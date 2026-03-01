@@ -60,6 +60,9 @@ class MailParserService
         // Extract sender IP
         $senderIp = $this->extractSenderIp($headers);
 
+        // Check if this is a reply to a digest email
+        $isDigestReply = $this->isDigestReply($envelopeTo, $headers);
+
         return new ParsedEmail(
             rawMessage: $rawMessage,
             envelopeFrom: $envelopeFrom,
@@ -84,7 +87,8 @@ class MailParserService
             chatMessageId: $chatInfo['messageId'],
             commandUserId: $commandInfo['userId'],
             commandGroupId: $commandInfo['groupId'],
-            senderIp: $senderIp
+            senderIp: $senderIp,
+            isDigestReply: $isDigestReply
         );
     }
 
@@ -540,5 +544,31 @@ class MailParserService
         }
 
         return null;
+    }
+
+    /**
+     * Check if this email is a reply to a digest email.
+     *
+     * Digest emails are sent from noreply@. We detect replies by checking:
+     * 1. Envelope-to is noreply@{user_domain}
+     * 2. In-Reply-To header contains "UnifiedDigest" (our Message-ID pattern)
+     */
+    private function isDigestReply(string $envelopeTo, array $headers): bool
+    {
+        $userDomain = config('freegle.mail.user_domain');
+        $noreplyAddr = config('freegle.mail.noreply_addr');
+
+        // Check if addressed to noreply@
+        if (strtolower($envelopeTo) === strtolower($noreplyAddr)) {
+            return true;
+        }
+
+        // Check if In-Reply-To references a digest email
+        $inReplyTo = $headers['in-reply-to'] ?? null;
+        if ($inReplyTo !== null && str_contains($inReplyTo, 'UnifiedDigest')) {
+            return true;
+        }
+
+        return false;
     }
 }

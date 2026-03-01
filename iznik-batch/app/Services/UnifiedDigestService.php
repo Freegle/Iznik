@@ -263,11 +263,22 @@ class UnifiedDigestService
             $key = $this->getDeduplicationKey($post);
 
             if (isset($processed[$key])) {
-                // Add this group to the existing post's groups list.
+                // Key matches - also check body similarity before deduplicating.
                 $existingIndex = $processed[$key];
                 $existing = $deduplicated[$existingIndex];
-                $existing['postedToGroups'][] = $post->groupid;
-                $deduplicated[$existingIndex] = $existing;
+
+                if ($this->bodiesMatch($existing['message'], $post)) {
+                    // Same key AND similar body - true duplicate, merge groups.
+                    $existing['postedToGroups'][] = $post->groupid;
+                    $deduplicated[$existingIndex] = $existing;
+                } else {
+                    // Same key but different body - treat as separate post.
+                    $index = $deduplicated->count();
+                    $deduplicated->push([
+                        'message' => $post,
+                        'postedToGroups' => [$post->groupid],
+                    ]);
+                }
             } else {
                 // New unique post.
                 $index = $deduplicated->count();
@@ -280,6 +291,34 @@ class UnifiedDigestService
         }
 
         return $deduplicated;
+    }
+
+    /**
+     * Check if two messages have matching body content.
+     */
+    protected function bodiesMatch(Message $a, Message $b): bool
+    {
+        // TrashNothing posts with same tnpostid are always duplicates.
+        if ($a->tnpostid && $b->tnpostid && $a->tnpostid === $b->tnpostid) {
+            return true;
+        }
+
+        return $this->normalizeBody($a->textbody) === $this->normalizeBody($b->textbody);
+    }
+
+    /**
+     * Normalize body text for comparison.
+     */
+    protected function normalizeBody(?string $body): string
+    {
+        if ($body === null) {
+            return '';
+        }
+
+        $normalized = strtolower(trim($body));
+        $normalized = preg_replace('/\s+/', ' ', $normalized);
+
+        return substr($normalized, 0, 200);
     }
 
     /**

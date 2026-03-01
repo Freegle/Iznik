@@ -3,6 +3,7 @@
 namespace App\Mail\Digest;
 
 use App\Mail\MjmlMailable;
+use App\Mail\Traits\AmpEmail;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\User;
@@ -21,6 +22,7 @@ use Illuminate\Support\Facades\DB;
  */
 class UnifiedDigest extends MjmlMailable
 {
+    use AmpEmail;
     use LoggableEmail;
     use TrackableEmail;
 
@@ -29,6 +31,8 @@ class UnifiedDigest extends MjmlMailable
     public string $deliveryUrl;
 
     protected Collection $preparedPosts;
+
+    protected int $digestNumber;
 
     public function __construct(
         protected User $user,
@@ -40,6 +44,9 @@ class UnifiedDigest extends MjmlMailable
 
         $this->userSite = config('freegle.sites.user');
         $this->deliveryUrl = config('freegle.delivery.base_url');
+
+        // Look up digest number for this user.
+        $this->digestNumber = $this->getDigestNumber();
 
         // Prepare posts with tracking URLs and decoded text.
         $this->preparedPosts = $this->preparePosts();
@@ -56,6 +63,8 @@ class UnifiedDigest extends MjmlMailable
             [
                 'mode' => $this->mode,
                 'post_count' => $this->posts->count(),
+                'digest_number' => $this->digestNumber,
+                'has_amp' => $this->isAmpEnabled(),
             ]
         );
     }
@@ -73,17 +82,37 @@ class UnifiedDigest extends MjmlMailable
      */
     public function build(): static
     {
-        return $this->mjmlView('emails.mjml.digest.unified', array_merge([
+        $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
             'posts' => $this->preparedPosts,
             'postCount' => $this->posts->count(),
             'sponsors' => $this->sponsors,
             'settingsUrl' => $this->trackedUrl($this->userSite . '/settings', 'footer_settings', 'settings'),
-            'browseUrl' => $this->trackedUrl($this->userSite . '/browse', 'browse_button', 'browse'),
+            'browseUrl' => $this->trackedUrl($this->userSite . '/browse', 'browse_cta', 'browse'),
             'userSite' => $this->userSite,
         ], $this->getTrackingData()), 'emails.text.digest.unified')
             ->to($this->user->email_preferred)
             ->applyLogging('UnifiedDigest');
+
+        // Render AMP variant if enabled.
+        if ($this->isAmpEnabled()) {
+            $ampPosts = $this->prepareAmpPosts();
+
+            $this->renderAmpTemplate('emails.amp.digest.unified', [
+                'user' => $this->user,
+                'posts' => $ampPosts,
+                'postCount' => $this->posts->count(),
+                'settingsUrl' => $this->userSite . '/settings',
+                'browseUrl' => $this->userSite . '/browse',
+                'userSite' => $this->userSite,
+            ]);
+
+            $result->withSymfonyMessage(function ($message) {
+                $this->applyAmpToMessage($message);
+            });
+        }
+
+        return $result;
     }
 
     /**
@@ -169,7 +198,9 @@ class UnifiedDigest extends MjmlMailable
      */
     protected function preparePosts(): Collection
     {
-        return $this->posts->map(function ($post, $index) {
+        $totalPosts = $this->posts->count();
+
+        return $this->posts->map(function ($post, $index) use ($totalPosts) {
             $message = $post['message'];
             $postedToGroups = $post['postedToGroups'];
 
@@ -180,6 +211,12 @@ class UnifiedDigest extends MjmlMailable
 
             // Get image URL via delivery service.
             $imageUrl = $this->getMessageImageUrl($message);
+
+            // Create tracked image URL with scroll depth.
+            $scrollPercent = $totalPosts > 0 ? round(($index / $totalPosts) * 100) : 0;
+            $trackedImage = $imageUrl
+                ? $this->trackedImageUrl($imageUrl, "image_{$index}", $scrollPercent)
+                : null;
 
             // Decode emoji sequences in message text.
             $messageText = $message->textbody
@@ -198,12 +235,49 @@ class UnifiedDigest extends MjmlMailable
                 'messageText' => $messageText,
                 'messageUrl' => $messageUrl,
                 'imageUrl' => $imageUrl,
+                'trackedImageUrl' => $trackedImage,
                 'postedToText' => $postedToText,
                 'type' => $message->type,
                 'subject' => $message->subject,
                 'itemName' => $this->extractItemName($message->subject),
             ];
         });
+    }
+
+    /**
+     * Prepare posts with AMP reply URLs and tokens.
+     */
+    protected function prepareAmpPosts(): Collection
+    {
+        $ampApiBase = config('freegle.amp.api_base', $this->userSite);
+        $userId = $this->user->id;
+
+        return $this->preparedPosts->map(function ($post) use ($ampApiBase, $userId) {
+            $messageId = $post['message']->id;
+            $token = $this->generateToken($userId, $messageId);
+
+            $post['ampReplyUrl'] = "{$ampApiBase}/amp/digest/reply?" . http_build_query([
+                'rt' => $token,
+                'uid' => $userId,
+                'mid' => $messageId,
+            ]);
+
+            // Fallback URL for non-AMP clients or AMP form errors.
+            $post['fallbackReplyUrl'] = $post['messageUrl'];
+
+            return $post;
+        });
+    }
+
+    /**
+     * Get the digest number for this user (count of previously sent digests).
+     */
+    protected function getDigestNumber(): int
+    {
+        return (int) DB::table('email_tracking')
+            ->where('userid', $this->user->id)
+            ->where('email_type', 'UnifiedDigest')
+            ->count();
     }
 
     /**
