@@ -22,8 +22,8 @@
 
     /* Header */
     .header {
-      background-color: #5cb85c;
-      padding: 20px;
+      background-color: #338808;
+      padding: 16px 20px;
       text-align: center;
     }
 
@@ -330,7 +330,7 @@
       <p class="footer-text">This email was sent with AMP to {{ $user->email_preferred }}</p>
       <p class="footer-links">
         <a href="{{ $settingsUrl }}">Change your email settings</a> &bull;
-        <a href="{{ $userSite }}/unsubscribe">Unsubscribe</a>
+        <a href="{{ $unsubscribeUrl ?? $userSite . '/unsubscribe' }}">Unsubscribe</a>
       </p>
       <div class="footer-divider"></div>
       <p class="footer-charity">

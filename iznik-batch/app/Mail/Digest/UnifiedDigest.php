@@ -48,10 +48,7 @@ class UnifiedDigest extends MjmlMailable
         // Look up digest number for this user.
         $this->digestNumber = $this->getDigestNumber();
 
-        // Prepare posts with tracking URLs and decoded text.
-        $this->preparedPosts = $this->preparePosts();
-
-        // Initialize email tracking.
+        // Initialize email tracking BEFORE preparePosts so trackedUrl() works.
         $userId = $this->user->exists ? $this->user->id : null;
 
         $this->initTracking(
@@ -67,6 +64,9 @@ class UnifiedDigest extends MjmlMailable
                 'has_amp' => $this->isAmpEnabled(),
             ]
         );
+
+        // Prepare posts with tracking URLs and decoded text.
+        $this->preparedPosts = $this->preparePosts();
     }
 
     /**
@@ -87,7 +87,9 @@ class UnifiedDigest extends MjmlMailable
             'posts' => $this->preparedPosts,
             'postCount' => $this->posts->count(),
             'sponsors' => $this->sponsors,
+            'mode' => $this->mode,
             'settingsUrl' => $this->trackedUrl($this->userSite . '/settings', 'footer_settings', 'settings'),
+            'unsubscribeUrl' => $this->trackedUrl($this->userSite . '/unsubscribe', 'footer_unsubscribe', 'unsubscribe'),
             'browseUrl' => $this->trackedUrl($this->userSite . '/browse', 'browse_cta', 'browse'),
             'userSite' => $this->userSite,
         ], $this->getTrackingData()), 'emails.text.digest.unified')
@@ -102,8 +104,9 @@ class UnifiedDigest extends MjmlMailable
                 'user' => $this->user,
                 'posts' => $ampPosts,
                 'postCount' => $this->posts->count(),
-                'settingsUrl' => $this->userSite . '/settings',
-                'browseUrl' => $this->userSite . '/browse',
+                'settingsUrl' => $this->trackedUrl($this->userSite . '/settings', 'amp_settings', 'settings'),
+                'unsubscribeUrl' => $this->trackedUrl($this->userSite . '/unsubscribe', 'amp_unsubscribe', 'unsubscribe'),
+                'browseUrl' => $this->trackedUrl($this->userSite . '/browse', 'amp_browse', 'browse'),
                 'userSite' => $this->userSite,
             ]);
 
