@@ -256,10 +256,24 @@ class UnifiedDigest extends MjmlMailable
                 'type' => $message->type,
                 'subject' => $message->subject,
                 'itemName' => $this->extractItemName($message->subject),
+                'locationName' => $this->extractLocationName($message->subject),
                 'arrivalFormatted' => $arrivalFormatted,
                 'arrivalIso' => $arrivalIso,
             ];
         });
+    }
+
+    /**
+     * Extract location name from subject line.
+     * Returns the text in parentheses at the end, e.g. "Edinburgh" from "OFFER: Sofa (Edinburgh)".
+     */
+    protected function extractLocationName(string $subject): ?string
+    {
+        if (preg_match('/\(([^)]+)\)\s*$/', $subject, $matches)) {
+            return $matches[1];
+        }
+
+        return null;
     }
 
     /**
