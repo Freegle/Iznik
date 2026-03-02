@@ -7,6 +7,7 @@ Here {{ $postCount === 1 ? 'is' : 'are' }} {{ $postCount }} new post{{ $postCoun
 
 @foreach($posts as $post)
 {{ strtoupper($post['type']) }}: {{ $post['itemName'] }}
+{{ $post['arrivalFormatted'] }}
 @if($post['messageText'])
 {{ \Illuminate\Support\Str::limit($post['messageText'], 150) }}
 @endif

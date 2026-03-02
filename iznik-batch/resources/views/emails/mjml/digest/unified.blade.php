@@ -24,7 +24,7 @@
         <mj-section mj-class="bg-green-light" padding="12px 20px">
             <mj-column>
                 <mj-text font-size="13px" color="#333333" line-height="1.6" padding="0">
-                    Hi {{ $user->displayname ?? 'there' }}, here's what's new:
+                    Hi {{ $user->displayname ?? 'there' }}, here's what's new:<br/>
                     @foreach($posts as $i => $post)
                     <a href="{{ $post['messageUrl'] }}" style="color: {{ $post['type'] === 'Offer' ? '#338808' : '#00A1CB' }}; font-weight: 600; text-decoration: none;">{{ $post['itemName'] }}</a>{!! $i < count($posts) - 1 ? ' &bull; ' : '' !!}
                     @endforeach
@@ -58,32 +58,26 @@
         <mj-section background-color="#ffffff" padding="0 20px 16px 20px">
             {{-- Image column --}}
             <mj-column width="30%" vertical-align="top">
-                @if($post['imageUrl'])
                 <mj-image
                     width="120px"
-                    src="{{ $post['trackedImageUrl'] ?? $post['imageUrl'] }}"
+                    src="{{ $post['trackedImageUrl'] }}"
                     alt="{{ $post['itemName'] }}"
                     href="{{ $post['messageUrl'] }}"
                     border-radius="8px"
                     padding="0"
                 />
-                @else
-                <mj-image
-                    width="120px"
-                    src="{{ config('freegle.branding.logo_url') }}"
-                    alt="{{ $post['itemName'] }}"
-                    href="{{ $post['messageUrl'] }}"
-                    padding="10px"
-                    css-class="no-photo-placeholder"
-                />
-                @endif
             </mj-column>
 
             {{-- Content column --}}
             <mj-column width="70%" vertical-align="top">
                 {{-- Item name --}}
-                <mj-text font-size="16px" font-weight="bold" color="#333333" padding="0 0 6px 0" line-height="1.3">
+                <mj-text font-size="16px" font-weight="bold" color="#333333" padding="0 0 4px 0" line-height="1.3">
                     <a href="{{ $post['messageUrl'] }}" style="color: #333333; text-decoration: none;">{{ $post['itemName'] }}</a>
+                </mj-text>
+
+                {{-- Time posted --}}
+                <mj-text font-size="12px" color="#888888" padding="0 0 6px 0">
+                    {{ $post['arrivalFormatted'] }}
                 </mj-text>
 
                 {{-- Description preview --}}
@@ -95,7 +89,7 @@
 
                 {{-- Posted to (cross-post indicator) - subtle --}}
                 @if($post['postedToText'])
-                <mj-text font-size="11px" color="#999999" padding="0 0 6px 0" font-style="italic">
+                <mj-text font-size="11px" color="#999999" padding="0 0 4px 0" font-style="italic">
                     {{ $post['postedToText'] }}
                 </mj-text>
                 @endif

@@ -9,6 +9,7 @@ use App\Mail\Traits\TrackableEmail;
 use App\Models\User;
 use App\Services\UnifiedDigestService;
 use App\Support\EmojiUtils;
+use Carbon\Carbon;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
@@ -206,6 +207,7 @@ class UnifiedDigest extends MjmlMailable
         return $this->posts->map(function ($post, $index) use ($totalPosts) {
             $message = $post['message'];
             $postedToGroups = $post['postedToGroups'];
+            $isOffer = $message->type === 'Offer';
 
             // Get group names for "Posted to:" display.
             $postedToText = count($postedToGroups) > 1
@@ -215,11 +217,15 @@ class UnifiedDigest extends MjmlMailable
             // Get image URL via delivery service.
             $imageUrl = $this->getMessageImageUrl($message);
 
+            // Use type-specific placeholder if no photo.
+            $placeholderUrl = $isOffer
+                ? config('freegle.images.offer_placeholder')
+                : config('freegle.images.wanted_placeholder');
+
             // Create tracked image URL with scroll depth.
             $scrollPercent = $totalPosts > 0 ? round(($index / $totalPosts) * 100) : 0;
-            $trackedImage = $imageUrl
-                ? $this->trackedImageUrl($imageUrl, "image_{$index}", $scrollPercent)
-                : null;
+            $displayImageUrl = $imageUrl ?? $placeholderUrl;
+            $trackedImage = $this->trackedImageUrl($displayImageUrl, "image_{$index}", $scrollPercent);
 
             // Decode emoji sequences in message text.
             $messageText = $message->textbody
@@ -233,16 +239,25 @@ class UnifiedDigest extends MjmlMailable
                 'view_message'
             );
 
+            // Format arrival time for display.
+            $arrival = $message->arrival instanceof Carbon ? $message->arrival : Carbon::parse($message->arrival);
+            $arrivalFormatted = $arrival->format('D j M, ga'); // e.g. "Sun 1 Mar, 9pm"
+            $arrivalIso = $arrival->toIso8601String();
+
             return [
                 'message' => $message,
                 'messageText' => $messageText,
                 'messageUrl' => $messageUrl,
                 'imageUrl' => $imageUrl,
+                'displayImageUrl' => $displayImageUrl,
                 'trackedImageUrl' => $trackedImage,
+                'isPlaceholder' => $imageUrl === null,
                 'postedToText' => $postedToText,
                 'type' => $message->type,
                 'subject' => $message->subject,
                 'itemName' => $this->extractItemName($message->subject),
+                'arrivalFormatted' => $arrivalFormatted,
+                'arrivalIso' => $arrivalIso,
             ];
         });
     }

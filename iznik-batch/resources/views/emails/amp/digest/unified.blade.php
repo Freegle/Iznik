@@ -5,6 +5,7 @@
   <script async src="https://cdn.ampproject.org/v0.js"></script>
   <script async custom-element="amp-form" src="https://cdn.ampproject.org/v0/amp-form-0.1.js"></script>
   <script async custom-element="amp-accordion" src="https://cdn.ampproject.org/v0/amp-accordion-0.1.js"></script>
+  <script async custom-element="amp-timeago" src="https://cdn.ampproject.org/v0/amp-timeago-0.1.js"></script>
   <script async custom-template="amp-mustache" src="https://cdn.ampproject.org/v0/amp-mustache-0.2.js"></script>
   <style amp4email-boilerplate>body{visibility:hidden}</style>
   <style amp-custom>
@@ -94,6 +95,11 @@
       color: #888888;
       font-style: italic;
       margin: 0 0 8px 0;
+    }
+    .post-time {
+      font-size: 12px;
+      color: #888888;
+      margin: 0 0 4px 0;
     }
 
     /* Reply accordion */
@@ -267,14 +273,13 @@
     {{-- Post cards with reply accordion --}}
     @foreach($posts as $index => $post)
     <div class="post-card">
-      @if($post['imageUrl'])
-      <amp-img class="post-image" src="{{ $post['imageUrl'] }}" width="80" height="80" layout="fixed" alt="{{ $post['itemName'] }}"></amp-img>
-      @else
-      <amp-img class="post-image" src="{{ config('freegle.branding.logo_url') }}" width="80" height="80" layout="fixed" alt="No photo"></amp-img>
-      @endif
+      <amp-img class="post-image" src="{{ $post['displayImageUrl'] }}" width="80" height="80" layout="fixed" alt="{{ $post['itemName'] }}"></amp-img>
       <div class="post-content">
         <p class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</p>
         <p class="post-title"><a href="{{ $post['fallbackReplyUrl'] }}">{{ $post['itemName'] }}</a></p>
+        <p class="post-time">
+          <amp-timeago datetime="{{ $post['arrivalIso'] }}" locale="en" width="160" height="20" layout="fixed">{{ $post['arrivalFormatted'] }}</amp-timeago>
+        </p>
         @if($post['messageText'])
         <p class="post-preview">{{ \Illuminate\Support\Str::limit($post['messageText'], 100) }}</p>
         @endif
