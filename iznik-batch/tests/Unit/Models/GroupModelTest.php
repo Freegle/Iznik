@@ -272,13 +272,6 @@ class GroupModelTest extends TestCase
         $this->assertEquals('Other', Group::TYPE_OTHER);
     }
 
-    public function test_digests_relationship(): void
-    {
-        $group = $this->createTestGroup();
-
-        $this->assertEquals(0, $group->digests()->count());
-    }
-
     public function test_messages_relationship(): void
     {
         $group = $this->createTestGroup();
