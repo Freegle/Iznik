@@ -204,7 +204,18 @@ class UnifiedDigest extends MjmlMailable
     {
         $totalPosts = $this->posts->count();
 
-        return $this->posts->map(function ($post, $index) use ($totalPosts) {
+        // Get user's location for distance calculation.
+        $userLat = null;
+        $userLng = null;
+        if ($this->user->lastlocation) {
+            $loc = DB::table('locations')->where('id', $this->user->lastlocation)->first(['lat', 'lng']);
+            if ($loc) {
+                $userLat = (float) $loc->lat;
+                $userLng = (float) $loc->lng;
+            }
+        }
+
+        return $this->posts->map(function ($post, $index) use ($totalPosts, $userLat, $userLng) {
             $message = $post['message'];
             $postedToGroups = $post['postedToGroups'];
             $isOffer = $message->type === 'Offer';
@@ -244,6 +255,13 @@ class UnifiedDigest extends MjmlMailable
             $arrivalFormatted = $arrival->format('D j M, ga'); // e.g. "Sun 1 Mar, 9pm"
             $arrivalIso = $arrival->toIso8601String();
 
+            // Calculate distance from user.
+            $distanceText = null;
+            if ($userLat !== null && $userLng !== null && $message->lat && $message->lng) {
+                $miles = $this->haversineDistance($userLat, $userLng, (float) $message->lat, (float) $message->lng);
+                $distanceText = $miles < 1 ? '< 1 mile' : round($miles) . ' miles';
+            }
+
             return [
                 'message' => $message,
                 'messageText' => $messageText,
@@ -259,6 +277,7 @@ class UnifiedDigest extends MjmlMailable
                 'locationName' => $this->extractLocationName($message->subject),
                 'arrivalFormatted' => $arrivalFormatted,
                 'arrivalIso' => $arrivalIso,
+                'distanceText' => $distanceText,
             ];
         });
     }
@@ -274,6 +293,19 @@ class UnifiedDigest extends MjmlMailable
         }
 
         return null;
+    }
+
+    /**
+     * Haversine distance in miles between two lat/lng points.
+     */
+    protected function haversineDistance(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $earthRadiusMiles = 3959;
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+
+        return $earthRadiusMiles * 2 * atan2(sqrt($a), sqrt(1 - $a));
     }
 
     /**

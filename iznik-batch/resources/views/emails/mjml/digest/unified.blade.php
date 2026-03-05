@@ -5,57 +5,36 @@
         @php
             $offers = collect($posts)->where('type', 'Offer');
             $wanteds = collect($posts)->where('type', 'Wanted');
-            $maxHeaderItems = 4;
+            $maxHeaderItems = 3;
+            $offerColor = '#3c763d';
+            $wantedColor = '#4895DD';
         @endphp
 
-        {{-- Header - Freegle brand green with logo + post summary --}}
-        <mj-section mj-class="bg-success" padding="16px 20px 8px 20px">
-            <mj-column width="30%">
+        {{-- Header - Freegle brand green with logo + compact summary --}}
+        <mj-section mj-class="bg-success" padding="16px 20px">
+            <mj-column width="20%" vertical-align="middle">
                 <mj-image
-                    width="60px"
+                    width="50px"
                     src="{{ config('freegle.branding.logo_url') }}"
                     alt="Freegle"
                     align="left"
                     padding="0"
                 />
             </mj-column>
-            <mj-column width="70%">
-                <mj-text font-size="20px" font-weight="bold" color="#ffffff" align="right" padding="8px 0 0 0">
-                    {{ $postCount }} new post{{ $postCount === 1 ? '' : 's' }} near you
-                </mj-text>
-            </mj-column>
-        </mj-section>
-
-        {{-- Header continued - greeting + OFFER/WANTED split summary --}}
-        <mj-section mj-class="bg-success" padding="0 20px 16px 20px">
-            <mj-column>
-                <mj-text font-size="14px" color="#ffffff" padding="0 0 8px 0" line-height="1.5">
-                    Hi {{ $user->displayname ?? 'there' }}, here's what's new:
-                </mj-text>
-
-                @if($offers->isNotEmpty())
-                <mj-text font-size="13px" color="#ffffff" padding="0 0 4px 0" line-height="1.6">
-                    <span style="display: inline-block; background-color: rgba(255,255,255,0.25); font-size: 11px; font-weight: bold; padding: 1px 6px; border-radius: 3px; letter-spacing: 0.5px; vertical-align: middle; margin-right: 4px;">OFFER</span>
-                    @foreach($offers->take($maxHeaderItems) as $i => $post)
-                    <a href="{{ $post['messageUrl'] }}" style="color: #ffffff; text-decoration: underline; text-decoration-color: rgba(255,255,255,0.4);">{{ $post['itemName'] }}</a>@if(!$loop->last || $offers->count() > $maxHeaderItems) &bull; @endif
-                    @endforeach
-                    @if($offers->count() > $maxHeaderItems)
-                    <a href="{{ $browseUrl }}" style="color: #ffffff; text-decoration: underline;">{{ $offers->count() - $maxHeaderItems }} more&hellip;</a>
+            <mj-column width="80%" vertical-align="middle">
+                <mj-text font-size="13px" color="#ffffff" padding="0" line-height="1.6">
+                    @if($offers->isNotEmpty())
+                    <span style="display: inline-block; background-color: {{ $offerColor }}; border: 1px solid rgba(255,255,255,0.4); font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.5px; vertical-align: middle; margin-right: 3px;">OFFER</span>
+                    @foreach($offers->take($maxHeaderItems) as $post)<a href="#msg-{{ $post['message']->id }}" style="color: #ffffff; text-decoration: underline;">{{ $post['itemName'] }}</a>@if(!$loop->last), @endif @endforeach @if($offers->count() > $maxHeaderItems) <a href="{{ $browseUrl }}" style="color: #ffffff; text-decoration: underline;">+{{ $offers->count() - $maxHeaderItems }} more</a> @endif
+                    @endif
+                    @if($offers->isNotEmpty() && $wanteds->isNotEmpty())
+                    <br/>
+                    @endif
+                    @if($wanteds->isNotEmpty())
+                    <span style="display: inline-block; background-color: {{ $wantedColor }}; font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.5px; vertical-align: middle; margin-right: 3px;">WANTED</span>
+                    @foreach($wanteds->take($maxHeaderItems) as $post)<a href="#msg-{{ $post['message']->id }}" style="color: #ffffff; text-decoration: underline;">{{ $post['itemName'] }}</a>@if(!$loop->last), @endif @endforeach @if($wanteds->count() > $maxHeaderItems) <a href="{{ $browseUrl }}" style="color: #ffffff; text-decoration: underline;">+{{ $wanteds->count() - $maxHeaderItems }} more</a> @endif
                     @endif
                 </mj-text>
-                @endif
-
-                @if($wanteds->isNotEmpty())
-                <mj-text font-size="13px" color="#ffffff" padding="0 0 4px 0" line-height="1.6">
-                    <span style="display: inline-block; background-color: rgba(255,255,255,0.25); font-size: 11px; font-weight: bold; padding: 1px 6px; border-radius: 3px; letter-spacing: 0.5px; vertical-align: middle; margin-right: 4px;">WANTED</span>
-                    @foreach($wanteds->take($maxHeaderItems) as $i => $post)
-                    <a href="{{ $post['messageUrl'] }}" style="color: #ffffff; text-decoration: underline; text-decoration-color: rgba(255,255,255,0.4);">{{ $post['itemName'] }}</a>@if(!$loop->last || $wanteds->count() > $maxHeaderItems) &bull; @endif
-                    @endforeach
-                    @if($wanteds->count() > $maxHeaderItems)
-                    <a href="{{ $browseUrl }}" style="color: #ffffff; text-decoration: underline;">{{ $wanteds->count() - $maxHeaderItems }} more&hellip;</a>
-                    @endif
-                </mj-text>
-                @endif
             </mj-column>
         </mj-section>
 
@@ -65,83 +44,76 @@
 
         {{-- Card separator --}}
         @if($index > 0)
-        <mj-section padding="0" background-color="#f4f4f4">
+        <mj-section padding="0" background-color="#ffffff">
             <mj-column>
                 <mj-divider border-color="#e9ecef" border-width="1px" padding="0 20px" />
             </mj-column>
         </mj-section>
         @endif
 
-        {{-- Single section: image + all content side by side --}}
-        <mj-section background-color="#ffffff" padding="16px 20px">
-            {{-- Image column --}}
-            <mj-column width="30%" vertical-align="top">
-                <mj-image
-                    width="120px"
-                    src="{{ $post['trackedImageUrl'] }}"
-                    alt="{{ $post['itemName'] }}"
-                    href="{{ $post['messageUrl'] }}"
-                    border-radius="8px"
-                    padding="0"
-                />
-            </mj-column>
-
-            {{-- Content column --}}
-            <mj-column width="70%" vertical-align="top">
-                {{-- Badge + Title + Location using table for proper alignment --}}
-                <mj-text font-size="15px" color="#212529" padding="0 0 4px 0" line-height="1.3">
-                    <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse: collapse;">
+        <mj-section background-color="#ffffff" padding="12px 20px">
+            <mj-column>
+                <mj-text padding="0" font-size="14px" color="#212529">
+                    <a id="msg-{{ $post['message']->id }}"></a>
+                    <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse: collapse; width: 100%;">
+                        {{-- Top row: image (rowspan) + title/description --}}
                         <tr>
-                            <td style="vertical-align: top; padding-right: 8px; padding-top: 2px;">
-                                <span style="display: inline-block; background-color: {{ $isOffer ? '#3c763d' : '#4895DD' }}; color: #ffffff; font-size: 11px; font-weight: bold; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px; white-space: nowrap;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
+                            <td rowspan="2" style="vertical-align: top; width: 120px; height: 120px; padding-right: 16px;">
+                                <a href="{{ $post['messageUrl'] }}">
+                                    <img src="{{ $post['trackedImageUrl'] }}" alt="{{ $post['itemName'] }}" width="120" height="120" style="display: block; width: 120px; height: 120px; object-fit: cover;" />
+                                </a>
                             </td>
                             <td style="vertical-align: top;">
-                                <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none; font-weight: 600; font-size: 15px;">{{ $post['itemName'] }}</a>
-                                @if($post['locationName'])
-                                <br/><span style="color: #808080; font-size: 12px; font-weight: normal;">{{ $post['locationName'] }}</span>
-                                @endif
+                                <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse: collapse; width: 100%;">
+                                    <tr>
+                                        <td style="vertical-align: top; width: 85px; padding-right: 8px;">
+                                            <span style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: bold; padding: 6px 11px; border-radius: 4px; line-height: 1;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
+                                        </td>
+                                        <td style="vertical-align: top;">
+                                            <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none; font-weight: 600; font-size: 15px; line-height: 1.4;">{{ $post['itemName'] }}</a>
+                                            @if($post['locationName'])
+                                            <br/><span style="color: #212529; font-size: 12px; font-weight: 500;">{{ $post['locationName'] }}</span>
+                                            @endif
+                                        </td>
+                                    </tr>
+                                    @if($post['messageText'] || $post['postedToText'])
+                                    <tr>
+                                        <td colspan="2" style="padding-top: 4px;">
+                                            @if($post['messageText'])
+                                            <span style="color: #808080; font-size: 13px; font-weight: 500; line-height: 1.4;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
+                                            @endif
+                                            @if($post['postedToText'])
+                                            <br/><span style="color: #999999; font-size: 11px; font-style: italic;">{{ $post['postedToText'] }}</span>
+                                            @endif
+                                        </td>
+                                    </tr>
+                                    @endif
+                                </table>
+                            </td>
+                        </tr>
+                        {{-- Bottom row: reply button + time, aligned to bottom of image --}}
+                        <tr>
+                            <td style="vertical-align: bottom; padding-top: 6px;">
+                                <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse: collapse; width: 100%;">
+                                    <tr>
+                                        <td style="vertical-align: middle;">
+                                            <a href="{{ $post['messageUrl'] }}" style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 13px; font-weight: 600; padding: 6px 16px; border-radius: 4px; text-decoration: none;">Reply</a>
+                                        </td>
+                                        <td style="vertical-align: middle; text-align: right; color: #999999; font-size: 12px; white-space: nowrap;">
+                                            @if($post['distanceText'])<span style="margin-right: 8px;">{{ $post['distanceText'] }}</span>@endif{{ $post['arrivalFormatted'] }}
+                                        </td>
+                                    </tr>
+                                </table>
                             </td>
                         </tr>
                     </table>
                 </mj-text>
-
-                {{-- Description preview --}}
-                @if($post['messageText'])
-                <mj-text font-size="13px" color="#808080" padding="2px 0 4px 0" line-height="1.4">
-                    {{ \Illuminate\Support\Str::limit($post['messageText'], 120) }}
-                </mj-text>
-                @endif
-
-                {{-- Posted to (cross-post indicator) - subtle --}}
-                @if($post['postedToText'])
-                <mj-text font-size="11px" color="#999999" padding="0 0 4px 0" font-style="italic">
-                    {{ $post['postedToText'] }}
-                </mj-text>
-                @endif
-
-                {{-- Meta row: time --}}
-                <mj-text font-size="12px" color="#808080" padding="2px 0 8px 0">
-                    {!! '&#128337;' !!} {{ $post['arrivalFormatted'] }}
-                </mj-text>
-
-                {{-- Reply button --}}
-                <mj-button
-                    href="{{ $post['messageUrl'] }}"
-                    mj-class="btn-success"
-                    align="left"
-                    font-size="14px"
-                    inner-padding="8px 24px"
-                    border-radius="4px"
-                    padding="0"
-                >
-                    Reply
-                </mj-button>
             </mj-column>
         </mj-section>
         @endforeach
 
         {{-- Browse all CTA --}}
-        <mj-section background-color="#ffffff" padding="20px">
+        <mj-section background-color="#ffffff" padding="16px 20px 20px 20px">
             <mj-column>
                 <mj-divider border-color="#e9ecef" border-width="1px" padding="0 0 16px 0" />
                 <mj-button
