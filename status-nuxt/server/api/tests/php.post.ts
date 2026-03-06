@@ -7,7 +7,7 @@ export default defineEventHandler(async (event) => {
   console.log('Starting PHP tests...')
 
   const body = await readBody(event).catch(() => ({}))
-  const filter = body?.filter ? `--filter "${body.filter}"` : ''
+  const filter = body?.filter || ''
 
   if (filter) {
     console.log(`Running PHP tests with filter: ${body.filter}`)
@@ -83,21 +83,6 @@ async function waitForHealthyAndRunTests(filter: string) {
   const state = getTestState('php')
   if (state.status !== 'running') return
 
-  // Refresh iznik_phpunit_test schema from iznik (which has latest migrations)
-  setTestState('php', { message: 'Refreshing test database schema...' })
-  try {
-    execSync(
-      `docker exec freegle-apiv1-phpunit sh -c "
-        mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik_phpunit_test; CREATE DATABASE iznik_phpunit_test;' &&
-        mysqldump -h percona -u root -piznik --no-data --routines --triggers iznik |
-          mysql -h percona -u root -piznik iznik_phpunit_test"`,
-      { encoding: 'utf8', timeout: 120000 }
-    )
-    appendTestLogs('php', 'Test database schema refreshed from iznik\n')
-  } catch (error: any) {
-    appendTestLogs('php', `Warning: Test database refresh issue: ${error.message}\n`)
-  }
-
   // Setup test environment
   setTestState('php', { message: 'Setting up test environment...' })
   try {
@@ -110,7 +95,10 @@ async function waitForHealthyAndRunTests(filter: string) {
     appendTestLogs('php', `Warning: Test environment setup issue: ${error.message}\n`)
   }
 
-  // Run tests
+  // Run tests with schema refresh inline before run-phpunit.sh
+  // The schema refresh ensures test databases have the latest schema from iznik
+  // (which has all migrations applied). This is done inline in the spawn command
+  // to avoid shell escaping issues with execSync through multiple docker layers.
   const testPath = filter || '/var/www/iznik/test/ut/php/'
   setTestState('php', { message: 'Running PHPUnit tests...' })
 
