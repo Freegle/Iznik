@@ -233,8 +233,9 @@ onMounted(async () => {
 
         // Strip "OFFER: " / "WANTED: " prefix and trailing location "(Place XX1)"
         let title = msg.subject || ''
-        title = title.replace(/^(OFFER|WANTED|TAKEN|RECEIVED)\s*:\s*/i, '')
-        title = title.replace(/\s*\([^)]*[A-Z]{1,2}\d{1,2}[A-Z]?\d?\)\s*$/i, '')
+        title = title.replace(/^(OFFERED?|WANTED|TAKEN|RECEIVED)\s*:?\s*/i, '')
+        // Strip trailing parenthetical location like "(Styvechale, Coventry)" or "(Bath BA1)"
+        title = title.replace(/\s*\([^)]+\)\s*$/, '')
 
         // Extract location/area from the original subject or group
         const area = msg.location?.area || groupName.replace('Freegle ', '') || ''
