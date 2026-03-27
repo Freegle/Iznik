@@ -11,6 +11,7 @@ export default defineConfig({
     },
   },
   test: {
+    root: resolve(__dirname),
     environment: 'happy-dom',
     include: ['tests/**/*.spec.js'],
   },
