@@ -115,6 +115,7 @@ import { useMessageStore } from '~/stores/message'
 import { useGroupStore } from '~/stores/group'
 import { useUserStore } from '~/stores/user'
 import { useChatStore } from '~/stores/chat'
+import { useNewsfeedStore } from '~/stores/newsfeed'
 import { classifyPost } from '~/composables/usePostClassifier'
 import { extractTitle } from '~/composables/useTitleExtractor'
 import { filterFeed, searchFeed } from '~/composables/useFeedFilter'
@@ -126,6 +127,7 @@ const messageStore = useMessageStore()
 const groupStore = useGroupStore()
 const userStore = useUserStore()
 const chatStore = useChatStore()
+const newsfeedStore = useNewsfeedStore()
 
 // State
 const searchQuery = ref('')
@@ -283,6 +285,41 @@ onMounted(async () => {
     } catch (e) {
       // Not logged in — chats won't load, that's fine
     }
+
+    // Fetch chitchat/newsfeed items and mix into feed
+    try {
+      const nfItems = await newsfeedStore.fetchFeed(25)
+      if (nfItems?.length) {
+        for (const nfId of nfItems.slice(0, 10)) {
+          const item = await newsfeedStore.fetch(nfId.id || nfId).catch(() => null)
+          if (item?.message) {
+            feedItems.value.push({
+              id: `nf-${item.id}`,
+              type: 'Discussion',
+              title: '',
+              description: item.message,
+              userName: item.user?.displayname || 'Someone',
+              userAvatar: item.user?.profile?.paththumb || null,
+              userId: item.userid,
+              groupName: '',
+              area: '',
+              date: item.timestamp,
+              timeAgo: dayjs(item.timestamp).fromNow(true),
+              imageUrls: item.imageid ? [`https://images.ilovefreegle.org/timg_${item.imageid}.jpg`] : [],
+              isSampleImage: false,
+              taken: false,
+              takenBy: null,
+              replies: item.replies?.length || 0,
+              isChitchat: true,
+            })
+          }
+        }
+        // Re-sort after adding chitchat
+        feedItems.value.sort((a, b) => new Date(b.date) - new Date(a.date))
+      }
+    } catch (e) {
+      // Chitchat may not load if not in a group
+    }
   } catch (e) {
     console.error('Failed to fetch messages', e)
   } finally {
@@ -290,7 +327,7 @@ onMounted(async () => {
   }
 })
 
-// Filtered items
+// Filtered items with grouping info
 const displayItems = computed(() => {
   let items = feedItems.value
 
@@ -300,7 +337,17 @@ const displayItems = computed(() => {
 
   items = filterFeed(items, typeFilter.value)
   items = searchFeed(items, searchQuery.value)
-  return items
+
+  // Add grouping: mark consecutive posts from the same user
+  return items.map((item, i) => {
+    const prev = i > 0 ? items[i - 1] : null
+    const next = i < items.length - 1 ? items[i + 1] : null
+    return {
+      ...item,
+      isGroupedWithPrev: prev && prev.userId === item.userId && !prev.taken && !item.taken,
+      isGroupedWithNext: next && next.userId === item.userId && !next.taken && !item.taken,
+    }
+  })
 })
 
 // Compose flow

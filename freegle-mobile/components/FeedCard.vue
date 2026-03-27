@@ -8,7 +8,7 @@
   </div>
 
   <!-- Normal post: person-focused chat-style layout -->
-  <div v-else class="feed-card" :class="cardClass" @click="expanded = !expanded">
+  <div v-else class="feed-card" :class="[cardClass, { 'feed-card--grouped': post.isGroupedWithPrev }]" @click="expanded = !expanded">
     <button
       class="menu-trigger"
       aria-label="More options"
@@ -28,8 +28,8 @@
       @close="showMenu = false"
     />
 
-    <!-- Person line: avatar + name + area + badge + time -->
-    <div class="feed-card__person">
+    <!-- Person line: hidden when grouped with previous post from same user -->
+    <div v-if="!post.isGroupedWithPrev" class="feed-card__person">
       <img
         v-if="post.userAvatar"
         :src="post.userAvatar"
@@ -83,13 +83,16 @@
       />
     </div>
 
-    <!-- Footer: reaction + reply -->
+    <!-- Footer: reaction + replies count + reply -->
     <div class="feed-card__footer">
       <button class="feed-card__react" @click.stop="toggleLike">
         <span :class="{ 'feed-card__heart--liked': liked }">{{ liked ? '&#10084;&#65039;' : '&#9825;' }}</span>
       </button>
+      <span v-if="post.replies > 0" class="feed-card__replies">
+        {{ post.replies }} {{ post.replies === 1 ? 'reply' : 'replies' }}
+      </span>
       <button class="reply-link" @click.stop="$emit('reply', post.id)">
-        Reply to {{ firstName }}
+        {{ post.isChitchat ? 'Join thread' : `Reply to ${firstName}` }}
       </button>
     </div>
   </div>
@@ -146,6 +149,12 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 .feed-card--offer { background: #f5faf0; }
 .feed-card--wanted { background: #f0f4fc; }
 .feed-card--discussion { background: #f7f7f7; }
+
+.feed-card--grouped {
+  margin-top: -4px;
+  padding-top: 6px;
+  border-radius: 0 0 12px 12px;
+}
 
 /* Taken (collapsed) */
 .feed-card--taken {
@@ -375,6 +384,12 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   0% { transform: scale(1); }
   50% { transform: scale(1.4); }
   100% { transform: scale(1); }
+}
+
+.feed-card__replies {
+  font-size: 11px;
+  color: #999;
+  flex: 1;
 }
 
 .reply-link {
