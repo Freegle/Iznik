@@ -17,6 +17,7 @@
           v-for="item in displayItems"
           :key="item.id"
           @swipe-left="onSwipeLeft(item)"
+          @swipe-right="onSwipeRight(item)"
         >
           <FeedCard
             :post="item"
@@ -81,6 +82,13 @@
       @close="showSettings = false"
       @navigate="onSettingsNavigate"
     />
+
+    <SwipeFeedback
+      :visible="!!swipeFeedbackItem"
+      :direction="swipeFeedbackDirection"
+      @feedback="handleSwipeFeedback"
+      @dismiss="swipeFeedbackItem = null"
+    />
   </div>
 </template>
 
@@ -102,6 +110,7 @@ import ProfileSheet from '~/components/ProfileSheet.vue'
 import SettingsDrawer from '~/components/SettingsDrawer.vue'
 import SwipeableCard from '~/components/SwipeableCard.vue'
 import DonateCard from '~/components/DonateCard.vue'
+import SwipeFeedback from '~/components/SwipeFeedback.vue'
 import { useMessageStore } from '~/stores/message'
 import { useGroupStore } from '~/stores/group'
 import { useUserStore } from '~/stores/user'
@@ -132,6 +141,8 @@ const activeChat = ref(null)
 const viewingProfile = ref(null)
 const hasPostedBefore = ref(false)
 const loading = ref(true)
+const swipeFeedbackItem = ref(null)
+const swipeFeedbackDirection = ref('left')
 
 // Feed items mapped from store
 const feedItems = ref([])
@@ -391,9 +402,26 @@ function markTaken(itemId) {
 function onSwipeLeft(item) {
   if (item.taken) {
     feedItems.value = feedItems.value.filter((i) => i.id !== item.id)
-  } else if (item.type === 'Discussion') {
-    typeFilter.value = 'Offer'
+  } else {
+    swipeFeedbackItem.value = item
+    swipeFeedbackDirection.value = 'left'
   }
+}
+
+function onSwipeRight(item) {
+  swipeFeedbackItem.value = item
+  swipeFeedbackDirection.value = 'right'
+  // Auto-dismiss the "more like this" after 1.5s
+  setTimeout(() => { swipeFeedbackItem.value = null }, 1500)
+}
+
+function handleSwipeFeedback(reason) {
+  const item = swipeFeedbackItem.value
+  if (item && reason === 'hide') {
+    feedItems.value = feedItems.value.filter((i) => i.id !== item.id)
+  }
+  // Future: send preference to API
+  swipeFeedbackItem.value = null
 }
 
 function onReport(postId) {}
