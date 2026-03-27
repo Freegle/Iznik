@@ -145,6 +145,12 @@ defineEmits(['open-chats', 'open-settings'])
     font-weight: 700;
     line-height: 16px;
     text-align: center;
+    animation: pulse-badge 2s ease-in-out infinite;
   }
+}
+
+@keyframes pulse-badge {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
 }
 </style>
