@@ -12,6 +12,7 @@ import { useChatStore } from '~/stores/chat'
 import { useAuthStore } from '~/stores/auth'
 import { useJobStore } from '~/stores/job'
 import { useMiscStore } from '~/stores/misc'
+import { useNewsfeedStore } from '~/stores/newsfeed'
 
 const runtimeConfig = useRuntimeConfig()
 
@@ -22,6 +23,7 @@ const chatStore = useChatStore()
 const authStore = useAuthStore()
 const jobStore = useJobStore()
 const miscStore = useMiscStore()
+const newsfeedStore = useNewsfeedStore()
 
 miscStore.init(runtimeConfig)
 messageStore.init(runtimeConfig)
@@ -30,4 +32,5 @@ userStore.init(runtimeConfig)
 chatStore.init(runtimeConfig)
 authStore.init(runtimeConfig)
 jobStore.init(runtimeConfig)
+newsfeedStore.init(runtimeConfig)
 </script>
