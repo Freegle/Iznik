@@ -8,7 +8,7 @@
   </div>
 
   <!-- Normal post: person-focused chat-style layout -->
-  <div v-else class="feed-card" :class="cardClass">
+  <div v-else class="feed-card" :class="cardClass" @click="expanded = !expanded">
     <button
       class="menu-trigger"
       aria-label="More options"
@@ -28,20 +28,22 @@
       @close="showMenu = false"
     />
 
-    <!-- Person line: avatar + name + badge + time -->
+    <!-- Person line: avatar + name + area + badge + time -->
     <div class="feed-card__person">
-      <NuxtImg
+      <img
         v-if="post.userAvatar"
         :src="post.userAvatar"
-        :alt="post.userName"
-        width="56"
-        height="56"
+        :alt="displayName"
         class="feed-card__avatar-img"
+        @error="avatarBroken = true"
       />
-      <div v-else class="feed-card__avatar" :class="`feed-card__avatar--${post.type.toLowerCase()}`">
+      <div v-if="!post.userAvatar || avatarBroken" class="feed-card__avatar" :class="`feed-card__avatar--${post.type.toLowerCase()}`">
         {{ initial }}
       </div>
-      <span class="feed-card__name">{{ displayName }}</span>
+      <div class="feed-card__person-info">
+        <span class="feed-card__name">{{ displayName }}</span>
+        <span v-if="post.area" class="feed-card__area">{{ post.area }}</span>
+      </div>
       <span v-if="post.type === 'Offer'" class="badge badge--offer">OFFER</span>
       <span v-else-if="post.type === 'Wanted'" class="badge badge--wanted">WANTED</span>
       <span class="feed-card__time">{{ post.timeAgo }}</span>
@@ -51,18 +53,17 @@
     <div class="feed-card__item">
       <div class="feed-card__text">
         <h3 class="feed-card__title">{{ post.title }}</h3>
-        <p v-if="post.description" class="feed-card__desc">{{ post.description }}</p>
-        <div v-if="post.groupName" class="feed-card__group">{{ post.groupName }}</div>
+        <p v-if="post.description" class="feed-card__desc" :class="{ 'feed-card__desc--expanded': expanded }">
+          {{ post.description }}
+        </p>
       </div>
-      <div v-if="post.imageUrls && post.imageUrls.length" class="feed-card__thumb-wrap">
-        <NuxtImg
+      <div v-if="post.imageUrls && post.imageUrls.length" class="feed-card__thumb-wrap" @click.stop="expanded = !expanded">
+        <img
           :src="post.imageUrls[0]"
           :alt="post.title"
-          width="144"
-          height="144"
-          fit="cover"
-          loading="lazy"
           class="feed-card__thumb"
+          :class="{ 'feed-card__thumb--expanded': expanded }"
+          loading="lazy"
         />
         <span v-if="post.imageUrls.length > 1 && !post.isSampleImage" class="feed-card__photo-count">
           {{ post.imageUrls.length }}
@@ -70,8 +71,23 @@
       </div>
     </div>
 
-    <!-- Reply — subtle, not transactional -->
+    <!-- Expanded: show all photos -->
+    <div v-if="expanded && post.imageUrls?.length > 1 && !post.isSampleImage" class="feed-card__gallery">
+      <img
+        v-for="(url, i) in post.imageUrls.slice(1)"
+        :key="i"
+        :src="url"
+        :alt="`${post.title} photo ${i + 2}`"
+        class="feed-card__gallery-img"
+        loading="lazy"
+      />
+    </div>
+
+    <!-- Footer: reaction + reply -->
     <div class="feed-card__footer">
+      <button class="feed-card__react" @click.stop="toggleLike">
+        <span :class="{ 'feed-card__heart--liked': liked }">{{ liked ? '&#10084;&#65039;' : '&#9825;' }}</span>
+      </button>
       <button class="reply-link" @click.stop="$emit('reply', post.id)">
         Reply to {{ firstName }}
       </button>
@@ -88,21 +104,19 @@ const props = defineProps({
 
 const emit = defineEmits(['reply', 'report', 'hide'])
 const showMenu = ref(false)
+const expanded = ref(false)
+const liked = ref(false)
+const avatarBroken = ref(false)
 
 const displayName = computed(() => {
   const name = props.post.userName || 'Someone'
-  // Truncate garbled hashes (no spaces, >15 chars)
   if (!name.includes(' ') && name.length > 15) return name.substring(0, 10) + '...'
   return name
 })
 
-const firstName = computed(() => {
-  return displayName.value.split(' ')[0]
-})
+const firstName = computed(() => displayName.value.split(' ')[0])
 
-const initial = computed(() => {
-  return (displayName.value || '?').charAt(0).toUpperCase()
-})
+const initial = computed(() => (displayName.value || '?').charAt(0).toUpperCase())
 
 const cardClass = computed(() => {
   switch (props.post.type) {
@@ -112,6 +126,7 @@ const cardClass = computed(() => {
   }
 })
 
+function toggleLike() { liked.value = !liked.value }
 function handleReport() { showMenu.value = false; emit('report', props.post.id) }
 function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 </script>
@@ -122,7 +137,11 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   padding: 10px 12px;
   margin: 0 8px 6px;
   border-radius: 12px;
+  cursor: pointer;
+  transition: box-shadow 0.15s;
 }
+
+.feed-card:active { box-shadow: 0 0 0 2px rgba(51, 136, 8, 0.2); }
 
 .feed-card--offer { background: #f5faf0; }
 .feed-card--wanted { background: #f0f4fc; }
@@ -156,26 +175,26 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   cursor: pointer;
   border-radius: 50%;
   z-index: 2;
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
 /* Person line */
 .feed-card__person {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   margin-bottom: 6px;
   padding-right: 20px;
 }
 
 .feed-card__avatar {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: white;
   flex-shrink: 0;
@@ -185,22 +204,31 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 .feed-card__avatar--discussion { background: #888; }
 
 .feed-card__avatar-img {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
 }
 
+.feed-card__person-info {
+  flex: 1;
+  min-width: 0;
+}
+
 .feed-card__name {
+  display: block;
   font-size: 14px;
   font-weight: 600;
   color: #333;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.feed-card__area {
+  display: block;
+  font-size: 11px;
+  color: #999;
+  line-height: 1.2;
 }
 
 .badge {
@@ -242,17 +270,17 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 .feed-card__desc {
   font-size: 13px;
   color: #555;
-  line-height: 1.35;
-  margin: 0 0 3px;
+  line-height: 1.4;
+  margin: 0;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.feed-card__group {
-  font-size: 11px;
-  color: #999;
+.feed-card__desc--expanded {
+  -webkit-line-clamp: unset;
+  display: block;
 }
 
 /* Thumbnail */
@@ -262,6 +290,7 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   width: 64px;
   height: 64px;
   align-self: center;
+  transition: width 0.2s, height 0.2s;
 }
 
 .feed-card__thumb {
@@ -269,6 +298,18 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   height: 64px;
   border-radius: 8px;
   object-fit: cover;
+  transition: width 0.2s, height 0.2s;
+}
+
+.feed-card__thumb--expanded {
+  width: 100%;
+  height: auto;
+  max-height: 200px;
+}
+
+.feed-card__thumb-wrap:has(.feed-card__thumb--expanded) {
+  width: 100%;
+  height: auto;
 }
 
 .feed-card__photo-count {
@@ -288,11 +329,52 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   padding: 0 3px;
 }
 
-/* Reply link */
+/* Gallery for expanded view */
+.feed-card__gallery {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  margin-top: 8px;
+  padding-bottom: 4px;
+}
+
+.feed-card__gallery-img {
+  width: 120px;
+  height: 90px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+/* Footer: reaction + reply */
 .feed-card__footer {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 4px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+
+.feed-card__react {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 2px 4px;
+  transition: transform 0.15s;
+}
+
+.feed-card__react:active {
+  transform: scale(1.3);
+}
+
+.feed-card__heart--liked {
+  animation: heart-pop 0.3s ease;
+}
+
+@keyframes heart-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.4); }
+  100% { transform: scale(1); }
 }
 
 .reply-link {

@@ -223,6 +223,9 @@ onMounted(async () => {
         title = title.replace(/^(OFFER|WANTED|TAKEN|RECEIVED)\s*:\s*/i, '')
         title = title.replace(/\s*\([^)]*[A-Z]{1,2}\d{1,2}[A-Z]?\d?\)\s*$/i, '')
 
+        // Extract location/area from the original subject or group
+        const area = msg.location?.area || groupName.replace('Freegle ', '') || ''
+
         return {
           id: msg.id,
           type: msg.type || 'Offer',
@@ -230,15 +233,20 @@ onMounted(async () => {
           description: msg.textbody || '',
           userName,
           userAvatar,
+          userId: uid,
           groupName,
+          area,
+          date: msg.arrival || msg.date,
           timeAgo: dayjs(msg.arrival || msg.date).fromNow(true),
           imageUrls,
           isSampleImage: !!isSample,
           taken: hasTaken,
-          takenBy: null, // Private — don't reveal who took it
+          takenBy: null,
+          replies: msg.replies?.length || 0,
         }
       })
       .filter(Boolean)
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
 
     // Try to load chat conversations
     try {
