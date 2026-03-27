@@ -85,9 +85,18 @@
 
     <!-- Footer: reaction + replies count + reply -->
     <div class="feed-card__footer">
-      <button class="feed-card__react" @click.stop="toggleLike">
-        <span :class="{ 'feed-card__heart--liked': liked }">{{ liked ? '&#10084;&#65039;' : '&#9825;' }}</span>
-      </button>
+      <div class="feed-card__react-wrap">
+        <ReactionPicker :visible="showReactions" @react="onReact" @close="showReactions = false" />
+        <button
+          class="feed-card__react"
+          @click.stop="toggleLike"
+          @long-press.stop="showReactions = true"
+          @touchstart.stop="startLongPress"
+          @touchend.stop="cancelLongPress"
+        >
+          <span :class="{ 'feed-card__heart--liked': liked }">{{ reactionEmoji || (liked ? '&#10084;&#65039;' : '&#9825;') }}</span>
+        </button>
+      </div>
       <span v-if="post.replies > 0" class="feed-card__replies">
         {{ post.replies }} {{ post.replies === 1 ? 'reply' : 'replies' }}
       </span>
@@ -100,6 +109,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
+import ReactionPicker from './ReactionPicker.vue'
 
 const props = defineProps({
   post: { type: Object, required: true },
@@ -110,6 +120,22 @@ const showMenu = ref(false)
 const expanded = ref(false)
 const liked = ref(false)
 const avatarBroken = ref(false)
+const showReactions = ref(false)
+const reactionEmoji = ref(null)
+let longPressTimer = null
+
+function startLongPress() {
+  longPressTimer = setTimeout(() => { showReactions.value = true }, 400)
+}
+
+function cancelLongPress() {
+  if (longPressTimer) clearTimeout(longPressTimer)
+}
+
+function onReact({ type, emoji }) {
+  reactionEmoji.value = emoji
+  liked.value = true
+}
 
 const displayName = computed(() => {
   const name = props.post.userName || 'Someone'
@@ -361,6 +387,10 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   align-items: center;
   justify-content: space-between;
   margin-top: 6px;
+}
+
+.feed-card__react-wrap {
+  position: relative;
 }
 
 .feed-card__react {
