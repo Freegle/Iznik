@@ -1,0 +1,53 @@
+:root {
+  --mobile-header-height: 48px;
+  --mobile-search-height: 40px;
+  --mobile-composer-height: 48px;
+  --mobile-ad-height: 50px;
+  --mobile-filter-height: 36px;
+
+  --feed-offer-bg: #f0f9e8;
+  --feed-offer-badge: #338808;
+  --feed-wanted-bg: #e8f0fd;
+  --feed-wanted-badge: #2563eb;
+  --feed-discussion-bg: #f5f5f5;
+  --feed-taken-bg: #f5f5f5;
+
+  --chat-header-bg: #1e40af;
+  --chat-outgoing-bg: #f0f9e8;
+  --chat-incoming-bg: #f0f0f0;
+
+  --header-bg: #1d6607;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+#__nuxt {
+  height: 100%;
+}
+
+.mobile-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 428px;
+  margin: 0 auto;
+  background: #fff;
+  position: relative;
+}
+
+.mobile-content {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
