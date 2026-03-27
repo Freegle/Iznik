@@ -1,31 +1,13 @@
 <template>
   <Transition name="drawer">
-    <div
-      v-if="visible"
-      class="settings-drawer"
-    >
+    <div v-if="visible" class="settings-drawer">
       <header class="settings-drawer__header">
-        <button
-          class="settings-drawer__back"
-          aria-label="Go back"
-          @click="$emit('close')"
-        >
-          <svg
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <path
-              d="M20 11H7.83L13.42 5.41L12 4L4 12L12 20L13.41 18.59L7.83 13H20V11Z"
-              fill="currentColor"
-            />
+        <button class="settings-drawer__back" aria-label="Go back" @click="$emit('close')">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M20 11H7.83L13.42 5.41L12 4L4 12L12 20L13.41 18.59L7.83 13H20V11Z" />
           </svg>
         </button>
-        <h1 class="settings-drawer__title">
-          Settings
-        </h1>
+        <h1 class="settings-drawer__title">Settings</h1>
       </header>
 
       <nav class="settings-drawer__list">
@@ -35,9 +17,20 @@
           class="settings-drawer__item"
           @click="$emit('navigate', item.section)"
         >
-          {{ item.label }}
+          <span class="settings-drawer__icon">{{ item.icon }}</span>
+          <div class="settings-drawer__item-text">
+            <span class="settings-drawer__item-label">{{ item.label }}</span>
+            <span v-if="item.hint" class="settings-drawer__item-hint">{{ item.hint }}</span>
+          </div>
+          <svg class="settings-drawer__chevron" width="16" height="16" viewBox="0 0 24 24" fill="#ccc">
+            <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z" />
+          </svg>
         </button>
       </nav>
+
+      <div class="settings-drawer__footer">
+        <p>Freegle — don't throw it away, give it away!</p>
+      </div>
     </div>
   </Transition>
 </template>
@@ -50,12 +43,12 @@ defineProps({
 defineEmits(['close', 'navigate'])
 
 const menuItems = [
-  { section: 'address-book', label: 'Address Book' },
-  { section: 'notifications', label: 'Notification Preferences' },
-  { section: 'location', label: 'Change Location' },
-  { section: 'export', label: 'Export My Data' },
-  { section: 'help', label: 'Help' },
-  { section: 'about', label: 'About Freegle' },
+  { section: 'notifications', label: 'Notifications', hint: 'Push, email, quiet hours', icon: '🔔' },
+  { section: 'location', label: 'Change Location', hint: 'Update your area', icon: '📍' },
+  { section: 'address-book', label: 'Address Book', hint: 'Saved addresses for collection', icon: '📖' },
+  { section: 'export', label: 'My Data', hint: 'Download or delete your data', icon: '📦' },
+  { section: 'help', label: 'Help', hint: null, icon: '❓' },
+  { section: 'about', label: 'About Freegle', hint: null, icon: '💚' },
 ]
 </script>
 
@@ -63,10 +56,10 @@ const menuItems = [
 .settings-drawer {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 300;
   display: flex;
   flex-direction: column;
-  background: #ffffff;
+  background: #fafafa;
 
   &__header {
     display: flex;
@@ -92,9 +85,7 @@ const menuItems = [
     color: #ffffff;
     cursor: pointer;
 
-    &:active {
-      background: rgba(255, 255, 255, 0.15);
-    }
+    &:active { background: rgba(255, 255, 255, 0.15); }
   }
 
   &__title {
@@ -106,23 +97,63 @@ const menuItems = [
   &__list {
     flex: 1;
     overflow-y: auto;
+    padding: 8px 0;
   }
 
   &__item {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 12px;
     width: 100%;
     padding: 14px 16px;
     border: none;
-    border-bottom: 1px solid #eeeeee;
-    background: #ffffff;
-    color: #333333;
-    font-size: 15px;
-    font-weight: 500;
+    background: white;
+    margin-bottom: 1px;
     text-align: left;
     cursor: pointer;
 
-    &:active {
-      background: #f5f5f5;
+    &:active { background: #f5f5f5; }
+  }
+
+  &__icon {
+    font-size: 20px;
+    flex-shrink: 0;
+    width: 28px;
+    text-align: center;
+  }
+
+  &__item-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__item-label {
+    display: block;
+    font-size: 15px;
+    font-weight: 500;
+    color: #333;
+  }
+
+  &__item-hint {
+    display: block;
+    font-size: 12px;
+    color: #999;
+    margin-top: 1px;
+  }
+
+  &__chevron {
+    flex-shrink: 0;
+  }
+
+  &__footer {
+    padding: 16px;
+    text-align: center;
+
+    p {
+      font-size: 12px;
+      color: #aaa;
+      margin: 0;
+      font-style: italic;
     }
   }
 }
