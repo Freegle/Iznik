@@ -7,7 +7,7 @@
     />
 
     <FeedSearch v-model="searchQuery" />
-    <FeedFilter v-model:view="currentView" v-model:type-filter="typeFilter" />
+    <FeedFilter @update:type-filter="(v) => typeFilter = v" />
 
     <div class="feed-page__content mobile-content">
       <div v-if="loading" class="feed-page__loading">Loading...</div>
@@ -24,6 +24,7 @@
             @reply="openReply"
             @report="onReport"
             @hide="onHide"
+            @open-detail="openDetail"
           />
         </SwipeableCard>
 
@@ -36,7 +37,7 @@
       </template>
     </div>
 
-    <FeedComposer v-if="currentView === 'feed'" @submit="onCompose" />
+    <FeedComposer @submit="onCompose" />
 
     <ConfirmPost
       v-if="pendingPost"
@@ -77,6 +78,12 @@
       @close="viewingProfile = null"
     />
 
+    <PostDetail
+      :post="detailPost"
+      @close="detailPost = null"
+      @reply="openReply"
+    />
+
     <SettingsDrawer
       :visible="showSettings"
       @close="showSettings = false"
@@ -111,6 +118,7 @@ import SettingsDrawer from '~/components/SettingsDrawer.vue'
 import SwipeableCard from '~/components/SwipeableCard.vue'
 import DonateCard from '~/components/DonateCard.vue'
 import SwipeFeedback from '~/components/SwipeFeedback.vue'
+import PostDetail from '~/components/PostDetail.vue'
 import { useMessageStore } from '~/stores/message'
 import { useGroupStore } from '~/stores/group'
 import { useUserStore } from '~/stores/user'
@@ -132,7 +140,7 @@ const newsfeedStore = useNewsfeedStore()
 // State
 const searchQuery = ref('')
 const currentView = ref('feed')
-const typeFilter = ref('All')
+const typeFilter = ref(new Set(['Offer', 'Wanted', 'Discussion']))
 const showChats = ref(false)
 const showSettings = ref(false)
 const showNotifyChoice = ref(false)
@@ -143,6 +151,7 @@ const activeChat = ref(null)
 const viewingProfile = ref(null)
 const hasPostedBefore = ref(false)
 const loading = ref(true)
+const detailPost = ref(null)
 const swipeFeedbackItem = ref(null)
 const swipeFeedbackDirection = ref('left')
 
@@ -233,7 +242,9 @@ onMounted(async () => {
 
         // Strip "OFFER: " / "WANTED: " prefix and trailing location "(Place XX1)"
         let title = msg.subject || ''
-        title = title.replace(/^(OFFERED?|WANTED|TAKEN|RECEIVED)\s*:?\s*/i, '')
+        // Strip type prefixes — various formats from Freegle and trashnothing
+        title = title.replace(/^(OFFERED?|WANTED|TAKEN|RECEIVED|OFFER)\s*[-:]\s*/i, '')
+        title = title.replace(/^\[?(offer|wanted|taken|received)\]?\s*[-:.]?\s*/i, '')
         // Strip trailing parenthetical location like "(Styvechale, Coventry)" or "(Bath BA1)"
         title = title.replace(/\s*\([^)]+\)\s*$/, '')
 
@@ -332,11 +343,15 @@ onMounted(async () => {
 const displayItems = computed(() => {
   let items = feedItems.value
 
-  if (currentView.value === 'mine') {
-    items = items.filter((i) => i.userName === 'You')
+  // Multi-select type filter (Offer, Wanted, Discussion, Mine)
+  if (typeFilter.value instanceof Set) {
+    const showMine = typeFilter.value.has('Mine')
+    items = items.filter((i) => {
+      if (i.taken) return true
+      if (showMine && i.userName === 'You') return true
+      return typeFilter.value.has(i.type)
+    })
   }
-
-  items = filterFeed(items, typeFilter.value)
   items = searchFeed(items, searchQuery.value)
 
   // Add grouping: mark consecutive posts from the same user
@@ -389,6 +404,12 @@ function confirmPost() {
 
 function onNotifyChoice(method) {
   showNotifyChoice.value = false
+}
+
+// Detail view
+function openDetail(postId) {
+  const post = feedItems.value.find((p) => p.id === postId)
+  if (post) detailPost.value = post
 }
 
 // Reply flow

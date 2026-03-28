@@ -8,7 +8,7 @@
   </div>
 
   <!-- Normal post: person-focused chat-style layout -->
-  <div v-else class="feed-card" :class="[cardClass, { 'feed-card--grouped': post.isGroupedWithPrev }]" @click="expanded = !expanded">
+  <div v-else class="feed-card" :class="[cardClass, { 'feed-card--grouped': post.isGroupedWithPrev }]" @click="$emit('open-detail', post.id)">
     <button
       class="menu-trigger"
       aria-label="More options"
@@ -101,7 +101,7 @@
         {{ post.replies }} {{ post.replies === 1 ? 'reply' : 'replies' }}
       </span>
       <button class="reply-link" @click.stop="$emit('reply', post.id)">
-        {{ post.isChitchat ? 'Join thread' : `Reply to ${firstName}` }}
+        {{ post.isChitchat ? 'Join thread' : 'Reply' }}
       </button>
     </div>
   </div>
@@ -115,7 +115,7 @@ const props = defineProps({
   post: { type: Object, required: true },
 })
 
-const emit = defineEmits(['reply', 'report', 'hide'])
+const emit = defineEmits(['reply', 'report', 'hide', 'open-detail'])
 const showMenu = ref(false)
 const expanded = ref(false)
 const liked = ref(false)
@@ -300,6 +300,10 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   color: #222;
   margin: 0 0 2px;
   line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .feed-card__desc {
@@ -308,7 +312,7 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   line-height: 1.4;
   margin: 0;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -322,15 +326,15 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 .feed-card__thumb-wrap {
   position: relative;
   flex-shrink: 0;
-  width: 64px;
-  height: 64px;
+  width: 80px;
+  height: 80px;
   align-self: center;
   transition: width 0.2s, height 0.2s;
 }
 
 .feed-card__thumb {
-  width: 64px;
-  height: 64px;
+  width: 80px;
+  height: 80px;
   border-radius: 8px;
   object-fit: cover;
   transition: width 0.2s, height 0.2s;
@@ -424,13 +428,20 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 
 .reply-link {
   font-size: 12px;
-  font-weight: 500;
-  color: #338808;
-  background: none;
-  border: none;
+  font-weight: 600;
+  padding: 5px 16px;
+  border-radius: 999px;
+  background: transparent;
   cursor: pointer;
-  padding: 2px 0;
+  border: 1.5px solid #338808;
+  color: #338808;
 }
-.feed-card--wanted .reply-link { color: #2563eb; }
-.feed-card--discussion .reply-link { color: #666; }
+.feed-card--wanted .reply-link {
+  border-color: #2563eb;
+  color: #2563eb;
+}
+.feed-card--discussion .reply-link {
+  border-color: #888;
+  color: #666;
+}
 </style>
