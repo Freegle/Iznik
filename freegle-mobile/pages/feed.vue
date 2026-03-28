@@ -225,7 +225,8 @@ onMounted(async () => {
         const uid = typeof msg.fromuser === 'number' ? msg.fromuser : msg.fromuser?.id
         if (uid && userStore.list[uid]) {
           userName = userStore.list[uid].displayname || 'Someone'
-          userAvatar = userStore.list[uid].profile?.paththumb || null
+          const thumb = userStore.list[uid].profile?.paththumb
+          userAvatar = thumb && !thumb.includes('defaultprofile') ? thumb : null
         } else if (typeof msg.fromuser === 'object' && msg.fromuser?.displayname) {
           userName = msg.fromuser.displayname
         }
@@ -242,14 +243,17 @@ onMounted(async () => {
 
         // Strip "OFFER: " / "WANTED: " prefix and trailing location "(Place XX1)"
         let title = msg.subject || ''
-        // Strip type prefixes — various formats from Freegle and trashnothing
+
+        // Extract location from parenthetical before stripping
+        const locMatch = title.match(/\(([^)]+)\)\s*$/)
+        const itemLocation = locMatch ? locMatch[1] : ''
+
+        // Strip type prefixes and trailing location
         title = title.replace(/^(OFFERED?|WANTED|TAKEN|RECEIVED|OFFER)\s*[-:]\s*/i, '')
         title = title.replace(/^\[?(offer|wanted|taken|received)\]?\s*[-:.]?\s*/i, '')
-        // Strip trailing parenthetical location like "(Styvechale, Coventry)" or "(Bath BA1)"
         title = title.replace(/\s*\([^)]+\)\s*$/, '')
 
-        // Extract location/area from the original subject or group
-        const area = msg.location?.area || groupName.replace('Freegle ', '') || ''
+        const area = itemLocation || msg.location?.area || groupName.replace('Freegle ', '') || ''
 
         return {
           id: msg.id,

@@ -28,40 +28,51 @@
       @close="showMenu = false"
     />
 
-    <!-- Person line: hidden when grouped with previous post from same user -->
-    <div v-if="!post.isGroupedWithPrev" class="feed-card__person">
-      <img
-        v-if="post.userAvatar && !avatarBroken"
-        :src="post.userAvatar"
-        :alt="displayName"
-        class="feed-card__avatar-img"
-        @error="avatarBroken = true"
-      />
-      <div v-else class="feed-card__avatar" :class="`feed-card__avatar--${post.type.toLowerCase()}`">
-        {{ initial }}
+    <!-- Two-column layout: avatar rail (left) + content (right) -->
+    <div class="feed-card__layout">
+      <!-- Left: avatar + vertical connector line for groups -->
+      <div class="feed-card__rail">
+        <template v-if="!post.isGroupedWithPrev">
+          <img
+            v-if="post.userAvatar && !avatarBroken"
+            :src="post.userAvatar"
+            :alt="displayName"
+            class="feed-card__avatar-img"
+            @error="avatarBroken = true"
+          />
+          <div v-else class="feed-card__avatar" :class="`feed-card__avatar--${post.type.toLowerCase()}`">
+            {{ initial }}
+          </div>
+        </template>
+        <div v-if="post.groupCount > 1 || post.isGroupedWithPrev" class="feed-card__connector"></div>
       </div>
-      <div class="feed-card__person-info">
-        <span class="feed-card__name">{{ displayName }}</span>
-        <span v-if="post.groupCount > 1" class="feed-card__posted">has {{ post.groupCount }} posts</span>
-        <span v-else class="feed-card__posted">posted:</span>
-        <span v-if="post.area" class="feed-card__area">{{ post.area }}</span>
-      </div>
-    </div>
 
-    <!-- Item content: text + photo on right with badge overlay -->
-    <div class="feed-card__item">
-      <div class="feed-card__text">
-        <h3 class="feed-card__title">{{ post.title }}</h3>
-        <p v-if="post.description" class="feed-card__desc">{{ post.description }}</p>
-      </div>
-      <div v-if="post.imageUrls && post.imageUrls.length" class="feed-card__thumb-wrap">
-        <img :src="post.imageUrls[0]" :alt="post.title" class="feed-card__thumb" loading="lazy" />
-        <span v-if="post.type !== 'Discussion'" class="feed-card__type-overlay" :class="`feed-card__type-overlay--${post.type.toLowerCase()}`">
-          {{ post.type }}
-        </span>
-        <span v-if="post.imageUrls.length > 1 && !post.isSampleImage" class="feed-card__photo-count">
-          {{ post.imageUrls.length }}
-        </span>
+      <!-- Right: person info + item content -->
+      <div class="feed-card__main">
+        <!-- Person line -->
+        <div v-if="!post.isGroupedWithPrev" class="feed-card__person">
+          <span class="feed-card__name">{{ displayName }}</span>
+          <span v-if="post.groupCount > 1" class="feed-card__posted">has {{ post.groupCount }} posts</span>
+          <span v-else class="feed-card__posted">posted:</span>
+        </div>
+
+        <!-- Item content -->
+        <div class="feed-card__item">
+          <div class="feed-card__text">
+            <h3 class="feed-card__title">{{ post.title }}</h3>
+            <p v-if="post.description" class="feed-card__desc">{{ post.description }}</p>
+            <span v-if="post.area" class="feed-card__area">{{ post.area }}</span>
+          </div>
+          <div v-if="post.imageUrls && post.imageUrls.length" class="feed-card__thumb-wrap">
+            <img :src="post.imageUrls[0]" :alt="post.title" class="feed-card__thumb" loading="lazy" />
+            <span v-if="post.type !== 'Discussion'" class="feed-card__type-overlay" :class="`feed-card__type-overlay--${post.type.toLowerCase()}`">
+              {{ post.type }}
+            </span>
+            <span v-if="post.imageUrls.length > 1 && !post.isSampleImage" class="feed-card__photo-count">
+              {{ post.imageUrls.length }}
+            </span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -144,290 +155,66 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 </script>
 
 <style scoped>
-.feed-card {
-  position: relative;
-  padding: 10px 12px;
-  margin: 0 8px 6px;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: box-shadow 0.15s;
-}
-
+/* Card container */
+.feed-card { position: relative; padding: 10px 12px; margin: 0 8px 6px; border-radius: 12px; cursor: pointer; }
 .feed-card:active { box-shadow: 0 0 0 2px rgba(51, 136, 8, 0.2); }
-
 .feed-card--offer { background: #f5faf0; }
 .feed-card--wanted { background: #f0f4fc; }
 .feed-card--discussion { background: #f7f7f7; }
-
-.feed-card--group-start {
-  border-radius: 12px 12px 0 0;
-  margin-bottom: 0;
-  border-left: 3px solid #ddd;
-  margin-left: 28px;
-  padding-left: 14px;
-}
-
-.feed-card--grouped {
-  margin-top: 0;
-  padding-top: 6px;
-  border-radius: 0 0 12px 12px;
-  border-left: 3px solid #ddd;
-  margin-left: 28px;
-  padding-left: 14px;
-  border-top: 1px dashed #e8e8e8;
-}
-
-.feed-card--grouped + .feed-card--grouped {
-  border-radius: 0;
-}
-
-.feed-card--grouped:last-child,
-.feed-card--grouped + :not(.feed-card--grouped) {
-  border-radius: 0 0 12px 12px;
-}
+.feed-card--group-start { margin-bottom: 0; border-radius: 12px 12px 0 0; }
+.feed-card--grouped { margin-top: 0; padding-top: 4px; border-radius: 0 0 12px 12px; }
 
 /* Taken (collapsed) */
-.feed-card--taken {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: #f0f0f0;
-  padding: 8px 12px;
-  margin: 0 8px 4px;
-  border-radius: 8px;
-  font-size: 13px;
-  color: #888;
-}
+.feed-card--taken { display: flex; align-items: center; gap: 6px; background: #f0f0f0; padding: 8px 12px; margin: 0 8px 4px; border-radius: 8px; font-size: 13px; color: #888; }
 .taken-icon { flex-shrink: 0; }
 .taken-title { font-weight: 600; color: #666; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .taken-label { font-weight: 600; flex-shrink: 0; }
 .taken-time { flex-shrink: 0; font-size: 11px; color: #aaa; }
 
 /* Three-dot menu */
-.menu-trigger {
-  position: absolute;
-  top: 8px;
-  right: 6px;
-  background: none;
-  border: none;
-  padding: 4px;
-  cursor: pointer;
-  border-radius: 50%;
-  z-index: 2;
-  opacity: 0.5;
-}
+.menu-trigger { position: absolute; top: 8px; right: 6px; background: none; border: none; padding: 4px; cursor: pointer; border-radius: 50%; z-index: 2; opacity: 0.5; }
 
-/* Person line */
-.feed-card__person {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-  padding-right: 20px;
-}
+/* Two-column layout */
+.feed-card__layout { display: flex; gap: 10px; }
+.feed-card__rail { display: flex; flex-direction: column; align-items: center; width: 32px; flex-shrink: 0; }
+.feed-card__connector { width: 2px; flex: 1; background: #d0d0d0; min-height: 8px; margin-top: 4px; }
+.feed-card__main { flex: 1; min-width: 0; }
 
-.feed-card__avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 700;
-  color: white;
-  flex-shrink: 0;
-}
+/* Avatar */
+.feed-card__avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: white; flex-shrink: 0; }
 .feed-card__avatar--offer { background: #338808; }
 .feed-card__avatar--wanted { background: #2563eb; }
 .feed-card__avatar--discussion { background: #888; }
+.feed-card__avatar-img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
 
-.feed-card__avatar-img {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  object-fit: cover;
-  flex-shrink: 0;
-}
+/* Person info */
+.feed-card__person { display: flex; align-items: baseline; gap: 0; padding-right: 20px; margin-bottom: 2px; }
+.feed-card__name { font-size: 14px; font-weight: 600; color: #333; }
+.feed-card__posted { font-size: 12px; color: #bbb; font-weight: 400; margin-left: 4px; }
+.feed-card__area { font-size: 11px; color: #999; margin-bottom: 4px; }
 
-.feed-card__person-info {
-  flex: 1;
-  min-width: 0;
-}
+/* Item content */
+.feed-card__item { display: flex; gap: 10px; }
+.feed-card__text { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
+.feed-card__title { font-size: 15px; font-weight: 600; color: #222; margin: 0 0 3px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.feed-card__desc { font-size: 13px; color: #555; line-height: 1.4; margin: 0; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 
-.feed-card__name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #333;
-}
-
-.feed-card__posted {
-  font-size: 12px;
-  color: #bbb;
-  font-weight: 400;
-  margin-left: 4px;
-}
-
-.feed-card__area {
-  display: block;
-  font-size: 11px;
-  color: #999;
-  line-height: 1.2;
-}
-
-.badge {
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-  padding: 2px 5px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-.badge--offer { background: #d4edbc; color: #2d6b0e; }
-.badge--wanted { background: #c8ddfb; color: #1a4fa0; }
-
-.feed-card__time {
-  font-size: 11px;
-  color: #999;
-  flex-shrink: 0;
-}
-
-/* Item content — photo on left with badge overlay, text on right */
-.feed-card__item {
-  display: flex;
-  gap: 10px;
-}
-
-/* Thumbnail with type badge overlay */
-.feed-card__thumb-wrap {
-  position: relative;
-  flex-shrink: 0;
-  width: 88px;
-  height: 88px;
-}
-
-.feed-card__thumb {
-  width: 88px;
-  height: 88px;
-  border-radius: 10px;
-  object-fit: cover;
-}
-
-.feed-card__type-overlay {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: white;
-}
+/* Thumbnail */
+.feed-card__thumb-wrap { position: relative; flex-shrink: 0; width: 88px; height: 88px; }
+.feed-card__thumb { width: 88px; height: 88px; border-radius: 10px; object-fit: cover; }
+.feed-card__type-overlay { position: absolute; top: 4px; left: 4px; font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; color: white; }
 .feed-card__type-overlay--offer { background: rgba(51, 136, 8, 0.85); }
 .feed-card__type-overlay--wanted { background: rgba(37, 99, 235, 0.85); }
+.feed-card__photo-count { position: absolute; bottom: 4px; right: 4px; background: rgba(0,0,0,0.6); color: #fff; font-size: 10px; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; display: flex; align-items: center; justify-content: center; padding: 0 4px; }
 
-.feed-card__photo-count {
-  position: absolute;
-  bottom: 4px;
-  right: 4px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  min-width: 18px;
-  height: 18px;
-  border-radius: 9px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
-}
-
-.feed-card__text {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.feed-card__title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #222;
-  margin: 0 0 3px;
-  line-height: 1.3;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.feed-card__desc {
-  font-size: 13px;
-  color: #555;
-  line-height: 1.4;
-  margin: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 1;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* Footer: heart + time + replies + reply button */
-.feed-card__footer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.feed-card__react-wrap {
-  position: relative;
-}
-
-.feed-card__react {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 16px;
-  padding: 0;
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.feed-card__time {
-  font-size: 11px;
-  color: #bbb;
-}
-
-.feed-card__replies {
-  font-size: 11px;
-  color: #999;
-}
-
+/* Footer */
+.feed-card__footer { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.feed-card__react-wrap { position: relative; }
+.feed-card__react { background: none; border: none; cursor: pointer; font-size: 16px; padding: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
+.feed-card__time { font-size: 11px; color: #bbb; }
+.feed-card__replies { font-size: 11px; color: #999; }
 .feed-card__spacer { flex: 1; }
-
-.reply-link {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 5px 16px;
-  border-radius: 999px;
-  background: transparent;
-  cursor: pointer;
-  border: 1.5px solid #338808;
-  color: #338808;
-}
-.feed-card--wanted .reply-link {
-  border-color: #2563eb;
-  color: #2563eb;
-}
-.feed-card--discussion .reply-link {
-  border-color: #888;
-  color: #666;
-}
+.reply-link { font-size: 12px; font-weight: 600; padding: 5px 16px; border-radius: 999px; background: transparent; cursor: pointer; border: 1.5px solid #338808; color: #338808; }
+.feed-card--wanted .reply-link { border-color: #2563eb; color: #2563eb; }
+.feed-card--discussion .reply-link { border-color: #888; color: #666; }
 </style>
