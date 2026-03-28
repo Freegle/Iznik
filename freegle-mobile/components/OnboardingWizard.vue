@@ -39,15 +39,8 @@
 
       <!-- Slide 3: Community -->
       <div class="onboarding__slide onboarding__slide--community">
-        <div class="onboarding__stats">
-          <div class="onboarding__stat">
-            <span class="onboarding__stat-num">38M+</span>
-            <span class="onboarding__stat-label">items freegled</span>
-          </div>
-          <div class="onboarding__stat">
-            <span class="onboarding__stat-num">8M+</span>
-            <span class="onboarding__stat-label">members</span>
-          </div>
+        <div class="onboarding__emoji-row" style="font-size: 2.5rem; margin-bottom: 1rem;">
+          <span>💚</span><span>🌍</span><span>♻️</span>
         </div>
         <h2>Join your local community</h2>
         <p class="onboarding__detail">
