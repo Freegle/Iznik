@@ -1,0 +1,18 @@
+{
+  "name": "freegle-mobile-video",
+  "scripts": {
+    "preview": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts FreegleMobileDemo out/freegle-mobile-demo.mp4"
+  },
+  "dependencies": {
+    "@remotion/bundler": "^4.0.440",
+    "@remotion/cli": "^4.0.440",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "remotion": "^4.0.440"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "typescript": "^6.0.2"
+  }
+}
