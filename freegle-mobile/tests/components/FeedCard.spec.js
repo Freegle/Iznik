@@ -11,22 +11,26 @@ describe('FeedCard', () => {
     userName: 'Alice',
     groupName: 'Freegle Bath',
     timeAgo: '2h',
-    imageUrls: [],
+    imageUrls: ['/test.jpg'],
     taken: false,
     takenBy: null,
   }
 
-  it('renders offer card with green styling', () => {
+  it('renders offer card with title and user', () => {
     const wrapper = mount(FeedCard, { props: { post: offerPost } })
-    expect(wrapper.text()).toContain('OFFER')
     expect(wrapper.text()).toContain('Sofa')
     expect(wrapper.text()).toContain('Alice')
   })
 
-  it('renders wanted card', () => {
+  it('shows type overlay badge on photo for offer', () => {
+    const wrapper = mount(FeedCard, { props: { post: offerPost } })
+    expect(wrapper.text()).toContain('Offer')
+  })
+
+  it('shows type overlay badge for wanted', () => {
     const wanted = { ...offerPost, id: 2, type: 'Wanted' }
     const wrapper = mount(FeedCard, { props: { post: wanted } })
-    expect(wrapper.text()).toContain('WANTED')
+    expect(wrapper.text()).toContain('Wanted')
   })
 
   it('renders taken card as collapsed line without revealing who took it', () => {
@@ -39,17 +43,13 @@ describe('FeedCard', () => {
   it('renders discussion card without type badge', () => {
     const discussion = { ...offerPost, id: 4, type: 'Discussion' }
     const wrapper = mount(FeedCard, { props: { post: discussion } })
-    expect(wrapper.text()).not.toContain('OFFER')
-    expect(wrapper.text()).not.toContain('WANTED')
+    expect(wrapper.find('.feed-card__type-overlay').exists()).toBe(false)
   })
 
-  it('emits reply event on button click', async () => {
+  it('emits open-detail event on card click', async () => {
     const wrapper = mount(FeedCard, { props: { post: offerPost } })
-    const replyBtn = wrapper.find('[class*="reply"]')
-    if (replyBtn.exists()) {
-      await replyBtn.trigger('click')
-      expect(wrapper.emitted('reply')).toBeTruthy()
-    }
+    await wrapper.find('.feed-card').trigger('click')
+    expect(wrapper.emitted('open-detail')).toBeTruthy()
   })
 
   it('shows photo count badge for multiple images', () => {

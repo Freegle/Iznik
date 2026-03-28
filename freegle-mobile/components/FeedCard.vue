@@ -31,75 +31,56 @@
     <!-- Person line: hidden when grouped with previous post from same user -->
     <div v-if="!post.isGroupedWithPrev" class="feed-card__person">
       <img
-        v-if="post.userAvatar"
+        v-if="post.userAvatar && !avatarBroken"
         :src="post.userAvatar"
         :alt="displayName"
         class="feed-card__avatar-img"
         @error="avatarBroken = true"
       />
-      <div v-if="!post.userAvatar || avatarBroken" class="feed-card__avatar" :class="`feed-card__avatar--${post.type.toLowerCase()}`">
+      <div v-else class="feed-card__avatar" :class="`feed-card__avatar--${post.type.toLowerCase()}`">
         {{ initial }}
       </div>
       <div class="feed-card__person-info">
         <span class="feed-card__name">{{ displayName }}</span>
         <span v-if="post.area" class="feed-card__area">{{ post.area }}</span>
       </div>
-      <span v-if="post.type === 'Offer'" class="badge badge--offer">OFFER</span>
-      <span v-else-if="post.type === 'Wanted'" class="badge badge--wanted">WANTED</span>
-      <span class="feed-card__time">{{ post.timeAgo }}</span>
     </div>
 
-    <!-- Item content -->
+    <!-- Item content: photo with badge overlay + text -->
     <div class="feed-card__item">
-      <div class="feed-card__text">
-        <h3 class="feed-card__title">{{ post.title }}</h3>
-        <p v-if="post.description" class="feed-card__desc" :class="{ 'feed-card__desc--expanded': expanded }">
-          {{ post.description }}
-        </p>
-      </div>
-      <div v-if="post.imageUrls && post.imageUrls.length" class="feed-card__thumb-wrap" @click.stop="expanded = !expanded">
-        <img
-          :src="post.imageUrls[0]"
-          :alt="post.title"
-          class="feed-card__thumb"
-          :class="{ 'feed-card__thumb--expanded': expanded }"
-          loading="lazy"
-        />
+      <div v-if="post.imageUrls && post.imageUrls.length" class="feed-card__thumb-wrap">
+        <img :src="post.imageUrls[0]" :alt="post.title" class="feed-card__thumb" loading="lazy" />
+        <span v-if="post.type !== 'Discussion'" class="feed-card__type-overlay" :class="`feed-card__type-overlay--${post.type.toLowerCase()}`">
+          {{ post.type }}
+        </span>
         <span v-if="post.imageUrls.length > 1 && !post.isSampleImage" class="feed-card__photo-count">
           {{ post.imageUrls.length }}
         </span>
       </div>
+      <div class="feed-card__text">
+        <h3 class="feed-card__title">{{ post.title }}</h3>
+        <p v-if="post.description" class="feed-card__desc">{{ post.description }}</p>
+      </div>
     </div>
 
-    <!-- Expanded: show all photos -->
-    <div v-if="expanded && post.imageUrls?.length > 1 && !post.isSampleImage" class="feed-card__gallery">
-      <img
-        v-for="(url, i) in post.imageUrls.slice(1)"
-        :key="i"
-        :src="url"
-        :alt="`${post.title} photo ${i + 2}`"
-        class="feed-card__gallery-img"
-        loading="lazy"
-      />
-    </div>
-
-    <!-- Footer: reaction + replies count + reply -->
+    <!-- Footer: heart + time + replies + reply button -->
     <div class="feed-card__footer">
       <div class="feed-card__react-wrap">
         <ReactionPicker :visible="showReactions" @react="onReact" @close="showReactions = false" />
         <button
           class="feed-card__react"
           @click.stop="toggleLike"
-          @long-press.stop="showReactions = true"
           @touchstart.stop="startLongPress"
           @touchend.stop="cancelLongPress"
         >
-          <span :class="{ 'feed-card__heart--liked': liked }">{{ reactionEmoji || (liked ? '&#10084;&#65039;' : '&#9825;') }}</span>
+          {{ reactionEmoji || (liked ? '❤️' : '♡') }}
         </button>
       </div>
+      <span class="feed-card__time">{{ post.timeAgo }}</span>
       <span v-if="post.replies > 0" class="feed-card__replies">
         {{ post.replies }} {{ post.replies === 1 ? 'reply' : 'replies' }}
       </span>
+      <span class="feed-card__spacer"></span>
       <button class="reply-link" @click.stop="$emit('reply', post.id)">
         {{ post.isChitchat ? 'Join thread' : 'Reply' }}
       </button>
@@ -283,22 +264,71 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   flex-shrink: 0;
 }
 
-/* Item content */
+/* Item content — photo on left with badge overlay, text on right */
 .feed-card__item {
   display: flex;
   gap: 10px;
 }
 
+/* Thumbnail with type badge overlay */
+.feed-card__thumb-wrap {
+  position: relative;
+  flex-shrink: 0;
+  width: 88px;
+  height: 88px;
+}
+
+.feed-card__thumb {
+  width: 88px;
+  height: 88px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.feed-card__type-overlay {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: white;
+}
+.feed-card__type-overlay--offer { background: rgba(51, 136, 8, 0.85); }
+.feed-card__type-overlay--wanted { background: rgba(37, 99, 235, 0.85); }
+
+.feed-card__photo-count {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
 .feed-card__text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .feed-card__title {
   font-size: 15px;
   font-weight: 600;
   color: #222;
-  margin: 0 0 2px;
+  margin: 0 0 3px;
   line-height: 1.3;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -317,79 +347,11 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   overflow: hidden;
 }
 
-.feed-card__desc--expanded {
-  -webkit-line-clamp: unset;
-  display: block;
-}
-
-/* Thumbnail */
-.feed-card__thumb-wrap {
-  position: relative;
-  flex-shrink: 0;
-  width: 80px;
-  height: 80px;
-  align-self: center;
-  transition: width 0.2s, height 0.2s;
-}
-
-.feed-card__thumb {
-  width: 80px;
-  height: 80px;
-  border-radius: 8px;
-  object-fit: cover;
-  transition: width 0.2s, height 0.2s;
-}
-
-.feed-card__thumb--expanded {
-  width: 100%;
-  height: auto;
-  max-height: 200px;
-}
-
-.feed-card__thumb-wrap:has(.feed-card__thumb--expanded) {
-  width: 100%;
-  height: auto;
-}
-
-.feed-card__photo-count {
-  position: absolute;
-  bottom: 2px;
-  right: 2px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  min-width: 16px;
-  height: 16px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 3px;
-}
-
-/* Gallery for expanded view */
-.feed-card__gallery {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  margin-top: 8px;
-  padding-bottom: 4px;
-}
-
-.feed-card__gallery-img {
-  width: 120px;
-  height: 90px;
-  border-radius: 8px;
-  object-fit: cover;
-  flex-shrink: 0;
-}
-
-/* Footer: reaction + reply */
+/* Footer: heart + time + replies + reply button */
 .feed-card__footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   margin-top: 6px;
 }
 
@@ -402,29 +364,25 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
   border: none;
   cursor: pointer;
   font-size: 16px;
-  padding: 2px 4px;
-  transition: transform 0.15s;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.feed-card__react:active {
-  transform: scale(1.3);
-}
-
-.feed-card__heart--liked {
-  animation: heart-pop 0.3s ease;
-}
-
-@keyframes heart-pop {
-  0% { transform: scale(1); }
-  50% { transform: scale(1.4); }
-  100% { transform: scale(1); }
+.feed-card__time {
+  font-size: 11px;
+  color: #bbb;
 }
 
 .feed-card__replies {
   font-size: 11px;
   color: #999;
-  flex: 1;
 }
+
+.feed-card__spacer { flex: 1; }
 
 .reply-link {
   font-size: 12px;

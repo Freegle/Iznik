@@ -12,7 +12,7 @@ describe('SwipeableCard', () => {
 
   it('emits swipe-left on left swipe gesture', async () => {
     const wrapper = mount(SwipeableCard)
-    const el = wrapper.find('[class*="swipeable"], div')
+    const el = wrapper.find('.swipeable-card')
 
     await el.trigger('touchstart', { touches: [{ clientX: 200 }] })
     await el.trigger('touchmove', { touches: [{ clientX: 50 }] })
