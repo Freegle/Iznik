@@ -65,8 +65,7 @@ const scenes: Scene[] = [
     subtitle: 'Scroll through offers, wanteds, and community posts',
     img: '06-feed-scroll.png',
     durationSec: 3,
-    transition: 'scroll-down',
-    scrollAmount: 300,
+    transition: 'fade',
   },
   // Detail
   {
@@ -88,6 +87,13 @@ const scenes: Scene[] = [
     img: '08-settings.png',
     durationSec: 3,
     transition: 'slide-right',
+  },
+  // Compose
+  {
+    subtitle: 'Post something — just type and send',
+    img: '10-compose.png',
+    durationSec: 3,
+    transition: 'fade',
   },
   // Closing card
   { subtitle: '', durationSec: 4 },
@@ -119,11 +125,13 @@ export const DemoVideo: React.FC = () => {
       {/* Phone mockup scenes */}
       {sceneData.slice(1, -1).map((scene, i) => {
         if (!scene.img) return null;
+        const prevScene = i > 0 ? sceneData[i] : null; // previous in the slice
         return (
           <Sequence key={i} from={scene.startFrame} durationInFrames={scene.durationFrames}>
             <AbsoluteFill style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <PhoneScene
                 img={scene.img}
+                prevImg={prevScene?.img}
                 transition={scene.transition || 'fade'}
                 scrollAmount={scene.scrollAmount}
                 durationFrames={scene.durationFrames}
@@ -190,72 +198,62 @@ const ClosingCard: React.FC = () => {
 
 const PhoneScene: React.FC<{
   img: string;
+  prevImg?: string;
   transition: TransitionType;
   scrollAmount?: number;
   durationFrames: number;
-}> = ({ img, transition, scrollAmount = 0, durationFrames }) => {
+}> = ({ img, prevImg, transition, scrollAmount = 0, durationFrames }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const T = 12;
 
-  // Entry animation based on transition type
-  let translateX = 0;
-  let translateY = 0;
-  let opacity = 1;
-
-  const TRANSITION_FRAMES = 12;
+  // All transitions happen INSIDE the phone screen
+  let contentX = 0;
+  let contentY = 0;
+  let contentOpacity = 1;
 
   switch (transition) {
     case 'fade':
-      opacity = interpolate(frame, [0, TRANSITION_FRAMES], [0, 1], { extrapolateRight: 'clamp' });
+      contentOpacity = interpolate(frame, [0, T], [0, 1], { extrapolateRight: 'clamp' });
       break;
     case 'slide-left':
-      translateX = interpolate(frame, [0, TRANSITION_FRAMES], [80, 0], { extrapolateRight: 'clamp' });
-      opacity = interpolate(frame, [0, 8], [0, 1], { extrapolateRight: 'clamp' });
+      contentX = interpolate(frame, [0, T], [260, 0], { extrapolateRight: 'clamp' });
       break;
     case 'slide-right':
-      translateX = interpolate(frame, [0, TRANSITION_FRAMES], [280, 0], { extrapolateRight: 'clamp' });
-      opacity = interpolate(frame, [0, 6], [0.3, 1], { extrapolateRight: 'clamp' });
+      contentX = interpolate(frame, [0, T], [260, 0], { extrapolateRight: 'clamp' });
       break;
     case 'slide-up':
-      translateY = interpolate(frame, [0, TRANSITION_FRAMES], [500, 0], { extrapolateRight: 'clamp' });
-      opacity = interpolate(frame, [0, 8], [0, 1], { extrapolateRight: 'clamp' });
+      contentY = interpolate(frame, [0, T], [570, 0], { extrapolateRight: 'clamp' });
       break;
     case 'scroll-down':
-      opacity = interpolate(frame, [0, 8], [0, 1], { extrapolateRight: 'clamp' });
       break;
   }
 
-  // Scroll animation within the phone screen
-  const scrollOffset = scrollAmount > 0
-    ? interpolate(frame, [TRANSITION_FRAMES, durationFrames - 10], [0, scrollAmount], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
+  const scrollY = scrollAmount > 0
+    ? interpolate(frame, [T, durationFrames - 10], [0, scrollAmount], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })
     : 0;
 
-  // Exit fade
-  const exitOpacity = interpolate(frame, [durationFrames - 8, durationFrames], [1, 0], { extrapolateLeft: 'clamp' });
-
   return (
-    <div style={{
-      opacity: Math.min(opacity, exitOpacity),
-      transform: `translate(${translateX}px, ${translateY}px)`,
-    }}>
-      <PhoneMockup scale={1.05}>
+    <PhoneMockup scale={1.05}>
+      <div style={{ width: '100%', height: '100%', overflow: 'hidden', position: 'relative', background: '#fff' }}>
+        {/* Previous screen behind during slide transitions */}
+        {prevImg && (transition === 'slide-right' || transition === 'slide-up' || transition === 'slide-left') && (
+          <Img
+            src={staticFile(`screenshots/${prevImg}`)}
+            style={{ width: '100%', position: 'absolute', top: 0, left: 0 }}
+          />
+        )}
+        {/* Current screen sliding/fading in */}
         <div style={{
-          width: '100%',
-          height: '100%',
-          overflow: 'hidden',
-          position: 'relative',
+          position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+          opacity: contentOpacity,
+          transform: `translate(${contentX}px, ${contentY}px)`,
         }}>
           <Img
             src={staticFile(`screenshots/${img}`)}
-            style={{
-              width: '100%',
-              position: 'absolute',
-              top: -scrollOffset,
-              left: 0,
-            }}
+            style={{ width: '100%', position: 'absolute', top: -scrollY, left: 0 }}
           />
         </div>
-      </PhoneMockup>
-    </div>
+      </div>
+    </PhoneMockup>
   );
 };
