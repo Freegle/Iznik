@@ -23,7 +23,7 @@ const activeTypes = reactive(new Set(['Offer', 'Wanted', 'Discussion']))
 const types = [
   { value: 'Offer', label: 'Offers', icon: '🎁', color: 'green' },
   { value: 'Wanted', label: 'Wanted', icon: '🔍', color: 'blue' },
-  { value: 'Discussion', label: 'Social', icon: '💬', color: 'grey' },
+  { value: 'Discussion', label: 'Social', icon: '👥', color: 'grey' },
   { value: 'Mine', label: 'Mine', icon: '👤', color: 'purple' },
 ]
 
