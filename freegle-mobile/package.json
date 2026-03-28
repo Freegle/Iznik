@@ -9,7 +9,8 @@
   },
   "dependencies": {
     "dayjs": "^1.11.20",
-    "nuxt": "^3.17.0"
+    "nuxt": "^3.17.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.5",
