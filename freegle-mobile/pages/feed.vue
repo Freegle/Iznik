@@ -316,7 +316,7 @@ onMounted(async () => {
 
     // Try to load chat conversations
     try {
-      await chatStore.listChats()
+      await chatStore.fetchChats()
       const chats = Object.values(chatStore.listByChatId || {})
       conversations.value = chats.slice(0, 20).map((chat) => {
         const otherUser = chat.otheruid
