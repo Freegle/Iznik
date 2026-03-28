@@ -188,27 +188,64 @@ onMounted(async () => {
   }
 
   try {
-    // Get location
     const loc = JSON.parse(stored)
     let lat = loc.lat || null
     let lng = loc.lng || null
 
+    // If logged in, try to get location from user's profile/groups
+    if (isLoggedIn.value && !lat) {
+      try {
+        const jwt = authStore.auth?.jwt
+        const resp = await $fetch('https://api.ilovefreegle.org/apiv2/session', {
+          headers: { Authorization: JSON.stringify(jwt) },
+        })
+        const me = resp?.me
+
+        // Try mylocation from settings
+        if (me?.settings?.mylocation?.lat) {
+          lat = me.settings.mylocation.lat
+          lng = me.settings.mylocation.lng
+        }
+
+        // Try first group membership location
+        if (!lat && me?.memberships?.length) {
+          const group = me.memberships[0]
+          if (group.lat && group.lng) {
+            lat = group.lat
+            lng = group.lng
+          }
+        }
+
+        // Try user's own lat/lng
+        if (!lat && me?.lat) {
+          lat = me.lat
+          lng = me.lng
+        }
+      } catch (e) {
+        // Session fetch failed, continue with stored location
+      }
+    }
+
     // If postcode only, geocode via the API
     if (!lat && loc.postcode) {
       try {
-        const res = await $fetch(`https://api.ilovefreegle.org/apiv2/location/typeahead`, {
-          params: { q: loc.postcode },
+        // Normalize postcode: ensure space before last 3 chars (e.g. "pr32nx" -> "PR3 2NX")
+        let pc = loc.postcode.toUpperCase().replace(/\s/g, '')
+        if (pc.length >= 5) {
+          pc = pc.slice(0, -3) + ' ' + pc.slice(-3)
+        }
+        const res = await $fetch('https://api.ilovefreegle.org/apiv2/locations', {
+          params: { typeahead: pc },
         })
         if (res?.locations?.length) {
           lat = res.locations[0].lat
           lng = res.locations[0].lng
-          // Save for next time
           loc.lat = lat
           loc.lng = lng
           localStorage.setItem('freegle-mobile-location', JSON.stringify(loc))
         }
       } catch (e) {
-        // Geocode failed, use default
+        // Geocode failed
       }
     }
 
