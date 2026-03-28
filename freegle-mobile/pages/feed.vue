@@ -318,16 +318,30 @@ onMounted(async () => {
     try {
       await chatStore.fetchChats()
       const chats = Object.values(chatStore.listByChatId || {})
-      conversations.value = chats.slice(0, 20).map((chat) => {
-        const otherUser = chat.otheruid
-          ? { id: chat.otheruid, displayname: chat.name || 'Someone' }
-          : { id: 0, displayname: chat.name || 'Chat' }
+
+      // Sort by most recent first
+      chats.sort((a, b) => new Date(b.lastdate || 0) - new Date(a.lastdate || 0))
+
+      // Fetch profile images for chat partners
+      const chatUserIds = chats
+        .map((c) => c.otheruid)
+        .filter((uid) => uid && !userStore.list[uid])
+      if (chatUserIds.length) {
+        await Promise.all(chatUserIds.slice(0, 20).map((uid) => userStore.fetch(uid).catch(() => null)))
+      }
+
+      conversations.value = chats.slice(0, 30).map((chat) => {
+        const uid = chat.otheruid
+        const user = uid ? userStore.list[uid] : null
+        const thumb = user?.profile?.paththumb
+        const isDefault = !thumb || thumb.includes('defaultprofile') || thumb.includes('profile-image?default=')
 
         return {
           chatId: chat.id,
-          userId: otherUser.id,
-          userName: otherUser.displayname,
-          avatar: null,
+          userId: uid || 0,
+          userName: chat.name || user?.displayname || 'Someone',
+          avatar: isDefault ? null : thumb,
+          generatedName: chat.name || user?.displayname || 'Someone',
           lastMessage: chat.snippet || '',
           timeAgo: chat.lastdate ? dayjs(chat.lastdate).fromNow(true) : '',
           unread: chat.unseen || 0,
