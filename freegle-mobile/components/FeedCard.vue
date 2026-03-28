@@ -40,9 +40,7 @@
             class="feed-card__avatar-img"
             @error="avatarBroken = true"
           />
-          <div v-else class="feed-card__avatar" :class="`feed-card__avatar--${post.type.toLowerCase()}`">
-            {{ initial }}
-          </div>
+          <GeneratedAvatar v-else :name="displayName" :size="32" class="feed-card__avatar-generated" />
         </template>
         <div v-if="post.groupCount > 1 || post.isGroupedWithPrev" class="feed-card__connector"></div>
       </div>
@@ -186,6 +184,7 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 .feed-card__avatar--wanted { background: #2563eb; }
 .feed-card__avatar--discussion { background: #888; }
 .feed-card__avatar-img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+.feed-card__avatar-generated { border-radius: 50%; overflow: hidden; flex-shrink: 0; }
 
 /* Person info */
 .feed-card__person { display: flex; align-items: baseline; gap: 0; padding-right: 20px; margin-bottom: 2px; }
