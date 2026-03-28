@@ -56,17 +56,18 @@
         >
           <!-- Avatar -->
           <img
-            v-if="convo.avatar"
+            v-if="convo.avatar && !brokenAvatars.has(convo.userId)"
             :src="convo.avatar"
             :alt="convo.userName"
             class="chat-list__avatar"
+            @error="brokenAvatars.add(convo.userId)"
           />
-          <div
+          <GeneratedAvatar
             v-else
-            class="chat-list__avatar chat-list__avatar--placeholder"
-          >
-            {{ convo.userName ? convo.userName.charAt(0).toUpperCase() : '?' }}
-          </div>
+            :name="convo.generatedName || convo.userName || 'User'"
+            :size="40"
+            class="chat-list__avatar chat-list__avatar--generated"
+          />
 
           <!-- Name + preview -->
           <div class="chat-list__content">
@@ -109,6 +110,10 @@
 </template>
 
 <script setup>
+import { reactive } from 'vue'
+
+const brokenAvatars = reactive(new Set())
+
 defineProps({
   visible: {
     type: Boolean,
@@ -233,6 +238,11 @@ defineEmits(['close', 'open-chat'])
       font-size: 18px;
       font-weight: 600;
       color: #666666;
+    }
+
+    &--generated {
+      border-radius: 50%;
+      overflow: hidden;
     }
   }
 
