@@ -8,7 +8,7 @@
   </div>
 
   <!-- Normal post: person-focused chat-style layout -->
-  <div v-else class="feed-card" :class="[cardClass, { 'feed-card--grouped': post.isGroupedWithPrev }]" @click="$emit('open-detail', post.id)">
+  <div v-else class="feed-card" :class="[cardClass, { 'feed-card--grouped': post.isGroupedWithPrev, 'feed-card--group-start': post.groupCount > 1 }]" @click="$emit('open-detail', post.id)">
     <button
       class="menu-trigger"
       aria-label="More options"
@@ -42,13 +42,18 @@
       </div>
       <div class="feed-card__person-info">
         <span class="feed-card__name">{{ displayName }}</span>
-        <span class="feed-card__posted">posted:</span>
+        <span v-if="post.groupCount > 1" class="feed-card__posted">has {{ post.groupCount }} posts</span>
+        <span v-else class="feed-card__posted">posted:</span>
         <span v-if="post.area" class="feed-card__area">{{ post.area }}</span>
       </div>
     </div>
 
-    <!-- Item content: photo with badge overlay + text -->
+    <!-- Item content: text + photo on right with badge overlay -->
     <div class="feed-card__item">
+      <div class="feed-card__text">
+        <h3 class="feed-card__title">{{ post.title }}</h3>
+        <p v-if="post.description" class="feed-card__desc">{{ post.description }}</p>
+      </div>
       <div v-if="post.imageUrls && post.imageUrls.length" class="feed-card__thumb-wrap">
         <img :src="post.imageUrls[0]" :alt="post.title" class="feed-card__thumb" loading="lazy" />
         <span v-if="post.type !== 'Discussion'" class="feed-card__type-overlay" :class="`feed-card__type-overlay--${post.type.toLowerCase()}`">
@@ -57,10 +62,6 @@
         <span v-if="post.imageUrls.length > 1 && !post.isSampleImage" class="feed-card__photo-count">
           {{ post.imageUrls.length }}
         </span>
-      </div>
-      <div class="feed-card__text">
-        <h3 class="feed-card__title">{{ post.title }}</h3>
-        <p v-if="post.description" class="feed-card__desc">{{ post.description }}</p>
       </div>
     </div>
 
@@ -158,13 +159,31 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 .feed-card--wanted { background: #f0f4fc; }
 .feed-card--discussion { background: #f7f7f7; }
 
+.feed-card--group-start {
+  border-radius: 12px 12px 0 0;
+  margin-bottom: 0;
+  border-left: 3px solid #ddd;
+  margin-left: 28px;
+  padding-left: 14px;
+}
+
 .feed-card--grouped {
-  margin-top: -2px;
+  margin-top: 0;
   padding-top: 6px;
   border-radius: 0 0 12px 12px;
   border-left: 3px solid #ddd;
   margin-left: 28px;
   padding-left: 14px;
+  border-top: 1px dashed #e8e8e8;
+}
+
+.feed-card--grouped + .feed-card--grouped {
+  border-radius: 0;
+}
+
+.feed-card--grouped:last-child,
+.feed-card--grouped + :not(.feed-card--grouped) {
+  border-radius: 0 0 12px 12px;
 }
 
 /* Taken (collapsed) */

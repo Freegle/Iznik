@@ -354,16 +354,27 @@ const displayItems = computed(() => {
   }
   items = searchFeed(items, searchQuery.value)
 
-  // Add grouping: mark consecutive posts from the same user
-  return items.map((item, i) => {
+  // Add grouping: mark consecutive posts from the same user + count group size
+  const result = items.map((item, i) => {
     const prev = i > 0 ? items[i - 1] : null
-    const next = i < items.length - 1 ? items[i + 1] : null
-    return {
-      ...item,
-      isGroupedWithPrev: prev && prev.userId === item.userId && !prev.taken && !item.taken,
-      isGroupedWithNext: next && next.userId === item.userId && !next.taken && !item.taken,
-    }
+    const isGroupedWithPrev = prev && prev.userId === item.userId && !prev.taken && !item.taken
+    return { ...item, isGroupedWithPrev }
   })
+
+  // Count group sizes and mark first item in each group
+  for (let i = 0; i < result.length; i++) {
+    if (!result[i].isGroupedWithPrev && !result[i].taken) {
+      let count = 1
+      let j = i + 1
+      while (j < result.length && result[j].isGroupedWithPrev) {
+        count++
+        j++
+      }
+      result[i].groupCount = count
+    }
+  }
+
+  return result
 })
 
 // Compose flow
