@@ -245,7 +245,7 @@ onMounted(async () => {
         if (uid && userStore.list[uid]) {
           userName = userStore.list[uid].displayname || 'Someone'
           const thumb = userStore.list[uid].profile?.paththumb
-          userAvatar = thumb && !thumb.includes('defaultprofile') ? thumb : null
+          userAvatar = thumb || null
         } else if (typeof msg.fromuser === 'object' && msg.fromuser?.displayname) {
           userName = msg.fromuser.displayname
         }
