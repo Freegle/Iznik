@@ -172,16 +172,35 @@ onMounted(async () => {
   }
 
   try {
-    // Get lat/lng from location
+    // Get location
     const loc = JSON.parse(stored)
     let lat = loc.lat || null
     let lng = loc.lng || null
 
-    // Default to centre of England if no GPS coords
+    // If postcode only, geocode via the API
+    if (!lat && loc.postcode) {
+      try {
+        const res = await $fetch(`https://api.ilovefreegle.org/apiv2/location/typeahead`, {
+          params: { q: loc.postcode },
+        })
+        if (res?.locations?.length) {
+          lat = res.locations[0].lat
+          lng = res.locations[0].lng
+          // Save for next time
+          loc.lat = lat
+          loc.lng = lng
+          localStorage.setItem('freegle-mobile-location', JSON.stringify(loc))
+        }
+      } catch (e) {
+        // Geocode failed, use default
+      }
+    }
+
+    // Default to centre of England
     if (!lat) { lat = 52.5; lng = -1.5 }
 
-    // Create bounds roughly 30 miles around location (~0.45 degrees)
-    const offset = 0.45
+    // Create bounds roughly 20 miles around location (~0.3 degrees)
+    const offset = 0.3
     const list = await messageStore.fetchInBounds(
       lat - offset, lng - offset, lat + offset, lng + offset, null, 30, true
     )
