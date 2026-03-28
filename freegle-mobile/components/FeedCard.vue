@@ -170,7 +170,7 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 .taken-time { flex-shrink: 0; font-size: 11px; color: #aaa; }
 
 /* Three-dot menu */
-.menu-trigger { position: absolute; top: 8px; right: 6px; background: none; border: none; padding: 4px; cursor: pointer; border-radius: 50%; z-index: 2; opacity: 0.5; }
+.menu-trigger { position: absolute; top: 4px; right: 4px; background: none; border: none; padding: 4px; cursor: pointer; border-radius: 50%; z-index: 2; opacity: 0.5; }
 
 /* Two-column layout */
 .feed-card__layout { display: flex; gap: 10px; }
