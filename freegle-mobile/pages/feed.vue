@@ -2,8 +2,10 @@
   <div class="feed-page">
     <MobileHeader
       :unread-count="unreadCount"
+      :logged-in="isLoggedIn"
       @open-chats="showChats = true"
       @open-settings="showSettings = true"
+      @open-login="showLogin = true"
     />
 
     <FeedSearch v-model="searchQuery" />
@@ -90,6 +92,13 @@
       @navigate="onSettingsNavigate"
     />
 
+    <LoginModal
+      :visible="showLogin"
+      :hint="loginHint"
+      @close="showLogin = false"
+      @logged-in="onLoggedIn"
+    />
+
     <SwipeFeedback
       :visible="!!swipeFeedbackItem"
       :direction="swipeFeedbackDirection"
@@ -119,7 +128,9 @@ import SwipeableCard from '~/components/SwipeableCard.vue'
 import DonateCard from '~/components/DonateCard.vue'
 import SwipeFeedback from '~/components/SwipeFeedback.vue'
 import PostDetail from '~/components/PostDetail.vue'
+import LoginModal from '~/components/LoginModal.vue'
 import { useMessageStore } from '~/stores/message'
+import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
 import { useUserStore } from '~/stores/user'
 import { useChatStore } from '~/stores/chat'
@@ -136,6 +147,9 @@ const groupStore = useGroupStore()
 const userStore = useUserStore()
 const chatStore = useChatStore()
 const newsfeedStore = useNewsfeedStore()
+const authStore = useAuthStore()
+
+const isLoggedIn = computed(() => !!authStore.auth?.jwt)
 
 // State
 const searchQuery = ref('')
@@ -152,6 +166,8 @@ const viewingProfile = ref(null)
 const hasPostedBefore = ref(false)
 const loading = ref(true)
 const detailPost = ref(null)
+const showLogin = ref(false)
+const loginHint = ref('')
 const swipeFeedbackItem = ref(null)
 const swipeFeedbackDirection = ref('left')
 
@@ -540,6 +556,11 @@ function onDonate() {
 }
 
 function onSettingsNavigate(section) {}
+
+function onLoggedIn() {
+  // Reload to fetch chats
+  window.location.reload()
+}
 </script>
 
 <style scoped>
