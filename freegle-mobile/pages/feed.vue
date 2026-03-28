@@ -254,15 +254,16 @@ onMounted(async () => {
 
     // Create bounds roughly 20 miles around location (~0.3 degrees)
     const offset = 0.3
-    const list = await messageStore.fetchInBounds(
-      lat - offset, lng - offset, lat + offset, lng + offset, null, 30, true
-    )
+    const list = await Promise.race([
+      messageStore.fetchInBounds(lat - offset, lng - offset, lat + offset, lng + offset, null, 30, true),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('fetchInBounds timeout')), 20000)),
+    ])
 
     // Fetch full details for each message
     const fetchPromises = list.slice(0, 30).map((item) =>
       messageStore.fetch(item.id).catch(() => null)
     )
-    await Promise.all(fetchPromises)
+    await Promise.race([Promise.all(fetchPromises), new Promise(r => setTimeout(r, 15000))])
 
     // Collect unique user IDs to batch-fetch names
     const userIds = new Set()
@@ -277,7 +278,7 @@ onMounted(async () => {
     const userFetches = [...userIds].map((uid) =>
       userStore.fetch(uid).catch(() => null)
     )
-    await Promise.all(userFetches)
+    await Promise.race([Promise.all(userFetches), new Promise(r => setTimeout(r, 10000))])
 
     // Map store messages to FeedCard format
     feedItems.value = list

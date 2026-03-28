@@ -59,11 +59,17 @@ const scenes: {
     img: '07-detail.png',
     durationSec: 3.5,
   },
+  // Reply
+  {
+    subtitle: 'Reply privately — just between you and the poster',
+    img: '09-reply.png',
+    durationSec: 3.5,
+  },
   // Settings
   {
     subtitle: 'Manage notifications, location, and more',
     img: '08-settings.png',
-    durationSec: 3,
+    durationSec: 3.5,
   },
   // Closing card
   { subtitle: '', durationSec: 4 },
@@ -89,7 +95,7 @@ export const DemoVideo: React.FC = () => {
   return (
     <AbsoluteFill style={{ background: bgGradient }}>
       {/* Background music */}
-      <Audio src={staticFile('bg-music-warm.mp3')} volume={0.15} />
+      <Audio src={staticFile('bg-music.mp3')} volume={0.7} />
 
       {/* Title card */}
       <Sequence from={0} durationInFrames={sceneData[0].durationFrames}>
@@ -223,14 +229,14 @@ const PhoneScene: React.FC<{
   img: string;
   startFrame: number;
   durationFrames: number;
-}> = ({ img, startFrame, durationFrames }) => {
+}> = ({ img }) => {
+  // useCurrentFrame() inside a Sequence returns frames relative to the sequence start
   const frame = useCurrentFrame();
-  const relFrame = frame - startFrame;
 
-  const slideIn = interpolate(relFrame, [0, 12], [30, 0], {
+  const slideIn = interpolate(frame, [0, 12], [30, 0], {
     extrapolateRight: 'clamp',
   });
-  const fadeIn = interpolate(relFrame, [0, 10], [0, 1], {
+  const fadeIn = interpolate(frame, [0, 10], [0, 1], {
     extrapolateRight: 'clamp',
   });
 
