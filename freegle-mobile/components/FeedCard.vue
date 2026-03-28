@@ -209,7 +209,7 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 /* Footer */
 .feed-card__footer { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .feed-card__react-wrap { position: relative; }
-.feed-card__react { background: none; border: none; cursor: pointer; font-size: 16px; padding: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; }
+.feed-card__react { background: none; border: none; cursor: pointer; font-size: 16px; padding: 0; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; line-height: 1; }
 .feed-card__time { font-size: 11px; color: #bbb; }
 .feed-card__replies { font-size: 11px; color: #999; }
 .feed-card__spacer { flex: 1; }

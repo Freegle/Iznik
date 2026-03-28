@@ -10,30 +10,24 @@
     </div>
 
     <div class="mobile-header__right">
+      <!-- Chat icon (logged in) or Login button -->
       <button
+        v-if="loggedIn"
         class="mobile-header__btn"
         aria-label="Open chats"
         @click="$emit('open-chats')"
       >
-        <svg
-          class="mobile-header__chat-icon"
-          width="24"
-          height="24"
-          viewBox="0 0 24 24"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <path
-            d="M20 2H4C2.9 2 2 2.9 2 4V22L6 18H20C21.1 18 22 17.1 22 16V4C22 2.9 21.1 2 20 2Z"
-            fill="currentColor"
-          />
+        <svg class="mobile-header__chat-icon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20 2H4C2.9 2 2 2.9 2 4V22L6 18H20C21.1 18 22 17.1 22 16V4C22 2.9 21.1 2 20 2Z" />
         </svg>
-        <span
-          v-if="unreadCount > 0"
-          class="mobile-header__badge"
-        >
-          {{ unreadCount }}
-        </span>
+        <span v-if="unreadCount > 0" class="mobile-header__badge">{{ unreadCount }}</span>
+      </button>
+      <button
+        v-else
+        class="mobile-header__login"
+        @click="$emit('open-login')"
+      >
+        Log in
       </button>
 
       <button
@@ -60,13 +54,11 @@
 
 <script setup>
 defineProps({
-  unreadCount: {
-    type: Number,
-    default: 0,
-  },
+  unreadCount: { type: Number, default: 0 },
+  loggedIn: { type: Boolean, default: false },
 })
 
-defineEmits(['open-chats', 'open-settings'])
+defineEmits(['open-chats', 'open-settings', 'open-login'])
 </script>
 
 <style scoped lang="scss">
@@ -129,6 +121,19 @@ defineEmits(['open-chats', 'open-settings'])
   &__chat-icon,
   &__dots-icon {
     display: block;
+  }
+
+  &__login {
+    padding: 4px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    border-radius: 14px;
+    background: transparent;
+    color: white;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+
+    &:active { background: rgba(255, 255, 255, 0.15); }
   }
 
   &__badge {
