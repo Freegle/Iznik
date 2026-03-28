@@ -24,7 +24,7 @@
             />
           </svg>
         </button>
-        <span class="chat-list__title">Messages</span>
+        <span class="chat-list__title">Chats</span>
       </header>
 
       <!-- Conversation list -->

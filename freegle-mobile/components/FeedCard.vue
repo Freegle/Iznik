@@ -42,6 +42,7 @@
       </div>
       <div class="feed-card__person-info">
         <span class="feed-card__name">{{ displayName }}</span>
+        <span class="feed-card__posted">posted:</span>
         <span v-if="post.area" class="feed-card__area">{{ post.area }}</span>
       </div>
     </div>
@@ -158,9 +159,12 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 .feed-card--discussion { background: #f7f7f7; }
 
 .feed-card--grouped {
-  margin-top: -4px;
+  margin-top: -2px;
   padding-top: 6px;
   border-radius: 0 0 12px 12px;
+  border-left: 3px solid #ddd;
+  margin-left: 28px;
+  padding-left: 14px;
 }
 
 /* Taken (collapsed) */
@@ -233,11 +237,16 @@ function handleHide() { showMenu.value = false; emit('hide', props.post.id) }
 }
 
 .feed-card__name {
-  display: block;
   font-size: 14px;
   font-weight: 600;
   color: #333;
-  line-height: 1.2;
+}
+
+.feed-card__posted {
+  font-size: 12px;
+  color: #bbb;
+  font-weight: 400;
+  margin-left: 4px;
 }
 
 .feed-card__area {

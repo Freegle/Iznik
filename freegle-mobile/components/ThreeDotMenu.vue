@@ -1,8 +1,8 @@
 <template>
-  <div class="three-dot-menu">
+  <div class="three-dot-menu" @click.stop>
     <div
       class="three-dot-menu__backdrop"
-      @click="$emit('close')"
+      @click.stop="$emit('close')"
     />
     <div class="three-dot-menu__panel">
       <button

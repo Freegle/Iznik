@@ -97,7 +97,9 @@ function toggle(type) {
   }
 
   &__icon {
-    font-size: 14px;
+    font-size: 13px;
+    line-height: 1;
+    vertical-align: middle;
   }
 }
 </style>
