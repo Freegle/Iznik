@@ -130,10 +130,7 @@
 
         <!-- Collection time (Offers only) -->
         <div v-if="message?.type === 'Offer'" class="reply-form-field">
-          <label
-            :for="'replytomessage2-' + messageId"
-            class="reply-form-label"
-          >
+          <label :for="'replytomessage2-' + messageId" class="reply-form-label">
             When could you collect?
           </label>
           <Field
@@ -150,8 +147,8 @@
             placeholder="Suggest days and times..."
           />
           <p class="reply-form-hint">
-            Suggest days and times you could collect if you're chosen. Your plans
-            might change but this speeds up making arrangements.
+            Suggest days and times you could collect if you're chosen. Your
+            plans might change but this speeds up making arrangements.
           </p>
           <ErrorMessage name="collect" class="text-danger fw-bold" />
         </div>
@@ -270,7 +267,7 @@ const faraway = FAR_AWAY
 
 const messageStore = useMessageStore()
 const userStore = useUserStore()
-const { me, myid, myGroups } = useMe()
+const { me, myGroups } = useMe()
 
 // Initialize state machine
 const stateMachine = useReplyStateMachine(props.messageId)
@@ -323,10 +320,6 @@ const truncatedDescription = computed(() => {
 
 const milesaway = computed(() => {
   return milesAway(me?.lat, me?.lng, message.value?.lat, message.value?.lng)
-})
-
-const fromme = computed(() => {
-  return message.value?.fromuser === myid.value
 })
 
 const alreadyAMember = computed(() => {
