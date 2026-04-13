@@ -715,7 +715,8 @@ describe('MessageExpanded', () => {
       expect(wrapper.find('.reply-button').exists()).toBe(false)
     })
 
-    it('expands reply section when reply button clicked', async () => {
+    it('expands reply section when reply button clicked (desktop)', async () => {
+      mockBreakpoint.value = 'lg'
       const wrapper = await createWrapper()
       expect(wrapper.find('.message-reply-section').exists()).toBe(false)
 
@@ -723,6 +724,7 @@ describe('MessageExpanded', () => {
       await flushPromises()
 
       expect(wrapper.find('.message-reply-section').exists()).toBe(true)
+      mockBreakpoint.value = 'md'
     })
 
     it('shows cancel button in modal/fullscreen mode', async () => {
@@ -772,10 +774,11 @@ describe('MessageExpanded', () => {
   })
 
   describe('replied state', () => {
-    it('shows confirmation alert after sending reply', async () => {
+    it('shows confirmation alert after sending reply (desktop)', async () => {
+      mockBreakpoint.value = 'lg'
       const wrapper = await createWrapper()
 
-      // Expand reply section
+      // Expand reply section (only works on desktop lg+)
       await wrapper.find('.reply-button').trigger('click')
       await flushPromises()
 
@@ -786,6 +789,7 @@ describe('MessageExpanded', () => {
 
       expect(wrapper.find('.b-alert').exists()).toBe(true)
       expect(wrapper.text()).toContain('Message sent')
+      mockBreakpoint.value = 'md'
     })
   })
 
