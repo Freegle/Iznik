@@ -1,10 +1,7 @@
 <template>
   <client-only>
     <div class="chat-reply-page">
-      <ChatReplyPane
-        v-if="replyToMessageId"
-        :message-id="replyToMessageId"
-      />
+      <ChatReplyPane v-if="replyToMessageId" :message-id="replyToMessageId" />
       <div v-else class="empty-state">
         <p>No message to reply to.</p>
         <nuxt-link to="/browse">Browse messages</nuxt-link>
@@ -31,9 +28,7 @@ const replyToMessageId = computed(() => {
   return id > 0 ? id : null
 })
 
-useHead(
-  buildHead(route, runtimeConfig, 'Reply', 'Reply to a freegler')
-)
+useHead(buildHead(route, runtimeConfig, 'Reply', 'Reply to a freegler'))
 </script>
 
 <style scoped lang="scss">
