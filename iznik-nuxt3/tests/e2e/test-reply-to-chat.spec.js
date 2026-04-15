@@ -28,10 +28,7 @@ test.describe('Reply-to-Chat - Mobile', () => {
     getTestEmail,
     withdrawPost,
   }) => {
-    // Set mobile viewport
-    await page.setViewportSize(MOBILE_VIEWPORT)
-
-    // Post a message first (as poster)
+    // Post a message first at default viewport (postMessage fixture needs desktop give page)
     const posterEmail = getTestEmail('poster-r2c-mob')
     const uniqueItem = `test-r2c-mobile-${Date.now()}`
     const result = await postMessage({
@@ -43,7 +40,7 @@ test.describe('Reply-to-Chat - Mobile', () => {
     expect(result.id).toBeTruthy()
     console.log(`[Test] Posted message ${result.id}`)
 
-    // Log out from poster and login as the replier
+    // Log out from poster and login as the replier at mobile viewport
     await logoutIfLoggedIn(page)
     await page.setViewportSize(MOBILE_VIEWPORT)
     await loginViaHomepage(page, testEnv.user.email, 'freegle')
@@ -116,8 +113,6 @@ test.describe('Reply-to-Chat - Mobile', () => {
     getTestEmail,
     withdrawPost,
   }) => {
-    await page.setViewportSize(MOBILE_VIEWPORT)
-
     const posterEmail = getTestEmail('poster-r2c-back')
     const uniqueItem = `test-r2c-back-${Date.now()}`
     const result = await postMessage({
@@ -172,8 +167,6 @@ test.describe('Reply-to-Chat - Tablet', () => {
     getTestEmail,
     withdrawPost,
   }) => {
-    await page.setViewportSize(TABLET_VIEWPORT)
-
     const posterEmail = getTestEmail('poster-r2c-tab')
     const uniqueItem = `test-r2c-tablet-${Date.now()}`
     const result = await postMessage({
@@ -219,9 +212,6 @@ test.describe('Reply-to-Chat - Desktop keeps inline', () => {
     getTestEmail,
     withdrawPost,
   }) => {
-    // Desktop viewport (1280x720 is the default, which is lg+)
-    await page.setViewportSize({ width: 1280, height: 720 })
-
     const posterEmail = getTestEmail('poster-r2c-desk')
     const uniqueItem = `test-r2c-desktop-${Date.now()}`
     const result = await postMessage({
@@ -271,8 +261,6 @@ test.describe('Reply-to-Chat - WANTED message', () => {
     getTestEmail,
     withdrawPost,
   }) => {
-    await page.setViewportSize(MOBILE_VIEWPORT)
-
     const posterEmail = getTestEmail('poster-r2c-want')
     const uniqueItem = `test-r2c-wanted-${Date.now()}`
     const result = await postMessage({
