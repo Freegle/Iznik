@@ -2,7 +2,7 @@
  * Reply Flow Tests - Logged In User (Tests 1.1, 1.2, 1.3)
  *
  * These tests cover the reply flow for users who are already logged in.
- * They use testEnv.user (created by create-test-env.php) as the logged-in replier.
+ * They MUST run serially because they share testEnv (dynamically created user).
  */
 
 const { test, expect } = require('./fixtures')
@@ -39,15 +39,10 @@ test.describe('Reply Flow - Logged In User', () => {
     // Log out from poster
     await logoutIfLoggedIn(page)
 
-    // Login as testEnv.user FIRST (before navigating to message page)
-    // testEnv.user is a pre-registered test user created by create-test-env.php with password 'freegle'
-    await loginViaHomepage(
-      page,
-      testEnv.user.email,
-      'freegle'
-    )
+    // Login as testEnv user FIRST (before navigating to message page)
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
     await waitForAuthInLocalStorage(page)
-    console.log('[Test] Logged in as existingTestEmail')
+    console.log('[Test] Logged in as testEnv user')
 
     // NOW navigate to message page (message will load with auth → has groups)
     await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
@@ -95,15 +90,10 @@ test.describe('Reply Flow - Logged In User', () => {
     // Log out from poster
     await logoutIfLoggedIn(page)
 
-    // Login as testEnv.user FIRST (before navigating)
-    // testEnv.user is a pre-registered test user created by create-test-env.php with password 'freegle'
-    await loginViaHomepage(
-      page,
-      testEnv.user.email,
-      'freegle'
-    )
+    // Login as testEnv user FIRST (before navigating)
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
     await waitForAuthInLocalStorage(page)
-    console.log('[Test] Logged in as existingTestEmail')
+    console.log('[Test] Logged in as testEnv user')
 
     // Navigate directly to the message page (while logged in)
     // Using direct navigation because newly posted messages may not appear
@@ -151,15 +141,10 @@ test.describe('Reply Flow - Logged In User', () => {
     // Log out from poster
     await logoutIfLoggedIn(page)
 
-    // Login as testEnv.user FIRST (before navigating)
-    // testEnv.user is a pre-registered test user created by create-test-env.php with password 'freegle'
-    await loginViaHomepage(
-      page,
-      testEnv.user.email,
-      'freegle'
-    )
+    // Login as testEnv user FIRST (before navigating)
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
     await waitForAuthInLocalStorage(page)
-    console.log('[Test] Logged in as existingTestEmail')
+    console.log('[Test] Logged in as testEnv user')
 
     // Navigate directly to the message page (while logged in)
     // Using direct navigation because newly posted messages may not appear

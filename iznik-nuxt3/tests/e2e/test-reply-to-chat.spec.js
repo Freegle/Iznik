@@ -9,7 +9,6 @@
  */
 
 const { test, expect } = require('./fixtures')
-const { environment } = require('./config')
 const { loginViaHomepage, logoutIfLoggedIn } = require('./utils/user')
 const {
   waitForAuthInLocalStorage,
@@ -25,7 +24,7 @@ test.describe('Reply-to-Chat - Mobile', () => {
   test('navigates to chat reply page when Reply clicked on mobile', async ({
     page,
     postMessage,
-    existingTestEmail,
+    testEnv,
     getTestEmail,
     withdrawPost,
   }) => {
@@ -47,11 +46,7 @@ test.describe('Reply-to-Chat - Mobile', () => {
     // Log out from poster and login as the replier
     await logoutIfLoggedIn(page)
     await page.setViewportSize(MOBILE_VIEWPORT)
-    await loginViaHomepage(
-      page,
-      existingTestEmail,
-      environment.unmodded_password
-    )
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
     await waitForAuthInLocalStorage(page)
 
     // Navigate to message page
@@ -93,7 +88,9 @@ test.describe('Reply-to-Chat - Mobile', () => {
     console.log('[Test] Filled reply form')
 
     // Click send
-    const sendButton = page.locator('.reply-send-btn, .btn:has-text("Send")').first()
+    const sendButton = page
+      .locator('.reply-send-btn, .btn:has-text("Send")')
+      .first()
     await sendButton.waitFor({ state: 'visible', timeout: 10000 })
     await sendButton.click()
     console.log('[Test] Clicked Send')
@@ -115,7 +112,7 @@ test.describe('Reply-to-Chat - Mobile', () => {
   test('back button returns to message page', async ({
     page,
     postMessage,
-    existingTestEmail,
+    testEnv,
     getTestEmail,
     withdrawPost,
   }) => {
@@ -133,11 +130,7 @@ test.describe('Reply-to-Chat - Mobile', () => {
 
     await logoutIfLoggedIn(page)
     await page.setViewportSize(MOBILE_VIEWPORT)
-    await loginViaHomepage(
-      page,
-      existingTestEmail,
-      environment.unmodded_password
-    )
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
     await waitForAuthInLocalStorage(page)
 
     // Navigate to message and click Reply
@@ -175,7 +168,7 @@ test.describe('Reply-to-Chat - Tablet', () => {
   test('navigates to chat reply page on tablet viewport', async ({
     page,
     postMessage,
-    existingTestEmail,
+    testEnv,
     getTestEmail,
     withdrawPost,
   }) => {
@@ -193,11 +186,7 @@ test.describe('Reply-to-Chat - Tablet', () => {
 
     await logoutIfLoggedIn(page)
     await page.setViewportSize(TABLET_VIEWPORT)
-    await loginViaHomepage(
-      page,
-      existingTestEmail,
-      environment.unmodded_password
-    )
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
     await waitForAuthInLocalStorage(page)
 
     await page.gotoAndVerify(`/message/${result.id}`)
@@ -226,7 +215,7 @@ test.describe('Reply-to-Chat - Desktop keeps inline', () => {
   test('desktop shows inline reply section (not chat page)', async ({
     page,
     postMessage,
-    existingTestEmail,
+    testEnv,
     getTestEmail,
     withdrawPost,
   }) => {
@@ -244,11 +233,7 @@ test.describe('Reply-to-Chat - Desktop keeps inline', () => {
     expect(result.id).toBeTruthy()
 
     await logoutIfLoggedIn(page)
-    await loginViaHomepage(
-      page,
-      existingTestEmail,
-      environment.unmodded_password
-    )
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
     await waitForAuthInLocalStorage(page)
 
     await page.gotoAndVerify(`/message/${result.id}`)
@@ -282,7 +267,7 @@ test.describe('Reply-to-Chat - WANTED message', () => {
   test('reply to WANTED message does not show collection time', async ({
     page,
     postMessage,
-    existingTestEmail,
+    testEnv,
     getTestEmail,
     withdrawPost,
   }) => {
@@ -300,11 +285,7 @@ test.describe('Reply-to-Chat - WANTED message', () => {
 
     await logoutIfLoggedIn(page)
     await page.setViewportSize(MOBILE_VIEWPORT)
-    await loginViaHomepage(
-      page,
-      existingTestEmail,
-      environment.unmodded_password
-    )
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
     await waitForAuthInLocalStorage(page)
 
     await page.gotoAndVerify(`/message/${result.id}`)
