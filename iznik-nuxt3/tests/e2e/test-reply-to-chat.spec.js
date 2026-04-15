@@ -102,8 +102,10 @@ test.describe('Reply-to-Chat - Mobile', () => {
     // Cleanup
     await logoutIfLoggedIn(page)
     await page.setViewportSize({ width: 1280, height: 720 })
-    await loginViaHomepage(page, posterEmail)
-    await withdrawPost({ item: result.item })
+    const loggedIn1 = await loginViaHomepage(page, posterEmail)
+    if (loggedIn1) {
+      await withdrawPost({ item: result.item })
+    }
   })
 
   test('back button returns to message page', async ({
@@ -154,8 +156,10 @@ test.describe('Reply-to-Chat - Mobile', () => {
     // Cleanup
     await logoutIfLoggedIn(page)
     await page.setViewportSize({ width: 1280, height: 720 })
-    await loginViaHomepage(page, posterEmail)
-    await withdrawPost({ item: result.item })
+    const loggedIn2 = await loginViaHomepage(page, posterEmail)
+    if (loggedIn2) {
+      await withdrawPost({ item: result.item })
+    }
   })
 })
 
@@ -199,8 +203,10 @@ test.describe('Reply-to-Chat - Tablet', () => {
     // Cleanup
     await logoutIfLoggedIn(page)
     await page.setViewportSize({ width: 1280, height: 720 })
-    await loginViaHomepage(page, posterEmail)
-    await withdrawPost({ item: result.item })
+    const loggedIn3 = await loginViaHomepage(page, posterEmail)
+    if (loggedIn3) {
+      await withdrawPost({ item: result.item })
+    }
   })
 })
 
@@ -248,8 +254,10 @@ test.describe('Reply-to-Chat - Desktop keeps inline', () => {
 
     // Cleanup
     await logoutIfLoggedIn(page)
-    await loginViaHomepage(page, posterEmail)
-    await withdrawPost({ item: result.item })
+    const loggedIn4 = await loginViaHomepage(page, posterEmail)
+    if (loggedIn4) {
+      await withdrawPost({ item: result.item })
+    }
   })
 })
 
@@ -300,7 +308,9 @@ test.describe('Reply-to-Chat - WANTED message', () => {
     // Cleanup
     await logoutIfLoggedIn(page)
     await page.setViewportSize({ width: 1280, height: 720 })
-    await loginViaHomepage(page, posterEmail)
-    await withdrawPost({ item: result.item })
+    const loggedIn5 = await loginViaHomepage(page, posterEmail)
+    if (loggedIn5) {
+      await withdrawPost({ item: result.item })
+    }
   })
 })
