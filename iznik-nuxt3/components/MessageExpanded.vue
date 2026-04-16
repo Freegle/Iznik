@@ -864,22 +864,13 @@ function stopThumbnailAutoScroll() {
 }
 
 function expandReply() {
-  console.log(
-    'DEBUG expandReply called, replyable:',
-    props.replyable,
-    'replied:',
-    replied.value,
-    'fromme:',
-    fromme.value,
-    'breakpoint:',
-    miscStore.breakpoint
-  )
-
   // On mobile/tablet (below lg breakpoint), navigate to the chat reply pane
   // for a simpler UX. Desktop (lg+) keeps the inline reply section so users
-  // can see the post details alongside.
-  const mobileBreakpoints = ['xs', 'sm', 'md']
-  if (mobileBreakpoints.includes(miscStore.breakpoint)) {
+  // can see the post details alongside. When the breakpoint hasn't been
+  // determined yet (SSR / first paint on mobile), default to the mobile flow
+  // to avoid forcing narrow viewports into the inline desktop layout.
+  const desktopBreakpoints = ['lg', 'xl']
+  if (!desktopBreakpoints.includes(miscStore.breakpoint)) {
     router.push({
       path: '/chats/reply',
       query: { replyto: props.id },

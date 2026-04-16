@@ -16,9 +16,9 @@ import { useRoute } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
 import ChatReplyPane from '~/components/ChatReplyPane.vue'
 
-definePageMeta({
-  layout: 'login',
-})
+// Uses the default layout — logged-out users can supply their email in the
+// ChatReplyPane, matching the inline reply flow. A forced login modal would
+// break the email-first reply flow.
 
 const route = useRoute()
 const runtimeConfig = useRuntimeConfig()
@@ -33,7 +33,7 @@ useHead(buildHead(route, runtimeConfig, 'Reply', 'Reply to a freegler'))
 
 <style scoped lang="scss">
 .chat-reply-page {
-  height: calc(100vh - 68px); // Account for navbar
+  height: calc(100dvh - 68px); /* Account for navbar; dvh handles mobile URL bar */
   display: flex;
   flex-direction: column;
 }
