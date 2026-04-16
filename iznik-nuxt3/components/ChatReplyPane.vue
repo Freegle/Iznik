@@ -319,7 +319,12 @@ const truncatedDescription = computed(() => {
 })
 
 const milesaway = computed(() => {
-  return milesAway(me?.lat, me?.lng, message.value?.lat, message.value?.lng)
+  return milesAway(
+    me.value?.lat,
+    me.value?.lng,
+    message.value?.lat,
+    message.value?.lng
+  )
 })
 
 const alreadyAMember = computed(() => {
@@ -541,7 +546,7 @@ function goBack() {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
-  background: #e5ddd5; // WhatsApp-style chat background
+  background: #e5ddd5; /* WhatsApp-style chat background */
 }
 
 .message-context {
