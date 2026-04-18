@@ -208,6 +208,15 @@ describe('OurUploadedImage', () => {
         expect.stringContaining('Failed to fetch image')
       )
     })
+
+    it('does not report broken images to Sentry for non-freegletusd sources', async () => {
+      const Sentry = await import('@sentry/browser')
+      const wrapper = createWrapper({ src: 'uploadcare-cdn-uuid-xyz' })
+      await wrapper.vm.brokenImage({ target: {} })
+      expect(Sentry.captureMessage).not.toHaveBeenCalledWith(
+        expect.stringContaining('Failed to fetch image')
+      )
+    })
   })
 
   describe('loading behavior', () => {
