@@ -1,0 +1,40 @@
+diff --git a/node_modules/@uppy/utils/lib/fileFilters.js b/node_modules/@uppy/utils/lib/fileFilters.js
+index 3944c52..3030539 100644
+--- a/node_modules/@uppy/utils/lib/fileFilters.js
++++ b/node_modules/@uppy/utils/lib/fileFilters.js
+@@ -1,8 +1,8 @@
+ export function filterNonFailedFiles(files) {
+-    const hasError = (file) => 'error' in file && !!file.error;
+-    return files.filter((file) => !hasError(file));
++    const hasError = (file) => file != null && 'error' in file && !!file.error;
++    return files.filter((file) => file != null && !hasError(file));
+ }
+ // Don't double-emit upload-started for Golden Retriever-restored files that were already started
+ export function filterFilesToEmitUploadStarted(files) {
+-    return files.filter((file) => !file.progress?.uploadStarted || !file.isRestored);
++    return files.filter((file) => file != null && (!file.progress?.uploadStarted || !file.isRestored));
+ }
+diff --git a/node_modules/@uppy/utils/src/fileFilters.ts b/node_modules/@uppy/utils/src/fileFilters.ts
+index 415bdef..6ad8cb4 100644
+--- a/node_modules/@uppy/utils/src/fileFilters.ts
++++ b/node_modules/@uppy/utils/src/fileFilters.ts
+@@ -4,9 +4,9 @@ export function filterNonFailedFiles(
+   files: UppyFile<any, any>[],
+ ): UppyFile<any, any>[] {
+   const hasError = (file: UppyFile<any, any>): boolean =>
+-    'error' in file && !!file.error
++    file != null && 'error' in file && !!file.error
+ 
+-  return files.filter((file) => !hasError(file))
++  return files.filter((file) => file != null && !hasError(file))
+ }
+ 
+ // Don't double-emit upload-started for Golden Retriever-restored files that were already started
+@@ -14,6 +14,6 @@ export function filterFilesToEmitUploadStarted(
+   files: UppyFile<any, any>[],
+ ): UppyFile<any, any>[] {
+   return files.filter(
+-    (file) => !file.progress?.uploadStarted || !file.isRestored,
++    (file) => file != null && (!file.progress?.uploadStarted || !file.isRestored),
+   )
+ }
