@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   filterNonFailedFiles,
   filterFilesToEmitUploadStarted,
-} from '@uppy/utils'
+} from '@uppy/utils/lib/fileFilters'
 
 // Regression test for Sentry NUXT3-D2C:
 // "TypeError: Cannot use 'in' operator to search for 'error' in undefined"
