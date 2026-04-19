@@ -2,6 +2,19 @@ import type { ActionDefinition } from 'ai-flower'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readFile, writeFile } from 'node:fs/promises'
+import {
+  getDb,
+  getTopicCursor,
+  setTopicCursor,
+  listTopicCursors,
+  kvGet,
+  kvSet,
+  queueDiscourseDraft,
+  insertReviewerFeedback,
+  listUnprocessedFeedback,
+  upsertDiscourseBug,
+} from '../db/index.js'
+import { renderAllViews } from '../db/views.js'
 
 const exec = promisify(execFile)
 
@@ -26,17 +39,36 @@ async function sh(cmd: string, args: string[], cwd?: string): Promise<{ stdout: 
 export const actions: ActionDefinition[] = [
   {
     name: 'load_state',
-    description: 'Read /tmp/freegle-monitor/state.json. Returns the parsed JSON plus iterationStartTs (now).',
+    description: 'Load monitor state from the SQLite DB. Returns {state: {topics, last_email_sent, sentry_last_check}, iterationStartTs}. On first run after the SQLite migration, bootstraps from the legacy /tmp/freegle-monitor/state.json so no cursor is lost.',
     handler: async () => {
-      let state: unknown = {}
-      try {
-        const raw = await readFile(STATE_PATH, 'utf8')
-        state = JSON.parse(raw)
-      } catch {
-        state = {}
+      const db = getDb()
+
+      // One-time bootstrap: if DB has no cursors but state.json exists, import.
+      const cursorCount = (db.prepare('SELECT COUNT(*) AS c FROM topic_cursor').get() as { c: number }).c
+      if (cursorCount === 0) {
+        try {
+          const raw = await readFile(STATE_PATH, 'utf8')
+          const legacy = JSON.parse(raw) as { topics?: Record<string, { last_post?: number }>; last_email_sent?: string; sentry_last_check?: string }
+          for (const [tid, entry] of Object.entries(legacy.topics ?? {})) {
+            setTopicCursor(db, Number(tid), entry?.last_post ?? 0)
+          }
+          if (legacy.last_email_sent) kvSet(db, 'last_email_sent', legacy.last_email_sent)
+          if (legacy.sentry_last_check) kvSet(db, 'sentry_last_check', legacy.sentry_last_check)
+        } catch {
+          // No legacy file — fresh start.
+        }
+      }
+
+      const topics: Record<string, { last_post: number; title: string | null }> = {}
+      for (const c of listTopicCursors(db)) {
+        topics[String(c.topic_id)] = { last_post: c.last_post_number, title: c.title }
       }
       return {
-        state,
+        state: {
+          topics,
+          last_email_sent: kvGet(db, 'last_email_sent'),
+          sentry_last_check: kvGet(db, 'sentry_last_check'),
+        },
         iterationStartTs: new Date().toISOString(),
       }
     },
@@ -153,56 +185,93 @@ print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
 `
       const { stdout, stderr, code } = await sh('python3', ['-c', script])
       if (code !== 0) throw new Error(`fetch_discourse failed: ${stderr}`)
-      return JSON.parse(stdout.trim())
+      const result = JSON.parse(stdout.trim()) as { posts: Array<{ topic: number; topicTitle: string; postNumber: number; username: string; text: string; createdAt: string; isOP: boolean }>; topicsSeen: Record<string, { title: string; latestPostNumber: number }> }
+
+      // Advance topic cursors in the DB. We do this in fetch rather than TRIAGE
+      // so that even if TRIAGE crashes or is skipped, we don't re-pull the same
+      // posts on the next iteration. TRIAGE is still responsible for deciding
+      // what's a bug — the cursor is just "up to which post did we see?".
+      try {
+        const db = getDb()
+        for (const [tid, t] of Object.entries(result.topicsSeen ?? {})) {
+          setTopicCursor(db, Number(tid), t.latestPostNumber, t.title)
+        }
+      } catch (err) {
+        // DB failure must not abort the fetch — cursor will be re-advanced next time.
+        console.error('[db] setTopicCursor failed in fetch_discourse:', err)
+      }
+
+      return result
     },
   },
 
   {
     name: 'read_user_feedback',
-    description: 'Read /tmp/freegle-monitor/user_feedback.md — the channel for the human reviewer to override or reject FSM decisions between iterations (e.g. "PR #208 rejected: theory was X, real symptom is Y"). Returns {entries: [{raw, prRejected?, bugTopic?, bugPost?, reason?}]} parsed best-effort from lines starting with `PR #<n>`, `REJECT:`, `REWORK:`, or `REOPEN bug <topic>/<post>:`. Missing file or empty file returns {entries: []} — this is normal. The TRIAGE state consults these so a rejection surfaces the bug again as actionable with the reviewer reason as extra context.',
+    description: 'Return unprocessed reviewer feedback from the SQLite reviewer_feedback table. On first run after migration, imports any parseable lines from the legacy /tmp/freegle-monitor/user_feedback.md so nothing is lost. Returns {entries: [{id, raw, prRejected?, bugTopic?, bugPost?, reason?}], present}. TRIAGE consults these so a rejection surfaces the bug again as actionable with the reviewer reason as extra context.',
     handler: async () => {
-      let raw = ''
-      try {
-        raw = await readFile(USER_FEEDBACK_PATH, 'utf8')
-      } catch {
-        return { entries: [], path: USER_FEEDBACK_PATH, present: false }
-      }
-      const entries: Array<{ raw: string; prRejected?: number; bugTopic?: number; bugPost?: number; reason?: string }> = []
-      for (const line of raw.split('\n')) {
-        const trimmed = line.trim()
-        if (!trimmed || trimmed.startsWith('#')) continue
-        // Only pick up lines that match a specific, recognised instruction
-        // pattern. Prose in the file template (headings, example snippets,
-        // usage docs) must NOT leak into entries — otherwise TRIAGE sees
-        // meaningless "reason" strings and can't tell the real instructions
-        // from the docstring. Strict match, or skip.
+      const db = getDb()
+
+      // Parse a line into a reviewer-feedback row. Shared between bootstrap and
+      // any future import pass.
+      const parseLine = (trimmed: string): { kind: 'pr_rejected' | 'bug_reopen'; prNumber?: number; bugTopic?: number; bugPost?: number; reason?: string } | null => {
+        if (!trimmed || trimmed.startsWith('#')) return null
         const reopenMatch = trimmed.match(/^REOPEN\s+bug\s+(\d+)[\/\.](\d+)\s*[:\-]?\s*(.*)$/i)
         const prMatch = trimmed.match(/^(?:PR\s*)?#(\d+)\s+(rejected|rework|wrong|bad|close)\b\s*[:\-]?\s*(.*)$/i)
-        // Also accept a leading-colon shorthand: `PR #208: reason…`
         const prColonMatch = trimmed.match(/^PR\s*#(\d+)\s*[:\-]\s*(.+)$/i)
         if (reopenMatch) {
-          entries.push({
-            raw: trimmed,
+          return {
+            kind: 'bug_reopen',
             bugTopic: Number(reopenMatch[1]),
             bugPost: Number(reopenMatch[2]),
             reason: reopenMatch[3]?.trim() || undefined,
-          })
-        } else if (prMatch) {
-          entries.push({
-            raw: trimmed,
-            prRejected: Number(prMatch[1]),
-            reason: prMatch[3]?.trim() || prMatch[2],
-          })
-        } else if (prColonMatch) {
-          entries.push({
-            raw: trimmed,
-            prRejected: Number(prColonMatch[1]),
-            reason: prColonMatch[2]?.trim() || undefined,
-          })
+          }
         }
-        // Anything else — prose, headings, example placeholders — is skipped.
+        if (prMatch) {
+          return {
+            kind: 'pr_rejected',
+            prNumber: Number(prMatch[1]),
+            reason: prMatch[3]?.trim() || prMatch[2],
+          }
+        }
+        if (prColonMatch) {
+          return {
+            kind: 'pr_rejected',
+            prNumber: Number(prColonMatch[1]),
+            reason: prColonMatch[2]?.trim() || undefined,
+          }
+        }
+        return null
       }
-      return { entries, path: USER_FEEDBACK_PATH, present: true }
+
+      // One-time bootstrap from legacy MD if DB is empty and file exists.
+      const fbCount = (db.prepare('SELECT COUNT(*) AS c FROM reviewer_feedback').get() as { c: number }).c
+      let legacyPresent = false
+      if (fbCount === 0) {
+        try {
+          const raw = await readFile(USER_FEEDBACK_PATH, 'utf8')
+          legacyPresent = true
+          for (const line of raw.split('\n')) {
+            const trimmed = line.trim()
+            const parsed = parseLine(trimmed)
+            if (parsed) {
+              insertReviewerFeedback(db, { ...parsed, raw: trimmed })
+            }
+          }
+        } catch {
+          // no legacy file — fine
+        }
+      }
+
+      const rows = listUnprocessedFeedback(db)
+      const entries = rows.map(r => ({
+        id: r.id,
+        raw: r.raw,
+        prRejected: r.kind === 'pr_rejected' ? (r.pr_number ?? undefined) : undefined,
+        bugTopic: r.kind === 'bug_reopen' ? (r.bug_topic ?? undefined) : undefined,
+        bugPost: r.kind === 'bug_reopen' ? (r.bug_post ?? undefined) : undefined,
+        reason: r.reason ?? undefined,
+      }))
+      return { entries, path: USER_FEEDBACK_PATH, present: entries.length > 0 || legacyPresent }
     },
   },
 
@@ -371,35 +440,25 @@ print(json.dumps(out))
       const prNumber = params.prNumber as number | undefined
       const prUrl = params.prUrl as string | undefined
 
-      const quoteLines = quote.split('\n').map(l => `> ${l}`).join('\n')
-      const discourseUrl = `https://discourse.ilovefreegle.org/t/${topic}/${post}`
-      const ts = new Date().toISOString()
-      const prRef = prNumber ? ` *(PR #${prNumber}${prUrl ? ` — ${prUrl}` : ''})*` : ''
+      const db = getDb()
+      const draftId = queueDiscourseDraft(db, {
+        topic, post, username, quote, body,
+        previewUrl, prNumber, prUrl,
+      })
+
+      // Also mark the bug as fix-queued so subsequent iterations know a draft is out.
+      if (prNumber) {
+        upsertDiscourseBug(db, {
+          topic, post, reporter: username, excerpt: quote,
+          state: 'fix-queued', prNumber,
+        })
+      }
+
+      // Regenerate the MD view so the copy-paste queue reflects current DB state.
+      await renderAllViews(db)
+
       const previewLine = previewUrl ? `> @${username} Possible fix — please test: ${previewUrl}` : `> @${username} ${body}`
-
-      const entry = [
-        `## ${topic}.${post} — @${username}${prRef}`,
-        `*Queued ${ts} — ${discourseUrl}*`,
-        '',
-        `[quote="${username}, post:${post}, topic:${topic}"]`,
-        quoteLines.replace(/^> /gm, ''),
-        '[/quote]',
-        '',
-        previewUrl ? `@${username} Possible fix — please test: ${previewUrl}` : `@${username} ${body}`,
-        '',
-        '---',
-        '',
-      ].join('\n')
-
-      // Render what will actually be posted (no markdown wrapper) so the human
-      // reviewer can copy it straight into Discourse.
-      let existing = ''
-      try { existing = await readFile(DRAFTS_PATH, 'utf8') } catch {}
-      const header = existing.startsWith('# Discourse Reply Drafts')
-        ? ''
-        : `# Discourse Reply Drafts\n\nQueued for human approval. NEVER auto-posted. Copy-paste into Discourse after review.\n\n`
-      await writeFile(DRAFTS_PATH, (header + existing) + entry, 'utf8')
-      return { queued: true, draft: params, file: DRAFTS_PATH, previewLineRendered: previewLine }
+      return { queued: true, draftId, draft: params, file: DRAFTS_PATH, previewLineRendered: previewLine }
     },
   },
 
@@ -768,13 +827,9 @@ If you omit the marker, your work is considered failed regardless of what actual
       required: ['subject', 'body'],
     },
     handler: async (params) => {
-      let state: any = {}
-      try {
-        state = JSON.parse(await readFile(STATE_PATH, 'utf8'))
-      } catch {
-        state = {}
-      }
-      const last = state.last_email_sent ? new Date(state.last_email_sent).getTime() : 0
+      const db = getDb()
+      const lastStr = kvGet(db, 'last_email_sent')
+      const last = lastStr ? new Date(lastStr).getTime() : 0
       const now = Date.now()
       if (last && now - last < 3600_000) {
         return { skipped: true, reason: 'cooldown' }
@@ -812,8 +867,8 @@ print('sent')
         child.on('close', code => resolve({ code: code ?? 0, stdout, stderr }))
       })
       if (result.code !== 0) throw new Error(`send_email failed: ${result.stderr}`)
-      state.last_email_sent = new Date().toISOString()
-      await writeFile(STATE_PATH, JSON.stringify(state, null, 2))
+      kvSet(db, 'last_email_sent', new Date().toISOString())
+      await renderAllViews(db) // keep state.json view in sync
       return { sent: true }
     },
   },
