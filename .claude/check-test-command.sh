@@ -39,7 +39,16 @@ fi
 if echo "$COMMAND" | grep -qE '^\s*(cat|tail|head|less|wc)\b.*/tmp/'; then
   IS_DATA_COMMAND=true
 fi
-if echo "$COMMAND" | grep -qE '\bdocker (top|logs|cp|exec)\b'; then
+if echo "$COMMAND" | grep -qE '\bdocker (top|logs|cp)\b'; then
+  IS_DATA_COMMAND=true
+fi
+# `docker exec` is only classed as a data command when the inner argv is
+# narrowly a read (mysql -e/-B, cat/tail/head/ls/grep/wc, ps/env/which,
+# supervisorctl status, bare artisan subcommands that are informational).
+# Any `docker exec ... vendor/bin/phpunit`, `docker exec ... go test`,
+# `docker exec ... artisan test`, etc. must fall through to TEST_PATTERNS.
+if echo "$COMMAND" | grep -qE '\bdocker exec\b' && \
+   ! echo "$COMMAND" | grep -qE '\b(phpunit|go test|go vet|go build|artisan test|artisan dusk|artisan migrate|vitest|playwright|npm test|npm run test)\b'; then
   IS_DATA_COMMAND=true
 fi
 if echo "$COMMAND" | grep -qE '\b(ps|pgrep)\b'; then
@@ -61,13 +70,19 @@ TEST_PATTERNS=(
   '\bnpm run test\b'
   '\bnpm test\b'
   '\bgo test\b'
+  '\bgo vet\b'
+  '\bgo build\b'
   '\bartisan test\b'
   '\bartisan dusk\b'
+  '\bartisan migrate\b'
   '\bvendor/bin/phpunit\b'
   '\bvendor/phpunit/phpunit/phpunit\b'
   '\bphp\b.*\bphpunit\b'
   '\bvitest\b'
   '\bnpx vitest\b'
+  # Spinning up an ephemeral dev-toolchain container on the host is not
+  # allowed — use the status API which points at the dev-profile containers.
+  '\bdocker run\b.*\b(golang|node|composer|php):'
 )
 
 IS_TEST_COMMAND=false
