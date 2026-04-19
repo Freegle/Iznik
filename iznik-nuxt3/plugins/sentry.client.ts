@@ -86,9 +86,11 @@ export default defineNuxtPlugin(async (nuxtApp) => {
           'TypeError: Unable to preload',
           'Window closed',
 
-          // Freestar third-party ad JS (ftUtils.js getPlacementPosition).
-          // Belt-and-braces: also dropped by suppressException via beforeSend.
+          // Freestar third-party ad JS (ftUtils.js getPlacementPosition,
+          // getInnerDimensions). Belt-and-braces: also dropped by
+          // suppressException via beforeSend.
           'getPlacementPosition',
+          'getInnerDimensions',
         ],
         integrations: [
           new Integrations.BrowserTracing({
