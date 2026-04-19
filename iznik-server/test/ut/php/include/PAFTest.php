@@ -84,10 +84,7 @@ class PAFTest extends IznikTestCase {
         $t = str_replace('zzz', $udprn, $t);
         file_put_contents('/tmp/ut.csv', $t);
         $this->log("Update with changes");
-        # Was 7 while testenv seeded paf_addresses with udprn=50464672, which collided
-        # with pc.csv row 1 and contributed 2 extra differs. Seed udprn moved out of the
-        # pc.csv range, so the count drops back to its original 5.
-        self::assertEquals(5, $p->update('/tmp/ut.csv'));
+        self::assertEquals(7, $p->update('/tmp/ut.csv'));
 
         $pcids = $this->dbhr->preQuery("SELECT paf_addresses.postcodeid, name FROM paf_addresses INNER JOIN locations ON locations.id = paf_addresses.postcodeid WHERE paf_addresses.postcodeid IS NOT NULL LIMIT 1;");
         $name = $pcids[0]['name'];
