@@ -707,9 +707,19 @@ onMounted(() => {
     .use(Compressor)
 
   uppy.value.on('complete', handleUppySuccess)
+  let retryScheduled = false
   uppy.value.on('error', (error) => {
     console.error('Upload error, retry', error)
-    uppy.value.retryAll()
+    if (retryScheduled) return
+    retryScheduled = true
+    queueMicrotask(() => {
+      retryScheduled = false
+      try {
+        uppy.value?.retryAll()
+      } catch (retryError) {
+        console.error('retryAll() failed (Uppy state corruption)', retryError)
+      }
+    })
   })
 })
 

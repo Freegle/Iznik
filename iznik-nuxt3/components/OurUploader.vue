@@ -374,6 +374,7 @@ async function choosePhoto() {
 }
 
 let uppyTimer = null
+let retryScheduled = false
 
 onMounted(() => {
   if (isApp.value) return
@@ -470,11 +471,16 @@ onMounted(() => {
       clearTimeout(uppyTimer)
       uppyTimer = null
     }
-    try {
-      uppy.retryAll()
-    } catch (retryError) {
-      console.error('retryAll() failed (Uppy state corruption)', retryError)
-    }
+    if (retryScheduled) return
+    retryScheduled = true
+    queueMicrotask(() => {
+      retryScheduled = false
+      try {
+        uppy.retryAll()
+      } catch (retryError) {
+        console.error('retryAll() failed (Uppy state corruption)', retryError)
+      }
+    })
   })
   uppy.on('upload-retry', (fileID) => {
     console.log('upload retried:', fileID)
