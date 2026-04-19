@@ -69,4 +69,37 @@ describe('suppressException', () => {
       suppressException({ message: 'foo', stack: 'bar' })
     ).toBe(false)
   })
+
+  it('suppresses Freestar ftUtils.js null-document errors', () => {
+    // Sentry issue NUXT3-CES (6579683231): 11k events from Freestar third-party JS.
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: "Cannot read properties of null (reading 'document')",
+        stack:
+          "TypeError: Cannot read properties of null (reading 'document')\n" +
+          '    at Object.getPlacementPosition (https://a.pub.network/.../ftUtils.js:1:2345)',
+      })
+    ).toBe(true)
+  })
+
+  it('suppresses Freestar errors identified by getPlacementPosition in stack', () => {
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: "Cannot read properties of null (reading 'document')",
+        stack: '    at getPlacementPosition (something.js:1:1)',
+      })
+    ).toBe(true)
+  })
+
+  it('does not suppress unrelated null-document TypeErrors from our code', () => {
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: "Cannot read properties of null (reading 'document')",
+        stack: '    at MyComponent.vue:42 (https://example.com/MyComponent.vue)',
+      })
+    ).toBe(false)
+  })
 })

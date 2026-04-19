@@ -2518,10 +2518,19 @@ jobs:
           command: |
             [ "${SKIP_COVERAGE:-}" = "true" ] && exit 0
             if [ "${COV_UPLOADS:-0}" -gt 0 ]; then
-              echo "📊 Uploaded $COV_UPLOADS reports. Sending webhook..."
+              # Carry forward master's last-known coverage for any suite flags not
+              # uploaded in this build. Feature branches skip test suites whose
+              # subtree wasn't touched (SKIP_GO/SKIP_LARAVEL/SKIP_VITEST/SKIP_PLAYWRIGHT),
+              # so their Coveralls flag files are absent — without carryforward,
+              # Coveralls compares partial-branch coverage against master's full
+              # coverage and reports a large false "coverage dropped" regression
+              # (seen as a -7.1% drop on Nuxt-only PRs that skip Go+Laravel).
+              # carryforward only fills flags MISSING from this build; uploaded
+              # flags keep their fresh PR coverage.
+              echo "📊 Uploaded $COV_UPLOADS reports. Sending webhook (carryforward=go,laravel,vitest,playwright)..."
               curl -sf -X POST "https://coveralls.io/webhook?repo_token=${COVERALLS_REPO_TOKEN}" \
                 -H "Content-Type: application/json" \
-                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\"}}" \
+                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\",\"carryforward\":\"go,laravel,vitest,playwright\"}}" \
                 && echo "✅ Webhook sent" || echo "⚠️ Webhook failed"
             else echo "⚠️ No coverage uploaded"; fi
 

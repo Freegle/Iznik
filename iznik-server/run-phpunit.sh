@@ -136,14 +136,36 @@ fi
 # Run testenv.php for each worker database in parallel to create fixture data
 # NOTE: Don't pipe to head -3 as this kills PHP via SIGPIPE before testenv.php completes
 # This must run AFTER PostgreSQL databases are created (testenv.php connects to PG)
+#
+# Clear any stale LoggedPDO "host down" markers. If a previous run (or an
+# early connect attempt in this one) touched /tmp/iznik.dbstatus.*.down,
+# doConnect() short-circuits every retry for 60s, producing a stream of
+# "Sleep for all DB hosts down" messages without ever reattempting the
+# connection — testenv.php then fatals and fixture data (e.g. the
+# FreeglePlayground group) is never created, cascading into ~34 phantom
+# PHPUnit failures later on.
+rm -f /tmp/iznik.dbstatus.*.down
 echo "Setting up test environment in worker databases (parallel)..."
+TESTENV_FAIL=0
 for i in 1 2 3 4; do
     (
         echo "  Running testenv.php for iznik_$i..."
         cd /var/www/iznik && TEST_TOKEN=$i php install/testenv.php 2>&1
     ) &
+    eval "TESTENV_PID_$i=$!"
 done
-wait
+for i in 1 2 3 4; do
+    eval "pid=\$TESTENV_PID_$i"
+    if ! wait "$pid"; then
+        echo "  ERROR: testenv.php for iznik_$i failed (pid $pid)"
+        TESTENV_FAIL=1
+    fi
+done
+if [ "$TESTENV_FAIL" -ne 0 ]; then
+    echo "  FATAL: one or more testenv.php workers failed; aborting before tests run."
+    echo "  Running tests without the fixture data would produce misleading failures."
+    exit 1
+fi
 echo "  Test environment setup complete."
 
 # Kill any existing background workers and clear stop files

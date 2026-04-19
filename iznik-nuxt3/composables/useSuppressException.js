@@ -26,5 +26,18 @@ export function suppressException(err) {
     return true
   }
 
+  // Freestar (third-party ad provider) ftUtils.js: getPlacementPosition reads
+  // (this.isPlacementXdom?t:t.parent).document with t.parent=null in cross-origin
+  // iframes. Sentry issue NUXT3-CES (~11k events). Match on the Freestar signature
+  // (ftUtils.js or getPlacementPosition in stack) rather than the generic message
+  // so we don't mask real bugs in our own code.
+  if (
+    err.stack?.includes('ftUtils.js') ||
+    err.stack?.includes('getPlacementPosition')
+  ) {
+    console.log('Freestar ftUtils - suppress exception')
+    return true
+  }
+
   return false
 }
