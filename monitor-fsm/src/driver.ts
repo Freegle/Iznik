@@ -31,6 +31,9 @@ import {
 import { ClaudeCodeAdapter } from 'ai-flower/adapters/claude-code'
 
 import { actions } from './actions/index.js'
+import { getDb, startIteration, endIteration } from './db/index.js'
+import { renderAllViews } from './db/views.js'
+import { putStatusPost } from './db/discourse-status.js'
 
 const exec = promisify(execFile)
 
@@ -343,6 +346,11 @@ async function main() {
   console.log(`[driver] created instance ${instance.id} iterationStartTs=${iterationStartTs}`)
   logInstance(instance, '[driver] start')
 
+  // Open a DB iteration row so every run is logged with start/end/outcome.
+  const db = getDb()
+  const iterationId = startIteration(db, iterationStartTs)
+  console.log(`[driver] iteration id=${iterationId} started`)
+
   // Track which Discourse bugs have been picked as currentBug this iteration.
   // If the same (topic, post) pair is picked twice, the iteration is looping:
   // VERIFY must have failed to append a deferred entry to bugsFixed. We
@@ -600,6 +608,37 @@ async function main() {
   // Summary of what was actually done
   const allPRActions = finalInstance.history.flatMap(h => h.actionsExecuted.filter(a => a.action === 'create_pr' && !a.error))
   console.log(`[driver] create_pr calls that succeeded: ${allPRActions.length}`)
+
+  // Close the iteration row.
+  const outcome = finalInstance.status === 'completed'
+    ? 'completed'
+    : (step >= MAX_STEPS ? 'timeout' : 'errored')
+  endIteration(db, iterationId, outcome, step, allPRActions.length, `final state=${finalInstance.currentState}`)
+
+  // Regenerate all views so /tmp/freegle-monitor/{summary.md, retest-drafts.md,
+  // state.json} reflect the final DB state after this iteration.
+  try {
+    await renderAllViews(db)
+    console.log('[driver] views regenerated from DB')
+  } catch (err) {
+    console.error('[driver] renderAllViews failed:', err)
+  }
+
+  // Edit the Discourse "Monitor Status — Live Summary" wiki post so moderators
+  // see the current picture without developer jargon. Optional — skipped if
+  // SKIP_DISCOURSE_STATUS is set (local dev) or the API key is missing.
+  if (!process.env.SKIP_DISCOURSE_STATUS) {
+    try {
+      const result = await putStatusPost(db)
+      if (result.posted) {
+        console.log(`[driver] Discourse status post updated (HTTP ${result.status})`)
+      } else {
+        console.warn(`[driver] Discourse status post NOT updated: ${result.reason ?? `HTTP ${result.status}`}`)
+      }
+    } catch (err) {
+      console.error('[driver] putStatusPost threw:', err)
+    }
+  }
 }
 
 main().catch(err => {
