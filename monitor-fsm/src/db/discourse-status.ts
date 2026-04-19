@@ -5,13 +5,13 @@
 // via PUT /posts/{id}.json — never POST a new reply, which would fire
 // notifications to anyone watching.
 //
-// The content is written in plain English for a Freegle-moderator audience:
-// no PR numbers, CI state, Sentry IDs, iteration steps, or any developer
-// jargon. Technical details stay in the DB for the developer audience.
+// Plain English for a Freegle-moderator audience: no Sentry IDs, CI steps,
+// iteration counts, or V1/V2/Go/Nuxt jargon. PR links ARE included — mods
+// asked for them so they can see what's outstanding.
 
 import { readFileSync } from 'node:fs'
 import type { Database as DB } from 'better-sqlite3'
-import { listOpenDiscourseBugs, listPendingDrafts } from './index.js'
+import { listOpenDiscourseBugs, listPendingDrafts, type DiscourseBugRow } from './index.js'
 
 export const STATUS_POST_ID = 63250
 export const STATUS_TOPIC_ID = 9599
@@ -42,28 +42,51 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
   `).all() as Array<{ topic: number; post: number; reporter: string | null; excerpt: string | null; fixed_at: string; deployed_at: string | null }>
 
   const lines: string[] = []
-  lines.push('# Bug Reports — Live Summary', '')
-  lines.push('Hi! This is an automatically-updated list of the bugs and issues we\'re currently aware of on Freegle — both ones reported by moderators on Discourse and errors spotted in the site itself. It\'s rewritten from scratch each time our monitoring checker runs, so it\'s always up to date.')
-  lines.push('')
-  lines.push(`*Last updated ${new Date().toISOString().replace('T', ' ').slice(0, 16)} UTC*`)
-  lines.push('')
-  lines.push('No need to reply here — replies aren\'t read and nobody gets an email when this post changes.')
-  lines.push('')
+  lines.push('> :robot: **Produced by AI.** This post is rewritten end-to-end every time our automated monitoring checker runs — no human types it.', '')
+  lines.push('This is an automatically-updated list of the bugs and issues we\'re currently aware of on Freegle — both ones reported by moderators on Discourse and errors spotted in the site itself.', '')
+  lines.push(`*Last updated ${new Date().toISOString().replace('T', ' ').slice(0, 16)} UTC. No need to reply here — replies aren\'t read and nobody gets an email when this post changes.*`, '')
 
   // Stable-ish display IDs: B-<topic>-<post> for bugs, D-<draft_id> for drafts.
   const bugId = (b: { topic: number; post: number }) => `B-${b.topic}-${b.post}`
   const draftId = (d: { id: number }) => `D-${d.id}`
 
-  // Bugs being worked on — open + investigating + fix-queued + deferred
+  // Has a reply draft been posted for this bug? If so we really have "sent"
+  // it. If not (or none drafted), it's misleading to say "fix sent" — the
+  // reporter has heard nothing. Build a quick index of drafts by topic.post.
+  const postedKeys = new Set<string>()
+  const queuedKeys = new Set<string>()
+  for (const d of pending) queuedKeys.add(`${d.topic}.${d.post}`)
+  const postedDrafts = db.prepare(`
+    SELECT topic, post FROM discourse_draft WHERE posted_at IS NOT NULL
+  `).all() as Array<{ topic: number; post: number }>
+  for (const d of postedDrafts) postedKeys.add(`${d.topic}.${d.post}`)
+
+  const prLink = (n: number | null) =>
+    n ? `[#${n}](https://github.com/Freegle/Iznik/pull/${n})` : '—'
+
+  const workingLabel = (b: DiscourseBugRow): string => {
+    const key = `${b.topic}.${b.post}`
+    if (b.state === 'investigating') return 'being investigated'
+    if (b.state === 'open') return 'to look at'
+    // fix-queued — nuance based on whether reporter has actually been told
+    if (postedKeys.has(key)) return 'fix sent — awaiting retest'
+    if (queuedKeys.has(key)) return 'fix ready — reply awaiting review'
+    return 'fix ready — drafting reply'
+  }
+
+  const escapeCell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ')
+
+  // Bugs being worked on — rendered as a table for scannability.
   const workingStates = ['open', 'investigating', 'fix-queued']
   const working = open.filter(b => workingStates.includes(b.state))
   if (working.length > 0) {
     lines.push('## Bugs we\'re working on', '')
+    lines.push('| ID | Reporter | Issue | Status | PR |')
+    lines.push('|---|---|---|---|---|')
     for (const b of working) {
       const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
-      const excerpt = (b.excerpt ?? '').slice(0, 160)
-      const stateLabel = b.state === 'fix-queued' ? 'fix sent for testing' : b.state === 'investigating' ? 'being investigated' : 'to look at'
-      lines.push(`- \`${bugId(b)}\` — **[${b.reporter ?? 'reporter'}](${url})** — ${excerpt} *(${stateLabel})*`)
+      const excerpt = escapeCell((b.excerpt ?? '').slice(0, 160))
+      lines.push(`| \`${bugId(b)}\` | [${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${workingLabel(b)} | ${prLink(b.pr_number)} |`)
     }
     lines.push('')
   }
@@ -71,24 +94,28 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
   // Recently fixed
   if (recentFixed.length > 0) {
     lines.push('## Recently fixed (last 7 days)', '')
+    lines.push('| ID | Reporter | Issue | Status | PR |')
+    lines.push('|---|---|---|---|---|')
     for (const b of recentFixed) {
       const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
-      const excerpt = (b.excerpt ?? '').slice(0, 160)
+      const excerpt = escapeCell((b.excerpt ?? '').slice(0, 160))
       const status = b.deployed_at ? 'live' : 'fix on the way to the live site'
-      lines.push(`- \`${bugId(b)}\` — **[${b.reporter ?? 'reporter'}](${url})** — ${excerpt} *(${status})*`)
+      lines.push(`| \`${bugId(b)}\` | [${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${status} | ${prLink((b as DiscourseBugRow).pr_number ?? null)} |`)
     }
     lines.push('')
   }
 
-  // Deferred — "waiting on you"
+  // Deferred — "waiting on more information"
   const deferred = open.filter(b => b.state === 'deferred')
   if (deferred.length > 0) {
     lines.push('## Waiting on more information', '')
+    lines.push('| ID | Reporter | Issue | Why it\'s waiting |')
+    lines.push('|---|---|---|---|')
     for (const b of deferred) {
       const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
-      const excerpt = (b.excerpt ?? '').slice(0, 160)
-      const reason = b.reason ? ` — ${b.reason}` : ''
-      lines.push(`- \`${bugId(b)}\` — **[${b.reporter ?? 'reporter'}](${url})** — ${excerpt}${reason}`)
+      const excerpt = escapeCell((b.excerpt ?? '').slice(0, 160))
+      const reason = escapeCell(b.reason ?? '—')
+      lines.push(`| \`${bugId(b)}\` | [${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${reason} |`)
     }
     lines.push('')
   }
@@ -97,30 +124,55 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
     lines.push('*Nothing currently on the list — we\'re all caught up!*', '')
   }
 
-  // Reply drafts — show inline so moderators can review and post them. We
-  // cannot embed a real click-to-post button inside a Discourse wiki post, so
-  // instead each draft gets: (1) a unique ID you can point at in chat; (2) the
-  // full quoted body as a fenced block (Discourse's "copy" chip picks it up);
-  // (3) a "Reply on Discourse" link that jumps to the target post so you can
-  // click Reply, paste, and send.
-  if (pending.length > 0) {
+  // Reply drafts — split by whether the fix is actually live. Telling a
+  // reporter "please retest after the next deploy" is useless because they
+  // can't see deploys; so we only show "ready to send" drafts once the PR
+  // is merged AND deployed. Everything else is "on hold" so moderators can
+  // still see what's queued without accidentally posting it early.
+  const prLookup = new Map<number, { state: string | null; deploy_state: string | null }>()
+  const prRows = db.prepare('SELECT number, state, deploy_state FROM pr').all() as Array<{ number: number; state: string | null; deploy_state: string | null }>
+  for (const r of prRows) prLookup.set(r.number, { state: r.state, deploy_state: r.deploy_state })
+
+  const isLive = (prNumber: number | null): boolean => {
+    if (!prNumber) return false
+    const pr = prLookup.get(prNumber)
+    if (!pr) return false
+    return pr.state === 'MERGED' && (pr.deploy_state === 'live' || pr.deploy_state === 'deployed')
+  }
+
+  const ready = pending.filter(d => isLive(d.pr_number))
+  const onHold = pending.filter(d => !isLive(d.pr_number))
+
+  const renderDraft = (d: typeof pending[number], note?: string) => {
+    const targetUrl = `${DISCOURSE_BASE}/t/${d.topic}/${d.post}`
+    lines.push(`### \`${draftId(d)}\` → reply to @${d.username} on [${d.topic}/${d.post}](${targetUrl})`)
+    if (note) lines.push('', `*${note}*`)
+    lines.push('', '```')
+    lines.push(`[quote="${d.username}, post:${d.post}, topic:${d.topic}"]`)
+    lines.push(d.quote)
+    lines.push('[/quote]')
+    lines.push('')
+    lines.push(d.body)
+    lines.push('```', '')
+    if (!note) lines.push(`[Open post to reply →](${targetUrl})`, '')
+  }
+
+  if (ready.length > 0) {
     lines.push('---', '')
-    lines.push('## Reply drafts awaiting review', '')
-    lines.push(`*${pending.length} reply draft${pending.length === 1 ? '' : 's'} queued. Each is keyed to a reporter; open the link, paste the block, send.*`, '')
-    for (const d of pending) {
-      const targetUrl = `${DISCOURSE_BASE}/t/${d.topic}/${d.post}`
-      lines.push(`### \`${draftId(d)}\` → reply to @${d.username} on [${d.topic}/${d.post}](${targetUrl})`)
-      lines.push('')
-      lines.push('```')
-      lines.push(`[quote="${d.username}, post:${d.post}, topic:${d.topic}"]`)
-      lines.push(d.quote)
-      lines.push('[/quote]')
-      lines.push('')
-      lines.push(d.body)
-      lines.push('```')
-      lines.push('')
-      lines.push(`[Open post to reply →](${targetUrl})`)
-      lines.push('')
+    lines.push('## Replies ready to send', '')
+    lines.push(`*${ready.length} reply${ready.length === 1 ? '' : 'ies'} ready — the fix is live. Open the link, paste the block, send.*`, '')
+    for (const d of ready) renderDraft(d)
+  }
+
+  if (onHold.length > 0) {
+    lines.push('---', '')
+    lines.push('## Replies on hold (fix not yet live)', '')
+    lines.push(`*${onHold.length} reply${onHold.length === 1 ? '' : 'ies'} queued but **don't post yet** — the fix is still being tested or hasn't been deployed. They'll move to "ready to send" above once it's live.*`, '')
+    for (const d of onHold) {
+      const prNote = d.pr_number
+        ? `Waiting for [#${d.pr_number}](https://github.com/Freegle/Iznik/pull/${d.pr_number}) to merge & go live.`
+        : 'No PR yet — fix still being prepared.'
+      renderDraft(d, prNote)
     }
   }
 
