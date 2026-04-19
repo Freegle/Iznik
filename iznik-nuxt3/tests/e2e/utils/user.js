@@ -118,7 +118,14 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     await clearSessionData(page)
 
     if (navigateToHome) {
-      await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+      // Use domcontentloaded (not the default 'load') because the Nuxt homepage
+      // loads Freestar ads, Google Sign-In, and other third-party scripts whose
+      // load events can hang indefinitely in CI. Matches loginViaModTools and
+      // waitForLoadState('domcontentloaded') used elsewhere in this file.
+      await page.gotoAndVerify('/', {
+        timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
+      })
       console.log('Navigated to homepage')
     }
 
@@ -135,7 +142,10 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     // Fall back to clearing cookies/storage
     await clearSessionData(page)
     if (navigateToHome) {
-      await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+      await page.gotoAndVerify('/', {
+        timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
+      })
     }
     return page
   }
