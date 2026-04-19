@@ -253,6 +253,15 @@ class User extends Model
     }
 
     /**
+     * Check if this user is a LoveJunk proxy account.
+     * LJ users have the ljuserid column set.
+     */
+    public function isLJ(): bool
+    {
+        return ! empty($this->attributes['ljuserid']);
+    }
+
+    /**
      * Check if a notification type is enabled for this user.
      *
      * @param string $type The notification type (email, emailmine, push)
@@ -260,6 +269,14 @@ class User extends Model
      */
     public function notifsOn(string $type, ?int $groupId = NULL): bool
     {
+        // emailmine is never honoured for TN or LJ proxy users. Their "real"
+        // inbox is the partner's proxy address, so a self-copy is delivered
+        // back to themselves and looks like someone else is sending their
+        // own words at them.
+        if ($type === self::NOTIFS_EMAIL_MINE && ($this->isTN() || $this->isLJ())) {
+            return FALSE;
+        }
+
         // Default values for notification types.
         $defaults = [
             'email' => TRUE,
