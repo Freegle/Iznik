@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/session"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -2545,5 +2546,32 @@ func TestGetSessionInventsNameFromEmail(t *testing.T) {
 		json.NewDecoder(resp.Body).Decode(&resp2)
 		me, _ := resp2["me"].(map[string]interface{})
 		assert.Equal(t, localPart, me["displayname"], "Session should invent display name from email local part")
+	})
+}
+
+func TestFetchEmailHealth(t *testing.T) {
+	// Deterministic coverage for the daytime-gated email health block in
+	// GetSession. Without this test the lines flip in and out of Go
+	// coverage depending on the wall-clock hour CI runs at, which caused
+	// Coveralls-go to fail unrelated PRs (see PR #212 / job 180487491).
+
+	t.Run("outside daytime returns zero without querying", func(t *testing.T) {
+		// Each out-of-window hour must short-circuit to (0, 0).
+		for _, hour := range []int{0, 6, 22, 23} {
+			emailin, emailout := session.FetchEmailHealth(database.DBConn, hour)
+			assert.Equal(t, int64(0), emailin, "hour %d should not flag emailin", hour)
+			assert.Equal(t, int64(0), emailout, "hour %d should not flag emailout", hour)
+		}
+	})
+
+	t.Run("daytime runs both queries and returns 0 or 1", func(t *testing.T) {
+		// At a daytime hour both queries run; the flags are 0 or 1 depending
+		// on real traffic in the test DB. We assert the contract, not the
+		// value, so the test stays deterministic across environments.
+		for _, hour := range []int{7, 12, 21} {
+			emailin, emailout := session.FetchEmailHealth(database.DBConn, hour)
+			assert.Contains(t, []int64{0, 1}, emailin, "hour %d emailin must be 0 or 1", hour)
+			assert.Contains(t, []int64{0, 1}, emailout, "hour %d emailout must be 0 or 1", hour)
+		}
 	})
 }

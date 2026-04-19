@@ -102,4 +102,43 @@ describe('suppressException', () => {
       })
     ).toBe(false)
   })
+
+  it('suppresses NotReadableError I/O read failures (NUXT3-D2P)', () => {
+    // Sentry issue NUXT3-D2P (7372873858): 568 events / 357 users.
+    // Mobile Safari/iOS file/camera read failures (permission denied,
+    // iCloud Photo not downloaded, file picker cancelled, etc.).
+    const err = new TypeError(
+      'NotReadableError: The I/O read operation failed.'
+    )
+    expect(suppressException(err)).toBe(true)
+  })
+
+  it('suppresses NotReadableError when surfaced via toString only', () => {
+    expect(
+      suppressException({
+        toString: () =>
+          'TypeError: NotReadableError: The I/O read operation failed.',
+      })
+    ).toBe(true)
+  })
+
+  it('does not suppress unrelated NotReadableErrors', () => {
+    // A bare NotReadableError without the I/O read phrase should still report,
+    // since it may indicate a real bug elsewhere.
+    expect(
+      suppressException({
+        name: 'NotReadableError',
+        message: 'Could not start video source',
+      })
+    ).toBe(false)
+  })
+
+  it('does not suppress unrelated TypeErrors', () => {
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: "Cannot read properties of undefined (reading 'foo')",
+      })
+    ).toBe(false)
+  })
 })
