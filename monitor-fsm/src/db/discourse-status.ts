@@ -50,6 +50,10 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
   lines.push('No need to reply here — replies aren\'t read and nobody gets an email when this post changes.')
   lines.push('')
 
+  // Stable-ish display IDs: B-<topic>-<post> for bugs, D-<draft_id> for drafts.
+  const bugId = (b: { topic: number; post: number }) => `B-${b.topic}-${b.post}`
+  const draftId = (d: { id: number }) => `D-${d.id}`
+
   // Bugs being worked on — open + investigating + fix-queued + deferred
   const workingStates = ['open', 'investigating', 'fix-queued']
   const working = open.filter(b => workingStates.includes(b.state))
@@ -59,7 +63,7 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
       const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
       const excerpt = (b.excerpt ?? '').slice(0, 160)
       const stateLabel = b.state === 'fix-queued' ? 'fix sent for testing' : b.state === 'investigating' ? 'being investigated' : 'to look at'
-      lines.push(`- **[${b.reporter ?? 'reporter'}](${url})** — ${excerpt} *(${stateLabel})*`)
+      lines.push(`- \`${bugId(b)}\` — **[${b.reporter ?? 'reporter'}](${url})** — ${excerpt} *(${stateLabel})*`)
     }
     lines.push('')
   }
@@ -71,7 +75,7 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
       const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
       const excerpt = (b.excerpt ?? '').slice(0, 160)
       const status = b.deployed_at ? 'live' : 'fix on the way to the live site'
-      lines.push(`- **[${b.reporter ?? 'reporter'}](${url})** — ${excerpt} *(${status})*`)
+      lines.push(`- \`${bugId(b)}\` — **[${b.reporter ?? 'reporter'}](${url})** — ${excerpt} *(${status})*`)
     }
     lines.push('')
   }
@@ -84,7 +88,7 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
       const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
       const excerpt = (b.excerpt ?? '').slice(0, 160)
       const reason = b.reason ? ` — ${b.reason}` : ''
-      lines.push(`- **[${b.reporter ?? 'reporter'}](${url})** — ${excerpt}${reason}`)
+      lines.push(`- \`${bugId(b)}\` — **[${b.reporter ?? 'reporter'}](${url})** — ${excerpt}${reason}`)
     }
     lines.push('')
   }
@@ -93,10 +97,31 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
     lines.push('*Nothing currently on the list — we\'re all caught up!*', '')
   }
 
+  // Reply drafts — show inline so moderators can review and post them. We
+  // cannot embed a real click-to-post button inside a Discourse wiki post, so
+  // instead each draft gets: (1) a unique ID you can point at in chat; (2) the
+  // full quoted body as a fenced block (Discourse's "copy" chip picks it up);
+  // (3) a "Reply on Discourse" link that jumps to the target post so you can
+  // click Reply, paste, and send.
   if (pending.length > 0) {
     lines.push('---', '')
-    lines.push(`*${pending.length} reply draft${pending.length === 1 ? '' : 's'} awaiting review before being posted back to reporters.*`)
-    lines.push('')
+    lines.push('## Reply drafts awaiting review', '')
+    lines.push(`*${pending.length} reply draft${pending.length === 1 ? '' : 's'} queued. Each is keyed to a reporter; open the link, paste the block, send.*`, '')
+    for (const d of pending) {
+      const targetUrl = `${DISCOURSE_BASE}/t/${d.topic}/${d.post}`
+      lines.push(`### \`${draftId(d)}\` → reply to @${d.username} on [${d.topic}/${d.post}](${targetUrl})`)
+      lines.push('')
+      lines.push('```')
+      lines.push(`[quote="${d.username}, post:${d.post}, topic:${d.topic}"]`)
+      lines.push(d.quote)
+      lines.push('[/quote]')
+      lines.push('')
+      lines.push(d.body)
+      lines.push('```')
+      lines.push('')
+      lines.push(`[Open post to reply →](${targetUrl})`)
+      lines.push('')
+    }
   }
 
   return {
