@@ -1066,18 +1066,27 @@ func Search(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "No search term")
 		}
 
-		// Try vector search if requested and embeddings are loaded
+		// When searchmode=vector is explicitly requested and vector succeeds,
+		// respect the result (even if empty) instead of falling back to keyword.
+		// Silently switching match models makes repeat queries return different
+		// result sets — the non-determinism Dee reported (Discourse 9594).
 		if searchmode == "vector" && embedding.Global.Count() > 0 {
 			vectorResults, err := VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
 				float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 			if err != nil {
 				fmt.Printf("Vector search failed, falling back to keyword: %v\n", err)
 			} else {
-				res = vectorResults
+				filtered := []SearchResult{}
+				for _, r := range vectorResults {
+					if r.Msgid != 0 {
+						filtered = append(filtered, r)
+					}
+				}
+				wg.Wait()
+				return c.JSON(filtered)
 			}
 		}
 
-		// Fall back to keyword search if vector returned nothing
 		if len(res) == 0 {
 			words := GetWords(term)
 

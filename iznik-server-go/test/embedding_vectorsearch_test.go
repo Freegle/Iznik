@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -13,6 +14,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// makeAntiparallelVec returns a unit vector pointing opposite to makeTestVec,
+// so cosine similarity is ~-1 — reliably below MinVectorScore.
+func makeAntiparallelVec(seed float32) [embedding.EmbeddingDim]float32 {
+	var v [embedding.EmbeddingDim]float32
+	var norm float32
+	for i := 0; i < embedding.EmbeddingDim; i++ {
+		v[i] = -(seed + float32(i)*0.01)
+		norm += v[i] * v[i]
+	}
+	norm = float32(math.Sqrt(float64(norm)))
+	for i := 0; i < embedding.EmbeddingDim; i++ {
+		v[i] /= norm
+	}
+	return v
+}
 
 func makeTestVec(seed float32) [embedding.EmbeddingDim]float32 {
 	var v [embedding.EmbeddingDim]float32
@@ -201,4 +218,139 @@ func TestStoreSetEntriesAndCount(t *testing.T) {
 
 	embedding.Global.SetEntries(nil)
 	assert.Equal(t, 0, embedding.Global.Count())
+}
+
+// TestSearchHandlerVectorModeDoesNotFallBackToKeyword reproduces the
+// non-determinism Dee reported on Discourse 9594: the same query returning
+// wildly different result sets on repeat attempts (flat screens → wood/floor
+// paint → flat screens again). Root cause: when searchmode=vector returned
+// zero matches above MinVectorScore, the handler silently fell back to the
+// keyword index, which has a completely different match model. Flaky network
+// conditions flipping vector between success and timeout produced the
+// observed mode-switching.
+//
+// After the fix, an explicit searchmode=vector request respects the vector
+// result set (even if empty) instead of secretly switching to keyword.
+func TestSearchHandlerVectorModeDoesNotFallBackToKeyword(t *testing.T) {
+	prefix := uniquePrefix("vectornofallback")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// Create a message whose indexed words WOULD match a keyword search for
+	// "television" (via exact + prefix word matches on the search index).
+	CreateTestMessage(t, userID, groupID, "television stand oak", 55.9533, -3.1883)
+
+	// Confirm the keyword path actually finds this message — otherwise the
+	// test below would pass trivially and wouldn't prove we avoided fallback.
+	keywordResp, _ := getApp().Test(httptest.NewRequest(
+		"GET",
+		"/api/message/search/television?searchmode=keyword&groupids="+strconv.FormatUint(groupID, 10),
+		nil,
+	), 60000)
+	require.Equal(t, 200, keywordResp.StatusCode)
+	var keywordResults []message.SearchResult
+	json.NewDecoder(keywordResp.Body).Decode(&keywordResults)
+	require.NotEmpty(t, keywordResults, "sanity check: keyword search must find the seeded message")
+
+	// Set up the embedding store with ONE entry whose vector points in the
+	// opposite direction to the query — cosine ≈ -1, far below MinVectorScore
+	// of 0.65. Count() > 0 so the handler enters the vector branch; the
+	// filtered vector result is legitimately empty.
+	queryVec := makeTestVec(1.0)
+	antiparallel := makeAntiparallelVec(1.0)
+	embedding.Global.SetEntries([]embedding.Entry{
+		{
+			Msgid: 999999, Groupid: groupID, Msgtype: "Offer",
+			Lat: 55.9533, Lng: -3.1883,
+			Subject: "totally unrelated noise", Arrival: time.Now(),
+			SubjectVec: antiparallel,
+		},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	server := mockSidecarReturning(t, queryVec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	defer embedding.SetSidecarURL("")
+
+	// Now the same query with searchmode=vector. Vector legitimately returns
+	// nothing above threshold. The handler must NOT silently fall back to the
+	// keyword index (which would surface "television stand oak").
+	vectorResp, _ := getApp().Test(httptest.NewRequest(
+		"GET",
+		"/api/message/search/television?searchmode=vector&groupids="+strconv.FormatUint(groupID, 10),
+		nil,
+	), 60000)
+	require.Equal(t, 200, vectorResp.StatusCode)
+
+	var vectorResults []message.SearchResult
+	json.NewDecoder(vectorResp.Body).Decode(&vectorResults)
+
+	assert.Empty(t, vectorResults,
+		"searchmode=vector with no matches above threshold must return empty, not fall back to keyword")
+
+	// No result should carry a keyword matchedon.Type — fail clearly if the
+	// fallback leaks through.
+	for _, r := range vectorResults {
+		assert.Equal(t, "Vector", r.Matchedon.Type,
+			"non-Vector matchedon.Type (%q) for msgid=%d indicates keyword fallback", r.Matchedon.Type, r.Msgid)
+	}
+}
+
+// TestSearchHandlerVectorModeIsDeterministic confirms the same vector query
+// returns the same result set on repeat calls — directly addresses Dee's
+// "very puzzling" report that identical queries produced different results
+// (Discourse 9594).
+func TestSearchHandlerVectorModeIsDeterministic(t *testing.T) {
+	prefix := uniquePrefix("vectordeterministic")
+	groupID := CreateTestGroup(t, prefix)
+
+	// Two entries: one strong match, one antiparallel (noise).
+	queryVec := makeTestVec(1.0)
+	strongMatch := makeTestVec(1.001)
+	embedding.Global.SetEntries([]embedding.Entry{
+		{
+			Msgid: 11111, Groupid: groupID, Msgtype: "Offer",
+			Lat: 55.9533, Lng: -3.1883,
+			Subject: "television", Arrival: time.Now(), SubjectVec: strongMatch,
+		},
+		{
+			Msgid: 22222, Groupid: groupID, Msgtype: "Offer",
+			Lat: 55.9533, Lng: -3.1883,
+			Subject: "unrelated", Arrival: time.Now(),
+			SubjectVec: makeAntiparallelVec(1.0),
+		},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	server := mockSidecarReturning(t, queryVec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	defer embedding.SetSidecarURL("")
+
+	url := "/api/message/search/television?searchmode=vector&groupids=" + strconv.FormatUint(groupID, 10)
+
+	runOnce := func() []uint64 {
+		resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil), 60000)
+		require.Equal(t, 200, resp.StatusCode)
+		var results []message.SearchResult
+		json.NewDecoder(resp.Body).Decode(&results)
+		ids := make([]uint64, len(results))
+		for i, r := range results {
+			ids[i] = r.Msgid
+		}
+		return ids
+	}
+
+	first := runOnce()
+	for i := 0; i < 3; i++ {
+		assert.Equal(t, first, runOnce(),
+			"repeat #%d returned different ids — vector search must be deterministic for identical inputs", i+1)
+	}
+
+	// Sanity: the strong match should be in the result set; the antiparallel
+	// noise must be filtered by MinVectorScore.
+	assert.Contains(t, first, uint64(11111))
+	assert.NotContains(t, first, uint64(22222))
 }
