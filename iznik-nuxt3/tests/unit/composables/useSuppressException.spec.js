@@ -93,6 +93,48 @@ describe('suppressException', () => {
     ).toBe(true)
   })
 
+  it('suppresses Freestar ftUtils.js getInnerDimensions null errors (Firefox phrasing, NUXT3-D2H)', () => {
+    // Sentry issue NUXT3-D2H (7372854976): 337 events / 119 users.
+    // Firefox surfaces null-property TypeErrors as:
+    //   "can't access property \"display\", t is null"
+    // Culprit: getInnerDimensions(ftUtils) in /ftUtils.js.
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: 'can\'t access property "display", t is null',
+        stack:
+          'TypeError: can\'t access property "display", t is null\n' +
+          '    at getInnerDimensions (https://a.pub.network/.../ftUtils.js:1:4567)',
+      })
+    ).toBe(true)
+  })
+
+  it('suppresses Freestar ftUtils.js getInnerDimensions null errors (Chrome phrasing, NUXT3-D2H)', () => {
+    // Chrome phrasing of the same Freestar ftUtils.js getInnerDimensions crash.
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: "Cannot read properties of null (reading 'display')",
+        stack:
+          "TypeError: Cannot read properties of null (reading 'display')\n" +
+          '    at Object.getInnerDimensions (https://a.pub.network/.../ftUtils.js:1:4567)',
+      })
+    ).toBe(true)
+  })
+
+  it('suppresses Freestar errors identified by getInnerDimensions alone in stack', () => {
+    // If the filename has been stripped (e.g. due to SourceMap rewriting or
+    // bundler renaming), the getInnerDimensions function name in the stack is
+    // still a Freestar-specific signature.
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: 'can\'t access property "display", t is null',
+        stack: '    at getInnerDimensions (something.js:1:1)',
+      })
+    ).toBe(true)
+  })
+
   it('does not suppress unrelated null-document TypeErrors from our code', () => {
     expect(
       suppressException({
