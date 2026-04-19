@@ -202,3 +202,130 @@ func TestStoreSetEntriesAndCount(t *testing.T) {
 	embedding.Global.SetEntries(nil)
 	assert.Equal(t, 0, embedding.Global.Count())
 }
+
+// unitVecWithCosine returns a normalised 256-dim vector whose dot product
+// with the reference query vector [1, 0, 0, …] equals exactly cos. Used for
+// threshold-boundary tests where we need deterministic, targeted cosines.
+func unitVecWithCosine(cos float32) [embedding.EmbeddingDim]float32 {
+	var v [embedding.EmbeddingDim]float32
+	v[0] = cos
+	v[1] = float32(math.Sqrt(float64(1.0 - cos*cos)))
+	return v
+}
+
+// TestVectorSearchWhiteGoodsRegression reproduces Discourse 9585 post 18
+// (Jos): "'White goods' now finding one older (19 days) item but not 4
+// recent ones (ringed, all still live)."
+//
+// Cosines below were measured against the live embedding sidecar
+// (nomic-embed-text-v1.5 256-dim Matryoshka, quantized, asymmetric
+// search_query:/search_document: prefixes) on the exact preprocessed
+// subjects from Jos's screenshot:
+//
+//	white goods vs "Whirlpool free standing fridge freezer" = 0.47
+//	white goods vs "Washing machine"                         = 0.43
+//	white goods vs "Dishwasher"                              = 0.40
+//	white goods vs "fridge"                                  = 0.45
+//	white goods vs "white goods" (literal)                   = 0.80
+//	unrelated ("Yoga mat", "Bike helmet", "Lego set")        = 0.35–0.39
+//
+// At the previous 0.65 floor every tangentially-related item was
+// silently dropped — the reporter saw a single 19-day-old post and
+// nothing else. 0.45 restores the clearly-related cluster (fridge, 0.45;
+// Whirlpool fridge freezer, 0.47 — plus the literal "white goods"
+// match at 0.80) alongside the literal match, while leaving the clear
+// noise baseline below the floor. Washing machine (0.43) and Dishwasher
+// (0.40) remain below the new floor — lowering further admits
+// indistinguishable noise (Garden pot 0.42, Vinyl records 0.46); those
+// items simply don't share enough signal with "white goods" in a 256-dim
+// embedding for any threshold-based filter to recover safely.
+func TestVectorSearchWhiteGoodsRegression(t *testing.T) {
+	queryVec := unitVecWithCosine(1.0) // reference [1, 0, 0, …]
+
+	// Exact measured cosines from the live sidecar, subjects as
+	// preprocessed by iznik-batch's EmbeddingService::preprocessSubject.
+	whirlpool := unitVecWithCosine(0.47)
+	washer := unitVecWithCosine(0.43)
+	dishwasher := unitVecWithCosine(0.40)
+	fridge := unitVecWithCosine(0.45)
+	literal := unitVecWithCosine(0.80)
+	// Clear noise baselines — stay below 0.45 at either threshold.
+	yogaMat := unitVecWithCosine(0.39)
+	bikeHelmet := unitVecWithCosine(0.38)
+
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: 1001, Groupid: 1, Msgtype: "Offer", Subject: "OFFER: Whirlpool free standing fridge freezer (Kensington W14)", SubjectVec: whirlpool},
+		{Msgid: 1002, Groupid: 1, Msgtype: "Wanted", Subject: "WANTED: Washing machine (Holland Park W14)", SubjectVec: washer},
+		{Msgid: 1003, Groupid: 1, Msgtype: "Wanted", Subject: "WANTED: Dishwasher (Holland Park W14)", SubjectVec: dishwasher},
+		{Msgid: 1004, Groupid: 1, Msgtype: "Offer", Subject: "OFFER: fridge (North Kensington W10)", SubjectVec: fridge},
+		{Msgid: 1005, Groupid: 1, Msgtype: "Offer", Subject: "OFFER: white goods (Anytown)", SubjectVec: literal},
+		{Msgid: 9001, Groupid: 1, Msgtype: "Offer", Subject: "OFFER: Yoga mat", SubjectVec: yogaMat},
+		{Msgid: 9002, Groupid: 1, Msgtype: "Offer", Subject: "OFFER: Bike helmet", SubjectVec: bikeHelmet},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	server := mockSidecarReturning(t, queryVec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	defer embedding.SetSidecarURL("")
+
+	results, err := message.VectorSearch("white goods", 20, nil, "", 0, 0, 0, 0)
+	require.NoError(t, err)
+
+	found := map[uint64]bool{}
+	for _, r := range results {
+		found[r.Msgid] = true
+	}
+
+	// Core regression: the old 0.65 floor returned ONE result for "white
+	// goods" on Jos's group; at 0.45 the recent clearly-related posts
+	// (cosines ≥ 0.45) must all surface alongside the literal match.
+	assert.True(t, found[1001], "Whirlpool fridge freezer (cos 0.47) must be returned — dropped at 0.65, recovered at 0.45")
+	assert.True(t, found[1004], "OFFER: fridge (cos 0.45) must be returned — dropped at 0.65, recovered at 0.45")
+	assert.True(t, found[1005], "literal 'white goods' item (cos 0.80) must be returned")
+
+	// Clear noise baselines must NOT leak in — the point of lowering is
+	// to capture signal, not to empty the filter.
+	assert.False(t, found[9001], "Yoga mat (cos 0.39) must stay filtered")
+	assert.False(t, found[9002], "Bike helmet (cos 0.38) must stay filtered")
+
+	// The literal phrase match should rank first — keyword boost +
+	// highest subject cosine. Protects against future regressions where
+	// noise reorders the strong signal.
+	require.NotEmpty(t, results)
+	assert.Equal(t, uint64(1005), results[0].Msgid, "literal 'white goods' match should rank first")
+
+	// Before the fix, results for "white goods" on the test data would
+	// contain only msgid 1005 (cos 0.80); after the fix we expect the
+	// strong-cluster items above.
+	assert.GreaterOrEqualf(t, len(results), 3,
+		"expected the literal match plus at least 2 clearly-related recent posts to surface — got %d. Before the fix this returned 1 (literal only).",
+		len(results))
+}
+
+// TestVectorSearchSingularQueryReturnsLiteralMatch reproduces observable (B)
+// of Discourse 9585.18: "'white good' didn't find anything." Singular form
+// scores ~0.64 against the literal "white goods" document — below the old
+// 0.65 cutoff, above the new 0.45 one. The test guards against a future
+// threshold raise from silently re-breaking singular/plural queries.
+func TestVectorSearchSingularQueryReturnsLiteralMatch(t *testing.T) {
+	queryVec := unitVecWithCosine(1.0)
+	literal := unitVecWithCosine(0.64) // measured white good vs white goods
+	noise := unitVecWithCosine(0.38)
+
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: 2001, Groupid: 1, Msgtype: "Offer", Subject: "OFFER: white goods (Anytown)", SubjectVec: literal},
+		{Msgid: 9003, Groupid: 1, Msgtype: "Offer", Subject: "OFFER: Lego set", SubjectVec: noise},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	server := mockSidecarReturning(t, queryVec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	defer embedding.SetSidecarURL("")
+
+	results, err := message.VectorSearch("white good", 10, nil, "", 0, 0, 0, 0)
+	require.NoError(t, err)
+	require.NotEmpty(t, results, "singular 'white good' must not return zero results when a 0.64-cosine literal-phrase match exists")
+	assert.Equal(t, uint64(2001), results[0].Msgid)
+}

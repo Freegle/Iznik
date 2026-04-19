@@ -8,9 +8,32 @@ import (
 const keywordBoostWeight = 0.3
 
 // MinVectorScore is the minimum per-field cosine (subject OR body) to include
-// a result. nomic-embed-text-v1.5 normalized dot products: random noise ~0.50,
-// tangential ~0.60, genuine semantic matches 0.70+, exact 0.75+.
-const MinVectorScore = 0.65
+// a result. Calibrated against the production sidecar (nomic-embed-text-v1.5,
+// quantized, Matryoshka-truncated to 256 dim) with asymmetric prefixes —
+// "search_query: …" on the query and "search_document: …" on the stored
+// subject/body. Measured on the subjects from Discourse 9585.18 (Jos —
+// query "white goods"):
+//
+//	unrelated noise ("Yoga mat", "Bike helmet", "Lego set") …… 0.35–0.46
+//	tangentially related ("Washing machine", "Dishwasher") … 0.40–0.48
+//	clearly related ("Whirlpool … fridge freezer", "fridge") … 0.45–0.55
+//	literal phrase match ("white goods")                   … 0.70–0.85
+//
+// Matryoshka 256-dim truncation compresses the dynamic range by ~0.15
+// vs the published full-1024-dim figures, so real-world scores run
+// lower than the original comment suggested. The previous 0.65 floor
+// silently dropped every tangentially-related item for domain-category
+// queries like "white goods" → "fridge/washing machine/dishwasher",
+// which is exactly what Jos observed: only one item (literal phrase
+// match in its body) cleared the cutoff, and four live recent
+// appliance posts — all measured at 0.40–0.47 — were hidden. Singular
+// "white good" dropped below the floor even against the literal match
+// (0.64), producing zero results.
+//
+// 0.45 keeps semantic matches in the candidate pool while still
+// filtering obvious noise; the keyword boost and subject/body tiering
+// continue to order literal matches first.
+const MinVectorScore = 0.45
 
 type scoredResult struct {
 	result SearchResult
