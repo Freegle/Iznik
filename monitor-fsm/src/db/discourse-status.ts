@@ -66,15 +66,18 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
 
   const workingLabel = (b: DiscourseBugRow): string => {
     const key = `${b.topic}.${b.post}`
-    if (b.state === 'investigating') return 'being investigated'
-    if (b.state === 'open') return 'to look at'
-    // fix-queued — nuance based on whether reporter has actually been told
-    if (postedKeys.has(key)) return 'fix sent — awaiting retest'
-    if (queuedKeys.has(key)) return 'fix ready — reply awaiting review'
-    return 'fix ready — drafting reply'
+    if (b.state === 'investigating') return 'investigating'
+    if (b.state === 'open') return 'new'
+    // fix-queued — collapsed to one of two: "fixed" or "retesting" (reply posted).
+    return postedKeys.has(key) ? 'retesting' : 'fixed'
   }
 
   const escapeCell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ')
+
+  // Small wrappers keep the table visually tight — IDs are reference handles
+  // (you shouldn't need to read them often), status labels are secondary info.
+  const tiny = (s: string) => `<small>${s}</small>`
+  const small = (s: string) => `<small>${s}</small>`
 
   // Bugs being worked on — rendered as a table for scannability.
   const workingStates = ['open', 'investigating', 'fix-queued']
@@ -86,7 +89,7 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
     for (const b of working) {
       const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
       const excerpt = escapeCell((b.excerpt ?? '').slice(0, 160))
-      lines.push(`| \`${bugId(b)}\` | [${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${workingLabel(b)} | ${prLink(b.pr_number)} |`)
+      lines.push(`| ${tiny('`' + bugId(b) + '`')} | [${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${small(workingLabel(b))} | ${small(prLink(b.pr_number))} |`)
     }
     lines.push('')
   }
@@ -99,8 +102,8 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
     for (const b of recentFixed) {
       const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
       const excerpt = escapeCell((b.excerpt ?? '').slice(0, 160))
-      const status = b.deployed_at ? 'live' : 'fix on the way to the live site'
-      lines.push(`| \`${bugId(b)}\` | [${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${status} | ${prLink((b as DiscourseBugRow).pr_number ?? null)} |`)
+      const status = b.deployed_at ? 'live' : 'deploying'
+      lines.push(`| ${tiny('`' + bugId(b) + '`')} | [${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${small(status)} | ${small(prLink((b as DiscourseBugRow).pr_number ?? null))} |`)
     }
     lines.push('')
   }
@@ -115,7 +118,7 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
       const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
       const excerpt = escapeCell((b.excerpt ?? '').slice(0, 160))
       const reason = escapeCell(b.reason ?? '—')
-      lines.push(`| \`${bugId(b)}\` | [${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${reason} |`)
+      lines.push(`| ${tiny('`' + bugId(b) + '`')} | [${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${small(reason)} |`)
     }
     lines.push('')
   }
