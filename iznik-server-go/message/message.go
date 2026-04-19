@@ -2745,10 +2745,13 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon) VALUES (?, ?, 1, NOW(), ?)",
 		newUserID, email, canon)
 
-	// Create session.
+	// Create session. series must be a random numeric value (bigint
+	// unsigned); using userID collided across every session for the same
+	// user and defeated UNIQUE KEY (id, series, token).
+	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
 	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-		newUserID, newUserID, token)
+		newUserID, series, token)
 
 	// Use token to find our specific session (avoids race with concurrent requests).
 	var sessionID uint64

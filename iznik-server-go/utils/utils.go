@@ -2,6 +2,7 @@ package utils
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"math"
 	"regexp"
@@ -182,6 +183,19 @@ func RandomHex(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// RandomUint64 generates a non-zero random uint64 drawn from crypto/rand.
+// Used for numeric columns such as sessions.series (bigint unsigned) where
+// passing a hex string caused MySQL to silently coerce to 0 or MAX uint64.
+func RandomUint64() uint64 {
+	var b [8]byte
+	rand.Read(b[:])
+	v := binary.BigEndian.Uint64(b[:])
+	if v == 0 {
+		v = 1
+	}
+	return v
 }
 
 // NilIfEmpty returns nil if the string is empty, for use in SQL NULL inserts.

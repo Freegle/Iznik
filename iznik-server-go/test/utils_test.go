@@ -104,6 +104,19 @@ func TestRandomHexDistinct(t *testing.T) {
 	assert.NotEqual(t, a, b)
 }
 
+func TestRandomUint64NonZeroAndDistinct(t *testing.T) {
+	// Must never return 0 (0 is a sentinel for "no persistent token" in
+	// auth.go:46) and must be well-distributed across the uint64 range so
+	// collisions per user are cryptographically improbable.
+	seen := map[uint64]bool{}
+	for i := 0; i < 64; i++ {
+		v := utils.RandomUint64()
+		assert.NotEqual(t, uint64(0), v)
+		seen[v] = true
+	}
+	assert.Equal(t, 64, len(seen), "RandomUint64 must produce distinct values across calls")
+}
+
 func TestNilIfEmpty(t *testing.T) {
 	assert.Nil(t, utils.NilIfEmpty(""))
 	assert.Equal(t, "hello", utils.NilIfEmpty("hello"))
