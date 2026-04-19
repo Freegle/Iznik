@@ -202,6 +202,28 @@ describe('DevConnectScreen', () => {
 
       expect(wrapper.text()).toContain('timed out')
     })
+
+    it('uses fallback message when non-abort error has no message', async () => {
+      // Covers the `|| 'Could not reach the server'` branch of
+      // testConnection's catch: error.name !== 'AbortError' AND
+      // error.message is falsy.
+      global.fetch.mockRejectedValue(new Error(''))
+
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      const input = wrapper.find('.b-form-input')
+      await input.setValue('http://nomessage.url:3002')
+
+      const connectBtn = wrapper
+        .findAll('.b-button')
+        .find((b) => b.text().includes('Connect'))
+      await connectBtn.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.status-card.error').exists()).toBe(true)
+      expect(wrapper.text()).toContain('Could not reach the server')
+    })
   })
 
   describe('manual connection', () => {
@@ -372,6 +394,33 @@ describe('DevConnectScreen', () => {
       await flushPromises()
 
       expect(BarcodeScanner.stopScan).toHaveBeenCalled()
+    })
+
+    it('reports failure when scanner throws', async () => {
+      // Covers scanQR()'s catch block: console.error + errorMessage +
+      // connectionStatus='failed' when the scanner rejects (e.g. camera
+      // hardware failure on a real device).
+      const errorSpy = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+      BarcodeScanner.checkPermission.mockResolvedValue({ granted: true })
+      BarcodeScanner.startScan.mockRejectedValue(new Error('camera busy'))
+
+      const wrapper = createWrapper()
+      await flushPromises()
+
+      const scanBtn = wrapper
+        .findAll('.b-button')
+        .find((b) => b.text().includes('Scan QR'))
+      await scanBtn.trigger('click')
+      await flushPromises()
+
+      expect(errorSpy).toHaveBeenCalledWith('QR scan error:', expect.any(Error))
+      expect(wrapper.text()).toContain('Failed to scan QR code: camera busy')
+      expect(wrapper.find('.status-card.error').exists()).toBe(true)
+      expect(BarcodeScanner.stopScan).toHaveBeenCalled()
+
+      errorSpy.mockRestore()
     })
   })
 
