@@ -247,6 +247,7 @@ func AddDonation(c *fiber.Ctx) error {
 			"user_name":  name,
 			"user_email": preferredEmail,
 			"amount":     req.Amount,
+			"source":     "external",
 		}); err != nil {
 			log.Printf("Failed to queue donate-external email for user %d: %v", req.UserID, err)
 		}

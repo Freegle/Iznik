@@ -138,6 +138,7 @@ func handleChargeSucceeded(c *fiber.Ctx, event *stripe.Event) error {
 			"user_id":    userID,
 			"user_email": userEmail,
 			"amount":     amount,
+			"source":     "stripe",
 		}); err != nil {
 			log.Printf("[StripeIPN] Failed to queue thank-you email: %v", err)
 		}

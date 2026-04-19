@@ -267,6 +267,7 @@ class ProcessBackgroundTasksCommand extends Command
             userId: (int) $data['user_id'],
             userEmail: $data['user_email'],
             amount: (float) $data['amount'],
+            source: $data['source'] ?? DonateExternalMail::SOURCE_EXTERNAL,
         );
 
         if ($shouldSpool) {
