@@ -72,7 +72,7 @@ func TestVectorSearchBasic(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	assert.NotEmpty(t, results)
 	assert.Equal(t, uint64(1), results[0].Msgid)
@@ -95,7 +95,7 @@ func TestVectorSearchKeywordBoost(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	// Sofa should be boosted to first by keyword match in subject
@@ -116,7 +116,7 @@ func TestVectorSearchWithMsgtypeFilter(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, err := message.VectorSearch("sofa", 10, nil, "Offer", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("sofa", 10, nil, "Offer", 0, 0, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, uint64(20), results[0].Msgid)
@@ -136,7 +136,7 @@ func TestVectorSearchWithGroupFilter(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, err := message.VectorSearch("sofa", 10, []uint64{200}, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("sofa", 10, []uint64{200}, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, uint64(31), results[0].Msgid)
@@ -159,9 +159,92 @@ func TestVectorSearchLimit(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, err := message.VectorSearch("item", 3, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("item", 3, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, results, 3)
+}
+
+// TestVectorSearchStatsDiagnostics pins the diagnostic fields that the handler
+// logs to Loki on every call. These exist so that when a repeat identical
+// query returns a different result set (Dee, Discourse 9594), we can tell from
+// the logs which stage drifted — sidecar embedding, store size, or top
+// candidate cosines. Keep this test honest if you edit VectorStats.
+func TestVectorSearchStatsDiagnostics(t *testing.T) {
+	queryVec := makeTestVec(1.0)
+	strongMatch := makeTestVec(1.001)   // cosine ≈ 1 with queryVec → above threshold
+	antiparallel := makeAntiparallelVec(1.0) // cosine ≈ -1 → below threshold
+
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "strong", SubjectVec: strongMatch},
+		{Msgid: 2, Groupid: 100, Msgtype: "Offer", Subject: "noise", SubjectVec: antiparallel},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	server := mockSidecarReturning(t, queryVec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	defer embedding.SetSidecarURL("")
+
+	_, stats, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, stats.StoreSize, "StoreSize must reflect embedding.Global.Count()")
+	assert.Equal(t, 2, stats.Candidates, "both entries pass pre-filters, so Candidates=2")
+	assert.Equal(t, 1, stats.SubjectTier, "only the strong match should clear MinVectorScore")
+	assert.Equal(t, 1, stats.Dropped, "antiparallel entry is below threshold on both fields")
+	assert.Greater(t, stats.TopSubjectCos, float32(message.MinVectorScore),
+		"TopSubjectCos must capture the strong-match cosine even when most entries fail")
+	assert.Greater(t, stats.EmbedMs, float64(0), "EmbedMs must be populated")
+	assert.Greater(t, stats.TotalMs, float64(0), "TotalMs must be populated")
+	assert.NotEmpty(t, stats.QueryVecFP, "QueryVecFP must fingerprint the sidecar response")
+	assert.Empty(t, stats.Error, "successful call should not set Error")
+}
+
+// TestVectorSearchStatsDeterministicFingerprint confirms the query embedding
+// fingerprint is stable for identical inputs against a deterministic sidecar —
+// the property we rely on to detect sidecar-induced non-determinism in Loki.
+func TestVectorSearchStatsDeterministicFingerprint(t *testing.T) {
+	queryVec := makeTestVec(1.0)
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "x", SubjectVec: makeTestVec(1.001)},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	server := mockSidecarReturning(t, queryVec[:])
+	defer server.Close()
+	embedding.SetSidecarURL(server.URL)
+	defer embedding.SetSidecarURL("")
+
+	_, s1, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
+	require.NoError(t, err)
+	_, s2, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
+	require.NoError(t, err)
+	_, s3, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
+	require.NoError(t, err)
+
+	assert.Equal(t, s1.QueryVecFP, s2.QueryVecFP)
+	assert.Equal(t, s2.QueryVecFP, s3.QueryVecFP)
+}
+
+// TestVectorSearchStatsOnEmbedError confirms that when EmbedQuery fails, the
+// stats carry the error text and the handler can emit a diagnostic log
+// regardless of the failure path.
+func TestVectorSearchStatsOnEmbedError(t *testing.T) {
+	embedding.Global.SetEntries([]embedding.Entry{
+		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "x", SubjectVec: makeTestVec(1.0)},
+	})
+	defer embedding.Global.SetEntries(nil)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := server.URL
+	server.Close()
+	embedding.SetSidecarURL(url)
+	defer embedding.SetSidecarURL("")
+
+	_, stats, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
+	assert.Error(t, err)
+	assert.NotEmpty(t, stats.Error, "stats.Error must be populated when EmbedQuery fails")
+	assert.Equal(t, 1, stats.StoreSize, "StoreSize is known even when embedding fails")
 }
 
 func TestVectorSearchSidecarError(t *testing.T) {
@@ -178,7 +261,7 @@ func TestVectorSearchSidecarError(t *testing.T) {
 	embedding.SetSidecarURL(url)
 	defer embedding.SetSidecarURL("")
 
-	_, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
+	_, _, err := message.VectorSearch("sofa", 10, nil, "", 0, 0, 0, 0)
 	assert.Error(t, err)
 }
 

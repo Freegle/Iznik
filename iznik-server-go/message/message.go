@@ -1071,8 +1071,12 @@ func Search(c *fiber.Ctx) error {
 		// Silently switching match models makes repeat queries return different
 		// result sets — the non-determinism Dee reported (Discourse 9594).
 		if searchmode == "vector" && embedding.Global.Count() > 0 {
-			vectorResults, err := VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
+			vectorResults, stats, err := VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
 				float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+			fallbackTaken := err != nil
+
+			logVectorSearch(term, groupids, msgtype, myid, searchmode, len(vectorResults), fallbackTaken, stats)
+
 			if err != nil {
 				fmt.Printf("Vector search failed, falling back to keyword: %v\n", err)
 			} else {
