@@ -2770,7 +2770,7 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 
 	persistent := fiber.Map{
 		"id":     sessionID,
-		"series": newUserID,
+		"series": series,
 		"token":  token,
 		"userid": newUserID,
 	}

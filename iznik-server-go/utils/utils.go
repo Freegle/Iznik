@@ -185,13 +185,21 @@ func RandomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-// RandomUint64 generates a non-zero random uint64 drawn from crypto/rand.
-// Used for numeric columns such as sessions.series (bigint unsigned) where
-// passing a hex string caused MySQL to silently coerce to 0 or MAX uint64.
+// RandomUint64 generates a non-zero random unsigned integer drawn from
+// crypto/rand, constrained to 53 bits so the value round-trips through
+// JSON without losing precision. JavaScript's Number.MAX_SAFE_INTEGER is
+// 2^53-1; a raw uint64 encoded as a JSON number gets rounded on the
+// client, so the persistent token it returns via Authorization2 no
+// longer matches sessions.series in the DB and the lookup silently
+// fails. Used for numeric columns such as sessions.series (bigint
+// unsigned) where passing a hex string caused MySQL to silently coerce
+// to 0 or MAX uint64.
 func RandomUint64() uint64 {
 	var b [8]byte
 	rand.Read(b[:])
-	v := binary.BigEndian.Uint64(b[:])
+	// Mask to 53 bits: values in [0, 2^53-1] survive a JSON round-trip
+	// through a JavaScript Number without rounding.
+	v := binary.BigEndian.Uint64(b[:]) & ((uint64(1) << 53) - 1)
 	if v == 0 {
 		v = 1
 	}

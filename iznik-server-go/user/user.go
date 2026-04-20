@@ -1872,7 +1872,7 @@ func PutUser(c *fiber.Ctx) error {
 		"id":     newUserID,
 		"persistent": fiber.Map{
 			"id":     sessionID,
-			"series": newUserID,
+			"series": series,
 			"token":  token,
 			"userid": newUserID,
 		},
