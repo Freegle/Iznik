@@ -38,6 +38,7 @@ type VectorStats struct {
 	TopBodyCos    float32 // max BodyCos across the candidates
 	QueryVecFP    string  // fingerprint of the returned embedding — identical query should yield identical fingerprint
 	Error         string  // populated if EmbedQuery failed (otherwise "")
+	TopK          string  // top-5 candidates serialized as "msgid:subjCos:bodyCos:subject|..." for threshold tuning
 }
 
 type scoredResult struct {
@@ -141,6 +142,26 @@ func VectorSearch(term string, limit int, groupids []uint64, msgtype string,
 	stats.SubjectTier = len(subjectTier)
 	stats.BodyTier = len(bodyTier)
 
+	// Capture top-5 candidates by max(subjectCos,bodyCos) for threshold tuning.
+	// Cheap — vecResults is already the top-K chosen by the store.
+	var topK strings.Builder
+	kMax := 5
+	if len(vecResults) < kMax {
+		kMax = len(vecResults)
+	}
+	for i := 0; i < kMax; i++ {
+		vr := vecResults[i]
+		if i > 0 {
+			topK.WriteString("|")
+		}
+		subj := vr.Subject
+		if len(subj) > 60 {
+			subj = subj[:60]
+		}
+		fmt.Fprintf(&topK, "%d:%.4f:%.4f:%s", vr.Msgid, vr.SubjectCos, vr.BodyCos, subj)
+	}
+	stats.TopK = topK.String()
+
 	sortByScoreDesc(subjectTier)
 	sortByScoreDesc(bodyTier)
 
@@ -210,6 +231,7 @@ func logVectorSearch(term string, groupids []uint64, msgtype string, userID uint
 		"top_body_cos":    stats.TopBodyCos,
 		"query_vec_fp":    stats.QueryVecFP,
 		"min_score":       MinVectorScore,
+		"top_k":           stats.TopK,
 	}
 	if stats.Error != "" {
 		data["error"] = stats.Error
