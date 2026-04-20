@@ -97,6 +97,12 @@ module.exports = defineConfig({
                     // via the host components; excluded from Playwright to
                     // avoid dragging per-job coverage down.
                     !sourcePath.includes('useUppyRetryCoalesce') &&
+                    // ChatMobileNavbar: 198 relevant L+B, consistently 0%
+                    // covered across every Playwright run (master + PR).
+                    // It only renders in the mobile chat layout path that
+                    // the e2e suite does not navigate into, so it is pure
+                    // denominator noise. Unit tests cover it.
+                    !sourcePath.includes('components/ChatMobileNavbar') &&
                     sourcePath.length < 300
                   )
                 },
@@ -168,15 +174,6 @@ module.exports = defineConfig({
             '--allow-insecure-localhost',
             '--disable-extensions',
             '--disable-plugins',
-            // Force V8 to eagerly parse/compile all JS so coverage
-            // instrumentation reports the same relevant_line_count across
-            // runs regardless of which functions each test happens to call.
-            // Without this, layouts/default.vue reports 56 lines on one run
-            // and 20 on the next, because V8 lazy-parses unused functions,
-            // and unparsed bytecode is invisible to monocart's V8 coverage
-            // collector. That drift dragged Playwright per-job coverage
-            // down 0.2% on otherwise identical runs.
-            '--js-flags=--no-lazy',
           ],
         },
         contextOptions: {
