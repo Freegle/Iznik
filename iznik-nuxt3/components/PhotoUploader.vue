@@ -181,6 +181,7 @@ import Tus from '@uppy/tus'
 import Compressor from '@uppy/compressor'
 import PhotoCard from './PhotoCard.vue'
 import OurUploadedImage from '~/components/OurUploadedImage.vue'
+import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
 import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
 import { useMobileStore } from '~/stores/mobile'
@@ -707,19 +708,10 @@ onMounted(() => {
     .use(Compressor)
 
   uppy.value.on('complete', handleUppySuccess)
-  let retryScheduled = false
+  const scheduleRetry = createRetryCoalescer(() => uppy.value)
   uppy.value.on('error', (error) => {
     console.error('Upload error, retry', error)
-    if (retryScheduled) return
-    retryScheduled = true
-    queueMicrotask(() => {
-      retryScheduled = false
-      try {
-        uppy.value?.retryAll()
-      } catch (retryError) {
-        console.error('retryAll() failed (Uppy state corruption)', retryError)
-      }
-    })
+    scheduleRetry()
   })
 })
 

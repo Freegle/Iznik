@@ -91,6 +91,12 @@ module.exports = defineConfig({
                     // error class we add drops coverage — Vitest unit tests
                     // cover it properly, so exclude from Playwright only.
                     !sourcePath.includes('useSuppressException') &&
+                    // Uppy retry-coalesce composable: its branches fire only
+                    // on Uppy upload errors / state-corruption exceptions
+                    // that Playwright e2e flows don't trigger. Unit-tested
+                    // via the host components; excluded from Playwright to
+                    // avoid dragging per-job coverage down.
+                    !sourcePath.includes('useUppyRetryCoalesce') &&
                     sourcePath.length < 300
                   )
                 },

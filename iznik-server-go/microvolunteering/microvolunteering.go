@@ -71,6 +71,12 @@ const (
 	AIImageReviewQuorum  = 5
 )
 
+// CoinFlip picks between AI image review and approved message review when both
+// are available. Overridable from tests so both branches can be exercised
+// deterministically; otherwise `rand.Intn(2)` leaves the fallback paths
+// covered only probabilistically, which flips Coveralls' per-job status check.
+var CoinFlip = func() int { return rand.Intn(2) }
+
 // GetChallenge returns a micro-volunteering challenge for the logged-in user
 // @Summary Get micro-volunteering challenge
 // @Description Returns a micro-volunteering challenge for the logged-in user
@@ -175,7 +181,7 @@ func GetChallenge(c *fiber.Ctx) error {
 	wantAIImage := contains(challengeTypes, ChallengeAIImageReview)
 
 	if wantCheckMessage && wantAIImage {
-		if rand.Intn(2) == 0 {
+		if CoinFlip() == 0 {
 			if challenge := getAIImageReviewChallenge(db, userID); challenge != nil {
 				return c.JSON(challenge)
 			}

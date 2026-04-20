@@ -60,6 +60,7 @@ import ResizeObserver from 'resize-observer-polyfill'
 import hasOwn from 'object.hasown'
 import * as Sentry from '@sentry/browser'
 import { uid } from '~/composables/useId'
+import { createRetryCoalescer } from '~/composables/useUppyRetryCoalesce'
 import { useMobileStore } from '@/stores/mobile' // APP...
 import { useRuntimeConfig } from '#app'
 import { useImageStore } from '~/stores/image'
@@ -374,7 +375,7 @@ async function choosePhoto() {
 }
 
 let uppyTimer = null
-let retryScheduled = false
+const scheduleRetry = createRetryCoalescer(() => uppy)
 
 onMounted(() => {
   if (isApp.value) return
@@ -471,16 +472,7 @@ onMounted(() => {
       clearTimeout(uppyTimer)
       uppyTimer = null
     }
-    if (retryScheduled) return
-    retryScheduled = true
-    queueMicrotask(() => {
-      retryScheduled = false
-      try {
-        uppy.retryAll()
-      } catch (retryError) {
-        console.error('retryAll() failed (Uppy state corruption)', retryError)
-      }
-    })
+    scheduleRetry()
   })
   uppy.on('upload-retry', (fileID) => {
     console.log('upload retried:', fileID)
