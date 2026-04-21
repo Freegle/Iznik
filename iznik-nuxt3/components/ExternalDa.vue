@@ -373,11 +373,13 @@ function rippleRendered(rendered) {
   }
 }
 
-// v-bind in scoped <style> emits the returned value directly into CSS, so
-// it must be a valid CSS value — not a boolean. `pointer-events: true` is
-// invalid and triggers "Invalid value used for CSS binding" warnings.
+// When the ad (or its fallback — Jobs list, donate banner) is rendered we
+// must allow pointer events so the link/ad is clickable. When the slot is
+// still an empty placeholder (adShown=false) we set `none` so clicks pass
+// through to any content behind. The previous mapping was inverted, which
+// blocked clicks on Jobs links and footer ads once an ad resolved.
 const passClicks = computed(() => {
-  return adShown.value ? 'none' : 'auto'
+  return adShown.value ? 'auto' : 'none'
 })
 
 onBeforeUnmount(() => {
