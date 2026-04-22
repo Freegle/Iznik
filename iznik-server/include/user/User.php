@@ -775,6 +775,8 @@ class User extends Entity
         # Invalidate cache.
         $this->emails = NULL;
 
+        error_log("TN-SYNC-TRACE [WRITE] table=users_emails op=delete where=userid={$this->id},email={$email}");
+
         $rc = $this->dbhm->preExec("DELETE FROM users_emails WHERE userid = ? AND email = ?;",
             [$this->id, $email]);
         return ($rc);

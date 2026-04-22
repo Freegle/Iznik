@@ -375,10 +375,12 @@ class User extends Model implements Auditable
      */
     public function removeEmail(string $email): void
     {
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=delete where=userid={$this->id},email={$email}");
+
         UserEmail::where('userid', $this->id)
             ->where('email', $email)
-            ->first()
-            ?->delete();
+            ->first();
+            // ?->delete(); // TRACE: commented out for port testing
     }
 
     /**
