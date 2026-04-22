@@ -113,6 +113,22 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     const desktopLogout = page.locator('#menu-option-logout')
     const mobileLogout = page.locator('text=Logout').filter({ visible: true })
 
+    // Briefly wait for a logout button to become visible. Right after
+    // signUpViaHomepage / loginViaHomepage the navbar may still be hydrating,
+    // and the synchronous isVisible() check below would miss it — causing a
+    // fall-through into the expensive gotoAndVerify('/') path that can hang
+    // for 200+ seconds under parallel CI load and burn the test budget
+    // (symptom: test-reply-flow-existing-user.spec.js 3.1 timing out at 20m
+    // after "No logout button visible").
+    await Promise.race([
+      desktopLogout
+        .waitFor({ state: 'visible', timeout: 10000 })
+        .catch(() => {}),
+      mobileLogout
+        .waitFor({ state: 'visible', timeout: 10000 })
+        .catch(() => {}),
+    ])
+
     const isDesktopVisible = await desktopLogout.isVisible().catch(() => false)
     const isMobileVisible = await mobileLogout.isVisible().catch(() => false)
 
