@@ -41,7 +41,75 @@ test.describe('Repost Group Change', () => {
         '.message-card:has(.notice--warning) button:has-text("Edit & Resend")'
       )
       .first()
-    await expect(editResendBtn).toBeVisible({ timeout: timeouts.ui.appearance })
+    try {
+      await expect(editResendBtn).toBeVisible({
+        timeout: timeouts.ui.appearance,
+      })
+    } catch (err) {
+      const diag = await page.evaluate((rejectedId) => {
+        const cards = Array.from(document.querySelectorAll('.message-card'))
+        const warning = document.querySelectorAll('.notice--warning')
+        const rejectedCard = document.querySelector(
+          `[data-message-id="${rejectedId}"]`
+        )
+        return {
+          totalCards: cards.length,
+          cardIds: cards
+            .map((c) => c.getAttribute('data-message-id'))
+            .filter(Boolean),
+          noticeWarningCount: warning.length,
+          rejectedCardFound: !!rejectedCard,
+          rejectedCardHTML: rejectedCard
+            ? rejectedCard.innerHTML.slice(0, 2000)
+            : null,
+        }
+      }, testEnv.rejected?.offer)
+      console.log('=== REPOST DIAGNOSTIC ON FAIL ===')
+      console.log(JSON.stringify(diag, null, 2))
+      const apiResp = await page
+        .request.get(
+          `http://apiv2.localhost/api/user/${testEnv.user.id}/message?active=true`
+        )
+        .catch((e) => ({ status: () => 'ERR', json: async () => e.message }))
+      console.log(
+        'api /user/:id/message status:',
+        typeof apiResp.status === 'function' ? apiResp.status() : 'unknown'
+      )
+      if (typeof apiResp.json === 'function') {
+        const body = await apiResp.json().catch(() => null)
+        console.log(
+          'rejected entry in list:',
+          JSON.stringify(
+            (body || []).find(
+              (m) => String(m.id) === String(testEnv.rejected?.offer)
+            ) || null
+          )
+        )
+      }
+      const msgResp = await page
+        .request.get(
+          `http://apiv2.localhost/api/message/${testEnv.rejected?.offer}`
+        )
+        .catch((e) => ({ status: () => 'ERR', json: async () => e.message }))
+      if (typeof msgResp.json === 'function') {
+        const m = await msgResp.json().catch(() => null)
+        if (m) {
+          console.log('/message/:id location present:', !!m.location)
+          console.log('/message/:id item present:', !!m.item)
+          console.log(
+            '/message/:id groups:',
+            JSON.stringify(
+              (m.groups || []).map((g) => ({
+                id: g.groupid,
+                collection: g.collection,
+              }))
+            )
+          )
+        }
+      }
+      console.log('=== END REPOST DIAGNOSTIC ===')
+      throw err
+    }
     console.log('Found rejected message with Edit & Resend button')
     await editResendBtn.click()
     console.log('Clicked Edit & Resend')
