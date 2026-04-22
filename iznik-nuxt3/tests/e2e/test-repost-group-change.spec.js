@@ -39,9 +39,9 @@ test.describe('Repost Group Change', () => {
     const messageCard = page.locator(
       `.message-card[data-message-id="${testEnv.rejected.offer}"]`
     )
-    const editResendBtn = messageCard.locator(
-      'button:has-text("Edit & Resend")'
-    )
+    const editResendBtn = messageCard
+      .locator('button:has-text("Edit & Resend")')
+      .first()
     await expect(editResendBtn).toBeVisible({ timeout: timeouts.ui.appearance })
     console.log('Found rejected message with Edit & Resend button')
     await editResendBtn.click()

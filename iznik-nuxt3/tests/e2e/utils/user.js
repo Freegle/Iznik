@@ -164,6 +164,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       await page.gotoAndVerify('/', {
         timeout: timeouts.navigation.initial,
         waitUntil: 'domcontentloaded',
+        maxRetries: 1,
       })
       console.log('Navigated to homepage')
     }
@@ -184,6 +185,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       await page.gotoAndVerify('/', {
         timeout: timeouts.navigation.initial,
         waitUntil: 'domcontentloaded',
+        maxRetries: 1,
       })
     }
     return page
@@ -319,9 +321,11 @@ async function signUpViaHomepage(
   // 10m test budget. The sign-in button is in SSR-rendered HTML and
   // waitForEnabledSignInButton polls for hydration separately, so we don't
   // need `load`. Same reasoning as logoutIfLoggedIn above.
+  // Use maxRetries: 1 to prevent up to 3 retries × 202s timeout = ~10m per call.
   await page.gotoAndVerify('/', {
     timeout: timeouts.navigation.initial,
     waitUntil: 'domcontentloaded',
+    maxRetries: 1,
   })
 
   // Wait for page to be fully loaded with JavaScript
