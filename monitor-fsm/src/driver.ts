@@ -28,7 +28,70 @@ import {
   type WorkflowDefinition,
   type WorkflowInstance,
 } from 'ai-flower'
-import { ClaudeCodeAdapter } from 'ai-flower/adapters/claude-code'
+
+// Local Claude Code adapter — forwards `model` to the SDK's query() so we can
+// run the FSM brain on Haiku (each step is a small, structured JSON decision
+// that doesn't need Opus-grade reasoning). The upstream
+// `ai-flower/adapters/claude-code` accepts a `model` option but silently drops
+// it before calling `query()`, so we inline our own.
+interface LocalAdapterOptions {
+  maxTokens?: number
+  model?: string
+}
+class LocalClaudeCodeAdapter implements LLMAdapter {
+  private readonly options: LocalAdapterOptions
+  constructor(options: LocalAdapterOptions = {}) {
+    this.options = options
+    if (!process.env.CLAUDECODE) {
+      console.warn(
+        '[LocalClaudeCodeAdapter] CLAUDECODE env not set — running outside a Claude Code session will fail.',
+      )
+    }
+  }
+  async call(system: string, user: string): Promise<string> {
+    // @ts-ignore — optional peer dependency
+    const { query } = await import('@anthropic-ai/claude-agent-sdk')
+    const collected: string[] = []
+    let final: string | null = null
+    // Sonnet/Opus aggressively call tools by default; with allowedTools=[] and
+    // maxTurns=1 that yields subtype=error_max_turns with no text. Prepend an
+    // explicit directive to produce text-only output so the first turn returns
+    // a JSON string directly.
+    const systemWithDirective =
+      'IMPORTANT: You have NO tools available. Do not attempt to call Bash, Read, Grep, or any other tool. Respond ONLY with the required JSON output as plain text. No tool use, no preamble, no code blocks.\n\n' +
+      system
+    const gen = query({
+      prompt: user,
+      options: {
+        systemPrompt: systemWithDirective,
+        maxTurns: 2,
+        allowedTools: [],
+        permissionMode: 'default',
+        ...(this.options.model ? { model: this.options.model } : {}),
+      },
+    })
+    for await (const msg of gen as AsyncIterable<any>) {
+      if (msg.type === 'result') {
+        if (typeof msg.result === 'string') final = msg.result
+        else if (Array.isArray(msg.content)) {
+          final = msg.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('')
+        }
+        if (!final) {
+          console.error('[LocalClaudeCodeAdapter] result msg had no extractable text; msg keys=' + Object.keys(msg).join(',') + ' subtype=' + msg.subtype + ' is_error=' + msg.is_error + ' stop_reason=' + msg.stop_reason)
+        }
+        break
+      }
+      if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
+        for (const b of msg.message.content) {
+          if (b.type === 'text') collected.push(b.text)
+        }
+      }
+    }
+    const text = final ?? collected.join('') ?? ''
+    if (!text) throw new Error('LocalClaudeCodeAdapter: empty response from query() (model=' + (this.options.model || 'default') + ')')
+    return text
+  }
+}
 
 import { actions } from './actions/index.js'
 import { getDb, startIteration, endIteration } from './db/index.js'
@@ -277,7 +340,13 @@ async function main() {
   const storage = new JSONFileStorage(INSTANCE_STORE)
   await storage.saveWorkflow(definition)
 
-  const innerAdapter = new ClaudeCodeAdapter({ maxTokens: 8192 })
+  // Driver brain runs on Haiku by default — every step is a small JSON
+  // decision with a fixed shape, and Haiku handles that at a fraction of the
+  // cost of Opus. Override with FSM_DRIVER_MODEL env var (e.g. 'sonnet' or
+  // 'opus') if a tough state consistently picks wrong transitions.
+  const driverModel = process.env.FSM_DRIVER_MODEL || 'haiku'
+  console.log(`[driver] brain model: ${driverModel}`)
+  const innerAdapter = new LocalClaudeCodeAdapter({ maxTokens: 8192, model: driverModel })
   // Retry-aware wrapper. ai-flower retries on validation failure by calling us
   // again with the same (system, user) pair. We detect that repetition and
   // prepend an escalating JSON-only preamble with a worked example. The

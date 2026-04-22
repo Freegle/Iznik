@@ -154,9 +154,44 @@ for i, tid in enumerate(sorted(topic_ids)):
         continue
 
     title = td.get('title', '')
-    posts = td.get('post_stream', {}).get('posts', [])
+    posts = list(td.get('post_stream', {}).get('posts', []))
     if not posts:
         continue
+    # /t/{id}.json returns ONLY the first 20 posts. If the topic is longer
+    # than that, everything after post 20 is invisible — a tracked topic
+    # with cursor=20 and highest_post_number=198 would see zero new posts
+    # forever. Paginate via /t/{id}/{post_number}.json which returns a
+    # window starting at that post. Walk forward in steps of 20 until we
+    # cover up to highest_post_number.
+    highest_in_topic = td.get('highest_post_number') or td.get('posts_count') or 0
+    if highest_in_topic and tid in tracked_cursors and cursor + 1 <= highest_in_topic:
+        seen_post_numbers = {p.get('post_number', 0) for p in posts}
+        start = max(cursor + 1, 21)
+        page_guard = 0
+        while start <= highest_in_topic and page_guard < 30:
+            page_guard += 1
+            try:
+                pd = fetch(f'https://discourse.ilovefreegle.org/t/{tid}/{start}.json')
+            except Exception as e:
+                sys.stderr.write(f'topic {tid} page {start} failed: {e}\\n')
+                break
+            page_posts = pd.get('post_stream', {}).get('posts', [])
+            if not page_posts:
+                break
+            added = 0
+            for pp in page_posts:
+                pn = pp.get('post_number', 0)
+                if pn not in seen_post_numbers:
+                    posts.append(pp)
+                    seen_post_numbers.add(pn)
+                    added += 1
+            page_highest = max((p.get('post_number', 0) for p in page_posts), default=start)
+            if page_highest <= start:
+                break  # no forward progress
+            start = page_highest + 1
+            if added == 0:
+                break
+            time.sleep(0.4)  # be kind to Discourse while paginating
     highest = max(p.get('post_number', 0) for p in posts)
     topics_seen[tid] = {'title': title, 'latestPostNumber': highest}
 
@@ -179,9 +214,29 @@ for i, tid in enumerate(sorted(topic_ids)):
             'isOP': pn == 1,
         })
 
-# Sort by topic then post number so TRIAGE sees them in reading order
-posts_out.sort(key=lambda p: (p['topic'], p['postNumber']))
-print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
+# Cap posts per topic to keep TRIAGE prompts within the LLM context window.
+# Catch-up scenarios (a tracked thread with hundreds of missed posts after a
+# pagination bug fix, or a quiet monitor restart) can otherwise produce
+# 400+ posts in a single tick and bust Haiku's context. We always keep the
+# NEWEST N per topic because those are the actionable ones — the cursor
+# still advances to highest_post_number (via topicsSeen), so older posts
+# aren't re-fetched next tick; they're just dropped from this batch.
+PER_TOPIC_CAP = 40
+by_topic = {}
+for p in posts_out:
+    by_topic.setdefault(p['topic'], []).append(p)
+capped = []
+dropped = 0
+for tid, plist in by_topic.items():
+    plist.sort(key=lambda p: p['postNumber'])
+    if len(plist) > PER_TOPIC_CAP:
+        dropped += len(plist) - PER_TOPIC_CAP
+        plist = plist[-PER_TOPIC_CAP:]  # keep newest
+    capped.extend(plist)
+capped.sort(key=lambda p: (p['topic'], p['postNumber']))
+if dropped:
+    sys.stderr.write(f'[fetch_discourse] capped to {PER_TOPIC_CAP}/topic — dropped {dropped} older posts (cursor still advances)\\n')
+print(json.dumps({'posts': capped, 'topicsSeen': topics_seen}))
 `
       const { stdout, stderr, code } = await sh('python3', ['-c', script])
       if (code !== 0) throw new Error(`fetch_discourse failed: ${stderr}`)
@@ -616,13 +671,14 @@ print(urllib.request.urlopen(req).read().decode())
 
   {
     name: 'delegate_to_coder',
-    description: 'Spawn a headless Claude Code session to perform an actual code change (diagnose, edit files, run tests, commit, push, open PR). The embedded FSM LLM has no tool access — this is how a FIX_* state actually produces a PR. Params: {task: string, repoCwd?: string, timeoutSec?: number}. Returns {stdout, exitCode, prNumber?}. The subagent must emit a line `PR_NUMBER=<n>` on stdout to be picked up.',
+    description: 'Spawn a headless Claude Code session to perform an actual code change (diagnose, edit files, run tests, commit, push, open PR). The embedded FSM LLM has no tool access — this is how a FIX_* state actually produces a PR. Params: {task: string, repoCwd?: string, timeoutSec?: number, model?: string}. Returns {stdout, exitCode, prNumber?}. The subagent must emit a line `PR_NUMBER=<n>` on stdout to be picked up. Use `model` to steer cost: "opus" for hard diagnostic/architectural fixes (default); "sonnet" for routine TDD fixes once the bug is understood; "haiku" for mechanical follow-ups (nursing tests green, trivial CI fixes, coverage top-ups). If unsure, omit — the default picks a safe model.',
     paramsSchema: {
       type: 'object',
       properties: {
         task: { type: 'string', description: 'Full task description for the subagent: what to fix, how, acceptance criteria, exact repo path, whether to push to master or a feature branch.' },
         repoCwd: { type: 'string', description: 'Working directory. Defaults to /home/edward/FreegleDockerWSL.' },
         timeoutSec: { type: 'number', description: 'Max seconds. Default 1200 (20 min).' },
+        model: { type: 'string', description: 'Claude model alias or full ID to pass via `claude --model`. "opus" | "sonnet" | "haiku" or full IDs like "claude-sonnet-4-6". Default: $FSM_CODER_DEFAULT_MODEL or "sonnet".' },
       },
       required: ['task'],
     },
@@ -630,6 +686,12 @@ print(urllib.request.urlopen(req).read().decode())
       const task = params.task as string
       const repoCwd = (params.repoCwd as string) ?? '/home/edward/FreegleDockerWSL'
       const timeoutSec = (params.timeoutSec as number) ?? 1200
+      // Model selection: caller can request a specific tier per task. If
+      // omitted, fall back to FSM_CODER_DEFAULT_MODEL or "sonnet". Sonnet is
+      // a reasonable default for agentic TDD work; opus only when explicitly
+      // asked for. Use haiku for mechanical nursing where the fix is already
+      // understood.
+      const model = (params.model as string | undefined) || process.env.FSM_CODER_DEFAULT_MODEL || 'sonnet'
       const fullPrompt = `${task}
 
 ==== CRITICAL EXECUTION CONTRAINTS — READ FIRST ====
@@ -679,6 +741,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       const SILENCE_TOOL_MS = 1_800_000   // 30 min while a tool is in flight
       const SILENCE_IDLE_MS = 180_000     // 3 min between events when idle
       const HARD_CAP_MS = Math.max(timeoutSec * 1000, 3_600_000)
+      console.log(`[delegate_to_coder] spawning claude --model ${model} in ${repoCwd}`)
       const { spawn } = await import('node:child_process')
       type KillReason = 'tool-silence' | 'idle-silence' | 'hardCap' | null
       const result = await new Promise<{ stdout: string; stderr: string; textStream: string; code: number; killReason: KillReason; lastTool: string | null }>((resolve) => {
@@ -691,6 +754,7 @@ If you omit the marker, your work is considered failed regardless of what actual
             '--include-partial-messages',
             '--permission-mode', 'acceptEdits',
             '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob',
+            '--model', model,
           ],
           { cwd: repoCwd, stdio: ['pipe', 'pipe', 'pipe'] },
         )
