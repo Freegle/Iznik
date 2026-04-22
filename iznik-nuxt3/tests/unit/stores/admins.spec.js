@@ -84,6 +84,22 @@ describe('admins store', () => {
     })
   })
 
+  it('approve sends pending as boolean false (not numeric 0)', async () => {
+    const store = useAdminsStore()
+    store.config = {}
+    mockFetch.mockResolvedValue({ id: 7, pending: false })
+
+    await store.approve({ id: 7 })
+
+    expect(mockPatch).toHaveBeenCalledWith({
+      id: 7,
+      pending: false,
+    })
+    // Go API decodes `pending` into *bool, so a numeric 0 would 400.
+    const call = mockPatch.mock.calls[0][0]
+    expect(typeof call.pending).toBe('boolean')
+  })
+
   it('delete removes from list', async () => {
     const store = useAdminsStore()
     store.config = {}

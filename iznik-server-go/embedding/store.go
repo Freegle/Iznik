@@ -13,16 +13,6 @@ import (
 // EmbeddingDim is 256-dim Matryoshka truncation of nomic-embed-text-v1.5.
 const EmbeddingDim = 256
 
-// SubjectWeight and BodyWeight combine the two per-message cosine scores into
-// the final ranking score. Subject dominates because the subject line is the
-// high-signal "what is this item" field; the body disambiguates but is noisy
-// (boilerplate, location text, tags). When body is absent we fall back to the
-// pure subject cosine (not 0.7×subject) so the scoring scale stays consistent.
-const (
-	SubjectWeight float32 = 0.7
-	BodyWeight    float32 = 0.3
-)
-
 // Entry holds one message's subject (and optional body) embedding plus metadata.
 type Entry struct {
 	Msgid      uint64
@@ -149,22 +139,28 @@ func decodeFloats(raw []byte, dst []float32) {
 	}
 }
 
-// VectorSearchResult from vector search.
+// VectorSearchResult from vector search. SubjectCos and BodyCos are the pure
+// per-field cosines; HasBody distinguishes "body exists but cosine is 0" from
+// "no body embedding" (BodyCos is 0 in both cases). The caller decides how to
+// tier/order results — this struct carries the raw signal.
 type VectorSearchResult struct {
-	Msgid   uint64    `json:"id"`
-	Groupid uint64    `json:"groupid"`
-	Msgtype string    `json:"type"`
-	Lat     float64   `json:"lat"`
-	Lng     float64   `json:"lng"`
-	Score   float32   `json:"score"`
-	Subject string    `json:"-"` // Used for hybrid keyword scoring, not serialized
-	Arrival time.Time `json:"-"`
+	Msgid      uint64    `json:"id"`
+	Groupid    uint64    `json:"groupid"`
+	Msgtype    string    `json:"type"`
+	Lat        float64   `json:"lat"`
+	Lng        float64   `json:"lng"`
+	SubjectCos float32   `json:"subjectCos"`
+	BodyCos    float32   `json:"bodyCos"`
+	HasBody    bool      `json:"hasBody"`
+	Subject    string    `json:"-"` // Used for hybrid keyword scoring, not serialized
+	Arrival    time.Time `json:"-"`
 }
 
-// Search performs brute-force cosine similarity. Each entry contributes a
-// subject cosine; if a body embedding is present the final score is the
-// weighted combination 0.7*subject + 0.3*body. Bodyless entries keep their
-// pure subject cosine so the scale matches.
+// Search performs brute-force cosine similarity on every entry and returns the
+// top-K by max(subjectCos, bodyCos). Returning both cosines separately lets the
+// caller order subject-matches ahead of body-matches (what users expect:
+// a literal "table" in the subject should come before a message that only
+// mentions "table" in the body).
 func (s *Store) Search(query []float32, limit int, msgtype string, groupids []uint64,
 	swlat, swlng, nelat, nelng float32) []VectorSearchResult {
 
@@ -179,8 +175,11 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 	hasBoxFilter := nelat != 0 || nelng != 0 || swlat != 0 || swlng != 0
 
 	type scored struct {
-		idx   int
-		score float32
+		idx        int
+		subjectCos float32
+		bodyCos    float32
+		hasBody    bool
+		rankScore  float32 // max(subjectCos, bodyCos) — used only for top-K selection
 	}
 
 	results := make([]scored, 0, len(s.entries))
@@ -210,19 +209,27 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 			subjectCos += query[j] * e.SubjectVec[j]
 		}
 
-		score := subjectCos
-		if e.BodyVec != nil {
-			var bodyCos float32
+		rankScore := subjectCos
+		var bodyCos float32
+		hasBody := e.BodyVec != nil
+		if hasBody {
 			for j := 0; j < EmbeddingDim; j++ {
 				bodyCos += query[j] * e.BodyVec[j]
 			}
-			score = SubjectWeight*subjectCos + BodyWeight*bodyCos
+			if bodyCos > rankScore {
+				rankScore = bodyCos
+			}
 		}
 
-		results = append(results, scored{idx: i, score: score})
+		results = append(results, scored{
+			idx: i, subjectCos: subjectCos, bodyCos: bodyCos,
+			hasBody: hasBody, rankScore: rankScore,
+		})
 	}
 
-	// Sort top-K by score descending (selection sort — fine for N < 1000)
+	// Top-K by rankScore descending (selection sort — fine for N < 1000).
+	// Caller re-orders into subject/body tiers; this step only bounds the
+	// working set of candidates that are strong on at least one field.
 	n := len(results)
 	if n > limit {
 		n = limit
@@ -230,7 +237,7 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 	for i := 0; i < n; i++ {
 		maxIdx := i
 		for j := i + 1; j < len(results); j++ {
-			if results[j].score > results[maxIdx].score {
+			if results[j].rankScore > results[maxIdx].rankScore {
 				maxIdx = j
 			}
 		}
@@ -244,14 +251,16 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 	for i, r := range results {
 		e := &s.entries[r.idx]
 		out[i] = VectorSearchResult{
-			Msgid:   e.Msgid,
-			Groupid: e.Groupid,
-			Msgtype: e.Msgtype,
-			Lat:     e.Lat,
-			Lng:     e.Lng,
-			Score:   r.score,
-			Subject: e.Subject,
-			Arrival: e.Arrival,
+			Msgid:      e.Msgid,
+			Groupid:    e.Groupid,
+			Msgtype:    e.Msgtype,
+			Lat:        e.Lat,
+			Lng:        e.Lng,
+			SubjectCos: r.subjectCos,
+			BodyCos:    r.bodyCos,
+			HasBody:    r.hasBody,
+			Subject:    e.Subject,
+			Arrival:    e.Arrival,
 		}
 	}
 

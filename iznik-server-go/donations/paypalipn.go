@@ -156,6 +156,7 @@ func PayPalIPN(c *fiber.Ctx) error {
 				"user_id":    userID,
 				"user_email": userEmail,
 				"amount":     amount,
+				"source":     "paypal",
 			}); err != nil {
 				log.Printf("[PayPalIPN] Failed to queue thank-you email: %v", err)
 			}

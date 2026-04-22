@@ -85,6 +85,12 @@ export default defineNuxtPlugin(async (nuxtApp) => {
           'TypeError: NetworkError when attempting to fetch resource.',
           'TypeError: Unable to preload',
           'Window closed',
+
+          // Freestar third-party ad JS (ftUtils.js getPlacementPosition,
+          // getInnerDimensions). Belt-and-braces: also dropped by
+          // suppressException via beforeSend.
+          'getPlacementPosition',
+          'getInnerDimensions',
         ],
         integrations: [
           new Integrations.BrowserTracing({

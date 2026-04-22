@@ -26,5 +26,35 @@ export function suppressException(err) {
     return true
   }
 
+  // Freestar (third-party ad provider) ftUtils.js throws a range of null-property
+  // TypeErrors from cross-origin iframes — getPlacementPosition reads
+  // (this.isPlacementXdom?t:t.parent).document with t.parent=null (NUXT3-CES),
+  // getInnerDimensions reads t.display with t=null (NUXT3-D2H). Match on the
+  // Freestar signature (ftUtils.js filename or known Freestar function names in
+  // the stack) rather than the generic message, so we don't mask real bugs in
+  // our own code.
+  if (
+    err.stack?.includes('ftUtils.js') ||
+    err.stack?.includes('getPlacementPosition') ||
+    err.stack?.includes('getInnerDimensions')
+  ) {
+    console.log('Freestar ftUtils - suppress exception')
+    return true
+  }
+
+  // Browser-native NotReadableError from file/camera/media reads. Sentry issue
+  // NUXT3-D2P (568 events / 357 users). Typically fired on mobile Safari/iOS
+  // when the user denies permission, an iCloud Photo is not yet downloaded,
+  // the file disappears mid-read, the device is low on memory, or the user
+  // cancels a file picker. Benign user-environment error, not a Freegle bug.
+  // Match on the full inner phrase so unrelated NotReadableErrors still report.
+  if (
+    err.message?.includes('NotReadableError: The I/O read operation failed') ||
+    err.toString?.().includes('NotReadableError: The I/O read operation failed')
+  ) {
+    console.log('NotReadableError I/O - suppress exception')
+    return true
+  }
+
   return false
 }

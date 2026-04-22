@@ -101,9 +101,9 @@ func TestStoreSearchSortOrder(t *testing.T) {
 	assert.Equal(t, uint64(2), results[1].Msgid)
 	// Different (msgid 1) should be last
 	assert.Equal(t, uint64(1), results[2].Msgid)
-	// Scores should be descending
-	assert.Greater(t, results[0].Score, results[1].Score)
-	assert.Greater(t, results[1].Score, results[2].Score)
+	// SubjectCos should be descending
+	assert.Greater(t, results[0].SubjectCos, results[1].SubjectCos)
+	assert.Greater(t, results[1].SubjectCos, results[2].SubjectCos)
 }
 
 func TestStoreCount(t *testing.T) {
@@ -202,33 +202,79 @@ func TestVecToBytes(t *testing.T) {
 	}
 }
 
-// --- Hybrid subject+body vector search ---
+// --- Subject + body cosines returned separately for tiering ---
 
-func TestStoreSearchCombinesSubjectAndBodyWithWeights(t *testing.T) {
-	// Query perfectly matches subjectA, and body vector happens to match query
-	// exactly too. Combined score should be ~1.0 (= w_s*1 + w_b*1).
-	// Another entry has subject=query exactly but body=noise. Combined should
-	// be lower than the first.
+// makeOrthogonalTo returns a unit vector orthogonal to ref. makeVec patterns
+// all collapse near the all-ones direction (dot ≈0.97 between any two),
+// making them useless as "noise" — we have to Gram-Schmidt against the
+// specific reference to get a genuinely zero-cosine vector.
+func makeOrthogonalTo(ref [EmbeddingDim]float32) [EmbeddingDim]float32 {
+	var v [EmbeddingDim]float32
+	for i := 0; i < EmbeddingDim; i++ {
+		if i%2 == 0 {
+			v[i] = 1.0
+		} else {
+			v[i] = -1.0
+		}
+	}
+	var dot float32
+	for i := 0; i < EmbeddingDim; i++ {
+		dot += v[i] * ref[i]
+	}
+	for i := 0; i < EmbeddingDim; i++ {
+		v[i] -= dot * ref[i]
+	}
+	var norm float32
+	for i := 0; i < EmbeddingDim; i++ {
+		norm += v[i] * v[i]
+	}
+	norm = float32(math.Sqrt(float64(norm)))
+	for i := 0; i < EmbeddingDim; i++ {
+		v[i] /= norm
+	}
+	return v
+}
+
+func TestStoreSearchReturnsBothCosinesSeparately(t *testing.T) {
+	// Store exposes subjectCos and bodyCos independently so the caller can
+	// tier (subject-matches first, body-matches later) instead of blending.
 	s := &Store{}
 	query := makeVec(1.0)
-	noise := makeVec(10.0)
+	noise := makeOrthogonalTo(query)
 
 	s.entries = []Entry{
-		{Msgid: 1, Msgtype: "Offer", Subject: "match with helpful body",
+		{Msgid: 1, Msgtype: "Offer", Subject: "subject match + body match",
 			SubjectVec: query, BodyVec: vecPtr(query)},
-		{Msgid: 2, Msgtype: "Offer", Subject: "match with noisy body",
+		{Msgid: 2, Msgtype: "Offer", Subject: "subject match + noisy body",
 			SubjectVec: query, BodyVec: vecPtr(noise)},
+		{Msgid: 3, Msgtype: "Offer", Subject: "noisy subject + body match",
+			SubjectVec: noise, BodyVec: vecPtr(query)},
 	}
 
 	results := s.Search(query[:], 10, "", nil, 0, 0, 0, 0)
-	assert.Len(t, results, 2)
-	assert.Equal(t, uint64(1), results[0].Msgid, "helpful body should outrank noisy body")
-	assert.Greater(t, results[0].Score, results[1].Score)
+	assert.Len(t, results, 3)
+
+	byId := make(map[uint64]VectorSearchResult)
+	for _, r := range results {
+		byId[r.Msgid] = r
+	}
+
+	assert.InDelta(t, float32(1.0), byId[1].SubjectCos, 1e-5)
+	assert.InDelta(t, float32(1.0), byId[1].BodyCos, 1e-5)
+	assert.True(t, byId[1].HasBody)
+
+	assert.InDelta(t, float32(1.0), byId[2].SubjectCos, 1e-5)
+	assert.InDelta(t, float32(0), byId[2].BodyCos, 1e-5,
+		"msg 2 body is orthogonal — bodyCos must be near zero")
+
+	assert.InDelta(t, float32(0), byId[3].SubjectCos, 1e-5,
+		"msg 3 subject is orthogonal — subjectCos must be near zero")
+	assert.InDelta(t, float32(1.0), byId[3].BodyCos, 1e-5)
 }
 
-func TestStoreSearchUsesSubjectOnlyWhenBodyAbsent(t *testing.T) {
-	// Body absent → score should equal the pure subject cosine, not get
-	// penalised by the BodyWeight coefficient.
+func TestStoreSearchMarksBodyAbsent(t *testing.T) {
+	// A bodyless entry must report HasBody=false and BodyCos=0 so the caller
+	// never tries to rescue it on body similarity.
 	s := &Store{}
 	query := makeVec(1.0)
 
@@ -238,42 +284,38 @@ func TestStoreSearchUsesSubjectOnlyWhenBodyAbsent(t *testing.T) {
 
 	results := s.Search(query[:], 10, "", nil, 0, 0, 0, 0)
 	assert.Len(t, results, 1)
-	// Dot product of normalised vector with itself = 1.0
-	assert.InDelta(t, float32(1.0), results[0].Score, 1e-5,
-		"subject-only entry must score at the pure subject cosine (no weight penalty)")
+	assert.InDelta(t, float32(1.0), results[0].SubjectCos, 1e-5)
+	assert.False(t, results[0].HasBody)
+	assert.Equal(t, float32(0), results[0].BodyCos)
 }
 
-func TestStoreSearchBodyBoostsWeakSubjectMatch(t *testing.T) {
-	// Subject cosine is weak (0.6) but body matches the query exactly (1.0).
-	// Combined = 0.7*0.6 + 0.3*1.0 = 0.72 → above MinVectorScore threshold.
-	// A subject-only entry with the same 0.6 would score 0.6 and be cut by the
-	// threshold in vectorsearch.go. This is the whole point of the hybrid.
+func TestStoreSearchTopKUsesMaxOfCosines(t *testing.T) {
+	// Top-K candidate selection uses max(subjectCos, bodyCos) so that an
+	// entry strong on only one field still reaches the caller, where it can
+	// be tiered appropriately.
 	s := &Store{}
-
-	// Build a subject vector that gives dot(query)=0.6 approximately.
-	// Mix of query direction and orthogonal noise.
 	query := makeVec(1.0)
-	orthogonal := makeVec(100.0)
-	var weakSubject [EmbeddingDim]float32
-	var norm float32
-	for i := 0; i < EmbeddingDim; i++ {
-		weakSubject[i] = 0.6*query[i] + 0.8*orthogonal[i]
-		norm += weakSubject[i] * weakSubject[i]
-	}
-	norm = float32(math.Sqrt(float64(norm)))
-	for i := 0; i < EmbeddingDim; i++ {
-		weakSubject[i] /= norm
-	}
+	noise := makeOrthogonalTo(query)
 
 	s.entries = []Entry{
-		{Msgid: 1, Msgtype: "Offer", SubjectVec: weakSubject, BodyVec: vecPtr(query)},
-		{Msgid: 2, Msgtype: "Offer", SubjectVec: weakSubject, BodyVec: nil},
+		// weak subject, no body — should NOT make top-2
+		{Msgid: 1, Msgtype: "Offer", SubjectVec: noise, BodyVec: nil},
+		// strong subject, no body — makes top-2
+		{Msgid: 2, Msgtype: "Offer", SubjectVec: query, BodyVec: nil},
+		// weak subject, strong body — makes top-2 via body
+		{Msgid: 3, Msgtype: "Offer", SubjectVec: noise, BodyVec: vecPtr(query)},
 	}
 
-	results := s.Search(query[:], 10, "", nil, 0, 0, 0, 0)
+	results := s.Search(query[:], 2, "", nil, 0, 0, 0, 0)
 	assert.Len(t, results, 2)
-	assert.Equal(t, uint64(1), results[0].Msgid, "body match should boost entry 1 above entry 2")
-	assert.Greater(t, results[0].Score, results[1].Score)
+
+	ids := map[uint64]bool{}
+	for _, r := range results {
+		ids[r.Msgid] = true
+	}
+	assert.True(t, ids[2], "strong-subject entry should be in top-2")
+	assert.True(t, ids[3], "strong-body entry should be in top-2")
+	assert.False(t, ids[1], "weak-on-both entry should be dropped")
 }
 
 func TestStoreLoadReadsSubjectAndBodyColumns(t *testing.T) {

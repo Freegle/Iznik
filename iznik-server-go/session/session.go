@@ -21,7 +21,47 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
+	"gorm.io/gorm"
 )
+
+// FetchEmailHealth returns the incoming and outgoing email alert flags
+// used by the moderator/admin work badge. Only flagged during daytime
+// hours (07:00-22:00 UTC) — outside that window both values are zero.
+// Extracted so it can be unit-tested with an explicit hour, making Go
+// coverage for this block deterministic regardless of CI wall-clock time.
+func FetchEmailHealth(db *gorm.DB, hour int) (emailin, emailout int64) {
+	if hour < 7 || hour >= 22 {
+		return 0, 0
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		// Incoming: alert if zero platform=0 chat messages in last 2 hours.
+		var inCount int64
+		db.Raw(`SELECT COUNT(*) FROM chat_messages
+			WHERE platform = 0 AND date >= DATE_SUB(NOW(), INTERVAL 2 HOUR)`).Scan(&inCount)
+		if inCount == 0 {
+			emailin = 1
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		// Outgoing: alert if fewer than 10 emails sent in last hour.
+		var outCount int64
+		db.Raw(`SELECT COUNT(*) FROM email_tracking
+			WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)`).Scan(&outCount)
+		if outCount < 10 {
+			emailout = 1
+		}
+	}()
+
+	wg.Wait()
+	return emailin, emailout
+}
 
 // fetchDiscourseStats fetches notification and topic counts from the Discourse API.
 // Returns nil if Discourse is not configured or the API call fails.
@@ -1167,33 +1207,11 @@ func GetSession(c *fiber.Ctx) error {
 			}()
 
 			// --- Email health: incoming and outgoing alerts (admin/support) ---
-			// Only flag during daytime hours (07:00-22:00 UTC).
-			nowHour := time.Now().Hour()
-			if nowHour >= 7 && nowHour < 22 {
-				wg2.Add(1)
-				go func() {
-					defer wg2.Done()
-					// Incoming: alert if zero platform=0 chat messages in last 2 hours.
-					var inCount int64
-					db.Raw(`SELECT COUNT(*) FROM chat_messages
-						WHERE platform = 0 AND date >= DATE_SUB(NOW(), INTERVAL 2 HOUR)`).Scan(&inCount)
-					if inCount == 0 {
-						emailin = 1
-					}
-				}()
-
-				wg2.Add(1)
-				go func() {
-					defer wg2.Done()
-					// Outgoing: alert if fewer than 10 emails sent in last hour.
-					var outCount int64
-					db.Raw(`SELECT COUNT(*) FROM email_tracking
-						WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)`).Scan(&outCount)
-					if outCount < 10 {
-						emailout = 1
-					}
-				}()
-			}
+			wg2.Add(1)
+			go func() {
+				defer wg2.Done()
+				emailin, emailout = FetchEmailHealth(db, time.Now().Hour())
+			}()
 		}
 
 		wg2.Wait()

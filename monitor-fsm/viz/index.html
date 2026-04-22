@@ -1,0 +1,1922 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Freegle Monitor — FSM replay</title>
+<!--
+  Freegle Monitor FSM — visual replay (workshop-floor edition)
+  ============================================================
+  Self-contained HTML. Open in a browser; no build, no network.
+
+  Event schema (a flat list of timestamped objects, ms since iteration start):
+    { t, type, ...payload }
+
+  Supported event types (unchanged from prior version):
+    enter_state { state }
+    action      { state, action, ok, summary }
+    pickup_card { cardId, label, kind, detail? }
+    move_card   { cardId, toColumn }    // toColumn is a ZONE key now
+    gate        { passed, count }
+    pr_created  { number, title }
+    done        {}
+
+  Layout zones (replaces 10-column kanban):
+    Intake       — 5 gather states + TRIAGE (with 5-dot sub-progress)
+    Dispatch     — ROUTER (diamond)
+    CI Fix       — FIX_MASTER_CI workbench
+    Bug Fix      — FIX_DISCOURSE_BUG workbench
+    Sentry Fix   — FIX_SENTRY_ISSUE workbench
+    Coverage     — WRITE_COVERAGE shelf (folded into Gate zone header)
+    Gate         — COVERAGE_GATE (literal gate graphic)
+    Output       — WRAP_UP / SEND_EMAIL / SCHEDULE_NEXT / END conveyor
+
+  STATE_TO_ZONE controls mapping; applyEvent() drives walking + cards.
+-->
+<style>
+  :root{
+    --bg:#f6f1e7;
+    --board:#ece4d2;
+    --panel:#fffdf7;
+    --panel-border:#d7cdb4;
+    --ink:#2a2a32;
+    --muted:#6b6b76;
+    --accent:#ff8f6b;
+    --accent2:#6ec6c1;
+    --accent3:#b48ee0;
+    --shadow: 0 2px 0 rgba(0,0,0,.08), 0 6px 18px rgba(30,20,0,.08);
+    --intake:#ffe8c9;
+    --dispatch:#ffd9b3;
+    --ci:#ffd0d0;
+    --bug:#ffe6b0;
+    --sentry:#dcccff;
+    --gate:#ffeab0;
+    --output:#d5e8ff;
+    --done:#c8f0cf;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{
+    display:flex;align-items:center;gap:16px;padding:12px 20px;
+    background:linear-gradient(180deg,#fff5e8,#f6f1e7);
+    border-bottom:1px solid #d7cdb4;
+  }
+  header h1{margin:0;font-size:20px;letter-spacing:.2px}
+  header .subhead{display:flex;flex-direction:column;line-height:1.15}
+  header .caption{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+  header .grow{flex:1}
+  .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .btn{
+    font: inherit; padding:6px 12px; border-radius:999px;
+    border:1px solid #c2b89d; background:#fff; cursor:pointer;
+    box-shadow: 0 1px 0 rgba(0,0,0,.04);
+  }
+  .btn:hover{background:#fffbe9}
+  .btn.primary{background:var(--accent);color:white;border-color:transparent}
+  .btn.primary:hover{background:#ff7a52}
+  select, input[type=range]{font:inherit}
+  .time{font-variant-numeric: tabular-nums; color:var(--muted); min-width:110px; text-align:right}
+  .state-pill{
+    display:inline-block;font-size:10px;padding:2px 8px;border-radius:999px;
+    background:#fff2dd;border:1px solid #e4d3a6;color:#6a5726;margin-left:6px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .layout{
+    display:grid; grid-template-columns: 1fr 300px; gap:12px; padding:12px;
+    min-height: calc(100vh - 60px);
+  }
+  .board-wrap{
+    position:relative; overflow:hidden;
+    background: radial-gradient(ellipse at 50% 10%, #f4ecd6 0%, #e7dec4 70%, #ddd3b6 100%);
+    border-radius:18px; padding:14px; box-shadow: var(--shadow);
+  }
+  /* subtle floor grid to evoke a workshop floor */
+  .board-wrap::before{
+    content:""; position:absolute; inset:0; pointer-events:none; opacity:.35;
+    background-image:
+      linear-gradient(rgba(120,100,60,.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(120,100,60,.08) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  /* Workshop grid:
+     Row 1 (top):   Intake (wide)    | Dispatch (narrow diamond)
+     Row 2 (mid):   CI Fix | Bug Fix | Sentry Fix
+     Row 3 (gate):  Gate (wide)      | Output (wide)
+     Row 4 (bot):   Done (full width)
+     The character walks between zones using left/top coordinates.
+  */
+  .board{
+    position:relative;
+    display:grid;
+    grid-template-columns: 1.4fr 1fr 1fr 1fr;
+    grid-template-rows: minmax(170px,auto) minmax(180px,auto) minmax(150px,auto) minmax(160px,auto);
+    grid-template-areas:
+      "intake  intake   intake   dispatch"
+      "ci      ci       bug      sentry"
+      "gate    gate     output   output"
+      "done    done     done     done";
+    gap:14px;
+    min-height: 760px;
+  }
+  .zone{
+    position:relative;
+    background:var(--panel);
+    border:1px solid var(--panel-border);
+    border-radius:14px;
+    padding:12px 14px 14px;
+    display:flex; flex-direction:column;
+    transition: box-shadow .3s ease, border-color .3s ease;
+  }
+  .zone.active{
+    box-shadow: 0 0 0 3px rgba(255,143,107,.4), var(--shadow);
+    border-color: #e9a98c;
+  }
+  .zone-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+  .zone-head h2{margin:0;font-size:13px;letter-spacing:.4px;text-transform:uppercase;color:#4b4b55}
+  .zone-icon{
+    width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;
+    background:#f1ead6;border:1px solid #d7cdb4;
+  }
+  .zone-count{font-size:10px;color:var(--muted);background:#f1ead6;border-radius:999px;padding:2px 8px;font-variant-numeric:tabular-nums}
+  .zone-desc{font-size:11px;color:var(--muted);line-height:1.35;margin:2px 0 8px;max-width:520px}
+  .zone-body{position:relative;flex:1;min-height:110px}
+
+  /* Zone palettes */
+  #zone-intake   { background: linear-gradient(180deg, var(--intake) 0%, #fff7e6 55%); }
+  #zone-dispatch { background: linear-gradient(180deg, var(--dispatch) 0%, #fff2df 55%); grid-area: dispatch; align-items:stretch; }
+  #zone-ci       { background: linear-gradient(180deg, var(--ci) 0%, #fff0f0 55%); grid-area: ci; }
+  #zone-bug      { background: linear-gradient(180deg, var(--bug) 0%, #fff6dc 55%); grid-area: bug; }
+  #zone-sentry   { background: linear-gradient(180deg, var(--sentry) 0%, #f3eeff 55%); grid-area: sentry; }
+  #zone-gate     { background: linear-gradient(180deg, var(--gate) 0%, #fff5d6 55%); grid-area: gate; }
+  #zone-output   { background: linear-gradient(180deg, var(--output) 0%, #eef4ff 55%); grid-area: output; }
+  #zone-done     { background: linear-gradient(180deg, var(--done) 0%, #eaf7ec 55%); grid-area: done; }
+  #zone-intake   { grid-area: intake; }
+
+  /* Sub-progress dots under Intake */
+  .subdots{display:flex;gap:5px;margin-left:auto;align-items:center}
+  .subdots .step{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:58px}
+  .subdots .d{
+    width:9px;height:9px;border-radius:50%;
+    background:#e4dcc4;border:1px solid #b7ac89;
+  }
+  .subdots .step.on .d{background:var(--accent);border-color:var(--accent);box-shadow:0 0 6px rgba(255,143,107,.6)}
+  .subdots .step .lbl{font-size:9px;color:#8b7f5a;letter-spacing:.2px;text-transform:uppercase}
+  .subdots .step.on .lbl{color:#8a4c2f;font-weight:600}
+
+  /* Dispatch diamond */
+  .dispatch-diamond{
+    position:relative; width:120px; height:120px; margin:8px auto 0;
+    background: #ffe1b8; border:2px solid #d6a26b;
+    transform: rotate(45deg);
+    border-radius:14px;
+    box-shadow: inset 0 0 0 4px #fff3dc, var(--shadow);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .dispatch-diamond.active{
+    animation: dispatchSpin 3s linear infinite;
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 4px #ffe1d6, 0 0 0 4px rgba(255,143,107,.25), var(--shadow);
+  }
+  .dispatch-diamond .inner{
+    transform: rotate(-45deg);
+    font-size:10px; letter-spacing:.4px; text-transform:uppercase; color:#7a5424; font-weight:600;
+    text-align:center; line-height:1.25; padding:4px 6px;
+  }
+  @keyframes dispatchSpin {
+    0%{ transform: rotate(45deg); }
+    100%{ transform: rotate(405deg); }
+  }
+
+  /* Gate graphic */
+  .gate-graphic{
+    position:relative; display:flex; align-items:center; justify-content:center;
+    gap:4px; height:96px; margin-top:6px;
+  }
+  .gate-graphic .post{
+    width:10px; height:96px; background:linear-gradient(180deg,#9a7a48,#6b5230);
+    border-radius:3px; box-shadow: inset -2px 0 0 rgba(255,255,255,.15);
+  }
+  .gate-graphic .leaf{
+    width:60px; height:86px;
+    background:
+      repeating-linear-gradient(90deg, #c79565 0 10px, #a57b4d 10px 12px);
+    border:2px solid #6b5230; border-radius:4px;
+    transform-origin: 0 50%;
+    transition: transform .6s cubic-bezier(.5,0,.3,1);
+  }
+  .gate-graphic .leaf.right{ transform-origin: 100% 50%; }
+  .gate-graphic.open .leaf.left { transform: perspective(300px) rotateY(-75deg); }
+  .gate-graphic.open .leaf.right{ transform: perspective(300px) rotateY(75deg); }
+  .gate-graphic.closed .leaf{ transform: none; }
+  .gate-readout{
+    margin-top:8px;padding:6px 10px;border-radius:8px;
+    font-size:12px;background:#f3ecd5;border:1px dashed #c9bf9c;color:#615a42;text-align:center;
+    font-variant-numeric: tabular-nums;
+  }
+  .gate-readout.pass{background:#d9f4db;border-color:#8fc39a;color:#235c2d}
+  .gate-readout.fail{background:#ffd6d6;border-color:#d99696;color:#7a2424}
+
+  /* Output conveyor */
+  .conveyor{
+    position:relative; margin-top:8px; height:72px;
+    background:
+      linear-gradient(180deg, #c7d3e8 0%, #a8b7d2 100%);
+    border-radius:10px;
+    border:2px solid #7e8fad;
+    overflow:hidden;
+    display:flex; align-items:center;
+  }
+  .conveyor::before{
+    content:""; position:absolute; inset:0;
+    background: repeating-linear-gradient(90deg, rgba(255,255,255,.15) 0 14px, rgba(0,0,0,.1) 14px 18px);
+    animation: conveyorRoll 2s linear infinite;
+  }
+  .zone.active .conveyor::before{ animation-duration: .8s; }
+  @keyframes conveyorRoll { 0%{ background-position: 0 0 } 100%{ background-position: -64px 0 } }
+  .conveyor .stops{
+    position:relative; display:grid; grid-template-columns: repeat(4, 1fr); width:100%; padding:0 12px;
+    color:#273852; font-size:11px; font-weight:600; letter-spacing:.3px; text-transform:uppercase;
+    text-align:center;
+  }
+  .conveyor .stops span{
+    background: rgba(255,255,255,.75); border-radius:6px; padding:4px 6px; margin:0 4px;
+    border:1px solid #90a2c0;
+  }
+  .conveyor .stops span.cur{ background: #ffd9b3; border-color:#cd8f50; color:#6a3d18; }
+
+  /* Cards */
+  .card{
+    position:absolute; left:8px;
+    width: calc(50% - 12px);
+    min-height:64px; padding:8px 10px;
+    border-radius:10px; background:#fff;
+    box-shadow: var(--shadow);
+    font-size:12px; line-height:1.35;
+    transition: transform 1.1s cubic-bezier(.6,.05,.2,1),
+                top 1.1s cubic-bezier(.6,.05,.2,1),
+                left 1.1s cubic-bezier(.6,.05,.2,1),
+                width .5s ease,
+                opacity .4s ease;
+    transform-origin: 50% 100%;
+    border:1px solid rgba(0,0,0,.08);
+  }
+  .card[data-kind="discourse"]{
+    background:#eef5ff;
+    border-left:3px solid #6ec6c1;
+  }
+  .card[data-kind="discourse"] .quote{
+    margin-top:4px;
+    padding:5px 7px;
+    background:rgba(255,255,255,.75);
+    border-left:2px solid #6ec6c1;
+    border-radius:4px;
+    font-size:10.5px; color:#3a4a55; line-height:1.35;
+    font-style:italic;
+  }
+  .card[data-kind="discourse"] .byline{
+    font-size:10px; color:#4a6070;
+  }
+  .card[data-kind="discourse"] .byline strong{ color:#234550; }
+  .card[data-kind="discourse"] .footer{
+    margin-top:4px; font-size:9.5px; color:#6b6b76;
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .card[data-kind="discourse"] .tag{
+    background:#fff; border:1px solid #b6cfd0; color:#3a6b6b;
+    padding:1px 6px; border-radius:999px; font-size:9px;
+    text-transform:uppercase; letter-spacing:.3px;
+  }
+  .card .head{
+    display:flex; align-items:center; gap:6px; margin-bottom:3px;
+    border-bottom:1px dashed rgba(0,0,0,.12); padding-bottom:3px;
+  }
+  .card .badge{
+    display:inline-block; font-size:9px; letter-spacing:.5px; text-transform:uppercase;
+    padding:2px 6px; border-radius:4px; color:#3a2a1e; background:rgba(255,255,255,.55);
+    border:1px solid rgba(0,0,0,.18);
+  }
+  .card .cid{font-size:10px;color:#6b5d2e;margin-left:auto;font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;}
+  .card .label{font-weight:600; font-size:12px;}
+  .card .detail{font-size:10.5px;color:#55534c;margin-top:3px;line-height:1.35}
+  .card[data-kind="ci"]{background:#ffd9d9}
+  .card[data-kind="bug"]{background:#ffecb5}
+  .card[data-kind="sentry"]{background:#e2d3ff}
+  .card[data-kind="coverage"]{background:#cfeed3}
+  .card[data-kind="iteration"]{background:#d3e0ff}
+  .card.carried{
+    transform: translateY(-8px) rotate(-3deg);
+    box-shadow: 0 18px 30px rgba(0,0,0,.22);
+    z-index: 40;
+    width: 170px !important;
+  }
+  .card .pr{
+    position:absolute; top:-12px; right:-8px;
+    background:#2a9d5a;color:white;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:600;
+    box-shadow: 0 2px 6px rgba(0,0,0,.15);
+    animation: pop .6s ease;
+  }
+  @keyframes pop { 0%{transform:scale(.6);opacity:0} 100%{transform:scale(1);opacity:1} }
+
+  /* Iteration ribbon across board bottom */
+  .ribbon{
+    position:absolute; left:12px; right:12px; bottom:6px; height:4px;
+    background:linear-gradient(90deg, rgba(255,143,107,.1), rgba(255,143,107,.35), rgba(255,143,107,.1));
+    border-radius:2px; pointer-events:none;
+  }
+  .ribbon .marker{
+    position:absolute; top:-3px; height:10px; width:4px; background:var(--accent);
+    border-radius:3px;
+    transition: left .65s cubic-bezier(.6,.05,.2,1);
+    box-shadow: 0 0 8px rgba(255,143,107,.6);
+  }
+
+  /* ---------- Worker (cartoon) ---------- */
+  .worker{
+    position:absolute;
+    width:90px; height:140px;
+    left:0; top:0;
+    transition: left 1.4s cubic-bezier(.55,.05,.25,1),
+                top  1.4s cubic-bezier(.55,.05,.25,1),
+                transform .5s ease;
+    z-index: 30;
+    pointer-events:none;
+    transform-origin: 50% 100%;
+  }
+  .worker svg{ display:block; width:100%; height:100%; overflow:visible; }
+  .worker.walking .body{ animation: bodyBob .9s ease-in-out infinite; }
+  .worker.walking .leg-l{ animation: stepL .9s ease-in-out infinite; }
+  .worker.walking .leg-r{ animation: stepR .9s ease-in-out infinite; }
+  .worker.walking .arm-l{ animation: swingL .9s ease-in-out infinite; }
+  .worker.walking .arm-r{ animation: swingR .9s ease-in-out infinite; }
+  .worker.face-left svg{ transform: scaleX(-1); }
+  .worker.picking .arm-l{ animation: armPick 1.1s ease; }
+  .worker.picking .arm-r{ animation: armPick 1.1s ease; }
+  .worker.thinking .arm-r{ animation: armThink 2.2s ease-in-out infinite; }
+  .worker.celebrate{ animation: celebrate 1.2s ease; }
+  .worker.shrug .arm-l, .worker.shrug .arm-r{ animation: armShrug 1.5s ease; }
+  .worker .lids{ transition: opacity .12s ease; }
+  .worker.blink .lids{ opacity:1 }
+  .worker.blink .eyes{ opacity:0 }
+  @keyframes bodyBob { 0%,100%{transform: translateY(0)} 50%{transform: translateY(-2px)} }
+  @keyframes stepL { 0%,100%{ transform: rotate(-20deg) } 50%{ transform: rotate(20deg) } }
+  @keyframes stepR { 0%,100%{ transform: rotate(20deg) } 50%{ transform: rotate(-20deg) } }
+  @keyframes swingL{ 0%,100%{ transform: rotate(18deg) } 50%{ transform: rotate(-18deg) } }
+  @keyframes swingR{ 0%,100%{ transform: rotate(-18deg) } 50%{ transform: rotate(18deg) } }
+  @keyframes armPick{
+    0%{ transform: rotate(0) }
+    40%{ transform: rotate(-60deg) }
+    70%{ transform: rotate(-55deg) }
+    100%{ transform: rotate(0) }
+  }
+  @keyframes armThink{
+    0%,100%{ transform: rotate(-85deg) }
+    50%{ transform: rotate(-70deg) }
+  }
+  @keyframes celebrate{
+    0%,100%{ transform: translateY(0) rotate(0) }
+    30%{ transform: translateY(-18px) rotate(-4deg) }
+    60%{ transform: translateY(-6px) rotate(3deg) }
+  }
+  @keyframes armShrug{
+    0%,100%{ transform: rotate(0) }
+    50%{ transform: rotate(-50deg) }
+  }
+
+  /* thought bubble */
+  .bubble{
+    position:absolute;
+    left:-8px;
+    top:-54px;
+    max-width:230px;
+    padding:7px 10px;
+    border-radius:14px;
+    background:#fff;
+    border:2px solid #3a2a1e;
+    font-size:11px; color:#3a2a1e; line-height:1.3;
+    box-shadow: 0 4px 0 rgba(0,0,0,.08);
+    pointer-events:none;
+    opacity:0;
+    transform: translateY(6px);
+    transition: opacity .25s ease, transform .25s ease;
+  }
+  .bubble::after{
+    content:""; position:absolute; left:26px; bottom:-10px;
+    width:12px; height:12px; background:#fff;
+    border-right:2px solid #3a2a1e; border-bottom:2px solid #3a2a1e;
+    transform: rotate(45deg);
+  }
+  .bubble.show{ opacity:1; transform: translateY(0); }
+
+  /* Sidebar */
+  .sidebar{
+    background:#fffaf0;border:1px solid #e2d8be;border-radius:14px;padding:10px;
+    display:flex;flex-direction:column;gap:10px;
+    box-shadow: var(--shadow);
+    min-height: 300px;
+  }
+  .sidebar h3{margin:0;font-size:12px;letter-spacing:.5px;text-transform:uppercase;color:#5a523b}
+  .log{
+    flex:1; overflow:auto; background:#fdf7e6; border:1px dashed #d7cdb4; border-radius:10px;
+    padding:8px; font-size:11px; line-height:1.45; color:#3d3a2f;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    max-height: 360px;
+  }
+  .log .line{ padding:3px 0; border-bottom:1px dotted #e9dfbe }
+  .log .line:last-child{border-bottom:0}
+  .log .ok{color:#2a7f46}
+  .log .bad{color:#a43434}
+  .log .tstamp{color:#8a7e58}
+  .legend{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;font-size:11px;color:#4c4837}
+  .legend .sw{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:6px;vertical-align:middle}
+  .foot{font-size:10px;color:var(--muted)}
+  .scrub{ width:100%; accent-color: var(--accent); }
+
+  .done-banner{
+    position:absolute; right:14px; top:16px; background:#2a9d5a; color:white;
+    padding:6px 12px; border-radius:999px; font-size:12px; display:none;
+    box-shadow: var(--shadow); z-index: 50;
+  }
+  .done-banner.show{display:block; animation: pop .4s ease}
+
+  /* Done-zone stacked pile */
+  .done-pile{
+    position:relative;
+    width:100%;
+    min-height:110px;
+    padding:8px 4px 20px;
+  }
+  .done-pile.empty::before{
+    content:"Cards arrive here once finished. Click one to read what happened.";
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:11px; color:var(--muted);
+    pointer-events:none;
+  }
+  .done-stack{
+    position:relative;
+    display:flex;
+    gap:0;
+    padding-left:12px;
+    min-height:90px;
+    flex-wrap:wrap;
+  }
+  .done-card{
+    position:relative;
+    flex:0 0 auto;
+    width:210px;
+    min-height:80px;
+    margin-left:-128px; /* ~60% overlap */
+    padding:8px 10px;
+    background:#fff;
+    border-radius:10px;
+    border:1px solid rgba(0,0,0,.1);
+    box-shadow: 0 2px 0 rgba(0,0,0,.08), 0 6px 14px rgba(30,20,0,.1);
+    font-size:11.5px;
+    cursor:pointer;
+    transition: margin .35s ease, transform .35s ease, width .35s ease, box-shadow .25s ease;
+  }
+  .done-card:first-child{ margin-left:0; }
+  .done-card:hover{ transform: translateY(-3px); }
+  .done-card[data-kind="ci"]{ background:#ffd9d9 }
+  .done-card[data-kind="bug"]{ background:#ffecb5 }
+  .done-card[data-kind="sentry"]{ background:#e2d3ff }
+  .done-card[data-kind="coverage"]{ background:#cfeed3 }
+  .done-card[data-kind="iteration"]{ background:#d3e0ff }
+  .done-card[data-kind="discourse"]{ background:#eef5ff; border-left:3px solid #6ec6c1 }
+  .done-card .d-head{ display:flex; align-items:center; gap:6px; margin-bottom:3px }
+  .done-card .d-badge{
+    font-size:9px; letter-spacing:.5px; text-transform:uppercase;
+    padding:1px 6px; border-radius:4px; color:#3a2a1e;
+    background:rgba(255,255,255,.55); border:1px solid rgba(0,0,0,.18);
+  }
+  .done-card .d-label{ font-weight:600; font-size:11.5px; line-height:1.25 }
+  /* Modal for Done card detail */
+  .card-modal-backdrop{
+    position:fixed; inset:0;
+    background:rgba(30,22,10,.45);
+    display:none;
+    align-items:center; justify-content:center;
+    z-index:1000;
+    animation: fadeIn .18s ease;
+  }
+  .card-modal-backdrop.open{ display:flex }
+  @keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
+  .card-modal{
+    background:#fffdf7;
+    border-radius:14px;
+    box-shadow: 0 20px 50px rgba(0,0,0,.25);
+    width: min(640px, 92vw);
+    max-height: 80vh;
+    overflow:auto;
+    padding: 18px 22px 20px;
+    position:relative;
+    animation: popIn .22s cubic-bezier(.4,1.6,.6,1);
+  }
+  @keyframes popIn { from { transform: scale(.92); opacity:0 } to { transform: scale(1); opacity:1 } }
+  .card-modal[data-kind="ci"]{ border-top: 6px solid #e55; }
+  .card-modal[data-kind="bug"]{ border-top: 6px solid #d09a20; }
+  .card-modal[data-kind="sentry"]{ border-top: 6px solid #8455d4; }
+  .card-modal[data-kind="coverage"]{ border-top: 6px solid #4fa065; }
+  .card-modal[data-kind="iteration"]{ border-top: 6px solid #5a8bd4; }
+  .card-modal[data-kind="discourse"]{ border-top: 6px solid #6ec6c1; }
+  .card-modal .m-close{
+    position:absolute; top:10px; right:12px;
+    background:transparent; border:none; font-size:22px; line-height:1;
+    color:#888; cursor:pointer; padding:4px 8px; border-radius:6px;
+  }
+  .card-modal .m-close:hover{ background:#f1ead6; color:#333 }
+  .card-modal .m-head{ display:flex; align-items:center; gap:8px; margin-bottom:10px; flex-wrap:wrap }
+  .card-modal .m-badge{
+    font-size:10px; letter-spacing:.5px; text-transform:uppercase;
+    padding:2px 8px; border-radius:4px; color:#3a2a1e;
+    background:#f3ecd5; border:1px solid rgba(0,0,0,.18);
+  }
+  .card-modal .m-title{ font-size:18px; font-weight:600; line-height:1.3 }
+  .card-modal .m-pr{
+    display:inline-block; background:#2a9d5a; color:white;
+    font-size:11px; padding:2px 9px; border-radius:999px; font-weight:600;
+  }
+  .card-modal .m-detail{
+    margin-top:8px; font-size:13px; color:#3e3a2f; line-height:1.55;
+  }
+  .card-modal .m-byline{ margin-top:4px; font-size:12px; color:#4a6070 }
+  .card-modal .m-byline strong{ color:#234550 }
+  .card-modal .m-quote{
+    margin-top:8px; padding:10px 14px;
+    background:#f5fbfb;
+    border-left:3px solid #6ec6c1;
+    border-radius:6px;
+    font-size:13px; color:#2e3f4a; line-height:1.5;
+    font-style:italic;
+  }
+  .card-modal .m-hist-title{
+    margin-top:16px; font-size:11px; letter-spacing:.5px; text-transform:uppercase;
+    color:#6b6b76;
+  }
+  .card-modal .m-history{
+    margin-top:6px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size:11.5px; line-height:1.5;
+    background:#fdf7e6;
+    border:1px dashed #d7cdb4;
+    border-radius:8px;
+    padding:8px 10px;
+  }
+  .card-modal .m-history .h-row{ padding:3px 0; border-bottom:1px dotted rgba(0,0,0,.1); color:#3d3a2f }
+  .card-modal .m-history .h-row:last-child{ border-bottom:0 }
+  .card-modal .m-history .h-row .t{ color:#8a7e58; margin-right:8px }
+  .card-modal .m-meta{
+    margin-top:14px; font-size:11px; color:#6b6b76;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  .done-card .d-pr{
+    display:inline-block; background:#2a9d5a; color:white;
+    font-size:10px; padding:1px 7px; border-radius:999px;
+    margin-left:auto; font-weight:600;
+  }
+  .done-card .d-quote{
+    margin-top:5px;
+    padding:5px 7px;
+    background:rgba(255,255,255,.75);
+    border-left:2px solid #6ec6c1;
+    border-radius:4px;
+    font-size:10.5px; color:#3a4a55; line-height:1.35;
+    font-style:italic;
+  }
+  .done-card .d-byline{ font-size:10px; color:#4a6070 }
+  .done-card .d-byline strong{ color:#234550 }
+
+  .error-tray{
+    position:absolute; left:14px; bottom:16px; background:#a43434; color:#fff;
+    padding:4px 10px; border-radius:8px; font-size:11px; display:none;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  .error-tray.show{display:block}
+</style>
+</head>
+<body>
+<header>
+  <div class="subhead">
+    <h1>Freegle Monitor <span style="color:#bcb39a">—</span> FSM replay</h1>
+    <span class="caption" id="runCaption">&nbsp;</span>
+  </div>
+  <span class="state-pill" id="curState">idle</span>
+  <div class="grow"></div>
+  <div class="toolbar">
+    <button class="btn" id="btnStepBack" title="Step back one event">&#9664;</button>
+    <button class="btn primary" id="btnPlay">Play</button>
+    <button class="btn" id="btnStepFwd" title="Step forward one event">&#9654;</button>
+    <button class="btn" id="btnReset">Reset</button>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#5a523b">
+      Speed
+      <select id="speed">
+        <option value="0.5">0.5x</option>
+        <option value="1" selected>1x</option>
+        <option value="2">2x</option>
+        <option value="4">4x</option>
+      </select>
+    </label>
+    <span class="time" id="timeLbl">0.0s / 0.0s</span>
+    <span class="time" id="evtLbl" style="min-width:90px">event 0 / 0</span>
+  </div>
+</header>
+
+<div class="layout">
+  <div class="board-wrap">
+    <div class="board" id="board">
+
+      <!-- INTAKE -->
+      <section class="zone" id="zone-intake" data-zone="intake">
+        <div class="zone-head">
+          <span class="zone-icon" title="Morning rounds">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b5230" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+          </span>
+          <h2>Morning rounds</h2>
+          <span class="zone-count" data-count="intake">0</span>
+          <div class="subdots" id="subdots"></div>
+        </div>
+        <p class="zone-desc">Checks what's new on Discourse, what's been committed, whether the master build is green, and what Sentry's flagged. Sorts each into a pile to look at.</p>
+        <div class="zone-body" data-body="intake"></div>
+      </section>
+
+      <!-- DISPATCH -->
+      <section class="zone" id="zone-dispatch" data-zone="dispatch">
+        <div class="zone-head">
+          <span class="zone-icon" title="Picking what to fix next">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b5230" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/></svg>
+          </span>
+          <h2>Picking what to fix next</h2>
+          <span class="zone-count" data-count="dispatch">0</span>
+        </div>
+        <p class="zone-desc">Looks at the piles and decides: master build first if it's red, then any new bug report, then Sentry noise. If there's nothing, writes a coverage PR instead.</p>
+        <div class="zone-body" data-body="dispatch">
+          <div class="dispatch-diamond" id="dispatchDiamond"><div class="inner">Deciding</div></div>
+        </div>
+      </section>
+
+      <!-- CI FIX -->
+      <section class="zone" id="zone-ci" data-zone="ci">
+        <div class="zone-head">
+          <span class="zone-icon" title="Fixing a broken build">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8b2e2e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 1 0 3 3L21 5.6 18.4 3l-3.7 3.3z"/><path d="M13.3 10.7 5 19l2 2 8.3-8.3"/></svg>
+          </span>
+          <h2>Fixing a broken build</h2>
+          <span class="zone-count" data-count="ci">0</span>
+        </div>
+        <p class="zone-desc">Reads the CI logs, works out what went wrong, asks a coder to fix it and push.</p>
+        <div class="zone-body" data-body="ci"></div>
+      </section>
+
+      <!-- BUG FIX -->
+      <section class="zone" id="zone-bug" data-zone="bug">
+        <div class="zone-head">
+          <span class="zone-icon" title="Fixing a reported bug">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8b6a1d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="8" width="12" height="10" rx="5"/><path d="M12 8V5M8 4l2 2M16 4l-2 2M4 12h2M18 12h2M4 18l2-1M18 17l2 1"/></svg>
+          </span>
+          <h2>Fixing a reported bug</h2>
+          <span class="zone-count" data-count="bug">0</span>
+        </div>
+        <p class="zone-desc">Reproduces what the user described, writes a test that fails, fixes it, opens a PR.</p>
+        <div class="zone-body" data-body="bug"></div>
+      </section>
+
+      <!-- SENTRY -->
+      <section class="zone" id="zone-sentry" data-zone="sentry">
+        <div class="zone-head">
+          <span class="zone-icon" title="Fixing a runtime error">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#5a3e8f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.5"/></svg>
+          </span>
+          <h2>Fixing a runtime error</h2>
+          <span class="zone-count" data-count="sentry">0</span>
+        </div>
+        <p class="zone-desc">Reads the stack trace, finds the offending code — or filters out noise from third-party scripts — and opens a PR.</p>
+        <div class="zone-body" data-body="sentry"></div>
+      </section>
+
+      <!-- GATE -->
+      <section class="zone" id="zone-gate" data-zone="gate">
+        <div class="zone-head">
+          <span class="zone-icon" title="Did we ship anything?">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6b5230" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V6M20 20V6M4 10h16M4 14h16M4 18h16"/></svg>
+          </span>
+          <h2>Check: did we ship anything?</h2>
+          <span class="zone-count" data-count="gate">0</span>
+        </div>
+        <p class="zone-desc">Every session has to produce at least one PR. If nothing was fixed, goes back and writes a coverage PR instead.</p>
+        <div class="gate-graphic closed" id="gateGraphic">
+          <div class="post"></div>
+          <div class="leaf left"></div>
+          <div class="leaf right"></div>
+          <div class="post"></div>
+        </div>
+        <div class="gate-readout" id="gateReadout">waiting · no verdict yet</div>
+        <div class="zone-body" data-body="gate" style="min-height:0;margin-top:6px"></div>
+      </section>
+
+      <!-- OUTPUT -->
+      <section class="zone" id="zone-output" data-zone="output">
+        <div class="zone-head">
+          <span class="zone-icon" title="Wrapping up">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#274a82" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h12M12 6l6 6-6 6"/></svg>
+          </span>
+          <h2>Wrapping up</h2>
+          <span class="zone-count" data-count="output">0</span>
+        </div>
+        <p class="zone-desc">Writes the summary, emails it (unless one just went out), schedules the next check-in.</p>
+        <div class="conveyor" id="conveyor">
+          <div class="stops">
+            <span data-stop="WRAP_UP">Summary</span>
+            <span data-stop="SEND_EMAIL">Email</span>
+            <span data-stop="SCHEDULE_NEXT">Schedule</span>
+            <span data-stop="END">Done</span>
+          </div>
+        </div>
+        <div class="zone-body" data-body="output" style="margin-top:6px"></div>
+      </section>
+
+      <!-- DONE PILE -->
+      <section class="zone" id="zone-done" data-zone="done">
+        <div class="zone-head">
+          <span class="zone-icon" title="Finished cards">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#2a6b3a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7l6 10 10-14"/></svg>
+          </span>
+          <h2>Done</h2>
+          <span class="zone-count" data-count="done">0</span>
+          <span style="margin-left:auto;font-size:10.5px;color:var(--muted)">Click a card to read what happened.</span>
+        </div>
+        <div class="done-pile empty" id="donePile">
+          <div class="done-stack" id="doneStack"></div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- Worker with thought bubble -->
+    <div class="worker" id="worker">
+      <div class="bubble" id="bubble"></div>
+      <svg viewBox="0 0 90 140" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="shirtG" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stop-color="#7fd9d3"/>
+            <stop offset=".55" stop-color="#4eb6af"/>
+            <stop offset="1" stop-color="#34948e"/>
+          </linearGradient>
+          <linearGradient id="trouserG" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stop-color="#54648a"/>
+            <stop offset="1" stop-color="#2e3a54"/>
+          </linearGradient>
+          <linearGradient id="shoeG" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stop-color="#2a2230"/>
+            <stop offset="1" stop-color="#14101a"/>
+          </linearGradient>
+          <linearGradient id="skinG" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stop-color="#fbdcb8"/>
+            <stop offset="1" stop-color="#e9b88e"/>
+          </linearGradient>
+          <radialGradient id="blushG" cx="50%" cy="50%" r="50%">
+            <stop offset="0" stop-color="#ff9aa2" stop-opacity=".85"/>
+            <stop offset="1" stop-color="#ff9aa2" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+
+        <!-- shadow on floor -->
+        <ellipse cx="45" cy="136" rx="22" ry="3.5" fill="rgba(0,0,0,.2)"/>
+
+        <!-- Body group bobs while walking -->
+        <g class="body">
+
+          <!-- Back leg -->
+          <g transform="translate(39 99)">
+            <g class="leg-l" style="transform-origin: 0 0">
+              <line x1="0" y1="0" x2="-2" y2="26" stroke="url(#trouserG)" stroke-width="9" stroke-linecap="round"/>
+              <!-- shoe -->
+              <ellipse cx="-3" cy="29" rx="6" ry="3" fill="url(#shoeG)" stroke="#0a0812" stroke-width="1"/>
+            </g>
+          </g>
+          <g transform="translate(51 99)">
+            <g class="leg-r" style="transform-origin: 0 0">
+              <line x1="0" y1="0" x2="2" y2="26" stroke="url(#trouserG)" stroke-width="9" stroke-linecap="round"/>
+              <ellipse cx="3" cy="29" rx="6" ry="3" fill="url(#shoeG)" stroke="#0a0812" stroke-width="1"/>
+            </g>
+          </g>
+
+          <!-- Torso / t-shirt -->
+          <path d="M27 54
+                   Q31 45 45 44
+                   Q59 45 63 54
+                   L66 100
+                   Q45 108 24 100 Z"
+                fill="url(#shirtG)" stroke="#234845" stroke-width="1.5"/>
+          <!-- shirt highlight / crease -->
+          <path d="M36 58 Q45 64 54 58" fill="none" stroke="rgba(255,255,255,.25)" stroke-width="1.5" stroke-linecap="round"/>
+          <path d="M45 56 L45 100" stroke="rgba(0,0,0,.08)" stroke-width="1"/>
+
+          <!-- Lanyard -->
+          <path d="M40 45 Q43 56 42 70" stroke="#c94848" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+          <path d="M50 45 Q47 56 48 70" stroke="#c94848" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+          <!-- ID badge -->
+          <g>
+            <rect x="40" y="68" width="12" height="16" rx="2" fill="#fff" stroke="#2a2230" stroke-width="1"/>
+            <rect x="42" y="70.5" width="8" height="2.5" fill="#6ec6c1"/>
+            <rect x="42" y="75" width="6" height="1.2" fill="#b0b0b8"/>
+            <rect x="42" y="77.5" width="8" height="1.2" fill="#b0b0b8"/>
+            <rect x="42" y="80" width="5" height="1.2" fill="#b0b0b8"/>
+          </g>
+          <!-- chest monogram -->
+          <text x="34" y="64" font-family="ui-monospace, Menlo, monospace" font-size="4.5" fill="#1a3b39" font-weight="bold" opacity=".8">fg</text>
+
+          <!-- Back arm (behind torso) -->
+          <g transform="translate(29 56)">
+            <g class="arm-l" style="transform-origin: 0 0">
+              <line x1="0" y1="0" x2="-3" y2="26" stroke="url(#shirtG)" stroke-width="8" stroke-linecap="round"/>
+              <!-- forearm / sleeve edge -->
+              <circle cx="-3" cy="27" r="2.5" fill="#234845" opacity=".35"/>
+              <!-- hand -->
+              <ellipse cx="-4" cy="32" rx="4.5" ry="5.5" fill="url(#skinG)" stroke="#3a2a1e" stroke-width="1"/>
+              <!-- tiny thumb -->
+              <path d="M-7 30 q-2 2 -1 4" stroke="#3a2a1e" stroke-width="1" fill="none"/>
+            </g>
+          </g>
+
+          <!-- Front arm -->
+          <g transform="translate(61 56)">
+            <g class="arm-r" style="transform-origin: 0 0">
+              <line x1="0" y1="0" x2="3" y2="26" stroke="url(#shirtG)" stroke-width="8" stroke-linecap="round"/>
+              <circle cx="3" cy="27" r="2.5" fill="#234845" opacity=".35"/>
+              <ellipse cx="4" cy="32" rx="4.5" ry="5.5" fill="url(#skinG)" stroke="#3a2a1e" stroke-width="1"/>
+              <path d="M7 30 q2 2 1 4" stroke="#3a2a1e" stroke-width="1" fill="none"/>
+            </g>
+          </g>
+
+          <!-- Neck -->
+          <rect x="41.5" y="40" width="7" height="8" fill="url(#skinG)" stroke="#3a2a1e" stroke-width="1"/>
+          <!-- t-shirt collar -->
+          <path d="M40 46 Q45 49 50 46" fill="none" stroke="#234845" stroke-width="1.4"/>
+
+          <!-- Head (slightly oversized for chibi feel) -->
+          <g>
+            <!-- hair back (mop) -->
+            <path d="M22 24 Q24 6 45 4 Q66 6 68 24 Q68 32 62 33 L28 33 Q22 32 22 24 Z" fill="#4a2f1a"/>
+            <!-- face -->
+            <ellipse cx="45" cy="26" rx="18" ry="19" fill="url(#skinG)" stroke="#3a2a1e" stroke-width="1.5"/>
+            <!-- hair front: messy fringe with strands -->
+            <path d="M27 20 Q32 8 45 8 Q58 8 63 20
+                     Q60 16 55 21
+                     Q50 14 47 21
+                     Q44 14 40 21
+                     Q36 15 33 21
+                     Q30 17 27 20 Z" fill="#4a2f1a"/>
+            <!-- stray strand -->
+            <path d="M36 10 q-3 4 -2 9" stroke="#3a2412" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+            <path d="M54 11 q4 3 3 8" stroke="#3a2412" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+            <!-- cowlick -->
+            <path d="M46 8 q-2 -3 2 -4 q3 2 0 5" fill="#4a2f1a"/>
+
+            <!-- ears -->
+            <ellipse cx="27" cy="28" rx="2.6" ry="3.6" fill="#e6b387" stroke="#3a2a1e" stroke-width="1"/>
+            <ellipse cx="63" cy="28" rx="2.6" ry="3.6" fill="#e6b387" stroke="#3a2a1e" stroke-width="1"/>
+
+            <!-- Round glasses wireframe -->
+            <g stroke="#2a2230" stroke-width="1.3" fill="none">
+              <!-- bridge -->
+              <path d="M42 26 q3 -1.5 6 0"/>
+              <!-- arms to ears -->
+              <path d="M31 27 l-4 1"/>
+              <path d="M59 27 l4 1"/>
+              <!-- left lens -->
+              <circle cx="38" cy="27" r="4.5" fill="rgba(255,255,255,.35)"/>
+              <!-- right lens -->
+              <circle cx="52" cy="27" r="4.5" fill="rgba(255,255,255,.35)"/>
+              <!-- lens highlights -->
+              <path d="M35.5 25 q-1.2 1.2 -.8 3" stroke="rgba(255,255,255,.8)" stroke-width="1"/>
+              <path d="M49.5 25 q-1.2 1.2 -.8 3" stroke="rgba(255,255,255,.8)" stroke-width="1"/>
+            </g>
+
+            <!-- eyes (behind glasses) -->
+            <g class="eyes">
+              <ellipse class="eye-l" cx="38" cy="27.5" rx="1.4" ry="1.7" fill="#2a2230"/>
+              <ellipse class="eye-r" cx="52" cy="27.5" rx="1.4" ry="1.7" fill="#2a2230"/>
+              <!-- eye sparkle -->
+              <circle cx="38.6" cy="27" r=".5" fill="#fff"/>
+              <circle cx="52.6" cy="27" r=".5" fill="#fff"/>
+            </g>
+            <!-- blink lids -->
+            <g class="lids" style="opacity:0">
+              <rect x="33.5" y="26" width="9" height="3" fill="url(#skinG)"/>
+              <rect x="47.5" y="26" width="9" height="3" fill="url(#skinG)"/>
+              <line x1="33.5" y1="28" x2="42.5" y2="28" stroke="#3a2a1e" stroke-width=".9"/>
+              <line x1="47.5" y1="28" x2="56.5" y2="28" stroke="#3a2a1e" stroke-width=".9"/>
+            </g>
+
+            <!-- brows -->
+            <path d="M33 22 q3 -2 6 0" fill="none" stroke="#3a2412" stroke-width="1.4" stroke-linecap="round"/>
+            <path d="M48 22 q3 -2 6 0" fill="none" stroke="#3a2412" stroke-width="1.4" stroke-linecap="round"/>
+
+            <!-- blush -->
+            <ellipse cx="32" cy="32" rx="3.2" ry="2" fill="url(#blushG)"/>
+            <ellipse cx="58" cy="32" rx="3.2" ry="2" fill="url(#blushG)"/>
+
+            <!-- nose -->
+            <path d="M45 30 q-1 3 0 4.5" fill="none" stroke="#3a2a1e" stroke-width="1.1" stroke-linecap="round"/>
+            <!-- mouth (gentle smile) -->
+            <path d="M41 37 q4 3 8 0" fill="none" stroke="#3a2a1e" stroke-width="1.4" stroke-linecap="round"/>
+          </g>
+
+        </g>
+      </svg>
+    </div>
+
+    <div class="ribbon"><div class="marker" id="ribMarker" style="left:0%"></div></div>
+    <div class="done-banner" id="doneBanner">Iteration complete</div>
+    <div class="error-tray" id="errorTray"></div>
+  </div>
+
+  <aside class="sidebar">
+    <h3>Activity log</h3>
+    <div class="log" id="log"></div>
+    <h3>Legend</h3>
+    <div class="legend">
+      <div><span class="sw" style="background:#d3e0ff"></span>Iteration</div>
+      <div><span class="sw" style="background:#ffd9d9"></span>CI fix</div>
+      <div><span class="sw" style="background:#ffecb5"></span>Bug</div>
+      <div><span class="sw" style="background:#e2d3ff"></span>Sentry</div>
+      <div><span class="sw" style="background:#cfeed3"></span>Coverage</div>
+      <div><span class="sw" style="background:#2a9d5a"></span>PR created</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <input type="range" class="scrub" id="scrub" min="0" max="1000" value="0" />
+      <div class="foot">Drag to scrub. Playback stays on the current speed.</div>
+    </div>
+  </aside>
+</div>
+
+<script>
+/* =========================================================================
+   FSM configuration
+   ========================================================================= */
+const ZONES = ['intake','dispatch','ci','bug','sentry','gate','output','done'];
+
+const STATE_TO_ZONE = {
+  LOAD_STATE:        'intake',
+  FETCH_DISCOURSE:   'intake',
+  CHECK_GIT:         'intake',
+  CHECK_CI:          'intake',
+  CHECK_SENTRY:      'intake',
+  TRIAGE:            'intake',
+  ROUTER:            'dispatch',
+  FIX_MASTER_CI:     'ci',
+  FIX_DISCOURSE_BUG: 'bug',
+  FIX_SENTRY_ISSUE:  'sentry',
+  WRITE_COVERAGE:    'gate',
+  COVERAGE_GATE:     'gate',
+  WRAP_UP:           'output',
+  SEND_EMAIL:        'output',
+  SCHEDULE_NEXT:     'output',
+  END:               'output',
+};
+
+// Back-compat: old events use column labels; translate to zone keys.
+const COLUMN_TO_ZONE = {
+  'Inbox':'intake', 'Triage':'intake', 'Ready':'dispatch',
+  'CI Fix':'ci', 'Bug Fix':'bug', 'Sentry':'sentry',
+  'Coverage':'gate', 'Gate':'gate',
+  'Wrap-up':'output', 'Done':'done',
+};
+function normZone(z){
+  if (!z) return 'intake';
+  if (ZONES.includes(z)) return z;
+  return COLUMN_TO_ZONE[z] || 'intake';
+}
+
+// Intake internal order for the 5-dot sub-progress
+const INBOX_SUBSTATES = ['LOAD_STATE','FETCH_DISCOURSE','CHECK_GIT','CHECK_CI','CHECK_SENTRY'];
+const SUBSTATE_LABELS = ['State','Discourse','Git','CI','Sentry'];
+
+// Pretty output stop names
+const OUTPUT_STATES = ['WRAP_UP','SEND_EMAIL','SCHEDULE_NEXT','END'];
+
+// Narrative descriptions for each known card. Label is the plain-English
+// headline; detail explains in one or two sentences; meta is the small
+// technical footer (Sentry id, GitHub Actions run, etc).
+const CARD_INFO = {
+  'iter-1': {
+    label:  'Morning check-in',
+    detail: "Scan the overnight signals and deal with whatever's broken. Full gather, decide, fix, gate cycle.",
+    meta:   '11:12 UTC · run 41ddc261',
+  },
+  'ci-master': {
+    label:  'Master build is broken',
+    detail: "The job that bumps the version number tried to push back to the repo and GitHub refused with a 403. Nobody can deploy until this clears.",
+    meta:   'GitHub Actions run 24602044778 · update-version job',
+    done:   "Master build was red. The version-bump job couldn't push the new commit back to the repo (HTTP 403). Fixed by adding permissions: contents: write to the GitHub Actions workflow. Pushed directly to master as commit 3c26145.",
+  },
+  'sentry-ftutils': {
+    label:  'Third-party ad library crashing 956 users',
+    detail: "Freestar's ad code is hitting a null document on some pages. 11,409 events from 956 users since we started seeing it.",
+    meta:   'Sentry NUXT3-CES · first seen 2 weeks ago',
+    done:   "956 users were hitting a null-pointer in Freestar's ad code (ftUtils.js getPlacementPosition). Can't fix their library, so added a suppression rule in our Sentry config so it stops polluting the issue list. Opened PR #206.",
+  },
+  'coverage-1': {
+    label:  'Need to ship something',
+    detail: "No bug fixes this round, so write a coverage PR to keep the deploy queue moving.",
+    meta:   'coverage backfill',
+  },
+};
+
+// Classification label shown on a Discourse card footer.
+const DISCOURSE_TAGS = {
+  'own-reply':   'own reply (mine)',
+  'off-topic':   'off-topic chat',
+  'own-chitchat':'own reply · chitchat',
+  'bug':         'bug report',
+  'retest':      'asked to retest',
+  'fixed':       'already fixed',
+};
+
+function shortKind(k){
+  return ({
+    ci:'CI red',
+    bug:'Bug report',
+    sentry:'Runtime error',
+    coverage:'Coverage',
+    iteration:'Session',
+    discourse:'Discourse',
+  })[k] || (k||'').toUpperCase();
+}
+
+/* =========================================================================
+   Embedded real events (unchanged payload; keys match prior version)
+   ========================================================================= */
+const RUN_META = {
+  runId: '41ddc261-cce5-49ae-9838-4e66d36c0487',
+  startedAt: '2026-04-18T11:12:13Z',
+  endedAt:   '2026-04-18T11:25:35Z',
+  realDurationSec: 802,
+};
+const SAMPLE_EVENTS = [
+  { t: 0, type: "pickup_card", cardId: "iter-1", label: "Morning check-in", kind: "iteration" },
+  { t: 0, type: "enter_state", state: "LOAD_STATE" },
+  { t: 215, type: "action", state: "LOAD_STATE", action: "load_state", ok: true, summary: "cursors for 21 topics" },
+  { t: 430, type: "enter_state", state: "FETCH_DISCOURSE" },
+  // Four Discourse posts land during FETCH_DISCOURSE, staggered 400ms apart.
+  { t: 900, type: "pickup_card", cardId: "disc-9363-4", kind: "discourse",
+    topicTitle: "Job ads — possible layout change",
+    user: "Edward_Hibbert",
+    excerpt: "It might be possible to improve the layout a bit (eg side by side). But they're likely to stay there. Job ads raise funds we need." },
+  { t: 1300, type: "pickup_card", cardId: "disc-9557-4", kind: "discourse",
+    topicTitle: "Old test emails went out",
+    user: "Edward_Hibbert",
+    excerpt: "Yes, those were some tests which shouldn't have gone out. They've been deleted but due to another problem we had some old mails queued up which only went out today." },
+  { t: 1700, type: "pickup_card", cardId: "disc-9579-5", kind: "discourse",
+    topicTitle: "Old computer equipment collection",
+    user: "Jeni",
+    excerpt: "Our local Rotary Group advertises twice a year for old computer equipment to send overseas. They have a collection point and volunteers in a local supermarket car park. I think maybe other Rotary Groups may do something similar?" },
+  { t: 2100, type: "pickup_card", cardId: "disc-9594-4", kind: "discourse",
+    topicTitle: "Chitchat very limited",
+    user: "Edward_Hibbert",
+    excerpt: "There's a total limit on the number of posts you see on ChitChat — maybe 100 or something. But it sounded like you were only seeing a few." },
+  { t: 2204, type: "action", state: "FETCH_DISCOURSE", action: "fetch_discourse", ok: true, summary: "4 new posts" },
+  { t: 3978, type: "enter_state", state: "CHECK_GIT" },
+  { t: 4170, type: "action", state: "CHECK_GIT", action: "git_log_today", ok: true, summary: "3 repos scanned" },
+  { t: 4361, type: "enter_state", state: "CHECK_CI" },
+  { t: 4557, type: "action", state: "CHECK_CI", action: "check_master_ci", ok: false, summary: "master FAILING · run 24602044778" },
+  { t: 4752, type: "enter_state", state: "CHECK_SENTRY" },
+  { t: 4757, type: "pickup_card", cardId: "ci-master", kind: "ci",
+    label: "Master build is broken",
+    detail: "The version-bump job got a 403 pushing to GitHub. Nobody can deploy until this clears." },
+  { t: 4960, type: "action", state: "CHECK_SENTRY", action: "check_sentry", ok: true, summary: "10 unresolved nuxt, 0 go" },
+  { t: 5169, type: "enter_state", state: "TRIAGE" },
+  // Classify each Discourse card during triage (staggered).
+  { t: 5400, type: "classify_card", cardId: "disc-9363-4", classification: "own-reply" },
+  { t: 5700, type: "classify_card", cardId: "disc-9557-4", classification: "own-reply" },
+  { t: 6000, type: "classify_card", cardId: "disc-9579-5", classification: "off-topic" },
+  { t: 6100, type: "classify_card", cardId: "disc-9594-4", classification: "own-chitchat" },
+  // All four Discourse cards are not actionable: move them to Done.
+  { t: 6150, type: "move_card", cardId: "disc-9363-4", toColumn: "Done" },
+  { t: 6155, type: "move_card", cardId: "disc-9557-4", toColumn: "Done" },
+  { t: 6160, type: "move_card", cardId: "disc-9579-5", toColumn: "Done" },
+  { t: 6165, type: "move_card", cardId: "disc-9594-4", toColumn: "Done" },
+  { t: 6186, type: "enter_state", state: "ROUTER" },
+  { t: 6762, type: "enter_state", state: "FIX_MASTER_CI" },
+  { t: 6862, type: "move_card", cardId: "ci-master", toColumn: "CI Fix" },
+  { t: 7083, type: "action", state: "FIX_MASTER_CI", action: "fetch_ci_failure_logs", ok: true, summary: "update-version: 403 push denied" },
+  { t: 9523, type: "action", state: "FIX_MASTER_CI", action: "delegate_to_coder", ok: true, summary: "direct push 3c26145" },
+  { t: 9923, type: "move_card", cardId: "ci-master", toColumn: "Done" },
+  { t: 12337, type: "enter_state", state: "ROUTER" },
+  { t: 13000, type: "enter_state", state: "FIX_SENTRY_ISSUE" },
+  { t: 13100, type: "pickup_card", cardId: "sentry-ftutils", kind: "sentry",
+    label: "Third-party ad library crashing 956 users",
+    detail: "Freestar's ad code is hitting a null document. 11,409 events from 956 users." },
+  { t: 13903, type: "action", state: "FIX_SENTRY_ISSUE", action: "read_sentry_issues", ok: true, summary: "picked NUXT3-CES: ftUtils getPlacementPosition" },
+  { t: 14807, type: "action", state: "FIX_SENTRY_ISSUE", action: "search_code", ok: true, summary: "no local matches" },
+  { t: 24036, type: "action", state: "FIX_SENTRY_ISSUE", action: "delegate_to_coder", ok: true, summary: "PR_NUMBER=206" },
+  { t: 33002, type: "action", state: "FIX_SENTRY_ISSUE", action: "create_pr", ok: true, summary: "#206 verified" },
+  { t: 33152, type: "pr_created", number: 206, title: "fix(sentry): suppress Freestar ftUtils.js null-document errors" },
+  { t: 33402, type: "move_card", cardId: "sentry-ftutils", toColumn: "Done" },
+  { t: 33642, type: "enter_state", state: "ROUTER" },
+  { t: 34130, type: "enter_state", state: "COVERAGE_GATE" },
+  { t: 34605, type: "action", state: "COVERAGE_GATE", action: "verify_pr_created", ok: false, summary: "count=0 (transient)" },
+  { t: 35399, type: "action", state: "COVERAGE_GATE", action: "verify_pr_created", ok: true, summary: "count=1" },
+  { t: 36008, type: "action", state: "COVERAGE_GATE", action: "verify_pr_created", ok: true, summary: "count=1" },
+  { t: 36158, type: "gate", passed: true, count: 1 },
+  { t: 36298, type: "enter_state", state: "WRAP_UP" },
+  { t: 37048, type: "action", state: "WRAP_UP", action: "write_summary", ok: true, summary: "summary.md 2402B" },
+  { t: 37798, type: "enter_state", state: "SEND_EMAIL" },
+  { t: 38481, type: "action", state: "SEND_EMAIL", action: "send_email", ok: true, summary: "skipped · cooldown" },
+  { t: 39165, type: "enter_state", state: "SCHEDULE_NEXT" },
+  { t: 39635, type: "action", state: "SCHEDULE_NEXT", action: "schedule_wakeup", ok: true, summary: "1500s" },
+  { t: 39904, type: "move_card", cardId: "iter-1", toColumn: "Done" },
+  { t: 40104, type: "enter_state", state: "END" },
+  { t: 40104, type: "done" },
+];
+const TOTAL_T = SAMPLE_EVENTS[SAMPLE_EVENTS.length - 1].t + 500;
+
+/* =========================================================================
+   Error accounting (for definition-of-done)
+   ========================================================================= */
+let ERROR_COUNT = 0;
+const errorTrayEl = document.getElementById('errorTray');
+function recordError(where, err){
+  ERROR_COUNT++;
+  try { console.error('[viz]', where, err); } catch(_){}
+  if (errorTrayEl){
+    errorTrayEl.textContent = 'Runtime errors: ' + ERROR_COUNT + ' · last: ' + (err && err.message ? err.message : where);
+    errorTrayEl.classList.add('show');
+  }
+}
+window.addEventListener('error', e => recordError('window', e.error || e));
+
+/* =========================================================================
+   Lookups for DOM
+   ========================================================================= */
+const boardEl   = document.getElementById('board');
+const boardWrap = boardEl.parentElement;
+const workerEl  = document.getElementById('worker');
+const bubbleEl  = document.getElementById('bubble');
+const logEl     = document.getElementById('log');
+const curStateEl= document.getElementById('curState');
+const scrubEl   = document.getElementById('scrub');
+const timeLbl   = document.getElementById('timeLbl');
+const btnPlay   = document.getElementById('btnPlay');
+const btnReset  = document.getElementById('btnReset');
+const speedSel  = document.getElementById('speed');
+const ribMarker = document.getElementById('ribMarker');
+const doneBanner= document.getElementById('doneBanner');
+const gateGraphic = document.getElementById('gateGraphic');
+const gateReadout = document.getElementById('gateReadout');
+const dispatchDiamond = document.getElementById('dispatchDiamond');
+const conveyorEl = document.getElementById('conveyor');
+
+const zoneEls = {};
+ZONES.forEach(z => {
+  zoneEls[z] = {
+    zone:  document.getElementById('zone-' + z),
+    body:  document.querySelector('[data-body="'+z+'"]') || null,
+    count: document.querySelector('[data-count="'+z+'"]'),
+  };
+});
+const donePileEl  = document.getElementById('donePile');
+const doneStackEl = document.getElementById('doneStack');
+const evtLbl      = document.getElementById('evtLbl');
+const btnStepBack = document.getElementById('btnStepBack');
+const btnStepFwd  = document.getElementById('btnStepFwd');
+
+// Build intake subdots
+const subdotsWrap = document.getElementById('subdots');
+const subdotEls = [];
+INBOX_SUBSTATES.forEach((s, i) => {
+  const step = document.createElement('div'); step.className = 'step'; step.dataset.state = s;
+  const d = document.createElement('div'); d.className = 'd';
+  const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = SUBSTATE_LABELS[i];
+  step.append(d, lbl);
+  subdotsWrap.appendChild(step);
+  subdotEls.push(step);
+});
+
+/* =========================================================================
+   Runtime state
+   ========================================================================= */
+let cards = {};              // cardId -> { id, el, kind, label, detail, zone, history:[], classification, pr, user, topicTitle, excerpt }
+let carriedId = null;
+let curState  = null;
+let curZone   = null;
+let lastAppliedIdx = -1;
+let playing = false;
+let speed = 1;
+let simT = 0;
+let lastFrame = null;
+let rafId = null;
+let bubbleTimeout = null;
+let workerLastX = null;
+let doneOrder = [];          // card IDs in the order they arrived in Done
+let blinkTimer = null;
+
+/* =========================================================================
+   Helpers
+   ========================================================================= */
+function zoneCenter(key){
+  const z = zoneEls[key]; if (!z) return { x: 0, y: 0 };
+  const b = z.zone.getBoundingClientRect();
+  const bw = boardWrap.getBoundingClientRect();
+  // park worker near bottom-center of zone
+  return {
+    x: (b.left - bw.left) + b.width / 2,
+    y: (b.top  - bw.top)  + b.height - 18,
+  };
+}
+
+function moveWorker(zoneKey, instant=false){
+  const { x, y } = zoneCenter(zoneKey);
+  if (!x && !y) return;
+  const w = workerEl.getBoundingClientRect().width || 90;
+  const h = workerEl.getBoundingClientRect().height || 140;
+  const targetLeft = x - w/2;
+  const targetTop  = y - h;
+  // Face direction based on movement
+  if (workerLastX != null){
+    if (targetLeft < workerLastX - 4) workerEl.classList.add('face-left');
+    else if (targetLeft > workerLastX + 4) workerEl.classList.remove('face-left');
+  }
+  workerLastX = targetLeft;
+  const prev = workerEl.style.transition;
+  if (instant) workerEl.style.transition = 'none';
+  workerEl.style.left = targetLeft + 'px';
+  workerEl.style.top  = targetTop  + 'px';
+  workerEl.classList.add('walking');
+  if (instant) requestAnimationFrame(() => { workerEl.style.transition = prev || ''; });
+}
+
+function stopWalking(){ workerEl.classList.remove('walking'); }
+
+function setActiveZone(key){
+  Object.values(zoneEls).forEach(z => z.zone.classList.remove('active'));
+  if (zoneEls[key]) zoneEls[key].zone.classList.add('active');
+  dispatchDiamond.classList.toggle('active', key === 'dispatch');
+  curZone = key;
+}
+
+function restackZone(key){
+  const z = zoneEls[key]; if (!z) return;
+  if (key === 'done') { renderDonePile(); return; }
+  const list = Object.values(cards).filter(c => c.zone === key && c.id !== carriedId);
+  // Two-column flow inside each zone body.
+  list.forEach((c, i) => {
+    const row = Math.floor(i / 2);
+    const col = i % 2;
+    if (!c.el.classList.contains('in-main')) return;
+    c.el.style.top = (6 + row * 84) + 'px';
+    c.el.style.left = (8 + col * 50) + '%';
+    c.el.style.width = 'calc(50% - 12px)';
+    c.el.style.right = '';
+  });
+  if (z.count) z.count.textContent = String(list.length + (carriedId && cards[carriedId] && cards[carriedId].zone === key ? 1 : 0));
+}
+
+function recountAll(){
+  ZONES.forEach(k => {
+    if (k === 'done') return;
+    const list = Object.values(cards).filter(c => c.zone === k);
+    if (zoneEls[k] && zoneEls[k].count) zoneEls[k].count.textContent = String(list.length);
+  });
+  if (zoneEls.done && zoneEls.done.count) zoneEls.done.count.textContent = String(doneOrder.length);
+}
+
+function narrativeLabel(kind, cardId, fallback){
+  if (CARD_INFO[cardId] && CARD_INFO[cardId].label) return CARD_INFO[cardId].label;
+  return fallback || '';
+}
+function narrativeDetail(kind, cardId, explicit){
+  if (explicit) return explicit;
+  if (CARD_INFO[cardId] && CARD_INFO[cardId].detail) return CARD_INFO[cardId].detail;
+  switch (kind){
+    case 'ci':       return "The master build is red. Reading the CI logs now.";
+    case 'bug':      return "A user reported something broken. Reproducing, writing a test, fixing.";
+    case 'sentry':   return "An unresolved error in Sentry. Decide: fix our code, or suppress third-party noise.";
+    case 'coverage': return "Backfill tests for uncovered paths so the session ships a PR.";
+    case 'iteration':return "Scan the overnight signals and deal with whatever's broken.";
+    case 'discourse':return "A post on Discourse, not yet classified.";
+  }
+  return '';
+}
+function cardMeta(kind, cardId){
+  if (CARD_INFO[cardId] && CARD_INFO[cardId].meta) return CARD_INFO[cardId].meta;
+  return '';
+}
+
+function findZoneCard(zone){
+  if (!zone) return null;
+  // Prefer a non-iteration card currently in this zone.
+  const list = Object.values(cards).filter(c => c.zone === zone && c.kind !== 'iteration' && c.kind !== 'discourse');
+  return list[list.length - 1] || null;
+}
+
+function spawnCard(ev){
+  const { cardId: id, kind } = ev;
+  const zone = curZone || 'intake';
+  const z = zoneEls[zone];
+  if (!z || !z.body) return;
+  const el = document.createElement('div');
+  el.className = 'card in-main';
+  el.dataset.kind = kind;
+  el.dataset.id = id;
+
+  const info = CARD_INFO[id] || {};
+  const label = narrativeLabel(kind, id, ev.label) || info.label || (ev.topicTitle || 'Card');
+  const detail = narrativeDetail(kind, id, ev.detail);
+  const meta = cardMeta(kind, id);
+
+  if (kind === 'discourse'){
+    el.innerHTML =
+      '<div class="head">' +
+        '<span class="badge"></span>' +
+        '<span class="cid"></span>' +
+      '</div>' +
+      '<div class="byline"></div>' +
+      '<div class="quote"></div>' +
+      '<div class="footer"><span class="tag">unread</span><span class="when"></span></div>';
+    el.querySelector('.badge').textContent = shortKind(kind);
+    el.querySelector('.cid').textContent = '';
+    const by = el.querySelector('.byline');
+    by.innerHTML = '';
+    const strong = document.createElement('strong'); strong.textContent = ev.user || 'Someone';
+    by.appendChild(strong);
+    by.appendChild(document.createTextNode(' in "' + (ev.topicTitle || '') + '"'));
+    el.querySelector('.quote').textContent = '"' + (ev.excerpt || '') + '"';
+  } else {
+    el.innerHTML =
+      '<div class="head">' +
+        '<span class="badge"></span>' +
+        '<span class="cid"></span>' +
+      '</div>' +
+      '<div class="label"></div>' +
+      '<div class="detail"></div>' +
+      (meta ? '<div class="meta" style="font-size:9.5px;color:#8a7e58;margin-top:4px;font-family: ui-monospace, Menlo, monospace"></div>' : '');
+    el.querySelector('.badge').textContent = shortKind(kind);
+    el.querySelector('.cid').textContent = '';
+    el.querySelector('.label').textContent = label;
+    el.querySelector('.detail').textContent = detail;
+    if (meta) el.querySelector('.meta').textContent = meta;
+  }
+
+  z.body.appendChild(el);
+  cards[id] = {
+    id, el, kind,
+    label, detail, meta,
+    zone,
+    history: [],
+    classification: null,
+    pr: null,
+    user: ev.user || null,
+    topicTitle: ev.topicTitle || null,
+    excerpt: ev.excerpt || null,
+  };
+  restackZone(zone);
+}
+
+function attachCardToWorker(id){
+  const c = cards[id]; if (!c) return;
+  carriedId = id;
+  c.el.classList.add('carried');
+  positionCarriedCard();
+}
+
+function positionCarriedCard(){
+  if (!carriedId) return;
+  const c = cards[carriedId]; if (!c) return;
+  if (c.el.parentElement !== boardWrap) boardWrap.appendChild(c.el);
+  const bw = boardWrap.getBoundingClientRect();
+  const wBox = workerEl.getBoundingClientRect();
+  const x = (wBox.left - bw.left) + wBox.width/2 - 85;
+  const y = (wBox.top  - bw.top)  - 20;
+  c.el.style.left = x + 'px';
+  c.el.style.top  = y + 'px';
+  c.el.style.right = 'auto';
+  c.el.style.width = '170px';
+}
+
+function detachCardIntoZone(id, zone){
+  const c = cards[id]; if (!c) return;
+  c.zone = zone;
+  c.el.classList.remove('carried');
+  if (zone === 'done'){
+    // Remove the travel card; the Done pile renders its own DOM.
+    if (c.el.parentElement) c.el.parentElement.removeChild(c.el);
+    if (!doneOrder.includes(id)) doneOrder.push(id);
+    renderDonePile();
+  } else {
+    const z = zoneEls[zone]; if (!z || !z.body) return;
+    z.body.appendChild(c.el);
+    c.el.style.width = '';
+    c.el.style.right = '';
+    restackZone(zone);
+  }
+  if (carriedId === id) carriedId = null;
+  recountAll();
+}
+
+function renderDonePile(){
+  if (!doneStackEl) return;
+  doneStackEl.innerHTML = '';
+  if (doneOrder.length === 0){
+    donePileEl.classList.add('empty');
+    return;
+  }
+  donePileEl.classList.remove('empty');
+  doneOrder.forEach(id => {
+    const c = cards[id]; if (!c) return;
+    const d = document.createElement('div');
+    d.className = 'done-card';
+    d.dataset.kind = c.kind;
+    d.dataset.id = id;
+
+    const head = document.createElement('div'); head.className = 'd-head';
+    const badge = document.createElement('span'); badge.className = 'd-badge'; badge.textContent = shortKind(c.kind);
+    head.appendChild(badge);
+
+    let labelText;
+    if (c.kind === 'discourse'){
+      labelText = (c.user || 'Someone') + ' — "' + (c.topicTitle || '') + '"';
+    } else {
+      labelText = c.label || id;
+    }
+    const label = document.createElement('span'); label.className = 'd-label'; label.textContent = labelText;
+    head.appendChild(label);
+    if (c.pr){
+      const pr = document.createElement('span'); pr.className = 'd-pr'; pr.textContent = 'PR #' + c.pr;
+      head.appendChild(pr);
+    }
+    d.appendChild(head);
+
+    if (c.kind === 'discourse'){
+      const by = document.createElement('div'); by.className = 'd-byline';
+      by.innerHTML = '';
+      const strong = document.createElement('strong'); strong.textContent = c.user || 'Someone';
+      by.appendChild(strong);
+      by.appendChild(document.createTextNode(' said:'));
+      d.appendChild(by);
+      const q = document.createElement('div'); q.className = 'd-quote';
+      q.textContent = '"' + (c.excerpt || '') + '"';
+      d.appendChild(q);
+    }
+
+    d.addEventListener('click', () => openCardModal(id));
+    doneStackEl.appendChild(d);
+  });
+}
+
+function openCardModal(id){
+  const c = cards[id]; if (!c) return;
+  const info = CARD_INFO[id] || {};
+  const modal = document.createElement('div');
+  modal.className = 'card-modal';
+  modal.dataset.kind = c.kind;
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'm-close';
+  closeBtn.setAttribute('aria-label', 'Close');
+  closeBtn.textContent = '\u00d7';
+  modal.appendChild(closeBtn);
+
+  const head = document.createElement('div'); head.className = 'm-head';
+  const badge = document.createElement('span'); badge.className = 'm-badge'; badge.textContent = shortKind(c.kind);
+  head.appendChild(badge);
+  const title = document.createElement('div'); title.className = 'm-title';
+  if (c.kind === 'discourse'){
+    title.textContent = (c.user || 'Someone') + ' — "' + (c.topicTitle || '') + '"';
+  } else {
+    title.textContent = c.label || id;
+  }
+  head.appendChild(title);
+  if (c.pr){
+    const pr = document.createElement('span'); pr.className = 'm-pr'; pr.textContent = 'PR #' + c.pr;
+    head.appendChild(pr);
+  }
+  modal.appendChild(head);
+
+  if (c.kind === 'discourse'){
+    const by = document.createElement('div'); by.className = 'm-byline';
+    const strong = document.createElement('strong'); strong.textContent = c.user || 'Someone';
+    by.appendChild(strong); by.appendChild(document.createTextNode(' said:'));
+    modal.appendChild(by);
+    const q = document.createElement('div'); q.className = 'm-quote';
+    q.textContent = '"' + (c.excerpt || '') + '"';
+    modal.appendChild(q);
+  }
+
+  const detail = document.createElement('div'); detail.className = 'm-detail';
+  if (c.kind === 'discourse'){
+    detail.textContent = 'A post on Discourse classified as ' + (DISCOURSE_TAGS[c.classification] || 'not actionable') + '. No fix required.';
+  } else if (info.done){
+    detail.textContent = info.done;
+  } else {
+    detail.textContent = c.detail || '';
+  }
+  modal.appendChild(detail);
+
+  if (c.history && c.history.length){
+    const htitle = document.createElement('div'); htitle.className = 'm-hist-title'; htitle.textContent = 'What happened';
+    modal.appendChild(htitle);
+    const hist = document.createElement('div'); hist.className = 'm-history';
+    c.history.forEach(h => {
+      const row = document.createElement('div'); row.className = 'h-row';
+      const ts = document.createElement('span'); ts.className = 't'; ts.textContent = (h.t/1000).toFixed(1) + 's';
+      row.appendChild(ts);
+      row.appendChild(document.createTextNode(h.text));
+      hist.appendChild(row);
+    });
+    modal.appendChild(hist);
+  }
+
+  if (c.meta || c.kind === 'discourse'){
+    const meta = document.createElement('div'); meta.className = 'm-meta';
+    if (c.kind === 'discourse'){
+      meta.textContent = 'Discourse #' + id.replace(/^disc-/, '') + (c.classification ? ' · tag: ' + (DISCOURSE_TAGS[c.classification] || c.classification) : '');
+    } else {
+      meta.textContent = c.meta || '';
+    }
+    modal.appendChild(meta);
+  }
+
+  const backdrop = document.createElement('div');
+  backdrop.className = 'card-modal-backdrop open';
+  backdrop.appendChild(modal);
+
+  const close = () => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
+  closeBtn.addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
+
+  document.body.appendChild(backdrop);
+}
+
+function appendLog(tSec, text, ok){
+  try {
+    const div = document.createElement('div');
+    div.className = 'line';
+    const okCls = ok === undefined ? '' : (ok ? 'ok' : 'bad');
+    div.innerHTML = '<span class="tstamp"></span> <span class="'+okCls+'"></span>';
+    div.firstElementChild.textContent = tSec.toFixed(1) + 's';
+    div.lastElementChild.textContent = text;
+    logEl.appendChild(div);
+    while (logEl.childElementCount > 14) logEl.removeChild(logEl.firstChild);
+    logEl.scrollTop = logEl.scrollHeight;
+  } catch (e) { recordError('log', e); }
+}
+
+function updateSubdots(state){
+  const idx = INBOX_SUBSTATES.indexOf(state);
+  subdotEls.forEach((step,i) => step.classList.toggle('on', i <= idx && idx >= 0));
+}
+
+function markAllSubdots(){ subdotEls.forEach(s => s.classList.add('on')); }
+
+function setRibbon(tMs){
+  const pct = Math.min(100, (tMs / TOTAL_T) * 100);
+  ribMarker.style.left = pct + '%';
+}
+
+function showBubble(text, ms=1800){
+  if (!text) { bubbleEl.classList.remove('show'); return; }
+  if (text.length > 140) text = text.slice(0, 137) + '…';
+  bubbleEl.textContent = text;
+  bubbleEl.classList.add('show');
+  if (bubbleTimeout) clearTimeout(bubbleTimeout);
+  bubbleTimeout = setTimeout(() => bubbleEl.classList.remove('show'), ms);
+}
+
+function highlightOutputStop(state){
+  const all = conveyorEl.querySelectorAll('[data-stop]');
+  all.forEach(el => el.classList.toggle('cur', el.dataset.stop === state));
+}
+
+function doCelebrate(){
+  workerEl.classList.add('celebrate');
+  setTimeout(() => workerEl.classList.remove('celebrate'), 700);
+}
+function doShrug(){
+  workerEl.classList.add('shrug');
+  setTimeout(() => workerEl.classList.remove('shrug'), 900);
+}
+function doPick(){
+  workerEl.classList.add('picking');
+  setTimeout(() => workerEl.classList.remove('picking'), 650);
+}
+function doThink(on){
+  workerEl.classList.toggle('thinking', !!on);
+}
+
+/* =========================================================================
+   Event application
+   ========================================================================= */
+function applyEvent(ev, instant=false){
+  try {
+    const tSec = ev.t/1000;
+    switch (ev.type){
+      case 'enter_state': {
+        curState = ev.state;
+        const zone = STATE_TO_ZONE[ev.state] || 'intake';
+        setActiveZone(zone);
+        moveWorker(zone, instant);
+        curStateEl.textContent = ev.state;
+        // Intake sub-progress
+        if (zone === 'intake') {
+          if (INBOX_SUBSTATES.includes(ev.state)) updateSubdots(ev.state);
+          else if (ev.state === 'TRIAGE') markAllSubdots();
+        }
+        // Dispatch: router spins + thought bubble
+        doThink(zone === 'dispatch');
+        if (zone === 'dispatch' && !instant){
+          showBubble("Right, what's next — is the master build still red? Any new bug reports? Sentry noise?");
+        }
+        // Output conveyor stop
+        if (zone === 'output') highlightOutputStop(ev.state);
+        if (ev.state === 'END') {
+          doneBanner.classList.add('show');
+          stopWalking();
+        }
+        if (carriedId) positionCarriedCard();
+        if (!instant) appendLog(tSec, '→ ' + ev.state);
+        break;
+      }
+      case 'action': {
+        if (!instant) appendLog(tSec, '  · ' + ev.action + ': ' + ev.summary, ev.ok);
+        // Attach action history to the relevant card for the workbench zone.
+        const zoneCard = findZoneCard(curZone);
+        if (zoneCard){
+          zoneCard.history.push({ t: ev.t, text: ev.action.replace(/_/g,' ') + ' — ' + ev.summary, ok: ev.ok });
+        }
+        // brief thought bubble summarizing the action when in a workbench
+        if (!instant && curZone && ['ci','bug','sentry'].includes(curZone)){
+          showBubble(ev.action.replace(/_/g,' ') + ' — ' + ev.summary, 1600);
+        }
+        break;
+      }
+      case 'pickup_card': {
+        if (!cards[ev.cardId]) spawnCard(ev);
+        if (ev.kind !== 'discourse'){
+          if (!instant) doPick();
+          attachCardToWorker(ev.cardId);
+        }
+        const c = cards[ev.cardId];
+        const nicelabel = c ? (c.kind === 'discourse' ? (c.user + ' on ' + (c.topicTitle||'Discourse')) : c.label) : ev.cardId;
+        if (!instant) appendLog(tSec, '  new: ' + nicelabel);
+        break;
+      }
+      case 'classify_card': {
+        const c = cards[ev.cardId]; if (!c) break;
+        c.classification = ev.classification;
+        if (c.kind === 'discourse' && c.el && c.el.parentElement){
+          const tag = c.el.querySelector('.tag');
+          if (tag) tag.textContent = DISCOURSE_TAGS[ev.classification] || ev.classification;
+        }
+        c.history.push({ t: ev.t, text: 'classified as ' + (DISCOURSE_TAGS[ev.classification] || ev.classification), ok: true });
+        if (!instant) appendLog(tSec, '  classified: ' + c.id + ' → ' + (DISCOURSE_TAGS[ev.classification] || ev.classification));
+        break;
+      }
+      case 'move_card': {
+        const c = cards[ev.cardId]; if (!c) break;
+        const toZone = normZone(ev.toColumn);
+        const isCarried = (carriedId === ev.cardId);
+        if (isCarried) {
+          moveWorker(toZone, instant);
+          const delay = instant ? 0 : 1100;
+          setTimeout(() => {
+            if (!instant) doPick();
+            setTimeout(() => { detachCardIntoZone(ev.cardId, toZone); }, instant ? 0 : 360);
+          }, delay);
+        } else {
+          c.zone = toZone;
+          if (toZone === 'done'){
+            if (c.el && c.el.parentElement) c.el.parentElement.removeChild(c.el);
+            if (!doneOrder.includes(ev.cardId)) doneOrder.push(ev.cardId);
+            renderDonePile();
+          } else if (zoneEls[toZone] && zoneEls[toZone].body){
+            zoneEls[toZone].body.appendChild(c.el);
+            c.el.classList.add('in-main');
+            restackZone(toZone);
+          }
+          recountAll();
+        }
+        c.history.push({ t: ev.t, text: 'moved to ' + toZone, ok: true });
+        if (!instant) appendLog(tSec, '  card "' + (c.label||c.id) + '" → ' + toZone);
+        break;
+      }
+      case 'gate': {
+        gateReadout.textContent = (ev.passed ? 'PASS' : 'FAIL') + ' · PRs since start: ' + ev.count;
+        gateReadout.classList.toggle('pass', !!ev.passed);
+        gateReadout.classList.toggle('fail', !ev.passed);
+        gateGraphic.classList.toggle('open',   !!ev.passed);
+        gateGraphic.classList.toggle('closed', !ev.passed);
+        if (!instant) {
+          appendLog(tSec, '  gate ' + (ev.passed ? 'PASSED' : 'FAILED') + ' (count=' + ev.count + ')', ev.passed);
+          if (ev.passed) doCelebrate(); else doShrug();
+        }
+        break;
+      }
+      case 'pr_created': {
+        let target = carriedId ? cards[carriedId] : null;
+        if (!target){
+          // Try the card currently living in the active workbench zone.
+          target = findZoneCard(curZone);
+        }
+        if (!target){
+          const list = Object.values(cards).filter(c => c.kind !== 'iteration' && c.kind !== 'discourse');
+          target = list[list.length-1];
+        }
+        if (target){
+          target.pr = ev.number;
+          target.history.push({ t: ev.t, text: 'PR #' + ev.number + ' opened — ' + ev.title, ok: true });
+          if (target.el && target.el.parentElement){
+            const old = target.el.querySelector('.pr'); if (old) old.remove();
+            const b = document.createElement('span'); b.className = 'pr'; b.textContent = 'PR #' + ev.number;
+            target.el.appendChild(b);
+          }
+          renderDonePile();
+        }
+        if (!instant) {
+          appendLog(tSec, '  PR #' + ev.number + ' — ' + ev.title, true);
+          showBubble('PR opened: ' + ev.title, 2200);
+        }
+        break;
+      }
+      case 'done': {
+        stopWalking();
+        doneBanner.classList.add('show');
+        if (!instant) appendLog(tSec, 'iteration done', true);
+        break;
+      }
+    }
+  } catch (e) {
+    recordError('applyEvent:' + (ev && ev.type), e);
+  }
+}
+
+/* =========================================================================
+   Reset / playback
+   ========================================================================= */
+function resetAll(){
+  Object.values(cards).forEach(c => { if (c.el && c.el.parentElement) c.el.parentElement.removeChild(c.el); });
+  cards = {};
+  carriedId = null;
+  curState = null;
+  curZone = null;
+  lastAppliedIdx = -1;
+  simT = 0;
+  logEl.innerHTML = '';
+  doneOrder = [];
+  renderDonePile();
+  doneBanner.classList.remove('show');
+  gateReadout.textContent = 'waiting · no verdict yet';
+  gateReadout.classList.remove('pass','fail');
+  gateGraphic.classList.remove('open'); gateGraphic.classList.add('closed');
+  dispatchDiamond.classList.remove('active');
+  conveyorEl.querySelectorAll('[data-stop]').forEach(e => e.classList.remove('cur'));
+  subdotEls.forEach(s => s.classList.remove('on'));
+  recountAll();
+  curStateEl.textContent = 'idle';
+  setRibbon(0);
+  moveWorker('intake', true);
+  stopWalking();
+  doThink(false);
+  showBubble('');
+  updateTime();
+  ERROR_COUNT = 0;
+  errorTrayEl.classList.remove('show');
+}
+
+function jumpTo(ms, opts){
+  const preservePlayback = opts && opts.preservePlayback;
+  const wasPlaying = playing;
+  pause();
+  resetAll();
+  simT = ms;
+  for (let i = 0; i < SAMPLE_EVENTS.length; i++){
+    const ev = SAMPLE_EVENTS[i];
+    if (ev.t > ms) break;
+    applyEvent(ev, true);
+    lastAppliedIdx = i;
+  }
+  setRibbon(simT);
+  updateTime();
+  if (preservePlayback && wasPlaying) play();
+}
+
+function jumpToEventIndex(idx){
+  idx = Math.max(-1, Math.min(SAMPLE_EVENTS.length - 1, idx));
+  const ms = idx < 0 ? 0 : SAMPLE_EVENTS[idx].t;
+  jumpTo(ms);
+  lastAppliedIdx = idx;
+  // Re-display the event counter
+  updateTime();
+}
+
+function updateTime(){
+  const s = simT / 1000;
+  const tot = TOTAL_T / 1000;
+  timeLbl.textContent = s.toFixed(1) + 's / ' + tot.toFixed(1) + 's';
+  scrubEl.value = Math.round((simT / TOTAL_T) * 1000);
+  if (evtLbl){
+    const idx = lastAppliedIdx + 1; // events 1-indexed for display
+    evtLbl.textContent = 'event ' + Math.max(0, idx) + ' / ' + SAMPLE_EVENTS.length;
+  }
+  setRibbon(simT);
+}
+
+function tick(ts){
+  if (!playing) return;
+  if (lastFrame == null) lastFrame = ts;
+  const dt = (ts - lastFrame) * speed;
+  lastFrame = ts;
+  simT += dt;
+  if (simT > TOTAL_T) simT = TOTAL_T;
+
+  while (lastAppliedIdx + 1 < SAMPLE_EVENTS.length && SAMPLE_EVENTS[lastAppliedIdx+1].t <= simT){
+    lastAppliedIdx++;
+    applyEvent(SAMPLE_EVENTS[lastAppliedIdx], false);
+  }
+
+  if (carriedId) positionCarriedCard();
+  updateTime();
+
+  if (simT >= TOTAL_T){
+    pause();
+    btnPlay.textContent = 'Replay';
+    return;
+  }
+  rafId = requestAnimationFrame(tick);
+}
+
+function play(){
+  if (simT >= TOTAL_T) { resetAll(); }
+  playing = true;
+  lastFrame = null;
+  btnPlay.textContent = 'Pause';
+  rafId = requestAnimationFrame(tick);
+}
+function pause(){
+  playing = false;
+  if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+  btnPlay.textContent = 'Play';
+  stopWalking();
+}
+
+btnPlay.addEventListener('click', () => { if (playing) pause(); else play(); });
+btnReset.addEventListener('click', () => { pause(); resetAll(); btnPlay.textContent = 'Play'; });
+speedSel.addEventListener('change', () => { speed = parseFloat(speedSel.value); });
+scrubEl.addEventListener('input', () => {
+  const ms = (parseInt(scrubEl.value,10) / 1000) * TOTAL_T;
+  // Scrubbing always pauses — user controls play manually.
+  jumpTo(ms, { preservePlayback: false });
+});
+if (btnStepBack) btnStepBack.addEventListener('click', () => {
+  pause();
+  jumpToEventIndex(lastAppliedIdx - 1);
+});
+if (btnStepFwd) btnStepFwd.addEventListener('click', () => {
+  pause();
+  jumpToEventIndex(lastAppliedIdx + 1);
+});
+
+window.addEventListener('resize', () => {
+  if (curZone) moveWorker(curZone, true);
+  if (carriedId) positionCarriedCard();
+  ZONES.forEach(restackZone);
+});
+
+/* =========================================================================
+   Boot
+   ========================================================================= */
+function formatRunCaption(){
+  if (typeof RUN_META === 'undefined') return '';
+  const short = (RUN_META.runId || '').slice(0, 8);
+  const mins = Math.round((RUN_META.realDurationSec || 0) / 60 * 10) / 10;
+  const started = RUN_META.startedAt ? RUN_META.startedAt.replace('T',' ').replace('Z',' UTC') : '';
+  return 'Run ' + short + '  ·  started ' + started + '  ·  real duration ' + mins + ' min  ·  playback compressed ~20×';
+}
+function scheduleBlink(){
+  if (blinkTimer) clearTimeout(blinkTimer);
+  const next = 4000 + Math.random() * 2000; // 4–6s
+  blinkTimer = setTimeout(() => {
+    workerEl.classList.add('blink');
+    setTimeout(() => workerEl.classList.remove('blink'), 150);
+    scheduleBlink();
+  }, next);
+}
+
+function boot(){
+  const cap = document.getElementById('runCaption');
+  if (cap) cap.textContent = formatRunCaption();
+  resetAll();
+  scheduleBlink();
+  setTimeout(play, 400);
+}
+window.addEventListener('load', boot);
+</script>
+</body>
+</html>

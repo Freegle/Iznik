@@ -7,12 +7,23 @@ import (
 
 const keywordBoostWeight = 0.3
 
-// MinVectorScore is the minimum combined (subject+body) cosine score to
-// include a result. nomic-embed-text-v1.5 normalized dot products: random
-// noise ~0.50, tangential ~0.60, genuine semantic matches 0.70+, exact 0.75+.
+// MinVectorScore is the minimum per-field cosine (subject OR body) to include
+// a result. nomic-embed-text-v1.5 normalized dot products: random noise ~0.50,
+// tangential ~0.60, genuine semantic matches 0.70+, exact 0.75+.
 const MinVectorScore = 0.65
 
-// VectorSearch performs semantic search with hybrid keyword scoring.
+type scoredResult struct {
+	result SearchResult
+	score  float32
+}
+
+// VectorSearch performs semantic search with subject-first tiering and keyword
+// re-ranking. Subject-tier hits (subjectCos ≥ MinVectorScore) come first;
+// body-tier hits (only bodyCos ≥ MinVectorScore) follow. Within each tier,
+// results are ordered by their tier cosine + a keyword boost (literal query
+// word matches in the subject). This matches what users expect: an item whose
+// subject literally says "table" should surface before one that only mentions
+// "table" buried in the body.
 func VectorSearch(term string, limit int, groupids []uint64, msgtype string,
 	nelat, nelng, swlat, swlng float32) ([]SearchResult, error) {
 
@@ -27,30 +38,19 @@ func VectorSearch(term string, limit int, groupids []uint64, msgtype string,
 
 	queryWords := GetWords(term)
 
-	type scoredResult struct {
-		result SearchResult
-		score  float32
-	}
-
-	scored := make([]scoredResult, 0, len(vecResults))
+	var subjectTier []scoredResult
+	var bodyTier []scoredResult
 
 	for _, vr := range vecResults {
-		// Combined score below threshold → drop. Keyword boost doesn't
-		// rescue results below the semantic floor; it only re-orders.
-		if vr.Score < MinVectorScore {
-			continue
-		}
-
+		// Keyword boost: literal query-word matches in the subject.
+		// Re-ranks within a tier; doesn't rescue results below threshold.
 		var keywordScore float32
 		if len(queryWords) > 0 {
-			// Whole-word match: tokenise the subject with the same rules
-			// GetWords uses for the query so "table" ≠ "portable".
 			subjectWords := GetWords(vr.Subject)
 			subjectSet := make(map[string]struct{}, len(subjectWords))
 			for _, w := range subjectWords {
 				subjectSet[w] = struct{}{}
 			}
-
 			matched := 0
 			for _, w := range queryWords {
 				if _, ok := subjectSet[w]; ok {
@@ -60,10 +60,7 @@ func VectorSearch(term string, limit int, groupids []uint64, msgtype string,
 			keywordScore = float32(matched) / float32(len(queryWords))
 		}
 
-		hybridScore := vr.Score + keywordScore*keywordBoostWeight
-
 		lat, lng := utils.Blur(vr.Lat, vr.Lng, utils.BLUR_USER)
-
 		sr := SearchResult{
 			Msgid:   vr.Msgid,
 			Arrival: vr.Arrival,
@@ -78,26 +75,43 @@ func VectorSearch(term string, limit int, groupids []uint64, msgtype string,
 			},
 		}
 
-		scored = append(scored, scoredResult{result: sr, score: hybridScore})
-	}
-
-	// Sort by hybrid score descending.
-	for i := 0; i < len(scored)-1; i++ {
-		for j := i + 1; j < len(scored); j++ {
-			if scored[j].score > scored[i].score {
-				scored[i], scored[j] = scored[j], scored[i]
-			}
+		if vr.SubjectCos >= MinVectorScore {
+			subjectTier = append(subjectTier, scoredResult{
+				result: sr,
+				score:  vr.SubjectCos + keywordScore*keywordBoostWeight,
+			})
+		} else if vr.HasBody && vr.BodyCos >= MinVectorScore {
+			bodyTier = append(bodyTier, scoredResult{
+				result: sr,
+				score:  vr.BodyCos + keywordScore*keywordBoostWeight,
+			})
 		}
 	}
 
-	if len(scored) > limit {
-		scored = scored[:limit]
+	sortByScoreDesc(subjectTier)
+	sortByScoreDesc(bodyTier)
+
+	combined := append(subjectTier, bodyTier...)
+	if len(combined) > limit {
+		combined = combined[:limit]
 	}
 
-	results := make([]SearchResult, len(scored))
-	for i, s := range scored {
+	results := make([]SearchResult, len(combined))
+	for i, s := range combined {
 		results[i] = s.result
 	}
 
 	return results, nil
+}
+
+// sortByScoreDesc sorts in place by score descending. Selection sort —
+// tier sizes are well under 1000, constant factors beat heap/quick overhead.
+func sortByScoreDesc(s []scoredResult) {
+	for i := 0; i < len(s)-1; i++ {
+		for j := i + 1; j < len(s); j++ {
+			if s[j].score > s[i].score {
+				s[i], s[j] = s[j], s[i]
+			}
+		}
+	}
 }

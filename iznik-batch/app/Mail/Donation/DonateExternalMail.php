@@ -8,19 +8,28 @@ use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
 /**
- * Notification email sent to info@ilovefreegle.org when an external donation is recorded.
+ * Notification email sent to info@ilovefreegle.org when a donation needing a
+ * manual thank-you is recorded (external bank transfer, PayPal, or Stripe).
  *
- * Matches the legacy donations.php PUT email from iznik-server.
+ * Matches the three legacy V1 paths:
+ *   - donations.php PUT       → "via an external donation" (bank transfer)
+ *   - donateipn.php (PayPal)  → "via PayPal Donate"
+ *   - stripeipn.php           → "via Stripe"
  */
 class DonateExternalMail extends MjmlMailable
 {
     use LoggableEmail;
+
+    public const SOURCE_EXTERNAL = 'external';
+    public const SOURCE_PAYPAL = 'paypal';
+    public const SOURCE_STRIPE = 'stripe';
 
     public function __construct(
         public string $userName,
         public int $userId,
         public string $userEmail,
         public float $amount,
+        public string $source = self::SOURCE_EXTERNAL,
     ) {
         parent::__construct();
     }
@@ -36,9 +45,23 @@ class DonateExternalMail extends MjmlMailable
         );
     }
 
+    /**
+     * Human-readable channel phrase used in subject and body.
+     */
+    public function getChannelPhrase(): string
+    {
+        return match ($this->source) {
+            self::SOURCE_PAYPAL => 'PayPal Donate',
+            self::SOURCE_STRIPE => 'Stripe',
+            default => 'an external donation',
+        };
+    }
+
     protected function getSubject(): string
     {
-        return "{$this->userName} ({$this->userEmail}) donated £{$this->amount} via an external donation. Please can you thank them?";
+        $channel = $this->getChannelPhrase();
+
+        return "{$this->userName} ({$this->userEmail}) donated £{$this->amount} via {$channel}. Please can you thank them?";
     }
 
     public function build(): static
@@ -53,6 +76,7 @@ class DonateExternalMail extends MjmlMailable
                 'userId' => $this->userId,
                 'userEmail' => $this->userEmail,
                 'amount' => $this->amount,
+                'channel' => $this->getChannelPhrase(),
             ]
         )->to($infoAddr)
             ->applyLogging('DonateExternal');

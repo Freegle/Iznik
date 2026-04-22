@@ -84,6 +84,13 @@ module.exports = defineConfig({
                     !sourcePath.includes('node_modules/') &&
                     !sourcePath.includes('data:') &&
                     !sourcePath.includes('blob:') &&
+                    // Sentry error-filter composable: its branches fire only
+                    // on specific browser/3rd-party errors (Leaflet, Freestar,
+                    // NotReadableError, etc.) that e2e tests don't trigger.
+                    // Counting it in Playwright's denominator means every new
+                    // error class we add drops coverage — Vitest unit tests
+                    // cover it properly, so exclude from Playwright only.
+                    !sourcePath.includes('useSuppressException') &&
                     sourcePath.length < 300
                   )
                 },

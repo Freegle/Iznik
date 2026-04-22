@@ -69,4 +69,118 @@ describe('suppressException', () => {
       suppressException({ message: 'foo', stack: 'bar' })
     ).toBe(false)
   })
+
+  it('suppresses Freestar ftUtils.js null-document errors', () => {
+    // Sentry issue NUXT3-CES (6579683231): 11k events from Freestar third-party JS.
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: "Cannot read properties of null (reading 'document')",
+        stack:
+          "TypeError: Cannot read properties of null (reading 'document')\n" +
+          '    at Object.getPlacementPosition (https://a.pub.network/.../ftUtils.js:1:2345)',
+      })
+    ).toBe(true)
+  })
+
+  it('suppresses Freestar errors identified by getPlacementPosition in stack', () => {
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: "Cannot read properties of null (reading 'document')",
+        stack: '    at getPlacementPosition (something.js:1:1)',
+      })
+    ).toBe(true)
+  })
+
+  it('suppresses Freestar ftUtils.js getInnerDimensions null errors (Firefox phrasing, NUXT3-D2H)', () => {
+    // Sentry issue NUXT3-D2H (7372854976): 337 events / 119 users.
+    // Firefox surfaces null-property TypeErrors as:
+    //   "can't access property \"display\", t is null"
+    // Culprit: getInnerDimensions(ftUtils) in /ftUtils.js.
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: 'can\'t access property "display", t is null',
+        stack:
+          'TypeError: can\'t access property "display", t is null\n' +
+          '    at getInnerDimensions (https://a.pub.network/.../ftUtils.js:1:4567)',
+      })
+    ).toBe(true)
+  })
+
+  it('suppresses Freestar ftUtils.js getInnerDimensions null errors (Chrome phrasing, NUXT3-D2H)', () => {
+    // Chrome phrasing of the same Freestar ftUtils.js getInnerDimensions crash.
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: "Cannot read properties of null (reading 'display')",
+        stack:
+          "TypeError: Cannot read properties of null (reading 'display')\n" +
+          '    at Object.getInnerDimensions (https://a.pub.network/.../ftUtils.js:1:4567)',
+      })
+    ).toBe(true)
+  })
+
+  it('suppresses Freestar errors identified by getInnerDimensions alone in stack', () => {
+    // If the filename has been stripped (e.g. due to SourceMap rewriting or
+    // bundler renaming), the getInnerDimensions function name in the stack is
+    // still a Freestar-specific signature.
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: 'can\'t access property "display", t is null',
+        stack: '    at getInnerDimensions (something.js:1:1)',
+      })
+    ).toBe(true)
+  })
+
+  it('does not suppress unrelated null-document TypeErrors from our code', () => {
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: "Cannot read properties of null (reading 'document')",
+        stack: '    at MyComponent.vue:42 (https://example.com/MyComponent.vue)',
+      })
+    ).toBe(false)
+  })
+
+  it('suppresses NotReadableError I/O read failures (NUXT3-D2P)', () => {
+    // Sentry issue NUXT3-D2P (7372873858): 568 events / 357 users.
+    // Mobile Safari/iOS file/camera read failures (permission denied,
+    // iCloud Photo not downloaded, file picker cancelled, etc.).
+    const err = new TypeError(
+      'NotReadableError: The I/O read operation failed.'
+    )
+    expect(suppressException(err)).toBe(true)
+  })
+
+  it('suppresses NotReadableError when surfaced via toString only', () => {
+    expect(
+      suppressException({
+        toString: () =>
+          'TypeError: NotReadableError: The I/O read operation failed.',
+      })
+    ).toBe(true)
+  })
+
+  it('does not suppress unrelated NotReadableErrors', () => {
+    // A bare NotReadableError without the I/O read phrase should still report,
+    // since it may indicate a real bug elsewhere.
+    expect(
+      suppressException({
+        name: 'NotReadableError',
+        message: 'Could not start video source',
+      })
+    ).toBe(false)
+  })
+
+  it('does not suppress unrelated TypeErrors', () => {
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: "Cannot read properties of undefined (reading 'foo')",
+      })
+    ).toBe(false)
+  })
 })
