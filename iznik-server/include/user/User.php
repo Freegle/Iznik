@@ -706,12 +706,14 @@ class User extends Entity
             ]);
 
             if (count($emails) == 0) {
+                error_log("TN-SYNC-TRACE [WRITE] table=users_emails op=insert where=userid={$this->id}");
                 $sql = "INSERT IGNORE INTO users_emails (userid, email, preferred, canon, backwards) VALUES (?, ?, ?, ?, ?)";
                 $rc = $this->dbhm->preExec($sql,
                     [$this->id, $email, $primary, $canon, strrev($canon)]);
                 $rc = $this->dbhm->lastInsertId();
 
                 if ($rc && $primary) {
+                    error_log("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid={$this->id},id!={$rc} set=preferred=0");
                     # Make sure no other email is flagged as primary
                     $this->dbhm->preExec("UPDATE users_emails SET preferred = 0 WHERE userid = ? AND id != ?;", [
                         $this->id,
@@ -722,6 +724,7 @@ class User extends Entity
                 $rc = $emails[0]['id'];
 
                 if ($changeprimary && $primary != $emails[0]['preferred']) {
+                    error_log("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=id={$rc} set=preferred={$primary}");
                     # Change in status.
                     $this->dbhm->preExec("UPDATE users_emails SET preferred = ? WHERE id = ?;", [
                         $primary,
@@ -730,6 +733,7 @@ class User extends Entity
                 }
 
                 if ($primary) {
+                    error_log("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid={$this->id},id!={$rc} set=preferred=0");
                     # Make sure no other email is flagged as primary
                     $this->dbhm->preExec("UPDATE users_emails SET preferred = 0 WHERE userid = ? AND id != ?;", [
                         $this->id,
@@ -764,9 +768,11 @@ class User extends Entity
         }
 
         if ($emailid) {
+            error_log("TN-SYNC-TRACE [WRITE] table=bounces_emails op=update where=emailid={$emailid} set=reset=1");
             $this->dbhm->preExec("UPDATE bounces_emails SET reset = 1 WHERE emailid = ?;", [$emailid]);
         }
 
+        error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=bouncing=0");
         $this->dbhm->preExec("UPDATE users SET bouncing = 0 WHERE id = ?;", [$this->id]);
     }
 
@@ -7205,6 +7211,7 @@ memberships.groupid IN $groupq
                 // Check if user exists before updating to avoid foreign key constraint violations
                 $userExists = $this->dbhr->preQuery("SELECT id FROM users WHERE id = ?;", [$userid]);
                 if (count($userExists) > 0) {
+                    error_log("TN-SYNC-TRACE [WRITE] table=users_donations op=update where=id={$donation['id']} set=userid={$userid}");
                     $this->dbhm->preExec("UPDATE users_donations SET userid = ? WHERE id = ?;", [
                         $userid,
                         $donation['id']

@@ -455,16 +455,21 @@ class User extends Model implements Auditable
                 ->get();
 
             if ($emails->isEmpty()) {
-                $newEmail = UserEmail::create([
-                    'userid' => $this->id,
-                    'email' => $email,
-                    'preferred' => $primary,
-                    'canon' => $canon,
-                    'backwards' => strrev($canon),
-                ]);
-                $rc = $newEmail->id;
+                Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=insert where=userid={$this->id}");
+                // TRACE: commented out for port testing
+                // $newEmail = UserEmail::create([
+                //     'userid' => $this->id,
+                //     'email' => $email,
+                //     'preferred' => $primary,
+                //     'canon' => $canon,
+                //     'backwards' => strrev($canon),
+                // ]);
+                // $rc = $newEmail->id;
+
+                $rc = true;
 
                 if ($rc && $primary) {
+                    Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid={$this->id},id!={$rc} set=preferred=0");
                     # Make sure no other email is flagged as primary
                     UserEmail::where('userid', $this->id)
                         ->where('id', '!=', $rc)
@@ -472,22 +477,24 @@ class User extends Model implements Auditable
                         ->get()
                         ->each(function ($other) {
                             $other->preferred = 0;
-                            $other->save();
+                            // $other->save(); // TRACE: commented out for port testing
                         });
                 }
             } else {
                 $rc = $emails[0]->id;
 
                 if ($changeprimary && $primary != $emails[0]->preferred) {
+                    Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=id={$rc} set=preferred={$primary}");
                     # Change in status.
                     $existing = UserEmail::find($rc);
                     if ($existing) {
                         $existing->preferred = $primary;
-                        $existing->save();
+                        // $existing->save(); // TRACE: commented out for port testing
                     }
                 }
 
                 if ($primary) {
+                    Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid={$this->id},id!={$rc} set=preferred=0");
                     # Make sure no other email is flagged as primary
                     UserEmail::where('userid', $this->id)
                         ->where('id', '!=', $rc)
@@ -495,7 +502,7 @@ class User extends Model implements Auditable
                         ->get()
                         ->each(function ($other) {
                             $other->preferred = 0;
-                            $other->save();
+                            // $other->save(); // TRACE: commented out for port testing
                         });
 
                     # If we've set an email we might no longer be bouncing.
@@ -515,18 +522,20 @@ class User extends Model implements Auditable
     public function unbounce(int $emailid): void
     {
         if ($emailid) {
+            Logger::info("TN-SYNC-TRACE [WRITE] table=bounces_emails op=update where=emailid={$emailid} set=reset=1");
             BounceEmail::where('emailid', $emailid)
                 ->where('reset', '!=', 1)
                 ->get()
                 ->each(function ($bounce) {
                     $bounce->reset = 1;
-                    $bounce->save();
+                    // $bounce->save(); // TRACE: commented out for port testing
                 });
         }
 
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=bouncing=0");
         if ($this->bouncing != 0) {
             $this->bouncing = 0;
-            $this->save();
+            // $this->save(); // TRACE: commented out for port testing
         }
     }
 
@@ -545,8 +554,9 @@ class User extends Model implements Auditable
                 // Check if user exists before updating to avoid foreign key constraint violations
                 $userExists = User::where('id', $userid)->exists();
                 if ($userExists) {
+                    Logger::info("TN-SYNC-TRACE [WRITE] table=users_donations op=update where=id={$donation->id} set=userid={$userid}");
                     $donation->userid = $userid;
-                    $donation->save();
+                    // $donation->save(); // TRACE: commented out for port testing
                 }
             }
         }
