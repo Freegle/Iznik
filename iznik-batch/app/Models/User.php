@@ -1336,22 +1336,29 @@ class User extends Model implements Auditable
     public function forget(string $reason): void
     {
         // --- Clear personal attributes ---
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=firstname=NULL");
         $this->firstname = NULL;
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=lastname=NULL");
         $this->lastname = NULL;
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=fullname=Deleted User #{$this->id}");
         $this->fullname = 'Deleted User #' . $this->id;
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=settings=NULL");
         $this->settings = NULL;
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=yahooid=NULL");
         $this->yahooid = NULL;
-        $this->save();
+        // $this->save();  // TRACE: commented out for port testing
 
         // --- Delete external emails (keep internal Freegle addresses) ---
         foreach ($this->emails()->get() as $email) {
             if (!self::isInternalEmail($email->email)) {
-                $email->delete();
+                Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=delete where=userid={$this->id},email={$email->email}");
+                // $email->delete();  // TRACE: commented out for port testing
             }
         }
 
         // --- Delete all login credentials ---
-        UserLogin::where('userid', $this->id)->get()->each->delete();
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_logins op=delete where=userid={$this->id}");
+        // UserLogin::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
 
         // --- Clear message content and withdraw messages without an outcome ---
         $msgIds = Message::where('fromuser', $this->id)
@@ -1370,17 +1377,20 @@ class User extends Model implements Auditable
             $message->textbody = NULL;
             $message->htmlbody = NULL;
             $message->deleted = now();
-            $message->save();
+            Logger::info("TN-SYNC-TRACE [WRITE] table=messages op=update where=id={$msgId} set=fromip=NULL,message=NULL,envelopefrom=NULL,fromname=NULL,fromaddr=NULL,messageid=NULL,textbody=NULL,htmlbody=NULL,deleted=NOW()");
+            // $message->save();  // TRACE: commented out for port testing
 
             // Mark the message group as deleted
             $messageGroup = MessageGroup::find($msgId);
             $messageGroup->deleted = 1;
-            $messageGroup->save();
+            Logger::info("TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid={$msgId} set=deleted=1");
+            // $messageGroup->save();  // TRACE: commented out for port testing
 
             // Clear any outcome comments that might contain personal data.
             foreach ($message->outcomes()->get() as $messageOutcome) {
                 $messageOutcome->comments = NULL;
-                $messageOutcome->save();
+                Logger::info("TN-SYNC-TRACE [WRITE] table=messages_outcomes op=update where=msgid={$msgId} set=comments=NULL");
+                // $messageOutcome->save();  // TRACE: commented out for port testing
             }
 
             // Withdraw if no outcome has been recorded yet.
@@ -1392,39 +1402,54 @@ class User extends Model implements Auditable
         // --- Clear chat message content ---
         foreach ($this->chatMessages()->get() as $chatMessage) {
             $chatMessage->message = NULL;
-            $chatMessage->save();
+            Logger::info("TN-SYNC-TRACE [WRITE] table=chat_messages op=update where=id={$chatMessage->id} set=message=NULL");
+            // $chatMessage->save();  // TRACE: commented out for port testing
         }
 
         // --- Delete user-generated content ---
-        CommunityEvent::where('userid', $this->id)->get()->each->delete();
-        Volunteering::where('userid', $this->id)->get()->each->delete();
-        Newsfeed::where('userid', $this->id)->get()->each->delete();
-        UserStory::where('userid', $this->id)->get()->each->delete();
-        UserSearch::where('userid', $this->id)->get()->each->delete();
-        UserAboutMe::where('userid', $this->id)->get()->each->delete();
-        Rating::where('rater', $this->id)->get()->each->delete();
-        Rating::where('ratee', $this->id)->get()->each->delete();
+        Logger::info("TN-SYNC-TRACE [WRITE] table=communityevents op=delete where=userid={$this->id}");
+        // CommunityEvent::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        Logger::info("TN-SYNC-TRACE [WRITE] table=volunteering op=delete where=userid={$this->id}");
+        // Volunteering::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        Logger::info("TN-SYNC-TRACE [WRITE] table=newsfeed op=delete where=userid={$this->id}");
+        // Newsfeed::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_stories op=delete where=userid={$this->id}");
+        // UserStory::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_searches op=delete where=userid={$this->id}");
+        // UserSearch::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_aboutme op=delete where=userid={$this->id}");
+        // UserAboutMe::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        Logger::info("TN-SYNC-TRACE [WRITE] table=ratings op=delete where=rater={$this->id}");
+        // Rating::where('rater', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        Logger::info("TN-SYNC-TRACE [WRITE] table=ratings op=delete where=ratee={$this->id}");
+        // Rating::where('ratee', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
 
         // --- Remove all group memberships ---
         $groupIds = collect($this->getMembershipList())->pluck('id');
         foreach ($groupIds as $groupId) {
+            Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$this->id},groupid={$groupId}");
             $this->removeMembership($groupId);
         }
 
         // --- Delete postal addresses and profile images ---
-        UserAddress::where('userid', $this->id)->get()->each->delete();
-        UserImage::where('userid', $this->id)->get()->each->delete();
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_addresses op=delete where=userid={$this->id}");
+        // UserAddress::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users_images op=delete where=userid={$this->id}");
+        // UserImage::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
 
         // --- Delete message promises ---
-        MessagePromise::where('userid', $this->id)->get()->each->delete();
+        Logger::info("TN-SYNC-TRACE [WRITE] table=messages_promises op=delete where=userid={$this->id}");
+        // MessagePromise::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
 
         // --- Mark user as forgotten ---
         $this->forgotten = now();
         $this->tnuserid = NULL;
-        $this->save();
+        Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=forgotten=NOW(),tnuserid=NULL");
+        // $this->save();  // TRACE: commented out for port testing
 
         // --- Delete sessions ---
-        UserSession::where('userid', $this->id)->get()->each->delete();
+        Logger::info("TN-SYNC-TRACE [WRITE] table=sessions op=delete where=userid={$this->id}");
+        // UserSession::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
 
         // --- Log the deletion ---
         $log = new Log();
@@ -1433,7 +1458,8 @@ class User extends Model implements Auditable
         $log->subtype = 'Deleted';
         $log->user = $this->id;
         $log->text = $reason;
-        $log->save();
+        Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=User,subtype=Deleted,user={$this->id},text=len=" . strlen($reason));
+        // $log->save();  // TRACE: commented out for port testing
     }
 
     /**

@@ -5890,10 +5890,15 @@ class User extends Entity
         # otherwise it would mess up the stats.
 
         # Clear name etc.
+        error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=firstname=NULL");
         $this->setPrivate('firstname', NULL);
+        error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=lastname=NULL");
         $this->setPrivate('lastname', NULL);
+        error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=fullname=Deleted User #{$this->id}");
         $this->setPrivate('fullname', "Deleted User #" . $this->id);
+        error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=settings=NULL");
         $this->setPrivate('settings', NULL);
+        error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=yahooid=NULL");
         $this->setPrivate('yahooid', NULL);
 
         # Delete emails which aren't ours.
@@ -5901,11 +5906,13 @@ class User extends Entity
 
         foreach ($emails as $email) {
             if (!$email['ourdomain']) {
+                error_log("TN-SYNC-TRACE [WRITE] table=users_emails op=delete where=userid={$this->id},email={$email['email']}");
                 $this->removeEmail($email['email']);
             }
         }
 
         # Delete all logins.
+        error_log("TN-SYNC-TRACE [WRITE] table=users_logins op=delete where=userid={$this->id}");
         $this->dbhm->preExec("DELETE FROM users_logins WHERE userid = ?;", [
             $this->id
         ]);
@@ -5919,15 +5926,18 @@ class User extends Entity
         ]);
 
         foreach ($msgs as $msg) {
+            error_log("TN-SYNC-TRACE [WRITE] table=messages op=update where=id={$msg['id']} set=fromip=NULL,message=NULL,envelopefrom=NULL,fromname=NULL,fromaddr=NULL,messageid=NULL,textbody=NULL,htmlbody=NULL,deleted=NOW()");
             $this->dbhm->preExec("UPDATE messages SET fromip = NULL, message = NULL, envelopefrom = NULL, fromname = NULL, fromaddr = NULL, messageid = NULL, textbody = NULL, htmlbody = NULL, deleted = NOW() WHERE id = ?;", [
                 $msg['id']
             ]);
 
+            error_log("TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid={$msg['id']} set=deleted=1");
             $this->dbhm->preExec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ?;", [
                 $msg['id']
             ]);
 
             # Delete outcome comments that they've added - just about might have personal data.
+            error_log("TN-SYNC-TRACE [WRITE] table=messages_outcomes op=update where=msgid={$msg['id']} set=comments=NULL");
             $this->dbhm->preExec("UPDATE messages_outcomes SET comments = NULL WHERE msgid = ?;", [
                 $msg['id']
             ]);
@@ -5945,6 +5955,7 @@ class User extends Entity
         ]);
 
         foreach ($msgs as $msg) {
+            error_log("TN-SYNC-TRACE [WRITE] table=chat_messages op=update where=id={$msg['id']} set=message=NULL");
             $this->dbhm->preExec("UPDATE chat_messages SET message = NULL WHERE id = ?;", [
                 $msg['id']
             ]);
@@ -5952,27 +5963,35 @@ class User extends Entity
 
         # Delete completely any community events, volunteering opportunities, newsfeed posts, searches and stories
         # they have created (their personal details might be in there), and any ratings by or about them.
+        error_log("TN-SYNC-TRACE [WRITE] table=communityevents op=delete where=userid={$this->id}");
         $this->dbhm->preExec("DELETE FROM communityevents WHERE userid = ?;", [
             $this->id
         ]);
+        error_log("TN-SYNC-TRACE [WRITE] table=volunteering op=delete where=userid={$this->id}");
         $this->dbhm->preExec("DELETE FROM volunteering WHERE userid = ?;", [
             $this->id
         ]);
+        error_log("TN-SYNC-TRACE [WRITE] table=newsfeed op=delete where=userid={$this->id}");
         $this->dbhm->preExec("DELETE FROM newsfeed WHERE userid = ?;", [
             $this->id
         ]);
+        error_log("TN-SYNC-TRACE [WRITE] table=users_stories op=delete where=userid={$this->id}");
         $this->dbhm->preExec("DELETE FROM users_stories WHERE userid = ?;", [
             $this->id
         ]);
+        error_log("TN-SYNC-TRACE [WRITE] table=users_searches op=delete where=userid={$this->id}");
         $this->dbhm->preExec("DELETE FROM users_searches WHERE userid = ?;", [
             $this->id
         ]);
+        error_log("TN-SYNC-TRACE [WRITE] table=users_aboutme op=delete where=userid={$this->id}");
         $this->dbhm->preExec("DELETE FROM users_aboutme WHERE userid = ?;", [
             $this->id
         ]);
+        error_log("TN-SYNC-TRACE [WRITE] table=ratings op=delete where=rater={$this->id}");
         $this->dbhm->preExec("DELETE FROM ratings WHERE rater = ?;", [
             $this->id
         ]);
+        error_log("TN-SYNC-TRACE [WRITE] table=ratings op=delete where=ratee={$this->id}");
         $this->dbhm->preExec("DELETE FROM ratings WHERE ratee = ?;", [
             $this->id
         ]);
@@ -5981,33 +6000,40 @@ class User extends Entity
         $membs = $this->getMemberships();
 
         foreach ($membs as $memb) {
+            error_log("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$this->id},groupid={$memb['id']}");
             $this->removeMembership($memb['id']);
         }
 
         # Delete any postal addresses
+        error_log("TN-SYNC-TRACE [WRITE] table=users_addresses op=delete where=userid={$this->id}");
         $this->dbhm->preExec("DELETE FROM users_addresses WHERE userid = ?;", [
             $this->id
         ]);
 
         # Delete any profile images
+        error_log("TN-SYNC-TRACE [WRITE] table=users_images op=delete where=userid={$this->id}");
         $this->dbhm->preExec("DELETE FROM users_images WHERE userid = ?;", [
             $this->id
         ]);
 
         # Remove any promises.
+        error_log("TN-SYNC-TRACE [WRITE] table=messages_promises op=delete where=userid={$this->id}");
         $this->dbhm->preExec("DELETE FROM messages_promises WHERE userid = ?;", [
             $this->id
         ]);
 
+        error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=forgotten=NOW(),tnuserid=NULL");
         $this->dbhm->preExec("UPDATE users SET forgotten = NOW(), tnuserid = NULL WHERE id = ?;", [
             $this->id
         ]);
 
+        error_log("TN-SYNC-TRACE [WRITE] table=sessions op=delete where=userid={$this->id}");
         $this->dbhm->preExec("DELETE FROM sessions WHERE userid = ?;", [
             $this->id
         ]);
 
         $l = new Log($this->dbhr, $this->dbhm);
+        error_log("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=User,subtype=Deleted,user={$this->id},text=len=" . strlen($reason));
         $l->log([
             'type' => Log::TYPE_USER,
             'subtype' => Log::SUBTYPE_DELETED,
