@@ -416,7 +416,13 @@ async function main() {
     // etc. as 'tool' — we save one LLM call per state, which on an ~8-state
     // iteration adds up to roughly half the tokens with zero functional change.
     const stateDef: any = (definition.states as any)[current.currentState]
-    if (stateDef?.nodeType === 'tool') {
+    // 'tool' is the primary marker. 'start' gets the same treatment when it
+    // has readActions — ai-flower's validator insists on exactly one 'start'
+    // node, so we can't rename LOAD_STATE to 'tool'. A start node with no
+    // actions would fall through to the normal LLM path (same as today).
+    const isToolLike = stateDef?.nodeType === 'tool'
+      || (stateDef?.nodeType === 'start' && Array.isArray(stateDef?.readActions) && stateDef.readActions.length > 0)
+    if (isToolLike) {
       const readActions: string[] = stateDef.readActions ?? []
       const writeActions: string[] = stateDef.writeActions ?? []
       const toolActions = [...readActions, ...writeActions]
