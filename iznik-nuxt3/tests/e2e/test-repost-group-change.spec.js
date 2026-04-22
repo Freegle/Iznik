@@ -64,6 +64,30 @@ test.describe('Repost Group Change', () => {
     })
     console.log('On whereami page')
 
+    // Dump compose-store + DOM state for diagnostics (helps find why
+    // the group dropdown sometimes fails to render on CI).
+    const whereamiState = await page.evaluate(() => {
+      const pinia = window.$nuxt?.$pinia || window.$pinia
+      const state = pinia?.state?.value
+      const compose = state?.compose
+      return {
+        href: window.location.href,
+        bodyText: document.body.innerText.slice(0, 500),
+        hasSelectElement: !!document.querySelector('select'),
+        hasComposeGroup: !!document.querySelector('.community-section'),
+        composePostcode: compose?.postcode
+          ? {
+              id: compose.postcode.id,
+              name: compose.postcode.name,
+              groupsnearCount: compose.postcode.groupsnear?.length ?? 0,
+              groupsnearIds: compose.postcode.groupsnear?.map((g) => g.id),
+            }
+          : null,
+        composeGroup: compose?.group,
+      }
+    })
+    console.log('WHEREAMI DIAG:', JSON.stringify(whereamiState, null, 2))
+
     // Wait for the group dropdown to appear.
     const groupDropdown = page.locator('select').first()
     await expect(groupDropdown).toBeVisible({ timeout: timeouts.ui.appearance })
