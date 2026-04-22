@@ -403,7 +403,16 @@ async function main() {
     }
 
     step++
-    startGroup(`→ step ${step}: ${current.currentState}`)
+    // Flag the step header with whether it costs an LLM call. Tool / start-with-
+    // readActions → deterministic code, no tokens. Agent → LLM decides what to
+    // call next and usually costs one call; write-action agent states (DELEGATE_*,
+    // FIX_*, WRITE_COVERAGE) ALSO spawn a delegate subprocess that itself burns
+    // tokens on top of the FSM brain call.
+    const headerStateDef: any = (definition.states as any)[current.currentState]
+    const headerIsTool = headerStateDef?.nodeType === 'tool'
+      || (headerStateDef?.nodeType === 'start' && Array.isArray(headerStateDef?.readActions) && headerStateDef.readActions.length > 0)
+    const headerTag = headerIsTool ? '[tool]' : '[LLM]'
+    startGroup(`→ step ${step}: ${current.currentState} ${headerTag}`)
     try {
 
     // ─── TOOL NODE FAST-PATH ───
