@@ -86,6 +86,29 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
   console.log('Logging out via UI')
 
   try {
+    // Clear any lingering modal backdrop from a prior modal (e.g. the login
+    // modal that closes via route redirect after signUpViaHomepage). The
+    // backdrop node in <div id="teleports"> otherwise intercepts pointer
+    // events and blocks the #menu-option-logout click.
+    if (!page.isClosed()) {
+      await page
+        .evaluate(() => {
+          document
+            .querySelectorAll('.modal.show, .modal[style*="display: block"]')
+            .forEach((el) => {
+              el.classList.remove('show')
+              el.style.display = 'none'
+            })
+          document
+            .querySelectorAll('.modal-backdrop')
+            .forEach((el) => el.remove())
+          document.body.classList.remove('modal-open')
+          document.body.style.removeProperty('overflow')
+          document.body.style.removeProperty('padding-right')
+        })
+        .catch(() => {})
+    }
+
     // Check if the logout button is visible (desktop or mobile)
     const desktopLogout = page.locator('#menu-option-logout')
     const mobileLogout = page.locator('text=Logout').filter({ visible: true })
