@@ -200,22 +200,29 @@ describe('OurUploadedImage', () => {
       expect(wrapper.emitted('error')[0][0]).toBe(mockEvent)
     })
 
-    it('does not report broken images to Sentry (NUXT3-BS6 noise)', async () => {
+    it('reports to Sentry when target is connected (real load failure)', async () => {
       const Sentry = await import('@sentry/browser')
       const wrapper = createWrapper({ src: 'freegletusd-abc123' })
-      await wrapper.vm.brokenImage({ target: {} })
-      expect(Sentry.captureMessage).not.toHaveBeenCalledWith(
-        expect.stringContaining('Failed to fetch image')
+      await wrapper.vm.brokenImage({ target: { isConnected: true } })
+      expect(Sentry.captureMessage).toHaveBeenCalledWith(
+        'Failed to fetch image freegletusd-abc123'
       )
     })
 
-    it('does not report broken images to Sentry for non-freegletusd sources', async () => {
+    it('does not report when target is detached from DOM (cancelled request)', async () => {
       const Sentry = await import('@sentry/browser')
-      const wrapper = createWrapper({ src: 'uploadcare-cdn-uuid-xyz' })
-      await wrapper.vm.brokenImage({ target: {} })
-      expect(Sentry.captureMessage).not.toHaveBeenCalledWith(
-        expect.stringContaining('Failed to fetch image')
-      )
+      const wrapper = createWrapper({ src: 'freegletusd-abc123' })
+      await wrapper.vm.brokenImage({ target: { isConnected: false } })
+      expect(Sentry.captureMessage).not.toHaveBeenCalled()
+    })
+
+    it('does not report when component is unmounting', async () => {
+      const Sentry = await import('@sentry/browser')
+      const wrapper = createWrapper({ src: 'freegletusd-abc123' })
+      const brokenImage = wrapper.vm.brokenImage
+      wrapper.unmount()
+      brokenImage({ target: { isConnected: true } })
+      expect(Sentry.captureMessage).not.toHaveBeenCalled()
     })
   })
 

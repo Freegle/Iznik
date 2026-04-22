@@ -110,14 +110,15 @@ export default defineNuxtPlugin(async (nuxtApp) => {
             return null
           }
 
-          // Drop "Failed to fetch image ..." captureMessage events.
-          // Sentry issue NUXT3-BS6 (~94k events, 351 users, level info). These fire
-          // from OurUploadedImage.vue when a user's image can't load - typically
-          // because it was deleted, the user is on a flaky network, or an ad/image
-          // blocker is active. Not actionable. We've removed the captureMessage
-          // call, but keep this filter to catch already-deployed / cached bundles
-          // (which also emit the same message for non-freegletusd sources).
-          if (event.message?.startsWith('Failed to fetch image ')) {
+          // Transitional safety net for Sentry NUXT3-BS6. OurUploadedImage now
+          // gates its captureMessage behind state checks (isUnmounting /
+          // target.isConnected) so transient fetch aborts on mobile infinite
+          // scroll + Capacitor WebView no longer fire. Cached bundles deployed
+          // before that change still emit the unconditional captureMessage —
+          // drop those here until the rollout window closes (remove ~30 days
+          // after deploy). Narrowed to freegletusd- so real load failures on
+          // other providers (e.g. uploadcare) still surface.
+          if (event.message?.startsWith('Failed to fetch image freegletusd-')) {
             return null
           }
 

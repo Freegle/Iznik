@@ -19,7 +19,7 @@
   />
 </template>
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onBeforeUnmount } from 'vue'
 import * as Sentry from '@sentry/browser'
 
 const props = defineProps({
@@ -140,6 +140,16 @@ const chooseSrc = computed(() => {
 
 const show = ref(true)
 
+// Track component teardown so `brokenImage` can tell a real load failure apart
+// from an <img> error fired while Vue is unmounting the node (infinite-scroll
+// virtualisation, keepAlive eviction). The element-level `isConnected` check
+// in `brokenImage` covers detachment after the hook fires; this ref covers the
+// narrow window where the hook has run but the DOM is still attached.
+const isUnmounting = ref(false)
+onBeforeUnmount(() => {
+  isUnmounting.value = true
+})
+
 const modString = computed(() => {
   if (!props.modifiers) {
     return null
@@ -155,5 +165,16 @@ function brokenImage(e) {
   console.log('Our uploaded image broken', props.src)
   emit('error', e)
   show.value = false
+
+  // Skip Sentry when the error was caused by a cancelled request rather than
+  // a real load failure: the component is tearing down, or the <img> node has
+  // already been detached from the DOM (common with infinite-scroll feeds on
+  // mobile / Capacitor, where scrolling removes the node mid-fetch and Chromium
+  // aborts the request, firing `error` on the detached element).
+  if (isUnmounting.value || e?.target?.isConnected === false) {
+    return
+  }
+
+  Sentry.captureMessage('Failed to fetch image ' + props.src)
 }
 </script>
