@@ -15,13 +15,22 @@
  *   4. Stop when status === 'completed' or hard step-cap is reached.
  */
 
+// Silence the misleading ClaudeCodeAdapter warning before its module is loaded.
+// The warning reads like a fatal ("This adapter requires running from within a
+// Claude Code session"), but in practice the adapter authenticates through the
+// local `claude` CLI (subscription auth) and works fine standalone. The adapter
+// only checks `process.env.CLAUDECODE` at construction to decide whether to
+// print the warning — setting it here suppresses the warning without changing
+// behaviour. Must be set BEFORE the adapter import.
+if (!process.env.CLAUDECODE) process.env.CLAUDECODE = '1'
+
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
-import { out, outWarn, dbg, truncate, startGroup, endGroup } from './log.js'
+import { out, outWarn, dbg, truncate, startGroup, endGroup, summarizeActionResult, summarizeReasoning } from './log.js'
 
 import {
   WorkflowEngine,
@@ -456,7 +465,8 @@ async function main() {
       })
       logInstance(result.instance, `after step ${step}`)
       if (result.llmReasoning) {
-        out(`reason: ${truncate(result.llmReasoning.replace(/\s+/g, ' ').trim(), 200)}`)
+        const cleaned = summarizeReasoning(current.currentState, result.llmReasoning)
+        if (cleaned) out(`reason: ${cleaned}`)
       }
       // Actions that already emit their own start/end group lines (with tool
       // call children) should not get a redundant `· action → {...}` line
@@ -467,11 +477,11 @@ async function main() {
         if (a.error) {
           outWarn(`action ${a.action} failed: ${truncate(a.error, 200)}`)
         } else {
-          const resStr = a.result === undefined ? '' : JSON.stringify(a.result)
+          const summary = summarizeActionResult(a.action, a.result)
           if (!selfLogging.has(a.action)) {
-            out(`· ${a.action}${resStr ? ` → ${truncate(resStr, 160)}` : ''}`)
+            out(`· ${a.action}${summary ? ` → ${summary}` : ''}`)
           }
-          if (resStr) dbg(`action ${a.action} full result: ${resStr}`)
+          dbg(`action ${a.action} full result: ${a.result === undefined ? '(undefined)' : JSON.stringify(a.result)}`)
         }
       }
 

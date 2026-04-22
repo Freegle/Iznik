@@ -101,3 +101,149 @@ function formatDuration(ms: number): string {
   const rem = Math.round(s - m * 60)
   return `${m}m${rem.toString().padStart(2, '0')}s`
 }
+
+// ─── Action result summarizer ───────────────────────────────────────────────
+// Every action gets one human-readable sentence (no JSON). For unknown actions
+// we fall back to "ok" — the full payload is always in debug.log for anyone
+// who needs to dig.
+export function summarizeActionResult(action: string, result: unknown): string {
+  if (result === undefined || result === null) return 'ok'
+  const r = result as Record<string, any>
+  switch (action) {
+    case 'load_state': {
+      const topics = r.state?.topics ?? {}
+      const n = Object.keys(topics).length
+      const lastEmail = r.state?.last_email_sent
+      return lastEmail
+        ? `${n} tracked topic${n === 1 ? '' : 's'}, last email ${timeSince(lastEmail)}`
+        : `${n} tracked topic${n === 1 ? '' : 's'}, no email sent yet`
+    }
+    case 'fetch_discourse': {
+      const posts = Array.isArray(r.posts) ? r.posts.length : 0
+      const seen = r.topicsSeen ? Object.keys(r.topicsSeen).length : 0
+      return `${posts} new post${posts === 1 ? '' : 's'} across ${seen} topic${seen === 1 ? '' : 's'}`
+    }
+    case 'git_log_today': {
+      const total = typeof r.totalCommits === 'number'
+        ? r.totalCommits
+        : (Array.isArray(r.commits) ? r.commits.length : undefined)
+      if (typeof total === 'number') return `${total} commit${total === 1 ? '' : 's'} in last 3 days`
+      return 'ok'
+    }
+    case 'check_master_ci': {
+      const failing = r.failing === true
+      const name = r.latestRun?.name ?? r.latestRun?.conclusion ?? ''
+      return failing ? `master FAILING${name ? ' (' + name + ')' : ''}` : 'master green'
+    }
+    case 'check_my_open_pr_ci': {
+      const red = Array.isArray(r.redPRs) ? r.redPRs.length : 0
+      const pending = Array.isArray(r.pendingPRs) ? r.pendingPRs.length : 0
+      const allGreen = r.allGreen === true
+      if (allGreen) return 'all @me PRs green'
+      const redList = red > 0 ? r.redPRs.map((p: any) => `#${p.number}`).join(',') : ''
+      const pieces: string[] = []
+      if (red > 0) pieces.push(`${red} red${redList ? ' (' + redList + ')' : ''}`)
+      if (pending > 0) pieces.push(`${pending} pending`)
+      return pieces.length ? pieces.join(', ') : 'no @me PRs'
+    }
+    case 'check_sentry': {
+      const issues = Array.isArray(r.issues) ? r.issues : []
+      if (issues.length === 0) return '0 issues'
+      const byProject: Record<string, number> = {}
+      for (const i of issues) {
+        const p = i.project ?? 'unknown'
+        byProject[p] = (byProject[p] ?? 0) + 1
+      }
+      const parts = Object.entries(byProject).map(([p, n]) => `${n} ${p}`)
+      return `${issues.length} unresolved (${parts.join(', ')})`
+    }
+    case 'read_user_feedback': {
+      const entries = Array.isArray(r.entries) ? r.entries.length : 0
+      return `${entries} feedback entr${entries === 1 ? 'y' : 'ies'}`
+    }
+    case 'search_code': {
+      const matches = Array.isArray(r.matches) ? r.matches.length : 0
+      return `${matches} file${matches === 1 ? '' : 's'} matched`
+    }
+    case 'fetch_ci_failure_logs': {
+      const bytes = typeof r.bytes === 'number'
+        ? r.bytes
+        : (typeof r.logs === 'string' ? r.logs.length : undefined)
+      return typeof bytes === 'number' ? `${formatBytes(bytes)} of logs` : 'ok'
+    }
+    case 'verify_pr_created': {
+      const count = r.count ?? 0
+      const passed = r.passed === true
+      return passed ? `count=${count} (passed)` : `count=${count} (not yet)`
+    }
+    case 'create_pr': {
+      if (r.verified === false) return `#${r.pr?.number ?? '?'} not verified`
+      const fe = r.frontendOnly === true ? 'frontend-only' : 'backend/mixed'
+      return `#${r.pr?.number ?? '?'} verified (${fe}${r.deployPreviewUrl ? ', preview' : ''})`
+    }
+    case 'post_discourse_reply_draft': {
+      const draft = r.draft ?? {}
+      return `draft queued for ${draft.topic ?? '?'}.${draft.post ?? '?'} → @${draft.username ?? '?'}`
+    }
+    case 'write_summary': {
+      return `${r.bytes ?? '?'} bytes → ${r.written ?? 'summary.md'}`
+    }
+    case 'send_email': {
+      if (r.skipped === true) return `skipped (${r.reason ?? 'unknown'})`
+      return `sent`
+    }
+    case 'schedule_wakeup': {
+      return r.delaySeconds ? `wake in ${r.delaySeconds}s` : 'ok'
+    }
+    case 'read_sentry_issues': {
+      return `loaded ${r.issueId ?? '?'}`
+    }
+    default: {
+      // Unknown action — show the first 80 chars of the JSON so we at least see
+      // SOMETHING, but this should be rare. Add the action to the switch above
+      // when you see one of these.
+      const json = JSON.stringify(r)
+      return truncate(json, 80)
+    }
+  }
+}
+
+// ─── Reasoning summarizer ───────────────────────────────────────────────────
+// The LLM tends to restate what the state prompt already says ("In LOAD_STATE.
+// I need to call load_state to read monitor state, then propose transition to
+// FETCH_DISCOURSE"). That's noise. Only print reasoning for states where it
+// reflects a real decision, and even there strip common boilerplate prefixes.
+const REASONING_STATES = new Set([
+  'CI_ROUTER', 'WORK_ROUTER', 'ROUTER', // both old and new router names
+  'PICK_DISCOURSE_BUG',
+  'VERIFY_DISCOURSE_BUG_FIX',
+  'COVERAGE_GATE',
+  'TRIAGE',
+])
+export function summarizeReasoning(stateName: string, reasoning: string): string | null {
+  if (!REASONING_STATES.has(stateName)) return null
+  let r = reasoning.replace(/\s+/g, ' ').trim()
+  r = r.replace(/^(In \w+\.\s*)/i, '')
+  r = r.replace(/^(I (?:need to|will|'ll|'m going to) )/i, '')
+  r = r.replace(/^Executing step \d+[:.]?\s*/i, '')
+  return truncate(r, 180)
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n}B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`
+  return `${(n / 1024 / 1024).toFixed(1)}MB`
+}
+
+function timeSince(iso: string): string {
+  const then = new Date(iso).getTime()
+  if (isNaN(then)) return iso
+  const sec = Math.round((Date.now() - then) / 1000)
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.round(sec / 60)
+  if (min < 60) return `${min}m ago`
+  const hr = Math.round(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const day = Math.round(hr / 24)
+  return `${day}d ago`
+}
