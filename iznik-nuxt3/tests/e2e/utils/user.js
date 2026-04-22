@@ -296,7 +296,17 @@ async function signUpViaHomepage(
   // the in-memory Pinia store still has stale state (e.g. loggedInEver=true).
   // A fresh page load re-hydrates from the now-empty localStorage so the login
   // modal opens in signup mode rather than login mode.
-  await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+  //
+  // waitUntil 'domcontentloaded' rather than the gotoAndVerify default of
+  // 'load': the homepage's Google GSI/FedCM scripts sometimes never fire the
+  // `load` event in CI, so each 202.5s nav attempt × 3 retries exhausts the
+  // 10m test budget. The sign-in button is in SSR-rendered HTML and
+  // waitForEnabledSignInButton polls for hydration separately, so we don't
+  // need `load`. Same reasoning as logoutIfLoggedIn above.
+  await page.gotoAndVerify('/', {
+    timeout: timeouts.navigation.initial,
+    waitUntil: 'domcontentloaded',
+  })
 
   // Wait for page to be fully loaded with JavaScript
   // Don't use networkidle - the app has background polling that prevents idle state
@@ -539,10 +549,15 @@ async function loginViaHomepage(
   await clearSessionData(page)
   console.log('Cleared session data before login')
 
-  // Navigate to homepage if we're not already there
+  // Navigate to homepage if we're not already there.
+  // waitUntil 'domcontentloaded': homepage GSI/FedCM scripts sometimes never
+  // fire `load` in CI — see signUpViaHomepage for the full rationale.
   const currentUrl = page.url()
   if (!currentUrl.endsWith('/') && !currentUrl.endsWith('/?')) {
-    await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+    await page.gotoAndVerify('/', {
+      timeout: timeouts.navigation.initial,
+      waitUntil: 'domcontentloaded',
+    })
   }
 
   // Find and click the sign-in button on the homepage to open the login modal
