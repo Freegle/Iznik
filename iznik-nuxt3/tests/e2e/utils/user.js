@@ -113,6 +113,22 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     const desktopLogout = page.locator('#menu-option-logout')
     const mobileLogout = page.locator('text=Logout').filter({ visible: true })
 
+    // Briefly wait for a logout button to become visible. Right after
+    // signUpViaHomepage / loginViaHomepage the navbar may still be hydrating,
+    // and the synchronous isVisible() check below would miss it — causing a
+    // fall-through into the expensive gotoAndVerify('/') path that can hang
+    // for 200+ seconds under parallel CI load and burn the test budget
+    // (symptom: test-reply-flow-existing-user.spec.js 3.1 timing out at 20m
+    // after "No logout button visible").
+    await Promise.race([
+      desktopLogout
+        .waitFor({ state: 'visible', timeout: 10000 })
+        .catch(() => {}),
+      mobileLogout
+        .waitFor({ state: 'visible', timeout: 10000 })
+        .catch(() => {}),
+    ])
+
     const isDesktopVisible = await desktopLogout.isVisible().catch(() => false)
     const isMobileVisible = await mobileLogout.isVisible().catch(() => false)
 
@@ -148,6 +164,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       await page.gotoAndVerify('/', {
         timeout: timeouts.navigation.initial,
         waitUntil: 'domcontentloaded',
+        maxRetries: 1,
       })
       console.log('Navigated to homepage')
     }
@@ -168,6 +185,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       await page.gotoAndVerify('/', {
         timeout: timeouts.navigation.initial,
         waitUntil: 'domcontentloaded',
+        maxRetries: 1,
       })
     }
     return page
@@ -303,9 +321,11 @@ async function signUpViaHomepage(
   // 10m test budget. The sign-in button is in SSR-rendered HTML and
   // waitForEnabledSignInButton polls for hydration separately, so we don't
   // need `load`. Same reasoning as logoutIfLoggedIn above.
+  // Use maxRetries: 1 to prevent up to 3 retries × 202s timeout = ~10m per call.
   await page.gotoAndVerify('/', {
     timeout: timeouts.navigation.initial,
     waitUntil: 'domcontentloaded',
+    maxRetries: 1,
   })
 
   // Wait for page to be fully loaded with JavaScript
@@ -1374,6 +1394,25 @@ async function loginViaModTools(page, email, password = 'freegle') {
   // Click the Log in button (never Join Freegle!)
   await loginButton.first().click()
   console.log('Clicked Log in button')
+
+  // Check for error messages before waiting for modal to close
+  // Some errors (like "We don't know that email address") keep the modal visible
+  try {
+    const errorSelector = '.alert-danger, .text-danger, .invalid-feedback'
+    const errorElement = page.locator(errorSelector)
+
+    if (
+      await errorElement
+        .isVisible({ timeout: timeouts.ui.appearance / 2 })
+        .catch(() => false)
+    ) {
+      const errorText = await errorElement.textContent()
+      console.error(`ModTools login failed with error: ${errorText}`)
+      return false
+    }
+  } catch (e) {
+    // Continue if error check fails - modal might close successfully
+  }
 
   // Wait for the modal to close (v-if="!loggedIn" removes it from DOM)
   await loginModal.waitFor({

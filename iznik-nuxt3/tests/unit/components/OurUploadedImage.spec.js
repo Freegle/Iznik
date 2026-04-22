@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import OurUploadedImage from '~/components/OurUploadedImage.vue'
-import * as Sentry from '@sentry/browser'
 
 vi.mock('@sentry/browser', () => ({
   captureMessage: vi.fn(),
@@ -202,14 +201,28 @@ describe('OurUploadedImage', () => {
     })
 
     it('reports to Sentry when target is connected (real load failure)', async () => {
+      const Sentry = await import('@sentry/browser')
       const wrapper = createWrapper({ src: 'freegletusd-abc123' })
-      vi.mocked(Sentry.captureMessage).mockClear()
-
       await wrapper.vm.brokenImage({ target: { isConnected: true } })
-
       expect(Sentry.captureMessage).toHaveBeenCalledWith(
         'Failed to fetch image freegletusd-abc123'
       )
+    })
+
+    it('does not report when target is detached from DOM (cancelled request)', async () => {
+      const Sentry = await import('@sentry/browser')
+      const wrapper = createWrapper({ src: 'freegletusd-abc123' })
+      await wrapper.vm.brokenImage({ target: { isConnected: false } })
+      expect(Sentry.captureMessage).not.toHaveBeenCalled()
+    })
+
+    it('does not report when component is unmounting', async () => {
+      const Sentry = await import('@sentry/browser')
+      const wrapper = createWrapper({ src: 'freegletusd-abc123' })
+      const brokenImage = wrapper.vm.brokenImage
+      wrapper.unmount()
+      brokenImage({ target: { isConnected: true } })
+      expect(Sentry.captureMessage).not.toHaveBeenCalled()
     })
   })
 
