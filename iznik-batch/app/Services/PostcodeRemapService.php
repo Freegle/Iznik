@@ -66,8 +66,19 @@ class PostcodeRemapService
         $params = [];
 
         if ($polygon) {
-            $geomFilter = "ST_Contains(ST_GeomFromText(?, {$this->srid}), locations_spatial.geometry) AND";
-            $params[] = $polygon;
+            // Include postcodes that either fall within the polygon OR currently point at
+            // the affected location via areaid. The latter catches postcodes whose areaid
+            // was assigned by KNN (buffered intersection / nearest-neighbour) rather than
+            // strict containment — those sit outside the polygon but still need remapping
+            // when the location they reference is excluded or its geometry changes.
+            if ($locationId) {
+                $geomFilter = "(ST_Contains(ST_GeomFromText(?, {$this->srid}), locations_spatial.geometry) OR locations.areaid = ?) AND";
+                $params[] = $polygon;
+                $params[] = $locationId;
+            } else {
+                $geomFilter = "ST_Contains(ST_GeomFromText(?, {$this->srid}), locations_spatial.geometry) AND";
+                $params[] = $polygon;
+            }
         }
 
         // Fetch all full postcodes (contain a space) within the scope.
@@ -245,6 +256,25 @@ class PostcodeRemapService
      */
     private function syncLocationsInPolygon(string $polygon): void
     {
+        // First remove any now-excluded locations within the polygon scope from PostgreSQL.
+        // Without this, a location excluded after being synced would remain in PG's KNN
+        // index until the nightly syncAllLocations table-swap rebuilds from scratch,
+        // meaning exclusions wouldn't take effect for postcode remapping until then.
+        $excludedInScope = DB::select("
+            SELECT DISTINCT le.locationid
+            FROM locations_excluded le
+            INNER JOIN locations_spatial ls ON ls.locationid = le.locationid
+            WHERE ST_Intersects(ls.geometry, ST_GeomFromText(?, {$this->srid}))
+        ", [$polygon]);
+
+        if (!empty($excludedInScope)) {
+            $ids = array_map(fn ($r) => (int) $r->locationid, $excludedInScope);
+            DB::connection('pgsql')->delete(
+                'DELETE FROM locations WHERE locationid IN (' . implode(',', $ids) . ')'
+            );
+            Log::info('PostcodeRemapService: removed ' . count($ids) . ' excluded locations from PostgreSQL within polygon scope');
+        }
+
         $locations = DB::select("
             SELECT locations.id, locations.name, locations.type,
                    ST_AsText(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE ls.geometry END) AS geom
