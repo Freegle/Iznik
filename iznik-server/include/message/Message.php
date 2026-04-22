@@ -1061,9 +1061,6 @@ class Message
                 $rets[$msg['id']]['groups'] = Utils::presdef('groups', $msg, []);
             }
 
-            $rets[$msg['id']]['showarea'] = TRUE;
-            $rets[$msg['id']]['showpc'] = TRUE;
-
             # We don't use foreach with & because that copies data by reference which causes bugs.
             $me = Session::whoAmI($this->dbhr, $this->dbhm);
             $mod = $me && $me->isModerator();
@@ -1129,12 +1126,6 @@ class Message
                     $keywords = $g->getSetting('keywords', $g->defaultSettings['keywords']);
                     $rets[$msg['id']]['keyword'] = Utils::presdef(strtolower($msg['type']), $keywords, $msg['type']);
 
-                    # Some groups disable the area or postcode.  If so, hide that.
-                    $includearea = $g->getSetting('includearea', TRUE);
-                    $includepc = $g->getSetting('includepc', TRUE);
-                    $rets[$msg['id']]['showarea'] = !$includearea ? FALSE : $rets[$msg['id']]['showarea'];
-                    $rets[$msg['id']]['showpc'] = !$includepc ? FALSE : $rets[$msg['id']]['showpc'];
-
                     if (Utils::pres('mine', $rets[$msg['id']])) {
                         # Can we repost?
                         $rets[$msg['id']]['canrepost'] = FALSE;
@@ -1179,24 +1170,20 @@ class Message
 
                 # We can always see any area and top-level postcode.  If we're a mod or this is our message
                 # we can see the precise location.
-                if (Utils::pres('showarea', $rets[$msg['id']])) {
-                    $areaid = $l->getPrivate('areaid');
-                    if ($areaid) {
-                        # This location is quite specific.  Return the area it's in.
-                        $a = $this->getLocation($areaid, $locationlist);
-                        $rets[$msg['id']]['area'] = $a->getPublic();
-                    } else {
-                        # This location isn't in an area; it is one.  Return it.
-                        $rets[$msg['id']]['area'] = $l->getPublic();
-                    }
+                $areaid = $l->getPrivate('areaid');
+                if ($areaid) {
+                    # This location is quite specific.  Return the area it's in.
+                    $a = $this->getLocation($areaid, $locationlist);
+                    $rets[$msg['id']]['area'] = $a->getPublic();
+                } else {
+                    # This location isn't in an area; it is one.  Return it.
+                    $rets[$msg['id']]['area'] = $l->getPublic();
                 }
 
-                if (Utils::pres('showpc', $rets[$msg['id']])) {
-                    $pcid = $l->getPrivate('postcodeid');
-                    if ($pcid) {
-                        $p = $this->getLocation($pcid, $locationlist);
-                        $rets[$msg['id']]['postcode'] = $p->getPublic();
-                    }
+                $pcid = $l->getPrivate('postcodeid');
+                if ($pcid) {
+                    $p = $this->getLocation($pcid, $locationlist);
+                    $rets[$msg['id']]['postcode'] = $p->getPublic();
                 }
 
                 # Can see the location if we have been asked to, if we're a mod, if it's our message, or we have
@@ -1219,9 +1206,6 @@ class Message
                     $rets[$msg['id']]['location'] = $l->getPublic();
                 }
             }
-
-            unset($rets[$msg['id']]['showarea']);
-            unset($rets[$msg['id']]['showpc']);
         }
     }
 
@@ -4225,21 +4209,9 @@ ORDER BY lastdate DESC;";
 
             # Normally we should have an area and postcode to use, but as a fallback we use the area we have.
             if ($areaid && $pcid) {
-                $includearea = $g->getSetting('includearea', TRUE);
-                $includepc = $g->getSetting('includepc', TRUE);
-
-                if ($includearea && $includepc) {
-                    # We want the area in the group, e.g. Edinburgh EH4.
-                    $la = new Location($this->dbhr, $this->dbhm, $areaid);
-                    $loc = $la->getPrivate('name') . ' ' . $l->ensureVague();
-                } else if ($includepc) {
-                    # Just postcode, e.g. EH4
-                    $loc = $l->ensureVague();
-                } else  {
-                    # Just area or foolish settings, e.g. Edinburgh
-                    $la = new Location($this->dbhr, $this->dbhm, $areaid);
-                    $loc = $la->getPrivate('name');
-                }
+                # Area followed by vague postcode, e.g. Edinburgh EH4.
+                $la = new Location($this->dbhr, $this->dbhm, $areaid);
+                $loc = $la->getPrivate('name') . ' ' . $l->ensureVague();
             } else {
                 $l = new Location($this->dbhr, $this->dbhm, $locationid);
                 $loc = $l->ensureVague();
