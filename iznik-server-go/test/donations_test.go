@@ -24,7 +24,7 @@ func TestGetDonations(t *testing.T) {
 	assert.Contains(t, result, "target")
 	assert.Contains(t, result, "raised")
 
-	// Target should be the default (2000 unless DONATION_TARGET env var is set)
+	// Target should be the default (5000 unless DONATION_TARGET env var is set)
 	target, ok := result["target"].(float64)
 	assert.True(t, ok, "target should be a number")
 	assert.Greater(t, target, float64(0), "target should be positive")

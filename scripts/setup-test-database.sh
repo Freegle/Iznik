@@ -53,8 +53,17 @@ docker exec "${PREFIX}-apiv1" sh -c "mysql -h percona -u root -piznik \
   -e \"SET GLOBAL sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''));\""
 
 # 3. Run testenv.php for fixture data (still needs apiv1 PHP classes)
+# Clear any stale LoggedPDO "host down" markers first. On self-hosted runner
+# apiv1's /tmp persists across CI runs; a stale /tmp/iznik.dbstatus.*.down
+# causes doConnect() to short-circuit every retry for 60s, so testenv.php
+# fatals with "Sleep for all DB hosts down" and fixture data is never
+# created — cascading into AUTO_INCREMENT-dependent PHPUnit failures.
 echo "Setting up test environment (FreeglePlayground group, test users, etc.)..."
-docker exec "${PREFIX}-apiv1" sh -c "cd /var/www/iznik && php install/testenv.php"
+docker exec "${PREFIX}-apiv1" sh -c "rm -f /tmp/iznik.dbstatus.*.down"
+docker exec "${PREFIX}-apiv1" sh -c "cd /var/www/iznik && php install/testenv.php" || {
+  echo "testenv.php failed — aborting test database setup"
+  exit 1
+}
 
 # 4. Create iznik_go_test by cloning schema from migrated iznik DB
 echo "Setting up iznik_go_test database for Go tests..."

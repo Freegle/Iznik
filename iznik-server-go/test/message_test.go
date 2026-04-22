@@ -363,6 +363,57 @@ func TestRejectedMessageInActiveQuery(t *testing.T) {
 	assert.True(t, found, "Rejected message should appear in active query for own user")
 }
 
+// A rejected message may end up in the DB with locationid=0 (e.g. if the
+// MailRouter never resolved a location before the message was rejected).
+// The owner still needs to see both `item` and `location` on GET /message/:id
+// so the frontend can render the "Edit & Resend" button (v-if="location && item").
+// Regression: prior to the fix in message.go, item and location were both
+// gated on `locationid > 0`, so a rejected message with locationid=0 came
+// back with item=null AND location=null, hiding Edit & Resend entirely.
+func TestRejectedMessageWithoutLocationidReturnsItemAndLocation(t *testing.T) {
+	prefix := uniquePrefix("rjctnoloc")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+
+	// Create a message with a real locationid, then clear it to simulate the
+	// failure mode where the fixture / MailRouter leaves locationid=0.
+	// Lat/lng remain set (as they normally would be for a routed message).
+	// Use FOREIGN_KEY_CHECKS=0 because messages.locationid has a FK to
+	// locations.id; we're simulating the DB state directly.
+	msgID := CreateTestMessage(t, userID, groupID, "OFFER: Rejected NoLoc Chair", 55.9533, -3.1883)
+	// CreateTestMessage doesn't populate messages.lat/lng, only the spatial
+	// index — set them explicitly so Go falls into the lat/lng-fallback path.
+	db.Exec("SET FOREIGN_KEY_CHECKS = 0")
+	db.Exec("UPDATE messages SET locationid = 0, lat = ?, lng = ? WHERE id = ?", 55.9533, -3.1883, msgID)
+	db.Exec("SET FOREIGN_KEY_CHECKS = 1")
+	db.Exec("UPDATE messages_groups SET collection = 'Rejected' WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
+
+	// Give the message an item (lives in messages_items, independent of location).
+	itemID := CreateTestItem(t, prefix+" Chair")
+	CreateTestMessageItem(t, msgID, itemID)
+
+	// Owner fetches the message detail.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/"+fmt.Sprint(msgID)+"?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.Equal(t, msgID, msg.ID)
+	assert.NotNil(t, msg.Item, "Owner must get item on rejected message without locationid (Edit & Resend requires it)")
+	assert.NotNil(t, msg.Location, "Owner must get a location (from lat/lng fallback) on rejected message without locationid (Edit & Resend requires it)")
+	// Repost flow needs msg.location.name — MyMessage.repost() calls
+	// locationStore.typeahead(msg.location.name). If Name is empty the
+	// compose store's postcode is never set and the /give/whereami
+	// group dropdown fails to render.
+	assert.NotEmpty(t, msg.Location.Name, "Location must carry a Name so the repost flow can set composeStore.postcode via typeahead")
+}
+
 func TestCount(t *testing.T) {
 	// Create a full test user for count endpoint
 	prefix := uniquePrefix("count")

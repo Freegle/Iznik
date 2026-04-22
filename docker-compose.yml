@@ -712,6 +712,8 @@ services:
       - AMP_SECRET=${AMP_SECRET:-test-amp-secret-for-docker}
       - TNKEY=${TNKEY:-}
       - MAPBOX_KEY=${MAPBOX_KEY:-}
+      - DONATION_TARGET=${DONATION_TARGET:-}
+      - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
     volumes:
       - apiv2_logs:/var/log/freegle
@@ -784,6 +786,8 @@ services:
       - AMP_SECRET=${AMP_SECRET:-test-amp-secret-for-docker}
       - TNKEY=${TNKEY:-}
       - MAPBOX_KEY=${MAPBOX_KEY:-}
+      - DONATION_TARGET=${DONATION_TARGET:-}
+      - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
     volumes:
       - apiv2_logs:/var/log/freegle
     healthcheck:
