@@ -59,6 +59,8 @@ class TNSyncCommand extends Command
                 $from = $this->getSyncFromDate();
                 $to = gmdate('c');
 
+                Log::info("TN-SYNC-TRACE [START] from={$from} to={$to}");
+
                 $maxChangeDate = null;
 
                 // Sync ratings.
@@ -97,6 +99,8 @@ class TNSyncCommand extends Command
                     'duplicates_merged' => $duplicatesMerged,
                 ]);
 
+                Log::info("TN-SYNC-TRACE [END] ratings={$ratingsProcessed} changes={$changesProcessed} merges={$duplicatesMerged} max_date=" . ($maxChangeDate ?? 'null'));
+
                 return Command::SUCCESS;
             });
         } catch (\Exception $e) {
@@ -131,14 +135,17 @@ class TNSyncCommand extends Command
 
     private function storeSyncDate(string $date): void
     {
-        if (file_put_contents($this->dateFile, $date) !== false) {
-            Log::info("Stored max change date to {$this->dateFile}: {$date}");
-        } else {
-            Log::error("Failed to store max change date to {$this->dateFile}");
-            if (function_exists('\Sentry\captureMessage')) {
-                \Sentry\captureMessage("Failed to store TN sync date to {$this->dateFile}");
-            }
-        }
+        Log::info("TN-SYNC-TRACE [WRITE] op=file-write path={$this->dateFile} set=date={$date}");
+
+        // TRACE: commented out for port testing
+        // if (file_put_contents($this->dateFile, $date) !== false) {
+        //     Log::info("Stored max change date to {$this->dateFile}: {$date}");
+        // } else {
+        //     Log::error("Failed to store max change date to {$this->dateFile}");
+        //     if (function_exists('\Sentry\captureMessage')) {
+        //         \Sentry\captureMessage("Failed to store TN sync date to {$this->dateFile}");
+        //     }
+        // }
     }
 
     /**
@@ -169,6 +176,8 @@ class TNSyncCommand extends Command
             $ratings = $response->json('ratings', []);
             $page++;
 
+            Log::info("TN-SYNC-TRACE [RATINGS-PAGE] page=" . ($page - 1) . " count=" . count($ratings));
+
             foreach ($ratings as $rating) {
                 $count++;
 
@@ -177,11 +186,13 @@ class TNSyncCommand extends Command
                 }
 
                 if (!($rating['ratee_fd_user_id'] ?? null)) {
+                    Log::info("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee= rating={$rating['rating']} action=skip-no-user-id");
                     continue;
                 }
 
                 $user = User::find($rating['ratee_fd_user_id']);
                 if (!$user) {
+                    Log::info("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating={$rating['rating']} action=skip-user-not-found");
                     continue;
                 }
 
@@ -195,25 +206,30 @@ class TNSyncCommand extends Command
                         }
                         $ratingModel->rating = $rating['rating'];
                         $ratingModel->timestamp = $rating['date'];
-                        $ratingModel->save();
+                        Log::info("TN-SYNC-TRACE [WRITE] table=ratings op=upsert where=tn_rating_id={$rating['rating_id']} set=ratee={$rating['ratee_fd_user_id']},rating={$rating['rating']},timestamp={$rating['date']},visible=1");
+                        // $ratingModel->save();  // TRACE: commented out for port testing
                         $this->loki->logEvent('tn-sync', 'rating-upsert', [
                             'action' => $isNew ? 'insert' : 'update',
                             'tn_rating_id' => $rating['rating_id'],
                             'user_id' => $rating['ratee_fd_user_id'],
                         ]);
+                        Log::info("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating={$rating['rating']} action=upsert");
                     } else {
+                        Log::info("TN-SYNC-TRACE [WRITE] table=ratings op=delete where=ratee={$rating['ratee_fd_user_id']},tn_rating_id={$rating['rating_id']}");
                         $existing = Rating::where('ratee', $rating['ratee_fd_user_id'])
                             ->where('tn_rating_id', $rating['rating_id'])
                             ->first();
                         if ($existing) {
-                            $existing->delete();
+                            // $existing->delete();  // TRACE: commented out for port testing
                             $this->loki->logEvent('tn-sync', 'rating-delete', [
                                 'tn_rating_id' => $rating['rating_id'],
                                 'user_id' => $rating['ratee_fd_user_id'],
                             ]);
                         }
+                        Log::info("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating= action=delete");
                     }
                 } catch (\Exception $e) {
+                    Log::info("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating={$rating['rating']} action=error");
                     Log::error('TN sync: ratings sync failed', [
                         'error' => $e->getMessage(),
                         'rating' => $rating,
@@ -256,6 +272,8 @@ class TNSyncCommand extends Command
             $changes = $response->json('changes', []);
             $page++;
 
+            Log::info("TN-SYNC-TRACE [CHANGES-PAGE] page=" . ($page - 1) . " count=" . count($changes));
+
             foreach ($changes as $change) {
                 $count++;
 
@@ -275,6 +293,7 @@ class TNSyncCommand extends Command
 
                     if (!empty($change['account_removed'])) {
                         Log::info("FD #{$change['fd_user_id']} TN account removed");
+                        Log::info("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=account-removed");
                         $user->forget('TN account removed');
                         $this->loki->logEvent('tn-sync', 'user-forget', [
                             'user_id' => $change['fd_user_id'],
@@ -287,7 +306,8 @@ class TNSyncCommand extends Command
                         $isNew = !$replyTime->exists;
                         $replyTime->replytime = $change['reply_time'];
                         $replyTime->timestamp = $change['date'];
-                        $replyTime->save();
+                        Log::info("TN-SYNC-TRACE [WRITE] table=users_replytime op=replace where=userid={$change['fd_user_id']} set=replytime={$change['reply_time']},timestamp={$change['date']}");
+                        // $replyTime->save();  // TRACE: commented out for port testing
                         $this->loki->logEvent('tn-sync', 'user-reply-time-upsert', [
                             'action' => $isNew ? 'insert' : 'update',
                             'user_id' => $change['fd_user_id'],
@@ -300,7 +320,8 @@ class TNSyncCommand extends Command
                             $isNew = !$aboutMe->exists;
                             $aboutMe->timestamp = $change['date'];
                             $aboutMe->text = $change['about_me'];
-                            $aboutMe->save();
+                            Log::info("TN-SYNC-TRACE [WRITE] table=users_aboutme op=replace where=userid={$change['fd_user_id']} set=timestamp={$change['date']},text=len=" . strlen($change['about_me']));
+                            // $aboutMe->save();  // TRACE: commented out for port testing
                             $this->loki->logEvent('tn-sync', 'user-about-me-upsert', [
                                 'action' => $isNew ? 'insert' : 'update',
                                 'user_id' => $change['fd_user_id'],
@@ -318,6 +339,7 @@ class TNSyncCommand extends Command
 
                         if ($oldname != $change['username']) {
                             Log::info("Name change for {$change['fd_user_id']} {$oldname} => {$change['username']}");
+                            Log::info("TN-SYNC-TRACE [NAME-CHANGE] fd_user_id={$change['fd_user_id']} old={$oldname} new={$change['username']}");
                             $user->fullname = $change['username'];
 
                             $emails = $user->emails()->pluck('email');
@@ -346,18 +368,28 @@ class TNSyncCommand extends Command
                         if ($lat !== null && $lng !== null) {
                             $loc = Location::closestPostcode((float) $lat, (float) $lng);
 
-                            if ($loc) {
+                            if ($loc && $loc['id'] !== $user->lastlocation) {
                                 Log::info("FD #{$change['fd_user_id']} TN lat/lng {$lat},{$lng} has changed  => {$loc['id']} {$loc['name']}");
+                                Log::info("TN-SYNC-TRACE [LOCATION] fd_user_id={$change['fd_user_id']} lat={$lat} lng={$lng} old_loc={$user->lastlocation} new_loc={$loc['id']}");
                                 $user->lastlocation = $loc['id'];
                             }
                         }
                     }
 
-                    $user->save();
+                    if ($user->isDirty('fullname')) {
+                        Log::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$user->id} set=fullname={$user->fullname}");
+                    }
+                    if ($user->isDirty('lastlocation')) {
+                        Log::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$user->id} set=lastlocation={$user->lastlocation}");
+                    }
+                    // $user->save();  // TRACE: commented out for port testing
                     $this->loki->logEvent('tn-sync', 'user-update', [
                         'user_id' => $change['fd_user_id'],
                     ]);
+
+                    Log::info("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=processed");
                 } catch (\Exception $e) {
+                    Log::info("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=error");
                     Log::error('TN sync: user changes sync failed', [
                         'error' => $e->getMessage(),
                         'change' => $change,
@@ -385,6 +417,7 @@ class TNSyncCommand extends Command
         }
 
         Log::info('Found ' . count($duplicates) . ' duplicate TN users');
+        Log::info("TN-SYNC-TRACE [DUP-SCAN] count=" . count($duplicates));
         $merged = 0;
 
         foreach ($duplicates as $dup) {
@@ -404,6 +437,7 @@ class TNSyncCommand extends Command
                 foreach ($userIds as $userId) {
                     if ($userId != $mergeTo) {
                         Log::info("Merging {$userId} into {$mergeTo}");
+                        Log::info("TN-SYNC-TRACE [MERGE] from={$userId} into={$mergeTo}");
                         User::merge($mergeTo, $userId, "Duplicate TN user created accidentally");
                         $this->loki->logEvent('tn-sync', 'user-merge', [
                             'merge_to' => $mergeTo,
