@@ -76,7 +76,7 @@ func TestVectorSearchBodyTierWhenSubjectBelowThreshold(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, err := message.VectorSearch("item", 10, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("item", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 1, "body-only match must be returned, not dropped")
 	assert.Equal(t, uint64(100), results[0].Msgid)
@@ -116,7 +116,7 @@ func TestVectorSearchSubjectTierComesBeforeBodyTier(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, err := message.VectorSearch("coyote", 10, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("coyote", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	assert.Equal(t, uint64(200), results[0].Msgid, "subject-tier hit must come first")
@@ -148,7 +148,7 @@ func TestVectorSearchCombinedTruncationAcrossTiers(t *testing.T) {
 
 	// Limit=3 crosses the tier boundary: 2 subject + 1 body = 3 returned,
 	// one body-tier entry is dropped.
-	results, err := message.VectorSearch("item", 3, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("item", 3, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 3)
 	// First two must be the subject-tier entries, in some order.
@@ -190,7 +190,7 @@ func TestVectorSearchDropsResultsBelowBothThresholds(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, err := message.VectorSearch("item", 10, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("item", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 1, "below-threshold entries must be dropped")
 	assert.Equal(t, uint64(401), results[0].Msgid)
@@ -227,7 +227,7 @@ func TestVectorSearchStopWordQuerySkipsKeywordBoost(t *testing.T) {
 	require.Empty(t, message.GetWords("the and or"),
 		"premise: all-stop-word query must tokenise to zero words")
 
-	results, err := message.VectorSearch("the and or", 10, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("the and or", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	// Deterministic ordering by raw cosine, no keyword noise applied.
@@ -261,7 +261,7 @@ func TestVectorSearchBlursReturnedCoordinates(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("thing", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 
@@ -310,7 +310,7 @@ func TestVectorSearchHasBodyFalseDoesNotEnterBodyTier(t *testing.T) {
 	embedding.SetSidecarURL(server.URL)
 	defer embedding.SetSidecarURL("")
 
-	results, err := message.VectorSearch("match", 10, nil, "", 0, 0, 0, 0)
+	results, _, err := message.VectorSearch("match", 10, nil, "", 0, 0, 0, 0)
 	require.NoError(t, err)
 	require.Len(t, results, 1, "HasBody=false + subject below threshold must drop entry")
 	assert.Equal(t, uint64(701), results[0].Msgid)
