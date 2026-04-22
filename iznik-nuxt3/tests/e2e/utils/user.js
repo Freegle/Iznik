@@ -141,7 +141,14 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     await clearSessionData(page)
 
     if (navigateToHome) {
-      await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+      // Use domcontentloaded instead of the default 'load' event: the post-logout
+      // cleanup only needs to land on a clean page, and waiting for 'load' blocks
+      // on third-party resources (Google FedCM/GSI) that sometimes never resolve
+      // in CI, exhausting the navigation timeout and the whole test timeout.
+      await page.gotoAndVerify('/', {
+        timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
+      })
       console.log('Navigated to homepage')
     }
 
@@ -158,7 +165,10 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     // Fall back to clearing cookies/storage
     await clearSessionData(page)
     if (navigateToHome) {
-      await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+      await page.gotoAndVerify('/', {
+        timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
+      })
     }
     return page
   }

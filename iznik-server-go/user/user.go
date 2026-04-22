@@ -1843,10 +1843,13 @@ func PutUser(c *fiber.Ctx) error {
 		}
 	}
 
-	// Create a session. Series is a numeric value; token is a random string.
+	// Create a session. Series is a random numeric value (bigint unsigned);
+	// token is a random hex string. Previously passed userID for series,
+	// which collided across every session for the same user.
+	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
 	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-		newUserID, newUserID, token)
+		newUserID, series, token)
 
 	var sessionID uint64
 	db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", newUserID).Scan(&sessionID)
@@ -1869,7 +1872,7 @@ func PutUser(c *fiber.Ctx) error {
 		"id":     newUserID,
 		"persistent": fiber.Map{
 			"id":     sessionID,
-			"series": newUserID,
+			"series": series,
 			"token":  token,
 			"userid": newUserID,
 		},

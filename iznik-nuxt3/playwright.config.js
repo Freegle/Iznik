@@ -31,8 +31,11 @@ module.exports = defineConfig({
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,
-  // Self-hosted runner has more resources; cloud CI needs fewer workers to avoid flakiness
-  workers: process.env.SELF_HOSTED_RUNNER === 'true' ? 11 : 6,
+  // PW_WORKERS env var takes precedence (set per-executor in CircleCI orb).
+  // Fallback: self-hosted runner has more resources; cloud CI needs fewer workers to avoid flakiness.
+  workers: process.env.PW_WORKERS
+    ? Number(process.env.PW_WORKERS)
+    : process.env.SELF_HOSTED_RUNNER === 'true' ? 11 : 6,
   maxFailures: 0,
   reporter: [
     ['list'],
