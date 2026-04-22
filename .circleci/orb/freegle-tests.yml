@@ -15,7 +15,7 @@ executors:
       COMPOSE_DOCKER_CLI_BUILD: 1
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle
-      PW_WORKERS: 5
+      PW_WORKERS: 4
 
   machine-executor-local:
     machine:
