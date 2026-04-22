@@ -28,7 +28,7 @@
     "CI_ROUTER": {
       "description": "Phase A dispatch. Pure decision state — routes to a CI-fix state if anything is red, else advances to Phase B via FETCH_DISCOURSE. No actions.",
       "nodeType": "agent",
-      "prompt": "You are the Phase A router. Do NOT call actions. Pick ONE transition based on STRICT priority order:\n\n(1) if context._action_check_master_ci.failing === true AND contextUpdates.masterFixAttempted !== true → FIX_MASTER_CI.\n\n(2) else if context._action_check_my_open_pr_ci.redPRs is non-empty, pick the FIRST red PR whose number is not already in contextUpdates.openPRFixAttempts (or whose latest attempt produced no new commit yet — keep trying) → FIX_OPEN_PR_CI. A red CI on an open PR I authored is a HARD block on leaving Phase A. Do NOT skip it. Do NOT call it flaky, environmental, pre-existing, or unrelated. Keep dispatching to FIX_OPEN_PR_CI until redPRs is empty.\n\n(3) else (all CI green) → FETCH_DISCOURSE. This is the ONLY path out of Phase A and into the discovery phase.\n\nSet contextUpdates = {} and actions = []. Put your reasoning (which priority level fired, and which red PR number if level 2) in the reasoning field.",
+      "prompt": "You are the Phase A router. Do NOT call actions. Pick ONE transition based on STRICT priority order:\n\n(1) if context._action_check_master_ci.failing === true AND contextUpdates.masterFixAttempted !== true → FIX_MASTER_CI.\n\n(2) else if context._action_check_my_open_pr_ci.redPRs is non-empty, pick the FIRST red PR whose number is not already in contextUpdates.openPRFixAttempts (or whose latest attempt produced no new commit yet — keep trying) → FIX_OPEN_PR_CI. A red CI on an open PR I authored is a HARD block on leaving Phase A. Do NOT skip it. Do NOT call it flaky, environmental, pre-existing, or unrelated. Keep dispatching to FIX_OPEN_PR_CI until redPRs is empty.\n\n(3) else (all CI green): branch on context.phase.\n    - context.phase === 'implementation' → COVERAGE_GATE. In peak hours we intentionally skip Discourse triage and Sentry investigation — those are heavy reasoning tasks best done off-peak. CI-fix work is already done by steps (1)/(2) above; the remaining peak-phase output is a coverage PR.\n    - context.phase === 'analysis' (or undefined) → FETCH_DISCOURSE. Full discovery phase: fetch posts, check git, check Sentry, triage, and drive Discourse/Sentry fixes.\n\nSet contextUpdates = {} and actions = []. Put your reasoning (which priority level fired, and which red PR number if level 2, or which phase branch if level 3) in the reasoning field.",
       "readActions": [],
       "writeActions": []
     },
@@ -229,7 +229,14 @@
       "from": "CI_ROUTER",
       "to": "FETCH_DISCOURSE",
       "trigger": "llm_decision",
-      "label": "ci green, enter phase B"
+      "label": "ci green, analysis phase → discovery"
+    },
+    {
+      "id": "t_ci_router_to_coverage_gate",
+      "from": "CI_ROUTER",
+      "to": "COVERAGE_GATE",
+      "trigger": "llm_decision",
+      "label": "ci green, implementation phase → skip discovery"
     },
     {
       "id": "t_master_fix_to_ci",

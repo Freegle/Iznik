@@ -644,6 +644,7 @@ print(urllib.request.urlopen(req).read().decode())
         task: { type: 'string', description: 'Full task description for the subagent: what to fix, how, acceptance criteria, exact repo path, whether to push to master or a feature branch.' },
         repoCwd: { type: 'string', description: 'Working directory. Defaults to /home/edward/FreegleDockerWSL.' },
         timeoutSec: { type: 'number', description: 'Max seconds. Default 1200 (20 min).' },
+        model: { type: 'string', description: 'Claude model id for the subagent. Omit to use the iteration-active model (Haiku in peak/implementation phase, Sonnet in off-peak/analysis phase).' },
       },
       required: ['task'],
     },
@@ -702,7 +703,13 @@ If you omit the marker, your work is considered failed regardless of what actual
       const HARD_CAP_MS = Math.max(timeoutSec * 1000, 3_600_000)
       const { spawn } = await import('node:child_process')
       type KillReason = 'tool-silence' | 'idle-silence' | 'hardCap' | null
-      startGroup(`· delegate_to_coder (claude ${CLAUDE_BIN.startsWith('/') ? 'at ' + CLAUDE_BIN : ''})`)
+      // Model selection: explicit param wins; otherwise use the iteration's
+      // active delegate model (set by driver from getPhaseInfo). In peak
+      // (implementation) phase this is Haiku — cheap, fast, sufficient for
+      // fixing CI or writing a coverage test. In off-peak (analysis) phase
+      // this is Sonnet/session-default for heavy diagnosis.
+      const delegateModel = (params.model as string) ?? process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'sonnet'
+      startGroup(`· delegate_to_coder (model=${delegateModel})`)
       let toolCount = 0
       const result = await new Promise<{ stdout: string; stderr: string; textStream: string; code: number; killReason: KillReason; lastTool: string | null }>((resolve) => {
         const child = spawn(
@@ -714,6 +721,7 @@ If you omit the marker, your work is considered failed regardless of what actual
             '--include-partial-messages',
             '--permission-mode', 'acceptEdits',
             '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob',
+            '--model', delegateModel,
           ],
           { cwd: repoCwd, stdio: ['pipe', 'pipe', 'pipe'] },
         )

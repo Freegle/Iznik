@@ -223,10 +223,18 @@ const REASONING_STATES = new Set([
 export function summarizeReasoning(stateName: string, reasoning: string): string | null {
   if (!REASONING_STATES.has(stateName)) return null
   let r = reasoning.replace(/\s+/g, ' ').trim()
+  // Strip the prompt-restatement patterns the LLM tends to echo. These match
+  // openings like "In LOAD_STATE. I need to...", "Phase A entry: ...", "You
+  // are the Phase A router. Pick ...", "Step 1: Call ...", "Executing step 2".
   r = r.replace(/^(In \w+\.\s*)/i, '')
   r = r.replace(/^(I (?:need to|will|'ll|'m going to) )/i, '')
+  r = r.replace(/^(You are (?:the |a )?[\w\s]+?router\.?\s*)/i, '')
+  r = r.replace(/^Phase [AB](?: entry)?[:.]?\s*/i, '')
   r = r.replace(/^Executing step \d+[:.]?\s*/i, '')
-  return truncate(r, 180)
+  r = r.replace(/^Step \d+[:.]?\s*/i, '')
+  // Collapse trailing "Calling X now." / "Proceeding with X." — fluff.
+  r = r.replace(/\s*(Calling|Proceeding with) [^.]+\.\s*$/i, '')
+  return truncate(r, 160)
 }
 
 function formatBytes(n: number): string {

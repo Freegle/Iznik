@@ -31,6 +31,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
 import { out, outWarn, dbg, truncate, startGroup, endGroup, summarizeActionResult, summarizeReasoning } from './log.js'
+import { getPhaseInfo, modelForBrain, modelForDelegate } from './phase.js'
 
 import {
   WorkflowEngine,
@@ -289,7 +290,19 @@ async function main() {
   const storage = new JSONFileStorage(INSTANCE_STORE)
   await storage.saveWorkflow(definition)
 
-  const innerAdapter = new ClaudeCodeAdapter({ maxTokens: 8192 })
+  // Decide phase ONCE at iteration start so the brain and delegate agree.
+  // Re-deciding mid-iteration would let a 08:00 rollover swap models halfway
+  // through a FIX_OPEN_PR_CI and surprise the delegate.
+  const phaseInfo = getPhaseInfo()
+  out(`phase: ${phaseInfo.phase.toUpperCase()} (${phaseInfo.reason})`)
+  out(`model: brain=${modelForBrain(phaseInfo)} delegate=${modelForDelegate(phaseInfo)}`)
+  // Stash on env so nested subprocesses (delegate action) pick up the same
+  // decision without us having to thread it through every action handler.
+  process.env.MONITOR_ACTIVE_PHASE = phaseInfo.phase
+  process.env.MONITOR_ACTIVE_DELEGATE_MODEL = modelForDelegate(phaseInfo)
+  process.env.MONITOR_ACTIVE_BRAIN_MODEL = modelForBrain(phaseInfo)
+
+  const innerAdapter = new ClaudeCodeAdapter({ maxTokens: 8192, model: modelForBrain(phaseInfo) })
   // Retry-aware wrapper. ai-flower retries on validation failure by calling us
   // again with the same (system, user) pair. We detect that repetition and
   // prepend an escalating JSON-only preamble with a worked example. The
@@ -354,7 +367,7 @@ async function main() {
 
   // Fresh instance per driver run — iterations should not resume.
   const iterationStartTs = new Date().toISOString()
-  const instance = await engine.createInstance({ iterationStartTs })
+  const instance = await engine.createInstance({ iterationStartTs, phase: phaseInfo.phase })
   out(`starting iteration ${instance.id.slice(0, 8)} at ${iterationStartTs}`)
   logInstance(instance, 'start')
 
