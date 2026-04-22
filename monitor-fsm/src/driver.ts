@@ -30,7 +30,7 @@ import { dirname, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
-import { out, outWarn, dbg, truncate, startGroup, endGroup, summarizeActionResult, summarizeReasoning } from './log.js'
+import { out, outWarn, dbg, truncate, startGroup, endGroup, summarizeActionResult, summarizeReasoning, humanizeState, humanizeAction } from './log.js'
 import { getPhaseInfo, modelForBrain, modelForDelegate } from './phase.js'
 
 import {
@@ -403,7 +403,16 @@ async function main() {
     }
 
     step++
-    startGroup(`→ step ${step}: ${current.currentState}`)
+    // Flag the step header with whether it costs an LLM call. Tool / start-with-
+    // readActions → deterministic code, no tokens. Agent → LLM decides what to
+    // call next and usually costs one call; write-action agent states (DELEGATE_*,
+    // FIX_*, WRITE_COVERAGE) ALSO spawn a delegate subprocess that itself burns
+    // tokens on top of the FSM brain call.
+    const headerStateDef: any = (definition.states as any)[current.currentState]
+    const headerIsTool = headerStateDef?.nodeType === 'tool'
+      || (headerStateDef?.nodeType === 'start' && Array.isArray(headerStateDef?.readActions) && headerStateDef.readActions.length > 0)
+    const headerTag = headerIsTool ? '[tool]' : '[LLM]'
+    startGroup(`→ step ${step}: ${humanizeState(current.currentState)} ${headerTag}`)
     try {
 
     // ─── TOOL NODE FAST-PATH ───
@@ -447,7 +456,7 @@ async function main() {
             const key = `_action_${actionName}`
             ctxUpdates[key] = res
             runningCtx[key] = res
-            out(`· ${actionName} → ${summarizeActionResult(actionName, res)}`)
+            out(`· ${humanizeAction(actionName)} → ${summarizeActionResult(actionName, res)}`)
             dbg(`tool action ${actionName} full result: ${JSON.stringify(res)}`)
             // Branch signal: an action can return `_transition` to steer the
             // state machine along a specific outgoing edge. Used by branching
@@ -524,7 +533,7 @@ async function main() {
         const nextCount = prev + 1
         openPRFixEntries.set(target.number, nextCount)
         if (nextCount > 2) {
-          outWarn(`loop-breaker: PR #${target.number} ${nextCount}x in FIX_OPEN_PR_CI with no commit — giving up on this PR`)
+          outWarn(`loop-breaker: PR #${target.number} tried ${nextCount} times without a new commit — giving up on this PR`)
           const terminalAttempts = [
             ...attempts,
             { prNumber: target.number, attemptedAt: new Date().toISOString(), terminal: true, reason: 'loop-breaker: 2 attempts without a pushed commit' },
@@ -565,11 +574,11 @@ async function main() {
       const selfLogging = new Set(['delegate_to_coder'])
       for (const a of result.actionsExecuted) {
         if (a.error) {
-          outWarn(`action ${a.action} failed: ${truncate(a.error, 200)}`)
+          outWarn(`${humanizeAction(a.action)} failed: ${truncate(a.error, 200)}`)
         } else {
           const summary = summarizeActionResult(a.action, a.result)
           if (!selfLogging.has(a.action)) {
-            out(`· ${a.action}${summary ? ` → ${summary}` : ''}`)
+            out(`· ${humanizeAction(a.action)}${summary ? ` → ${summary}` : ''}`)
           }
           dbg(`action ${a.action} full result: ${a.result === undefined ? '(undefined)' : JSON.stringify(a.result)}`)
         }
@@ -650,14 +659,14 @@ async function main() {
       if (STATES_PAST_GATE.has(post.currentState)) {
         const gate = await realGateCheck(iterationStartTs)
         if (!gate.passed) {
-          outWarn(`gate: reached ${post.currentState} without a PR — forcing back to COVERAGE_GATE`)
+          outWarn(`PR gate: reached "${humanizeState(post.currentState)}" without opening a PR — retrying gate`)
           await engine.forceTransition(
             instance.id,
             'COVERAGE_GATE',
             `Gate enforcement: ${gate.count} PRs found since ${iterationStartTs}; need ≥ 1`,
           )
         } else {
-          out(`gate: ${gate.count} PR(s) this iteration — ${gate.prs.map(p => '#' + p.number).join(', ')}`)
+          out(`PR gate: ${gate.count} PR(s) opened/updated this iteration — ${gate.prs.map(p => '#' + p.number).join(', ')}`)
         }
       }
 
@@ -674,7 +683,7 @@ async function main() {
         const red = await realRedPRCheck(terminalSet)
         if (red.redPRs.length > 0) {
           const summary = red.redPRs.map(p => `#${p.number} (${p.failedChecks.length} red)`).join(', ')
-          outWarn(`red CI on ${summary} — forcing back to CHECK_CI`)
+          outWarn(`red tests on ${summary} — returning to check automated tests`)
           await engine.forceTransition(
             instance.id,
             'CHECK_CI',

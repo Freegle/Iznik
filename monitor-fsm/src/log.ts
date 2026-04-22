@@ -223,18 +223,91 @@ const REASONING_STATES = new Set([
 export function summarizeReasoning(stateName: string, reasoning: string): string | null {
   if (!REASONING_STATES.has(stateName)) return null
   let r = reasoning.replace(/\s+/g, ' ').trim()
-  // Strip the prompt-restatement patterns the LLM tends to echo. These match
-  // openings like "In LOAD_STATE. I need to...", "Phase A entry: ...", "You
-  // are the Phase A router. Pick ...", "Step 1: Call ...", "Executing step 2".
+  // Strip the prompt-restatement patterns the LLM tends to echo BEFORE the
+  // real decision. Keep what's left.
   r = r.replace(/^(In \w+\.\s*)/i, '')
+  r = r.replace(/^(Current state is \w+\.\s*)/i, '')
+  r = r.replace(/^(Entering \w+ state(?: to \w+[^.]*)?\.?\s*)/i, '')
   r = r.replace(/^(I (?:need to|will|'ll|'m going to) )/i, '')
   r = r.replace(/^(You are (?:the |a )?[\w\s]+?router\.?\s*)/i, '')
   r = r.replace(/^Phase [AB](?: entry)?[:.]?\s*/i, '')
   r = r.replace(/^Executing step \d+[:.]?\s*/i, '')
   r = r.replace(/^Step \d+[:.]?\s*/i, '')
-  // Collapse trailing "Calling X now." / "Proceeding with X." — fluff.
+  r = r.replace(/^Checking CI status as required[^.]*\.\s*/i, '')
+  r = r.replace(/^(Task:|Need to:|Goal:)\s*/i, '')
+  // Humanize any STATE_NAME tokens that leaked through.
+  r = r.replace(/\b([A-Z][A-Z_]{3,})\b/g, (m) => humanizeState(m).toLowerCase())
+  // Humanize snake_case_action names too (verify_pr_created, check_master_ci…).
+  r = r.replace(/\b([a-z]+(?:_[a-z]+){1,})\b/g, (m) => humanizeAction(m))
+  // Collapse trailing fluff.
   r = r.replace(/\s*(Calling|Proceeding with) [^.]+\.\s*$/i, '')
-  return truncate(r, 160)
+  r = r.trim()
+  if (!r) return null
+  return truncate(r, 120)
+}
+
+// ─── State-name humanizer ───────────────────────────────────────────────────
+// Every state in workflow.json uses a SHOUTY_CONSTANT. Operators watching the
+// FSM don't read code; render something a non-developer can parse. Unknown
+// states fall back to Title Case of the constant with underscores removed.
+const STATE_LABELS: Record<string, string> = {
+  LOAD_STATE: 'Load state',
+  CHECK_CI: 'Check automated tests',
+  CI_ROUTER: 'Decide: fix tests or move on',
+  FIX_MASTER_CI: 'Fix broken master tests',
+  FIX_OPEN_PR_CI: 'Fix broken PR tests',
+  FETCH_DISCOURSE: 'Fetch Discourse posts',
+  CHECK_GIT: 'Check recent code changes',
+  CHECK_SENTRY: 'Check Sentry error reports',
+  TRIAGE: 'Triage volunteer posts',
+  WORK_ROUTER: 'Decide: which bug next',
+  PICK_DISCOURSE_BUG: 'Pick a bug to fix',
+  DELEGATE_DISCOURSE_BUG_FIX: 'Hand bug to coder',
+  VERIFY_DISCOURSE_BUG_FIX: "Check the coder's fix",
+  FIX_SENTRY_ISSUE: 'Fix a Sentry error',
+  COVERAGE_GATE: 'PR gate check',
+  WRITE_COVERAGE: 'Write coverage tests',
+  WRAP_UP: 'Write iteration summary',
+  SEND_EMAIL: 'Send email summary',
+  SCHEDULE_NEXT: 'Schedule next run',
+  END: 'Done',
+}
+export function humanizeState(stateName: string): string {
+  if (STATE_LABELS[stateName]) return STATE_LABELS[stateName]
+  return stateName.toLowerCase()
+    .split('_')
+    .map(w => w[0]?.toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
+// ─── Action-name humanizer ──────────────────────────────────────────────────
+const ACTION_LABELS: Record<string, string> = {
+  load_state: 'load state',
+  fetch_discourse: 'fetch Discourse posts',
+  git_log_today: 'check recent commits',
+  check_master_ci: 'check master tests',
+  check_my_open_pr_ci: 'check my PR tests',
+  check_sentry: 'check Sentry',
+  read_user_feedback: 'read reviewer feedback',
+  search_code: 'search code',
+  read_sentry_issues: 'read Sentry issue detail',
+  fetch_ci_failure_logs: 'fetch CI failure logs',
+  verify_pr_created: 'verify PR was created',
+  create_pr: 'verify PR details',
+  delegate_to_coder: 'hand off to coder',
+  post_discourse_reply_draft: 'queue reply draft',
+  write_summary: 'write summary',
+  send_email: 'send email',
+  schedule_wakeup: 'schedule wakeup',
+  ci_router_decide: 'routing decision (CI)',
+  work_router_decide: 'routing decision (work)',
+  coverage_gate_decide: 'gate decision',
+  compose_and_write_summary: 'write iteration summary',
+  compose_and_send_email: 'send iteration email',
+  schedule_next_auto: 'schedule next run',
+}
+export function humanizeAction(actionName: string): string {
+  return ACTION_LABELS[actionName] ?? actionName.replace(/_/g, ' ')
 }
 
 function formatBytes(n: number): string {
