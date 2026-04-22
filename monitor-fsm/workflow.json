@@ -7,8 +7,8 @@
   "guardrails": "You are running inside an FSM. You MUST return JSON matching the LLMDecision schema exactly. The response MUST be a single JSON object with these keys: reasoning (string), contextUpdates (OBJECT, not a string — use {} for no updates, NEVER write \"contextUpdates\": \"{...}\"), actions (ARRAY, not a string — use [] for no actions), proposedTransition (string or null). Do NOT wrap the whole response in markdown code fences. Do NOT JSON-stringify nested fields. You may only call actions listed for the current state, and may only propose transitions listed as 'Valid Next States'. You cannot bypass the PR gate: reaching END requires a PR (bug-fix or coverage) to have been created this iteration, verified by verify_pr_created. Do not lie about actions you have not taken. HARD INVARIANT — NEVER DISMISS A RED CHECK: A failing CI run, failing test, or red status check on ANY PR @me authored is ALWAYS a real bug that must be investigated to root cause and fixed. It does NOT matter whether the failure looks related to the change or not. You MUST NOT describe a failure as 'flaky', 'environmental', 'transient', 'pre-existing', 'unrelated', 'infrastructure timing', 'polluted test data', or any equivalent. You MUST NOT 'rerun and hope'. You MUST NOT mark such a failure as 'deferred'. Deferred is reserved EXCLUSIVELY for Discourse bugs and Sentry issues that need external information (reporter clarification, hardware the host cannot access, a user judgment call). CI failures never qualify — they are always within reach and must be driven to green.",
   "states": {
     "LOAD_STATE": {
-      "description": "Load state.json, record iterationStartTs. Tool node — executed deterministically by the driver, no LLM turn.",
-      "nodeType": "tool",
+      "description": "Load state.json, record iterationStartTs. Start node — ai-flower requires exactly one 'start' nodeType, so we keep this as 'start' but the driver treats start nodes with readActions the same as tool nodes (deterministic, no LLM turn).",
+      "nodeType": "start",
       "readActions": [
         "load_state"
       ],
