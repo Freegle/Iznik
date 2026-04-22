@@ -44,6 +44,25 @@ function resolveClaudeBin(): string {
 }
 const CLAUDE_BIN = resolveClaudeBin()
 
+// Redact obvious credentials from strings we display on screen or stash in
+// context (the stdoutTail fed back to the FSM). The delegate is explicitly
+// allowed to read ~/.circleci/cli.yml and put the token into a Bash env var
+// — that's legitimate work. But the tool-use event includes the full command
+// as `input.command`, so the raw token flows onto the terminal and into the
+// FSM's context unless we scrub here. Debug.log keeps the raw values so
+// post-hoc investigation still works.
+function redactSecrets(s: string): string {
+  if (!s) return s
+  return s
+    .replace(/\b(CIRCLECI_TOKEN|GITHUB_TOKEN|SENTRY_AUTH_TOKEN|SMTP_PASS|OPENAI_API_KEY|ANTHROPIC_API_KEY)=\S+/g, '$1=<redacted>')
+    .replace(/(Authorization:\s*(?:bearer|token)\s+)\S+/gi, '$1<redacted>')
+    .replace(/(-u\s+[^:\s]+:)\S+/g, '$1<redacted>')
+    .replace(/\bCCIPAT_[A-Za-z0-9_-]+/g, 'CCIPAT_<redacted>')
+    .replace(/\bsk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-<redacted>')
+    .replace(/\bghp_[A-Za-z0-9]+/g, 'ghp_<redacted>')
+    .replace(/\bghs_[A-Za-z0-9]+/g, 'ghs_<redacted>')
+}
+
 async function sh(cmd: string, args: string[], cwd?: string): Promise<{ stdout: string; stderr: string; code: number }> {
   try {
     const { stdout, stderr } = await exec(cmd, args, { cwd, maxBuffer: 20 * 1024 * 1024 })
@@ -753,12 +772,19 @@ If you omit the marker, your work is considered failed regardless of what actual
                 // watching sees progress while the coder runs. `input` on
                 // tool_use holds the args (Bash command, file path, etc.);
                 // show a terse single-line hint where we can.
+                //
+                // SECURITY: redact obvious secrets before display. Tokens
+                // routinely appear in bash commands (CIRCLECI_TOKEN=..., curl
+                // -u user:TOKEN, gh api -H "Authorization: bearer ..."). The
+                // full command still reaches debug.log but the screen + the
+                // stdoutTail we echo to the FSM are scrubbed.
                 const args = block.input ?? {}
                 let hint = ''
-                if (typeof args.command === 'string') hint = args.command.replace(/\s+/g, ' ').slice(0, 80)
+                if (typeof args.command === 'string') hint = args.command.replace(/\s+/g, ' ').slice(0, 120)
                 else if (typeof args.file_path === 'string') hint = args.file_path
                 else if (typeof args.path === 'string') hint = args.path
                 else if (typeof args.pattern === 'string') hint = args.pattern
+                hint = redactSecrets(hint)
                 out(`▸ ${block.name}${hint ? ': ' + truncate(hint, 90) : ''}`)
               } else if (block.type === 'tool_result') {
                 // Tool completed — resume idle-silence threshold.
@@ -855,8 +881,8 @@ If you omit the marker, your work is considered failed regardless of what actual
         silenceIdleMs: SILENCE_IDLE_MS,
         hardCapMs: HARD_CAP_MS,
         lastTool,
-        stdoutTail: textStream.slice(-2000),
-        stderrTail: stderr.slice(-2000),
+        stdoutTail: redactSecrets(textStream.slice(-2000)),
+        stderrTail: redactSecrets(stderr.slice(-2000)),
         prNumber,
         directPushSha,
         commitPushedSha,
