@@ -1391,6 +1391,25 @@ async function loginViaModTools(page, email, password = 'freegle') {
   await loginButton.first().click()
   console.log('Clicked Log in button')
 
+  // Check for error messages before waiting for modal to close
+  // Some errors (like "We don't know that email address") keep the modal visible
+  try {
+    const errorSelector = '.alert-danger, .text-danger, .invalid-feedback'
+    const errorElement = page.locator(errorSelector)
+
+    if (
+      await errorElement
+        .isVisible({ timeout: timeouts.ui.appearance / 2 })
+        .catch(() => false)
+    ) {
+      const errorText = await errorElement.textContent()
+      console.error(`ModTools login failed with error: ${errorText}`)
+      return false
+    }
+  } catch (e) {
+    // Continue if error check fails - modal might close successfully
+  }
+
   // Wait for the modal to close (v-if="!loggedIn" removes it from DOM)
   await loginModal.waitFor({
     state: 'detached',
