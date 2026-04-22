@@ -315,6 +315,54 @@ func TestExcludeLocation(t *testing.T) {
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
 }
 
+func TestExcludeLocationQueuesRemapTask(t *testing.T) {
+	prefix := uniquePrefix("locwr_exclrmp")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a test location with a polygon. The remap task needs the
+	// excluded location's geometry so PostcodeRemapService can re-run KNN
+	// over the postcodes that were previously inside it.
+	db := database.DBConn
+	polygon := "POLYGON((-3.21 55.94, -3.21 55.97, -3.18 55.97, -3.18 55.94, -3.21 55.94))"
+	db.Exec(fmt.Sprintf(
+		"INSERT INTO locations (name, type, canon, popularity, ourgeometry) VALUES (?, 'Polygon', ?, 0, ST_GeomFromText(?, %d))",
+		3857), // utils.SRID == 3857
+		"ExclRemap "+prefix, "exclremap "+prefix, polygon)
+	var locID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", "ExclRemap "+prefix).Scan(&locID)
+	assert.Greater(t, locID, uint64(0))
+
+	// Make sure there is no stale task from a prior run.
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+
+	body := fmt.Sprintf(`{"id":%d,"groupid":%d,"action":"Exclude"}`, locID, groupID)
+	req := httptest.NewRequest("POST", "/api/locations?jwt="+modToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Verify exclusion was created.
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM locations_excluded WHERE locationid = ? AND groupid = ?", locID, groupID).Scan(&count)
+	assert.Equal(t, int64(1), count)
+
+	// Verify a remap_postcodes task was queued — exclusion changes which
+	// area postcodes inside this polygon should belong to, so KNN must be
+	// re-run. Async via goroutine, so brief wait.
+	time.Sleep(100 * time.Millisecond)
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID).Scan(&taskCount)
+	assert.Greater(t, taskCount, int64(0), "remap_postcodes task should be queued after location exclude")
+
+	// Cleanup
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+	db.Exec("DELETE FROM locations_excluded WHERE locationid = ? AND groupid = ?", locID, groupID)
+	db.Exec("DELETE FROM locations WHERE id = ?", locID)
+}
+
 func TestExcludeLocationNotMod(t *testing.T) {
 	prefix := uniquePrefix("locwr_exclnm")
 	userID := CreateTestUser(t, prefix, "User")
