@@ -19,9 +19,9 @@ func TestGetDonationTarget(t *testing.T) {
 		t.Errorf("empty env: getDonationTarget() = %d, want %d", got, DEFAULT_DONATION_TARGET)
 	}
 
-	os.Setenv("DONATION_TARGET", "5000")
-	if got := getDonationTarget(); got != 5000 {
-		t.Errorf("valid env: getDonationTarget() = %d, want 5000", got)
+	os.Setenv("DONATION_TARGET", "7000")
+	if got := getDonationTarget(); got != 7000 {
+		t.Errorf("valid env: getDonationTarget() = %d, want 7000", got)
 	}
 
 	os.Setenv("DONATION_TARGET", "not-a-number")

@@ -37,6 +37,7 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  const t0 = process.hrtime.bigint();
   try {
     const { texts } = JSON.parse(body);
     if (!Array.isArray(texts) || texts.length === 0) {
@@ -65,9 +66,34 @@ const server = createServer(async (req, res) => {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ embeddings }));
+
+    const elapsedMs = Number(process.hrtime.bigint() - t0) / 1e6;
+    // Fingerprint first embedding so identical queries across calls can be
+    // cross-checked in Loki — deterministic extractor → identical fp.
+    const fp = embeddings[0]
+      .slice(0, 4)
+      .map(v => v.toFixed(4))
+      .join(',');
+    const sample = texts[0].length > 40 ? texts[0].slice(0, 40) + '...' : texts[0];
+    console.log(JSON.stringify({
+      level: 'info',
+      event: 'embed',
+      count: texts.length,
+      elapsed_ms: Number(elapsedMs.toFixed(2)),
+      first_text_len: texts[0].length,
+      first_text: sample,
+      fp,
+    }));
   } catch (e) {
+    const elapsedMs = Number(process.hrtime.bigint() - t0) / 1e6;
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: e.message }));
+    console.log(JSON.stringify({
+      level: 'error',
+      event: 'embed',
+      elapsed_ms: Number(elapsedMs.toFixed(2)),
+      error: e.message,
+    }));
   }
 });
 

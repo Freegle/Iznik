@@ -104,6 +104,33 @@ func TestRandomHexDistinct(t *testing.T) {
 	assert.NotEqual(t, a, b)
 }
 
+func TestRandomUint64NonZeroAndDistinct(t *testing.T) {
+	// Must never return 0 (0 is a sentinel for "no persistent token" in
+	// auth.go:46) and must be well-distributed across the safe range so
+	// collisions per user are cryptographically improbable.
+	seen := map[uint64]bool{}
+	for i := 0; i < 64; i++ {
+		v := utils.RandomUint64()
+		assert.NotEqual(t, uint64(0), v)
+		seen[v] = true
+	}
+	assert.Equal(t, 64, len(seen), "RandomUint64 must produce distinct values across calls")
+}
+
+// Values returned here are written to sessions.series and round-tripped
+// through JSON to a JavaScript client, which keeps IDs in Number (float64).
+// Anything above 2^53-1 gets rounded, so the Authorization2 token the
+// client returns no longer matches sessions.series in the DB and the
+// persistent-session lookup silently fails. Constrain the generator.
+func TestRandomUint64IsJSSafe(t *testing.T) {
+	const maxSafe = (uint64(1) << 53) - 1 // JavaScript Number.MAX_SAFE_INTEGER
+	for i := 0; i < 256; i++ {
+		v := utils.RandomUint64()
+		assert.LessOrEqual(t, v, maxSafe,
+			"RandomUint64 must stay within JavaScript's safe integer range so persistent.series survives a JSON round-trip")
+	}
+}
+
 func TestNilIfEmpty(t *testing.T) {
 	assert.Nil(t, utils.NilIfEmpty(""))
 	assert.Equal(t, "hello", utils.NilIfEmpty("hello"))

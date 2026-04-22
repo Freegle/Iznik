@@ -409,9 +409,9 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 							message.Location = loc
 						}
 					} else if message.Lat != 0 && message.Lng != 0 {
-						loc := &location.Location{}
-						loc.GroupsNear = location.ClosestGroups(float64(message.Lat), float64(message.Lng), location.NEARBY, 10)
-						message.Location = loc
+						l := location.ClosestPostcode(float32(message.Lat), float32(message.Lng))
+						l.GroupsNear = location.ClosestGroups(float64(message.Lat), float64(message.Lng), location.NEARBY, 10)
+						message.Location = &l
 					}
 				}
 
@@ -478,77 +478,90 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 					message.Refchatids = refchatids
 				}
 
-				// Fetch item and location for any viewer with locationid.
-				// Item is always public. Location (precise postcode) is only
-				// for mods and the message owner.
+				// Fetch item, location, and repost info in parallel.
+				// Item is always public and lives in messages_items, so it
+				// must be fetched regardless of locationid — a rejected
+				// message can have a valid item but no locationid.
+				// Location is for mods and the message owner only: prefer
+				// the precise postcode from locationid, else fall back to
+				// lat/lng (mirrors the mod path above).
+				// Repost eligibility needs the message's group settings,
+				// not location.
+				var wgExtra sync.WaitGroup
+
+				var loc *location.Location
+				var i *item.Item
+				var repostAt *time.Time
+				var canRepost bool
+
+				wgExtra.Add(1)
+				go func() {
+					defer wgExtra.Done()
+					i = item.FetchForMessage(message.ID)
+				}()
+
 				if message.Locationid > 0 {
-					var wgExtra sync.WaitGroup
-
-					var loc *location.Location
-					var i *item.Item
-					var repostAt *time.Time
-					var canRepost bool
-
 					wgExtra.Add(1)
 					go func() {
 						defer wgExtra.Done()
 						loc = location.FetchSingle(message.Locationid)
 					}()
-
+				} else if message.Lat != 0 && message.Lng != 0 {
 					wgExtra.Add(1)
 					go func() {
 						defer wgExtra.Done()
-						i = item.FetchForMessage(message.ID)
+						l := location.ClosestPostcode(float32(message.Lat), float32(message.Lng))
+						l.GroupsNear = location.ClosestGroups(float64(message.Lat), float64(message.Lng), location.NEARBY, 10)
+						loc = &l
 					}()
+				}
 
-					wgExtra.Add(1)
-					go func() {
-						defer wgExtra.Done()
-						var repostStr []string
-						db.Raw("SELECT CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts FROM `groups` INNER JOIN messages_groups ON messages_groups.groupid = groups.id WHERE msgid = ?", message.ID).Pluck("reposts", &repostStr)
+				wgExtra.Add(1)
+				go func() {
+					defer wgExtra.Done()
+					var repostStr []string
+					db.Raw("SELECT CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts FROM `groups` INNER JOIN messages_groups ON messages_groups.groupid = groups.id WHERE msgid = ?", message.ID).Pluck("reposts", &repostStr)
 
-						var reposts []group.RepostSettings
+					var reposts []group.RepostSettings
 
-						for _, r := range repostStr {
-							var rs group.RepostSettings
-							json.Unmarshal([]byte(r), &rs)
-							reposts = append(reposts, rs)
+					for _, r := range repostStr {
+						var rs group.RepostSettings
+						json.Unmarshal([]byte(r), &rs)
+						reposts = append(reposts, rs)
+					}
+
+					for _, r := range reposts {
+						var interval int
+
+						if message.Type == utils.OFFER {
+							interval = r.Offer
+						} else {
+							interval = r.Wanted
 						}
 
-						for _, r := range reposts {
-							var interval int
+						if interval < 365 {
+							if len(message.MessageGroups) > 0 {
+								ra := message.MessageGroups[0].Arrival.AddDate(0, 0, interval)
+								repostAt = &ra
 
-							if message.Type == utils.OFFER {
-								interval = r.Offer
-							} else {
-								interval = r.Wanted
-							}
-
-							if interval < 365 {
-								if len(message.MessageGroups) > 0 {
-									ra := message.MessageGroups[0].Arrival.AddDate(0, 0, interval)
-									repostAt = &ra
-
-									if repostAt.Before(time.Now()) {
-										canRepost = true
-									}
+								if repostAt.Before(time.Now()) {
+									canRepost = true
 								}
 							}
 						}
-					}()
-
-					wgExtra.Wait()
-
-					// Item is always public.
-					message.Item = i
-					message.Repostat = repostAt
-					message.Canrepost = canRepost
-
-					// Precise location only for mods and message owner.
-					// Other viewers get blurred lat/lng (handled elsewhere).
-					if message.Fromuser == myid || isModForMessage(db, myid, message.ID) {
-						message.Location = loc
 					}
+				}()
+
+				wgExtra.Wait()
+
+				message.Item = i
+				message.Repostat = repostAt
+				message.Canrepost = canRepost
+
+				// Precise location only for mods and message owner.
+				// Other viewers get blurred lat/lng (handled elsewhere).
+				if message.Fromuser == myid || isModForMessage(db, myid, message.ID) {
+					message.Location = loc
 				}
 
 				mu.Lock()
@@ -1066,18 +1079,31 @@ func Search(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "No search term")
 		}
 
-		// Try vector search if requested and embeddings are loaded
+		// When searchmode=vector is explicitly requested and vector succeeds,
+		// respect the result (even if empty) instead of falling back to keyword.
+		// Silently switching match models makes repeat queries return different
+		// result sets — the non-determinism Dee reported (Discourse 9594).
 		if searchmode == "vector" && embedding.Global.Count() > 0 {
-			vectorResults, err := VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
+			vectorResults, stats, err := VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
 				float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+			fallbackTaken := err != nil
+
+			logVectorSearch(term, groupids, msgtype, myid, searchmode, len(vectorResults), fallbackTaken, stats)
+
 			if err != nil {
 				fmt.Printf("Vector search failed, falling back to keyword: %v\n", err)
 			} else {
-				res = vectorResults
+				filtered := []SearchResult{}
+				for _, r := range vectorResults {
+					if r.Msgid != 0 {
+						filtered = append(filtered, r)
+					}
+				}
+				wg.Wait()
+				return c.JSON(filtered)
 			}
 		}
 
-		// Fall back to keyword search if vector returned nothing
 		if len(res) == 0 {
 			words := GetWords(term)
 
@@ -2745,10 +2771,13 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon) VALUES (?, ?, 1, NOW(), ?)",
 		newUserID, email, canon)
 
-	// Create session.
+	// Create session. series must be a random numeric value (bigint
+	// unsigned); using userID collided across every session for the same
+	// user and defeated UNIQUE KEY (id, series, token).
+	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
 	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-		newUserID, newUserID, token)
+		newUserID, series, token)
 
 	// Use token to find our specific session (avoids race with concurrent requests).
 	var sessionID uint64
@@ -2767,7 +2796,7 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 
 	persistent := fiber.Map{
 		"id":     sessionID,
-		"series": newUserID,
+		"series": series,
 		"token":  token,
 		"userid": newUserID,
 	}

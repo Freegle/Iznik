@@ -479,6 +479,21 @@ describe('MyMessage', () => {
       const takenBtn = actionBtns.filter((btn) => btn.text().includes('TAKEN'))
       expect(takenBtn.length).toBe(0)
     })
+
+    it('repost skips typeahead when location has no name (locationid=0 fallback)', async () => {
+      mockData.message.groups = [{ groupid: 1, collection: 'Rejected' }]
+      mockData.message.item = { name: 'Test item' }
+      mockData.message.location = { name: '' }
+      const wrapper = await createWrapper()
+      const editResend = wrapper
+        .findAll('.action-btn')
+        .find((btn) => btn.text().includes('Edit & Resend'))
+      expect(editResend).toBeTruthy()
+      await editResend.trigger('click')
+      await flushPromises()
+      expect(mockLocationStore.typeahead).not.toHaveBeenCalled()
+      expect(mockRouterPush).toHaveBeenCalledWith('/give')
+    })
   })
 
   describe('Action Buttons', () => {

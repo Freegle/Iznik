@@ -156,17 +156,22 @@ class DonationServiceTest extends TestCase
             'timestamp' => now()->subDays(3),
         ]);
 
-        // Create item receipt (this would normally trigger an ask).
+        // Create item receipt inside the query window [yesterday 17:00, today 17:00).
+        // Using now()->subHours(2) is time-of-day dependent: when the suite runs
+        // after 19:00 UTC the timestamp lands past today 17:00 and the recipient
+        // is not returned by getUsersWhoReceivedItems(), skipping the
+        // skipped_recent_ask branch and dropping coverage flakily.
+        $start = now()->subDay()->setTime(17, 0);
         DB::table('messages_by')->insert([
             'userid' => $user->id,
             'msgid' => $message->id,
-            'timestamp' => now()->subHours(2),
+            'timestamp' => $start->addMinutes(30),
         ]);
 
         $stats = $this->service->askForDonations();
 
         // Should be skipped because we asked recently.
-        $this->assertGreaterThanOrEqual(0, $stats['skipped_recent_ask']);
+        $this->assertEquals(1, $stats['skipped_recent_ask']);
         Mail::assertNothingSent();
     }
 

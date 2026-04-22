@@ -629,6 +629,18 @@ export function useReplyStateMachine(messageId) {
     // Check if logged in
     if (!me.value) {
       log('Not logged in, need to authenticate')
+      // The EmailValidator runs an async Google DNS domain check and emits
+      // `update:valid` only once it resolves. If the user clicks Send before
+      // that resolves (common under CI load), `emailValid.value` is still
+      // false even when the email is actually fine. Await any pending
+      // validation before deciding.
+      if (!emailValid.value && emailValidatorRef.value?.validate) {
+        try {
+          await emailValidatorRef.value.validate()
+        } catch (e) {
+          log('Email validator threw during revalidate:', e?.message)
+        }
+      }
       // Check email validation for non-logged-in users
       if (!emailValid.value) {
         log('Email not valid, focusing email field')

@@ -86,6 +86,29 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
   console.log('Logging out via UI')
 
   try {
+    // Clear any lingering modal backdrop from a prior modal (e.g. the login
+    // modal that closes via route redirect after signUpViaHomepage). The
+    // backdrop node in <div id="teleports"> otherwise intercepts pointer
+    // events and blocks the #menu-option-logout click.
+    if (!page.isClosed()) {
+      await page
+        .evaluate(() => {
+          document
+            .querySelectorAll('.modal.show, .modal[style*="display: block"]')
+            .forEach((el) => {
+              el.classList.remove('show')
+              el.style.display = 'none'
+            })
+          document
+            .querySelectorAll('.modal-backdrop')
+            .forEach((el) => el.remove())
+          document.body.classList.remove('modal-open')
+          document.body.style.removeProperty('overflow')
+          document.body.style.removeProperty('padding-right')
+        })
+        .catch(() => {})
+    }
+
     // Check if the logout button is visible (desktop or mobile)
     const desktopLogout = page.locator('#menu-option-logout')
     const mobileLogout = page.locator('text=Logout').filter({ visible: true })
@@ -118,7 +141,14 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     await clearSessionData(page)
 
     if (navigateToHome) {
-      await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+      // Use domcontentloaded instead of the default 'load' event: the post-logout
+      // cleanup only needs to land on a clean page, and waiting for 'load' blocks
+      // on third-party resources (Google FedCM/GSI) that sometimes never resolve
+      // in CI, exhausting the navigation timeout and the whole test timeout.
+      await page.gotoAndVerify('/', {
+        timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
+      })
       console.log('Navigated to homepage')
     }
 
@@ -135,7 +165,10 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     // Fall back to clearing cookies/storage
     await clearSessionData(page)
     if (navigateToHome) {
-      await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+      await page.gotoAndVerify('/', {
+        timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
+      })
     }
     return page
   }
@@ -263,7 +296,17 @@ async function signUpViaHomepage(
   // the in-memory Pinia store still has stale state (e.g. loggedInEver=true).
   // A fresh page load re-hydrates from the now-empty localStorage so the login
   // modal opens in signup mode rather than login mode.
-  await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+  //
+  // waitUntil 'domcontentloaded' rather than the gotoAndVerify default of
+  // 'load': the homepage's Google GSI/FedCM scripts sometimes never fire the
+  // `load` event in CI, so each 202.5s nav attempt × 3 retries exhausts the
+  // 10m test budget. The sign-in button is in SSR-rendered HTML and
+  // waitForEnabledSignInButton polls for hydration separately, so we don't
+  // need `load`. Same reasoning as logoutIfLoggedIn above.
+  await page.gotoAndVerify('/', {
+    timeout: timeouts.navigation.initial,
+    waitUntil: 'domcontentloaded',
+  })
 
   // Wait for page to be fully loaded with JavaScript
   // Don't use networkidle - the app has background polling that prevents idle state
@@ -506,10 +549,15 @@ async function loginViaHomepage(
   await clearSessionData(page)
   console.log('Cleared session data before login')
 
-  // Navigate to homepage if we're not already there
+  // Navigate to homepage if we're not already there.
+  // waitUntil 'domcontentloaded': homepage GSI/FedCM scripts sometimes never
+  // fire `load` in CI — see signUpViaHomepage for the full rationale.
   const currentUrl = page.url()
   if (!currentUrl.endsWith('/') && !currentUrl.endsWith('/?')) {
-    await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+    await page.gotoAndVerify('/', {
+      timeout: timeouts.navigation.initial,
+      waitUntil: 'domcontentloaded',
+    })
   }
 
   // Find and click the sign-in button on the homepage to open the login modal
