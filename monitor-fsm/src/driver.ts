@@ -21,6 +21,8 @@ import { dirname, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
+import { out, outWarn, dbg, truncate, startGroup, endGroup } from './log.js'
+
 import {
   WorkflowEngine,
   JSONFileStorage,
@@ -28,70 +30,7 @@ import {
   type WorkflowDefinition,
   type WorkflowInstance,
 } from 'ai-flower'
-
-// Local Claude Code adapter — forwards `model` to the SDK's query() so we can
-// run the FSM brain on Haiku (each step is a small, structured JSON decision
-// that doesn't need Opus-grade reasoning). The upstream
-// `ai-flower/adapters/claude-code` accepts a `model` option but silently drops
-// it before calling `query()`, so we inline our own.
-interface LocalAdapterOptions {
-  maxTokens?: number
-  model?: string
-}
-class LocalClaudeCodeAdapter implements LLMAdapter {
-  private readonly options: LocalAdapterOptions
-  constructor(options: LocalAdapterOptions = {}) {
-    this.options = options
-    if (!process.env.CLAUDECODE) {
-      console.warn(
-        '[LocalClaudeCodeAdapter] CLAUDECODE env not set — running outside a Claude Code session will fail.',
-      )
-    }
-  }
-  async call(system: string, user: string): Promise<string> {
-    // @ts-ignore — optional peer dependency
-    const { query } = await import('@anthropic-ai/claude-agent-sdk')
-    const collected: string[] = []
-    let final: string | null = null
-    // Sonnet/Opus aggressively call tools by default; with allowedTools=[] and
-    // maxTurns=1 that yields subtype=error_max_turns with no text. Prepend an
-    // explicit directive to produce text-only output so the first turn returns
-    // a JSON string directly.
-    const systemWithDirective =
-      'IMPORTANT: You have NO tools available. Do not attempt to call Bash, Read, Grep, or any other tool. Respond ONLY with the required JSON output as plain text. No tool use, no preamble, no code blocks.\n\n' +
-      system
-    const gen = query({
-      prompt: user,
-      options: {
-        systemPrompt: systemWithDirective,
-        maxTurns: 2,
-        allowedTools: [],
-        permissionMode: 'default',
-        ...(this.options.model ? { model: this.options.model } : {}),
-      },
-    })
-    for await (const msg of gen as AsyncIterable<any>) {
-      if (msg.type === 'result') {
-        if (typeof msg.result === 'string') final = msg.result
-        else if (Array.isArray(msg.content)) {
-          final = msg.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('')
-        }
-        if (!final) {
-          console.error('[LocalClaudeCodeAdapter] result msg had no extractable text; msg keys=' + Object.keys(msg).join(',') + ' subtype=' + msg.subtype + ' is_error=' + msg.is_error + ' stop_reason=' + msg.stop_reason)
-        }
-        break
-      }
-      if (msg.type === 'assistant' && Array.isArray(msg.message?.content)) {
-        for (const b of msg.message.content) {
-          if (b.type === 'text') collected.push(b.text)
-        }
-      }
-    }
-    const text = final ?? collected.join('') ?? ''
-    if (!text) throw new Error('LocalClaudeCodeAdapter: empty response from query() (model=' + (this.options.model || 'default') + ')')
-    return text
-  }
-}
+import { ClaudeCodeAdapter } from 'ai-flower/adapters/claude-code'
 
 import { actions } from './actions/index.js'
 import { getDb, startIteration, endIteration } from './db/index.js'
@@ -331,7 +270,8 @@ function sanitizeLLMDecision(raw: string): string {
 }
 
 function logInstance(i: WorkflowInstance, note: string) {
-  console.log(`[${new Date().toISOString()}] ${note} state=${i.currentState} status=${i.status} history=${i.history.length}`)
+  // Instance state changes at every tick — too noisy for screen. Debug log only.
+  dbg(`${note} state=${i.currentState} status=${i.status} history=${i.history.length}`)
 }
 
 async function main() {
@@ -340,13 +280,7 @@ async function main() {
   const storage = new JSONFileStorage(INSTANCE_STORE)
   await storage.saveWorkflow(definition)
 
-  // Driver brain runs on Haiku by default — every step is a small JSON
-  // decision with a fixed shape, and Haiku handles that at a fraction of the
-  // cost of Opus. Override with FSM_DRIVER_MODEL env var (e.g. 'sonnet' or
-  // 'opus') if a tough state consistently picks wrong transitions.
-  const driverModel = process.env.FSM_DRIVER_MODEL || 'haiku'
-  console.log(`[driver] brain model: ${driverModel}`)
-  const innerAdapter = new LocalClaudeCodeAdapter({ maxTokens: 8192, model: driverModel })
+  const innerAdapter = new ClaudeCodeAdapter({ maxTokens: 8192 })
   // Retry-aware wrapper. ai-flower retries on validation failure by calling us
   // again with the same (system, user) pair. We detect that repetition and
   // prepend an escalating JSON-only preamble with a worked example. The
@@ -379,11 +313,11 @@ async function main() {
           `after, no markdown code fences, no JSON-stringified fields. ` +
           `Example shape:\n\n${example}\n\n---\n\n`
         effectiveUser = preamble + user
-        console.log(`[llm retry] attempt=${attempt + 1} — prepending JSON-only preamble`)
+        out(`llm retry (attempt ${attempt + 1}) — re-prompting for valid JSON`)
       }
 
       const raw = await innerAdapter.call(system, effectiveUser)
-      console.log(`[llm raw attempt=${attempt + 1}] ${raw.length} chars — first 600:\n${raw.slice(0, 600)}\n[/llm raw]`)
+      dbg(`[llm raw attempt=${attempt + 1}] ${raw.length} chars:\n${raw}\n[/llm raw]`)
       // Claude subscription quota exhausted — the adapter returns the literal
       // limit message as a short plain-English string. Without explicit
       // detection, it fails JSON parsing, the driver force-transitions to
@@ -395,7 +329,7 @@ async function main() {
       }
       const repaired = sanitizeLLMDecision(raw)
       if (repaired !== raw) {
-        console.log('[llm sanitize] repaired stringified fields in LLM output')
+        dbg('llm sanitize repaired stringified fields in LLM output')
       }
       return repaired
     },
@@ -412,13 +346,13 @@ async function main() {
   // Fresh instance per driver run — iterations should not resume.
   const iterationStartTs = new Date().toISOString()
   const instance = await engine.createInstance({ iterationStartTs })
-  console.log(`[driver] created instance ${instance.id} iterationStartTs=${iterationStartTs}`)
-  logInstance(instance, '[driver] start')
+  out(`starting iteration ${instance.id.slice(0, 8)} at ${iterationStartTs}`)
+  logInstance(instance, 'start')
 
   // Open a DB iteration row so every run is logged with start/end/outcome.
   const db = getDb()
   const iterationId = startIteration(db, iterationStartTs)
-  console.log(`[driver] iteration id=${iterationId} started`)
+  dbg(`iteration db id=${iterationId}`)
 
   // Track which Discourse bugs have been picked as currentBug this iteration.
   // If the same (topic, post) pair is picked twice, the iteration is looping:
@@ -438,16 +372,17 @@ async function main() {
   while (step < MAX_STEPS) {
     const current = await engine.getInstance(instance.id)
     if (current.status === 'completed') {
-      console.log('[driver] instance completed')
+      out('iteration complete')
       break
     }
     if (current.status !== 'active') {
-      console.log(`[driver] instance status=${current.status} — stopping`)
+      out(`instance status=${current.status} — stopping`)
       break
     }
 
     step++
-    console.log(`\n─── step ${step} (state=${current.currentState}) ───`)
+    startGroup(`→ step ${step}: ${current.currentState}`)
+    try {
 
     // ─── STALE ACTION CLEARING ───
     // When entering a new bug's cycle at PICK_DISCOURSE_BUG, clear per-bug
@@ -467,7 +402,7 @@ async function main() {
         if (k in ctxNow) toClear[k] = null
       }
       if (Object.keys(toClear).length > 0) {
-        console.log(`[driver] clearing stale action keys on PICK_DISCOURSE_BUG entry: ${Object.keys(toClear).join(', ')}`)
+        dbg(`clearing stale action keys on PICK_DISCOURSE_BUG entry: ${Object.keys(toClear).join(', ')}`)
         await engine.updateContext(instance.id, toClear)
       }
     }
@@ -490,13 +425,13 @@ async function main() {
         const nextCount = prev + 1
         openPRFixEntries.set(target.number, nextCount)
         if (nextCount > 2) {
-          console.warn(`[fix-pr loop-breaker] PR #${target.number} entered FIX_OPEN_PR_CI ${nextCount}x with no commit. Recording terminal attempt, removing from redPRs, and routing to ROUTER.`)
+          outWarn(`loop-breaker: PR #${target.number} ${nextCount}x in FIX_OPEN_PR_CI with no commit — giving up on this PR`)
           const terminalAttempts = [
             ...attempts,
             { prNumber: target.number, attemptedAt: new Date().toISOString(), terminal: true, reason: 'loop-breaker: 2 attempts without a pushed commit' },
           ]
           // Also strip the PR from _action_check_my_open_pr_ci.redPRs so
-          // ROUTER's "keep trying if no new commit" heuristic can't re-pick it.
+          // CI_ROUTER's "keep trying if no new commit" heuristic can't re-pick it.
           const currentCI = ctxNow._action_check_my_open_pr_ci ?? {}
           const strippedRed = (currentCI.redPRs ?? []).filter((p: any) => p.number !== target.number)
           const updatedCI = { ...currentCI, redPRs: strippedRed }
@@ -506,8 +441,8 @@ async function main() {
           })
           await engine.forceTransition(
             instance.id,
-            'ROUTER',
-            `Loop-breaker: PR #${target.number} attempted ${nextCount}x with no commit pushed; stripped from redPRs and forcing ROUTER past this PR.`,
+            'CI_ROUTER',
+            `Loop-breaker: PR #${target.number} attempted ${nextCount}x with no commit pushed; stripped from redPRs and forcing CI_ROUTER past this PR.`,
           )
           continue
         }
@@ -519,16 +454,24 @@ async function main() {
         type: 'tick',
         data: { step, now: new Date().toISOString() },
       })
-      logInstance(result.instance, `[driver] after step ${step}`)
+      logInstance(result.instance, `after step ${step}`)
       if (result.llmReasoning) {
-        console.log(`[llm] ${result.llmReasoning.slice(0, 400)}`)
+        out(`reason: ${truncate(result.llmReasoning.replace(/\s+/g, ' ').trim(), 200)}`)
       }
+      // Actions that already emit their own start/end group lines (with tool
+      // call children) should not get a redundant `· action → {...}` line
+      // from the driver — it would appear below the group's summary footer
+      // and muddy the tree.
+      const selfLogging = new Set(['delegate_to_coder'])
       for (const a of result.actionsExecuted) {
         if (a.error) {
-          console.log(`[action ERROR] ${a.action}: ${a.error}`)
+          outWarn(`action ${a.action} failed: ${truncate(a.error, 200)}`)
         } else {
-          const resStr = a.result === undefined ? '(no result)' : JSON.stringify(a.result).slice(0, 200)
-          console.log(`[action OK] ${a.action} → ${resStr}`)
+          const resStr = a.result === undefined ? '' : JSON.stringify(a.result)
+          if (!selfLogging.has(a.action)) {
+            out(`· ${a.action}${resStr ? ` → ${truncate(resStr, 160)}` : ''}`)
+          }
+          if (resStr) dbg(`action ${a.action} full result: ${resStr}`)
         }
       }
 
@@ -555,7 +498,7 @@ async function main() {
           const nextAttempts = alreadyRecorded
             ? existingAttempts
             : [...existingAttempts, { prNumber: fixOpenPRTarget.number, attemptedAt: new Date().toISOString(), pushed: true, sha }]
-          console.log(`[fix-pr auto-strip] PR #${fixOpenPRTarget.number} delegate pushed (sha=${sha}). Stripping from redPRs and recording success.`)
+          out(`PR #${fixOpenPRTarget.number} fix pushed (${sha?.slice(0, 9) ?? 'sha?'}) — marking resolved`)
           await engine.updateContext(instance.id, {
             openPRFixAttempts: nextAttempts,
             _action_check_my_open_pr_ci: updatedCI,
@@ -581,7 +524,7 @@ async function main() {
         if (cb && typeof cb.topic !== 'undefined' && typeof cb.post !== 'undefined') {
           const key = `${cb.topic}.${cb.post}`
           if (pickedBugs.has(key)) {
-            console.warn(`[loop-breaker] bug ${key} picked a second time (just left PICK_DISCOURSE_BUG → ${midState.currentState}). Force-deferring and routing to ROUTER.`)
+            outWarn(`loop-breaker: bug ${key} picked twice — force-deferring`)
             const existingFixed = Array.isArray(ctx.bugsFixed) ? ctx.bugsFixed : []
             const deferred = { ...cb, outcome: 'deferred', reason: 'loop-breaker: bug picked twice in one iteration, previous delegate likely failed silently' }
             await engine.updateContext(instance.id, {
@@ -590,7 +533,7 @@ async function main() {
             })
             await engine.forceTransition(
               instance.id,
-              'ROUTER',
+              'WORK_ROUTER',
               `Loop-breaker: bug ${key} picked twice this iteration without being recorded in bugsFixed; force-appended deferred entry.`,
             )
           } else {
@@ -607,14 +550,14 @@ async function main() {
       if (STATES_PAST_GATE.has(post.currentState)) {
         const gate = await realGateCheck(iterationStartTs)
         if (!gate.passed) {
-          console.warn(`[gate] ❌ instance reached ${post.currentState} without a PR. Forcing back to COVERAGE_GATE.`)
+          outWarn(`gate: reached ${post.currentState} without a PR — forcing back to COVERAGE_GATE`)
           await engine.forceTransition(
             instance.id,
             'COVERAGE_GATE',
             `Gate enforcement: ${gate.count} PRs found since ${iterationStartTs}; need ≥ 1`,
           )
         } else {
-          console.log(`[gate] ✅ ${gate.count} PR(s) since iteration start: ${gate.prs.map(p => '#' + p.number).join(', ')}`)
+          out(`gate: ${gate.count} PR(s) this iteration — ${gate.prs.map(p => '#' + p.number).join(', ')}`)
         }
       }
 
@@ -631,23 +574,23 @@ async function main() {
         const red = await realRedPRCheck(terminalSet)
         if (red.redPRs.length > 0) {
           const summary = red.redPRs.map(p => `#${p.number} (${p.failedChecks.length} red)`).join(', ')
-          console.warn(`[red-pr] ❌ instance reached ${postRed.currentState} with red CI on: ${summary}. Forcing back to ROUTER.`)
+          outWarn(`red CI on ${summary} — forcing back to CHECK_CI`)
           await engine.forceTransition(
             instance.id,
             'CHECK_CI',
-            `Red-CI enforcement: ${red.redPRs.length} open PR(s) authored by @me have failing checks: ${summary}. Re-running CHECK_CI to refresh context, then ROUTER will dispatch to FIX_OPEN_PR_CI.`,
+            `Red-CI enforcement: ${red.redPRs.length} open PR(s) authored by @me have failing checks: ${summary}. Re-running CHECK_CI to refresh context, then CI_ROUTER will dispatch to FIX_OPEN_PR_CI.`,
           )
         } else {
-          console.log('[red-pr] ✅ no open PRs I authored have red CI')
+          dbg('red-pr: no open PRs I authored have red CI')
         }
       }
     } catch (err: any) {
-      console.error(`[driver] step ${step} error:`, err.message ?? err)
+      outWarn(`step ${step} error: ${err.message ?? err}`)
       // Claude subscription quota exhausted — retrying will produce the same
       // limit message. Abort the iteration; the next scheduled run will pick
       // up after the quota resets.
       if (err.message?.startsWith('CLAUDE_QUOTA_EXHAUSTED')) {
-        console.error('[driver] Claude subscription quota exhausted — aborting iteration.')
+        outWarn('Claude subscription quota exhausted — aborting iteration')
         break
       }
       // Safety net: if the LLM produced invalid JSON across all retries, don't
@@ -655,7 +598,7 @@ async function main() {
       // COVERAGE_GATE so the iteration wraps up cleanly (WRAP_UP → SEND_EMAIL
       // → SCHEDULE_NEXT). A genuine stuck-loop exits via MAX_STEPS instead.
       if (err.message?.includes('failed validation after')) {
-        console.error('[driver] LLM did not produce valid JSON after retries; force-transitioning to COVERAGE_GATE.')
+        outWarn('LLM produced invalid JSON after retries — skipping to COVERAGE_GATE')
         try {
           await engine.forceTransition(
             instance.id,
@@ -663,20 +606,23 @@ async function main() {
             'LLM JSON-validation failure after retries; skip to COVERAGE_GATE to end iteration.',
           )
         } catch (forceErr: any) {
-          console.error('[driver] force-transition failed:', forceErr.message ?? forceErr)
+          outWarn(`force-transition failed: ${forceErr.message ?? forceErr}`)
           break
         }
       }
     }
+    } finally {
+      endGroup()
+    }
   }
 
   const finalInstance = await engine.getInstance(instance.id)
-  console.log(`\n[driver] DONE status=${finalInstance.status} state=${finalInstance.currentState} steps=${step}`)
-  console.log(`[driver] history ${finalInstance.history.length} events`)
+  out(`DONE status=${finalInstance.status} state=${finalInstance.currentState} steps=${step}`)
+  dbg(`history ${finalInstance.history.length} events`)
 
   // Summary of what was actually done
   const allPRActions = finalInstance.history.flatMap(h => h.actionsExecuted.filter(a => a.action === 'create_pr' && !a.error))
-  console.log(`[driver] create_pr calls that succeeded: ${allPRActions.length}`)
+  out(`create_pr succeeded: ${allPRActions.length}`)
 
   // Close the iteration row.
   const outcome = finalInstance.status === 'completed'
@@ -688,9 +634,9 @@ async function main() {
   // state.json} reflect the final DB state after this iteration.
   try {
     await renderAllViews(db)
-    console.log('[driver] views regenerated from DB')
+    dbg('views regenerated from DB')
   } catch (err) {
-    console.error('[driver] renderAllViews failed:', err)
+    outWarn(`renderAllViews failed: ${err}`)
   }
 
   // Edit the Discourse "Monitor Status — Live Summary" wiki post so moderators
@@ -700,17 +646,17 @@ async function main() {
     try {
       const result = await putStatusPost(db)
       if (result.posted) {
-        console.log(`[driver] Discourse status post updated (HTTP ${result.status})`)
+        out(`Discourse status post updated (HTTP ${result.status})`)
       } else {
-        console.warn(`[driver] Discourse status post NOT updated: ${result.reason ?? `HTTP ${result.status}`}`)
+        outWarn(`Discourse status post NOT updated: ${result.reason ?? `HTTP ${result.status}`}`)
       }
     } catch (err) {
-      console.error('[driver] putStatusPost threw:', err)
+      outWarn(`putStatusPost threw: ${err}`)
     }
   }
 }
 
 main().catch(err => {
-  console.error('[driver] fatal:', err)
+  outWarn(`fatal: ${err}`)
   process.exit(1)
 })

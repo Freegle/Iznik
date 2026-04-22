@@ -2,21 +2,63 @@
   "id": "freegle-monitor-v2",
   "name": "Freegle Monitor",
   "version": "2",
-  "description": "FSM-enforced freegle-monitor iteration. Each kind of work item has its OWN state with a single, focused prompt \u2014 no 'work_item' state that has to decide what it's doing. ROUTER is the only decision point; every FIX_* state does exactly one thing. Reaching END requires passing COVERAGE_GATE (at least one PR since iterationStartTs).",
+  "description": "FSM-enforced freegle-monitor iteration. Two-phase flow: Phase A checks CI first and resolves any red CI before loading Discourse/Sentry context; Phase B runs only when CI is green, fetches Discourse/git/Sentry, and dispatches bug/Sentry/coverage work. Each work-item kind has its own state with a single focused prompt. Reaching END requires passing COVERAGE_GATE (at least one PR since iterationStartTs).",
   "initialState": "LOAD_STATE",
-  "guardrails": "You are running inside an FSM. You MUST return JSON matching the LLMDecision schema exactly. The response MUST be a single JSON object with these keys: reasoning (string), contextUpdates (OBJECT, not a string \u2014 use {} for no updates, NEVER write \\\"contextUpdates\\\": \\\"{...}\\\"), actions (ARRAY, not a string \u2014 use [] for no actions), proposedTransition (string or null). Do NOT wrap the whole response in markdown code fences. Do NOT JSON-stringify nested fields. You may only call actions listed for the current state, and may only propose transitions listed as 'Valid Next States'. You cannot bypass the PR gate: reaching END requires a PR (bug-fix or coverage) to have been created this iteration, verified by verify_pr_created. Do not lie about actions you have not taken. HARD INVARIANT \u2014 NEVER DISMISS A RED CHECK: A failing CI run, failing test, or red status check on ANY PR @me authored is ALWAYS a real bug that must be investigated to root cause and fixed. It does NOT matter whether the failure looks related to the change or not. You MUST NOT describe a failure as 'flaky', 'environmental', 'transient', 'pre-existing', 'unrelated', 'infrastructure timing', 'polluted test data', or any equivalent. You MUST NOT 'rerun and hope'. You MUST NOT mark such a failure as 'deferred'. Deferred is reserved EXCLUSIVELY for Discourse bugs and Sentry issues that need external information (reporter clarification, hardware the host cannot access, a user judgment call). CI failures never qualify \u2014 they are always within reach and must be driven to green.",
+  "guardrails": "You are running inside an FSM. You MUST return JSON matching the LLMDecision schema exactly. The response MUST be a single JSON object with these keys: reasoning (string), contextUpdates (OBJECT, not a string — use {} for no updates, NEVER write \"contextUpdates\": \"{...}\"), actions (ARRAY, not a string — use [] for no actions), proposedTransition (string or null). Do NOT wrap the whole response in markdown code fences. Do NOT JSON-stringify nested fields. You may only call actions listed for the current state, and may only propose transitions listed as 'Valid Next States'. You cannot bypass the PR gate: reaching END requires a PR (bug-fix or coverage) to have been created this iteration, verified by verify_pr_created. Do not lie about actions you have not taken. HARD INVARIANT — NEVER DISMISS A RED CHECK: A failing CI run, failing test, or red status check on ANY PR @me authored is ALWAYS a real bug that must be investigated to root cause and fixed. It does NOT matter whether the failure looks related to the change or not. You MUST NOT describe a failure as 'flaky', 'environmental', 'transient', 'pre-existing', 'unrelated', 'infrastructure timing', 'polluted test data', or any equivalent. You MUST NOT 'rerun and hope'. You MUST NOT mark such a failure as 'deferred'. Deferred is reserved EXCLUSIVELY for Discourse bugs and Sentry issues that need external information (reporter clarification, hardware the host cannot access, a user judgment call). CI failures never qualify — they are always within reach and must be driven to green.",
   "states": {
     "LOAD_STATE": {
       "description": "Load state.json, record iterationStartTs.",
       "nodeType": "start",
-      "prompt": "Call load_state to read /tmp/freegle-monitor/state.json. Propose transition to FETCH_DISCOURSE.",
+      "prompt": "Call load_state to read /tmp/freegle-monitor/state.json. Propose transition to CHECK_CI. CI is checked FIRST (Phase A) before any Discourse/Sentry work — a red CI blocks everything else and no Discourse context is needed to diagnose it.",
       "readActions": [
         "load_state"
       ],
       "writeActions": []
     },
+    "CHECK_CI": {
+      "description": "Phase A entry: check master CI status and any red CI on @me open PRs. No Discourse/Sentry context loaded yet — if CI is red we fix it first before burning tokens on unrelated fetches.",
+      "nodeType": "agent",
+      "prompt": "Call check_master_ci (returns {latestRun, failing}) AND call check_my_open_pr_ci (returns {redPRs, pendingPRs, allGreen}). Both results are used downstream: red master CI or any redPR means the iteration CANNOT advance to Phase B until fixed. Propose transition to CI_ROUTER.",
+      "readActions": [
+        "check_master_ci",
+        "check_my_open_pr_ci"
+      ],
+      "writeActions": []
+    },
+    "CI_ROUTER": {
+      "description": "Phase A dispatch. Pure decision state — routes to a CI-fix state if anything is red, else advances to Phase B via FETCH_DISCOURSE. No actions.",
+      "nodeType": "agent",
+      "prompt": "You are the Phase A router. Do NOT call actions. Pick ONE transition based on STRICT priority order:\n\n(1) if context._action_check_master_ci.failing === true AND contextUpdates.masterFixAttempted !== true → FIX_MASTER_CI.\n\n(2) else if context._action_check_my_open_pr_ci.redPRs is non-empty, pick the FIRST red PR whose number is not already in contextUpdates.openPRFixAttempts (or whose latest attempt produced no new commit yet — keep trying) → FIX_OPEN_PR_CI. A red CI on an open PR I authored is a HARD block on leaving Phase A. Do NOT skip it. Do NOT call it flaky, environmental, pre-existing, or unrelated. Keep dispatching to FIX_OPEN_PR_CI until redPRs is empty.\n\n(3) else (all CI green) → FETCH_DISCOURSE. This is the ONLY path out of Phase A and into the discovery phase.\n\nSet contextUpdates = {} and actions = []. Put your reasoning (which priority level fired, and which red PR number if level 2) in the reasoning field.",
+      "readActions": [],
+      "writeActions": []
+    },
+    "FIX_MASTER_CI": {
+      "description": "Fix a failing master CI run. Direct-push to master permitted (CI-failure exception). Exactly one job: diagnose, fix, push, mark done. Returns to CHECK_CI to re-verify before Phase A can exit.",
+      "nodeType": "agent",
+      "prompt": "Master CI is failing on runId context._action_check_master_ci.latestRun.databaseId. (1) Call fetch_ci_failure_logs with that runId to get the failure. (2) Call delegate_to_coder with a task describing the failure and asking it to diagnose, fix, and push directly to master. Include the log tail and the sha. The subagent MUST identify a concrete root cause — never accept 'flake', 'transient', 'environmental', or 'unrelated' as a fix. (3) When delegate_to_coder returns, call create_pr if a PR was opened OR set contextUpdates.masterFixAttempted = true if pushed direct to master. Propose transition to CHECK_CI so Phase A re-reads CI status before deciding whether to advance.",
+      "readActions": [
+        "fetch_ci_failure_logs",
+        "search_code"
+      ],
+      "writeActions": [
+        "delegate_to_coder",
+        "create_pr"
+      ]
+    },
+    "FIX_OPEN_PR_CI": {
+      "description": "Fix red CI on one of my OPEN PRs. Iteration cannot leave Phase A while any redPR is present. No deferring, no rationalizing the failure as flaky. Returns to CHECK_CI to re-verify.",
+      "nodeType": "agent",
+      "prompt": "Pick the first entry from context._action_check_my_open_pr_ci.redPRs. Its failedChecks[] contain the CircleCI / coverage / netlify URLs. (1) Record the attempt: append { prNumber, attemptedAt: <now> } to contextUpdates.openPRFixAttempts. (2) Call delegate_to_coder with a task that: (a) checks out the PR branch; (b) reads the failing check logs from the URLs provided (for CircleCI, use the v1.1 API with the CIRCLECI_TOKEN from ~/.circleci/cli.yml; follow the pattern in .circleci/README.md); (c) identifies a CONCRETE root cause — not 'flaky', 'transient', 'environmental', 'pre-existing', 'unrelated', 'polluted DB', or any equivalent evasion — and fixes it in code; (d) pushes a new commit to the PR branch. The delegate MUST NOT close the PR and MUST NOT rebase/squash. The fix may be a test change, a code change, a fixture reset, a CI-config change, or an orb bump — whatever the root cause requires. (3) After delegate returns, do NOT call create_pr (the PR already exists). Set contextUpdates.lastOpenPRFix = { prNumber, exitCode, stdoutTail }. Propose transition to CHECK_CI. CHECK_CI re-reads check_my_open_pr_ci so if a new commit is now pending, the PR moves out of redPRs into pendingPRs and CI_ROUTER will advance to Phase B (or pick the next red PR if any remain).",
+      "readActions": [
+        "fetch_ci_failure_logs",
+        "search_code"
+      ],
+      "writeActions": [
+        "delegate_to_coder"
+      ]
+    },
     "FETCH_DISCOURSE": {
-      "description": "Fetch all new Discourse posts with full body text.",
+      "description": "Phase B start: fetch all new Discourse posts with full body text. Only reached when CI is green.",
       "nodeType": "agent",
       "prompt": "Call fetch_discourse once. It reads state.topics cursors from context._action_load_state and returns {posts, topicsSeen}. Propose transition to CHECK_GIT.",
       "readActions": [
@@ -25,21 +67,11 @@
       "writeActions": []
     },
     "CHECK_GIT": {
-      "description": "Gather last 3 days of commits across the monorepo.",
+      "description": "Gather last 3 days of commits across the monorepo. Used by TRIAGE to mark 'already_fixed' bugs.",
       "nodeType": "agent",
-      "prompt": "Call git_log_today. Propose transition to CHECK_CI.",
+      "prompt": "Call git_log_today. Propose transition to CHECK_SENTRY.",
       "readActions": [
         "git_log_today"
-      ],
-      "writeActions": []
-    },
-    "CHECK_CI": {
-      "description": "Check master CI status and any red CI on @me open PRs.",
-      "nodeType": "agent",
-      "prompt": "Call check_master_ci (returns {latestRun, failing}) AND call check_my_open_pr_ci (returns {redPRs, pendingPRs, allGreen}). Both results are used downstream: red master CI or any redPR means the iteration CANNOT end until fixed. Propose transition to CHECK_SENTRY.",
-      "readActions": [
-        "check_master_ci",
-        "check_my_open_pr_ci"
       ],
       "writeActions": []
     },
@@ -55,55 +87,30 @@
     "TRIAGE": {
       "description": "Classify each Discourse post individually. Also reads user_feedback.md so that reviewer-rejected PRs resurface their bug as actionable.",
       "nodeType": "agent",
-      "prompt": "STEP 1: Call read_user_feedback to get any human-reviewer overrides (e.g. rejected PRs, reopened bugs). STEP 2: Look at context._action_fetch_discourse.posts. Classify EACH post (not each topic) against recent commits in context._action_git_log_today. Set contextUpdates.classifications = [{topic, post, user, type, summary, originalPostText, commitHash?, reviewerRejected?, reviewerReason?, rejectedPrNumber?}] with one entry per input post. Types: 'bug', 'retest', 'confirmed', 'already_fixed' (+commitHash), 'question', 'off_topic', 'mine' (Edward_Hibbert \u2014 skip). A reporter may raise multiple DIFFERENT problems across posts; treat each as a separate classification. STEP 3 \u2014 USER FEEDBACK OVERRIDES: for each entry in _action_read_user_feedback.entries: (a) if entry has bugTopic+bugPost, find the matching classification and force its type to 'bug', set reviewerRejected=true, set reviewerReason=entry.reason so the downstream coder reads the reviewer's correction. (b) if entry has prRejected (a PR number), and that PR has a corresponding bug in the existing classifications via originalPostText / summary match, do the same \u2014 flip to 'bug' + reviewerRejected=true + reviewerReason=entry.reason, AND also record rejectedPrNumber=entry.prRejected on that classification so the downstream coder can push the corrected fix to the rejected PR's branch instead of creating a parallel PR. STEP 4: Propose transition to ROUTER when every post is classified.",
+      "prompt": "STEP 1: Call read_user_feedback to get any human-reviewer overrides (e.g. rejected PRs, reopened bugs). STEP 2: Look at context._action_fetch_discourse.posts. Classify EACH post (not each topic) against recent commits in context._action_git_log_today. Set contextUpdates.classifications = [{topic, post, user, type, summary, originalPostText, commitHash?, reviewerRejected?, reviewerReason?, rejectedPrNumber?}] with one entry per input post. Types: 'bug', 'retest', 'confirmed', 'already_fixed' (+commitHash), 'question', 'off_topic', 'mine' (Edward_Hibbert — skip). A reporter may raise multiple DIFFERENT problems across posts; treat each as a separate classification. STEP 3 — USER FEEDBACK OVERRIDES: for each entry in _action_read_user_feedback.entries: (a) if entry has bugTopic+bugPost, find the matching classification and force its type to 'bug', set reviewerRejected=true, set reviewerReason=entry.reason so the downstream coder reads the reviewer's correction. (b) if entry has prRejected (a PR number), and that PR has a corresponding bug in the existing classifications via originalPostText / summary match, do the same — flip to 'bug' + reviewerRejected=true + reviewerReason=entry.reason, AND also record rejectedPrNumber=entry.prRejected on that classification so the downstream coder can push the corrected fix to the rejected PR's branch instead of creating a parallel PR. STEP 4: Propose transition to WORK_ROUTER when every post is classified.",
       "readActions": [
         "read_user_feedback"
       ],
       "writeActions": []
     },
-    "ROUTER": {
-      "description": "Pure dispatch. Inspects context and picks the next FIX_* state. No actions. One decision: which fix state next, or COVERAGE_GATE if nothing left.",
+    "WORK_ROUTER": {
+      "description": "Phase B dispatch. Pure decision state — routes to the next bug/Sentry/coverage state. CI-fix dispatch is NOT part of WORK_ROUTER; Phase A already guaranteed CI is green before we entered Phase B. No actions.",
       "nodeType": "agent",
-      "prompt": "You are a router. Do NOT call actions. Pick ONE transition based on STRICT priority order:\n\n(1) if context._action_check_master_ci.failing === true AND contextUpdates.masterFixAttempted !== true \u2192 FIX_MASTER_CI.\n\n(2) else if context._action_check_my_open_pr_ci.redPRs is non-empty, pick the FIRST red PR whose number is not already in contextUpdates.openPRFixAttempts (or whose latest attempt produced no new commit yet \u2014 keep trying) \u2192 FIX_OPEN_PR_CI. A red CI on an open PR I authored is a HARD block on reaching COVERAGE_GATE. Do NOT skip it. Do NOT call it flaky, environmental, pre-existing, or unrelated. Keep dispatching to FIX_OPEN_PR_CI until redPRs is empty.\n\n(3) else if classifications contains any 'bug' or 'retest' entry whose (topic, post) is NOT already present in contextUpdates.bugsFixed (an entry in bugsFixed counts regardless of its outcome field \u2014 'fixed' OR 'deferred' both mean 'done for this iteration') \u2192 PICK_DISCOURSE_BUG.\n\n(4) else if context._action_check_sentry has actionable issues AND contextUpdates.sentryFixAttempted !== true \u2192 FIX_SENTRY_ISSUE.\n\n(5) else \u2192 COVERAGE_GATE.\n\nSet contextUpdates = {} and actions = []. Put your reasoning (which priority level fired, and WHY \u2014 including the red-PR number if level 2) in the reasoning field.",
+      "prompt": "You are the Phase B router. Do NOT call actions. Pick ONE transition based on STRICT priority order:\n\n(1) if classifications contains any 'bug' or 'retest' entry whose (topic, post) is NOT already present in contextUpdates.bugsFixed (an entry in bugsFixed counts regardless of its outcome field — 'fixed' OR 'deferred' both mean 'done for this iteration') → PICK_DISCOURSE_BUG.\n\n(2) else if context._action_check_sentry has actionable issues AND contextUpdates.sentryFixAttempted !== true → FIX_SENTRY_ISSUE.\n\n(3) else → COVERAGE_GATE.\n\nSet contextUpdates = {} and actions = []. Put your reasoning (which priority level fired, and why) in the reasoning field. CI is NOT re-checked here — COVERAGE_GATE handles the safety-net re-check before wrap-up.",
       "readActions": [],
       "writeActions": []
-    },
-    "FIX_MASTER_CI": {
-      "description": "Fix a failing master CI run. Direct-push to master permitted (CI-failure exception). Exactly one job: diagnose, fix, push, mark done.",
-      "nodeType": "agent",
-      "prompt": "Master CI is failing on runId context._action_check_master_ci.latestRun.databaseId. (1) Call fetch_ci_failure_logs with that runId to get the failure. (2) Call delegate_to_coder with a task describing the failure and asking it to diagnose, fix, and push directly to master. Include the log tail and the sha. The subagent MUST identify a concrete root cause \u2014 never accept 'flake', 'transient', 'environmental', or 'unrelated' as a fix. (3) When delegate_to_coder returns, call create_pr if a PR was opened OR set contextUpdates.masterFixAttempted = true if pushed direct to master. Propose transition to ROUTER.",
-      "readActions": [
-        "fetch_ci_failure_logs",
-        "search_code"
-      ],
-      "writeActions": [
-        "delegate_to_coder",
-        "create_pr"
-      ]
-    },
-    "FIX_OPEN_PR_CI": {
-      "description": "Fix red CI on one of my OPEN PRs. Iteration cannot end while any redPR is present. No deferring, no rationalizing the failure as flaky.",
-      "nodeType": "agent",
-      "prompt": "Pick the first entry from context._action_check_my_open_pr_ci.redPRs. Its failedChecks[] contain the CircleCI / coverage / netlify URLs. (1) Record the attempt: append { prNumber, attemptedAt: <now> } to contextUpdates.openPRFixAttempts. (2) Call delegate_to_coder with a task that: (a) checks out the PR branch; (b) reads the failing check logs from the URLs provided (for CircleCI, use the v1.1 API with the CIRCLECI_TOKEN from ~/.circleci/cli.yml; follow the pattern in .circleci/README.md); (c) identifies a CONCRETE root cause \u2014 not 'flaky', 'transient', 'environmental', 'pre-existing', 'unrelated', 'polluted DB', or any equivalent evasion \u2014 and fixes it in code; (d) pushes a new commit to the PR branch. The delegate MUST NOT close the PR and MUST NOT rebase/squash. The fix may be a test change, a code change, a fixture reset, a CI-config change, or an orb bump \u2014 whatever the root cause requires. (3) After delegate returns, do NOT call create_pr (the PR already exists). Set contextUpdates.lastOpenPRFix = { prNumber, exitCode, stdoutTail }. Propose transition to ROUTER. ROUTER will re-evaluate check_my_open_pr_ci on the next tick (via CHECK_CI) so if a new commit is now pending, the PR moves out of redPRs into pendingPRs and won't be re-picked.",
-      "readActions": [
-        "fetch_ci_failure_logs",
-        "search_code"
-      ],
-      "writeActions": [
-        "delegate_to_coder"
-      ]
     },
     "PICK_DISCOURSE_BUG": {
       "description": "Single decision: which unfixed bug to fix next. Writes the chosen bug to contextUpdates.currentBug. No actions.",
       "nodeType": "agent",
-      "prompt": "Pick ONE bug from context.classifications (type == 'bug' or 'retest') that is not already in contextUpdates.bugsFixed (ANY outcome, including 'deferred'). Skip bugs that are awaiting reporter clarification \u2014 if the most recent post on the same topic in context._action_fetch_discourse.posts is a 'mine' (Edward_Hibbert) classification that asks a question, the reporter has not answered yet; append { topic, post, user, outcome: 'deferred', reason: 'awaiting reporter clarification' } to contextUpdates.bugsFixed and propose transition to ROUTER (NOT to DELEGATE_DISCOURSE_BUG_FIX). EXCEPTION: if the classification has reviewerRejected=true or rejectedPrNumber set, the user has explicitly told us to re-attempt with a new theory \u2014 this overrides the awaiting-clarification heuristic. A screenshot-only report IS actionable \u2014 Discourse posts embed the screenshot URL in originalPostText as <img src=\"...\"> or an upload:// reference. Extract that URL. For an actionable bug set contextUpdates.currentBug = { topic, post, user, summary, searchTerms: [list of 2-4 code-search terms], screenshotUrl: '<url-or-null>', originalPostText, reviewerReason: '<classification.reviewerReason or null>', rejectedPrNumber: <classification.rejectedPrNumber or null> } and propose transition to DELEGATE_DISCOURSE_BUG_FIX. reviewerReason and rejectedPrNumber MUST be carried forward verbatim when set on the classification \u2014 the DELEGATE prompt and coder both depend on them. Do NOT call any actions.",
+      "prompt": "Pick ONE bug from context.classifications (type == 'bug' or 'retest') that is not already in contextUpdates.bugsFixed (ANY outcome, including 'deferred'). Skip bugs that are awaiting reporter clarification — if the most recent post on the same topic in context._action_fetch_discourse.posts is a 'mine' (Edward_Hibbert) classification that asks a question, the reporter has not answered yet; append { topic, post, user, outcome: 'deferred', reason: 'awaiting reporter clarification' } to contextUpdates.bugsFixed and propose transition to WORK_ROUTER (NOT to DELEGATE_DISCOURSE_BUG_FIX). EXCEPTION: if the classification has reviewerRejected=true or rejectedPrNumber set, the user has explicitly told us to re-attempt with a new theory — this overrides the awaiting-clarification heuristic. A screenshot-only report IS actionable — Discourse posts embed the screenshot URL in originalPostText as <img src=\"...\"> or an upload:// reference. Extract that URL. For an actionable bug set contextUpdates.currentBug = { topic, post, user, summary, searchTerms: [list of 2-4 code-search terms], screenshotUrl: '<url-or-null>', originalPostText, reviewerReason: '<classification.reviewerReason or null>', rejectedPrNumber: <classification.rejectedPrNumber or null> } and propose transition to DELEGATE_DISCOURSE_BUG_FIX. reviewerReason and rejectedPrNumber MUST be carried forward verbatim when set on the classification — the DELEGATE prompt and coder both depend on them. Do NOT call any actions.",
       "readActions": [],
       "writeActions": []
     },
     "DELEGATE_DISCOURSE_BUG_FIX": {
       "description": "Single action: hand the chosen bug off to a coder subsession to reproduce, fix, push a branch, and open a PR.",
       "nodeType": "agent",
-      "prompt": "Read context.currentBug (written by PICK_DISCOURSE_BUG). (1) Call search_code once using contextUpdates.currentBug.searchTerms. (2) Call delegate_to_coder exactly once. The task you give the coder MUST include these sections verbatim (fill in bracketed placeholders):\n\n  === REPORTED SYMPTOM (do not paraphrase) ===\n  Reporter: @<currentBug.user>\n  Full post text: <currentBug.originalPostText>\n  Screenshot: <currentBug.screenshotUrl or 'none'>\n  Reviewer correction (if present): <currentBug.reviewerReason or 'none \u2014 no prior rejection'>\n\n  === SYMPTOM CROSS-CHECK (MANDATORY before you write any code) ===\n  Before proposing a fix, you MUST:\n    1. Extract 1\u20133 verbatim quotes from the reported symptom that uniquely describe WHAT the reporter actually sees going wrong (the observable, not your theory about the cause).\n    2. For each candidate theory you consider, write down which reporter quote it predicts, and which quotes it does NOT explain.\n    3. REJECT any theory whose predictions don't match every observable the reporter described. A fix that only plausibly-addresses the problem but doesn't match the exact phrasing (e.g. fixing 'slow loading' when the reporter said 'only shows 3 items') is NOT acceptable.\n    4. If no theory fits, emit DELEGATE_FAILED=<reason> explaining the mismatch rather than shipping a wrong fix.\n    5. If a reviewerReason is present, treat it as authoritative: a prior FSM attempt was already rejected; your fix must match the reviewer's restated symptom, not the FSM's earlier misreading.\n\n  === EVIDENCE REQUIREMENT (MANDATORY \u2014 no speculation PRs) ===\n  Plausibility is NOT evidence. A theory that sounds like it might explain the symptom is worth nothing without data. Before shipping a fix you MUST have AT LEAST ONE of:\n    (a) A LOCAL REPRODUCER \u2014 you ran the code path yourself (Chrome DevTools MCP for UI, curl/test for API) and saw the exact observable the reporter described. Describe what you did and what you saw.\n    (b) LOG EVIDENCE \u2014 a Loki query (localhost:3100) or Sentry issue showing the failure path. Paste the query + timestamp + matching line. Vague logs that don't name the symptom do not count.\n    (c) DATA-CONSTRAINED CODE EVIDENCE \u2014 a deterministic code path that MUST produce the observable from first principles (e.g. a hardcoded `LIMIT 3` with no pagination branch). Show the line, explain why it is unconditional.\n  If you have NONE of (a), (b), or (c) after honest investigation, the correct disposition is NOT to invent a theory. Emit `DELEGATE_FAILED=needs live-DB inspection (user-only)` and STOP. Two prior PRs on bug 9594/5 were both rejected for exactly this failure mode \u2014 plausible theory, no evidence, wrong fix. Do not be the third.\n\n  === TASK ===\n  Reproduce the symptom locally (or via Chrome DevTools MCP if UI), write a failing test that captures the exact observable, implement the fix, verify the test passes, and commit.\n\n  BRANCH / PR SELECTION (read carefully):\n    - If currentBug.rejectedPrNumber is set (a prior PR was rejected and the user wants the SAME PR updated with a corrected fix), you MUST push to that PR's existing branch rather than creating a new one. Concretely: run `gh pr checkout <rejectedPrNumber> -R Freegle/Iznik` at the start so you are on the existing PR's branch. After your commit, run `git push` (no -u, branch already tracks origin). Do NOT open a new PR. Emit PR_NUMBER=<rejectedPrNumber> and COMMIT_PUSHED=<sha>. This is the mechanism that lets the user see a corrected fix on the same PR number they rejected \u2014 creating a parallel PR is explicitly wrong.\n    - Otherwise (currentBug.rejectedPrNumber is null/undefined): push a new feature branch, open a PR via `gh pr create`, and emit PR_NUMBER=<n>.\n\nPropose transition to VERIFY_DISCOURSE_BUG_FIX.",
+      "prompt": "Read context.currentBug (written by PICK_DISCOURSE_BUG). (1) Call search_code once using contextUpdates.currentBug.searchTerms. (2) Call delegate_to_coder exactly once. The task you give the coder MUST include these sections verbatim (fill in bracketed placeholders):\n\n  === REPORTED SYMPTOM (do not paraphrase) ===\n  Reporter: @<currentBug.user>\n  Full post text: <currentBug.originalPostText>\n  Screenshot: <currentBug.screenshotUrl or 'none'>\n  Reviewer correction (if present): <currentBug.reviewerReason or 'none — no prior rejection'>\n\n  === SYMPTOM CROSS-CHECK (MANDATORY before you write any code) ===\n  Before proposing a fix, you MUST:\n    1. Extract 1–3 verbatim quotes from the reported symptom that uniquely describe WHAT the reporter actually sees going wrong (the observable, not your theory about the cause).\n    2. For each candidate theory you consider, write down which reporter quote it predicts, and which quotes it does NOT explain.\n    3. REJECT any theory whose predictions don't match every observable the reporter described. A fix that only plausibly-addresses the problem but doesn't match the exact phrasing (e.g. fixing 'slow loading' when the reporter said 'only shows 3 items') is NOT acceptable.\n    4. If no theory fits, emit DELEGATE_FAILED=<reason> explaining the mismatch rather than shipping a wrong fix.\n    5. If a reviewerReason is present, treat it as authoritative: a prior FSM attempt was already rejected; your fix must match the reviewer's restated symptom, not the FSM's earlier misreading.\n\n  === EVIDENCE REQUIREMENT (MANDATORY — no speculation PRs) ===\n  Plausibility is NOT evidence. A theory that sounds like it might explain the symptom is worth nothing without data. Before shipping a fix you MUST have AT LEAST ONE of:\n    (a) A LOCAL REPRODUCER — you ran the code path yourself (Chrome DevTools MCP for UI, curl/test for API) and saw the exact observable the reporter described. Describe what you did and what you saw.\n    (b) LOG EVIDENCE — a Loki query (localhost:3100) or Sentry issue showing the failure path. Paste the query + timestamp + matching line. Vague logs that don't name the symptom do not count.\n    (c) DATA-CONSTRAINED CODE EVIDENCE — a deterministic code path that MUST produce the observable from first principles (e.g. a hardcoded `LIMIT 3` with no pagination branch). Show the line, explain why it is unconditional.\n  If you have NONE of (a), (b), or (c) after honest investigation, the correct disposition is NOT to invent a theory. Emit `DELEGATE_FAILED=needs live-DB inspection (user-only)` and STOP. Two prior PRs on bug 9594/5 were both rejected for exactly this failure mode — plausible theory, no evidence, wrong fix. Do not be the third.\n\n  === TASK ===\n  Reproduce the symptom locally (or via Chrome DevTools MCP if UI), write a failing test that captures the exact observable, implement the fix, verify the test passes, and commit.\n\n  BRANCH / PR SELECTION (read carefully):\n    - If currentBug.rejectedPrNumber is set (a prior PR was rejected and the user wants the SAME PR updated with a corrected fix), you MUST push to that PR's existing branch rather than creating a new one. Concretely: run `gh pr checkout <rejectedPrNumber> -R Freegle/Iznik` at the start so you are on the existing PR's branch. After your commit, run `git push` (no -u, branch already tracks origin). Do NOT open a new PR. Emit PR_NUMBER=<rejectedPrNumber> and COMMIT_PUSHED=<sha>. This is the mechanism that lets the user see a corrected fix on the same PR number they rejected — creating a parallel PR is explicitly wrong.\n    - Otherwise (currentBug.rejectedPrNumber is null/undefined): push a new feature branch, open a PR via `gh pr create`, and emit PR_NUMBER=<n>.\n\nPropose transition to VERIFY_DISCOURSE_BUG_FIX.",
       "readActions": [
         "search_code"
       ],
@@ -114,7 +121,7 @@
     "VERIFY_DISCOURSE_BUG_FIX": {
       "description": "Single wrap-up: verify the PR, draft a Discourse reply, record the bug as fixed.",
       "nodeType": "agent",
-      "prompt": "delegate_to_coder just returned for the CURRENT currentBug. Decide based SOLELY on the most recent `context._action_delegate_to_coder` result. Ignore any earlier `_action_create_pr` in context \u2014 that success was for a DIFFERENT bug which is already recorded in `context.bugsFixed`. The current bug's delegate result is the ONLY evidence that matters here.\n\nMechanical decision: let D = context._action_delegate_to_coder. If D.exitCode === 0 AND D.prNumber is a number (and D.timedOut !== true), follow SUCCESS PATH. Otherwise \u2014 D.timedOut === true (143/SIGTERM), or D.exitCode !== 0 for any other reason, or D.prNumber is missing/undefined, or D itself is empty \u2014 follow FAILURE PATH. Do NOT re-evaluate or blend. The two paths are disjoint; the test is a mechanical check on D.\n\n(A) SUCCESS PATH \u2014 D.exitCode === 0 AND D.prNumber is set:\n  1. Call create_pr with {prNumber: D.prNumber}. It returns {verified, pr, files, frontendOnly, deployPreviewUrl}.\n  2. Call post_discourse_reply_draft with the STRICT template below. This NEVER posts \u2014 it appends to /tmp/freegle-monitor/retest-drafts.md for human approval.\n     - topic: context.currentBug.topic\n     - post: context.currentBug.postNumber (the post being answered)\n     - username: context.currentBug.username (the reporter)\n     - quote: a 15\u201325 word verbatim excerpt from the original report that uniquely identifies WHICH bug this reply addresses. Do NOT paraphrase. Multi-bug threads need this disambiguator.\n     - body: exactly one sentence. If frontendOnly === true AND deployPreviewUrl is defined, use \"Possible fix \u2014 please test: <deployPreviewUrl>\" (the action will format this automatically when previewUrl is passed). Otherwise use \"Fix applied for <one-clause plain-English description of the specific issue>. Please retest.\" No PR numbers, no commit hashes, no V1/V2, no Go/Nuxt/Laravel, no internal jargon. For backend/mixed fixes add \" after the next deploy\" if the fix is not yet live.\n     - previewUrl: pass deployPreviewUrl ONLY when frontendOnly === true. For any backend or mixed PR, OMIT previewUrl \u2014 the reporter cannot retest until a human-driven deploy.\n     - prNumber, prUrl: pass these from create_pr's result so the drafts file shows the PR reference for the reviewer.\n  3. Append { ...context.currentBug, prNumber: D.prNumber, frontendOnly, outcome: 'fixed' } to contextUpdates.bugsFixed.\n\n(B) FAILURE PATH \u2014 D.exitCode !== 0, OR D.prNumber missing, OR D missing/empty:\n  - Do NOT call create_pr.\n  - Do NOT call post_discourse_reply_draft.\n  - MANDATORY: Append { ...context.currentBug, outcome: 'deferred', reason: '<one-line>' } to contextUpdates.bugsFixed so ROUTER will not re-pick this bug. Failing to append means the iteration will loop on the same bug forever.\n\n  If D.timedOut === true, use reason: 'delegate timed out after N minutes \u2014 re-run next iteration'. Otherwise pick the best-fitting allowed value below.\n\n  ALLOWED `reason` values (must describe a concrete external blocker the host cannot act on):\n    - 'awaiting reporter clarification'\n    - 'needs live-DB inspection (user-only)'\n    - 'needs hardware host cannot access (specific mobile device)'\n    - 'needs a human judgement call (UX decision / product direction)'\n    - 'delegate timed out after N minutes \u2014 re-run next iteration'\n    - 'no actionable signal in the report (no repro steps, no screenshot)'\n\n  FORBIDDEN `reason` values \u2014 NEVER use these words or any paraphrase. They describe a disposition the FSM refuses to accept because a Discourse bug is either actionable or truly externally blocked:\n    - 'flaky', 'looks flaky'\n    - 'transient', 'transient failure'\n    - 'environmental', 'infra / infrastructure', 'CI infra'\n    - 'unrelated to my change', 'not related', 'pre-existing', 'existed before'\n    - 'polluted test data', 'polluted DB'\n    - 'will retry / rerun'\n\nIn BOTH paths set contextUpdates.currentBug = null. Propose transition to ROUTER.",
+      "prompt": "delegate_to_coder just returned for the CURRENT currentBug. Decide based SOLELY on the most recent `context._action_delegate_to_coder` result. Ignore any earlier `_action_create_pr` in context — that success was for a DIFFERENT bug which is already recorded in `context.bugsFixed`. The current bug's delegate result is the ONLY evidence that matters here.\n\nMechanical decision: let D = context._action_delegate_to_coder. If D.exitCode === 0 AND D.prNumber is a number (and D.timedOut !== true), follow SUCCESS PATH. Otherwise — D.timedOut === true (143/SIGTERM), or D.exitCode !== 0 for any other reason, or D.prNumber is missing/undefined, or D itself is empty — follow FAILURE PATH. Do NOT re-evaluate or blend. The two paths are disjoint; the test is a mechanical check on D.\n\n(A) SUCCESS PATH — D.exitCode === 0 AND D.prNumber is set:\n  1. Call create_pr with {prNumber: D.prNumber}. It returns {verified, pr, files, frontendOnly, deployPreviewUrl}.\n  2. Call post_discourse_reply_draft with the STRICT template below. This NEVER posts — it appends to /tmp/freegle-monitor/retest-drafts.md for human approval.\n     - topic: context.currentBug.topic\n     - post: context.currentBug.postNumber (the post being answered)\n     - username: context.currentBug.username (the reporter)\n     - quote: a 15–25 word verbatim excerpt from the original report that uniquely identifies WHICH bug this reply addresses. Do NOT paraphrase. Multi-bug threads need this disambiguator.\n     - body: exactly one sentence. If frontendOnly === true AND deployPreviewUrl is defined, use \"Possible fix — please test: <deployPreviewUrl>\" (the action will format this automatically when previewUrl is passed). Otherwise use \"Fix applied for <one-clause plain-English description of the specific issue>. Please retest.\" No PR numbers, no commit hashes, no V1/V2, no Go/Nuxt/Laravel, no internal jargon. For backend/mixed fixes add \" after the next deploy\" if the fix is not yet live.\n     - previewUrl: pass deployPreviewUrl ONLY when frontendOnly === true. For any backend or mixed PR, OMIT previewUrl — the reporter cannot retest until a human-driven deploy.\n     - prNumber, prUrl: pass these from create_pr's result so the drafts file shows the PR reference for the reviewer.\n  3. Append { ...context.currentBug, prNumber: D.prNumber, frontendOnly, outcome: 'fixed' } to contextUpdates.bugsFixed.\n\n(B) FAILURE PATH — D.exitCode !== 0, OR D.prNumber missing, OR D missing/empty:\n  - Do NOT call create_pr.\n  - Do NOT call post_discourse_reply_draft.\n  - MANDATORY: Append { ...context.currentBug, outcome: 'deferred', reason: '<one-line>' } to contextUpdates.bugsFixed so WORK_ROUTER will not re-pick this bug. Failing to append means the iteration will loop on the same bug forever.\n\n  If D.timedOut === true, use reason: 'delegate timed out after N minutes — re-run next iteration'. Otherwise pick the best-fitting allowed value below.\n\n  ALLOWED `reason` values (must describe a concrete external blocker the host cannot act on):\n    - 'awaiting reporter clarification'\n    - 'needs live-DB inspection (user-only)'\n    - 'needs hardware host cannot access (specific mobile device)'\n    - 'needs a human judgement call (UX decision / product direction)'\n    - 'delegate timed out after N minutes — re-run next iteration'\n    - 'no actionable signal in the report (no repro steps, no screenshot)'\n\n  FORBIDDEN `reason` values — NEVER use these words or any paraphrase. They describe a disposition the FSM refuses to accept because a Discourse bug is either actionable or truly externally blocked:\n    - 'flaky', 'looks flaky'\n    - 'transient', 'transient failure'\n    - 'environmental', 'infra / infrastructure', 'CI infra'\n    - 'unrelated to my change', 'not related', 'pre-existing', 'existed before'\n    - 'polluted test data', 'polluted DB'\n    - 'will retry / rerun'\n\nIn BOTH paths set contextUpdates.currentBug = null. Propose transition to WORK_ROUTER.",
       "readActions": [],
       "writeActions": [
         "create_pr",
@@ -124,7 +131,7 @@
     "FIX_SENTRY_ISSUE": {
       "description": "Fix one Sentry issue. Feature branch + PR.",
       "nodeType": "agent",
-      "prompt": "Pick one actionable Sentry issue from context._action_check_sentry. (1) Call read_sentry_issues for the detail. (2) Call search_code to locate the code. (3) Call delegate_to_coder with a task to diagnose, fix, push branch, open PR. (4) Call create_pr to verify. (5) Set contextUpdates.sentryFixAttempted = true. Propose transition to ROUTER.",
+      "prompt": "Pick one actionable Sentry issue from context._action_check_sentry. (1) Call read_sentry_issues for the detail. (2) Call search_code to locate the code. (3) Call delegate_to_coder with a task to diagnose, fix, push branch, open PR. (4) Call create_pr to verify. (5) Set contextUpdates.sentryFixAttempted = true. Propose transition to WORK_ROUTER.",
       "readActions": [
         "read_sentry_issues",
         "search_code"
@@ -135,9 +142,9 @@
       ]
     },
     "COVERAGE_GATE": {
-      "description": "Structural gate: verify_pr_created must return count > 0, AND check_my_open_pr_ci.redPRs must be empty. Iteration cannot wrap up while any open PR I authored is red.",
+      "description": "Structural gate: verify_pr_created must return count > 0, AND check_my_open_pr_ci.redPRs must be empty. Safety-net re-check of CI state in case a new commit turned a PR red mid-iteration — if so, fall back into Phase A via CI_ROUTER.",
       "nodeType": "agent",
-      "prompt": "Call verify_pr_created with iterationStartTs from context, then call check_my_open_pr_ci for a fresh read. Decide: (a) if check_my_open_pr_ci.redPRs is non-empty \u2192 propose ROUTER (a red PR is present and must be fixed before wrap-up; ROUTER will re-dispatch to FIX_OPEN_PR_CI). (b) else if verify_pr_created.count > 0 \u2192 propose WRAP_UP. (c) else \u2192 propose WRITE_COVERAGE. The host also enforces (a) \u2014 any attempt to reach WRAP_UP/SEND_EMAIL/SCHEDULE_NEXT while redPRs is non-empty will be force-transitioned back to ROUTER.",
+      "prompt": "Call verify_pr_created with iterationStartTs from context, then call check_my_open_pr_ci for a fresh read. Decide: (a) if check_my_open_pr_ci.redPRs is non-empty → propose CI_ROUTER (a red PR appeared mid-iteration; fall back into Phase A so the red is handled before wrap-up). (b) else if verify_pr_created.count > 0 → propose WRAP_UP. (c) else → propose WRITE_COVERAGE. The host also enforces (a) — any attempt to reach WRAP_UP/SEND_EMAIL/SCHEDULE_NEXT while redPRs is non-empty will be force-transitioned back to CI_ROUTER.",
       "readActions": [
         "verify_pr_created",
         "check_my_open_pr_ci"
@@ -177,7 +184,7 @@
     "SCHEDULE_NEXT": {
       "description": "Schedule next wakeup.",
       "nodeType": "agent",
-      "prompt": "Call schedule_wakeup with 1200-1800s for idle, \u2264270s if watching open PR CI. Propose transition to END.",
+      "prompt": "Call schedule_wakeup with 1200-1800s for idle, ≤270s if watching open PR CI. Propose transition to END.",
       "readActions": [],
       "writeActions": [
         "schedule_wakeup"
@@ -190,11 +197,53 @@
   },
   "transitions": [
     {
-      "id": "t_load_to_fetch",
+      "id": "t_load_to_ci",
       "from": "LOAD_STATE",
-      "to": "FETCH_DISCOURSE",
+      "to": "CHECK_CI",
       "trigger": "llm_decision",
       "label": "state loaded"
+    },
+    {
+      "id": "t_ci_to_ci_router",
+      "from": "CHECK_CI",
+      "to": "CI_ROUTER",
+      "trigger": "llm_decision",
+      "label": "ci checked"
+    },
+    {
+      "id": "t_ci_router_to_master_fix",
+      "from": "CI_ROUTER",
+      "to": "FIX_MASTER_CI",
+      "trigger": "llm_decision",
+      "label": "master red"
+    },
+    {
+      "id": "t_ci_router_to_open_pr_fix",
+      "from": "CI_ROUTER",
+      "to": "FIX_OPEN_PR_CI",
+      "trigger": "llm_decision",
+      "label": "open PR red"
+    },
+    {
+      "id": "t_ci_router_to_fetch",
+      "from": "CI_ROUTER",
+      "to": "FETCH_DISCOURSE",
+      "trigger": "llm_decision",
+      "label": "ci green, enter phase B"
+    },
+    {
+      "id": "t_master_fix_to_ci",
+      "from": "FIX_MASTER_CI",
+      "to": "CHECK_CI",
+      "trigger": "llm_decision",
+      "label": "master fix attempted, re-verify"
+    },
+    {
+      "id": "t_open_pr_fix_to_ci",
+      "from": "FIX_OPEN_PR_CI",
+      "to": "CHECK_CI",
+      "trigger": "llm_decision",
+      "label": "open PR fix pushed, re-verify"
     },
     {
       "id": "t_fetch_to_git",
@@ -204,18 +253,11 @@
       "label": "posts fetched"
     },
     {
-      "id": "t_git_to_ci",
+      "id": "t_git_to_sentry",
       "from": "CHECK_GIT",
-      "to": "CHECK_CI",
-      "trigger": "llm_decision",
-      "label": "git checked"
-    },
-    {
-      "id": "t_ci_to_sentry",
-      "from": "CHECK_CI",
       "to": "CHECK_SENTRY",
       "trigger": "llm_decision",
-      "label": "ci checked"
+      "label": "git checked"
     },
     {
       "id": "t_sentry_to_triage",
@@ -225,53 +267,32 @@
       "label": "sentry checked"
     },
     {
-      "id": "t_triage_to_router",
+      "id": "t_triage_to_work_router",
       "from": "TRIAGE",
-      "to": "ROUTER",
+      "to": "WORK_ROUTER",
       "trigger": "llm_decision",
       "label": "classified"
     },
     {
-      "id": "t_router_to_ci_fix",
-      "from": "ROUTER",
-      "to": "FIX_MASTER_CI",
-      "trigger": "llm_decision",
-      "label": "master red"
-    },
-    {
-      "id": "t_router_to_open_pr_fix",
-      "from": "ROUTER",
-      "to": "FIX_OPEN_PR_CI",
-      "trigger": "llm_decision",
-      "label": "open PR red"
-    },
-    {
-      "id": "t_router_to_pick_bug",
-      "from": "ROUTER",
+      "id": "t_work_router_to_pick_bug",
+      "from": "WORK_ROUTER",
       "to": "PICK_DISCOURSE_BUG",
       "trigger": "llm_decision",
       "label": "bug pending"
     },
     {
-      "id": "t_router_to_sentry_fix",
-      "from": "ROUTER",
+      "id": "t_work_router_to_sentry_fix",
+      "from": "WORK_ROUTER",
       "to": "FIX_SENTRY_ISSUE",
       "trigger": "llm_decision",
       "label": "sentry pending"
     },
     {
-      "id": "t_router_to_gate",
-      "from": "ROUTER",
+      "id": "t_work_router_to_gate",
+      "from": "WORK_ROUTER",
       "to": "COVERAGE_GATE",
       "trigger": "llm_decision",
       "label": "queue empty"
-    },
-    {
-      "id": "t_open_pr_fix_to_router",
-      "from": "FIX_OPEN_PR_CI",
-      "to": "ROUTER",
-      "trigger": "llm_decision",
-      "label": "open PR fix pushed"
     },
     {
       "id": "t_pick_to_delegate",
@@ -281,9 +302,9 @@
       "label": "bug chosen"
     },
     {
-      "id": "t_pick_to_router",
+      "id": "t_pick_to_work_router",
       "from": "PICK_DISCOURSE_BUG",
-      "to": "ROUTER",
+      "to": "WORK_ROUTER",
       "trigger": "llm_decision",
       "label": "bug deferred (awaiting clarification)"
     },
@@ -295,23 +316,16 @@
       "label": "coder returned"
     },
     {
-      "id": "t_verify_to_router",
+      "id": "t_verify_to_work_router",
       "from": "VERIFY_DISCOURSE_BUG_FIX",
-      "to": "ROUTER",
+      "to": "WORK_ROUTER",
       "trigger": "llm_decision",
       "label": "bug recorded"
     },
     {
-      "id": "t_ci_fix_to_router",
-      "from": "FIX_MASTER_CI",
-      "to": "ROUTER",
-      "trigger": "llm_decision",
-      "label": "ci fix done"
-    },
-    {
-      "id": "t_sentry_fix_to_router",
+      "id": "t_sentry_fix_to_work_router",
       "from": "FIX_SENTRY_ISSUE",
-      "to": "ROUTER",
+      "to": "WORK_ROUTER",
       "trigger": "llm_decision",
       "label": "sentry fix done"
     },
@@ -332,12 +346,12 @@
       "label": "gate failed"
     },
     {
-      "id": "t_gate_to_router",
+      "id": "t_gate_to_ci_router",
       "from": "COVERAGE_GATE",
-      "to": "ROUTER",
+      "to": "CI_ROUTER",
       "trigger": "llm_decision",
       "condition": "redPRs non-empty",
-      "label": "open PR red \u2014 must fix first"
+      "label": "open PR red — must fix first (fall back to phase A)"
     },
     {
       "id": "t_cov_to_gate",
