@@ -409,9 +409,9 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 							message.Location = loc
 						}
 					} else if message.Lat != 0 && message.Lng != 0 {
-						loc := &location.Location{}
-						loc.GroupsNear = location.ClosestGroups(float64(message.Lat), float64(message.Lng), location.NEARBY, 10)
-						message.Location = loc
+						l := location.ClosestPostcode(float32(message.Lat), float32(message.Lng))
+						l.GroupsNear = location.ClosestGroups(float64(message.Lat), float64(message.Lng), location.NEARBY, 10)
+						message.Location = &l
 					}
 				}
 
@@ -510,9 +510,9 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 					wgExtra.Add(1)
 					go func() {
 						defer wgExtra.Done()
-						l := &location.Location{}
+						l := location.ClosestPostcode(float32(message.Lat), float32(message.Lng))
 						l.GroupsNear = location.ClosestGroups(float64(message.Lat), float64(message.Lng), location.NEARBY, 10)
-						loc = l
+						loc = &l
 					}()
 				}
 

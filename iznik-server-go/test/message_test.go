@@ -382,8 +382,14 @@ func TestRejectedMessageWithoutLocationidReturnsItemAndLocation(t *testing.T) {
 	// Create a message with a real locationid, then clear it to simulate the
 	// failure mode where the fixture / MailRouter leaves locationid=0.
 	// Lat/lng remain set (as they normally would be for a routed message).
+	// Use FOREIGN_KEY_CHECKS=0 because messages.locationid has a FK to
+	// locations.id; we're simulating the DB state directly.
 	msgID := CreateTestMessage(t, userID, groupID, "OFFER: Rejected NoLoc Chair", 55.9533, -3.1883)
-	db.Exec("UPDATE messages SET locationid = 0 WHERE id = ?", msgID)
+	// CreateTestMessage doesn't populate messages.lat/lng, only the spatial
+	// index — set them explicitly so Go falls into the lat/lng-fallback path.
+	db.Exec("SET FOREIGN_KEY_CHECKS = 0")
+	db.Exec("UPDATE messages SET locationid = 0, lat = ?, lng = ? WHERE id = ?", 55.9533, -3.1883, msgID)
+	db.Exec("SET FOREIGN_KEY_CHECKS = 1")
 	db.Exec("UPDATE messages_groups SET collection = 'Rejected' WHERE msgid = ?", msgID)
 	db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
 
@@ -401,6 +407,11 @@ func TestRejectedMessageWithoutLocationidReturnsItemAndLocation(t *testing.T) {
 	assert.Equal(t, msgID, msg.ID)
 	assert.NotNil(t, msg.Item, "Owner must get item on rejected message without locationid (Edit & Resend requires it)")
 	assert.NotNil(t, msg.Location, "Owner must get a location (from lat/lng fallback) on rejected message without locationid (Edit & Resend requires it)")
+	// Repost flow needs msg.location.name — MyMessage.repost() calls
+	// locationStore.typeahead(msg.location.name). If Name is empty the
+	// compose store's postcode is never set and the /give/whereami
+	// group dropdown fails to render.
+	assert.NotEmpty(t, msg.Location.Name, "Location must carry a Name so the repost flow can set composeStore.postcode via typeahead")
 }
 
 func TestCount(t *testing.T) {
