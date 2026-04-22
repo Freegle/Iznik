@@ -4543,8 +4543,10 @@ WHERE refmsgid = ? AND chat_messages.type = ? AND reviewrejected = 0 AND message
 
     public function withdraw($comment, $happiness) {
         $intcomment = $this->interestingComment($comment);
+        error_log("TN-SYNC-TRACE [WRITE] table=messages_outcomes_intended op=delete where=msgid={$this->id}");
         $this->dbhm->preExec("DELETE FROM messages_outcomes_intended WHERE msgid = ?;", [ $this-> id ]);
 
+        error_log("TN-SYNC-TRACE [WRITE] table=messages_outcomes op=insert set=msgid={$this->id},outcome=" . Message::OUTCOME_WITHDRAWN . ",happiness=" . ($happiness ?? 'NULL') . ",comments=len=" . strlen($intcomment ?? ''));
         $this->dbhm->preExec("INSERT INTO messages_outcomes (msgid, outcome, happiness, comments) VALUES (?,?,?,?);", [
             $this->id,
             Message::OUTCOME_WITHDRAWN,
@@ -4554,6 +4556,7 @@ WHERE refmsgid = ? AND chat_messages.type = ? AND reviewrejected = 0 AND message
 
         $me = Session::whoAmI($this->dbhr, $this->dbhm);
 
+        error_log("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Message,subtype=Outcome,msgid={$this->id},user=" . $this->getFromuser() . ",byuser=" . ($me ? $me->getId() : 'NULL') . ",text=len=" . strlen($intcomment ? "Withdrawn: $comment" : 'Withdrawn'));
         $this->log->log([
             'type' => Log::TYPE_MESSAGE,
             'subtype' => Log::SUBTYPE_OUTCOME,

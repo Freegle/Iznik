@@ -1032,6 +1032,7 @@ class User extends Entity
         // Let them know.  We always want to let TN know if a member is removed/banned so that they can't see
         // the messages.
         if ($byemail || $this->isTN()) {
+            error_log("TN-SYNC-TRACE [EMAIL] action=send-farewell user={$this->id} groupid={$groupid} to=" . $this->getEmailPreferred());
             list ($transport, $mailer) = Mail::getMailer();
             $message = \Swift_Message::newInstance()
                 ->setSubject("Farewell from " . $g->getPrivate('nameshort'))
@@ -1049,6 +1050,7 @@ class User extends Entity
 
         if ($ban) {
             $sql = "INSERT IGNORE INTO users_banned (userid, groupid, byuser) VALUES (?,?,?);";
+            error_log("TN-SYNC-TRACE [WRITE] table=users_banned op=insert where=userid={$this->id},groupid={$groupid},byuser={$meid}");
             $this->dbhm->preExec($sql, [
                 $this->id,
                 $groupid,
@@ -1076,6 +1078,7 @@ class User extends Entity
         }
 
         # Now remove the membership.
+        error_log("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$this->id},groupid={$groupid}");
         $rc = $this->dbhm->preExec("DELETE FROM memberships WHERE userid = ? AND groupid = ?;",
             [
                 $this->id,
@@ -1084,6 +1087,7 @@ class User extends Entity
 
         if ($this->dbhm->rowsAffected() || $ban) {
             $l = new Log($this->dbhr, $this->dbhm);
+            error_log("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Group,subtype=Left,user={$this->id},byuser={$meid},groupid={$groupid},text=" . ($spam ? 'Autoremoved spammer' : ($ban ? 'via ban' : 'NULL')));
             $l->log([
                 'type' => Log::TYPE_GROUP,
                 'subtype' => Log::SUBTYPE_LEFT,

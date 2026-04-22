@@ -1481,21 +1481,23 @@ class User extends Model implements Auditable
     {
         // Notify TN users or email-triggered removals so they know they can no longer see messages.
         if ($byEmail || $this->isTN()) {
-            $group = Group::find($groupId);
-            $preferredEmail = $this->email_preferred;
-
-            if ($group && $preferredEmail) {
-                try {
-                    \Illuminate\Support\Facades\Mail::raw('Parting is such sweet sorrow.', function ($message) use ($group, $preferredEmail) {
-                        $message->subject('Farewell from ' . $group->nameshort)
-                            ->from($group->getAutoEmail())
-                            ->replyTo($group->getModsEmail())
-                            ->to($preferredEmail);
-                    });
-                } catch (\Exception $e) {
-                    Logger::warning("Failed to send farewell email for user {$this->id} on group {$groupId}: " . $e->getMessage());
-                }
-            }
+            Logger::info("TN-SYNC-TRACE [EMAIL] action=send-farewell user={$this->id} groupid={$groupId} to=" . ($this->email_preferred ?? 'NULL'));
+            // TRACE: commented out for port testing
+            // $group = Group::find($groupId);
+            // $preferredEmail = $this->email_preferred;
+            //
+            // if ($group && $preferredEmail) {
+            //     try {
+            //         \Illuminate\Support\Facades\Mail::raw('Parting is such sweet sorrow.', function ($message) use ($group, $preferredEmail) {
+            //             $message->subject('Farewell from ' . $group->nameshort)
+            //                 ->from($group->getAutoEmail())
+            //                 ->replyTo($group->getModsEmail())
+            //                 ->to($preferredEmail);
+            //         });
+            //     } catch (\Exception $e) {
+            //         Logger::warning("Failed to send farewell email for user {$this->id} on group {$groupId}: " . $e->getMessage());
+            //     }
+            // }
         }
 
         if ($ban) {
@@ -1504,7 +1506,8 @@ class User extends Model implements Auditable
             $userBanned->userid = $this->id;
             $userBanned->groupid = $groupId;
             $userBanned->byuser = $byUserId;
-            $userBanned->save();
+            Logger::info("TN-SYNC-TRACE [WRITE] table=users_banned op=insert where=userid={$this->id},groupid={$groupId},byuser=" . ($byUserId ?? 'NULL'));
+            // $userBanned->save();  // TRACE: commented out for port testing
 
             // Withdraw active Offer/Wanted messages on this group that have no outcome yet.
             $msgIds = MessageGroup::join('messages', 'messages_groups.msgid', '=', 'messages.id')
@@ -1523,10 +1526,12 @@ class User extends Model implements Auditable
         }
 
         // Remove the membership.
-        $deleted = Membership::where('userid', $this->id)
+        Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$this->id},groupid={$groupId}");
+        $membership = Membership::where('userid', $this->id)
             ->where('groupid', $groupId)
-            ->first()
-            ?->delete();
+            ->first();
+        $deleted = $membership ? 1 : 0;
+        // $membership?->delete();  // TRACE: commented out for port testing
 
         if ($deleted || $ban) {
             $log = new Log();
@@ -1537,7 +1542,8 @@ class User extends Model implements Auditable
             $log->byuser = $byUserId;
             $log->groupid = $groupId;
             $log->text = $spam ? 'Autoremoved spammer' : ($ban ? 'via ban' : NULL);
-            $log->save();
+            Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Group,subtype=Left,user={$this->id},byuser=" . ($byUserId ?? 'NULL') . ",groupid={$groupId},text=" . ($spam ? 'Autoremoved spammer' : ($ban ? 'via ban' : 'NULL')));
+            // $log->save();  // TRACE: commented out for port testing
         }
 
         return $deleted > 0 || $ban;

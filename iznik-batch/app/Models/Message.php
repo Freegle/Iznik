@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Log as Logger;
 use OwenIt\Auditing\Contracts\Auditable;
 
 /**
@@ -440,14 +441,16 @@ class Message extends Model implements Auditable
     {
         $intcomment = $this->interestingComment($comment);
 
-        MessageOutcomeIntended::where('msgid', $this->id)->get()->each->delete();
+        Logger::info("TN-SYNC-TRACE [WRITE] table=messages_outcomes_intended op=delete where=msgid={$this->id}");
+        // MessageOutcomeIntended::where('msgid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
 
         $messageOutcome = new MessageOutcome();
         $messageOutcome->msgid = $this->id;
         $messageOutcome->outcome = self::OUTCOME_WITHDRAWN;
         $messageOutcome->happiness = $happiness;
         $messageOutcome->comments = $intcomment;
-        $messageOutcome->save();
+        Logger::info("TN-SYNC-TRACE [WRITE] table=messages_outcomes op=insert set=msgid={$this->id},outcome=" . Message::OUTCOME_WITHDRAWN . ",happiness=" . ($happiness ?? 'NULL') . ",comments=len=" . strlen($intcomment ?? ''));
+        // $messageOutcome->save();  // TRACE: commented out for port testing
 
         $log = new Log();
         $log->timestamp = now();
@@ -457,6 +460,7 @@ class Message extends Model implements Auditable
         $log->user = $this->fromuser;
         $log->byuser = $byUserId;
         $log->text = $intcomment ? "Withdrawn: $comment" : 'Withdrawn';
-        $log->save();
+        Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Message,subtype=Outcome,msgid={$this->id},user={$this->fromuser},byuser=" . ($byUserId ?? 'NULL') . ",text=len=" . strlen($intcomment ? "Withdrawn: $comment" : 'Withdrawn'));
+        // $log->save();  // TRACE: commented out for port testing
     }
 }
