@@ -91,6 +91,12 @@ export default defineNuxtPlugin(async (nuxtApp) => {
           // suppressException via beforeSend.
           'getPlacementPosition',
           'getInnerDimensions',
+
+          // Leaflet Tooltip._updatePosition firing after map.remove() nulled
+          // _map during Vue navigation/unmount (NUXT3-D7B, dup 7375663927).
+          // Prevented at source by plugins/leafletTooltipGuard.client.js; this
+          // entry catches residual events from cached bundles.
+          'latLngToLayerPoint',
         ],
         integrations: [
           new Integrations.BrowserTracing({

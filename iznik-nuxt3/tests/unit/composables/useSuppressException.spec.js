@@ -183,4 +183,33 @@ describe('suppressException', () => {
       })
     ).toBe(false)
   })
+
+  it('suppresses Leaflet Tooltip._updatePosition null-map errors (NUXT3-D7B)', () => {
+    // Sentry issue NUXT3-D7B (7387861402) + duplicate 7375663927: 83 events /
+    // 21 users. Firefox/Chrome raise this when a Leaflet Tooltip update fires
+    // after the map has been torn down during Vue navigation/unmount. The
+    // message is the telltale match; minified stacks may not retain "leaflet".
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message:
+          "Cannot read properties of null (reading 'latLngToLayerPoint')",
+        stack:
+          "TypeError: Cannot read properties of null (reading 'latLngToLayerPoint')\n" +
+          '    at t._updatePosition (/_nuxt/entry.abc123.js:1:2345)',
+      })
+    ).toBe(true)
+  })
+
+  it('suppresses minified Leaflet errors identified by _updatePosition in stack', () => {
+    // After Vite minification the module name "leaflet" may not survive in the
+    // stack; _updatePosition is a Leaflet-internal signature.
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: 'null has no properties',
+        stack: '    at _updatePosition (something.abc.js:1:1)',
+      })
+    ).toBe(true)
+  })
 })
