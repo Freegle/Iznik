@@ -19,8 +19,8 @@
 //
 // Default hours (Europe/London local time — user is UK-based and subscription
 // resets are printed in London time):
-//   08:00–22:00 London → implementation (peak)
-//   22:00–08:00 London → analysis       (off-peak)
+//   13:00–19:00 London → implementation (peak) [= 05:00–11:00 PT]
+//   19:00–13:00 London → analysis       (off-peak)
 //
 // Override via env:
 //   MONITOR_PHASE=analysis|implementation — force one phase regardless of time
@@ -61,7 +61,7 @@ function londonHour(now: Date): number {
 
 function parsePeakWindow(spec: string | undefined): { start: number; end: number } {
   const m = (spec ?? '').match(/^(\d{1,2})-(\d{1,2})$/)
-  if (!m) return { start: 8, end: 22 }
+  if (!m) return { start: 13, end: 19 }
   const start = Math.max(0, Math.min(23, parseInt(m[1], 10)))
   const end = Math.max(0, Math.min(24, parseInt(m[2], 10)))
   return { start, end }
