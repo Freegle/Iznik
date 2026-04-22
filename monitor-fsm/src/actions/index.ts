@@ -1058,7 +1058,7 @@ print('sent')
 
   {
     name: 'compose_and_send_email',
-    description: 'Build an email summary from context + DB state and send it via SMTP with a 1h cooldown. No params. Skips silently if cooldown is active or nothing actionable happened this iteration.',
+    description: 'Build an email summary from context + DB state and send it via SMTP with a 1h cooldown. Labels each PR with its REAL state queried from `gh pr view` (open / merged / closed). Never claims "merged" or "deployed" unless gh confirms it — guards against the LLM hallucinating merge status.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const db = getDb()
@@ -1075,19 +1075,69 @@ print('sent')
       if (prs.length === 0 && bugsFixed.length === 0) {
         return { skipped: true, reason: 'nothing to report' }
       }
+
+      // ─── Verify PR state from gh. Don't trust context; query the real world. ───
+      // The email you send is factual, not aspirational. A prior iteration
+      // shipped an email that claimed "PR Merged & Deployed" for #210 when
+      // #210 was still open. That was LLM composition; this path is rule-
+      // based, but we also harden it by actively checking each PR's state.
+      const prStates: Array<{ number: number; title: string; url: string; state: string; isMerged: boolean; deployState: string | null }> = []
+      for (const p of prs) {
+        let state = 'UNKNOWN'
+        try {
+          const { stdout } = await exec('gh', ['pr', 'view', String(p.number), '--repo', 'Freegle/Iznik', '--json', 'state'], { maxBuffer: 1024 * 1024 })
+          const parsed = JSON.parse(stdout)
+          state = parsed.state ?? 'UNKNOWN'
+        } catch { /* leave UNKNOWN — better to say nothing than lie */ }
+        // deploy_state, if tracked, lives in the local pr table (populated by
+        // a separate process that polls production). If absent we say nothing
+        // about deploy — we don't assume "live" just because merged.
+        let deployState: string | null = null
+        try {
+          const row = db.prepare('SELECT deploy_state FROM pr WHERE number = ?').get(p.number) as { deploy_state: string | null } | undefined
+          deployState = row?.deploy_state ?? null
+        } catch { /* no pr table or no row — that's fine */ }
+        prStates.push({
+          number: p.number,
+          title: p.title ?? '',
+          url: p.url ?? `https://github.com/Freegle/Iznik/pull/${p.number}`,
+          state,
+          isMerged: state === 'MERGED',
+          deployState,
+        })
+      }
+
       const lines: string[] = []
       lines.push(`Phase: ${ctx?.phase ?? 'unknown'}`, '')
-      if (prs.length > 0) {
-        lines.push('PRs this iteration:')
-        for (const p of prs) lines.push(`- #${p.number} ${p.title ?? ''} — ${p.url ?? ''}`)
+      if (prStates.length > 0) {
+        lines.push('PRs this iteration (state from GitHub; "opened/updated" means NOT merged):')
+        for (const p of prStates) {
+          let label: string
+          if (p.state === 'UNKNOWN') {
+            label = 'state unknown'
+          } else if (p.isMerged) {
+            label = p.deployState === 'live' || p.deployState === 'deployed' ? 'merged + deployed' : 'merged (not yet deployed)'
+          } else if (p.state === 'CLOSED') {
+            label = 'closed (not merged)'
+          } else {
+            // p.state === 'OPEN'
+            label = 'opened/updated — still open'
+          }
+          lines.push(`- #${p.number} [${label}] ${p.title} — ${p.url}`)
+        }
         lines.push('')
       }
+      const fixedCount = bugsFixed.filter(b => b.outcome === 'fixed').length
+      const deferredCount = bugsFixed.filter(b => b.outcome === 'deferred').length
       if (bugsFixed.length > 0) {
-        lines.push(`${bugsFixed.filter(b => b.outcome === 'fixed').length} fixed / ${bugsFixed.filter(b => b.outcome === 'deferred').length} deferred Discourse bugs`)
+        lines.push(`Discourse bugs: ${fixedCount} fix attempted / ${deferredCount} deferred this iteration.`)
+        lines.push('("fix attempted" = a PR was opened; it does not mean merged, deployed, or accepted.)')
       }
-      const subject = `Freegle Monitor: ${prs.length} PR${prs.length === 1 ? '' : 's'}, ${bugsFixed.filter(b => b.outcome === 'fixed').length} bug${bugsFixed.filter(b => b.outcome === 'fixed').length === 1 ? '' : 's'} fixed`
+
+      const mergedCount = prStates.filter(p => p.isMerged).length
+      const openCount = prStates.filter(p => p.state === 'OPEN').length
+      const subject = `Freegle Monitor: ${openCount} PR${openCount === 1 ? '' : 's'} opened, ${mergedCount} merged, ${fixedCount} bug${fixedCount === 1 ? '' : 's'} attempted`
       const body = lines.join('\n')
-      // Delegate to the existing send_email action to reuse its SMTP code
       const sendDef = actions.find(a => a.name === 'send_email')!
       const res = await sendDef.handler({ subject, body }, context)
       return res
