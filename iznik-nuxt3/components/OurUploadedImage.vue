@@ -162,11 +162,7 @@ const modString = computed(() => {
   }
 })
 function brokenImage(e) {
-  console.log('Our uploaded image broken', props.src)
-  emit('error', e)
-  show.value = false
-
-  // Skip Sentry when the error was caused by a cancelled request rather than
+  // Skip processing when the error was caused by a cancelled request rather than
   // a real load failure: the component is tearing down, or the <img> node has
   // already been detached from the DOM (common with infinite-scroll feeds on
   // mobile / Capacitor, where scrolling removes the node mid-fetch and Chromium
@@ -174,6 +170,10 @@ function brokenImage(e) {
   if (isUnmounting.value || e?.target?.isConnected === false) {
     return
   }
+
+  console.log('Our uploaded image broken', props.src)
+  emit('error', e)
+  show.value = false
 
   Sentry.captureMessage('Failed to fetch image ' + props.src)
 }
