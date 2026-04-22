@@ -72,8 +72,6 @@ class Group extends Entity
             'communityevents' => 1,
             'volunteering' => 1,
             'stories' => 1,
-            'includearea' => 1,
-            'includepc' => 1,
             'moderated' => 0,
             'allowedits' => [
                 'moderated' => 1,

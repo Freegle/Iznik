@@ -130,8 +130,6 @@ describe('ModSettingsGroup', () => {
       maxagetoshow: 30,
       nearbygroups: 5,
       showjoin: 0,
-      includearea: true,
-      includepc: true,
       widerchatreview: false,
     },
     mysettings: {
