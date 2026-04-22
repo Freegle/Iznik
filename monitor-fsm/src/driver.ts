@@ -6,7 +6,7 @@
  * substantive "must have a real PR to pass the gate" check is enforced HERE.
  *
  * Algorithm:
- *   1. Load workflow.json, create engine with ClaudeCodeAdapter + actions.
+ *   1. Load workflow.json, create engine with usage-aware Claude adapter + actions.
  *   2. Create an instance.
  *   3. Loop: while instance.status === 'active', call processInput with a
  *      tick input. After each call, run the gate check. If the LLM transitioned
@@ -15,13 +15,10 @@
  *   4. Stop when status === 'completed' or hard step-cap is reached.
  */
 
-// Silence the misleading ClaudeCodeAdapter warning before its module is loaded.
-// The warning reads like a fatal ("This adapter requires running from within a
-// Claude Code session"), but in practice the adapter authenticates through the
-// local `claude` CLI (subscription auth) and works fine standalone. The adapter
-// only checks `process.env.CLAUDECODE` at construction to decide whether to
-// print the warning — setting it here suppresses the warning without changing
-// behaviour. Must be set BEFORE the adapter import.
+// The claude-agent-sdk keys subscription-auth on CLAUDECODE=1. We no longer
+// import ai-flower's ClaudeCodeAdapter (we inline a usage-capturing equivalent
+// below), but the SDK itself still honours this env var, so set it before the
+// first import that might pull the SDK in transitively.
 if (!process.env.CLAUDECODE) process.env.CLAUDECODE = '1'
 
 import { readFile } from 'node:fs/promises'
@@ -32,6 +29,7 @@ import { promisify } from 'node:util'
 
 import { out, outWarn, dbg, truncate, startGroup, endGroup, summarizeActionResult, summarizeReasoning, humanizeState, humanizeAction } from './log.js'
 import { getPhaseInfo, modelForBrain, modelForDelegate } from './phase.js'
+import { beginStep, stepSummary, iterationSummary, recordTokens, extractUsage } from './tokens.js'
 
 import {
   WorkflowEngine,
@@ -40,7 +38,6 @@ import {
   type WorkflowDefinition,
   type WorkflowInstance,
 } from 'ai-flower'
-import { ClaudeCodeAdapter } from 'ai-flower/adapters/claude-code'
 
 import { actions } from './actions/index.js'
 import { getDb, startIteration, endIteration } from './db/index.js'
@@ -302,7 +299,64 @@ async function main() {
   process.env.MONITOR_ACTIVE_DELEGATE_MODEL = modelForDelegate(phaseInfo)
   process.env.MONITOR_ACTIVE_BRAIN_MODEL = modelForBrain(phaseInfo)
 
-  const innerAdapter = new ClaudeCodeAdapter({ maxTokens: 8192, model: modelForBrain(phaseInfo) })
+  // Inline usage-aware adapter. ai-flower's ClaudeCodeAdapter is a thin wrapper
+  // around @anthropic-ai/claude-agent-sdk `query()` that returns only the final
+  // text; we need the `usage` block from the terminal `result` message to feed
+  // our token accounting. Reimplementing here (rather than subclassing) keeps
+  // the SDK import local and lets us read both assistant-level and result-level
+  // usage defensively — the SDK has moved the field between versions.
+  const brainModel = modelForBrain(phaseInfo)
+  const innerAdapter: LLMAdapter = {
+    async call(system: string, user: string): Promise<string> {
+      // @ts-ignore — optional peer dep
+      const { query } = await import('@anthropic-ai/claude-agent-sdk')
+      const collectedText: string[] = []
+      let finalResult: string | null = null
+      let usage: any = null
+
+      const gen = query({
+        prompt: user,
+        options: {
+          systemPrompt: system,
+          maxTurns: 1,
+          allowedTools: [],
+          permissionMode: 'default',
+          ...(brainModel ? { model: brainModel } : {}),
+        },
+      })
+
+      for await (const message of gen as any) {
+        if (message?.type === 'result') {
+          if (typeof message.result === 'string') {
+            finalResult = message.result
+          } else if (Array.isArray(message.content)) {
+            finalResult = message.content
+              .filter((c: any) => c.type === 'text')
+              .map((c: any) => c.text)
+              .join('')
+          }
+          if (message.usage) usage = message.usage
+          break
+        }
+        if (message?.type === 'assistant') {
+          if (Array.isArray(message.message?.content)) {
+            for (const block of message.message.content) {
+              if (block.type === 'text') collectedText.push(block.text)
+            }
+          }
+          // Assistant messages carry incremental usage on .message.usage
+          // in some SDK versions; retain the last one as fallback.
+          if (message.message?.usage) usage = message.message.usage
+        }
+      }
+
+      recordTokens('brain', extractUsage(usage))
+
+      const text = finalResult ?? collectedText.join('') ?? ''
+      if (!text) throw new Error('brain adapter: empty response from query()')
+      return text
+    },
+  }
   // Retry-aware wrapper. ai-flower retries on validation failure by calling us
   // again with the same (system, user) pair. We detect that repetition and
   // prepend an escalating JSON-only preamble with a worked example. The
@@ -403,6 +457,7 @@ async function main() {
     }
 
     step++
+    beginStep()
     // Flag the step header with whether it costs an LLM call. Tool / start-with-
     // readActions → deterministic code, no tokens. Agent → LLM decides what to
     // call next and usually costs one call; write-action agent states (DELEGATE_*,
@@ -721,11 +776,13 @@ async function main() {
       }
     }
     } finally {
-      endGroup()
+      endGroup(stepSummary())
     }
   }
 
   const finalInstance = await engine.getInstance(instance.id)
+  const iterTokens = iterationSummary()
+  if (iterTokens) out(`tokens this iteration: ${iterTokens}`)
   out(`DONE status=${finalInstance.status} state=${finalInstance.currentState} steps=${step}`)
   dbg(`history ${finalInstance.history.length} events`)
 

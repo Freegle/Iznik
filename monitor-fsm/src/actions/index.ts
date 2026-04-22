@@ -17,6 +17,7 @@ import {
   upsertDiscourseBug,
 } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
+import { recordTokens, extractUsage } from '../tokens.js'
 
 const exec = promisify(execFile)
 
@@ -794,9 +795,18 @@ If you omit the marker, your work is considered failed regardless of what actual
           } else if (typeof content === 'string') {
             textStream += content
           }
-          // `result` event closes the session; surfaces the final text too.
-          if (ev?.type === 'result' && typeof ev.result === 'string') {
-            textStream += ev.result
+          // `result` event closes the session; surfaces the final text too,
+          // and carries the cumulative token usage for the whole delegate run.
+          if (ev?.type === 'result') {
+            if (typeof ev.result === 'string') textStream += ev.result
+            // SDK puts usage at top level of the result event; older versions
+            // nested it under .message.usage. Try both.
+            const u = ev.usage ?? ev.message?.usage
+            if (u) recordTokens('delegate', extractUsage(u))
+          }
+          // Some CLI versions also emit a usage-only event mid-stream.
+          if (ev?.type === 'usage' && ev.usage) {
+            recordTokens('delegate', extractUsage(ev.usage))
           }
         }
 
