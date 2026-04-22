@@ -125,6 +125,18 @@ export default defineNuxtPlugin(async (nuxtApp) => {
             return null
           }
 
+          // Transitional safety net for Sentry NUXT3-BS6. OurUploadedImage now
+          // gates its captureMessage behind state checks (isUnmounting /
+          // target.isConnected) so transient fetch aborts on mobile infinite
+          // scroll + Capacitor WebView no longer fire. Cached bundles deployed
+          // before that change still emit the unconditional captureMessage —
+          // drop those here until the rollout window closes (remove ~30 days
+          // after deploy). Narrowed to freegletusd- so real load failures on
+          // other providers (e.g. uploadcare) still surface.
+          if (event.message?.startsWith('Failed to fetch image freegletusd-')) {
+            return null
+          }
+
           // In modtools, 401 means session expired during a long mod session.
           // BaseAPI already clears auth state and the login modal appears.
           // Any of the 600+ store calls can hit this; suppress globally here
