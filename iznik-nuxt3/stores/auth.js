@@ -121,15 +121,15 @@ export const useAuthStore = defineStore({
       this.userlist = []
     },
     disableGoogleAutoselect() {
-      if (
-        window &&
-        window.google &&
-        window.google.accounts &&
-        window.google.accounts.id
-      ) {
+      // SSR / torn-down test environments have no window. A bare `window`
+      // identifier throws ReferenceError (not undefined) in that case, which
+      // surfaced as an "uncaught exception after test teardown" when a
+      // setTimeout-scheduled retry fired after the jsdom env was destroyed.
+      if (typeof window === 'undefined') return
+      if (window.google?.accounts?.id) {
         try {
           console.log('Disable Google autoselect')
-          window?.google?.accounts?.id?.disableAutoSelect()
+          window.google.accounts.id.disableAutoSelect()
         } catch (e) {
           console.log('Ignore Google autoselect error', e)
         }
