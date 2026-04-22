@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'node:fs'
 import type { Database as DB } from 'better-sqlite3'
-import { listOpenDiscourseBugs, listPendingDrafts, type DiscourseBugRow } from './index.js'
+import { listOpenDiscourseBugs, listPendingDrafts, markDiscourseBugFixed, type DiscourseBugRow } from './index.js'
 
 export const STATUS_POST_ID = 63250
 export const STATUS_TOPIC_ID = 9599
@@ -26,7 +26,29 @@ export interface StatusRenderResult {
   fixedRecentCount: number
 }
 
+// Reconcile bug state against PR state before rendering. A bug sits in
+// 'fix-queued' from the moment a draft reply is queued (PR opened). It should
+// only move to 'fixed' once the PR is MERGED and live. Nothing in the rest of
+// the pipeline was calling markDiscourseBugFixed, so bugs accumulated forever
+// in "working on" with the misleading label "fixed". Do the transition here,
+// on every render, based on the pr table.
+function reconcileBugStates(db: DB): void {
+  const rows = db.prepare(`
+    SELECT b.topic, b.post, b.pr_number, p.state AS pr_state, p.deploy_state
+    FROM discourse_bug b
+    JOIN pr p ON p.number = b.pr_number
+    WHERE b.state = 'fix-queued'
+      AND b.pr_number IS NOT NULL
+      AND p.state = 'MERGED'
+      AND (p.deploy_state = 'live' OR p.deploy_state = 'deployed')
+  `).all() as Array<{ topic: number; post: number; pr_number: number }>
+  for (const r of rows) {
+    markDiscourseBugFixed(db, r.topic, r.post, r.pr_number)
+  }
+}
+
 export function renderStatusPostBody(db: DB): StatusRenderResult {
+  reconcileBugStates(db)
   const open = listOpenDiscourseBugs(db)
   const pending = listPendingDrafts(db)
 
