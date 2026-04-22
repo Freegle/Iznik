@@ -236,6 +236,23 @@ describe('auth store', () => {
     })
   })
 
+  describe('disableGoogleAutoselect', () => {
+    it('returns cleanly when window is undefined (simulates post-teardown setTimeout)', () => {
+      // Reproduces the Vitest unhandled-error seen when logout() scheduled a
+      // 100ms retry via setTimeout and that retry fired AFTER the test env
+      // had been torn down. A bare `window` reference in the guard threw
+      // ReferenceError; the fix uses `typeof window === 'undefined'`.
+      const originalWindow = globalThis.window
+      // eslint-disable-next-line no-undef
+      delete globalThis.window
+      try {
+        expect(() => store.disableGoogleAutoselect()).not.toThrow()
+      } finally {
+        globalThis.window = originalWindow
+      }
+    })
+  })
+
   describe('lostPassword', () => {
     it('returns worked=true on success', async () => {
       mockLostPassword.mockResolvedValue({})
