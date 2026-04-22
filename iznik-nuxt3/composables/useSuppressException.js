@@ -1,3 +1,35 @@
+// Robust suppression for Freestar ftUtils.js null-property errors
+// (NUXT3-CES getPlacementPosition, NUXT3-D2H getInnerDimensions) operating on
+// Sentry's parsed event frames. suppressException() below already matches on
+// err.stack string contents, but some events reach Sentry with a stack that
+// doesn't string-match (e.g. framework-wrapped TypeErrors where the original
+// exception is reconstructed before beforeSend sees it). A frame whose filename
+// is ftUtils.js AND whose function is one of Freestar's known null-property
+// sites is a narrow Freestar signature — won't mask real bugs in our own code.
+export function suppressSentryEvent(event) {
+  if (!event?.exception?.values) {
+    return false
+  }
+  for (const ex of event.exception.values) {
+    const frames = ex.stacktrace?.frames || []
+    for (const frame of frames) {
+      const isFtUtilsFrame =
+        frame.filename?.includes('/ftUtils.js') ||
+        frame.abs_path?.includes('/ftUtils.js')
+      const fn = frame.function || ''
+      const isFreestarFn =
+        fn === 'getPlacementPosition' ||
+        fn === 'Object.getPlacementPosition' ||
+        fn === 'getInnerDimensions' ||
+        fn === 'Object.getInnerDimensions'
+      if (isFtUtilsFrame && isFreestarFn) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 export function suppressException(err) {
   if (!err) {
     return false

@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { suppressException } from '~/composables/useSuppressException'
+import {
+  suppressException,
+  suppressSentryEvent,
+} from '~/composables/useSuppressException'
 
 describe('suppressException', () => {
   let logSpy
@@ -182,5 +185,151 @@ describe('suppressException', () => {
         message: "Cannot read properties of undefined (reading 'foo')",
       })
     ).toBe(false)
+  })
+})
+
+describe('suppressSentryEvent', () => {
+  it('returns false for falsy input', () => {
+    expect(suppressSentryEvent(null)).toBe(false)
+    expect(suppressSentryEvent(undefined)).toBe(false)
+    expect(suppressSentryEvent({})).toBe(false)
+  })
+
+  it('returns false when exception has no values', () => {
+    expect(suppressSentryEvent({ exception: {} })).toBe(false)
+    expect(suppressSentryEvent({ exception: { values: [] } })).toBe(false)
+  })
+
+  it('suppresses NUXT3-CES: ftUtils.js getPlacementPosition frame', () => {
+    // Synthetic Sentry event matching the NUXT3-CES signature (issue 6579683231):
+    // TypeError: Cannot read properties of null (reading 'document')
+    //   at Object.getPlacementPosition (.../ftUtils.js)
+    const event = {
+      exception: {
+        values: [
+          {
+            type: 'TypeError',
+            value: "Cannot read properties of null (reading 'document')",
+            stacktrace: {
+              frames: [
+                {
+                  function: 'Object.getPlacementPosition',
+                  filename: 'https://a.pub.network/freegle.org/ftUtils.js',
+                  abs_path: 'https://a.pub.network/freegle.org/ftUtils.js',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(true)
+  })
+
+  it('suppresses NUXT3-D2H: ftUtils.js getInnerDimensions frame', () => {
+    const event = {
+      exception: {
+        values: [
+          {
+            type: 'TypeError',
+            value: "Cannot read properties of null (reading 'display')",
+            stacktrace: {
+              frames: [
+                {
+                  function: 'getInnerDimensions',
+                  filename: 'https://a.pub.network/freegle.org/ftUtils.js',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(true)
+  })
+
+  it('matches when Freestar frame is not the top frame', () => {
+    const event = {
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                { function: 'userCode', filename: '/app.js' },
+                {
+                  function: 'getPlacementPosition',
+                  filename: '/ftUtils.js',
+                },
+                { function: 'innerWrapper', filename: '/lib.js' },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(true)
+  })
+
+  it('does not suppress ftUtils.js frames with unknown function names', () => {
+    // Narrow match: a new bug in ftUtils.js with a different function should
+    // still be reported so we notice it rather than masking it.
+    const event = {
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                {
+                  function: 'someNewFunction',
+                  filename: 'https://a.pub.network/freegle.org/ftUtils.js',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(false)
+  })
+
+  it('does not suppress getPlacementPosition in a non-ftUtils file', () => {
+    // Narrow match: another script happening to define a function called
+    // getPlacementPosition shouldn't be silently dropped.
+    const event = {
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                {
+                  function: 'getPlacementPosition',
+                  filename: '/app/MyComponent.vue',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(false)
+  })
+
+  it('does not suppress unrelated events', () => {
+    const event = {
+      exception: {
+        values: [
+          {
+            type: 'TypeError',
+            value: "Cannot read properties of null (reading 'foo')",
+            stacktrace: {
+              frames: [
+                { function: 'myHandler', filename: '/app/MyComponent.vue' },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(false)
   })
 })
