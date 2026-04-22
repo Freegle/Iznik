@@ -933,7 +933,7 @@ const repost = async (e) => {
     me
   )
 
-  if (msg.location) {
+  if (msg.location?.name) {
     const locs = await locationStore.typeahead(msg.location.name)
     composeStore.postcode = locs[0]
   }
