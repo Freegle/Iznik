@@ -2878,6 +2878,7 @@ class User extends Entity
                         if (count($id1membs) == 0) {
                             # id1 is not already a member.  Just change our id2 membership to id1.
                             #error_log("...$id1 not a member, UPDATE");
+                            error_log("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid=$id2,groupid={$id2memb['groupid']} set=userid=$id1");
                             $rc2 = $this->dbhm->preExec("UPDATE IGNORE memberships SET userid = $id1 WHERE userid = $id2 AND groupid = {$id2memb['groupid']};");
 
                             #error_log("Membership UPDATE merge returned $rc2");
@@ -2890,6 +2891,7 @@ class User extends Entity
                             #error_log("...as is $id1, roles {$id1memb['role']} vs {$id2memb['role']} => $role");
 
                             if ($role != $id1memb['role']) {
+                                error_log("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid=$id1,groupid={$id2memb['groupid']} set=role=$role");
                                 $rc2 = $this->dbhm->preExec("UPDATE memberships SET role = ? WHERE userid = $id1 AND groupid = {$id2memb['groupid']};", [
                                     $role
                                 ]);
@@ -2900,6 +2902,7 @@ class User extends Entity
                                 #  Our added date should be the older of the two.
                                 $date = min(strtotime($id1memb['added']), strtotime($id2memb['added']));
                                 $mysqltime = date("Y-m-d H:i:s", $date);
+                                error_log("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid=$id1,groupid={$id2memb['groupid']} set=added=$mysqltime");
                                 $rc2 = $this->dbhm->preExec("UPDATE memberships SET added = ? WHERE userid = $id1 AND groupid = {$id2memb['groupid']};", [
                                     $mysqltime
                                 ]);
@@ -2911,6 +2914,7 @@ class User extends Entity
                                 #error_log("Check {$id2memb['groupid']} memb $id2 $key = " . Utils::presdef($key, $id2memb, NULL));
                                 if ($id2memb[$key]) {
                                     if ($rc2) {
+                                        error_log("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid=$id1,groupid={$id2memb['groupid']} set=$key=" . (is_string($id2memb[$key]) && strlen($id2memb[$key]) > 50 ? ('len=' . strlen($id2memb[$key])) : $id2memb[$key]));
                                         $rc2 = $this->dbhm->preExec("UPDATE memberships SET $key = ? WHERE userid = $id1 AND groupid = {$id2memb['groupid']};", [
                                             $id2memb[$key]
                                         ]);
@@ -2956,10 +2960,12 @@ class User extends Entity
 
                         #error_log("Merge emails");
                         $sql = "UPDATE users_emails SET userid = $id1, preferred = 0 WHERE userid = $id2;";
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid=$id2 set=userid=$id1,preferred=0");
                         $rc = $this->dbhm->preExec($sql);
 
                         if ($primary) {
                             $sql = "UPDATE users_emails SET preferred = 1 WHERE id = $primary;";
+                            error_log("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=id=$primary set=preferred=1");
                             $rc = $this->dbhm->preExec($sql);
                         }
 
@@ -2970,51 +2976,93 @@ class User extends Entity
                     if ($rc) {
                         # Merge other foreign keys where success is less important.  For some of these there might already
                         # be entries, so we do an IGNORE.
+                        error_log("TN-SYNC-TRACE [WRITE] table=locations_excluded op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE locations_excluded SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=chat_roster op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE chat_roster SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=sessions op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE sessions SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=spam_users op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE spam_users SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=spam_users op=update where=byuserid=$id2 set=byuserid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE spam_users SET byuserid = $id1 WHERE byuserid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_addresses op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_addresses SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_comments op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE users_comments SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_comments op=update where=byuserid=$id2 set=byuserid=$id1");
                         $this->dbhm->preExec("UPDATE users_comments SET byuserid = $id1 WHERE byuserid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_donations op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_donations SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_images op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_images SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_invitations op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_invitations SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_logins op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE users_logins SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_logins op=update where=userid=$id1,type=" . User::LOGIN_NATIVE . " set=uid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_logins SET uid = $id1 WHERE userid = $id1 AND `type` = ?;", [
                             User::LOGIN_NATIVE
                         ]);
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_nearby op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_nearby SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_notifications op=update where=fromuser=$id2 set=fromuser=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_notifications SET fromuser = $id1 WHERE fromuser = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_notifications op=update where=touser=$id2 set=touser=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_notifications SET touser = $id1 WHERE touser = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_nudges op=update where=fromuser=$id2 set=fromuser=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_nudges SET fromuser = $id1 WHERE fromuser = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_nudges op=update where=touser=$id2 set=touser=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_nudges SET touser = $id1 WHERE touser = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_push_notifications op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_push_notifications SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_requests op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_requests SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_requests op=update where=completedby=$id2 set=completedby=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_requests SET completedby = $id1 WHERE completedby = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_searches op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_searches SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=newsfeed op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE newsfeed SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=messages_reneged op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE messages_reneged SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_stories op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_stories SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_stories_likes op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_stories_likes SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_stories_requested op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_stories_requested SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_thanks op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_thanks SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=modnotifs op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE modnotifs SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=teams_members op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE teams_members SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_aboutme op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_aboutme SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=ratings op=update where=rater=$id2 set=rater=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE ratings SET rater = $id1 WHERE rater = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=ratings op=update where=ratee=$id2 set=ratee=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE ratings SET ratee = $id1 WHERE ratee = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_replytime op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_replytime SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=messages_promises op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE messages_promises SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=messages_by op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE messages_by SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=trysts op=update where=user1=$id2 set=user1=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE trysts SET user1 = $id1 WHERE user1 = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=trysts op=update where=user2=$id2 set=user2=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE trysts SET user2 = $id1 WHERE user2 = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=isochrones_users op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE isochrones_users SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=microactions op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE microactions SET userid = $id1 WHERE userid = $id2;");
 
                         # Handle the bans.
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_banned op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_banned SET userid = $id1 WHERE userid = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=users_banned op=update where=byuser=$id2 set=byuser=$id1");
                         $this->dbhm->preExec("UPDATE IGNORE users_banned SET byuser = $id1 WHERE byuser = $id2;");
 
 
@@ -3022,6 +3070,7 @@ class User extends Entity
                         foreach ($bans as $ban) {
                             # Make sure we are not a member; this could happen if one of the users is banned and
                             # the other is not.
+                            error_log("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid=$id1,groupid={$ban['groupid']}");
                             $this->dbhm->preExec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", [
                                 $id1,
                                 $ban['groupid']
@@ -3053,20 +3102,26 @@ class User extends Entity
 
                             if (count($alreadys) > 0) {
                                 # Yes, there already is one.
+                                error_log("TN-SYNC-TRACE [WRITE] table=chat_messages op=update where=chatid={$room['id']} set=chatid={$alreadys[0]['id']}");
                                 $this->dbhm->preExec("UPDATE chat_messages SET chatid = {$alreadys[0]['id']} WHERE chatid = {$room['id']}");
 
                                 # Make sure latestmessage is set correctly.
+                                $traceLatestMessage = strlen($room['latestmessage']) > 50 ? ('len=' . strlen($room['latestmessage'])) : $room['latestmessage'];
+                                error_log("TN-SYNC-TRACE [WRITE] table=chat_rooms op=update where=id={$alreadys[0]['id']} set=latestmessage=$traceLatestMessage");
                                 $this->dbhm->preExec("UPDATE chat_rooms SET latestmessage = GREATEST(latestmessage, ?) WHERE id = ?", [
                                     $room['latestmessage'],
                                     $alreadys[0]['id']
                                 ]);
                             } else {
                                 # No, there isn't, so we can update our old one.
+                                $traceColumn = $room['user1'] == $id2 ? 'user1' : 'user2';
+                                error_log("TN-SYNC-TRACE [WRITE] table=chat_rooms op=update where=id={$room['id']} set=$traceColumn=$id1");
                                 $sql = $room['user1'] == $id2 ? "UPDATE chat_rooms SET user1 = $id1 WHERE id = {$room['id']};" : "UPDATE chat_rooms SET user2 = $id1 WHERE id = {$room['id']};";
                                 $this->dbhm->preExec($sql);
                             }
                         }
 
+                        error_log("TN-SYNC-TRACE [WRITE] table=chat_messages op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE chat_messages SET userid = $id1 WHERE userid = $id2;");
                     }
 
@@ -3075,15 +3130,18 @@ class User extends Entity
                     foreach (['fullname', 'firstname', 'lastname', 'yahooid'] as $att) {
                         $users = $this->dbhm->preQuery("SELECT $att FROM users WHERE id = $id2;");
                         foreach ($users as $user) {
+                            error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id=$id2 set=$att=NULL");
                             $this->dbhm->preExec("UPDATE users SET $att = NULL WHERE id = $id2;");
                             User::clearCache($id1);
                             User::clearCache($id2);
 
                             if (!$u1->getPrivate($att)) {
                                 if ($att != 'fullname') {
+                                    error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id=$id1,$att=NULL set=$att=" . (is_string($user[$att]) && strlen($user[$att]) > 50 ? ('len=' . strlen($user[$att])) : $user[$att]));
                                     $this->dbhm->preExec("UPDATE users SET $att = ? WHERE id = $id1 AND $att IS NULL;", [$user[$att]]);
                                 } else if (stripos($user[$att], 'fbuser') === FALSE && stripos($user[$att], '-owner') === FALSE) {
                                     # We don't want to overwrite a name with FBUser or a -owner address.
+                                    error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id=$id1 set=$att=" . (is_string($user[$att]) && strlen($user[$att]) > 50 ? ('len=' . strlen($user[$att])) : $user[$att]));
                                     $this->dbhm->preExec("UPDATE users SET $att = ? WHERE id = $id1;", [$user[$att]]);
                                 }
                             }
@@ -3092,12 +3150,14 @@ class User extends Entity
 
                     # Merge the logs.  There should be logs both about and by each user, so we can use the rc to check success.
                     if ($rc) {
+                        error_log("TN-SYNC-TRACE [WRITE] table=logs op=update where=user=$id2 set=user=$id1");
                         $rc = $this->dbhm->preExec("UPDATE logs SET user = $id1 WHERE user = $id2;");
 
                         #error_log("Log merge 1 returned $rc");
                     }
 
                     if ($rc) {
+                        error_log("TN-SYNC-TRACE [WRITE] table=logs op=update where=byuser=$id2 set=byuser=$id1");
                         $rc = $this->dbhm->preExec("UPDATE logs SET byuser = $id1 WHERE byuser = $id2;");
 
                         #error_log("Log merge 2 returned $rc");
@@ -3107,13 +3167,16 @@ class User extends Entity
                     # if this info isn't correct, so ignore the rc.
                     #error_log("Merge messages, current rc $rc");
                     if ($rc) {
+                        error_log("TN-SYNC-TRACE [WRITE] table=messages op=update where=fromuser=$id2 set=fromuser=$id1");
                         $this->dbhm->preExec("UPDATE messages SET fromuser = $id1 WHERE fromuser = $id2;");
                     }
 
                     # Merge the history
                     #error_log("Merge history, current rc $rc");
                     if ($rc) {
+                        error_log("TN-SYNC-TRACE [WRITE] table=messages_history op=update where=fromuser=$id2 set=fromuser=$id1");
                         $this->dbhm->preExec("UPDATE messages_history SET fromuser = $id1 WHERE fromuser = $id2;");
+                        error_log("TN-SYNC-TRACE [WRITE] table=memberships_history op=update where=userid=$id2 set=userid=$id1");
                         $this->dbhm->preExec("UPDATE memberships_history SET userid = $id1 WHERE userid = $id2;");
                     }
 
@@ -3122,6 +3185,7 @@ class User extends Entity
                     foreach ($u1s as $u1) {
                         $u2s = $this->dbhr->preQuery("SELECT systemrole FROM users WHERE id = $id2;");
                         foreach ($u2s as $u2) {
+                            error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id=$id1 set=systemrole=" . $this->systemRoleMax($u1['systemrole'], $u2['systemrole']));
                             $rc = $this->dbhm->preExec("UPDATE users SET systemrole = ? WHERE id = $id1;", [
                                 $this->systemRoleMax($u1['systemrole'], $u2['systemrole'])
                             ]);
@@ -3132,10 +3196,12 @@ class User extends Entity
                     # Merge the add date.
                     $u1 = User::get($this->dbhr, $this->dbhm, $id1);
                     $u2 = User::get($this->dbhr, $this->dbhm, $id2);
+                    error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id=$id1 set=added=" . (strtotime($u1->getPrivate('added')) < strtotime($u2->getPrivate('added')) ? $u1->getPrivate('added') : $u2->getPrivate('added')));
                     $this->dbhm->preExec("UPDATE users SET added = ? WHERE id = $id1;", [
                         strtotime($u1->getPrivate('added')) < strtotime($u2->getPrivate('added')) ? $u1->getPrivate('added') : $u2->getPrivate('added')
                     ]);
 
+                    error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id=$id1 set=lastupdated=NOW()");
                     $this->dbhm->preExec("UPDATE users SET lastupdated = NOW() WHERE id = ?;", [
                         $id1
                     ]);
@@ -3144,7 +3210,9 @@ class User extends Entity
                     $tnid2 = $u2->getPrivate('tnuserid');
 
                     if (!$tnid1 && $tnid2) {
+                        error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id2} set=tnuserid=NULL");
                         $u2->setPrivate('tnuserid', NULL);
+                        error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=tnuserid={$tnid2}");
                         $u1->setPrivate('tnuserid', $tnid2);
                     }
 
@@ -3171,12 +3239,14 @@ class User extends Entity
 
                         foreach ($giftaids as $giftaid) {
                             if ($giftaid['id'] != $best['id']) {
+                                error_log("TN-SYNC-TRACE [WRITE] table=giftaid op=delete where=id={$giftaid['id']}");
                                 $this->dbhm->preExec("DELETE FROM giftaid WHERE id = ?;", [
                                     $giftaid['id']
                                 ]);
                             }
                         }
 
+                        error_log("TN-SYNC-TRACE [WRITE] table=giftaid op=update where=id={$best['id']} set=userid=$id1");
                         $this->dbhm->preExec("UPDATE giftaid SET userid = ? WHERE id = ?;", [
                             $id1,
                             $best['id']
@@ -3185,21 +3255,24 @@ class User extends Entity
 
                     if ($rc) {
                         # Log the merge - before the delete otherwise we will fail to log it.
+                        $mergeText = "Merged $id2 into $id1 ($reason)";
+                        error_log("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=" . Log::TYPE_USER . ",subtype=" . Log::SUBTYPE_MERGED . ",user=$id2,byuser=" . ($me ? $me->getId() : 'NULL') . ",text=len=" . strlen($mergeText));
                         $l->log([
                             'type' => Log::TYPE_USER,
                             'subtype' => Log::SUBTYPE_MERGED,
                             'user' => $id2,
                             'byuser' => $me ? $me->getId() : NULL,
-                            'text' => "Merged $id2 into $id1 ($reason)"
+                            'text' => $mergeText
                         ]);
 
                         # Log under both users to make sure we can trace it.
+                        error_log("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=" . Log::TYPE_USER . ",subtype=" . Log::SUBTYPE_MERGED . ",user=$id1,byuser=" . ($me ? $me->getId() : 'NULL') . ",text=len=" . strlen($mergeText));
                         $l->log([
                             'type' => Log::TYPE_USER,
                             'subtype' => Log::SUBTYPE_MERGED,
                             'user' => $id1,
                             'byuser' => $me ? $me->getId() : NULL,
-                            'text' => "Merged $id2 into $id1 ($reason)"
+                            'text' => $mergeText
                         ]);
                     }
 
@@ -3235,6 +3308,13 @@ class User extends Entity
                     #
                     # Make sure we don't pick up an old cached version, as we've just changed it quite a bit.
                     error_log("Merged $id1 < $id2, $reason");
+                    $deletemembs = $this->dbhr->preQuery("SELECT groupid FROM memberships WHERE userid = ?;", [
+                        $id2
+                    ]);
+                    foreach ($deletemembs as $deletememb) {
+                        error_log("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid=$id2,groupid={$deletememb['groupid']}");
+                    }
+                    error_log("TN-SYNC-TRACE [WRITE] table=users op=delete where=id=$id2");
                     $deleteme = new User($this->dbhm, $this->dbhm, $id2);
                     $rc = $deleteme->delete(NULL, NULL, NULL, FALSE);
                 }

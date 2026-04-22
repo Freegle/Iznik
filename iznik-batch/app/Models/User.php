@@ -963,30 +963,34 @@ class User extends Model implements Auditable
                 if (!$id1Memb) {
                     // id1 is not already a member — just reassign the membership.
                     $id2Memb->userid = $id1;
-                    $id2Memb->save();
+                    Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id2},groupid={$id2Memb->groupid} set=userid={$id1}");
+                    // $id2Memb->save(); // TRACE: commented out for port testing
                 } else {
                     // Both are members — merge: take highest role, oldest date, non-NULL attributes.
                     $role = self::roleMax($id1Memb->role, $id2Memb->role);
 
                     if ($role !== $id1Memb->role) {
                         $id1Memb->role = $role;
+                        Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set=role={$role}");
                     }
 
                     // Keep the older added date.
                     $date = min(strtotime($id1Memb->added), strtotime($id2Memb->added));
                     $id1Memb->added = date('Y-m-d H:i:s', $date);
+                    Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set=added={$id1Memb->added}");
 
                     // Take non-NULL values from id2 for these attributes.
                     foreach (['configid', 'settings', 'heldby'] as $key) {
                         if ($id2Memb->$key !== NULL) {
                             $id1Memb->$key = $id2Memb->$key;
+                            Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id1},groupid={$id2Memb->groupid} set={$key}=" . (is_string($id2Memb->$key) && strlen($id2Memb->$key) > 50 ? ('len=' . strlen($id2Memb->$key)) : $id2Memb->$key));
                         }
                     }
 
-                    $id1Memb->save();
+                    // $id1Memb->save(); // TRACE: commented out for port testing
 
                     // Remove the now-redundant id2 membership.
-                    $id2Memb->delete();
+                    // $id2Memb->delete(); // TRACE: commented out for port testing
                 }
             }
 
@@ -1026,17 +1030,19 @@ class User extends Model implements Auditable
             }
 
             // Move all id2 emails to id1, clearing preferred.
+            Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid={$id2} set=userid={$id1},preferred=0");
             UserEmail::where('userid', $id2)->get()->each(function ($emailRow) use ($id1) {
                 $emailRow->userid = $id1;
                 $emailRow->preferred = 0;
-                $emailRow->save();
+                // $emailRow->save(); // TRACE: commented out for port testing
             });
 
             if ($primary) {
+                Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=id={$primary} set=preferred=1");
                 $primaryRow = UserEmail::find($primary);
                 if ($primaryRow) {
                     $primaryRow->preferred = 1;
-                    $primaryRow->save();
+                    // $primaryRow->save(); // TRACE: commented out for port testing
                 }
             }
 
@@ -1086,6 +1092,7 @@ class User extends Model implements Auditable
             EloquentUtils::reparentRow(UserLogin::class, 'userid', $id2, $id1);
 
             // Update Native login uid to match new userid.
+            Logger::info("TN-SYNC-TRACE [WRITE] table=users_logins op=update where=userid={$id1},type=" . self::LOGIN_NATIVE . " set=uid={$id1}");
             UserLogin::where('userid', $id1)
                 ->where('type', self::LOGIN_NATIVE)
                 ->where('uid', '!=', (string) $id1)
@@ -1093,7 +1100,7 @@ class User extends Model implements Auditable
                 ->each(function ($nativeLogin) use ($id1) {
                     try {
                         $nativeLogin->uid = (string) $id1;
-                        $nativeLogin->save();
+                        // $nativeLogin->save(); // TRACE: commented out for port testing
                     } catch (QueryException $e) {
                         Logger::warning("Native login uid update conflict for {$nativeLogin->getKey()}: " . $e->getMessage());
                     }
@@ -1106,10 +1113,11 @@ class User extends Model implements Auditable
             // Remove memberships for groups the merged user is banned from.
             $bans = UserBanned::where('userid', $id1)->get();
             foreach ($bans as $ban) {
+                Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$id1},groupid={$ban->groupid}");
                 Membership::where('userid', $id1)
                     ->where('groupid', $ban->groupid)
-                    ->first()
-                    ?->delete();
+                    ->first();
+                    // ?->delete(); // TRACE: commented out for port testing
             }
 
             // --- Merge chat rooms ---
@@ -1140,21 +1148,24 @@ class User extends Model implements Auditable
 
                 if ($existing) {
                     // Room already exists for id1 — move messages into it.
+                    Logger::info("TN-SYNC-TRACE [WRITE] table=chat_messages op=update where=chatid={$room->id} set=chatid={$existing->id}");
                     ChatMessage::where('chatid', $room->id)->get()->each(function ($chatMessage) use ($existing) {
                         $chatMessage->chatid = $existing->id;
-                        $chatMessage->save();
+                        // $chatMessage->save(); // TRACE: commented out for port testing
                     });
 
                     // Keep the latest message timestamp.
+                    Logger::info("TN-SYNC-TRACE [WRITE] table=chat_rooms op=update where=id={$existing->id} set=latestmessage=" . (is_string($room->latestmessage) && strlen($room->latestmessage) > 50 ? ('len=' . strlen($room->latestmessage)) : $room->latestmessage));
                     if ($room->latestmessage && (!$existing->latestmessage || $room->latestmessage > $existing->latestmessage)) {
                         $existing->latestmessage = $room->latestmessage;
-                        $existing->save();
+                        // $existing->save(); // TRACE: commented out for port testing
                     }
                 } else {
                     // No existing room — just reassign user reference.
                     $col = ($room->user1 == $id2) ? 'user1' : 'user2';
                     $room->$col = $id1;
-                    $room->save();
+                    Logger::info("TN-SYNC-TRACE [WRITE] table=chat_rooms op=update where=id={$room->id} set={$col}={$id1}");
+                    // $room->save(); // TRACE: commented out for port testing
                 }
             }
 
@@ -1174,7 +1185,8 @@ class User extends Model implements Auditable
 
                 // Clear id2's attribute first (unique key safety for yahooid).
                 $u2->$att = NULL;
-                $u2->save();
+                Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id2} set={$att}=NULL");
+                // $u2->save(); // TRACE: commented out for port testing
 
                 // Don't overwrite a name with FBUser or a -owner address.
                 $isDodgyName = $att === 'fullname'
@@ -1182,7 +1194,8 @@ class User extends Model implements Auditable
 
                 if ($u1->$att === NULL && !$isDodgyName) {
                     $u1->$att = $id2Value;
-                    $u1->save();
+                    Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=" . ($att !== 'fullname' ? "id={$id1},{$att}=NULL" : "id={$id1}") . " set={$att}=" . (is_string($id2Value) && strlen($id2Value) > 50 ? ('len=' . strlen($id2Value)) : $id2Value));
+                    // $u1->save(); // TRACE: commented out for port testing
                 }
 
                 $u1->refresh();
@@ -1204,16 +1217,17 @@ class User extends Model implements Auditable
             $u2->refresh();
 
             $mergedSystemRole = self::systemRoleMax($u1->systemrole, $u2->systemrole);
-            if ($u1->systemrole !== $mergedSystemRole) {
-                $u1->systemrole = $mergedSystemRole;
-                $u1->save();
-            }
+            $u1->systemrole = $mergedSystemRole;
+            Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=systemrole={$mergedSystemRole}");
+            // $u1->save(); // TRACE: commented out for port testing
 
             // --- Merge added date (keep oldest) ---
             $earlierAdded = ($u1->added < $u2->added) ? $u1->added : $u2->added;
             $u1->added = $earlierAdded;
+            Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=added={$earlierAdded}");
             $u1->lastupdated = now();
-            $u1->save();
+            Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=lastupdated=NOW()");
+            // $u1->save(); // TRACE: commented out for port testing
 
             // --- Merge TN user ID ---
             $tnId1 = $u1->tnuserid;
@@ -1221,9 +1235,11 @@ class User extends Model implements Auditable
 
             if (!$tnId1 && $tnId2) {
                 $u2->tnuserid = NULL;
-                $u2->save();
+                Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id2} set=tnuserid=NULL");
+                // $u2->save(); // TRACE: commented out for port testing
                 $u1->tnuserid = $tnId2;
-                $u1->save();
+                Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=tnuserid={$tnId2}");
+                // $u1->save(); // TRACE: commented out for port testing
             }
 
             // --- Merge gift aid (keep most favourable declaration) ---
@@ -1253,14 +1269,16 @@ class User extends Model implements Auditable
                 // Delete all except the best.
                 foreach ($giftAids as $giftAid) {
                     if ($giftAid->id !== $best->id) {
-                        $giftAid->delete();
+                        Logger::info("TN-SYNC-TRACE [WRITE] table=giftaid op=delete where=id={$giftAid->id}");
+                        // $giftAid->delete(); // TRACE: commented out for port testing
                     }
                 }
 
                 // Assign the best to id1.
+                Logger::info("TN-SYNC-TRACE [WRITE] table=giftaid op=update where=id={$best->id} set=userid={$id1}");
                 if ($best->userid !== $id1) {
                     $best->userid = $id1;
-                    $best->save();
+                    // $best->save(); // TRACE: commented out for port testing
                 }
             }
 
@@ -1274,7 +1292,8 @@ class User extends Model implements Auditable
             $logId2->user = $id2;
             $logId2->byuser = $byUserId;
             $logId2->text = $mergeText;
-            $logId2->save();
+            Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=User,subtype=Merged,user={$id2},byuser=" . ($byUserId ?? 'NULL') . ",text=len=" . strlen($mergeText));
+            // $logId2->save(); // TRACE: commented out for port testing
 
             $logId1 = new Log();
             $logId1->timestamp = now();
@@ -1283,7 +1302,8 @@ class User extends Model implements Auditable
             $logId1->user = $id1;
             $logId1->byuser = $byUserId;
             $logId1->text = $mergeText;
-            $logId1->save();
+            Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=User,subtype=Merged,user={$id1},byuser=" . ($byUserId ?? 'NULL') . ",text=len=" . strlen($mergeText));
+            // $logId1->save(); // TRACE: commented out for port testing
 
             DB::commit();
         } catch (\Exception $e) {
@@ -1299,8 +1319,12 @@ class User extends Model implements Auditable
         #
         # Make sure we don't pick up an old cached version, as we've just changed it quite a bit.
         try {
-            Membership::where('userid', $id2)->get()->each->delete();
-            User::find($id2)?->delete();
+            Membership::where('userid', $id2)->get()->each(function ($m) {
+                Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$m->userid},groupid={$m->groupid}");
+                // $m->delete(); // TRACE: commented out for port testing
+            });
+            Logger::info("TN-SYNC-TRACE [WRITE] table=users op=delete where=id={$id2}");
+            // User::find($id2)?->delete(); // TRACE: commented out for port testing
             Logger::info("Merged {$id1} < {$id2}, {$reason}");
         } catch (\Exception $e) {
             Logger::error("Failed to delete merged user {$id2}: " . $e->getMessage());
