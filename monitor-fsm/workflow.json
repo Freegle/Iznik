@@ -7,18 +7,16 @@
   "guardrails": "You are running inside an FSM. You MUST return JSON matching the LLMDecision schema exactly. The response MUST be a single JSON object with these keys: reasoning (string), contextUpdates (OBJECT, not a string — use {} for no updates, NEVER write \"contextUpdates\": \"{...}\"), actions (ARRAY, not a string — use [] for no actions), proposedTransition (string or null). Do NOT wrap the whole response in markdown code fences. Do NOT JSON-stringify nested fields. You may only call actions listed for the current state, and may only propose transitions listed as 'Valid Next States'. You cannot bypass the PR gate: reaching END requires a PR (bug-fix or coverage) to have been created this iteration, verified by verify_pr_created. Do not lie about actions you have not taken. HARD INVARIANT — NEVER DISMISS A RED CHECK: A failing CI run, failing test, or red status check on ANY PR @me authored is ALWAYS a real bug that must be investigated to root cause and fixed. It does NOT matter whether the failure looks related to the change or not. You MUST NOT describe a failure as 'flaky', 'environmental', 'transient', 'pre-existing', 'unrelated', 'infrastructure timing', 'polluted test data', or any equivalent. You MUST NOT 'rerun and hope'. You MUST NOT mark such a failure as 'deferred'. Deferred is reserved EXCLUSIVELY for Discourse bugs and Sentry issues that need external information (reporter clarification, hardware the host cannot access, a user judgment call). CI failures never qualify — they are always within reach and must be driven to green.",
   "states": {
     "LOAD_STATE": {
-      "description": "Load state.json, record iterationStartTs.",
-      "nodeType": "start",
-      "prompt": "Call load_state to read /tmp/freegle-monitor/state.json. Propose transition to CHECK_CI. CI is checked FIRST (Phase A) before any Discourse/Sentry work — a red CI blocks everything else and no Discourse context is needed to diagnose it.",
+      "description": "Load state.json, record iterationStartTs. Tool node — executed deterministically by the driver, no LLM turn.",
+      "nodeType": "tool",
       "readActions": [
         "load_state"
       ],
       "writeActions": []
     },
     "CHECK_CI": {
-      "description": "Phase A entry: check master CI status and any red CI on @me open PRs. No Discourse/Sentry context loaded yet — if CI is red we fix it first before burning tokens on unrelated fetches.",
-      "nodeType": "agent",
-      "prompt": "Call check_master_ci (returns {latestRun, failing}) AND call check_my_open_pr_ci (returns {redPRs, pendingPRs, allGreen}). Both results are used downstream: red master CI or any redPR means the iteration CANNOT advance to Phase B until fixed. Propose transition to CI_ROUTER.",
+      "description": "Phase A entry: check master CI status and any red CI on @me open PRs. Tool node — executed deterministically, no LLM turn. Results feed CI_ROUTER.",
+      "nodeType": "tool",
       "readActions": [
         "check_master_ci",
         "check_my_open_pr_ci"
@@ -26,10 +24,11 @@
       "writeActions": []
     },
     "CI_ROUTER": {
-      "description": "Phase A dispatch. Pure decision state — routes to a CI-fix state if anything is red, else advances to Phase B via FETCH_DISCOURSE. No actions.",
-      "nodeType": "agent",
-      "prompt": "You are the Phase A router. Do NOT call actions. Pick ONE transition based on STRICT priority order:\n\n(1) if context._action_check_master_ci.failing === true AND contextUpdates.masterFixAttempted !== true → FIX_MASTER_CI.\n\n(2) else if context._action_check_my_open_pr_ci.redPRs is non-empty, pick the FIRST red PR whose number is not already in contextUpdates.openPRFixAttempts (or whose latest attempt produced no new commit yet — keep trying) → FIX_OPEN_PR_CI. A red CI on an open PR I authored is a HARD block on leaving Phase A. Do NOT skip it. Do NOT call it flaky, environmental, pre-existing, or unrelated. Keep dispatching to FIX_OPEN_PR_CI until redPRs is empty.\n\n(3) else (all CI green): branch on context.phase.\n    - context.phase === 'implementation' → COVERAGE_GATE. In peak hours we intentionally skip Discourse triage and Sentry investigation — those are heavy reasoning tasks best done off-peak. CI-fix work is already done by steps (1)/(2) above; the remaining peak-phase output is a coverage PR.\n    - context.phase === 'analysis' (or undefined) → FETCH_DISCOURSE. Full discovery phase: fetch posts, check git, check Sentry, triage, and drive Discourse/Sentry fixes.\n\nSet contextUpdates = {} and actions = []. Put your reasoning (which priority level fired, and which red PR number if level 2, or which phase branch if level 3) in the reasoning field.",
-      "readActions": [],
+      "description": "Phase A dispatch. Tool node — ci_router_decide returns _transition deterministically from master CI + @me PR CI + context.phase. Priority: (1) master red → FIX_MASTER_CI; (2) red @me PR not in terminal attempts → FIX_OPEN_PR_CI; (3) phase=implementation → COVERAGE_GATE; (4) phase=analysis → FETCH_DISCOURSE.",
+      "nodeType": "tool",
+      "readActions": [
+        "ci_router_decide"
+      ],
       "writeActions": []
     },
     "FIX_MASTER_CI": {
@@ -58,27 +57,24 @@
       ]
     },
     "FETCH_DISCOURSE": {
-      "description": "Phase B start: fetch all new Discourse posts with full body text. Only reached when CI is green.",
-      "nodeType": "agent",
-      "prompt": "Call fetch_discourse once. It reads state.topics cursors from context._action_load_state and returns {posts, topicsSeen}. Propose transition to CHECK_GIT.",
+      "description": "Phase B start: fetch all new Discourse posts with full body text. Tool node — executed deterministically, no LLM turn. Only reached when CI is green.",
+      "nodeType": "tool",
       "readActions": [
         "fetch_discourse"
       ],
       "writeActions": []
     },
     "CHECK_GIT": {
-      "description": "Gather last 3 days of commits across the monorepo. Used by TRIAGE to mark 'already_fixed' bugs.",
-      "nodeType": "agent",
-      "prompt": "Call git_log_today. Propose transition to CHECK_SENTRY.",
+      "description": "Gather last 3 days of commits across the monorepo. Tool node — executed deterministically, no LLM turn. Used by TRIAGE to mark 'already_fixed' bugs.",
+      "nodeType": "tool",
       "readActions": [
         "git_log_today"
       ],
       "writeActions": []
     },
     "CHECK_SENTRY": {
-      "description": "List unresolved Sentry issues.",
-      "nodeType": "agent",
-      "prompt": "Call check_sentry. Propose transition to TRIAGE.",
+      "description": "List unresolved Sentry issues. Tool node — executed deterministically, no LLM turn.",
+      "nodeType": "tool",
       "readActions": [
         "check_sentry"
       ],
@@ -94,10 +90,11 @@
       "writeActions": []
     },
     "WORK_ROUTER": {
-      "description": "Phase B dispatch. Pure decision state — routes to the next bug/Sentry/coverage state. CI-fix dispatch is NOT part of WORK_ROUTER; Phase A already guaranteed CI is green before we entered Phase B. No actions.",
-      "nodeType": "agent",
-      "prompt": "You are the Phase B router. Do NOT call actions. Pick ONE transition based on STRICT priority order:\n\n(1) if classifications contains any 'bug' or 'retest' entry whose (topic, post) is NOT already present in contextUpdates.bugsFixed (an entry in bugsFixed counts regardless of its outcome field — 'fixed' OR 'deferred' both mean 'done for this iteration') → PICK_DISCOURSE_BUG.\n\n(2) else if context._action_check_sentry has actionable issues AND contextUpdates.sentryFixAttempted !== true → FIX_SENTRY_ISSUE.\n\n(3) else → COVERAGE_GATE.\n\nSet contextUpdates = {} and actions = []. Put your reasoning (which priority level fired, and why) in the reasoning field. CI is NOT re-checked here — COVERAGE_GATE handles the safety-net re-check before wrap-up.",
-      "readActions": [],
+      "description": "Phase B dispatch. Tool node — work_router_decide branches deterministically on context.classifications + context.bugsFixed + _action_check_sentry. Priority: (1) unfixed 'bug'/'retest' → PICK_DISCOURSE_BUG; (2) actionable Sentry issues → FIX_SENTRY_ISSUE; (3) else → COVERAGE_GATE.",
+      "nodeType": "tool",
+      "readActions": [
+        "work_router_decide"
+      ],
       "writeActions": []
     },
     "PICK_DISCOURSE_BUG": {
@@ -142,12 +139,10 @@
       ]
     },
     "COVERAGE_GATE": {
-      "description": "Structural gate: verify_pr_created must return count > 0, AND check_my_open_pr_ci.redPRs must be empty. Safety-net re-check of CI state in case a new commit turned a PR red mid-iteration — if so, fall back into Phase A via CI_ROUTER.",
-      "nodeType": "agent",
-      "prompt": "Call verify_pr_created with iterationStartTs from context, then call check_my_open_pr_ci for a fresh read. Decide: (a) if check_my_open_pr_ci.redPRs is non-empty → propose CI_ROUTER (a red PR appeared mid-iteration; fall back into Phase A so the red is handled before wrap-up). (b) else if verify_pr_created.count > 0 → propose WRAP_UP. (c) else → propose WRITE_COVERAGE. The host also enforces (a) — any attempt to reach WRAP_UP/SEND_EMAIL/SCHEDULE_NEXT while redPRs is non-empty will be force-transitioned back to CI_ROUTER.",
+      "description": "Structural gate: has this iteration produced a PR yet, and does any @me open PR currently have red CI? Tool node — deterministic branching, no LLM turn. The single readAction coverage_gate_decide runs verify_pr_created + check_my_open_pr_ci and returns _transition: CI_ROUTER | WRAP_UP | WRITE_COVERAGE.",
+      "nodeType": "tool",
       "readActions": [
-        "verify_pr_created",
-        "check_my_open_pr_ci"
+        "coverage_gate_decide"
       ],
       "writeActions": []
     },
@@ -164,31 +159,28 @@
       ]
     },
     "WRAP_UP": {
-      "description": "Write the cumulative summary and queue draft Discourse replies.",
-      "nodeType": "agent",
-      "prompt": "Call write_summary with the markdown content for /tmp/freegle-monitor/summary.md. Include all PRs created this iteration, bugs fixed, draft replies queued. Propose transition to SEND_EMAIL.",
-      "readActions": [],
-      "writeActions": [
-        "write_summary"
-      ]
+      "description": "Write the iteration summary to /tmp/freegle-monitor/summary.md. Tool node — summary is composed from context + DB, no LLM turn.",
+      "nodeType": "tool",
+      "readActions": [
+        "compose_and_write_summary"
+      ],
+      "writeActions": []
     },
     "SEND_EMAIL": {
-      "description": "Send email summary (1h cooldown).",
-      "nodeType": "agent",
-      "prompt": "Call send_email with subject and body summarising this iteration. Propose transition to SCHEDULE_NEXT.",
-      "readActions": [],
-      "writeActions": [
-        "send_email"
-      ]
+      "description": "Send email summary (1h cooldown). Tool node — subject and body composed deterministically from context.",
+      "nodeType": "tool",
+      "readActions": [
+        "compose_and_send_email"
+      ],
+      "writeActions": []
     },
     "SCHEDULE_NEXT": {
-      "description": "Schedule next wakeup.",
-      "nodeType": "agent",
-      "prompt": "Call schedule_wakeup with 1200-1800s for idle, ≤270s if watching open PR CI. Propose transition to END.",
-      "readActions": [],
-      "writeActions": [
-        "schedule_wakeup"
-      ]
+      "description": "Schedule next wakeup. Tool node — delay chosen by rule (≤270s if watching PR CI, else 1500s idle).",
+      "nodeType": "tool",
+      "readActions": [
+        "schedule_next_auto"
+      ],
+      "writeActions": []
     },
     "END": {
       "description": "Iteration complete.",

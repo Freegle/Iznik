@@ -947,4 +947,203 @@ print('sent')
       return { scheduled: true, delaySeconds: params.delaySeconds, reason: params.reason }
     },
   },
+
+  // ─── Tool-node helpers ──────────────────────────────────────────────────
+  // These actions encode logic that used to be LLM decisions. They return a
+  // `_transition` key so the driver's tool-node fast-path can pick the next
+  // state without calling the LLM.
+
+  {
+    name: 'coverage_gate_decide',
+    description: 'Pure-logic branch for COVERAGE_GATE. Reads iterationStartTs from context, counts PRs created/updated this iteration, and checks for red CI on @me open PRs. Returns {count, redPRs, _transition: "CI_ROUTER" | "WRAP_UP" | "WRITE_COVERAGE"}. Used by the COVERAGE_GATE tool node to skip an LLM call.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const verifyDef = actions.find(a => a.name === 'verify_pr_created')!
+      const redDef = actions.find(a => a.name === 'check_my_open_pr_ci')!
+      const iterationStartTs = (context as any)?.iterationStartTs as string | undefined
+      const verify = await verifyDef.handler({ iterationStartTs }, context)
+      const red = await redDef.handler({}, context)
+      const v = verify as any
+      const r = red as any
+      const redCount = Array.isArray(r.redPRs) ? r.redPRs.length : 0
+      const prCount = typeof v.count === 'number' ? v.count : 0
+      let target: string
+      if (redCount > 0) target = 'CI_ROUTER'
+      else if (prCount > 0) target = 'WRAP_UP'
+      else target = 'WRITE_COVERAGE'
+      return {
+        count: prCount,
+        redCount,
+        verify,
+        red,
+        _transition: target,
+      }
+    },
+  },
+
+  {
+    name: 'compose_and_write_summary',
+    description: 'Render the monitor summary markdown from the DB state + this iteration\'s context and write it to /tmp/freegle-monitor/summary.md. Replaces the LLM-composed WRAP_UP step. No params; reads context.bugsFixed, iterationStartTs, and DB rows.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as any
+      const iterationStartTs = ctx?.iterationStartTs ?? new Date().toISOString()
+      const phase = ctx?.phase ?? 'unknown'
+      const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
+      const verify = ctx?._action_coverage_gate_decide?.verify ?? ctx?._action_verify_pr_created ?? {}
+      const prsThisIter: Array<any> = Array.isArray(verify?.prs) ? verify.prs : []
+
+      const lines: string[] = []
+      lines.push('# Freegle Monitor — iteration summary', '')
+      lines.push(`- Iteration start: ${iterationStartTs}`)
+      lines.push(`- Phase: ${phase}`)
+      lines.push('')
+      lines.push('## PRs this iteration', '')
+      if (prsThisIter.length === 0) {
+        lines.push('_None._', '')
+      } else {
+        for (const p of prsThisIter) {
+          const title = p.title ?? ''
+          lines.push(`- [#${p.number}](${p.url ?? `https://github.com/Freegle/Iznik/pull/${p.number}`}) ${title}`)
+        }
+        lines.push('')
+      }
+      const fixed = bugsFixed.filter(b => b.outcome === 'fixed')
+      const deferred = bugsFixed.filter(b => b.outcome === 'deferred')
+      if (fixed.length > 0) {
+        lines.push('## Discourse bugs fixed', '')
+        for (const b of fixed) {
+          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'}${b.prNumber ? ` → PR #${b.prNumber}` : ''}`)
+        }
+        lines.push('')
+      }
+      if (deferred.length > 0) {
+        lines.push('## Discourse bugs deferred', '')
+        for (const b of deferred) {
+          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'} — ${b.reason ?? 'no reason recorded'}`)
+        }
+        lines.push('')
+      }
+      const content = lines.join('\n')
+      await writeFile(SUMMARY_PATH, content, 'utf8')
+      return { written: SUMMARY_PATH, bytes: content.length, prCount: prsThisIter.length, fixedCount: fixed.length, deferredCount: deferred.length }
+    },
+  },
+
+  {
+    name: 'compose_and_send_email',
+    description: 'Build an email summary from context + DB state and send it via SMTP with a 1h cooldown. No params. Skips silently if cooldown is active or nothing actionable happened this iteration.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const db = getDb()
+      const lastStr = kvGet(db, 'last_email_sent')
+      const last = lastStr ? new Date(lastStr).getTime() : 0
+      const now = Date.now()
+      if (last && now - last < 3600_000) {
+        return { skipped: true, reason: 'cooldown' }
+      }
+      const ctx = context as any
+      const verify = ctx?._action_coverage_gate_decide?.verify ?? ctx?._action_verify_pr_created ?? {}
+      const prs: Array<any> = Array.isArray(verify?.prs) ? verify.prs : []
+      const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
+      if (prs.length === 0 && bugsFixed.length === 0) {
+        return { skipped: true, reason: 'nothing to report' }
+      }
+      const lines: string[] = []
+      lines.push(`Phase: ${ctx?.phase ?? 'unknown'}`, '')
+      if (prs.length > 0) {
+        lines.push('PRs this iteration:')
+        for (const p of prs) lines.push(`- #${p.number} ${p.title ?? ''} — ${p.url ?? ''}`)
+        lines.push('')
+      }
+      if (bugsFixed.length > 0) {
+        lines.push(`${bugsFixed.filter(b => b.outcome === 'fixed').length} fixed / ${bugsFixed.filter(b => b.outcome === 'deferred').length} deferred Discourse bugs`)
+      }
+      const subject = `Freegle Monitor: ${prs.length} PR${prs.length === 1 ? '' : 's'}, ${bugsFixed.filter(b => b.outcome === 'fixed').length} bug${bugsFixed.filter(b => b.outcome === 'fixed').length === 1 ? '' : 's'} fixed`
+      const body = lines.join('\n')
+      // Delegate to the existing send_email action to reuse its SMTP code
+      const sendDef = actions.find(a => a.name === 'send_email')!
+      const res = await sendDef.handler({ subject, body }, context)
+      return res
+    },
+  },
+
+  {
+    name: 'ci_router_decide',
+    description: 'Phase A router logic. No LLM — pure branch based on CHECK_CI results + iteration context. Returns {_transition: "FIX_MASTER_CI" | "FIX_OPEN_PR_CI" | "FETCH_DISCOURSE" | "COVERAGE_GATE", pickedPR?}.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as any
+      const master = ctx?._action_check_master_ci ?? {}
+      const prCheck = ctx?._action_check_my_open_pr_ci ?? {}
+      const masterFailing = master.failing === true
+      const masterFixAttempted = ctx?.masterFixAttempted === true
+      const redPRs: Array<{ number: number }> = Array.isArray(prCheck.redPRs) ? prCheck.redPRs : []
+      const attempts: Array<{ prNumber: number; terminal?: boolean }> = Array.isArray(ctx?.openPRFixAttempts) ? ctx.openPRFixAttempts : []
+      // Allow re-picking a PR whose latest attempt did not push a commit —
+      // matches the original LLM prompt's "keep trying" rule. A terminal
+      // record (loop-breaker) is respected.
+      const attemptedNums = new Set(attempts.filter(a => a.terminal).map(a => a.prNumber))
+      const pickable = redPRs.find(p => !attemptedNums.has(p.number))
+      // Priority 1: master red
+      if (masterFailing && !masterFixAttempted) {
+        return { _transition: 'FIX_MASTER_CI', reason: `master CI failing on run ${master.latestRun?.databaseId ?? '?'}` }
+      }
+      // Priority 2: any red PR not in terminal-attempts
+      if (pickable) {
+        return { _transition: 'FIX_OPEN_PR_CI', reason: `red PR #${pickable.number} not yet attempted`, pickedPR: pickable.number }
+      }
+      // Priority 3: branch by phase
+      const phase = ctx?.phase ?? 'analysis'
+      if (phase === 'implementation') {
+        return { _transition: 'COVERAGE_GATE', reason: 'CI green, peak phase — skip discovery, go straight to coverage/gate' }
+      }
+      return { _transition: 'FETCH_DISCOURSE', reason: 'CI green, analysis phase — enter discovery' }
+    },
+  },
+
+  {
+    name: 'work_router_decide',
+    description: 'Phase B router logic. No LLM — branches on context.classifications and context.bugsFixed. Returns {_transition: "PICK_DISCOURSE_BUG" | "FIX_SENTRY_ISSUE" | "COVERAGE_GATE"}.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as any
+      const classifications: Array<any> = Array.isArray(ctx?.classifications) ? ctx.classifications : []
+      const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
+      const fixedKeys = new Set(bugsFixed.map(b => `${b.topic}.${b.post}`))
+      const pendingBug = classifications.find(c => (c.type === 'bug' || c.type === 'retest') && !fixedKeys.has(`${c.topic}.${c.post}`))
+      if (pendingBug) {
+        return { _transition: 'PICK_DISCOURSE_BUG', reason: `unfixed bug ${pendingBug.topic}.${pendingBug.post}` }
+      }
+      const sentry = ctx?._action_check_sentry ?? {}
+      const sentryIssues: Array<any> = Array.isArray(sentry.issues) ? sentry.issues : []
+      const sentryFixAttempted = ctx?.sentryFixAttempted === true
+      if (sentryIssues.length > 0 && !sentryFixAttempted) {
+        return { _transition: 'FIX_SENTRY_ISSUE', reason: `${sentryIssues.length} unresolved Sentry issue(s)` }
+      }
+      return { _transition: 'COVERAGE_GATE', reason: 'no pending bug / sentry — advance to gate' }
+    },
+  },
+
+  {
+    name: 'schedule_next_auto',
+    description: 'Pick the next-wakeup delay deterministically: ≤270s if @me has red or pending CI (inside 5-minute prompt cache), else 1200-1800s idle tick. No LLM input. Returns {scheduled, delaySeconds, reason}.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as any
+      const ciCheck = ctx?._action_coverage_gate_decide?.red ?? ctx?._action_check_my_open_pr_ci ?? {}
+      const redCount = Array.isArray(ciCheck?.redPRs) ? ciCheck.redPRs.length : 0
+      const pendingCount = Array.isArray(ciCheck?.pendingPRs) ? ciCheck.pendingPRs.length : 0
+      let delaySeconds: number
+      let reason: string
+      if (redCount > 0 || pendingCount > 0) {
+        delaySeconds = 270
+        reason = `watching ${redCount} red + ${pendingCount} pending @me PR(s) — stay in prompt cache`
+      } else {
+        delaySeconds = 1500  // 25 min
+        reason = 'no actionable PR state — idle tick'
+      }
+      return { scheduled: true, delaySeconds, reason }
+    },
+  },
 ]

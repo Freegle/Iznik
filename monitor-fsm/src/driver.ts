@@ -406,6 +406,77 @@ async function main() {
     startGroup(`→ step ${step}: ${current.currentState}`)
     try {
 
+    // ─── TOOL NODE FAST-PATH ───
+    // ai-flower declares 'tool' as a NodeType but the engine doesn't implement
+    // it — we do it here. Tool nodes are pure data-gather: execute all
+    // readActions, stash each result in context as _action_<name>, then
+    // force-transition along the single outgoing edge. NO LLM turn.
+    //
+    // This is the entire point of marking CHECK_CI / LOAD_STATE / FETCH_DISCOURSE
+    // etc. as 'tool' — we save one LLM call per state, which on an ~8-state
+    // iteration adds up to roughly half the tokens with zero functional change.
+    const stateDef: any = (definition.states as any)[current.currentState]
+    if (stateDef?.nodeType === 'tool') {
+      const readActions: string[] = stateDef.readActions ?? []
+      const writeActions: string[] = stateDef.writeActions ?? []
+      const toolActions = [...readActions, ...writeActions]
+      const outgoing = (definition.transitions ?? []).filter(t => t.from === current.currentState)
+      if (outgoing.length === 0) {
+        outWarn(`tool node ${current.currentState} has no outgoing transitions — falling back to LLM`)
+      } else {
+        const ctxUpdates: Record<string, unknown> = {}
+        const ctxNow: any = current.context ?? {}
+        // Actions read context to get prior results (e.g. fetch_discourse reads
+        // _action_load_state). Merge as we go so later actions see earlier ones.
+        const runningCtx = { ...ctxNow }
+        let branchTarget: string | null = null
+        for (const actionName of toolActions) {
+          const def = actions.find(a => a.name === actionName)
+          if (!def) {
+            outWarn(`tool node ${current.currentState}: action ${actionName} not found`)
+            continue
+          }
+          try {
+            const res: any = await def.handler({}, runningCtx)
+            const key = `_action_${actionName}`
+            ctxUpdates[key] = res
+            runningCtx[key] = res
+            out(`· ${actionName} → ${summarizeActionResult(actionName, res)}`)
+            dbg(`tool action ${actionName} full result: ${JSON.stringify(res)}`)
+            // Branch signal: an action can return `_transition` to steer the
+            // state machine along a specific outgoing edge. Used by branching
+            // tool nodes (e.g. COVERAGE_GATE → WRAP_UP/WRITE_COVERAGE/CI_ROUTER).
+            if (res && typeof res._transition === 'string') {
+              branchTarget = res._transition
+            }
+          } catch (err: any) {
+            outWarn(`tool action ${actionName} threw: ${err.message ?? err}`)
+          }
+        }
+        if (Object.keys(ctxUpdates).length > 0) {
+          await engine.updateContext(instance.id, ctxUpdates)
+        }
+        let target: string
+        if (branchTarget) {
+          const edge = outgoing.find(t => t.to === branchTarget)
+          if (!edge) {
+            outWarn(`tool node ${current.currentState}: action requested _transition=${branchTarget} but no outgoing edge matches — using first edge`)
+            target = outgoing[0].to
+          } else {
+            target = branchTarget
+          }
+        } else if (outgoing.length === 1) {
+          target = outgoing[0].to
+        } else {
+          outWarn(`tool node ${current.currentState} has ${outgoing.length} outgoing transitions and no _transition signal — using first edge`)
+          target = outgoing[0].to
+        }
+        await engine.forceTransition(instance.id, target, `Tool node ${current.currentState} auto-executed ${toolActions.length} action(s); → ${target}`)
+        // Done — skip the LLM path. The step's try/finally will call endGroup().
+        continue
+      }
+    }
+
     // ─── STALE ACTION CLEARING ───
     // When entering a new bug's cycle at PICK_DISCOURSE_BUG, clear per-bug
     // action results from the previous bug. Otherwise the VERIFY step for the
