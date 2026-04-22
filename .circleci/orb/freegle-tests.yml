@@ -2623,6 +2623,15 @@ jobs:
             fi
 
             echo "Auto-merging master to production..."
+
+            # Reset workspace before checking out production. The self-hosted
+            # runner preserves the workspace between jobs, and earlier steps
+            # write placeholder values to tracked secrets/*.txt files. Any
+            # Docker container that touched a tracked file may also have left
+            # it root-owned, which `git checkout` can't unlink.
+            sudo chown -R "$(id -u):$(id -g)" . 2>/dev/null || true
+            git reset --hard HEAD
+
             mkdir -p ~/.ssh
             ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
             git config --global user.email "circleci@freegle.org"
