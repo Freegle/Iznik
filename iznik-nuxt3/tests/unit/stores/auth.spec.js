@@ -251,6 +251,46 @@ describe('auth store', () => {
         globalThis.window = originalWindow
       }
     })
+
+    it('calls disableAutoSelect when window.google.accounts.id is available', () => {
+      const mockDisableAutoSelect = vi.fn()
+      const originalGoogle = globalThis.window.google
+      globalThis.window.google = {
+        accounts: { id: { disableAutoSelect: mockDisableAutoSelect } },
+      }
+      try {
+        expect(() => store.disableGoogleAutoselect()).not.toThrow()
+        expect(mockDisableAutoSelect).toHaveBeenCalled()
+      } finally {
+        if (originalGoogle === undefined) {
+          delete globalThis.window.google
+        } else {
+          globalThis.window.google = originalGoogle
+        }
+      }
+    })
+
+    it('handles disableAutoSelect throwing (catches error silently)', () => {
+      const originalGoogle = globalThis.window.google
+      globalThis.window.google = {
+        accounts: {
+          id: {
+            disableAutoSelect: vi.fn(() => {
+              throw new Error('Google error')
+            }),
+          },
+        },
+      }
+      try {
+        expect(() => store.disableGoogleAutoselect()).not.toThrow()
+      } finally {
+        if (originalGoogle === undefined) {
+          delete globalThis.window.google
+        } else {
+          globalThis.window.google = originalGoogle
+        }
+      }
+    })
   })
 
   describe('lostPassword', () => {
