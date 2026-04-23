@@ -1015,6 +1015,70 @@ func TestPostMessageRejectAfterMemberDeletes(t *testing.T) {
 	assert.Equal(t, "Rejected", collection, "Message should be in Rejected collection after mod rejects")
 }
 
+func TestPostMessageRejectAfterMemberWithdrawsPending(t *testing.T) {
+	prefix := uniquePrefix("msgmod_rej_wdraw")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, posterToken := CreateTestSession(t, posterID)
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a pending WANTED message
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Wanted', ?, NOW(), NOW())",
+		posterID, prefix+" pending wanted", locationID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, prefix+" pending wanted").Scan(&msgID)
+	if msgID == 0 {
+		t.Fatal("Failed to create pending message")
+	}
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)",
+		msgID, groupID)
+
+	// Member withdraws their pending message via the API
+	withdrawBody := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Withdrawn",
+	}
+	withdrawBytes, _ := json.Marshal(withdrawBody)
+	withdrawURL := fmt.Sprintf("/api/message?jwt=%s", posterToken)
+	wreq := httptest.NewRequest("POST", withdrawURL, bytes.NewBuffer(withdrawBytes))
+	wreq.Header.Set("Content-Type", "application/json")
+	wresp, err := getApp().Test(wreq)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, wresp.StatusCode, "Member should be able to withdraw their pending message")
+
+	// Verify the message was marked as deleted (soft delete), not hard deleted
+	var msgDeleted *string
+	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&msgDeleted)
+	assert.NotNil(t, msgDeleted, "Message should be soft-deleted (deleted IS NOT NULL), not hard-deleted")
+
+	// Mod should still be able to reject the message even though the member withdrew it.
+	// Before fix: handleOutcome hard-deleted messages row, leaving orphaned messages_groups →
+	// isModForMessage returned true (orphaned row) but getMessageModContext scan failed → 403.
+	// After fix: soft delete → getMessageModContext scans successfully → 200.
+	rejectBody := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"subject": "Duplicate post",
+		"body":    "Please do not post duplicates",
+	}
+	rejectBytes, _ := json.Marshal(rejectBody)
+	rejectURL := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	rreq := httptest.NewRequest("POST", rejectURL, bytes.NewBuffer(rejectBytes))
+	rreq.Header.Set("Content-Type", "application/json")
+	rresp, err := getApp().Test(rreq)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, rresp.StatusCode, "Mod should be able to reject message after member withdraws it (no 403)")
+}
+
 // --- Test: Delete (mod action) ---
 
 func TestPostMessageDelete(t *testing.T) {
@@ -3451,7 +3515,10 @@ func TestPostMessageOutcomeWithdrawnDoesNotMarkSpatialSuccessful(t *testing.T) {
 }
 
 func TestPostMessageWithdrawnPending(t *testing.T) {
-	// H4: Withdrawn on a pending message should delete it entirely.
+	// Withdrawn on a pending message should soft-delete it (V1 parity: Message::delete() uses
+	// UPDATE messages SET deleted = NOW(), not a hard DELETE).  Soft delete allows a moderator
+	// who already loaded the pending queue to still reject the message (see
+	// TestPostMessageRejectAfterMemberWithdrawsPending).
 	prefix := uniquePrefix("msgw_wdr_pnd")
 	db := database.DBConn
 
@@ -3478,12 +3545,12 @@ func TestPostMessageWithdrawnPending(t *testing.T) {
 
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
-	assert.Equal(t, true, result["deleted"], "Pending message should be deleted, not marked")
+	assert.Equal(t, true, result["deleted"], "Pending message should be flagged as deleted in the response")
 
-	// Verify message was deleted.
-	var msgCount int64
-	db.Raw("SELECT COUNT(*) FROM messages WHERE id = ?", msgID).Scan(&msgCount)
-	assert.Equal(t, int64(0), msgCount, "Message should be deleted from messages table")
+	// Verify soft delete: messages row still present but with deleted timestamp.
+	var msgDeleted *string
+	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&msgDeleted)
+	assert.NotNil(t, msgDeleted, "Message should be soft-deleted (deleted IS NOT NULL), not hard-deleted")
 }
 
 func TestPostMessageWithdrawnApproved(t *testing.T) {
