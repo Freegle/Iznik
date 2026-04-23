@@ -83,6 +83,12 @@ class ParsedEmail
     public readonly ?string $senderIp;
 
     // ========================================
+    // Digest Reply Properties
+    // ========================================
+
+    public readonly bool $isDigestReply;
+
+    // ========================================
     // Internal State
     // ========================================
 
@@ -114,7 +120,8 @@ class ParsedEmail
         ?int $chatMessageId,
         ?int $commandUserId,
         ?int $commandGroupId,
-        ?string $senderIp
+        ?string $senderIp,
+        bool $isDigestReply = false
     ) {
         $this->rawMessage = $rawMessage;
         $this->envelopeFrom = $envelopeFrom;
@@ -140,6 +147,7 @@ class ParsedEmail
         $this->commandUserId = $commandUserId;
         $this->commandGroupId = $commandGroupId;
         $this->senderIp = $senderIp;
+        $this->isDigestReply = $isDigestReply;
 
         // Cache envelope-to local part for routing checks
         $this->envelopeToLocalPart = explode('@', $envelopeTo)[0] ?? '';
@@ -276,6 +284,18 @@ class ParsedEmail
     }
 
     // ========================================
+    // Digest Reply Detection
+    // ========================================
+
+    /**
+     * Check if this is a reply to a digest email (sent from noreply@).
+     */
+    public function isDigestReply(): bool
+    {
+        return $this->isDigestReply;
+    }
+
+    // ========================================
     // Email Command Detection
     // ========================================
 
@@ -399,6 +419,7 @@ class ParsedEmail
             'chat_user_id' => $this->chatUserId,
             'chat_message_id' => $this->chatMessageId,
             'is_auto_reply' => $this->isAutoReply(),
+            'is_digest_reply' => $this->isDigestReply(),
             'is_subscribe_command' => $this->isSubscribeCommand(),
             'is_unsubscribe_command' => $this->isUnsubscribeCommand(),
             'is_digestoff_command' => $this->isDigestOffCommand(),

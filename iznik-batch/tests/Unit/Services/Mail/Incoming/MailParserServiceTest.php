@@ -472,6 +472,52 @@ class MailParserServiceTest extends TestCase
     }
 
     // ========================================
+    // Digest Reply Detection Tests
+    // ========================================
+
+    public function test_parse_detects_digest_reply_to_noreply_address(): void
+    {
+        $noreplyAddr = config('freegle.mail.noreply_addr');
+
+        $rawEmail = $this->createMinimalEmail([
+            'From' => 'user@example.com',
+            'To' => $noreplyAddr,
+            'Subject' => 'Re: 5 new posts near you - Sofa, Table',
+        ], 'Thanks for the digest!');
+
+        $parsed = $this->parser->parse($rawEmail, 'user@example.com', $noreplyAddr);
+
+        $this->assertTrue($parsed->isDigestReply());
+    }
+
+    public function test_parse_detects_digest_reply_via_in_reply_to_header(): void
+    {
+        $rawEmail = $this->createMinimalEmail([
+            'From' => 'user@example.com',
+            'To' => 'someaddress@example.com',
+            'Subject' => 'Re: 3 new posts near you',
+            'In-Reply-To' => '<UnifiedDigest-12345-67890@ilovefreegle.org>',
+        ], 'I want the sofa!');
+
+        $parsed = $this->parser->parse($rawEmail, 'user@example.com', 'someaddress@example.com');
+
+        $this->assertTrue($parsed->isDigestReply());
+    }
+
+    public function test_parse_non_digest_email_not_flagged_as_digest_reply(): void
+    {
+        $rawEmail = $this->createMinimalEmail([
+            'From' => 'user@example.com',
+            'To' => 'testgroup@groups.ilovefreegle.org',
+            'Subject' => 'OFFER: Sofa (London)',
+        ], 'Free sofa available.');
+
+        $parsed = $this->parser->parse($rawEmail, 'user@example.com', 'testgroup@groups.ilovefreegle.org');
+
+        $this->assertFalse($parsed->isDigestReply());
+    }
+
+    // ========================================
     // Helper Methods
     // ========================================
 

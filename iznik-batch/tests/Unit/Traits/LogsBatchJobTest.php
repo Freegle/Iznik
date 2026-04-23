@@ -99,10 +99,10 @@ class LogsBatchJobTest extends TestCase
     public function test_extracts_job_name_from_signature(): void
     {
         $this->lokiMock->shouldReceive('logBatchJob')
-            ->with('mail:digest', 'started', Mockery::any());
+            ->with('mail:digest:unified', 'started', Mockery::any());
 
         $this->lokiMock->shouldReceive('logBatchJob')
-            ->with('mail:digest', 'completed', Mockery::any());
+            ->with('mail:digest:unified', 'completed', Mockery::any());
 
         $command = new TestCommandWithComplexSignature();
         $command->setLaravel($this->app);
@@ -171,9 +171,9 @@ class TestCommandWithComplexSignature extends Command
 {
     use LogsBatchJob;
 
-    protected $signature = 'mail:digest
-                            {frequency : Digest frequency}
-                            {--mod=1 : Modulo divisor}';
+    protected $signature = 'mail:digest:unified
+                            {--mode=daily : Digest mode}
+                            {--limit=1000 : Max users}';
 
     public function handle(): int
     {
