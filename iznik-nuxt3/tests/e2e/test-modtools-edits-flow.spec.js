@@ -60,7 +60,6 @@ test.describe('ModTools Edits Flow', () => {
     // (a) the message is Approved, and (b) the editor's posting status is Moderated.
     // Use Playwright's request API (not page.evaluate fetch) to avoid CORS issues.
     console.log('\n--- Step 1b: Approve message via API ---')
-    const groupId = testEnv.group.id
 
     // Login as mod to get JWT via V2 API
     const loginResp = await page.request.post(
@@ -74,22 +73,11 @@ test.describe('ModTools Edits Flow', () => {
     expect(loginData.jwt).toBeTruthy()
     const modJwt = loginData.jwt
 
-    // Approve the message via V2 API (same endpoint the frontend uses)
-    const approveResp = await page.request.post(
-      `${API_V2}/message`,
-      {
-        data: {
-          action: 'Approve',
-          id: Number(posted.id),
-          groupid: Number(groupId),
-        },
-        headers: { Authorization: modJwt },
-      }
-    )
-    console.log(`Approve status: ${approveResp.status()}`)
-    expect(approveResp.ok()).toBeTruthy()
-
-    // Get the message to find the poster's user ID via V2 API
+    // Get the message FIRST to find actual groupid and poster's user ID.
+    // The message may have been posted to a different group than testEnv.group.id
+    // (e.g. postMessage() picks a group from the postcode area, not necessarily the
+    // test group). Using the wrong groupid in the approve call silently updates 0 rows,
+    // leaving collection='Pending', which prevents edit review creation.
     const msgResp = await page.request.get(
       `${API_V2}/message/${posted.id}`,
       {
@@ -98,8 +86,24 @@ test.describe('ModTools Edits Flow', () => {
     )
     const msgData = await msgResp.json()
     const fromUserId = msgData?.fromuser
-    console.log(`Message fromuser: ${fromUserId}`)
+    const actualGroupId = msgData?.groups?.[0]?.groupid ?? testEnv.group.id
+    console.log(`Message fromuser: ${fromUserId}, actual groupid: ${actualGroupId}`)
     expect(fromUserId).toBeTruthy()
+
+    // Approve the message via V2 API using the actual groupid
+    const approveResp = await page.request.post(
+      `${API_V2}/message`,
+      {
+        data: {
+          action: 'Approve',
+          id: Number(posted.id),
+          groupid: Number(actualGroupId),
+        },
+        headers: { Authorization: modJwt },
+      }
+    )
+    console.log(`Approve status: ${approveResp.status()}`)
+    expect(approveResp.ok()).toBeTruthy()
 
     // Set the poster's posting status to MODERATED on this group
     const memberResp = await page.request.patch(
@@ -107,13 +111,14 @@ test.describe('ModTools Edits Flow', () => {
       {
         data: {
           userid: Number(fromUserId),
-          groupid: Number(groupId),
+          groupid: Number(actualGroupId),
           ourPostingStatus: 'MODERATED',
         },
         headers: { Authorization: modJwt },
       }
     )
     console.log(`Set moderated status: ${memberResp.status()}`)
+    expect(memberResp.ok()).toBeTruthy()
     console.log('Message approved and user set to moderated')
 
     // Step 2: Edit the message on My Posts page.
