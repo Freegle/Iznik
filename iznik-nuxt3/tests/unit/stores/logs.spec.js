@@ -258,4 +258,53 @@ describe('logs store', () => {
     expect(mockUserFetchMultiple).not.toHaveBeenCalled()
     expect(mockMessageFetchMultiple).not.toHaveBeenCalled()
   })
+
+  it('stores accumulate logs from multiple users without filtering', async () => {
+    // The shared store accumulates logs from ALL users. This test verifies
+    // that the store itself doesn't filter, and that the filtering must
+    // happen in ModLogsModal to prevent cross-user log mixing (Discourse #9564).
+    const store = useLogsStore()
+    store.init({})
+
+    // Simulate fetching logs for user 10
+    mockLogsFetch.mockResolvedValueOnce({
+      logs: [
+        { id: 100, userid: 10, byuserid: 999, type: 'Message' },
+        { id: 101, userid: 10, byuserid: null, type: 'User' },
+      ],
+      context: { id: 101 },
+    })
+    await store.fetch({ userid: 10 })
+
+    // Simulate fetching logs for user 20 (rapid modal re-open)
+    mockLogsFetch.mockResolvedValueOnce({
+      logs: [
+        { id: 200, userid: 20, byuserid: 999, type: 'Message' },
+        { id: 201, userid: 20, byuserid: null, type: 'User' },
+      ],
+      context: { id: 201 },
+    })
+    await store.fetch({ userid: 20 })
+
+    // The STORE contains all logs from both users
+    expect(store.list).toHaveLength(4)
+    expect(store.list.map((l) => l.id)).toContain(100)
+    expect(store.list.map((l) => l.id)).toContain(101)
+    expect(store.list.map((l) => l.id)).toContain(200)
+    expect(store.list.map((l) => l.id)).toContain(201)
+
+    // This demonstrates that ModLogsModal MUST filter to show only
+    // logs where (userid === targetUser OR byuserid === targetUser)
+    const logsForUser10 = store.list.filter(
+      (log) => log.userid === 10 || log.byuserid === 10
+    )
+    const logsForUser20 = store.list.filter(
+      (log) => log.userid === 20 || log.byuserid === 20
+    )
+
+    expect(logsForUser10).toHaveLength(2)
+    expect(logsForUser20).toHaveLength(2)
+    expect(logsForUser10.map((l) => l.id)).toEqual([100, 101])
+    expect(logsForUser20.map((l) => l.id)).toEqual([200, 201])
+  })
 })
