@@ -220,3 +220,23 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
   - Docker: Added `pdo_pgsql` to batch Dockerfile, `PGSQL_*` env vars to batch dev + batch-prod, postgres dependency
   - Tests: Go test checks background_task queued; Laravel test checks PostgreSQL KNN + task dispatch
   - Go tests running, Laravel tests running
+
+### 2026-04-22 - Fix Playwright CI failures on PR #226 (Sentry/Leaflet fix)
+- **Issue**: PR #226 (fix/sentry-leaflet-tooltip-nullmap-nuxt3-d7b) had 2 Playwright test failures in CircleCI job #5399
+  - Test 3.3 (test-reply-flow-existing-user): Timeout at 600s (test exceeds timeout during cleanup logout)
+  - test-repost-group-change: Strict mode violation (button selector matches 2 elements)
+- **Root cause 1 (logout timeout)**: 
+  - `logoutIfLoggedIn()` and `signUpViaHomepage()` call `gotoAndVerify('/')` with default `maxRetries: 3`
+  - Each retry waits up to 202.5s timeout in CI (135s × 1.5 multiplier)
+  - Three retries = 607.5s, exceeding 600s test timeout
+  - Multiple logout calls compound issue: signup + 2 logouts = 3 × 202s each = ~10 minutes
+- **Root cause 2 (strict mode violation)**:
+  - Button selector `button:has-text("Edit & Resend")` matches 2 buttons in DOM
+  - Playwright strict mode requires exactly 1 element for `.click()`
+- **Fixes** (committed `a048f7e0d`, pushed):
+  - Set `maxRetries: 1` in `logoutIfLoggedIn` (2 places) and `signUpViaHomepage` — `waitUntil: 'domcontentloaded'` is already fast/stable
+  - Add `.first()` to button locator in `test-repost-group-change.spec.js`
+- **Changes**:
+  - `iznik-nuxt3/tests/e2e/utils/user.js`: 3 gotoAndVerify calls now use `maxRetries: 1`
+  - `iznik-nuxt3/tests/e2e/test-repost-group-change.spec.js`: Added `.first()` to button selector
+- **Status**: Pushed to PR branch, awaiting CI job to validate

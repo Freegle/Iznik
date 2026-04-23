@@ -157,19 +157,15 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     await clearSessionData(page)
 
     if (navigateToHome) {
-      // Use page.goto directly (not gotoAndVerify) with a capped timeout so
-      // cleanup never hangs for the full 202500ms navigation.initial when V8
-      // is slow to compile the homepage bundle under parallel CI load.
-      // domcontentloaded is enough — we just need a clean unauthenticated page.
-      // Swallow timeout errors: session data is already cleared, so landing on
-      // '/' is best-effort. gotoAndVerify's throw path was causing the entire
-      // test to hit the 20-minute timeout via cascading retries in the catch.
-      await page
-        .goto('/', {
-          timeout: timeouts.navigation.default,
-          waitUntil: 'domcontentloaded',
-        })
-        .catch((e) => console.log('Cleanup navigation to / failed:', e.message))
+      // Use domcontentloaded instead of the default 'load' event: the post-logout
+      // cleanup only needs to land on a clean page, and waiting for 'load' blocks
+      // on third-party resources (Google FedCM/GSI) that sometimes never resolve
+      // in CI, exhausting the navigation timeout and the whole test timeout.
+      await page.gotoAndVerify('/', {
+        timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
+        maxRetries: 1,
+      })
       console.log('Navigated to homepage')
     }
 
@@ -186,12 +182,11 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     // Fall back to clearing cookies/storage
     await clearSessionData(page)
     if (navigateToHome) {
-      await page
-        .goto('/', {
-          timeout: timeouts.navigation.default,
-          waitUntil: 'domcontentloaded',
-        })
-        .catch(() => {})
+      await page.gotoAndVerify('/', {
+        timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
+        maxRetries: 1,
+      })
     }
     return page
   }
@@ -320,13 +315,17 @@ async function signUpViaHomepage(
   // A fresh page load re-hydrates from the now-empty localStorage so the login
   // modal opens in signup mode rather than login mode.
   //
-  // Use page.goto directly with navigation.default (not navigation.initial)
-  // to avoid the 202500ms hang seen in CI when V8 lazy-parse stalls on the
-  // homepage bundle (jobs 5179, 5575). waitUntil 'domcontentloaded' means we
-  // don't wait for Google GSI/FedCM which sometimes never fires 'load' in CI.
-  await page.goto('/', {
-    timeout: timeouts.navigation.default,
+  // waitUntil 'domcontentloaded' rather than the gotoAndVerify default of
+  // 'load': the homepage's Google GSI/FedCM scripts sometimes never fire the
+  // `load` event in CI, so each 202.5s nav attempt × 3 retries exhausts the
+  // 10m test budget. The sign-in button is in SSR-rendered HTML and
+  // waitForEnabledSignInButton polls for hydration separately, so we don't
+  // need `load`. Same reasoning as logoutIfLoggedIn above.
+  // Use maxRetries: 1 to prevent up to 3 retries × 202s timeout = ~10m per call.
+  await page.gotoAndVerify('/', {
+    timeout: timeouts.navigation.initial,
     waitUntil: 'domcontentloaded',
+    maxRetries: 1,
   })
 
   // Wait for page to be fully loaded with JavaScript
@@ -1395,6 +1394,25 @@ async function loginViaModTools(page, email, password = 'freegle') {
   // Click the Log in button (never Join Freegle!)
   await loginButton.first().click()
   console.log('Clicked Log in button')
+
+  // Check for error messages before waiting for modal to close
+  // Some errors (like "We don't know that email address") keep the modal visible
+  try {
+    const errorSelector = '.alert-danger, .text-danger, .invalid-feedback'
+    const errorElement = page.locator(errorSelector)
+
+    if (
+      await errorElement
+        .isVisible({ timeout: timeouts.ui.appearance / 2 })
+        .catch(() => false)
+    ) {
+      const errorText = await errorElement.textContent()
+      console.error(`ModTools login failed with error: ${errorText}`)
+      return false
+    }
+  } catch (e) {
+    // Continue if error check fails - modal might close successfully
+  }
 
   // Wait for the modal to close (v-if="!loggedIn" removes it from DOM)
   await loginModal.waitFor({

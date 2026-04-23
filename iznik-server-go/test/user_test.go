@@ -3571,3 +3571,169 @@ func TestGetUserFetchMT_ModSeesEmailsForBannedUser(t *testing.T) {
 	assert.NotNil(t, u.Emails, "Mod should see emails for banned user")
 	assert.Greater(t, len(u.Emails), 0, "Should have at least one email")
 }
+
+// TestPatchUserTrustlevelSelfDeclined verifies that a regular user can
+// self-set trustlevel to 'Declined' — this is what the microvolunteering
+// "Decline" button does. The V2 handler previously silently dropped
+// trustlevel because it was not a field on UserPatchRequest.
+func TestPatchUserTrustlevelSelfDeclined(t *testing.T) {
+	prefix := uniquePrefix("patchtrustdecl")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Confirm baseline: trustlevel starts NULL.
+	var before *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", userID).Scan(&before)
+	assert.Nil(t, before, "trustlevel should start NULL")
+
+	payload := map[string]interface{}{
+		"id":         userID,
+		"trustlevel": "Declined",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var after *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", userID).Scan(&after)
+	require.NotNil(t, after, "trustlevel should be set after PATCH")
+	assert.Equal(t, "Declined", *after, "trustlevel must be persisted as Declined")
+}
+
+// TestPatchUserTrustlevelSelfBasic verifies that a regular user can
+// self-set trustlevel to 'Basic' — V1 also permits this.
+func TestPatchUserTrustlevelSelfBasic(t *testing.T) {
+	prefix := uniquePrefix("patchtrustbasic")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	payload := map[string]interface{}{
+		"id":         userID,
+		"trustlevel": "Basic",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var after *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", userID).Scan(&after)
+	require.NotNil(t, after)
+	assert.Equal(t, "Basic", *after)
+}
+
+// TestPatchUserTrustlevelSelfEmpty verifies that a regular user can clear
+// their trustlevel by sending an empty string — matches V1 behaviour
+// (user.php:218-220 sets NULL when trustlevel is falsy).
+func TestPatchUserTrustlevelSelfEmpty(t *testing.T) {
+	prefix := uniquePrefix("patchtrustclear")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Seed with Declined first.
+	db.Exec("UPDATE users SET trustlevel = 'Declined' WHERE id = ?", userID)
+
+	payload := map[string]interface{}{
+		"id":         userID,
+		"trustlevel": "",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var after *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", userID).Scan(&after)
+	assert.Nil(t, after, "trustlevel should be NULL after clearing")
+}
+
+// TestPatchUserTrustlevelSelfForbiddenElevated verifies that a regular user
+// CANNOT self-set trustlevel to 'Advanced' or 'Moderate' — only moderators
+// can set elevated trust levels (V1 user.php:205-213).
+func TestPatchUserTrustlevelSelfForbiddenElevated(t *testing.T) {
+	prefix := uniquePrefix("patchtrustelev")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	for _, level := range []string{"Advanced", "Moderate"} {
+		payload := map[string]interface{}{
+			"id":         userID,
+			"trustlevel": level,
+		}
+		s, _ := json.Marshal(payload)
+		request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+		request.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(request)
+		assert.NoError(t, err)
+		// V1 returns ret=2 "Permission denied"; V2 uses HTTP 403.
+		assert.Equal(t, fiber.StatusForbidden, resp.StatusCode, "regular user must not self-set %s", level)
+
+		var after *string
+		db.Raw("SELECT trustlevel FROM users WHERE id = ?", userID).Scan(&after)
+		assert.Nil(t, after, "trustlevel must NOT be updated to %s by non-mod", level)
+	}
+}
+
+// TestPatchUserTrustlevelOtherUserForbidden verifies that a regular user
+// cannot set another user's trustlevel — V1 only permits this for
+// moderators (user.php:205-207).
+func TestPatchUserTrustlevelOtherUserForbidden(t *testing.T) {
+	prefix := uniquePrefix("patchtrustother")
+	db := database.DBConn
+	callerID := CreateTestUser(t, prefix+"_caller", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	_, callerToken := CreateTestSession(t, callerID)
+
+	payload := map[string]interface{}{
+		"id":         targetID,
+		"trustlevel": "Declined",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+callerToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+
+	// Target's trustlevel must remain unchanged.
+	var after *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", targetID).Scan(&after)
+	assert.Nil(t, after, "regular user must not change another user's trustlevel")
+}
+
+// TestPatchUserTrustlevelModOnOther verifies that a moderator CAN set
+// another user's trustlevel to any value — matches V1 user.php:205-207.
+func TestPatchUserTrustlevelModOnOther(t *testing.T) {
+	prefix := uniquePrefix("patchtrustmod")
+	db := database.DBConn
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	_, modToken := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{
+		"id":         targetID,
+		"trustlevel": "Advanced",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var after *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", targetID).Scan(&after)
+	require.NotNil(t, after)
+	assert.Equal(t, "Advanced", *after, "moderator should be able to set elevated trustlevel")
+}

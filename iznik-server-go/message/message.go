@@ -1319,22 +1319,6 @@ func constructLocationString(db *gorm.DB, msgid uint64) string {
 		return ""
 	}
 
-	// Look up group settings for includearea/includepc (default both true).
-	groupid := getPrimaryGroupForMessage(db, msgid)
-	includeArea := true
-	includePC := true
-	if groupid > 0 {
-		var iaVal, ipVal *int
-		db.Raw("SELECT CAST(JSON_EXTRACT(settings, '$.includearea') AS UNSIGNED) FROM `groups` WHERE id = ?", groupid).Scan(&iaVal)
-		db.Raw("SELECT CAST(JSON_EXTRACT(settings, '$.includepc') AS UNSIGNED) FROM `groups` WHERE id = ?", groupid).Scan(&ipVal)
-		if iaVal != nil {
-			includeArea = *iaVal != 0
-		}
-		if ipVal != nil {
-			includePC = *ipVal != 0
-		}
-	}
-
 	if loc.Type == "Postcode" && loc.Areaid > 0 {
 		// Get the area name.
 		var areaName string
@@ -1346,13 +1330,7 @@ func constructLocationString(db *gorm.DB, msgid uint64) string {
 			vaguePC = vaguePC[:idx]
 		}
 
-		if includeArea && includePC {
-			return areaName + " " + vaguePC
-		} else if includePC {
-			return vaguePC
-		} else {
-			return areaName
-		}
+		return areaName + " " + vaguePC
 	}
 
 	// Not a postcode with area — use the location name as-is,
