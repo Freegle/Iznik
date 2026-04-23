@@ -174,22 +174,28 @@ describe('logs store', () => {
   })
 
   it('dedupes logs when sequential fetch returns overlapping rows', async () => {
+    // Reproduces pagination with DESC-ordered logs from Go API.
+    // The API query is: SELECT ... WHERE logs.id < context ORDER BY logs.id DESC
+    // So pagination moves backwards through log IDs (newest → oldest).
     const store = useLogsStore()
     store.init({})
+    // First fetch: newest logs (e.g., IDs 100, 99)
     mockLogsFetch.mockResolvedValueOnce({
-      logs: [{ id: 1 }, { id: 2 }],
-      context: { id: 2 },
+      logs: [{ id: 100 }, { id: 99 }],
+      context: { id: 99 }, // context = oldest in this page, used for next fetch's WHERE id < 99
     })
+    // Second fetch with context=99: gets id < 99, so returns [98, 97]
     mockLogsFetch.mockResolvedValueOnce({
-      logs: [{ id: 2 }, { id: 3 }],
-      context: { id: 3 },
+      logs: [{ id: 98 }, { id: 97 }],
+      context: { id: 97 },
     })
 
     await store.fetch({})
     await store.fetch({})
 
-    expect(store.list).toHaveLength(3)
-    expect(store.list.map((l) => l.id)).toEqual([1, 2, 3])
+    expect(store.list).toHaveLength(4)
+    // List builds chronologically: [100, 99] then append [98, 97] = [100, 99, 98, 97]
+    expect(store.list.map((l) => l.id)).toEqual([100, 99, 98, 97])
   })
 
   it('setParams stores params', () => {

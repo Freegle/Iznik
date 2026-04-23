@@ -976,6 +976,45 @@ func TestPostMessageReject(t *testing.T) {
 	// Push notifications are now queued by the batch processor, not synchronously by the Go API.
 }
 
+func TestPostMessageRejectAfterMemberDeletes(t *testing.T) {
+	prefix := uniquePrefix("msgmod_rej_del")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a pending message
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	// Simulate member deleting their own message (via DELETE /message/:id)
+	// This sets messages.deleted = NOW() but does NOT change messages_groups
+	db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", msgID)
+
+	// Now mod should still be able to reject the message, even though the poster deleted it
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"subject": "Rejection reason",
+		"body":    "Please fix your post",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err, "Request should not error")
+	assert.Equal(t, 200, resp.StatusCode, "Mod should be able to reject message even after member deletes it (messages.deleted IS NOT NULL)")
+
+	// Verify the message was moved to Rejected collection
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	assert.Equal(t, "Rejected", collection, "Message should be in Rejected collection after mod rejects")
+}
+
 // --- Test: Delete (mod action) ---
 
 func TestPostMessageDelete(t *testing.T) {
