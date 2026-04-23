@@ -56,6 +56,7 @@
 import SupportLink from '~/components/SupportLink'
 import ExternalLink from '~/components/ExternalLink'
 import { useError } from '#imports'
+import { onMounted } from 'vue'
 
 const error = useError()
 const maintenance = error?.value?.message === 'Maintenance error'
@@ -70,4 +71,36 @@ if (importError) {
   console.log('Import of module error - reload')
   window.location.reload()
 }
+
+onMounted(async () => {
+  // Report to Sentry whenever error.vue mounts. This closes the logging gap
+  // for SSR-originated errors (which don't flow through Vue's errorHandler
+  // or unhandledrejection, so our other client hooks miss them) and also
+  // catches any client-side error that bubbles past those hooks into Nuxt's
+  // own error boundary. Wrapped so a logging failure never compounds the
+  // original error.
+  try {
+    if (!error?.value || maintenance || importError) return
+    const Sentry = await import('@sentry/browser')
+    const e = error.value
+    const synth = new Error(e.message || 'Unknown error')
+    if (e.data?.stack) {
+      // Stack set by server/plugins/log-ssr-errors.js for SSR errors;
+      // preserved through Nuxt's error serialization via error.data.
+      synth.stack = e.data.stack
+    }
+    Sentry.withScope((scope) => {
+      scope.setTag('source', 'error-page-mount')
+      scope.setTag('statusCode', String(e.statusCode ?? ''))
+      scope.setExtra('errorData', e.data)
+      scope.setExtra(
+        'url',
+        window.location?.pathname + (window.location?.search || '')
+      )
+      Sentry.captureException(synth)
+    })
+  } catch (_) {
+    // never let logging itself throw
+  }
+})
 </script>

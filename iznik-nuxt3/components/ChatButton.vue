@@ -5,7 +5,7 @@
         :size="size"
         :variant="variant"
         :class="btnClass + ' d-none d-sm-inline'"
-        @click="gotoChat(true)"
+        @click="handleButtonClick"
       >
         <v-icon v-if="showIcon" icon="comments" />
         <span v-if="title" :class="titleClass">
@@ -16,7 +16,7 @@
         :size="size"
         :variant="variant"
         :class="btnClass + ' d-inline-block d-sm-none'"
-        @click="gotoChat(false)"
+        @click="handleButtonClick"
       >
         <v-icon v-if="showIcon" icon="comments" />
         <span v-if="title" :class="titleClass">
@@ -91,11 +91,19 @@ const router = useRouter()
 // Use me and myid computed properties from useMe composable for consistency
 const { me, myid } = useMe()
 
+const handleButtonClick = async (event) => {
+  // Support Control+click, Cmd+click, and middle-click to open in new tab
+  // Right-click is handled by browser context menu automatically
+  const openInNewTab =
+    (event && (event.ctrlKey || event.metaKey || event.button === 1)) || false
+  await openChat(null, null, null, openInNewTab)
+}
+
 const gotoChat = () => {
   openChat(null, null, null)
 }
 
-const openChat = async (event, firstmessage, firstmsgid) => {
+const openChat = async (event, firstmessage, firstmsgid, openInNewTab) => {
   emit('click')
   console.log(
     'Open chat',
@@ -111,7 +119,11 @@ const openChat = async (event, firstmessage, firstmsgid) => {
     const chatuserid = miscStore.modtools ? props.userid : 0
     const chatid = await chatStore.openChatToMods(props.groupid, chatuserid)
 
-    router.push('/chats/' + chatid)
+    if (openInNewTab && typeof window !== 'undefined' && window.open) {
+      window.open(`/chats/${chatid}`, '_blank')
+    } else {
+      router.push('/chats/' + chatid)
+    }
   } else if (props.userid > 0) {
     let chatid = null
     try {
@@ -166,15 +178,19 @@ const openChat = async (event, firstmessage, firstmsgid) => {
 
       // We may be called from within a profile modal. We want to skip the navigation guard which would otherwise
       // close the modal.
-      router.push({
-        name: 'chats-id',
-        query: {
-          noguard: true,
-        },
-        params: {
-          id: chatid,
-        },
-      })
+      if (openInNewTab) {
+        window.open(`/chats/${chatid}`, '_blank')
+      } else {
+        router.push({
+          name: 'chats-id',
+          query: {
+            noguard: true,
+          },
+          params: {
+            id: chatid,
+          },
+        })
+      }
     } else {
       // chatid is null/undefined - log this as it means openChatToUser failed silently
       action('chat_open_no_chatid', {
