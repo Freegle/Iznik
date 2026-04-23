@@ -36,9 +36,11 @@ test.describe('Repost Group Change', () => {
     // Step 3: Wait for the specific rejected message card with "Edit & Resend".
     // Target by data-message-id to avoid picking up stale rejected messages
     // from previous test runs on the persistent self-hosted runner.
-    const editResendBtn = page.locator(
-      `[data-message-id="${testEnv.rejected.offer}"] button:has-text("Edit & Resend")`
-    )
+    const editResendBtn = page
+      .locator(
+        `[data-message-id="${testEnv.rejected.offer}"] button:has-text("Edit & Resend")`
+      )
+      .first()
     await expect(editResendBtn).toBeVisible({ timeout: timeouts.ui.appearance })
     console.log('Found rejected message with Edit & Resend button')
     await editResendBtn.click()
