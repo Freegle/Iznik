@@ -157,15 +157,19 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     await clearSessionData(page)
 
     if (navigateToHome) {
-      // Use domcontentloaded instead of the default 'load' event: the post-logout
-      // cleanup only needs to land on a clean page, and waiting for 'load' blocks
-      // on third-party resources (Google FedCM/GSI) that sometimes never resolve
-      // in CI, exhausting the navigation timeout and the whole test timeout.
-      await page.gotoAndVerify('/', {
-        timeout: timeouts.navigation.initial,
-        waitUntil: 'domcontentloaded',
-        maxRetries: 1,
-      })
+      // Use page.goto directly (not gotoAndVerify) with a capped timeout so
+      // cleanup never hangs for the full 202500ms navigation.initial when V8
+      // is slow to compile the homepage bundle under parallel CI load.
+      // domcontentloaded is enough — we just need a clean unauthenticated page.
+      // Swallow timeout errors: session data is already cleared, so landing on
+      // '/' is best-effort. gotoAndVerify's throw path was causing the entire
+      // test to hit the 20-minute timeout via cascading retries in the catch.
+      await page
+        .goto('/', {
+          timeout: timeouts.navigation.default,
+          waitUntil: 'domcontentloaded',
+        })
+        .catch((e) => console.log('Cleanup navigation to / failed:', e.message))
       console.log('Navigated to homepage')
     }
 
@@ -182,11 +186,12 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     // Fall back to clearing cookies/storage
     await clearSessionData(page)
     if (navigateToHome) {
-      await page.gotoAndVerify('/', {
-        timeout: timeouts.navigation.initial,
-        waitUntil: 'domcontentloaded',
-        maxRetries: 1,
-      })
+      await page
+        .goto('/', {
+          timeout: timeouts.navigation.default,
+          waitUntil: 'domcontentloaded',
+        })
+        .catch(() => {})
     }
     return page
   }
@@ -315,16 +320,13 @@ async function signUpViaHomepage(
   // A fresh page load re-hydrates from the now-empty localStorage so the login
   // modal opens in signup mode rather than login mode.
   //
-  // waitUntil 'domcontentloaded' rather than the gotoAndVerify default of
-  // 'load': the homepage's Google GSI/FedCM scripts sometimes never fire the
-  // `load` event in CI, so each 202.5s nav attempt × 3 retries exhausts the
-  // 10m test budget. The sign-in button is in SSR-rendered HTML and
-  // waitForEnabledSignInButton polls for hydration separately, so we don't
-  // need `load`. Same reasoning as logoutIfLoggedIn above.
-  await page.gotoAndVerify('/', {
-    timeout: timeouts.navigation.initial,
+  // Use page.goto directly with navigation.default (not navigation.initial)
+  // to avoid the 202500ms hang seen in CI when V8 lazy-parse stalls on the
+  // homepage bundle (jobs 5179, 5575). waitUntil 'domcontentloaded' means we
+  // don't wait for Google GSI/FedCM which sometimes never fires 'load' in CI.
+  await page.goto('/', {
+    timeout: timeouts.navigation.default,
     waitUntil: 'domcontentloaded',
-    maxRetries: 1,
   })
 
   // Wait for page to be fully loaded with JavaScript
