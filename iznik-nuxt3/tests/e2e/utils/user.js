@@ -148,6 +148,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       await page.gotoAndVerify('/', {
         timeout: timeouts.navigation.initial,
         waitUntil: 'domcontentloaded',
+        maxRetries: 1,
       })
       console.log('Navigated to homepage')
     }
@@ -168,6 +169,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       await page.gotoAndVerify('/', {
         timeout: timeouts.navigation.initial,
         waitUntil: 'domcontentloaded',
+        maxRetries: 1,
       })
     }
     return page
@@ -306,6 +308,7 @@ async function signUpViaHomepage(
   await page.gotoAndVerify('/', {
     timeout: timeouts.navigation.initial,
     waitUntil: 'domcontentloaded',
+    maxRetries: 1,
   })
 
   // Wait for page to be fully loaded with JavaScript
