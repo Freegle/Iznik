@@ -325,11 +325,15 @@ class PostcodeRemapServiceTest extends TestCase
             );
         }
 
+        // Create a real group and user to satisfy FK constraints on locations_excluded.
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser();
+
         // Now mark the first area as excluded.
         DB::table('locations_excluded')->insert([
             'locationid' => $excludedId,
-            'groupid' => 1,
-            'userid' => 1,
+            'groupid' => $group->id,
+            'userid' => $user->id,
         ]);
 
         try {
@@ -406,10 +410,14 @@ class PostcodeRemapServiceTest extends TestCase
             [$postcodeId, 'POINT(-1.44 53.35)', $srid]
         );
 
+        // Create a real group and user to satisfy FK constraints on locations_excluded.
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser();
+
         DB::table('locations_excluded')->insert([
             'locationid' => $excludedId,
-            'groupid' => 1,
-            'userid' => 1,
+            'groupid' => $group->id,
+            'userid' => $user->id,
         ]);
 
         // Seed PG with only the replacement area (excluded area is filtered out by sync).
