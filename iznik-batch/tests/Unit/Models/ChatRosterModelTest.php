@@ -69,6 +69,7 @@ class ChatRosterModelTest extends TestCase
     {
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
+        $user3 = $this->createTestUser();
 
         $room = ChatRoom::create([
             'chattype' => ChatRoom::TYPE_USER2USER,
@@ -91,10 +92,19 @@ class ChatRosterModelTest extends TestCase
             'date' => now(),
         ]);
 
+        // V1 PHP also filters Closed — verify our scope matches.
+        $closed = ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $user3->id,
+            'status' => ChatRoster::STATUS_CLOSED,
+            'date' => now(),
+        ]);
+
         $results = ChatRoster::notBlocked()->get();
 
         $this->assertTrue($results->contains('id', $online->id));
         $this->assertFalse($results->contains('id', $blocked->id));
+        $this->assertFalse($results->contains('id', $closed->id), 'Closed roster entries should be excluded by notBlocked scope');
     }
 
     public function test_chat_room_relationship(): void

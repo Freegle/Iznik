@@ -44,6 +44,7 @@ func GetLogs(c *fiber.Ctx) error {
 	logsubtype := c.Query("logsubtype", "")
 	dateStr := c.Query("date", "")
 	search := c.Query("search", "")
+	modmailsonly := c.Query("modmailsonly", "") == "true"
 	limit, _ := strconv.Atoi(c.Query("limit", "20"))
 	contextID, _ := strconv.ParseUint(c.Query("context", "0"), 10, 64)
 
@@ -150,6 +151,14 @@ func GetLogs(c *fiber.Ctx) error {
 		for _, s := range subtypes {
 			args = append(args, s)
 		}
+	}
+
+	// Apply modmailsonly filter if requested.
+	// V1 filters to: Message (Rejected, Deleted, Replied) and User (Mailed, Rejected, Deleted).
+	if modmailsonly {
+		where = append(where, "((logs.type = ? AND logs.subtype IN (?, ?, ?)) OR (logs.type = ? AND logs.subtype IN (?, ?, ?)))")
+		args = append(args, log.LOG_TYPE_MESSAGE, log.LOG_SUBTYPE_REJECTED, log.LOG_SUBTYPE_DELETED, log.LOG_SUBTYPE_REPLIED,
+			log.LOG_TYPE_USER, log.LOG_SUBTYPE_MAILED, log.LOG_SUBTYPE_REJECTED, log.LOG_SUBTYPE_DELETED)
 	}
 
 	if dateStr != "" {

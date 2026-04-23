@@ -50,7 +50,7 @@ test.describe('Reply Flow - State Machine Logging', () => {
     // Sign up (creates user and logs in), then reply
     await logoutIfLoggedIn(page)
     await signUpViaHomepage(page, testEmail)
-    await page.gotoAndVerify(`/message/${result.id}`)
+    await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
     await clickReplyButton(page)
 
     await fillReplyForm(page, {

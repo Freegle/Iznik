@@ -165,26 +165,46 @@ test.describe('ModTools Spammer List', () => {
     page,
     testEnv,
   }) => {
-    // This test verifies that after the previous test held an entry, the spammer
-    // store correctly propagates heldby into the member object so the template
+    // This test verifies that after an entry is held, the spammer store
+    // correctly propagates heldby into the member object so the template
     // hides the Hold/Confirm/Reject buttons (v-if="!member.heldby").
     //
     // Bug: addAll() was not including item.heldby in the member object,
     // so member.heldby was always undefined and the Hold button always showed.
     //
-    // NOTE: This test does NOT hold any entries itself — it verifies the state
-    // left by the previous test. This leaves one entry unheld for the Confirm test.
+    // Per test setup rule: this test sets up its own held entry if needed.
+    // If no entries are already held, we hold one explicitly so we can verify
+    // the heldby state is reflected. This leaves at least one unheld entry
+    // for the Confirm test.
 
     await loginViaModTools(page, testEnv.mod.email)
     await goToSpammersPage(page)
 
-    const totalCards = await page.locator('.member-card').count()
-    const holdBtns = await page
+    let totalCards = await page.locator('.member-card').count()
+    let holdBtns = await page
       .locator('.member-card button:has-text("Hold")')
       .count()
 
-    // After the previous test held at least one entry, there should be
-    // fewer Hold buttons than member cards.
+    // If all entries are unheld (holdBtns == totalCards), hold one to establish
+    // the test condition. Otherwise, we verify the state left by a previous test.
+    if (holdBtns === totalCards) {
+      const holdBtn = page.locator('.member-card button:has-text("Hold")').first()
+      await expect(holdBtn).toBeVisible({ timeout: timeouts.ui.appearance })
+      await holdBtn.click()
+
+      // Wait for the entry to become held (Release button appears, replacing Hold).
+      await expect(
+        page.locator('.member-card button:has-text("Release")').first()
+      ).toBeVisible({ timeout: timeouts.ui.appearance })
+
+      totalCards = await page.locator('.member-card').count()
+      holdBtns = await page
+        .locator('.member-card button:has-text("Hold")')
+        .count()
+    }
+
+    // After holding at least one entry, there should be fewer Hold buttons
+    // than member cards (some entries have heldby set, hiding their buttons).
     expect(holdBtns).toBeLessThan(totalCards)
   })
 

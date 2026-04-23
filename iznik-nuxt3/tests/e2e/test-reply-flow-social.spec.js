@@ -59,7 +59,7 @@ test.describe('Reply Flow - Social Login Simulation', () => {
 
     // Navigate to message as logged-out user
     await logoutIfLoggedIn(page)
-    await page.gotoAndVerify(`/message/${result.id}`)
+    await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
     await clickReplyButton(page)
 
     // Start typing reply

@@ -238,9 +238,14 @@ commands:
       - run:
           name: Build containers
           command: |
-            # Pre-pull base image once (avoids multiple registry checks during parallel builds)
-            echo "Pre-pulling base image..."
-            docker pull ghcr.io/freegle/freegle-base:latest
+            # Pre-pull base image once (avoids multiple registry checks during parallel builds).
+            # Wrapped in a 3-minute timeout: GHCR can stall indefinitely on slow connections,
+            # leaving the build hanging. If the pull times out we continue — Docker will use
+            # whatever is in the local cache, and the build itself will re-attempt the pull
+            # with its own retry logic.
+            echo "Pre-pulling base image (timeout 180s)..."
+            timeout 180 docker pull ghcr.io/freegle/freegle-base:latest \
+              || echo "⚠️  Pre-pull timed out or failed — continuing with cached layers"
 
             # Build only containers needed for CI tests (skip dev containers)
             # This saves ~2-3 minutes by not building dev-local, modtools-dev-local, ai-support-helper
@@ -703,6 +708,9 @@ commands:
               if command -v gcov2lcov > /dev/null; then
                 cd iznik-server-go
                 if gcov2lcov -infile=coverage.out -outfile=coverage.lcov 2>&1 && [ -s coverage.lcov ]; then
+                  # Adjust file paths from /app/ to iznik-server-go/ for Coveralls
+                  sed -i 's|^SF:/app/|SF:iznik-server-go/|' coverage.lcov
+
                   # Copy lcov to original checkout for coveralls (needs .git)
                   if [ -d ~/project/.git ]; then
                     cp coverage.lcov ~/project/
@@ -2740,6 +2748,31 @@ jobs:
           name: Make gradlew executable
           command: chmod +x android/gradlew
       - run:
+          name: Configure Gradle Plugin Portal for all subprojects
+          command: |
+            mkdir -p ~/.gradle/init.d
+            cat > ~/.gradle/init.d/plugin-portal.gradle \<<'INITSCRIPT'
+            allprojects {
+              buildscript {
+                repositories {
+                  maven { url "https://plugins.gradle.org/m2/" }
+                  google()
+                  mavenCentral()
+                }
+              }
+              repositories {
+                maven { url "https://plugins.gradle.org/m2/" }
+                google()
+                mavenCentral()
+              }
+            }
+            INITSCRIPT
+      - restore_cache:
+          keys:
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "package-lock.json" }}
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-
+            - gradle-deps-v1-
+      - run:
           name: Create Debug Keystore
           command: |
             mkdir -p ~/.android
@@ -2767,6 +2800,11 @@ jobs:
             echo ""
             echo "📋 APK Info:"
             ls -lh app/build/outputs/apk/debug/
+      - save_cache:
+          key: gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "package-lock.json" }}
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
       - store_artifacts:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           destination: freegle-debug.apk
@@ -3286,6 +3324,31 @@ jobs:
           name: Make gradlew executable
           command: chmod +x android/gradlew
       - run:
+          name: Configure Gradle Plugin Portal for all subprojects
+          command: |
+            mkdir -p ~/.gradle/init.d
+            cat > ~/.gradle/init.d/plugin-portal.gradle \<<'INITSCRIPT'
+            allprojects {
+              buildscript {
+                repositories {
+                  maven { url "https://plugins.gradle.org/m2/" }
+                  google()
+                  mavenCentral()
+                }
+              }
+              repositories {
+                maven { url "https://plugins.gradle.org/m2/" }
+                google()
+                mavenCentral()
+              }
+            }
+            INITSCRIPT
+      - restore_cache:
+          keys:
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "package-lock.json" }}
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-
+            - gradle-deps-v1-
+      - run:
           name: Create Debug Keystore
           command: |
             mkdir -p ~/.android
@@ -3306,6 +3369,11 @@ jobs:
             cd android
             ./gradlew assembleDebug --stacktrace
             ls -lh app/build/outputs/apk/debug/
+      - save_cache:
+          key: gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "package-lock.json" }}
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
       - store_artifacts:
           path: android/app/build/outputs/apk/debug/app-debug.apk
           destination: freegle-dev.apk

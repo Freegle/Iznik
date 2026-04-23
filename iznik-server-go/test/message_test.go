@@ -976,6 +976,45 @@ func TestPostMessageReject(t *testing.T) {
 	// Push notifications are now queued by the batch processor, not synchronously by the Go API.
 }
 
+func TestPostMessageRejectAfterMemberDeletes(t *testing.T) {
+	prefix := uniquePrefix("msgmod_rej_del")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a pending message
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	// Simulate member deleting their own message (via DELETE /message/:id)
+	// This sets messages.deleted = NOW() but does NOT change messages_groups
+	db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", msgID)
+
+	// Now mod should still be able to reject the message, even though the poster deleted it
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"subject": "Rejection reason",
+		"body":    "Please fix your post",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err, "Request should not error")
+	assert.Equal(t, 200, resp.StatusCode, "Mod should be able to reject message even after member deletes it (messages.deleted IS NOT NULL)")
+
+	// Verify the message was moved to Rejected collection
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	assert.Equal(t, "Rejected", collection, "Message should be in Rejected collection after mod rejects")
+}
+
 // --- Test: Delete (mod action) ---
 
 func TestPostMessageDelete(t *testing.T) {
@@ -6828,6 +6867,88 @@ func TestListMessagesMTMultiGroupNoDuplicates(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, count, "Multi-group message should appear exactly once in MT list")
+}
+
+// TestListMessagesMT_MultiGroupGlobalArrivalOrder verifies that when a mod
+// covers multiple groups and queries with groupid=0, results come back in
+// global arrival DESC order (not grouped by groupid), and that the
+// pagination context correctly returns the next page.  Regression test for
+// the UNION ALL rewrite that replaced `WHERE mg.groupid IN (list)`.
+func TestListMessagesMT_MultiGroupGlobalArrivalOrder(t *testing.T) {
+	prefix := uniquePrefix("listmt_globalorder")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Interleave arrival ages across the two groups so any per-group
+	// ordering in results is obvious.  ages are days ago (older = larger).
+	ages := []int{10, 8, 6, 4, 2}
+	groups := []uint64{groupA, groupB, groupA, groupB, groupA}
+	msgIDs := make([]uint64, len(ages))
+	for i := range msgIDs {
+		msgIDs[i] = CreateTestMessageWithArrival(t, posterID, groups[i],
+			fmt.Sprintf("%s item %d", prefix, i), 52.0, -1.0, ages[i])
+	}
+	defer func() {
+		for _, id := range msgIDs {
+			db.Exec("DELETE FROM messages_groups WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages WHERE id = ?", id)
+		}
+	}()
+
+	// Expected order newest -> oldest (ages ascending => reverse of creation).
+	expectedDesc := []uint64{msgIDs[4], msgIDs[3], msgIDs[2], msgIDs[1], msgIDs[0]}
+
+	// Page 1: limit 3 newest, spanning both groups.  fromuser filter keeps
+	// the assertion independent of unrelated messages in the shared DB.
+	page1URL := fmt.Sprintf("/api/modtools/messages?collection=Approved&fromuser=%d&limit=3&jwt=%s",
+		posterID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", page1URL, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body1 map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body1)
+	page1 := body1["messages"].([]interface{})
+	require.Equal(t, 3, len(page1), "First page should have 3 messages")
+
+	got1 := make([]uint64, len(page1))
+	for i, id := range page1 {
+		got1[i] = uint64(id.(float64))
+	}
+	assert.Equal(t, expectedDesc[:3], got1,
+		"First page must be in global arrival DESC order, not grouped by groupid")
+
+	// Page 2 via pagination context.
+	ctxObj, _ := body1["context"].(map[string]interface{})
+	require.NotNil(t, ctxObj, "Pagination context should be present when page is full")
+	ctxBytes, _ := json.Marshal(ctxObj)
+	page2URL := fmt.Sprintf("/api/modtools/messages?collection=Approved&fromuser=%d&limit=3&context=%s&jwt=%s",
+		posterID, url.QueryEscape(string(ctxBytes)), modToken)
+	resp2, err := getApp().Test(httptest.NewRequest("GET", page2URL, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var body2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&body2)
+	page2 := body2["messages"].([]interface{})
+	require.Equal(t, 2, len(page2), "Second page should have the remaining 2 messages")
+
+	got2 := make([]uint64, len(page2))
+	for i, id := range page2 {
+		got2[i] = uint64(id.(float64))
+	}
+	assert.Equal(t, expectedDesc[3:], got2,
+		"Second page must continue the global arrival DESC ordering")
 }
 
 func TestListMessagesGroupsIncludesHeldby(t *testing.T) {
