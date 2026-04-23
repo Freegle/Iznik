@@ -77,7 +77,7 @@
             :zoom="zoom"
             :min-zoom="5"
             :max-zoom="17"
-            :options="{ dragging: dragging, touchZoom: true }"
+            :options="mapOptions"
             :center="[53.945, -2.5209]"
             :use-global-leaflet="true"
             @update:bounds="boundsChanged"
@@ -278,6 +278,7 @@ import { nextTick } from 'vue'
 
 import 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import '~/assets/css/gesture-handling.css'
 import {
   LMap,
   LTileLayer,
@@ -293,6 +294,7 @@ import turfpolygon from 'turf-polygon'
 import turfintersect from 'turf-intersect'
 import ClusterMarker from '~/components/ClusterMarker'
 import { attribution, osmtile } from '~/composables/useMap'
+import { registerGestureHandling } from '~/composables/gestureHandling'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useLocationStore } from '~/stores/location'
 import { POSTCODE_REGEX } from '~/constants'
@@ -302,6 +304,9 @@ let Wkt = null
 if (process.client) {
   Wkt = await import('wicket')
   await import('wicket/wicket-leaflet')
+  if (window.L && !window.L.Map.prototype.gestureHandling) {
+    registerGestureHandling(window.L)
+  }
 }
 
 const AREA_FILL_COLOUR = 'darkgreen'
@@ -401,6 +406,15 @@ const mapHeight = computed(() => {
 
   return height
 })
+
+const mapOptions = computed(() => ({
+  zoomControl: true,
+  dragging: dragging.value,
+  touchZoom: true,
+  scrollWheelZoom: false,
+  bounceAtZoomLimits: true,
+  gestureHandling: true,
+}))
 
 const allgroups = computed(() => {
   let groups = Object.values(modGroupStore.allGroups)
@@ -662,6 +676,9 @@ function selectLocation(l) {
     mapobj._handlers.forEach(function (handler) {
       handler.disable()
     })
+    // gestureHandling's removeHooks re-enables dragging + scrollWheelZoom; force them off to keep the map locked.
+    mapobj.dragging.disable()
+    mapobj.scrollWheelZoom.disable()
   }
 }
 
