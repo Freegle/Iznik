@@ -238,9 +238,14 @@ commands:
       - run:
           name: Build containers
           command: |
-            # Pre-pull base image once (avoids multiple registry checks during parallel builds)
-            echo "Pre-pulling base image..."
-            docker pull ghcr.io/freegle/freegle-base:latest
+            # Pre-pull base image once (avoids multiple registry checks during parallel builds).
+            # Wrapped in a 3-minute timeout: GHCR can stall indefinitely on slow connections,
+            # leaving the build hanging. If the pull times out we continue — Docker will use
+            # whatever is in the local cache, and the build itself will re-attempt the pull
+            # with its own retry logic.
+            echo "Pre-pulling base image (timeout 180s)..."
+            timeout 180 docker pull ghcr.io/freegle/freegle-base:latest \
+              || echo "⚠️  Pre-pull timed out or failed — continuing with cached layers"
 
             # Build only containers needed for CI tests (skip dev containers)
             # This saves ~2-3 minutes by not building dev-local, modtools-dev-local, ai-support-helper
