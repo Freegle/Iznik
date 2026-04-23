@@ -60,6 +60,7 @@ test.describe('ModTools Edits Flow', () => {
     // (a) the message is Approved, and (b) the editor's posting status is Moderated.
     // Use Playwright's request API (not page.evaluate fetch) to avoid CORS issues.
     console.log('\n--- Step 1b: Approve message via API ---')
+
     // Login as mod to get JWT via V2 API
     const loginResp = await page.request.post(
       `${API_V2}/session`,

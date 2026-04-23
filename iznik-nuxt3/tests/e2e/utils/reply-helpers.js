@@ -116,7 +116,7 @@ async function navigateToMessageViaBrowse(
   console.log(
     `[Browse] Navigating to ${browsePath} to find message ${messageId}`
   )
-  await page.gotoAndVerify(browsePath, { timeout: timeouts.navigation.default })
+  await page.gotoAndVerify(browsePath, { timeout: timeouts.navigation.default, maxRetries: 1 })
 
   // Dismiss login modal if it appears (browse page shows signup modal for non-logged-in users)
   await dismissLoginModalIfPresent(page)
@@ -179,6 +179,7 @@ async function navigateToMessageViaExplore(page, groupName, itemText = null) {
   console.log(`[Explore] Navigating to /explore/${groupName}`)
   await page.gotoAndVerify(`/explore/${groupName}`, {
     timeout: timeouts.navigation.default,
+    maxRetries: 1,
   })
 
   // Dismiss login modal if it appears (explore page shows signup modal for non-logged-in users)

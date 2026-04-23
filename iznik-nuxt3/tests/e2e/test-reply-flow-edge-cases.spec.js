@@ -47,7 +47,7 @@ test.describe('Reply Flow - Edge Cases', () => {
 
       // Log out and navigate as new user
       await logoutIfLoggedIn(page)
-      await page.gotoAndVerify(`/message/${result.id}`)
+      await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
       await clickReplyButton(page)
 
       // Start typing a reply
@@ -115,7 +115,7 @@ test.describe('Reply Flow - Edge Cases', () => {
 
       // Log out and navigate as new user
       await logoutIfLoggedIn(page)
-      await page.gotoAndVerify(`/message/${result.id}`)
+      await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
       await clickReplyButton(page)
 
       // Start typing a reply
@@ -127,7 +127,7 @@ test.describe('Reply Flow - Edge Cases', () => {
       console.log('[Test] Started typing reply')
 
       // Navigate away
-      await page.gotoAndVerify('/browse')
+      await page.gotoAndVerify('/browse', { maxRetries: 1 })
       console.log('[Test] Navigated to browse page')
 
       // Go back
@@ -210,7 +210,7 @@ test.describe('Reply Flow - Edge Cases', () => {
 
       // Log out and navigate to first message
       await logoutIfLoggedIn(page)
-      await page.gotoAndVerify(`/message/${result1.id}`)
+      await page.gotoAndVerify(`/message/${result1.id}`, { maxRetries: 1 })
       await clickReplyButton(page)
 
       // Type reply for message 1
@@ -222,7 +222,7 @@ test.describe('Reply Flow - Edge Cases', () => {
       console.log('[Test] Typed reply for message 1')
 
       // Navigate to second message
-      await page.gotoAndVerify(`/message/${result2.id}`)
+      await page.gotoAndVerify(`/message/${result2.id}`, { maxRetries: 1 })
       await clickReplyButton(page)
 
       // Check that the reply form is empty (not showing message 1's text)
@@ -240,7 +240,7 @@ test.describe('Reply Flow - Edge Cases', () => {
       console.log('[Test] Message 2 correctly has empty/fresh reply form')
 
       // Navigate back to message 1
-      await page.gotoAndVerify(`/message/${result1.id}`)
+      await page.gotoAndVerify(`/message/${result1.id}`, { maxRetries: 1 })
       await clickReplyButton(page)
 
       // Check that the reply section is accessible
@@ -295,7 +295,7 @@ test.describe('Reply Flow - Edge Cases', () => {
       await signUpViaHomepage(page, getTestEmail('doubleclick'))
 
       // Navigate to message page
-      await page.gotoAndVerify(`/message/${result.id}`)
+      await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
       await clickReplyButton(page)
 
       // Fill reply
@@ -374,7 +374,7 @@ test.describe('Reply Flow - Edge Cases', () => {
 
       // Log out from poster and navigate to message
       await logoutIfLoggedIn(page)
-      await page.gotoAndVerify(`/message/${result.id}`)
+      await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
       await clickReplyButton(page)
 
       // Start typing reply (not logged in)
@@ -450,9 +450,6 @@ test.describe('Reply Flow - Edge Cases', () => {
         timeout: timeouts.navigation.default,
       })
       console.log('[Test] Login modal closed')
-
-      // Wait briefly for auth state to propagate (don't use networkidle due to background polling)
-      await page.waitForTimeout(2000)
 
       // Check that the reply section is accessible after login
       // Note: Reply text persistence across navbar login is not guaranteed

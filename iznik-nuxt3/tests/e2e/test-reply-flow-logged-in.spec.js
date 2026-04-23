@@ -52,7 +52,7 @@ test.describe('Reply Flow - Logged In User', () => {
     console.log('[Test] Logged in as existingTestEmail')
 
     // NOW navigate to message page (message will load with auth → has groups)
-    await page.gotoAndVerify(`/message/${result.id}`)
+    await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
     await waitForAuthHydration(page)
     console.log('[Test] Navigated to message page while logged in')
 
@@ -111,7 +111,7 @@ test.describe('Reply Flow - Logged In User', () => {
     // Navigate directly to the message page (while logged in)
     // Using direct navigation because newly posted messages may not appear
     // immediately in browse/explore due to caching/indexing delays
-    await page.gotoAndVerify(`/message/${result.id}`)
+    await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
     await waitForAuthHydration(page)
     console.log('[Test] Navigated to message page while logged in')
 
@@ -168,7 +168,7 @@ test.describe('Reply Flow - Logged In User', () => {
     // Navigate directly to the message page (while logged in)
     // Using direct navigation because newly posted messages may not appear
     // immediately in browse/explore due to caching/indexing delays
-    await page.gotoAndVerify(`/message/${result.id}`)
+    await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
     await waitForAuthHydration(page)
     console.log('[Test] Navigated to message page while logged in')
 
