@@ -710,6 +710,14 @@ func CreateLocation(c *fiber.Ctx) error {
 		id = uint64(lastID)
 	}
 
+	// Sync to PostgreSQL spatial index (required by PostcodeRemapService).
+	if id > 0 {
+		db.Exec(
+			fmt.Sprintf("REPLACE INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, %d))", utils.SRID),
+			id, req.Polygon,
+		)
+	}
+
 	// Queue postcode remapping for the new area.
 	if id > 0 {
 		go queue.QueueTask(queue.TaskRemapPostcodes, map[string]interface{}{
