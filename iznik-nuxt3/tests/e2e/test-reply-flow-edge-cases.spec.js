@@ -374,7 +374,7 @@ test.describe('Reply Flow - Edge Cases', () => {
 
       // Log out from poster and navigate to message
       await logoutIfLoggedIn(page)
-      await page.gotoAndVerify(`/message/${result.id}`)
+      await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
       await clickReplyButton(page)
 
       // Start typing reply (not logged in)
@@ -450,9 +450,6 @@ test.describe('Reply Flow - Edge Cases', () => {
         timeout: timeouts.navigation.default,
       })
       console.log('[Test] Login modal closed')
-
-      // Wait briefly for auth state to propagate (don't use networkidle due to background polling)
-      await page.waitForTimeout(2000)
 
       // Check that the reply section is accessible after login
       // Note: Reply text persistence across navbar login is not guaranteed
