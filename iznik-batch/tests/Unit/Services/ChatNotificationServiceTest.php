@@ -1595,4 +1595,90 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertEquals(1, $count, 'Should only notify the actual recipient, not the moderator');
     }
 
+    public function test_notify_by_email_excludes_closed_user2user(): void
+    {
+        // Bug: V1 PHP filters status = 'Closed' AND status = 'Blocked' before sending
+        // notifications. Laravel's notBlocked() scope only excluded 'Blocked', so users
+        // who closed a chat were still getting email notifications.
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $sender->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        // Recipient has closed the chat — should not receive notifications.
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $recipient->id,
+            'lastmsgemailed' => null,
+            'status' => ChatRoster::STATUS_CLOSED,
+        ]);
+
+        $this->createTestChatMessage($room, $sender, ['date' => now()->subMinutes(5)]);
+
+        $count = $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+
+        $this->assertEquals(0, $count, 'User who closed the chat should NOT receive email notifications');
+        Mail::assertNothingSent();
+    }
+
+    public function test_notify_by_email_excludes_closed_user2mod_mod(): void
+    {
+        // Bug: When a moderator closes a User2Mod chat, their chat_roster.status is set
+        // to 'Closed'. But getMembersToNotify() fetches mods from group memberships and
+        // then creates/fetches their roster without checking status — so Closed mods
+        // were still receiving notifications.
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $moderator = $this->createTestUser();
+        Membership::create([
+            'userid' => $moderator->id,
+            'groupid' => $group->id,
+            'role' => 'Moderator',
+            'added' => now(),
+        ]);
+
+        $room = ChatRoom::create([
+            'chattype' => ChatRoom::TYPE_USER2MOD,
+            'user1' => $member->id,
+            'groupid' => $group->id,
+            'created' => now(),
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $member->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        // Moderator has already closed the chat — should not be notified.
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $moderator->id,
+            'lastmsgemailed' => null,
+            'status' => ChatRoster::STATUS_CLOSED,
+        ]);
+
+        $this->createTestChatMessage($room, $member, ['date' => now()->subMinutes(5)]);
+
+        $count = $this->service->notifyByEmail(ChatRoom::TYPE_USER2MOD, $room->id);
+
+        $modRoster = ChatRoster::where('chatid', $room->id)->where('userid', $moderator->id)->first();
+        $this->assertNull(
+            $modRoster?->lastmsgemailed,
+            'Moderator who closed the chat should NOT be notified'
+        );
+        $this->assertEquals(0, $count, 'No notifications should be sent when only mod has closed the chat');
+        Mail::assertNothingSent();
+    }
+
 }
