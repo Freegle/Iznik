@@ -149,8 +149,14 @@ func TestCreateLocation(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID).Scan(&taskCount)
 	assert.Greater(t, taskCount, int64(0), "remap_postcodes task should be queued after location create")
 
+	// Verify locations_spatial was synced (critical for PostcodeRemapService to find new areas).
+	var spatialCount int64
+	db.Raw("SELECT COUNT(*) FROM locations_spatial WHERE locationid = ?", locID).Scan(&spatialCount)
+	assert.Equal(t, int64(1), spatialCount, "locations_spatial should have an entry after location create")
+
 	// Cleanup
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+	db.Exec("DELETE FROM locations_spatial WHERE locationid = ?", locID)
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
 }
 
