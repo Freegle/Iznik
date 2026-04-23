@@ -347,7 +347,10 @@ func ListMessages(c *fiber.Ctx) error {
 // the trailing LIMIT; they are replicated per branch.
 func buildMTUnionAllMsgIDQuery(branchSQL string, branchArgs []interface{}, groupIDs []uint64, limit int) (string, []interface{}) {
 	var sb strings.Builder
-	sb.WriteString("SELECT msgid FROM (")
+	// The outer GROUP BY deduplicates messages that appear in multiple queried
+	// groups (e.g. a cross-posted Pending message).  MAX(arrival) picks the
+	// most-recent arrival across all branches for ordering.
+	sb.WriteString("SELECT msgid FROM (SELECT msgid, MAX(arrival) AS arrival FROM (")
 
 	args := make([]interface{}, 0, (len(branchArgs)+1)*len(groupIDs)+1)
 	for i, gid := range groupIDs {
@@ -362,7 +365,7 @@ func buildMTUnionAllMsgIDQuery(branchSQL string, branchArgs []interface{}, group
 		args = append(args, limit)
 	}
 
-	sb.WriteString(") t ORDER BY arrival DESC, msgid DESC LIMIT ?")
+	sb.WriteString(") raw GROUP BY msgid) t ORDER BY arrival DESC, msgid DESC LIMIT ?")
 	args = append(args, limit)
 
 	return sb.String(), args
