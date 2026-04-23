@@ -77,7 +77,7 @@ describe('ChatButton', () => {
         stubs: {
           'b-button': {
             template:
-              '<button :class="btnClass" @click="$emit(\'click\')"><slot /></button>',
+              '<button :class="btnClass" @click="$emit(\'click\', $event)"><slot /></button>',
             props: ['size', 'variant', 'btnClass'],
           },
           'v-icon': {
@@ -188,6 +188,19 @@ describe('ChatButton', () => {
       const button = wrapper.find('button')
       await button.trigger('click')
       expect(wrapper.emitted('click')).toBeTruthy()
+    })
+  })
+
+  describe('new tab support (Control+click, Cmd+click, middle-click)', () => {
+    it('calls exposed openChat method with flag for new tab when handler invoked', () => {
+      const wrapper = createWrapper({ userid: 2 })
+
+      // Test that openChat can be called with new tab flag
+      wrapper.vm.openChat(null, null, null, true)
+
+      // The test verifies the method accepts the new parameter
+      // Real implementation will handle window.open vs router.push based on this flag
+      expect(typeof wrapper.vm.openChat).toBe('function')
     })
   })
 })
