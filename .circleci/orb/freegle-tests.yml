@@ -703,6 +703,9 @@ commands:
               if command -v gcov2lcov > /dev/null; then
                 cd iznik-server-go
                 if gcov2lcov -infile=coverage.out -outfile=coverage.lcov 2>&1 && [ -s coverage.lcov ]; then
+                  # Adjust file paths from /app/ to iznik-server-go/ for Coveralls
+                  sed -i 's|^SF:/app/|SF:iznik-server-go/|' coverage.lcov
+
                   # Copy lcov to original checkout for coveralls (needs .git)
                   if [ -d ~/project/.git ]; then
                     cp coverage.lcov ~/project/
