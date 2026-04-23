@@ -173,6 +173,87 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent']);
     }
 
+    public function test_deduplication_same_subject_different_body_not_deduped(): void
+    {
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        // Two messages with same subject but different body text.
+        $message1 = $this->createTestMessage($user, $group1, [
+            'subject' => 'OFFER: Garden tools (London)',
+            'textbody' => 'I have a spade and a fork available for collection.',
+        ]);
+        $message2 = $this->createTestMessage($user, $group2, [
+            'subject' => 'OFFER: Garden tools (London)',
+            'textbody' => 'Lawnmower available, needs collecting this weekend.',
+        ]);
+
+        $message1->groupid = $group1->id;
+        $message2->groupid = $group2->id;
+
+        $posts = collect([$message1, $message2]);
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        // Should NOT be deduplicated because bodies are different.
+        $this->assertCount(2, $deduplicated);
+    }
+
+    public function test_deduplication_same_subject_same_body_deduped(): void
+    {
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        $bodyText = 'I have a lovely sofa available for collection.';
+
+        // Two messages with same subject AND same body.
+        $message1 = $this->createTestMessage($user, $group1, [
+            'subject' => 'OFFER: Sofa (London)',
+            'textbody' => $bodyText,
+        ]);
+        $message2 = $this->createTestMessage($user, $group2, [
+            'subject' => 'OFFER: Sofa (London)',
+            'textbody' => $bodyText,
+        ]);
+
+        $message1->groupid = $group1->id;
+        $message2->groupid = $group2->id;
+
+        $posts = collect([$message1, $message2]);
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        // Should be deduplicated because both subject and body match.
+        $this->assertCount(1, $deduplicated);
+        $this->assertCount(2, $deduplicated->first()['postedToGroups']);
+    }
+
+    public function test_deduplication_null_body_treated_as_matching(): void
+    {
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        // Two messages with same subject and both null bodies.
+        $message1 = $this->createTestMessage($user, $group1, [
+            'subject' => 'OFFER: Table (London)',
+            'textbody' => null,
+        ]);
+        $message2 = $this->createTestMessage($user, $group2, [
+            'subject' => 'OFFER: Table (London)',
+            'textbody' => null,
+        ]);
+
+        $message1->groupid = $group1->id;
+        $message2->groupid = $group2->id;
+
+        $posts = collect([$message1, $message2]);
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        // Should be deduplicated - null bodies both normalize to ''.
+        $this->assertCount(1, $deduplicated);
+    }
+
     public function test_sponsors_are_included_and_deduplicated(): void
     {
         $poster = $this->createTestUser();
@@ -406,6 +487,7 @@ class UnifiedDigestServiceTest extends TestCase
         // Should be deduplicated - null bodies both normalize to ''.
         $this->assertCount(1, $deduplicated);
     }
+
 
     public function test_immediate_mode_requires_full_setting(): void
     {

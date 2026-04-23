@@ -218,8 +218,8 @@ class PostcodeRemapServiceTest extends TestCase
         // Now mark the first area as excluded.
         DB::table('locations_excluded')->insert([
             'locationid' => $excludedId,
-            'groupid' => $group->id,
-            'userid' => $user->id,
+            'groupid' => null,
+            'userid' => null,
         ]);
 
         try {
@@ -303,8 +303,8 @@ class PostcodeRemapServiceTest extends TestCase
 
         DB::table('locations_excluded')->insert([
             'locationid' => $excludedId,
-            'groupid' => $group->id,
-            'userid' => $user->id,
+            'groupid' => null,
+            'userid' => null,
         ]);
 
         // Seed PG with only the replacement area (excluded area is filtered out by sync).

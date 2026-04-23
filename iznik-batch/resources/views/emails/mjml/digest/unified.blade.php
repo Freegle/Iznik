@@ -128,7 +128,7 @@
             </mj-column>
         </mj-section>
 
-        @if($sponsors->isNotEmpty())
+        @if(isset($sponsors) && $sponsors->isNotEmpty())
         <mj-section background-color="#ffffff" padding="10px 20px">
             <mj-column>
                 <mj-divider border-color="#eeeeee" padding-bottom="5px" />
@@ -166,10 +166,10 @@
         @endforeach
         @endif
 
+        @include('emails.mjml.partials.footer', ['email' => $user->email_preferred, 'settingsUrl' => $settingsUrl])
+
         @if(isset($trackingPixelMjml))
         {!! $trackingPixelMjml !!}
         @endif
-
-        @include('emails.mjml.partials.footer', ['email' => $user->email_preferred, 'settingsUrl' => $settingsUrl])
     </mj-body>
 </mjml>

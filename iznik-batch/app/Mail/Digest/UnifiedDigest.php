@@ -87,6 +87,7 @@ class UnifiedDigest extends MjmlMailable
             'user' => $this->user,
             'posts' => $this->preparedPosts,
             'postCount' => $this->posts->count(),
+            'mode' => $this->mode,
             'sponsors' => $this->sponsors,
             'mode' => $this->mode,
             'settingsUrl' => $this->trackedUrl($this->userSite . '/settings', 'footer_settings', 'settings'),
