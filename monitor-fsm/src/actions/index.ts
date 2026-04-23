@@ -17,6 +17,8 @@ import {
   upsertDiscourseBug,
 } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
+import { getPhaseInfo } from '../phase.js'
+import { modelForAdversarialReview } from '../policy.js'
 
 const exec = promisify(execFile)
 
@@ -1198,6 +1200,99 @@ print('sent')
         return { _transition: 'FIX_SENTRY_ISSUE', reason: `${sentryIssues.length} unresolved Sentry issue(s)` }
       }
       return { _transition: 'COVERAGE_GATE', reason: 'no pending bug / sentry — advance to gate' }
+    },
+  },
+
+  {
+    name: 'adversarial_review_pr',
+    description: 'Review a PR using Opus model for correctness and unintended changes. Params: {prNumber, repo}. Returns {passed, issues: [{category, description, severity}], summary}.',
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        prNumber: { type: 'number', description: 'PR number to review' },
+        repo: { type: 'string', description: 'Repository in owner/name format', default: 'Freegle/Iznik' },
+      },
+      required: ['prNumber'],
+    },
+    handler: async (params, context) => {
+      const { prNumber, repo = 'Freegle/Iznik' } = params as any
+      try {
+        // Fetch PR diff
+        const { stdout: diff } = await exec('gh', [
+          'pr', 'diff', String(prNumber),
+          '--repo', repo,
+          '--unified=3',
+        ], { maxBuffer: 50 * 1024 * 1024, timeout: 30 * 1000 })
+
+        if (!diff || diff.trim().length === 0) {
+          return {
+            passed: false,
+            issues: [{ category: 'diff', description: 'PR diff is empty or not accessible', severity: 'error' }],
+            summary: 'Failed to fetch PR diff',
+          }
+        }
+
+        // Review with Opus
+        const phaseInfo = getPhaseInfo()
+        const reviewModel = modelForAdversarialReview(phaseInfo)
+
+        const prompt = `You are a code review expert. Review this PR diff for:
+1. Correctness - does the fix actually solve the problem?
+2. Unintended changes - are there any unnecessary or harmful changes?
+3. Test coverage - are there tests for the fix?
+4. Code quality - does it follow the codebase patterns?
+
+Return ONLY a JSON object with:
+{
+  "passed": boolean,
+  "blockers": [{"category": string, "description": string}],
+  "warnings": [{"category": string, "description": string}],
+  "summary": string
+}
+
+If blockers exist, passed = false. Warnings do not block but should be noted.
+
+DIFF:
+\`\`\`
+${diff.slice(0, 20000)}
+\`\`\`
+${diff.length > 20000 ? '\n(diff truncated for length)' : ''}`
+
+        const response = await (global as any).__ai_flower_adapter.query(
+          reviewModel,
+          [{ role: 'user', content: prompt }],
+          { max_tokens: 1000 }
+        )
+
+        let review: any
+        try {
+          const text = response.message?.content?.[0]?.text ?? ''
+          const jsonMatch = text.match(/\{[\s\S]*\}/m)
+          review = jsonMatch ? JSON.parse(jsonMatch[0]) : {}
+        } catch (e) {
+          dbg(`[adversarial-review] JSON parse error: ${e}`)
+          review = {}
+        }
+
+        const passed = review.passed !== false && (!Array.isArray(review.blockers) || review.blockers.length === 0)
+        const issues = [
+          ...(Array.isArray(review.blockers) ? review.blockers.map((b: any) => ({ ...b, severity: 'error' })) : []),
+          ...(Array.isArray(review.warnings) ? review.warnings.map((w: any) => ({ ...w, severity: 'warning' })) : []),
+        ]
+
+        return {
+          passed,
+          issues,
+          summary: review.summary ?? (passed ? 'PR passed review' : 'PR has issues'),
+        }
+      } catch (err: any) {
+        outWarn(`[adversarial-review] error: ${err.message}`)
+        return {
+          passed: false,
+          issues: [{ category: 'error', description: err.message, severity: 'error' }],
+          summary: 'Review failed',
+        }
+      }
     },
   },
 

@@ -115,10 +115,19 @@
         "delegate_to_coder"
       ]
     },
+    "ADVERSARIAL_REVIEW_PR": {
+      "description": "Review PR for correctness and unintended changes using Opus model before marking fix as complete.",
+      "nodeType": "agent",
+      "prompt": "A PR has just been created by delegate_to_coder. Call adversarial_review_pr with the PR number from context._action_delegate_to_coder.prNumber and repo: 'Freegle/Iznik'. This will review the diff with Opus for correctness, unintended changes, and test coverage.\n\nIf review result.passed === true: set contextUpdates.prReviewPassed = true and propose transition to VERIFY_DISCOURSE_BUG_FIX.\n\nIf review result.passed === false: the review found blockers that must be fixed. Set contextUpdates.prReviewFailed = { prNumber: <pr>, issues: result.issues, summary: result.summary } and propose transition to WORK_ROUTER (defer this bug and move to the next one).",
+      "readActions": [],
+      "writeActions": [
+        "adversarial_review_pr"
+      ]
+    },
     "VERIFY_DISCOURSE_BUG_FIX": {
       "description": "Single wrap-up: verify the PR, draft a Discourse reply, record the bug as fixed.",
       "nodeType": "agent",
-      "prompt": "delegate_to_coder just returned for the CURRENT currentBug. Decide based SOLELY on the most recent `context._action_delegate_to_coder` result. Ignore any earlier `_action_create_pr` in context — that success was for a DIFFERENT bug which is already recorded in `context.bugsFixed`. The current bug's delegate result is the ONLY evidence that matters here.\n\nMechanical decision: let D = context._action_delegate_to_coder. If D.exitCode === 0 AND D.prNumber is a number (and D.timedOut !== true), follow SUCCESS PATH. Otherwise — D.timedOut === true (143/SIGTERM), or D.exitCode !== 0 for any other reason, or D.prNumber is missing/undefined, or D itself is empty — follow FAILURE PATH. Do NOT re-evaluate or blend. The two paths are disjoint; the test is a mechanical check on D.\n\n(A) SUCCESS PATH — D.exitCode === 0 AND D.prNumber is set:\n  1. Call create_pr with {prNumber: D.prNumber}. It returns {verified, pr, files, frontendOnly, deployPreviewUrl}.\n  2. Call post_discourse_reply_draft with the STRICT template below. This NEVER posts — it appends to /tmp/freegle-monitor/retest-drafts.md for human approval.\n     - topic: context.currentBug.topic\n     - post: context.currentBug.postNumber (the post being answered)\n     - username: context.currentBug.username (the reporter)\n     - quote: a 15–25 word verbatim excerpt from the original report that uniquely identifies WHICH bug this reply addresses. Do NOT paraphrase. Multi-bug threads need this disambiguator.\n     - body: exactly one sentence. If frontendOnly === true AND deployPreviewUrl is defined, use \"Possible fix — please test: <deployPreviewUrl>\" (the action will format this automatically when previewUrl is passed). Otherwise use \"Fix applied for <one-clause plain-English description of the specific issue>. Please retest.\" No PR numbers, no commit hashes, no V1/V2, no Go/Nuxt/Laravel, no internal jargon. For backend/mixed fixes add \" after the next deploy\" if the fix is not yet live.\n     - previewUrl: pass deployPreviewUrl ONLY when frontendOnly === true. For any backend or mixed PR, OMIT previewUrl — the reporter cannot retest until a human-driven deploy.\n     - prNumber, prUrl: pass these from create_pr's result so the drafts file shows the PR reference for the reviewer.\n  3. Append { ...context.currentBug, prNumber: D.prNumber, frontendOnly, outcome: 'fixed' } to contextUpdates.bugsFixed.\n\n(B) FAILURE PATH — D.exitCode !== 0, OR D.prNumber missing, OR D missing/empty:\n  - Do NOT call create_pr.\n  - Do NOT call post_discourse_reply_draft.\n  - MANDATORY: Append { ...context.currentBug, outcome: 'deferred', reason: '<one-line>' } to contextUpdates.bugsFixed so WORK_ROUTER will not re-pick this bug. Failing to append means the iteration will loop on the same bug forever.\n\n  If D.timedOut === true, use reason: 'delegate timed out after N minutes — re-run next iteration'. Otherwise pick the best-fitting allowed value below.\n\n  ALLOWED `reason` values (must describe a concrete external blocker the host cannot act on):\n    - 'awaiting reporter clarification'\n    - 'needs live-DB inspection (user-only)'\n    - 'needs hardware host cannot access (specific mobile device)'\n    - 'needs a human judgement call (UX decision / product direction)'\n    - 'delegate timed out after N minutes — re-run next iteration'\n    - 'no actionable signal in the report (no repro steps, no screenshot)'\n\n  FORBIDDEN `reason` values — NEVER use these words or any paraphrase. They describe a disposition the FSM refuses to accept because a Discourse bug is either actionable or truly externally blocked:\n    - 'flaky', 'looks flaky'\n    - 'transient', 'transient failure'\n    - 'environmental', 'infra / infrastructure', 'CI infra'\n    - 'unrelated to my change', 'not related', 'pre-existing', 'existed before'\n    - 'polluted test data', 'polluted DB'\n    - 'will retry / rerun'\n\nIn BOTH paths set contextUpdates.currentBug = null. Propose transition to WORK_ROUTER.",
+      "prompt": "delegate_to_coder just returned for the CURRENT currentBug, and adversarial_review_pr has verified the PR quality. Decide based SOLELY on the most recent `context._action_delegate_to_coder` result. Ignore any earlier `_action_create_pr` in context — that success was for a DIFFERENT bug which is already recorded in `context.bugsFixed`. The current bug's delegate result is the ONLY evidence that matters here.\n\nMechanical decision: let D = context._action_delegate_to_coder. If D.exitCode === 0 AND D.prNumber is a number (and D.timedOut !== true), follow SUCCESS PATH. Otherwise — D.timedOut === true (143/SIGTERM), or D.exitCode !== 0 for any other reason, or D.prNumber is missing/undefined, or D itself is empty — follow FAILURE PATH. Do NOT re-evaluate or blend. The two paths are disjoint; the test is a mechanical check on D.\n\n(A) SUCCESS PATH — D.exitCode === 0 AND D.prNumber is set:\n  1. Call create_pr with {prNumber: D.prNumber}. It returns {verified, pr, files, frontendOnly, deployPreviewUrl}.\n  2. Call post_discourse_reply_draft with the STRICT template below. This NEVER posts — it appends to /tmp/freegle-monitor/retest-drafts.md for human approval.\n     - topic: context.currentBug.topic\n     - post: context.currentBug.postNumber (the post being answered)\n     - username: context.currentBug.username (the reporter)\n     - quote: a 15–25 word verbatim excerpt from the original report that uniquely identifies WHICH bug this reply addresses. Do NOT paraphrase. Multi-bug threads need this disambiguator.\n     - body: exactly one sentence. If frontendOnly === true AND deployPreviewUrl is defined, use \"Possible fix — please test: <deployPreviewUrl>\" (the action will format this automatically when previewUrl is passed). Otherwise use \"Fix applied for <one-clause plain-English description of the specific issue>. Please retest.\" No PR numbers, no commit hashes, no V1/V2, no Go/Nuxt/Laravel, no internal jargon. For backend/mixed fixes add \" after the next deploy\" if the fix is not yet live.\n     - previewUrl: pass deployPreviewUrl ONLY when frontendOnly === true. For any backend or mixed PR, OMIT previewUrl — the reporter cannot retest until a human-driven deploy.\n     - prNumber, prUrl: pass these from create_pr's result so the drafts file shows the PR reference for the reviewer.\n  3. Append { ...context.currentBug, prNumber: D.prNumber, frontendOnly, outcome: 'fixed' } to contextUpdates.bugsFixed.\n\n(B) FAILURE PATH — D.exitCode !== 0, OR D.prNumber missing, OR D missing/empty:\n  - Do NOT call create_pr.\n  - Do NOT call post_discourse_reply_draft.\n  - MANDATORY: Append { ...context.currentBug, outcome: 'deferred', reason: '<one-line>' } to contextUpdates.bugsFixed so WORK_ROUTER will not re-pick this bug. Failing to append means the iteration will loop on the same bug forever.\n\n  If D.timedOut === true, use reason: 'delegate timed out after N minutes — re-run next iteration'. Otherwise pick the best-fitting allowed value below.\n\n  ALLOWED `reason` values (must describe a concrete external blocker the host cannot act on):\n    - 'awaiting reporter clarification'\n    - 'needs live-DB inspection (user-only)'\n    - 'needs hardware host cannot access (specific mobile device)'\n    - 'needs a human judgement call (UX decision / product direction)'\n    - 'delegate timed out after N minutes — re-run next iteration'\n    - 'no actionable signal in the report (no repro steps, no screenshot)'\n\n  FORBIDDEN `reason` values — NEVER use these words or any paraphrase. They describe a disposition the FSM refuses to accept because a Discourse bug is either actionable or truly externally blocked:\n    - 'flaky', 'looks flaky'\n    - 'transient', 'transient failure'\n    - 'environmental', 'infra / infrastructure', 'CI infra'\n    - 'unrelated to my change', 'not related', 'pre-existing', 'existed before'\n    - 'polluted test data', 'polluted DB'\n    - 'will retry / rerun'\n\nIn BOTH paths set contextUpdates.currentBug = null. Propose transition to WORK_ROUTER.",
       "readActions": [],
       "writeActions": [
         "create_pr",
@@ -149,12 +158,13 @@
     "WRITE_COVERAGE": {
       "description": "Mandatory coverage PR. Single purpose: produce one coverage PR.",
       "nodeType": "agent",
-      "prompt": "No bug-fix PR was created this iteration. Pick a test-coverage target (Go, Vitest, or Laravel). Call delegate_to_coder with a task to write tests (TDD), commit, push a feature branch, and open a PR. Then call create_pr to verify. Propose transition to COVERAGE_GATE.",
+      "prompt": "No bug-fix PR was created this iteration. Pick a test-coverage target (Go, Vitest, or Laravel). Call delegate_to_coder with a task to write tests (TDD), commit, push a feature branch, and open a PR. When delegate returns with a prNumber: (1) Call adversarial_review_pr to review the coverage PR with Opus. (2) If review passed, call create_pr to verify and propose transition to COVERAGE_GATE. (3) If review failed with blockers, set contextUpdates.coveragePRReviewFailed = { prNumber, issues } and propose transition to COVERAGE_GATE anyway (coverage PR quality reviewed but defer fixing any issues to next iteration).",
       "readActions": [
         "search_code"
       ],
       "writeActions": [
         "delegate_to_coder",
+        "adversarial_review_pr",
         "create_pr"
       ]
     },
@@ -308,11 +318,25 @@
       "label": "bug deferred (awaiting clarification)"
     },
     {
-      "id": "t_delegate_to_verify",
+      "id": "t_delegate_to_review",
       "from": "DELEGATE_DISCOURSE_BUG_FIX",
+      "to": "ADVERSARIAL_REVIEW_PR",
+      "trigger": "llm_decision",
+      "label": "coder returned, review PR"
+    },
+    {
+      "id": "t_review_to_verify",
+      "from": "ADVERSARIAL_REVIEW_PR",
       "to": "VERIFY_DISCOURSE_BUG_FIX",
       "trigger": "llm_decision",
-      "label": "coder returned"
+      "label": "review passed"
+    },
+    {
+      "id": "t_review_to_work_router",
+      "from": "ADVERSARIAL_REVIEW_PR",
+      "to": "WORK_ROUTER",
+      "trigger": "llm_decision",
+      "label": "review failed, defer bug"
     },
     {
       "id": "t_verify_to_work_router",
