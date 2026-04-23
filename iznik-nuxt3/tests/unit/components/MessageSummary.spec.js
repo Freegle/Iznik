@@ -1,5 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref } from 'vue'
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
+
+const mockMessageData = vi.hoisted(() => ({
+  id: 123,
+  type: 'Offer',
+  subject: 'Offer: Test item (Location)',
+  textbody: 'Test description',
+  attachments: [{ id: 1, path: '/photo.jpg' }],
+  successful: false,
+  promised: false,
+  area: 'Test Area',
+}))
 
 const mockMiscStore = {
   breakpoint: 'md',
@@ -11,16 +24,9 @@ vi.mock('~/stores/misc', () => ({
 
 vi.mock('~/composables/useMessageDisplay', () => ({
   useMessageDisplay: () => ({
-    message: ref({
-      id: 123,
-      type: 'Offer',
-      subject: 'Offer: Test item (Location)',
-      textbody: 'Test description',
-      attachments: [{ id: 1, path: '/photo.jpg' }],
-      successful: false,
-      promised: false,
-      area: 'Test Area',
-    }),
+    get message() {
+      return ref(mockMessageData)
+    },
     strippedSubject: ref('Test item'),
     subjectItemName: ref('Test item'),
     subjectLocation: ref('Location'),
@@ -48,10 +54,16 @@ vi.mock('~/composables/useClientLog', () => ({
   action: vi.fn(),
 }))
 
+// Default attachments for tests that don't need a specific type
+const defaultAttachments = [{ id: 1, path: '/photo.jpg' }]
+
 describe('MessageSummary', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockMiscStore.breakpoint = 'md'
+    mockMessageData.attachments = defaultAttachments
+    mockMessageData.successful = false
+    mockMessageData.promised = false
   })
 
   describe('expected props', () => {
@@ -408,6 +420,24 @@ describe('MessageSummary', () => {
     it('uses action from useClientLog', () => {
       // import { action } from '~/composables/useClientLog'
       expect(true).toBe(true)
+    })
+  })
+
+  describe('image lazy loading', () => {
+    it('NuxtPicture for externaluid must have :loading attribute to prevent render-blocking on mobile', () => {
+      // Reporter bug: "30 seconds for pictures to load / can't do anything until photos load"
+      // Root cause: NuxtPicture for externaluid images had no loading attribute, so the browser
+      // loaded all images eagerly, saturating bandwidth and freezing the page on slow mobile.
+      // OurUploadedImage and ProxyImage both default to loading="lazy"; NuxtPicture here must too.
+      const source = readFileSync(
+        resolve(__dirname, '../../../components/MessageSummary.vue'),
+        'utf-8'
+      )
+      const start = source.indexOf('v-else-if="message.attachments[0]?.externaluid"')
+      expect(start).toBeGreaterThan(-1)
+      const end = source.indexOf('/>', start)
+      const nuxtPictureBlock = source.substring(start, end)
+      expect(nuxtPictureBlock).toContain(':loading=')
     })
   })
 })

@@ -59,6 +59,7 @@
           fit="inside"
           sizes="(orientation: landscape) and (max-width: 991px) 100px, 200px"
           :preload="preload"
+          :loading="preload ? 'eager' : 'lazy'"
         />
         <ProxyImage
           v-else-if="message.attachments[0]?.path"
