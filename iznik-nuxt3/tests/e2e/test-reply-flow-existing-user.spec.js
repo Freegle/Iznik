@@ -50,7 +50,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     await logoutIfLoggedIn(page)
 
     // Navigate to message page
-    await page.gotoAndVerify(`/message/${result.id}`)
+    await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
     await clickReplyButton(page)
 
     // Fill in reply with existing user's email - should trigger login flow
