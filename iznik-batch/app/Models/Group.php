@@ -66,14 +66,6 @@ class Group extends Model
     }
 
     /**
-     * Get group's digest records.
-     */
-    public function digests(): HasMany
-    {
-        return $this->hasMany(GroupDigest::class, 'groupid');
-    }
-
-    /**
      * Scope to only Freegle groups.
      */
     public function scopeFreegle(Builder $query): Builder
