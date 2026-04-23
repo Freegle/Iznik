@@ -236,7 +236,9 @@ class UnifiedDigest extends MjmlMailable
             // Create tracked image URL with scroll depth.
             $scrollPercent = $totalPosts > 0 ? round(($index / $totalPosts) * 100) : 0;
             $displayImageUrl = $imageUrl ?? $placeholderUrl;
-            $trackedImage = $this->trackedImageUrl($displayImageUrl, "image_{$index}", $scrollPercent);
+            $trackedImage = $displayImageUrl !== null
+                ? $this->trackedImageUrl($displayImageUrl, "image_{$index}", $scrollPercent)
+                : null;
 
             // Decode emoji sequences in message text.
             $messageText = $message->textbody
