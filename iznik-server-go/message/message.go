@@ -1296,6 +1296,8 @@ func getPrimaryGroupForMessage(db *gorm.DB, msgid uint64) uint64 {
 }
 
 // getAllGroupsForMessage returns all groupids for a message.
+// Returns groups regardless of deleted state, so mods can still moderate and reject
+// messages even after the poster has deleted them.
 func getAllGroupsForMessage(db *gorm.DB, msgid uint64) []uint64 {
 	var groupids []uint64
 	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ?", msgid).Scan(&groupids)
@@ -1361,7 +1363,8 @@ func getGroupKeyword(db *gorm.DB, groupid uint64, msgType string) string {
 }
 
 // isModForMessage checks if the user is a system admin/support or a moderator/owner
-// of any group the message is on.
+// of any group the message is on. Returns true even if messages_groups rows are soft-deleted,
+// so mods can reject or delete messages even after the poster has deleted them.
 func isModForMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	// Check system admin/support.
 	if auth.IsAdminOrSupport(myid) {
@@ -1369,6 +1372,7 @@ func isModForMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	}
 
 	// Check if mod of any group the message is on.
+	// Don't filter on mg.deleted = 0 so mods can still moderate after poster deletes.
 	var count int64
 	result := db.Raw(`SELECT COUNT(*) FROM messages_groups mg
 		JOIN memberships m ON m.groupid = mg.groupid
