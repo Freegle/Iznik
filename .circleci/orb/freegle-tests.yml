@@ -1821,7 +1821,10 @@ jobs:
             if [ "$CIRCLE_BRANCH" = "master" ]; then
               CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD)
             else
-              CHANGED_FILES=$(git diff --name-only origin/master...HEAD)
+              # Fetch master history so origin/master...HEAD has a reachable merge base
+              # (shallow CI clones don't have master history by default)
+              git fetch origin master --depth=100 2>/dev/null || true
+              CHANGED_FILES=$(git diff --name-only origin/master...HEAD 2>/dev/null || echo "ALL_CHANGED")
             fi
 
             if [ -n "$CHANGED_FILES" ]; then
@@ -1845,7 +1848,18 @@ jobs:
       - run:
           name: Determine changed paths
           command: |
-            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "ALL")
+            # Compare against merge base with master for feature branches (not just last commit)
+            if [ "$CIRCLE_BRANCH" != "master" ]; then
+              git fetch origin master --depth=100 2>/dev/null || true
+              MERGE_BASE=$(git merge-base origin/master HEAD 2>/dev/null || echo "")
+              if [ -n "$MERGE_BASE" ]; then
+                CHANGED=$(git diff --name-only "$MERGE_BASE" HEAD 2>/dev/null || echo "ALL")
+              else
+                CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "ALL")
+              fi
+            else
+              CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "ALL")
+            fi
 
             SKIP_GO=true
             SKIP_VITEST=true
