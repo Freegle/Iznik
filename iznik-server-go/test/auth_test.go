@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -115,6 +116,108 @@ func TestValidJWTInvalidUser(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 401, resp.StatusCode)
+}
+
+// Reproduces the production "PATCH /session 401" signature: the user still
+// exists, but the sessions row the JWT points at has been removed (by
+// scripts/cron/purge_sessions.php after 31d of inactivity, or by logout
+// from another device). The JWT signature still parses so WhoAmI returns
+// the user id, but authMiddleware's sessions JOIN users check fails and
+// overrides the response with 401.
+//
+// Observed in Sentry as ≥3 users in 24h from the forgot-password flow —
+// their stale-JWT localStorage overlay survives the u/k auto-login and
+// the next authenticated call 401s.
+func TestPatchSessionWithPurgedSessionReturns401(t *testing.T) {
+	prefix := uniquePrefix("purged_session")
+	userID := CreateTestUser(t, prefix, "User")
+	sessionID, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("DELETE FROM sessions WHERE id = ?", sessionID)
+
+	// PATCH /session with a no-op body. The exact endpoint in the Sentry trace:
+	// handler would call WhoAmI (passes, JWT parses), mutate nothing meaningful,
+	// then the middleware's post-check overrides with 401.
+	req := httptest.NewRequest("PATCH", "/api/session?jwt="+token,
+		strings.NewReader(`{"displayname":"anything"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode,
+		"PATCH /session with JWT for a purged sessions row must 401 (user still exists)")
+}
+
+// Forgot-password end-to-end repro. A user whose browser holds a stale JWT
+// (from a session that was purged or wiped by logout-elsewhere) clicks the
+// emailed ?u=X&k=KEY link. The u/k login creates a NEW session row, but the
+// frontend's PATCH /session fires with the OLD JWT still in localStorage —
+// the exact race the Sentry trace shows. The old JWT's sessionid now points
+// at a missing row, so the middleware returns 401 even though a valid session
+// for the same user exists.
+func TestForgotPasswordStaleJWTReturns401(t *testing.T) {
+	prefix := uniquePrefix("forgotpass_stale")
+	userID := CreateTestUser(t, prefix, "User")
+
+	// 1. User's previous device session (JWT still in localStorage).
+	oldSessionID, oldJWT := CreateTestSession(t, userID)
+
+	// 2. Purge that session — e.g. cron/purge_sessions.php or logout from
+	//    the other device. The JWT is now stale but still parses.
+	db := database.DBConn
+	db.Exec("DELETE FROM sessions WHERE id = ?", oldSessionID)
+
+	// 3. Simulate a successful u/k auto-login on the forgotpass landing
+	//    page. This creates a brand-new session row for the same user.
+	_, _, err := auth.CreateSessionAndJWT(userID)
+	assert.NoError(t, err)
+
+	// 4. Frontend fires PATCH /session before localStorage is updated with
+	//    the new JWT — so it carries the STALE JWT. The server still 401s
+	//    because the stale JWT's sessionid doesn't exist.
+	req := httptest.NewRequest("PATCH", "/api/session?jwt="+oldJWT,
+		strings.NewReader(`{"password":"newpassword"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 401, resp.StatusCode,
+		"forgotpass PATCH /session with stale JWT from purged session must 401 even though user has a fresh session")
+}
+
+// CreateSessionAndJWT must write a numeric, non-zero series value. The
+// previous implementation passed utils.RandomHex(16) to a bigint unsigned
+// column, which MySQL silently coerced to 0 (or MAX uint64 when the hex
+// started with 'f'). This collapsed UNIQUE KEY (id, series, token) across
+// thousands of production sessions — breaking the per-device rotation
+// premise of (series, token).
+func TestCreateSessionAndJWTSeriesIsNumericAndUnique(t *testing.T) {
+	prefix := uniquePrefix("series_numeric")
+	userID := CreateTestUser(t, prefix, "User")
+
+	db := database.DBConn
+
+	// Create two sessions for the same user. The series values must both be
+	// non-zero, not MAX uint64, and distinct — anything else indicates the
+	// bigint coercion bug is back.
+	persistent1, _, err1 := auth.CreateSessionAndJWT(userID)
+	assert.NoError(t, err1)
+	persistent2, _, err2 := auth.CreateSessionAndJWT(userID)
+	assert.NoError(t, err2)
+
+	series1, _ := persistent1["series"].(uint64)
+	series2, _ := persistent2["series"].(uint64)
+
+	assert.NotEqual(t, uint64(0), series1, "series must not be 0 (hex-coercion bug)")
+	assert.NotEqual(t, uint64(0), series2, "series must not be 0 (hex-coercion bug)")
+	assert.NotEqual(t, ^uint64(0), series1, "series must not be MAX uint64 (hex-coercion overflow)")
+	assert.NotEqual(t, ^uint64(0), series2, "series must not be MAX uint64 (hex-coercion overflow)")
+	assert.NotEqual(t, series1, series2, "two fresh sessions for the same user must have distinct series")
+
+	// And the value returned in the persistent map must match what is
+	// actually stored in the sessions row.
+	sessionID1, _ := persistent1["id"].(uint64)
+	var storedSeries uint64
+	db.Raw("SELECT series FROM sessions WHERE id = ?", sessionID1).Scan(&storedSeries)
+	assert.Equal(t, series1, storedSeries,
+		"persistent.series must match sessions.series in DB (no silent coercion)")
 }
 
 func TestHasPermission(t *testing.T) {

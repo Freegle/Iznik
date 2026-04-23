@@ -77,12 +77,13 @@
               <span
                 v-if="
                   logMessage.groups &&
-                  logMessage.groups[0] &&
-                  logMessage.groups[0].collection === 'Pending'
+                  logMessage.groups.some(
+                    (g) => g.collection === 'Pending'
+                  )
                 "
                 class="text-warning"
               >
-                currently {{ logMessage.groups[0].collection }}
+                currently Pending
               </span>
             </span>
             <span v-else-if="logMessage">

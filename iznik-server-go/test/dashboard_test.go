@@ -144,6 +144,47 @@ func TestGetDashboardDiscourseTopicsNoConfig(t *testing.T) {
 	assert.Nil(t, comps["DiscourseTopics"])
 }
 
+func TestDashboardNewMessagesNoDoubleCount(t *testing.T) {
+	// A message on two groups should be counted once, not twice.
+	prefix := uniquePrefix("DashNoDup")
+	groupA := CreateTestGroup(t, prefix+"A")
+	groupB := CreateTestGroup(t, prefix+"B")
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupA, "Moderator")
+	CreateTestMembership(t, userID, groupB, "Moderator")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+
+	// Create a message on groupA using the helper.
+	msgID := CreateTestMessage(t, userID, groupA, prefix+" Test", 55.9533, -3.1883)
+
+	// Add the same message to groupB (multi-group).
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, autoreposts) "+
+		"VALUES (?, ?, 'Approved', NOW(), 0)", msgID, groupB)
+
+	// Legacy dashboard with allgroups should count this message once.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?allgroups=true&jwt=%s", token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	dash := result["dashboard"].(map[string]interface{})
+	assert.Equal(t, float64(1), dash["newmessages"], "Multi-group message should be counted once, not twice")
+
+	// RecentCounts component should also count once.
+	req2 := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=RecentCounts&allgroups=true&jwt=%s", token), nil)
+	resp2, _ := getApp().Test(req2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var result2 map[string]interface{}
+	json2.Unmarshal(rsp(resp2), &result2)
+	comps := result2["components"].(map[string]interface{})
+	rc := comps["RecentCounts"].(map[string]interface{})
+	assert.Equal(t, float64(1), rc["newmessages"], "RecentCounts should not double-count multi-group messages")
+}
+
 func TestGetDashboardV2Path(t *testing.T) {
 	req := httptest.NewRequest("GET", "/apiv2/dashboard", nil)
 	resp, _ := getApp().Test(req)

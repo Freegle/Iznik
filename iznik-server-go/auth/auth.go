@@ -264,7 +264,11 @@ func VerifyPassword(userID uint64, password string) bool {
 func CreateSessionAndJWT(userID uint64) (map[string]interface{}, string, error) {
 	db := database.DBConn
 
-	series := utils.RandomHex(16)
+	// series is a bigint unsigned column — must be numeric. A previous
+	// RandomHex(16) value was coerced by MySQL to 0 or MAX uint64 on insert,
+	// collapsing the UNIQUE KEY (id, series, token) and breaking the
+	// per-device rotation premise.
+	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
 
 	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, ?, NOW(), NOW())",

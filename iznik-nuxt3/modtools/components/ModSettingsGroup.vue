@@ -852,24 +852,6 @@
             </b-form-group>
             <ModGroupSetting
               :groupid="groupid"
-              name="settings.includearea"
-              label="Include area name in post location?"
-              description="When constructing a post subject, should we include the area name?"
-              type="toggle"
-              toggle-checked="Yes"
-              toggle-unchecked="No"
-            />
-            <ModGroupSetting
-              :groupid="groupid"
-              name="settings.includepc"
-              label="Include postcode in post location?"
-              description="When constructing a post subject, should we include the first part of the postcode?"
-              type="toggle"
-              toggle-checked="Yes"
-              toggle-unchecked="No"
-            />
-            <ModGroupSetting
-              :groupid="groupid"
               name="settings.map.zoom"
               label="Default zoom for maps"
               description="Where we show maps on the site for this community, which Google zoom level should we use?"

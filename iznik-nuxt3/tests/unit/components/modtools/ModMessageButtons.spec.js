@@ -622,6 +622,67 @@ describe('ModMessageButtons', () => {
     })
   })
 
+  describe('groupid prop passthrough', () => {
+    it('passes groupid to all child ModMessageButton components', () => {
+      // Update the stub to also accept groupid prop and have a name for findAllComponents
+      const stubs = {
+        ...commonStubs,
+        ModMessageButton: {
+          name: 'ModMessageButton',
+          ...commonStubs.ModMessageButton,
+          props: [...commonStubs.ModMessageButton.props, 'groupid'],
+        },
+      }
+
+      const messageData = createMessage({
+        groups: [{ groupid: 456, collection: 'Pending' }],
+      })
+      mockMessageStore.byId.mockImplementation((id) =>
+        id === messageData.id ? messageData : null
+      )
+
+      const wrapper = mount(ModMessageButtons, {
+        props: { messageid: messageData.id, groupid: 789 },
+        global: { stubs },
+      })
+
+      const buttons = wrapper.findAllComponents({ name: 'ModMessageButton' })
+      expect(buttons.length).toBeGreaterThan(0)
+      buttons.forEach((btn) => {
+        expect(btn.props('groupid')).toBe(789)
+      })
+    })
+
+    it('passes null groupid by default', () => {
+      const stubs = {
+        ...commonStubs,
+        ModMessageButton: {
+          name: 'ModMessageButton',
+          ...commonStubs.ModMessageButton,
+          props: [...commonStubs.ModMessageButton.props, 'groupid'],
+        },
+      }
+
+      const messageData = createMessage({
+        groups: [{ groupid: 456, collection: 'Pending' }],
+      })
+      mockMessageStore.byId.mockImplementation((id) =>
+        id === messageData.id ? messageData : null
+      )
+
+      const wrapper = mount(ModMessageButtons, {
+        props: { messageid: messageData.id },
+        global: { stubs },
+      })
+
+      const buttons = wrapper.findAllComponents({ name: 'ModMessageButton' })
+      expect(buttons.length).toBeGreaterThan(0)
+      buttons.forEach((btn) => {
+        expect(btn.props('groupid')).toBeNull()
+      })
+    })
+  })
+
   describe('edge cases', () => {
     it('handles message with no groups', () => {
       const wrapper = mountComponent({}, { groups: undefined })

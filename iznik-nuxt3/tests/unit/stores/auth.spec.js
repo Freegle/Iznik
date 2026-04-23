@@ -12,6 +12,7 @@ const mockFetchv2 = vi.fn()
 const mockRelated = vi.fn()
 const mockLostPassword = vi.fn()
 const mockUnsubscribe = vi.fn()
+const mockSave = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -22,6 +23,7 @@ vi.mock('~/api', () => ({
       related: mockRelated,
       lostPassword: mockLostPassword,
       unsubscribe: mockUnsubscribe,
+      save: mockSave,
     },
   }),
 }))
@@ -270,6 +272,56 @@ describe('auth store', () => {
       mockLostPassword.mockRejectedValue(new Error('network'))
       const result = await store.lostPassword('test@test.com')
       expect(result.worked).toBe(false)
+    })
+  })
+
+  // Reproduces the production "PATCH /session 401" signature from the
+  // forgot-password flow: the Go API's sessions.series bug (hex string
+  // coerced to bigint by MySQL, collapsing ≥7,000 rows to series=0) meant
+  // that a user's JWT could point at a sessions row that was effectively
+  // unreachable or had been purged. When the forgot-password page then
+  // submitted a new password via PATCH /session, the middleware's
+  // sessions JOIN users check failed and returned 401 — even though the
+  // user existed and their JWT signature was valid.
+  //
+  // At the store boundary this surfaces as saveAndGet rejecting, with
+  // BaseAPI having already wiped auth (simulated here by clearing the
+  // auth state as BaseAPI's 401 path does).
+  describe('forgot-password PATCH /session 401 repro', () => {
+    it('saveAndGet rejects and leaves auth wiped when PATCH /session returns 401', async () => {
+      // User just landed via ?u=X&k=KEY link; u/k login set fresh auth.
+      store.setAuth('jwt-from-u-k-login', 'persistent-from-u-k-login')
+
+      // Simulate the production scenario: the server returns 401 for the
+      // PATCH. BaseAPI's real implementation would wipe auth before the
+      // error propagates up to the store — emulate that here.
+      mockSave.mockImplementation(async () => {
+        store.setAuth(null, null)
+        store.setUser(null)
+        const err = new Error('Unauthorized')
+        err.response = { status: 401 }
+        throw err
+      })
+
+      await expect(
+        store.saveAndGet({ password: 'newpassword' })
+      ).rejects.toThrow('Unauthorized')
+
+      expect(mockSave).toHaveBeenCalledWith({ password: 'newpassword' })
+      expect(store.auth.jwt).toBeNull()
+      expect(store.auth.persistent).toBeNull()
+      expect(store.user).toBeNull()
+    })
+
+    it('saveAndGet succeeds when PATCH /session returns 200', async () => {
+      store.setAuth('valid-jwt', 'valid-persistent')
+      mockSave.mockResolvedValue({})
+      mockFetchv2.mockResolvedValue({ me: { id: 42 }, groups: [] })
+
+      await store.saveAndGet({ password: 'newpassword' })
+
+      expect(store.auth.jwt).toBe('valid-jwt')
+      expect(store.user.id).toBe(42)
     })
   })
 

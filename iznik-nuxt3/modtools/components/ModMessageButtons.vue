@@ -3,6 +3,7 @@
     <div v-if="editreview" class="d-inline">
       <ModMessageButton
         :messageid="message.id"
+        :groupid="groupid"
         variant="primary"
         icon="check"
         approveedits
@@ -10,6 +11,7 @@
       />
       <ModMessageButton
         :messageid="message.id"
+        :groupid="groupid"
         variant="danger"
         icon="times"
         revertedits
@@ -17,6 +19,7 @@
       />
       <ModMessageButton
         :messageid="message.id"
+        :groupid="groupid"
         variant="primary"
         icon="envelope"
         leave
@@ -27,6 +30,7 @@
       <ModMessageButton
         v-if="!cantpost"
         :messageid="message.id"
+        :groupid="groupid"
         variant="primary"
         icon="check"
         approve
@@ -34,6 +38,7 @@
       />
       <ModMessageButton
         :messageid="message.id"
+        :groupid="groupid"
         variant="warning"
         icon="times"
         reject
@@ -41,6 +46,7 @@
       />
       <ModMessageButton
         :messageid="message.id"
+        :groupid="groupid"
         variant="danger"
         icon="trash-alt"
         delete
@@ -49,6 +55,7 @@
       <ModMessageButton
         v-if="!message.heldby"
         :messageid="message.id"
+        :groupid="groupid"
         variant="warning"
         icon="pause"
         hold
@@ -56,6 +63,7 @@
       />
       <ModMessageButton
         :messageid="message.id"
+        :groupid="groupid"
         variant="danger"
         icon="ban"
         spam
@@ -65,6 +73,7 @@
     <div v-else-if="approved" class="d-inline">
       <ModMessageButton
         :messageid="message.id"
+        :groupid="groupid"
         variant="primary"
         icon="envelope"
         leave
@@ -72,6 +81,7 @@
       />
       <ModMessageButton
         :messageid="message.id"
+        :groupid="groupid"
         variant="danger"
         icon="trash-alt"
         delete
@@ -79,6 +89,7 @@
       />
       <ModMessageButton
         :messageid="message.id"
+        :groupid="groupid"
         variant="danger"
         icon="ban"
         spam
@@ -124,6 +135,7 @@
         :label="stdmsg.title"
         :stdmsgid="stdmsg.id"
         :messageid="message.id"
+        :groupid="groupid"
         :autosend="Boolean(stdmsg.autosend && allowAutoSend)"
       />
       <b-button
@@ -180,6 +192,11 @@ const props = defineProps({
     type: Boolean,
     required: false,
     default: false,
+  },
+  groupid: {
+    type: Number,
+    required: false,
+    default: null,
   },
 })
 

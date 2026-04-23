@@ -169,6 +169,18 @@ func PostSpammer(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
+
+	// V1 parity (Spam::addSpammer): for PendingAdd, skip the REPLACE if a spam_users row
+	// already exists for this user so the original reporter's byuserid is preserved.
+	// This is the fix for Discourse #9589 (wrong-attribution bug).
+	if req.Collection == utils.SPAM_COLLECTION_PENDING_ADD {
+		var existingCount int64
+		db.Raw("SELECT COUNT(*) FROM spam_users WHERE userid = ?", req.Userid).Scan(&existingCount)
+		if existingCount > 0 {
+			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": 0})
+		}
+	}
+
 	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
 	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
 	// parallel load (GORM's connection pool may assign a different connection).
@@ -188,6 +200,13 @@ func PostSpammer(c *fiber.Ctx) error {
 	lastID, err := sqlResult.LastInsertId()
 	if err == nil && lastID > 0 {
 		newID = uint64(lastID)
+	}
+
+	// V1 parity: reporting a SYSTEMROLE_USER as PendingAdd suppresses their ChitChat/newsfeed
+	// posts by setting users.newsfeedmodstatus = 'Suppressed' while pending review.
+	if req.Collection == utils.SPAM_COLLECTION_PENDING_ADD {
+		db.Exec("UPDATE users SET newsfeedmodstatus = ? WHERE id = ? AND systemrole = ?",
+			utils.NEWSFEED_MODSTATUS_SUPPRESSED, req.Userid, utils.SYSTEMROLE_USER)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
@@ -233,8 +252,10 @@ func PatchSpammer(c *fiber.Ctx) error {
 	db := database.DBConn
 	var current struct {
 		Collection string
+		Reason     string
+		Byuserid   *uint64
 	}
-	db.Raw("SELECT collection FROM spam_users WHERE id = ?", req.ID).Scan(&current)
+	db.Raw("SELECT collection, reason, byuserid FROM spam_users WHERE id = ?", req.ID).Scan(&current)
 
 	if current.Collection == "" {
 		return fiber.NewError(fiber.StatusNotFound, "Not found")
@@ -252,12 +273,28 @@ func PatchSpammer(c *fiber.Ctx) error {
 		}
 	}
 
-	// Build update.
+	// Build update. V1 parity (Spam::updateSpammer):
+	//   * Preserve the existing reason when the caller sends an empty one — a Hold
+	//     action carries no reason and must not blank out the reporter's facts.
+	//   * Preserve the existing byuserid (original reporter) except for
+	//     PENDING_REMOVE, where V1 tracks who requested removal by setting byuserid
+	//     to the acting mod. Otherwise holding or confirming a report must not
+	//     reassign the report to the current mod (Discourse #9592).
 	if req.Collection != "" {
+		reason := req.Reason
+		if reason == "" {
+			reason = current.Reason
+		}
+		var byuserid interface{}
+		if req.Collection == utils.SPAM_COLLECTION_PENDING_REMOVE {
+			byuserid = myid
+		} else {
+			byuserid = current.Byuserid
+		}
 		db.Exec("UPDATE spam_users SET collection = ?, reason = ?, byuserid = ?, "+
 			"heldby = ?, heldat = CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END "+
 			"WHERE id = ?",
-			req.Collection, req.Reason, myid, req.Heldby, req.Heldby, req.ID)
+			req.Collection, reason, byuserid, req.Heldby, req.Heldby, req.ID)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

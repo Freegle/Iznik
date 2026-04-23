@@ -321,7 +321,7 @@ $dbhm->preExec('REPLACE INTO `spam_keywords` (`id`, `word`, `exclude`, `action`,
 
 $dbhm->preExec("INSERT IGNORE INTO `locations` (`id`, `osm_id`, `name`, `type`, `osm_place`, `geometry`, `ourgeometry`, `gridid`, `postcodeid`, `areaid`, `canon`, `popularity`, `osm_amenity`, `osm_shop`, `maxdimension`, `lat`, `lng`, `timestamp`) VALUES
   (1687412, '189543628', 'SA65 9ET', 'Postcode', 0, ST_GeomFromText('POINT(-4.939858 52.006292)', {$dbhr->SRID()}), NULL, NULL, NULL, NULL, 'sa659et', 0, 0, 0, '0.002916', '52.006292', '-4.939858', '2016-08-23 06:01:25');");
-$dbhm->preExec("INSERT IGNORE INTO `paf_addresses` (`id`, `postcodeid`, `udprn`) VALUES (102367696, 1687412, 50464672);");
+$dbhm->preExec("INSERT IGNORE INTO `paf_addresses` (`id`, `postcodeid`, `udprn`) VALUES (102367696, 1687412, 102367696);");
 $dbhm->preExec("INSERT IGNORE INTO weights (name, simplename, weight, source) VALUES ('2 seater sofa', 'sofa', 37, 'FRN 2009');");
 $dbhm->preExec("INSERT IGNORE INTO spam_countries (country) VALUES ('Cameroon');");
 $dbhm->preExec("INSERT IGNORE INTO spam_whitelist_links (domain, count) VALUES ('users.ilovefreegle.org', 3);");

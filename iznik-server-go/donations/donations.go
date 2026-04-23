@@ -26,10 +26,10 @@ const SOURCE_BANK_TRANSFER = "BankTransfer"
 
 const PERIOD_THIS = "This"
 
-// Default values match current production configuration in /etc/iznik.conf
-// These can be overridden via environment variables DONATION_TARGET and DONATIONS_EXCLUDE
-const DEFAULT_DONATION_TARGET = 2000                                                         // Matches DONATION_TARGET in /etc/iznik.conf
-const DEFAULT_DONATIONS_EXCLUDE = "ppgfukpay@paypalgivingfund.org,paypal.msb@tipalti.com" // Matches DONATIONS_EXCLUDE in /etc/iznik.conf
+// Overridable via DONATION_TARGET / DONATIONS_EXCLUDE in .env (wired through
+// docker-compose into the apiv2 container). Production still reads /etc/iznik.conf.
+const DEFAULT_DONATION_TARGET = 5000
+const DEFAULT_DONATIONS_EXCLUDE = "ppgfukpay@paypalgivingfund.org,paypal.msb@tipalti.com"
 
 // getDonationTarget returns the donation target from env var or default
 func getDonationTarget() int {
@@ -247,6 +247,7 @@ func AddDonation(c *fiber.Ctx) error {
 			"user_name":  name,
 			"user_email": preferredEmail,
 			"amount":     req.Amount,
+			"source":     "external",
 		}); err != nil {
 			log.Printf("Failed to queue donate-external email for user %d: %v", req.UserID, err)
 		}

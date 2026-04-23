@@ -11,11 +11,16 @@ const {
   mockMiscStore,
   mockModconfigStore,
   mockModGroupStore,
+  mockGroupStore,
   mockUserStore,
   mockMe,
   mockMyModGroups,
 } = vi.hoisted(() => {
   return {
+    mockGroupStore: {
+      get: vi.fn((id) => ({ id, namedisplay: `Group ${id}` })),
+      fetch: vi.fn().mockResolvedValue(),
+    },
     mockAuthStore: {
       groups: [{ groupid: 789, configid: 1 }],
     },
@@ -90,6 +95,10 @@ const {
 // Mock stores
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
+}))
+
+vi.mock('~/stores/group', () => ({
+  useGroupStore: () => mockGroupStore,
 }))
 
 vi.mock('~/stores/location', () => ({
@@ -1153,6 +1162,89 @@ describe('ModMessage', () => {
       )
       await flushPromises()
       expect(wrapper.text()).not.toContain('Possibly should be on')
+    })
+  })
+
+  describe('multi-group support', () => {
+    it('uses contextGroupid prop when provided', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+            { groupid: 999, namedisplay: 'Group B', collection: 'Approved' },
+          ],
+        }
+      )
+      expect(wrapper.vm.groupid).toBe(789)
+    })
+
+    it('falls back to first group when no contextGroupid', () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+            { groupid: 999, namedisplay: 'Group B', collection: 'Approved' },
+          ],
+        }
+      )
+      expect(wrapper.vm.groupid).toBe(789)
+    })
+
+    it('computes contextGroup from the correct group', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 999 },
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+            { groupid: 999, namedisplay: 'Group B', collection: 'Approved' },
+          ],
+        }
+      )
+      expect(wrapper.vm.contextGroup.groupid).toBe(999)
+      expect(wrapper.vm.contextGroup.collection).toBe('Approved')
+    })
+
+    it('computes otherGroups excluding the context group', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+            { groupid: 999, namedisplay: 'Group B', collection: 'Approved' },
+          ],
+        }
+      )
+      expect(wrapper.vm.otherGroups).toHaveLength(1)
+      expect(wrapper.vm.otherGroups[0].groupid).toBe(999)
+    })
+
+    it('shows "Also on" indicator for multi-group messages', async () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+            { groupid: 999, namedisplay: 'Group B', collection: 'Approved' },
+          ],
+        }
+      )
+      await flushPromises()
+      expect(wrapper.text()).toContain('Also on')
+    })
+
+    it('does not show "Also on" for single-group messages', async () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+          ],
+        }
+      )
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('Also on')
     })
   })
 })

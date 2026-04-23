@@ -39,6 +39,18 @@ const summary = computed(() => {
   return ret === undefined ? false : ret
 })
 
+// Get arrival time for the contextual group (multi-group support).
+function getContextArrival(msg, contextGid) {
+  if (msg.groups?.length) {
+    if (contextGid) {
+      const g = msg.groups.find((g) => parseInt(g.groupid) === contextGid)
+      if (g) return g.arrival
+    }
+    return msg.groups[0].arrival
+  }
+  return msg.arrival
+}
+
 const messages = computed(() => {
   const messageStore = useMessageStore()
   let messages
@@ -66,15 +78,12 @@ const messages = computed(() => {
     })
   } else {
     // Normal: sort by arrival date, newest first.
+    // Use the contextual group's arrival if filtering by group (multi-group support).
+    const contextGid = groupid.value ? parseInt(groupid.value) : null
     messages.sort((a, b) => {
-      if (a.groups && b.groups) {
-        return (
-          new Date(b.groups[0].arrival).getTime() -
-          new Date(a.groups[0].arrival).getTime()
-        )
-      } else {
-        return new Date(b.arrival).getTime() - new Date(a.arrival).getTime()
-      }
+      const arrivalA = getContextArrival(a, contextGid)
+      const arrivalB = getContextArrival(b, contextGid)
+      return new Date(arrivalB).getTime() - new Date(arrivalA).getTime()
     })
   }
   // console.log('###messages sort:', messages[0]?.groups[0]?.arrival)

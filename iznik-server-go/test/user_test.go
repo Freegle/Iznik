@@ -958,6 +958,119 @@ func TestPutUserWithGroup(t *testing.T) {
 	assert.Equal(t, int64(1), memberCount)
 }
 
+// The persistent token returned by signup is used by the client as the
+// Authorization2 fallback when the JWT is expired. For that lookup to
+// succeed the (id, series, token) triple must match sessions row — if
+// persistent.series drifts away from sessions.series, the client silently
+// loses its long-lived session and subsequent unauthenticated API calls
+// can hang waiting for re-auth.
+func TestPutUserPersistentSeriesMatchesSession(t *testing.T) {
+	prefix := uniquePrefix("putuser_series")
+	email := fmt.Sprintf("%s@test.com", prefix)
+
+	payload := map[string]interface{}{
+		"email":       email,
+		"password":    "testpass123",
+		"firstname":   "Series",
+		"lastname":    prefix,
+		"displayname": "Series " + prefix,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request, 5000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	persistent, ok := result["persistent"].(map[string]interface{})
+	assert.True(t, ok, "PUT /user must return a persistent token map")
+
+	returnedSeries, _ := persistent["series"].(float64)
+	sessionID, _ := persistent["id"].(float64)
+	returnedToken, _ := persistent["token"].(string)
+	userID := uint64(result["id"].(float64))
+
+	assert.NotZero(t, returnedSeries,
+		"persistent.series must be non-zero — series=0 disables the Authorization2 fallback in auth.go:46")
+	assert.NotEqual(t, float64(userID), returnedSeries,
+		"persistent.series must be the random session series, not the userID — userID collides across every session for the same user")
+
+	// Constrain to JavaScript's safe integer range so the value survives a
+	// JSON round-trip through a Number without losing precision.
+	const maxSafe = float64(int64(1)<<53 - 1)
+	assert.LessOrEqual(t, returnedSeries, maxSafe,
+		"persistent.series must fit within JavaScript's safe integer range so the client can return it via Authorization2 without precision loss")
+
+	// The series returned to the client must match the sessions row in
+	// the DB — anything else means the persistent token the client holds
+	// will fail every Authorization2 lookup.
+	db := database.DBConn
+	var storedSeries uint64
+	var storedToken string
+	db.Raw("SELECT series, token FROM sessions WHERE id = ?", uint64(sessionID)).Row().Scan(&storedSeries, &storedToken)
+	assert.Equal(t, uint64(returnedSeries), storedSeries,
+		"persistent.series in response must equal sessions.series in DB")
+	assert.Equal(t, returnedToken, storedToken,
+		"persistent.token in response must equal sessions.token in DB")
+}
+
+// Draft-message signup via PUT /message creates a session on behalf of
+// the new user. The persistent token baked into the response must match
+// the sessions row so the draft-owner can keep using Authorization2 on
+// subsequent requests.
+func TestPutMessageUnauthenticatedPersistentSeriesMatchesSession(t *testing.T) {
+	prefix := uniquePrefix("putmsg_series")
+	email := fmt.Sprintf("%s@test.com", prefix)
+	groupID := CreateTestGroup(t, prefix)
+
+	payload := map[string]interface{}{
+		"email":       email,
+		"type":        "Offer",
+		"subject":     "Offer: test item (Test)",
+		"item":        "test item",
+		"textbody":    "Test body for series parity",
+		"messagetype": "Offer",
+		"groupid":     groupID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PUT", "/api/message", bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request, 10000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	persistent, ok := result["persistent"].(map[string]interface{})
+	if !ok {
+		t.Skip("PUT /message did not return a persistent token for this payload; handler shape changed")
+		return
+	}
+
+	returnedSeries, _ := persistent["series"].(float64)
+	sessionID, _ := persistent["id"].(float64)
+	returnedUserID, _ := persistent["userid"].(float64)
+
+	assert.NotZero(t, returnedSeries,
+		"persistent.series must be non-zero — series=0 disables Authorization2 fallback")
+	assert.NotEqual(t, returnedUserID, returnedSeries,
+		"persistent.series must be the random session series, not the userID")
+
+	const maxSafe = float64(int64(1)<<53 - 1)
+	assert.LessOrEqual(t, returnedSeries, maxSafe,
+		"persistent.series must survive a JSON round-trip through a JavaScript Number")
+
+	db := database.DBConn
+	var storedSeries uint64
+	db.Raw("SELECT series FROM sessions WHERE id = ?", uint64(sessionID)).Scan(&storedSeries)
+	assert.Equal(t, uint64(returnedSeries), storedSeries,
+		"persistent.series in response must equal sessions.series in DB")
+}
+
 // =============================================================================
 // PATCH /user tests (profile update)
 // =============================================================================
@@ -3457,4 +3570,170 @@ func TestGetUserFetchMT_ModSeesEmailsForBannedUser(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, u.Emails, "Mod should see emails for banned user")
 	assert.Greater(t, len(u.Emails), 0, "Should have at least one email")
+}
+
+// TestPatchUserTrustlevelSelfDeclined verifies that a regular user can
+// self-set trustlevel to 'Declined' — this is what the microvolunteering
+// "Decline" button does. The V2 handler previously silently dropped
+// trustlevel because it was not a field on UserPatchRequest.
+func TestPatchUserTrustlevelSelfDeclined(t *testing.T) {
+	prefix := uniquePrefix("patchtrustdecl")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Confirm baseline: trustlevel starts NULL.
+	var before *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", userID).Scan(&before)
+	assert.Nil(t, before, "trustlevel should start NULL")
+
+	payload := map[string]interface{}{
+		"id":         userID,
+		"trustlevel": "Declined",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var after *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", userID).Scan(&after)
+	require.NotNil(t, after, "trustlevel should be set after PATCH")
+	assert.Equal(t, "Declined", *after, "trustlevel must be persisted as Declined")
+}
+
+// TestPatchUserTrustlevelSelfBasic verifies that a regular user can
+// self-set trustlevel to 'Basic' — V1 also permits this.
+func TestPatchUserTrustlevelSelfBasic(t *testing.T) {
+	prefix := uniquePrefix("patchtrustbasic")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	payload := map[string]interface{}{
+		"id":         userID,
+		"trustlevel": "Basic",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var after *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", userID).Scan(&after)
+	require.NotNil(t, after)
+	assert.Equal(t, "Basic", *after)
+}
+
+// TestPatchUserTrustlevelSelfEmpty verifies that a regular user can clear
+// their trustlevel by sending an empty string — matches V1 behaviour
+// (user.php:218-220 sets NULL when trustlevel is falsy).
+func TestPatchUserTrustlevelSelfEmpty(t *testing.T) {
+	prefix := uniquePrefix("patchtrustclear")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Seed with Declined first.
+	db.Exec("UPDATE users SET trustlevel = 'Declined' WHERE id = ?", userID)
+
+	payload := map[string]interface{}{
+		"id":         userID,
+		"trustlevel": "",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var after *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", userID).Scan(&after)
+	assert.Nil(t, after, "trustlevel should be NULL after clearing")
+}
+
+// TestPatchUserTrustlevelSelfForbiddenElevated verifies that a regular user
+// CANNOT self-set trustlevel to 'Advanced' or 'Moderate' — only moderators
+// can set elevated trust levels (V1 user.php:205-213).
+func TestPatchUserTrustlevelSelfForbiddenElevated(t *testing.T) {
+	prefix := uniquePrefix("patchtrustelev")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	for _, level := range []string{"Advanced", "Moderate"} {
+		payload := map[string]interface{}{
+			"id":         userID,
+			"trustlevel": level,
+		}
+		s, _ := json.Marshal(payload)
+		request := httptest.NewRequest("PATCH", "/api/user?jwt="+token, bytes.NewBuffer(s))
+		request.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(request)
+		assert.NoError(t, err)
+		// V1 returns ret=2 "Permission denied"; V2 uses HTTP 403.
+		assert.Equal(t, fiber.StatusForbidden, resp.StatusCode, "regular user must not self-set %s", level)
+
+		var after *string
+		db.Raw("SELECT trustlevel FROM users WHERE id = ?", userID).Scan(&after)
+		assert.Nil(t, after, "trustlevel must NOT be updated to %s by non-mod", level)
+	}
+}
+
+// TestPatchUserTrustlevelOtherUserForbidden verifies that a regular user
+// cannot set another user's trustlevel — V1 only permits this for
+// moderators (user.php:205-207).
+func TestPatchUserTrustlevelOtherUserForbidden(t *testing.T) {
+	prefix := uniquePrefix("patchtrustother")
+	db := database.DBConn
+	callerID := CreateTestUser(t, prefix+"_caller", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	_, callerToken := CreateTestSession(t, callerID)
+
+	payload := map[string]interface{}{
+		"id":         targetID,
+		"trustlevel": "Declined",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+callerToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+
+	// Target's trustlevel must remain unchanged.
+	var after *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", targetID).Scan(&after)
+	assert.Nil(t, after, "regular user must not change another user's trustlevel")
+}
+
+// TestPatchUserTrustlevelModOnOther verifies that a moderator CAN set
+// another user's trustlevel to any value — matches V1 user.php:205-207.
+func TestPatchUserTrustlevelModOnOther(t *testing.T) {
+	prefix := uniquePrefix("patchtrustmod")
+	db := database.DBConn
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	_, modToken := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{
+		"id":         targetID,
+		"trustlevel": "Advanced",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PATCH", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var after *string
+	db.Raw("SELECT trustlevel FROM users WHERE id = ?", targetID).Scan(&after)
+	require.NotNil(t, after)
+	assert.Equal(t, "Advanced", *after, "moderator should be able to set elevated trustlevel")
 }

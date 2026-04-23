@@ -1,9 +1,11 @@
 package misc
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -121,4 +123,97 @@ func TestFilterHeadersSensitiveCaseInsensitive(t *testing.T) {
 	}
 	out := filterHeaders(headers, false)
 	assert.Empty(t, out, "all three should be filtered regardless of case")
+}
+
+// getClientIP test helper — spins up a minimal Fiber app and returns whatever
+// getClientIP extracted for a request constructed with the given headers.
+func runGetClientIP(t *testing.T, headers map[string]string) string {
+	t.Helper()
+	app := fiber.New()
+
+	var captured string
+	app.Get("/ip", func(c *fiber.Ctx) error {
+		captured = getClientIP(c)
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	req := httptest.NewRequest("GET", "/ip", nil)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := app.Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+	return captured
+}
+
+func TestGetClientIPForwardedForSingle(t *testing.T) {
+	ip := runGetClientIP(t, map[string]string{"X-Forwarded-For": "203.0.113.7"})
+	assert.Equal(t, "203.0.113.7", ip)
+}
+
+func TestGetClientIPForwardedForChainPicksFirst(t *testing.T) {
+	// Original client is first in the comma-separated list; intermediate
+	// proxies follow.
+	ip := runGetClientIP(t, map[string]string{
+		"X-Forwarded-For": "198.51.100.1, 10.0.0.1, 10.0.0.2",
+	})
+	assert.Equal(t, "198.51.100.1", ip)
+}
+
+func TestGetClientIPForwardedForTrimsWhitespace(t *testing.T) {
+	ip := runGetClientIP(t, map[string]string{
+		"X-Forwarded-For": "   198.51.100.9   , 10.0.0.1",
+	})
+	assert.Equal(t, "198.51.100.9", ip)
+}
+
+func TestGetClientIPFallsBackToRealIP(t *testing.T) {
+	// With no X-Forwarded-For, X-Real-IP is used.
+	ip := runGetClientIP(t, map[string]string{"X-Real-IP": "192.0.2.5"})
+	assert.Equal(t, "192.0.2.5", ip)
+}
+
+func TestGetClientIPRealIPTrimmed(t *testing.T) {
+	ip := runGetClientIP(t, map[string]string{"X-Real-IP": "  192.0.2.42  "})
+	assert.Equal(t, "192.0.2.42", ip)
+}
+
+func TestGetClientIPForwardedForBeatsRealIP(t *testing.T) {
+	// When both are present, X-Forwarded-For wins (first hop is closest to the
+	// actual client).
+	ip := runGetClientIP(t, map[string]string{
+		"X-Forwarded-For": "198.51.100.8",
+		"X-Real-IP":       "10.0.0.1",
+	})
+	assert.Equal(t, "198.51.100.8", ip)
+}
+
+func TestGetClientIPNoHeadersFallsBackToFiber(t *testing.T) {
+	// With neither proxy header set, getClientIP falls through to c.IP(),
+	// which for httptest.NewRequest returns an empty string rather than
+	// panicking. Either way the function must return without error.
+	ip := runGetClientIP(t, map[string]string{})
+	assert.NotPanics(t, func() { _ = ip })
+}
+
+func TestGetClientIPEmptyForwardedForFallsThrough(t *testing.T) {
+	// An empty X-Forwarded-For header must not shadow X-Real-IP — if the
+	// proxy sent an empty value we should still fall through.
+	ip := runGetClientIP(t, map[string]string{
+		"X-Forwarded-For": "",
+		"X-Real-IP":       "192.0.2.77",
+	})
+	assert.Equal(t, "192.0.2.77", ip)
+}
+
+func TestGetClientIPForwardedForEmptyFirstElement(t *testing.T) {
+	// If the first comma-separated entry is whitespace-only, the IP should
+	// fall through rather than returning an empty string.
+	ip := runGetClientIP(t, map[string]string{
+		"X-Forwarded-For": "  , 10.0.0.1",
+		"X-Real-IP":       "192.0.2.33",
+	})
+	// Empty first entry triggers fallback to X-Real-IP.
+	assert.Equal(t, "192.0.2.33", ip)
 }

@@ -34,14 +34,19 @@ export const useLogsStore = defineStore({
 
       if (params && params.id) {
         logs = data.log || []
-        this.list.push(...logs)
       } else {
         logs = data.logs || []
-        this.list.push(...logs)
         this.context = data.context
 
         ret = data.context
       }
+
+      // Dedupe by id. Concurrent fetchChunk calls from rapid re-opens of
+      // ModLogsModal can both see context=null and return the same page,
+      // pushing duplicate rows into the shared store list (9518.181).
+      const existingIds = new Set(this.list.map((l) => l.id))
+      const newLogs = logs.filter((l) => !existingIds.has(l.id))
+      this.list.push(...newLogs)
 
       // V2 pattern: API returns IDs only. Fetch related entities from stores
       // and attach them so components can access log.user, log.message, etc.

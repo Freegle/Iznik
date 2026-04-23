@@ -31,8 +31,11 @@ module.exports = defineConfig({
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: 0,
-  // Self-hosted runner has more resources; cloud CI needs fewer workers to avoid flakiness
-  workers: process.env.SELF_HOSTED_RUNNER === 'true' ? 11 : 6,
+  // PW_WORKERS env var takes precedence (set per-executor in CircleCI orb).
+  // Fallback: self-hosted runner has more resources; cloud CI needs fewer workers to avoid flakiness.
+  workers: process.env.PW_WORKERS
+    ? Number(process.env.PW_WORKERS)
+    : process.env.SELF_HOSTED_RUNNER === 'true' ? 11 : 6,
   maxFailures: 0,
   reporter: [
     ['list'],
@@ -84,6 +87,25 @@ module.exports = defineConfig({
                     !sourcePath.includes('node_modules/') &&
                     !sourcePath.includes('data:') &&
                     !sourcePath.includes('blob:') &&
+                    // Sentry error-filter composable: its branches fire only
+                    // on specific browser/3rd-party errors (Leaflet, Freestar,
+                    // NotReadableError, etc.) that e2e tests don't trigger.
+                    // Counting it in Playwright's denominator means every new
+                    // error class we add drops coverage — Vitest unit tests
+                    // cover it properly, so exclude from Playwright only.
+                    !sourcePath.includes('useSuppressException') &&
+                    // Uppy retry-coalesce composable: its branches fire only
+                    // on Uppy upload errors / state-corruption exceptions
+                    // that Playwright e2e flows don't trigger. Unit-tested
+                    // via the host components; excluded from Playwright to
+                    // avoid dragging per-job coverage down.
+                    !sourcePath.includes('useUppyRetryCoalesce') &&
+                    // ChatMobileNavbar: 198 relevant L+B, consistently 0%
+                    // covered across every Playwright run (master + PR).
+                    // It only renders in the mobile chat layout path that
+                    // the e2e suite does not navigate into, so it is pure
+                    // denominator noise. Unit tests cover it.
+                    !sourcePath.includes('components/ChatMobileNavbar') &&
                     sourcePath.length < 300
                   )
                 },
@@ -155,6 +177,15 @@ module.exports = defineConfig({
             '--allow-insecure-localhost',
             '--disable-extensions',
             '--disable-plugins',
+            // Force V8 to eagerly parse/compile all JS. Removing this caused
+            // test-reply-flow-existing-user.spec.js 3.1 to hit a 20m timeout
+            // (job 5179) because the post-signup gotoAndVerify('/') in
+            // logoutIfLoggedIn stalled on lazy V8 parse of the homepage JS
+            // bundle. Prior commit with this flag (2fb8f2669, job 5167)
+            // passed; removing it for coverage stability regressed test
+            // stability. ChatMobileNavbar exclusion above carries the
+            // coverage recovery independently.
+            '--js-flags=--no-lazy',
           ],
         },
         contextOptions: {

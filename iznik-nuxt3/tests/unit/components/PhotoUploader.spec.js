@@ -61,15 +61,18 @@ vi.mock('tus-js-client', () => ({
   }),
 }))
 
-// Mock Uppy and related
+// Mock Uppy and related. Shared instance so tests can introspect registered
+// event handlers and retryAll call counts.
+const mockUppyInstance = vi.hoisted(() => ({
+  use: vi.fn().mockReturnThis(),
+  on: vi.fn().mockReturnThis(),
+  close: vi.fn(),
+  clear: vi.fn(),
+  retryAll: vi.fn(),
+}))
+
 vi.mock('@uppy/core', () => ({
-  default: vi.fn(() => ({
-    use: vi.fn().mockReturnThis(),
-    on: vi.fn().mockReturnThis(),
-    close: vi.fn(),
-    clear: vi.fn(),
-    retryAll: vi.fn(),
-  })),
+  default: vi.fn(() => mockUppyInstance),
 }))
 
 vi.mock('@uppy/vue', () => ({
@@ -146,6 +149,11 @@ describe('PhotoUploader', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    mockUppyInstance.use.mockClear().mockReturnThis()
+    mockUppyInstance.on.mockClear().mockReturnThis()
+    mockUppyInstance.close.mockClear()
+    mockUppyInstance.clear.mockClear()
+    mockUppyInstance.retryAll.mockClear()
     mockMobileStore.isApp = false
     mockAnalyzePhotoQuality.mockResolvedValue({
       hasIssues: false,
@@ -1117,6 +1125,90 @@ describe('PhotoUploader', () => {
       await flushPromises()
 
       expect(wrapper.vm.uppy).not.toBeNull()
+    })
+
+    // Regression guard for NUXT3-D2C (Sentry TypeError `'error' in undefined`).
+    // Three consecutive per-file upload-error events fired concurrent retryAll
+    // calls that raced inside Uppy's filterNonFailedFiles. Coalesce bursts into
+    // a single queued retryAll.
+    it('coalesces multiple rapid error events into a single retryAll call', async () => {
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+
+      createWrapper()
+      await flushPromises()
+
+      const errorCall = mockUppyInstance.on.mock.calls.find(
+        (c) => c[0] === 'error'
+      )
+      expect(errorCall).toBeDefined()
+      const errorHandler = errorCall[1]
+
+      errorHandler(new Error('file 1 failed'))
+      errorHandler(new Error('file 2 failed'))
+      errorHandler(new Error('file 3 failed'))
+
+      await flushPromises()
+
+      expect(mockUppyInstance.retryAll).toHaveBeenCalledTimes(1)
+
+      consoleError.mockRestore()
+    })
+
+    it('allows a new retry to be scheduled after the current one flushes', async () => {
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+
+      createWrapper()
+      await flushPromises()
+
+      const errorCall = mockUppyInstance.on.mock.calls.find(
+        (c) => c[0] === 'error'
+      )
+      const errorHandler = errorCall[1]
+
+      errorHandler(new Error('burst 1a'))
+      errorHandler(new Error('burst 1b'))
+      await flushPromises()
+      expect(mockUppyInstance.retryAll).toHaveBeenCalledTimes(1)
+
+      errorHandler(new Error('burst 2'))
+      await flushPromises()
+      expect(mockUppyInstance.retryAll).toHaveBeenCalledTimes(2)
+
+      consoleError.mockRestore()
+    })
+
+    it('does not crash when retryAll() throws due to Uppy state corruption', async () => {
+      mockUppyInstance.retryAll.mockImplementation(() => {
+        throw new TypeError(
+          "Cannot use 'in' operator to search for 'error' in undefined"
+        )
+      })
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+
+      createWrapper()
+      await flushPromises()
+
+      const errorCall = mockUppyInstance.on.mock.calls.find(
+        (c) => c[0] === 'error'
+      )
+      const errorHandler = errorCall[1]
+
+      expect(() => errorHandler(new Error('Network failure'))).not.toThrow()
+      await flushPromises()
+      expect(mockUppyInstance.retryAll).toHaveBeenCalled()
+      expect(consoleError).toHaveBeenCalledWith(
+        'retryAll() failed (Uppy state corruption)',
+        expect.any(TypeError)
+      )
+
+      mockUppyInstance.retryAll.mockImplementation(() => {})
+      consoleError.mockRestore()
     })
 
     it('opens uppy modal when add photos clicked in web mode', async () => {

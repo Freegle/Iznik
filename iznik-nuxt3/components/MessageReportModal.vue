@@ -102,6 +102,7 @@ import { ref, computed } from 'vue'
 import { useRuntimeConfig } from 'nuxt/app'
 import { useMessageStore } from '~/stores/message'
 import { useChatStore } from '~/stores/chat'
+import { useAuthStore } from '~/stores/auth'
 import { useOurModal } from '~/composables/useOurModal'
 
 const props = defineProps({
@@ -115,6 +116,7 @@ defineEmits(['hidden'])
 
 const messageStore = useMessageStore()
 const chatStore = useChatStore()
+const authStore = useAuthStore()
 const { modal, hide } = useOurModal()
 
 const selectedReason = ref(null)
@@ -124,6 +126,18 @@ const submitted = ref(false)
 
 const message = computed(() => {
   return messageStore?.byId(props.id)
+})
+
+const reportGroupId = computed(() => {
+  if (!message.value?.groups?.length) return null
+  const myGroupIds = (authStore.groups || []).map((g) => parseInt(g.groupid))
+  // Find groups shared between the user and the message, preferring most recent.
+  const shared = message.value.groups
+    .filter((g) => myGroupIds.includes(parseInt(g.groupid)))
+    .sort((a, b) => new Date(b.arrival) - new Date(a.arrival))
+  return shared.length > 0
+    ? shared[0].groupid
+    : message.value.groups[0].groupid
 })
 
 const canSubmit = computed(() => {
@@ -143,9 +157,7 @@ async function report() {
   submitting.value = true
 
   try {
-    const chatid = await chatStore.openChatToMods(
-      message.value.groups[0].groupid
-    )
+    const chatid = await chatStore.openChatToMods(reportGroupId.value)
 
     const runtimeConfig = useRuntimeConfig()
     const reasonText =

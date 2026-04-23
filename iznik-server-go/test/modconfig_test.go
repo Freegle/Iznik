@@ -46,6 +46,25 @@ func TestGetModConfigSingle(t *testing.T) {
 	assert.Contains(t, cfg, "stdmsgs")
 }
 
+// V1 returns HTTP 200 with ret:2 for an invalid / deleted config id. Go
+// previously returned 404, which the frontend surfaced as "Settings
+// inaccessible" (9518.180). Keep V1 parity.
+func TestGetModConfigInvalidID(t *testing.T) {
+	prefix := uniquePrefix("ModCfgBadID")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, token := CreateTestSession(t, modID)
+
+	// An id that definitely doesn't exist.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/modconfig?id=99999999&jwt=%s", token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(2), result["ret"])
+	assert.Equal(t, "Invalid config id", result["status"])
+}
+
 func TestPostModConfig(t *testing.T) {
 	prefix := uniquePrefix("ModCfgPost")
 	groupID := CreateTestGroup(t, prefix)

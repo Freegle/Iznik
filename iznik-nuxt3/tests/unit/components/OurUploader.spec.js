@@ -959,6 +959,7 @@ describe('OurUploader', () => {
 
       if (errorHandler) {
         errorHandler(new Error('Test error'))
+        await flushPromises()
         expect(mockUppy.retryAll).toHaveBeenCalled()
       }
     })
@@ -1204,6 +1205,63 @@ describe('OurUploader', () => {
     })
   })
 
+  describe('error handler debouncing', () => {
+    // Sentry breadcrumbs for NUXT3-D2C show 3 consecutive per-file upload-error
+    // events firing `retryAll()` concurrently. Three overlapping retryAll calls
+    // race inside Uppy — getFilesByIds returns an undefined entry mid-removal
+    // and filterNonFailedFiles then throws `'error' in undefined`. Coalescing
+    // the bursts into a single queued retryAll removes the race.
+    it('coalesces multiple rapid error events into a single retryAll call', async () => {
+      mockIsApp.value = false
+      mockUppy.retryAll.mockImplementation(() => {})
+
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+
+      await createWrapper()
+
+      const errorCall = mockUppy.on.mock.calls.find((c) => c[0] === 'error')
+      expect(errorCall).toBeDefined()
+      const errorHandler = errorCall[1]
+
+      errorHandler(new Error('file 1 failed'))
+      errorHandler(new Error('file 2 failed'))
+      errorHandler(new Error('file 3 failed'))
+
+      await flushPromises()
+
+      expect(mockUppy.retryAll).toHaveBeenCalledTimes(1)
+
+      consoleError.mockRestore()
+    })
+
+    it('allows a new retry to be scheduled after the current one flushes', async () => {
+      mockIsApp.value = false
+      mockUppy.retryAll.mockImplementation(() => {})
+
+      const consoleError = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+
+      await createWrapper()
+
+      const errorCall = mockUppy.on.mock.calls.find((c) => c[0] === 'error')
+      const errorHandler = errorCall[1]
+
+      errorHandler(new Error('burst 1a'))
+      errorHandler(new Error('burst 1b'))
+      await flushPromises()
+      expect(mockUppy.retryAll).toHaveBeenCalledTimes(1)
+
+      errorHandler(new Error('burst 2'))
+      await flushPromises()
+      expect(mockUppy.retryAll).toHaveBeenCalledTimes(2)
+
+      consoleError.mockRestore()
+    })
+  })
+
   describe('error handler resilience', () => {
     it('does not crash when retryAll() throws due to Uppy state corruption', async () => {
       mockIsApp.value = false
@@ -1224,8 +1282,9 @@ describe('OurUploader', () => {
       expect(errorCall).toBeDefined()
       const errorHandler = errorCall[1]
 
-      // Should not throw — retryAll crash is caught
+      // Should not throw — retryAll crash is caught inside the microtask
       expect(() => errorHandler(new Error('Network failure'))).not.toThrow()
+      await flushPromises()
       expect(mockUppy.retryAll).toHaveBeenCalled()
       expect(consoleError).toHaveBeenCalledWith(
         'retryAll() failed (Uppy state corruption)',
@@ -1249,6 +1308,7 @@ describe('OurUploader', () => {
       const errorHandler = errorCall[1]
 
       errorHandler(new Error('Temporary failure'))
+      await flushPromises()
       expect(mockUppy.retryAll).toHaveBeenCalled()
       // Only the initial "Upload error, retry" log, no corruption log
       expect(consoleError).toHaveBeenCalledTimes(1)

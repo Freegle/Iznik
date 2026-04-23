@@ -27,7 +27,7 @@ RESPONSE=$(echo "$EMAIL_CONTENT" | curl -s -w "\n%{http_code}" \
     -H "X-Envelope-From: ${SENDER}" \
     -H "X-Envelope-To: ${RECIPIENT}" \
     --data-binary @- \
-    "http://freegle-batch-prod:8080/api/mail/incoming" 2>&1)
+    "http://batch-prod:8080/api/mail/incoming" 2>&1)
 
 # Extract HTTP status code (last line)
 HTTP_CODE=$(echo "$RESPONSE" | tail -n1)

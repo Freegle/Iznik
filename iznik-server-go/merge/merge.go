@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
@@ -15,6 +16,24 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+type loginRow struct {
+	ID         uint64     `json:"id"`
+	UserID     uint64     `json:"userid"`
+	Type       string     `json:"type"`
+	UID        string     `json:"uid"`
+	Added      *time.Time `json:"added"`
+	LastAccess *time.Time `json:"lastaccess"`
+}
+
+func fetchLoginsForUser(userID uint64) []loginRow {
+	logins := make([]loginRow, 0)
+	database.DBConn.Raw(
+		"SELECT id, userid, type, CAST(uid AS CHAR) AS uid, added, lastaccess "+
+			"FROM users_logins WHERE userid = ? ORDER BY lastaccess DESC",
+		userID,
+	).Scan(&logins)
+	return logins
+}
 
 // obfuscateEmail replaces the middle characters of the local part with stars.
 // e.g. "test@example.com" -> "t***@example.com"
@@ -82,8 +101,9 @@ func GetMerge(c *fiber.Ctx) error {
 
 	// Get user info for both users in parallel.
 	var name1, email1, name2, email2 string
+	var logins1, logins2 []loginRow
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(6)
 	go func() {
 		defer wg.Done()
 		db.Raw("SELECT COALESCE(fullname, 'A freegler') FROM users WHERE id = ?", m.User1).Scan(&name1)
@@ -100,6 +120,14 @@ func GetMerge(c *fiber.Ctx) error {
 		defer wg.Done()
 		db.Raw("SELECT COALESCE(email, '') FROM users_emails WHERE userid = ? ORDER BY preferred DESC LIMIT 1", m.User2).Scan(&email2)
 	}()
+	go func() {
+		defer wg.Done()
+		logins1 = fetchLoginsForUser(m.User1)
+	}()
+	go func() {
+		defer wg.Done()
+		logins2 = fetchLoginsForUser(m.User2)
+	}()
 	wg.Wait()
 
 	return c.JSON(fiber.Map{
@@ -109,14 +137,16 @@ func GetMerge(c *fiber.Ctx) error {
 			"id":  m.ID,
 			"uid": m.UID,
 			"user1": fiber.Map{
-				"id":    m.User1,
-				"name":  name1,
-				"email": obfuscateEmail(email1),
+				"id":     m.User1,
+				"name":   name1,
+				"email":  obfuscateEmail(email1),
+				"logins": logins1,
 			},
 			"user2": fiber.Map{
-				"id":    m.User2,
-				"name":  name2,
-				"email": obfuscateEmail(email2),
+				"id":     m.User2,
+				"name":   name2,
+				"email":  obfuscateEmail(email2),
+				"logins": logins2,
 			},
 			"accepted": m.Accepted,
 			"rejected": m.Rejected,

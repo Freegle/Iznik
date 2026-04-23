@@ -629,6 +629,40 @@ describe('ModLog', () => {
     })
   })
 
+  describe('multi-group messages', () => {
+    it('shows Pending when any group has Pending collection', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Received',
+        message: {
+          type: 'Offer',
+          groups: [
+            { id: 1, collection: 'Approved' },
+            { id: 2, collection: 'Pending' },
+          ],
+        },
+      })
+      expect(wrapper.text()).toContain('currently Pending')
+    })
+
+    it('does not show Pending when no group has Pending collection', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Received',
+        message: {
+          type: 'Offer',
+          groups: [
+            { id: 1, collection: 'Approved' },
+            { id: 2, collection: 'Approved' },
+          ],
+        },
+      })
+      expect(wrapper.text()).not.toContain('currently Pending')
+    })
+  })
+
   describe('edge cases', () => {
     it('handles log with minimal data', () => {
       const wrapper = createWrapper({

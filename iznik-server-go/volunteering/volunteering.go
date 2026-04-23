@@ -2,6 +2,7 @@ package volunteering
 
 import (
 	"errors"
+	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/newsfeed"
@@ -66,13 +67,37 @@ func List(c *fiber.Ctx) error {
 		// Use GetActiveModGroupIDs to exclude backup mods.
 		modGroupIDs := user.GetActiveModGroupIDs(myid)
 
-		// always filter by mod groups, even for admins.
-		// National (groupid IS NULL) volunteering is handled separately if needed.
+		seen := make(map[uint64]bool)
+
 		if len(modGroupIDs) > 0 {
+			var groupIds []uint64
 			db.Raw("SELECT DISTINCT volunteering.id FROM volunteering "+
 				"INNER JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
 				"WHERE groupid IN (?) AND volunteering.deleted = 0 AND pending = 1 "+
-				"ORDER BY id DESC", modGroupIDs).Pluck("id", &ids)
+				"ORDER BY id DESC", modGroupIDs).Pluck("id", &groupIds)
+			for _, id := range groupIds {
+				if !seen[id] {
+					seen[id] = true
+					ids = append(ids, id)
+				}
+			}
+		}
+
+		// Mirrors V1 User::getWorkCounts (User.php:6651-6656): users with
+		// PERM_NATIONAL_VOLUNTEERS see pending national ops (no volunteering_groups
+		// row, i.e. groupid IS NULL) in addition to their per-group ones.
+		if auth.HasPermission(myid, auth.PERM_NATIONAL_VOLUNTEERS) {
+			var nationalIds []uint64
+			db.Raw("SELECT volunteering.id FROM volunteering "+
+				"LEFT JOIN volunteering_groups ON volunteering.id = volunteering_groups.volunteeringid "+
+				"WHERE volunteering_groups.groupid IS NULL AND volunteering.deleted = 0 AND pending = 1 "+
+				"ORDER BY volunteering.id DESC").Pluck("id", &nationalIds)
+			for _, id := range nationalIds {
+				if !seen[id] {
+					seen[id] = true
+					ids = append(ids, id)
+				}
+			}
 		}
 	} else if len(groupids) > 0 {
 		start := time.Now().Format("2006-01-02")

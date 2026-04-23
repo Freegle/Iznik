@@ -13,40 +13,57 @@ class UpdateAIImageUsageCountsCommand extends Command
 
     public function handle(): int
     {
-        // Process in batches to avoid deadlocking on 32k+ rows.
-        $batchSize = 500;
-        $lastId = 0;
-        $totalUpdated = 0;
+        // Step 1: Precompute all AI attachment counts into a temp table (one scan).
+        DB::statement('DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts');
+        DB::statement("
+            CREATE TEMPORARY TABLE tmp_ai_usage_counts (
+                externaluid VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci PRIMARY KEY,
+                cnt INT NOT NULL
+            ) AS
+            SELECT ma.externaluid, COUNT(*) AS cnt
+            FROM messages_attachments ma
+            WHERE JSON_EXTRACT(ma.externalmods, '$.ai') = TRUE
+              AND ma.externaluid IS NOT NULL
+              AND ma.externaluid != ''
+            GROUP BY ma.externaluid
+        ");
 
-        do {
-            $ids = DB::table('ai_images')
-                ->where('id', '>', $lastId)
+        // Step 2: Update one row at a time via JOIN, skipping rows where
+        // the count hasn't changed. Single-row updates lock for microseconds
+        // and don't interfere with concurrent operations.
+        $totalUpdated = 0;
+        $totalSkipped = 0;
+
+        try {
+            // lazyById() uses cursor-based pagination (WHERE id > lastId) rather
+            // than LIMIT/OFFSET, so concurrent INSERT/DELETE on ai_images cannot
+            // cause rows to be skipped or seen twice during iteration.
+            $rows = DB::table('ai_images')
                 ->whereNotNull('externaluid')
                 ->where('externaluid', '!=', '')
-                ->orderBy('id')
-                ->limit($batchSize)
-                ->pluck('id');
+                ->select('id')
+                ->lazyById(500);
 
-            if ($ids->isEmpty()) {
-                break;
+            foreach ($rows as $row) {
+                $affected = DB::update("
+                    UPDATE ai_images ai
+                    LEFT JOIN tmp_ai_usage_counts t ON t.externaluid = ai.externaluid
+                    SET ai.usage_count = COALESCE(t.cnt, 0)
+                    WHERE ai.id = ?
+                      AND ai.usage_count != COALESCE(t.cnt, 0)
+                ", [$row->id]);
+
+                if ($affected > 0) {
+                    $totalUpdated++;
+                } else {
+                    $totalSkipped++;
+                }
             }
+        } finally {
+            DB::statement('DROP TEMPORARY TABLE IF EXISTS tmp_ai_usage_counts');
+        }
 
-            DB::update("
-                UPDATE ai_images ai
-                SET usage_count = (
-                    SELECT COUNT(*)
-                    FROM messages_attachments ma
-                    WHERE ma.externaluid = ai.externaluid
-                      AND JSON_EXTRACT(ma.externalmods, '$.ai') = TRUE
-                )
-                WHERE ai.id IN (" . $ids->implode(',') . ")
-            ");
-
-            $totalUpdated += $ids->count();
-            $lastId = $ids->last();
-        } while ($ids->count() === $batchSize);
-
-        $this->info("Updated usage counts for {$totalUpdated} AI images.");
+        $this->info("Updated {$totalUpdated} AI images, skipped {$totalSkipped} unchanged.");
 
         return Command::SUCCESS;
     }

@@ -42,9 +42,10 @@ export const useAdminsStore = defineStore({
       }
     },
     async approve(params) {
+      // Go API binds `pending` to *bool; a numeric 0 here yields 400.
       await api(this.config).admins.patch({
         id: params.id,
-        pending: 0,
+        pending: false,
       })
       await this.fetch({ id: params.id })
     },

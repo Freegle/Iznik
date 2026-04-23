@@ -479,6 +479,21 @@ describe('MyMessage', () => {
       const takenBtn = actionBtns.filter((btn) => btn.text().includes('TAKEN'))
       expect(takenBtn.length).toBe(0)
     })
+
+    it('repost skips typeahead when location has no name (locationid=0 fallback)', async () => {
+      mockData.message.groups = [{ groupid: 1, collection: 'Rejected' }]
+      mockData.message.item = { name: 'Test item' }
+      mockData.message.location = { name: '' }
+      const wrapper = await createWrapper()
+      const editResend = wrapper
+        .findAll('.action-btn')
+        .find((btn) => btn.text().includes('Edit & Resend'))
+      expect(editResend).toBeTruthy()
+      await editResend.trigger('click')
+      await flushPromises()
+      expect(mockLocationStore.typeahead).not.toHaveBeenCalled()
+      expect(mockRouterPush).toHaveBeenCalledWith('/give')
+    })
   })
 
   describe('Action Buttons', () => {
@@ -1031,6 +1046,34 @@ describe('MyMessage', () => {
       expect(mockComposeStore.setMessage).toHaveBeenCalled()
     })
 
+    it('fetches message before repost when not yet in store (Sentry 7421179445)', async () => {
+      // Simulate the Sentry case: message not yet in store at mount time.
+      // The useMessageDisplay mock returns ref(mockData.message), so setting
+      // mockData.message = null makes message.value null in the component.
+      const fetchedMessage = {
+        id: 999,
+        type: 'Offer',
+        fromuser: 1,
+        groups: [{ groupid: 1 }],
+        canrepost: true,
+        location: { name: 'AB1 2CD' },
+        item: { name: 'Test item' },
+        attachments: [],
+        availablenow: 1,
+        textbody: 'body',
+      }
+      mockData.message = null
+      mockMessageStore.fetch.mockResolvedValue(fetchedMessage)
+      await createWrapper({ action: 'repost', id: 999 })
+      // Without the fix, message.value.id throws (null.id) and setMessage is
+      // never called with the fetched id.
+      expect(mockComposeStore.setMessage).toHaveBeenCalledWith(
+        0,
+        expect.objectContaining({ id: 999 }),
+        expect.anything()
+      )
+    })
+
     it('redirects to /myposts when outcome modal closes for withdraw action', async () => {
       const wrapper = await createWrapper({ action: 'withdraw' })
       wrapper.vm.onOutcomeHidden()
@@ -1050,6 +1093,41 @@ describe('MyMessage', () => {
       wrapper.vm.onOutcomeHidden()
       expect(wrapper.vm.showOutcomeModal).toBe(false)
       expect(mockRouterPush).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('multi-group messages', () => {
+    it('fetches all groups and computes messageGroups', async () => {
+      mockData.message.groups = [
+        { groupid: 1, collection: 'Approved' },
+        { groupid: 2, collection: 'Approved' },
+      ]
+      mockGroupStore.get.mockImplementation((id) => ({
+        id,
+        nameshort: `group-${id}`,
+        namedisplay: `Group ${id}`,
+      }))
+      const wrapper = await createWrapper()
+      expect(mockGroupStore.fetch).toHaveBeenCalledWith(1)
+      expect(mockGroupStore.fetch).toHaveBeenCalledWith(2)
+      expect(wrapper.vm.messageGroups).toHaveLength(2)
+      expect(wrapper.vm.messageGroups[0].namedisplay).toBe('Group 1')
+      expect(wrapper.vm.messageGroups[1].namedisplay).toBe('Group 2')
+    })
+
+    it('shows all group names in the template', async () => {
+      mockData.message.groups = [
+        { groupid: 1, collection: 'Approved' },
+        { groupid: 2, collection: 'Approved' },
+      ]
+      mockGroupStore.get.mockImplementation((id) => ({
+        id,
+        nameshort: `group-${id}`,
+        namedisplay: `Group ${id}`,
+      }))
+      const wrapper = await createWrapper()
+      expect(wrapper.text()).toContain('Group 1')
+      expect(wrapper.text()).toContain('Group 2')
     })
   })
 })

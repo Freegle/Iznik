@@ -74,4 +74,33 @@ class UpdateAIImageUsageCountsCommandTest extends TestCase
         // Should not have been touched — still 99.
         $this->assertEquals(99, DB::table('ai_images')->where('name', 'test-usage-no-uid')->value('usage_count'));
     }
+
+    public function test_skips_rows_where_count_unchanged(): void
+    {
+        // Create an image whose usage_count already matches reality.
+        $uid = 'test-usage-uid-unchanged-' . uniqid();
+
+        DB::table('ai_images')->insert([
+            'name' => 'test-usage-unchanged',
+            'externaluid' => $uid,
+            'usage_count' => 1,
+        ]);
+
+        DB::table('messages_attachments')->insert([
+            'externaluid' => $uid,
+            'externalmods' => json_encode(['ai' => true]),
+            'hash' => 'unchanged',
+        ]);
+
+        $this->testAttachmentIds = DB::table('messages_attachments')
+            ->where('externaluid', $uid)
+            ->pluck('id')
+            ->toArray();
+
+        $this->artisan('ai:usage-counts:update')
+            ->assertSuccessful();
+
+        // Count should still be 1 (unchanged).
+        $this->assertEquals(1, DB::table('ai_images')->where('name', 'test-usage-unchanged')->value('usage_count'));
+    }
 }

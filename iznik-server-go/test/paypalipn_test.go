@@ -218,6 +218,12 @@ func TestPayPalIPN_RecurringVsOneOff(t *testing.T) {
 		userID).Scan(&taskCount)
 	assert.Equal(t, int64(1), taskCount, "Thank-you should be queued for first recurring donation")
 
+	// Source field must be 'paypal' so the email is worded correctly.
+	var source string
+	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(data, '$.source')) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL",
+		userID).Scan(&source)
+	assert.Equal(t, "paypal", source, "PayPal IPN must tag thank-you task with source=paypal")
+
 	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", txnID)
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'email_donate_external' AND data LIKE ?",
 		fmt.Sprintf("%%\"user_id\":%d%%", userID))

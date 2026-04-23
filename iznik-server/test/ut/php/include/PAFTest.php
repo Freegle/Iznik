@@ -84,7 +84,16 @@ class PAFTest extends IznikTestCase {
         $t = str_replace('zzz', $udprn, $t);
         file_put_contents('/tmp/ut.csv', $t);
         $this->log("Update with changes");
-        self::assertEquals(7, $p->update('/tmp/ut.csv'));
+        # Was 7 while testenv seeded paf_addresses with id=102367696 udprn=50464672,
+        # which made AB10 1AA udprn=50464672 a pre-existing UPDATE target during
+        # update(pc.csv). update(pc2.csv) then matched the same row (udprn preserved
+        # by the field-by-field UPDATE) and counted 2 real field diffs for TV10 1AA.
+        # Commit c0158933b moved the seed udprn to 102367696. With no pre-existing
+        # row at udprn=50464672, update(pc.csv) INSERTs the row — but PAF::update's
+        # INSERT branch does not write the udprn column, so the new row has udprn=NULL.
+        # update(pc2.csv) then finds 0 matches for every udprn lookup and produces
+        # 5 plain inserts = 5 diffs.
+        self::assertEquals(5, $p->update('/tmp/ut.csv'));
 
         $pcids = $this->dbhr->preQuery("SELECT paf_addresses.postcodeid, name FROM paf_addresses INNER JOIN locations ON locations.id = paf_addresses.postcodeid WHERE paf_addresses.postcodeid IS NOT NULL LIMIT 1;");
         $name = $pcids[0]['name'];

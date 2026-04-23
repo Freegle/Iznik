@@ -152,6 +152,46 @@ describe('logs store', () => {
     expect(store.list).toHaveLength(2)
   })
 
+  it('dedupes logs across concurrent fetches returning same page', async () => {
+    // Reproduces Discourse 9518.181: rapid repeated opens of ModLogsModal
+    // ran fetchChunk concurrently. Both saw context=null and returned page 1,
+    // pushing identical rows into the shared store list.
+    const store = useLogsStore()
+    store.init({})
+    mockLogsFetch.mockResolvedValue({
+      logs: [
+        { id: 10, type: 'Message' },
+        { id: 11, type: 'Message' },
+        { id: 12, type: 'Message' },
+      ],
+      context: { id: 12 },
+    })
+
+    await Promise.all([store.fetch({}), store.fetch({}), store.fetch({})])
+
+    expect(store.list).toHaveLength(3)
+    expect(store.list.map((l) => l.id).sort()).toEqual([10, 11, 12])
+  })
+
+  it('dedupes logs when sequential fetch returns overlapping rows', async () => {
+    const store = useLogsStore()
+    store.init({})
+    mockLogsFetch.mockResolvedValueOnce({
+      logs: [{ id: 1 }, { id: 2 }],
+      context: { id: 2 },
+    })
+    mockLogsFetch.mockResolvedValueOnce({
+      logs: [{ id: 2 }, { id: 3 }],
+      context: { id: 3 },
+    })
+
+    await store.fetch({})
+    await store.fetch({})
+
+    expect(store.list).toHaveLength(3)
+    expect(store.list.map((l) => l.id)).toEqual([1, 2, 3])
+  })
+
   it('setParams stores params', () => {
     const store = useLogsStore()
     store.setParams({ groupid: 5 })

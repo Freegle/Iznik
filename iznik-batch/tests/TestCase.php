@@ -53,6 +53,14 @@ abstract class TestCase extends BaseTestCase
         config(['mail.default' => 'array']);
         \Illuminate\Support\Facades\Mail::forgetMailers();
 
+        // Force cache driver to 'array' and flush it, so rate-limit / throttle
+        // entries (e.g. bounce_autoreply:<hash>) don't leak between tests.
+        // DatabaseTransactions only isolates the DB; the cache store is shared
+        // process-wide, so a cache entry set by one test would otherwise be
+        // visible to the next and cause order-dependent failures.
+        config(['cache.default' => 'array']);
+        \Illuminate\Support\Facades\Cache::flush();
+
         // Hard check: verify we are connected to the test database, not production.
         // This runs AFTER Laravel boots, so it checks the real PDO connection.
         $dbName = \DB::connection()->getDatabaseName();

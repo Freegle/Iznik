@@ -139,6 +139,16 @@
               Possibly should be on {{ homegroup }}
               <span v-if="!homegroupontn"> but group not on TN </span>
             </div>
+            <div
+              v-if="otherGroups.length > 0"
+              class="small text-muted"
+            >
+              Also on:
+              <span
+                v-for="(g, idx) in otherGroups"
+                :key="g.groupid"
+              >{{ groupStore.get(g.groupid)?.namedisplay || 'Group ' + g.groupid }}<span v-if="idx < otherGroups.length - 1">, </span></span>
+            </div>
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
               :key="'duplicate-' + duplicate.id + '-' + index"
@@ -191,7 +201,7 @@
                   >
                 </b-button>
                 <SpinButton
-                  v-if="message.groups[0].collection === 'Approved'"
+                  v-if="contextGroup?.collection === 'Approved'"
                   class="mt-2"
                   variant="white"
                   icon-name="reply"
@@ -251,6 +261,7 @@
                   </p>
                   <ModMessageButton
                     :messageid="message.id"
+                    :groupid="groupid"
                     variant="warning"
                     icon="play"
                     release
@@ -426,7 +437,7 @@
                 :message="message"
                 :userid="fromUserId"
                 modinfo
-                :groupid="message.groups[0].groupid"
+                :groupid="groupid"
               />
               <div v-else-if="fromUserId && !fromUser">
                 <Spinner :size="20" />
@@ -524,7 +535,7 @@
             <ModMemberActions
               v-if="showActions && message.groups && message.groups.length"
               :userid="fromUserId"
-              :groupid="message.groups[0].groupid"
+              :groupid="groupid"
               @commentadded="updateComments"
             />
           </b-col>
@@ -534,14 +545,14 @@
           class="mt-1"
         >
           <b-alert
-            v-if="message.groups[0].collection === 'Pending'"
+            v-if="contextGroup?.collection === 'Pending'"
             variant="info"
             show
           >
             <v-icon icon="info-circle" /> Post now in <em>Pending</em>.
           </b-alert>
           <b-alert
-            v-if="message.groups[0].collection === 'Approved'"
+            v-if="contextGroup?.collection === 'Approved'"
             variant="info"
             show
           >
@@ -585,6 +596,7 @@
             !editing
           "
           :messageid="message.id"
+          :groupid="groupid"
           :modconfigid="configid"
           :editreview="editreview"
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
@@ -628,6 +640,7 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import Highlighter from 'vue-highlight-words'
 
 import { useAuthStore } from '~/stores/auth'
+import { useGroupStore } from '~/stores/group'
 import { useLocationStore } from '~/stores/location'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
@@ -684,11 +697,17 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  contextGroupid: {
+    type: Number,
+    required: false,
+    default: null,
+  },
 })
 
 const emit = defineEmits(['destroy'])
 
 const authStore = useAuthStore()
+const groupStore = useGroupStore()
 const locationStore = useLocationStore()
 const memberStore = useMemberStore()
 const messageStore = useMessageStore()
@@ -759,23 +778,32 @@ const historyGroups = reactive({})
 const editmessage = ref(false)
 
 const groupid = computed(() => {
-  // moved from mixins/keywords
-  let ret = 0
+  // Use contextual groupid prop if provided (multi-group support),
+  // otherwise fall back to first group.
+  if (props.contextGroupid) return props.contextGroupid
 
   if (message.value && message.value.groups && message.value.groups.length) {
-    ret = message.value.groups[0].groupid
+    return message.value.groups[0].groupid
   }
-  return ret
+  return 0
 })
 
 const messageGroup = computed(() => {
-  let ret = null
+  return groupid.value || null
+})
 
-  if (message.value && message.value.groups && message.value.groups.length) {
-    ret = message.value.groups[0].groupid
-  }
+// Get the group info for the contextual group (multi-group support).
+const contextGroup = computed(() => {
+  if (!message.value?.groups?.length) return null
+  const gid = parseInt(groupid.value)
+  return message.value.groups.find((g) => parseInt(g.groupid) === gid) || message.value.groups[0]
+})
 
-  return ret
+// Other groups this message is on (for multi-group indicator).
+const otherGroups = computed(() => {
+  if (!message.value?.groups) return []
+  const gid = parseInt(groupid.value)
+  return message.value.groups.filter((g) => parseInt(g.groupid) !== gid)
 })
 
 const messageHistory = computed(() => {

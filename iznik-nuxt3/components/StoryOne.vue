@@ -214,8 +214,11 @@ async function unlove() {
 
 .story-card__image {
   margin-bottom: 1rem;
-  width: 250px;
-  height: 250px;
+  /* aspect-ratio reserves the square slot at any available width, so the
+     image can respond to narrow viewports without reintroducing CLS. */
+  width: 100%;
+  max-width: 250px;
+  aspect-ratio: 1 / 1;
 }
 
 .story-card__photo {

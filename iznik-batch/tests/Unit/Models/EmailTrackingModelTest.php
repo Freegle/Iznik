@@ -254,4 +254,16 @@ class EmailTrackingModelTest extends TestCase
 
         $this->assertStringContainsString('s=80', $url);
     }
+
+    public function test_create_for_email_works_inside_transaction(): void
+    {
+        // createForEmail must work inside a transaction (e.g., admin mail sending).
+        $email = $this->uniqueEmail('tracking-txn');
+
+        // DatabaseTransactions trait already wraps us in a transaction.
+        $tracking = EmailTracking::createForEmail('TxnTest', $email);
+
+        $this->assertNotNull($tracking->id);
+        $this->assertEquals('TxnTest', $tracking->email_type);
+    }
 }

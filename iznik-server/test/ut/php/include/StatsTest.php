@@ -110,10 +110,9 @@ class StatsTest extends IznikTestCase {
         $m->addItem($iid);
 
         list($g, $gid) = $this->createTestGroup('testgroup1', Group::GROUP_REUSE);
-        $g->setSettings([ 'includearea' => FALSE ]);
 
         $m->constructSubject($gid);
-        self::assertEquals(strtolower('OFFER: test item (TV13)'), strtolower($m->getSubject()));
+        self::assertEquals(strtolower('OFFER: test item (Tuvalu Central TV13)'), strtolower($m->getSubject()));
 
         list($u, $uid, $emailid) = $this->createTestUser(NULL, NULL, 'Test User', 'test2@test.com', 'testpw');
         $this->dbhm->preExec("UPDATE users SET lastaccess = NOW(), lastlocation = ? WHERE id = ?", [

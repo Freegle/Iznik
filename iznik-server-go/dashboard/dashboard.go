@@ -116,7 +116,7 @@ func GetDashboard(c *fiber.Ctx) error {
 
 	if len(groupIDs) > 0 {
 		var msgCount int64
-		db.Raw("SELECT COUNT(*) FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
+		db.Raw("SELECT COUNT(DISTINCT messages.id) FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
 			"WHERE messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?)",
 			startQ, endQ, groupIDs).Scan(&msgCount)
 		dashboard["newmessages"] = msgCount
@@ -190,7 +190,7 @@ func getRecentCounts(groupIDs []uint64, startQ, endQ string) map[string]int64 {
 	}
 
 	var newmessages, newmembers int64
-	db.Raw("SELECT COUNT(*) FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
+	db.Raw("SELECT COUNT(DISTINCT messages.id) FROM messages INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
 		"WHERE messages_groups.arrival >= ? AND messages_groups.arrival <= ? AND groupid IN (?) "+
 		"AND messages.arrival >= ? AND messages.arrival <= ?",
 		startQ, endQ, groupIDs, startQ, endQ).Scan(&newmessages)

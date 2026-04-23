@@ -874,6 +874,8 @@ func ExcludeLocation(c *fiber.Ctx) error {
 	db.Exec("INSERT IGNORE INTO locations_excluded (locationid, groupid, userid) VALUES (?, ?, ?)",
 		req.ID, req.GroupID, myid)
 
+	queueExcludeRemap(req.ID)
+
 	// If byname, also exclude all locations with the same name.
 	if req.Byname {
 		var name string
@@ -884,11 +886,27 @@ func ExcludeLocation(c *fiber.Ctx) error {
 			for _, otherID := range otherIDs {
 				db.Exec("INSERT IGNORE INTO locations_excluded (locationid, groupid, userid) VALUES (?, ?, ?)",
 					otherID, req.GroupID, myid)
+				queueExcludeRemap(otherID)
 			}
 		}
 	}
 
 	return c.JSON(fiber.Map{"success": true})
+}
+
+func queueExcludeRemap(locationID uint64) {
+	var wkt string
+	database.DBConn.Raw(
+		"SELECT ST_AsText(COALESCE(ourgeometry, geometry)) FROM locations WHERE id = ?",
+		locationID,
+	).Scan(&wkt)
+	if wkt == "" {
+		return
+	}
+	go queue.QueueTask(queue.TaskRemapPostcodes, map[string]interface{}{
+		"location_id": locationID,
+		"polygon":     wkt,
+	})
 }
 
 // --- KML to WKT conversion ---

@@ -104,12 +104,16 @@ describe('LayoutCommon', () => {
       // CLS fix: DaDisableCTA must appear AFTER ExternalDa in the template.
       // If it came before, the element appearing on ad render would push the
       // ad content (and div.jobs-slot) downward, causing a measurable layout shift.
+      // Match on `<DaDisableCTA` and `<ExternalDa` so that imports or comments
+      // further up the file can't satisfy the assertion spuriously.
       const src = readFileSync(
         resolve(__dirname, '../../../components/LayoutCommon.vue'),
         'utf-8'
       )
-      const daDisableCtaPos = src.indexOf('DaDisableCTA')
-      const externalDaPos = src.indexOf('ExternalDa')
+      const daDisableCtaPos = src.indexOf('<DaDisableCTA')
+      const externalDaPos = src.indexOf('<ExternalDa')
+      expect(daDisableCtaPos).toBeGreaterThan(-1)
+      expect(externalDaPos).toBeGreaterThan(-1)
       expect(daDisableCtaPos).toBeGreaterThan(externalDaPos)
     })
   })

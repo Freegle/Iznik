@@ -9,6 +9,7 @@
       <div :ref="'top' + message.id" />
       <ModMessage
         :messageid="message.id"
+        :context-groupid="groupid ? Number(groupid) : null"
         :next="
           ix < visibleMessages.length - 1 ? visibleMessages[ix + 1].id : null
         "

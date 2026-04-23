@@ -21,6 +21,7 @@ type MessageGroupInfo struct {
 	Groupid    uint64    `json:"groupid"`
 	Collection string    `json:"collection"`
 	Arrival    time.Time `json:"arrival"`
+	Heldby     *uint64   `json:"heldby,omitempty"`
 }
 
 type PaginationContext struct {
@@ -127,7 +128,7 @@ func ListMessages(c *fiber.Ctx) error {
 		// If the search term is numeric, also match on message ID.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchID > 0 {
-			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
+			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
 				"INNER JOIN messages m ON m.id = mg.msgid "+
 				"WHERE mg.groupid IN (?) "+
 				"AND mg.collection = ? "+
@@ -139,7 +140,7 @@ func ListMessages(c *fiber.Ctx) error {
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
-			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
+			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
 				"INNER JOIN messages m ON m.id = mg.msgid "+
 				"WHERE mg.groupid IN (?) "+
 				"AND mg.collection = ? "+
@@ -153,7 +154,7 @@ func ListMessages(c *fiber.Ctx) error {
 		// If search is a numeric user ID, do a fast direct lookup first.
 		searchUID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchUID > 0 {
-			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
+			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
 				"INNER JOIN messages m ON m.id = mg.msgid "+
 				"WHERE mg.groupid IN (?) "+
 				"AND mg.collection = ? "+
@@ -164,7 +165,7 @@ func ListMessages(c *fiber.Ctx) error {
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
-			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
+			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
 				"INNER JOIN messages m ON m.id = mg.msgid "+
 				"INNER JOIN users u ON u.id = m.fromuser "+
 				"LEFT JOIN users_emails ue ON ue.userid = u.id "+
@@ -177,7 +178,7 @@ func ListMessages(c *fiber.Ctx) error {
 		}
 	} else {
 		// Standard listing with optional pagination and fromuser filter.
-		sql := "SELECT mg.msgid FROM messages_groups mg " +
+		sql := "SELECT DISTINCT mg.msgid FROM messages_groups mg " +
 			"INNER JOIN messages m ON m.id = mg.msgid " +
 			"WHERE mg.groupid IN (?) " +
 			"AND mg.collection = ? " +
@@ -245,7 +246,7 @@ func ListMessages(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT groupid, collection, arrival FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&groups)
+				db.Raw("SELECT groupid, collection, arrival, heldby FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&groups)
 			}()
 
 			go func() {
@@ -429,7 +430,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		// If search is a numeric user ID, do a fast direct lookup first.
 		searchUID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchUID > 0 {
-			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
+			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
 				"INNER JOIN messages m ON m.id = mg.msgid "+
 				"INNER JOIN users u ON u.id = m.fromuser "+
 				"WHERE mg.groupid IN (?) "+
@@ -454,7 +455,7 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				groupIDs, collection, searchTerm, searchTerm, limit).Pluck("msgid", &msgIDs)
 		}
 	} else {
-		sql := "SELECT mg.msgid FROM messages_groups mg " +
+		sql := "SELECT DISTINCT mg.msgid FROM messages_groups mg " +
 			"INNER JOIN messages m ON m.id = mg.msgid " +
 			"INNER JOIN users u ON u.id = m.fromuser " +
 			"WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 " +
