@@ -325,11 +325,14 @@ class PostcodeRemapServiceTest extends TestCase
             );
         }
 
-        // Now mark the first area as excluded.
+        // Now mark the first area as excluded. Use real FK targets since
+        // locations_excluded has FKs to groups.id and users.id.
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser();
         DB::table('locations_excluded')->insert([
             'locationid' => $excludedId,
-            'groupid' => 1,
-            'userid' => 1,
+            'groupid' => $group->id,
+            'userid' => $user->id,
         ]);
 
         try {
@@ -406,10 +409,12 @@ class PostcodeRemapServiceTest extends TestCase
             [$postcodeId, 'POINT(-1.44 53.35)', $srid]
         );
 
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser();
         DB::table('locations_excluded')->insert([
             'locationid' => $excludedId,
-            'groupid' => 1,
-            'userid' => 1,
+            'groupid' => $group->id,
+            'userid' => $user->id,
         ]);
 
         // Seed PG with only the replacement area (excluded area is filtered out by sync).
