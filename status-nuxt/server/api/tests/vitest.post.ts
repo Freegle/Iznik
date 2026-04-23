@@ -41,7 +41,7 @@ export default defineEventHandler(async (event) => {
   })
 
   const filterArg = filter ? ` --reporter=verbose "${filter}"` : ' --reporter=verbose'
-  const testCmd = `cd /app && npx vitest run${filterArg} 2>&1`
+  const testCmd = `cd /app && npx vitest run${filterArg} --coverage 2>&1`
 
   const testProcess = spawn('sh', ['-c', `
     docker exec -w /app ${container} sh -c '${testCmd}'

@@ -151,7 +151,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
-      reportsDirectory: './coverage',
+      reportsDirectory: path.resolve(rootDir, 'coverage'),
       include: [
         'components/**/*.vue',
         'modtools/components/**/*.vue',
