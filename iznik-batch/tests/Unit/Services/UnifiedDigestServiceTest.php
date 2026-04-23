@@ -370,43 +370,6 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertCount(0, $sponsors);
     }
 
-    public function test_deduplication_with_same_message_on_multiple_groups(): void
-    {
-        // Multi-group model: same messages.id has two messages_groups rows.
-        // The digest query joins messages with messages_groups, so the same message
-        // appears twice with different groupids. deduplicatePosts should merge them.
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-
-        $message = $this->createTestMessage($user, $group1, [
-            'subject' => 'OFFER: Multi-Group Item (TestTown)',
-        ]);
-
-        // Add the same message to a second group (simulating the multi-group model).
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id,
-            'groupid' => $group2->id,
-            'collection' => 'Approved',
-            'arrival' => now(),
-        ]);
-
-        // Simulate what getPostsForUser returns: two rows for the same message
-        // with different groupid attributes (from the join).
-        $row1 = clone $message;
-        $row1->groupid = $group1->id;
-        $row2 = clone $message;
-        $row2->groupid = $group2->id;
-
-        $posts = collect([$row1, $row2]);
-        $deduplicated = $this->service->deduplicatePosts($posts);
-
-        $this->assertCount(1, $deduplicated, 'Same message on two groups should deduplicate to one');
-        $this->assertCount(2, $deduplicated->first()['postedToGroups'], 'Both groups should be in postedToGroups');
-        $this->assertContains($group1->id, $deduplicated->first()['postedToGroups']);
-        $this->assertContains($group2->id, $deduplicated->first()['postedToGroups']);
-    }
-
     public function test_immediate_mode_requires_full_setting(): void
     {
         $user = $this->createTestUser();

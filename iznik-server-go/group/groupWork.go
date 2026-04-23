@@ -107,6 +107,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 
 	// Build result map keyed by groupid.
 	workMap := make(map[uint64]*GroupWork)
+	var mapMutex sync.RWMutex
 	for _, gid := range allGroupIDs {
 		workMap[gid] = &GroupWork{Groupid: gid}
 	}
@@ -137,6 +138,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 			"INNER JOIN users u ON u.id = m.fromuser "+
 			"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL "+
 			"GROUP BY mg.groupid, held", allGroupIDs, utils.COLLECTION_PENDING).Scan(&rows)
+		mapMutex.Lock()
 		for _, r := range rows {
 			w := workMap[r.Groupid]
 			if w == nil {
@@ -152,6 +154,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 				w.Pendingother += r.Count
 			}
 		}
+		mapMutex.Unlock()
 	}()
 
 	// --- Spam messages: only active groups ---
@@ -167,11 +170,13 @@ func GetGroupWork(c *fiber.Ctx) error {
 			"INNER JOIN users u ON u.id = m.fromuser "+
 			"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 AND m.deleted IS NULL AND u.deleted IS NULL "+
 			"GROUP BY mg.groupid", activeGroupIDs, utils.COLLECTION_SPAM).Scan(&rows)
+		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
 				w.Spam = r.Count
 			}
 		}
+		mapMutex.Unlock()
 	}()
 
 	// --- Pending members: all groups, no active/inactive split ---
@@ -182,11 +187,13 @@ func GetGroupWork(c *fiber.Ctx) error {
 		db.Raw("SELECT groupid, COUNT(*) as count FROM memberships "+
 			"WHERE groupid IN ? AND collection = ? "+
 			"GROUP BY groupid", allGroupIDs, utils.COLLECTION_PENDING).Scan(&rows)
+		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
 				w.Pendingmembers = r.Count
 			}
 		}
+		mapMutex.Unlock()
 	}()
 
 	// --- Spam members: split by held, active → primary/other, inactive → other ---
@@ -198,6 +205,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 			"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
 			"AND (reviewedat IS NULL OR DATE(reviewedat) < DATE_SUB(NOW(), INTERVAL 31 DAY)) "+
 			"GROUP BY groupid, held", allGroupIDs).Scan(&rows)
+		mapMutex.Lock()
 		for _, r := range rows {
 			w := workMap[r.Groupid]
 			if w == nil {
@@ -213,6 +221,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 				w.Spammembersother += r.Count
 			}
 		}
+		mapMutex.Unlock()
 	}()
 
 	// --- Pending community events: only active groups ---
@@ -228,11 +237,13 @@ func GetGroupWork(c *fiber.Ctx) error {
 			"INNER JOIN communityevents_dates ced ON ced.eventid = ce.id "+
 			"WHERE ceg.groupid IN ? AND ce.pending = 1 AND ce.deleted = 0 AND ced.end >= NOW() "+
 			"GROUP BY ceg.groupid", activeGroupIDs).Scan(&rows)
+		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
 				w.Pendingevents = r.Count
 			}
 		}
+		mapMutex.Unlock()
 	}()
 
 	// --- Pending volunteering: only active groups ---
@@ -249,11 +260,13 @@ func GetGroupWork(c *fiber.Ctx) error {
 			"WHERE vg.groupid IN ? AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0 "+
 			"AND (vd.end IS NULL OR vd.end >= NOW()) "+
 			"GROUP BY vg.groupid", activeGroupIDs).Scan(&rows)
+		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
 				w.Pendingvolunteering = r.Count
 			}
 		}
+		mapMutex.Unlock()
 	}()
 
 	// --- Edit reviews: only active groups, last 7 days ---
@@ -269,11 +282,13 @@ func GetGroupWork(c *fiber.Ctx) error {
 			"WHERE mg.groupid IN ? AND me.reviewrequired = 1 AND me.approvedat IS NULL AND me.revertedat IS NULL "+
 			"AND me.timestamp > DATE_SUB(NOW(), INTERVAL 7 DAY) AND mg.deleted = 0 "+
 			"GROUP BY mg.groupid", activeGroupIDs).Scan(&rows)
+		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
 				w.Editreview = r.Count
 			}
 		}
+		mapMutex.Unlock()
 	}()
 
 	// --- Pending admins: only active groups ---
@@ -287,11 +302,13 @@ func GetGroupWork(c *fiber.Ctx) error {
 		db.Raw("SELECT groupid, COUNT(DISTINCT id) as count FROM admins "+
 			"WHERE groupid IN ? AND complete IS NULL AND pending = 1 AND heldby IS NULL "+
 			"GROUP BY groupid", activeGroupIDs).Scan(&rows)
+		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
 				w.Pendingadmins = r.Count
 			}
 		}
+		mapMutex.Unlock()
 	}()
 
 	// --- Happiness: only active groups ---
@@ -321,11 +338,13 @@ func GetGroupWork(c *fiber.Ctx) error {
 			"AND mo.reviewed = 0 "+
 			"GROUP BY mg.groupid",
 			hapCutoff, hapCutoff, activeGroupIDs).Scan(&rows)
+		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
 				w.Happiness = r.Count
 			}
 		}
+		mapMutex.Unlock()
 	}()
 
 	// --- Related members: only active groups ---
@@ -351,11 +370,13 @@ func GetGroupWork(c *fiber.Ctx) error {
 			"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? "+
 			"AND (SELECT COUNT(*) FROM users_logins WHERE userid = m.userid) > 0 "+
 			") t GROUP BY groupid", activeGroupIDs, activeGroupIDs).Scan(&rows)
+		mapMutex.Lock()
 		for _, r := range rows {
 			if w := workMap[r.Groupid]; w != nil {
 				w.Relatedmembers = r.Count
 			}
 		}
+		mapMutex.Unlock()
 	}()
 
 	// --- Chat review: per-group, split by active/inactive and held status ---
@@ -405,7 +426,9 @@ func GetGroupWork(c *fiber.Ctx) error {
 		}
 
 		// Active groups: not-held → chatreview, held → chatreviewother.
-		for _, r := range chatReviewByGroup(activeGroupIDs) {
+		activeRows := chatReviewByGroup(activeGroupIDs)
+		mapMutex.Lock()
+		for _, r := range activeRows {
 			if w := workMap[r.Groupid]; w != nil {
 				if r.Held == 0 {
 					w.Chatreview = r.Count
@@ -414,12 +437,16 @@ func GetGroupWork(c *fiber.Ctx) error {
 				}
 			}
 		}
+		mapMutex.Unlock()
 		// Inactive groups: all → chatreviewother.
-		for _, r := range chatReviewByGroup(inactiveGroupIDs) {
+		inactiveRows := chatReviewByGroup(inactiveGroupIDs)
+		mapMutex.Lock()
+		for _, r := range inactiveRows {
 			if w := workMap[r.Groupid]; w != nil {
 				w.Chatreviewother += r.Count
 			}
 		}
+		mapMutex.Unlock()
 
 		// Wider chat review: if user is eligible, count unheld messages from groups with
 		// widerchatreview=1. These appear as new group entries with chatreviewother counts.
@@ -442,6 +469,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 				"GROUP BY m1.groupid",
 				chatCutoff).Scan(&widerRows)
 
+			mapMutex.Lock()
 			for _, r := range widerRows {
 				if w, exists := workMap[r.Groupid]; exists {
 					// Group already in workMap — add to chatreviewother.
@@ -454,6 +482,7 @@ func GetGroupWork(c *fiber.Ctx) error {
 					}
 				}
 			}
+			mapMutex.Unlock()
 		}
 	}()
 
