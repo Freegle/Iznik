@@ -86,9 +86,48 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
   console.log('Logging out via UI')
 
   try {
+    // Clear any lingering modal backdrop from a prior modal (e.g. the login
+    // modal that closes via route redirect after signUpViaHomepage). The
+    // backdrop node in <div id="teleports"> otherwise intercepts pointer
+    // events and blocks the #menu-option-logout click.
+    if (!page.isClosed()) {
+      await page
+        .evaluate(() => {
+          document
+            .querySelectorAll('.modal.show, .modal[style*="display: block"]')
+            .forEach((el) => {
+              el.classList.remove('show')
+              el.style.display = 'none'
+            })
+          document
+            .querySelectorAll('.modal-backdrop')
+            .forEach((el) => el.remove())
+          document.body.classList.remove('modal-open')
+          document.body.style.removeProperty('overflow')
+          document.body.style.removeProperty('padding-right')
+        })
+        .catch(() => {})
+    }
+
     // Check if the logout button is visible (desktop or mobile)
     const desktopLogout = page.locator('#menu-option-logout')
     const mobileLogout = page.locator('text=Logout').filter({ visible: true })
+
+    // Briefly wait for a logout button to become visible. Right after
+    // signUpViaHomepage / loginViaHomepage the navbar may still be hydrating,
+    // and the synchronous isVisible() check below would miss it — causing a
+    // fall-through into the expensive gotoAndVerify('/') path that can hang
+    // for 200+ seconds under parallel CI load and burn the test budget
+    // (symptom: test-reply-flow-existing-user.spec.js 3.1 timing out at 20m
+    // after "No logout button visible").
+    await Promise.race([
+      desktopLogout
+        .waitFor({ state: 'visible', timeout: 10000 })
+        .catch(() => {}),
+      mobileLogout
+        .waitFor({ state: 'visible', timeout: 10000 })
+        .catch(() => {}),
+    ])
 
     const isDesktopVisible = await desktopLogout.isVisible().catch(() => false)
     const isMobileVisible = await mobileLogout.isVisible().catch(() => false)
@@ -125,6 +164,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       await page.gotoAndVerify('/', {
         timeout: timeouts.navigation.initial,
         waitUntil: 'domcontentloaded',
+        maxRetries: 1,
       })
       console.log('Navigated to homepage')
     }
@@ -145,6 +185,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       await page.gotoAndVerify('/', {
         timeout: timeouts.navigation.initial,
         waitUntil: 'domcontentloaded',
+        maxRetries: 1,
       })
     }
     return page
@@ -273,7 +314,19 @@ async function signUpViaHomepage(
   // the in-memory Pinia store still has stale state (e.g. loggedInEver=true).
   // A fresh page load re-hydrates from the now-empty localStorage so the login
   // modal opens in signup mode rather than login mode.
-  await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+  //
+  // waitUntil 'domcontentloaded' rather than the gotoAndVerify default of
+  // 'load': the homepage's Google GSI/FedCM scripts sometimes never fire the
+  // `load` event in CI, so each 202.5s nav attempt × 3 retries exhausts the
+  // 10m test budget. The sign-in button is in SSR-rendered HTML and
+  // waitForEnabledSignInButton polls for hydration separately, so we don't
+  // need `load`. Same reasoning as logoutIfLoggedIn above.
+  // Use maxRetries: 1 to prevent up to 3 retries × 202s timeout = ~10m per call.
+  await page.gotoAndVerify('/', {
+    timeout: timeouts.navigation.initial,
+    waitUntil: 'domcontentloaded',
+    maxRetries: 1,
+  })
 
   // Wait for page to be fully loaded with JavaScript
   // Don't use networkidle - the app has background polling that prevents idle state
@@ -516,10 +569,15 @@ async function loginViaHomepage(
   await clearSessionData(page)
   console.log('Cleared session data before login')
 
-  // Navigate to homepage if we're not already there
+  // Navigate to homepage if we're not already there.
+  // waitUntil 'domcontentloaded': homepage GSI/FedCM scripts sometimes never
+  // fire `load` in CI — see signUpViaHomepage for the full rationale.
   const currentUrl = page.url()
   if (!currentUrl.endsWith('/') && !currentUrl.endsWith('/?')) {
-    await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+    await page.gotoAndVerify('/', {
+      timeout: timeouts.navigation.initial,
+      waitUntil: 'domcontentloaded',
+    })
   }
 
   // Find and click the sign-in button on the homepage to open the login modal
@@ -1336,6 +1394,25 @@ async function loginViaModTools(page, email, password = 'freegle') {
   // Click the Log in button (never Join Freegle!)
   await loginButton.first().click()
   console.log('Clicked Log in button')
+
+  // Check for error messages before waiting for modal to close
+  // Some errors (like "We don't know that email address") keep the modal visible
+  try {
+    const errorSelector = '.alert-danger, .text-danger, .invalid-feedback'
+    const errorElement = page.locator(errorSelector)
+
+    if (
+      await errorElement
+        .isVisible({ timeout: timeouts.ui.appearance / 2 })
+        .catch(() => false)
+    ) {
+      const errorText = await errorElement.textContent()
+      console.error(`ModTools login failed with error: ${errorText}`)
+      return false
+    }
+  } catch (e) {
+    // Continue if error check fails - modal might close successfully
+  }
 
   // Wait for the modal to close (v-if="!loggedIn" removes it from DOM)
   await loginModal.waitFor({

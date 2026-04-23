@@ -1701,17 +1701,18 @@ type UserPutRequest struct {
 
 // UserPatchRequest is the body for PATCH /user (profile update).
 type UserPatchRequest struct {
-	ID                  uint64           `json:"id"`
-	Displayname         *string          `json:"displayname,omitempty"`
-	Settings            *json.RawMessage `json:"settings,omitempty"`
-	Onholidaytill       *string          `json:"onholidaytill,omitempty"`
-	Relevantallowed     *utils.FlexInt   `json:"relevantallowed,omitempty"`
-	Newslettersallowed  *utils.FlexInt   `json:"newslettersallowed,omitempty"`
-	Aboutme             *string          `json:"aboutme,omitempty"`
-	Newsfeedmodstatus   *string          `json:"newsfeedmodstatus,omitempty"`
-	Email               *string          `json:"email,omitempty"`
-	Source              *string          `json:"source,omitempty"`
-	Password            *string          `json:"password,omitempty"`
+	ID                 uint64           `json:"id"`
+	Displayname        *string          `json:"displayname,omitempty"`
+	Settings           *json.RawMessage `json:"settings,omitempty"`
+	Onholidaytill      *string          `json:"onholidaytill,omitempty"`
+	Relevantallowed    *utils.FlexInt   `json:"relevantallowed,omitempty"`
+	Newslettersallowed *utils.FlexInt   `json:"newslettersallowed,omitempty"`
+	Aboutme            *string          `json:"aboutme,omitempty"`
+	Newsfeedmodstatus  *string          `json:"newsfeedmodstatus,omitempty"`
+	Email              *string          `json:"email,omitempty"`
+	Source             *string          `json:"source,omitempty"`
+	Password           *string          `json:"password,omitempty"`
+	Trustlevel         *string          `json:"trustlevel,omitempty"`
 }
 
 // UserDeleteRequest is the body for DELETE /user.
@@ -2087,6 +2088,50 @@ func PatchUser(c *fiber.Ctx) error {
 		db.Exec("INSERT INTO users_logins (userid, type, uid, credentials, salt) VALUES (?, ?, ?, ?, ?) "+
 			"ON DUPLICATE KEY UPDATE credentials = ?, salt = ?",
 			targetID, utils.LOGIN_TYPE_NATIVE, uid, hashed, salt, hashed, salt)
+	}
+
+	// Trustlevel mirrors V1 iznik-server/http/api/user.php:199-226.
+	// A moderator (systemrole Moderator/Support/Admin) can set any trust level
+	// on any user. A regular user can only self-set Basic or Declined, or
+	// clear it by sending an empty string. Attempts that don't match either
+	// rule must be rejected — silent-drop was the NUXT3 bug that lost
+	// microvolunteering "Decline" clicks.
+	if req.Trustlevel != nil {
+		trustTarget := req.ID
+		if trustTarget == 0 {
+			trustTarget = myid
+		}
+
+		// A moderator acting on self or someone else — full permission.
+		isMod := auth.IsAdminOrSupport(myid)
+		if !isMod {
+			var systemrole string
+			db.Raw("SELECT systemrole FROM users WHERE id = ?", myid).Scan(&systemrole)
+			if systemrole == utils.SYSTEMROLE_MODERATOR {
+				isMod = true
+			}
+		}
+
+		if isMod {
+			if *req.Trustlevel == "" {
+				db.Exec("UPDATE users SET trustlevel = NULL WHERE id = ?", trustTarget)
+			} else {
+				db.Exec("UPDATE users SET trustlevel = ? WHERE id = ?", *req.Trustlevel, trustTarget)
+			}
+		} else {
+			// Non-moderator: self only, Basic/Declined/empty only.
+			if trustTarget != myid {
+				return fiber.NewError(fiber.StatusForbidden, "Not authorized to set another user's trust level")
+			}
+			tl := *req.Trustlevel
+			if tl == "" {
+				db.Exec("UPDATE users SET trustlevel = NULL WHERE id = ?", myid)
+			} else if tl == "Basic" || tl == "Declined" {
+				db.Exec("UPDATE users SET trustlevel = ? WHERE id = ?", tl, myid)
+			} else {
+				return fiber.NewError(fiber.StatusForbidden, "Only moderators can set elevated trust levels")
+			}
+		}
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})

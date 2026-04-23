@@ -9,7 +9,10 @@ import { defineNuxtPlugin, useRuntimeConfig } from '#app'
 import { useRouter } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
-import { suppressException } from '~/composables/useSuppressException'
+import {
+  suppressException,
+  suppressSentryEvent,
+} from '~/composables/useSuppressException'
 import { onTraceChange, getTraceId, getSessionId } from '~/composables/useTrace'
 import { useClientLog } from '~/composables/useClientLog'
 
@@ -91,6 +94,12 @@ export default defineNuxtPlugin(async (nuxtApp) => {
           // suppressException via beforeSend.
           'getPlacementPosition',
           'getInnerDimensions',
+
+          // Leaflet Tooltip._updatePosition firing after map.remove() nulled
+          // _map during Vue navigation/unmount (NUXT3-D7B, dup 7375663927).
+          // Prevented at source by plugins/leafletTooltipGuard.client.js; this
+          // entry catches residual events from cached bundles.
+          'latLngToLayerPoint',
         ],
         integrations: [
           new Integrations.BrowserTracing({
@@ -109,6 +118,28 @@ export default defineNuxtPlugin(async (nuxtApp) => {
           if (useMiscStore()?.unloading) {
             // All network requests are aborted during unload, and so we'll get spurious errors.  Ignore them.
             console.log('Ignore error in unload')
+            return null
+          }
+
+          // Freestar ftUtils.js null-property errors (NUXT3-CES
+          // getPlacementPosition, NUXT3-D2H getInnerDimensions). The stack-based
+          // match in suppressException() below misses events where the original
+          // exception is reconstructed/wrapped by the time beforeSend sees it,
+          // so also check the parsed event frames directly.
+          if (suppressSentryEvent(event)) {
+            console.log('Freestar ftUtils frame - suppress event')
+            return null
+          }
+
+          // Transitional safety net for Sentry NUXT3-BS6. OurUploadedImage now
+          // gates its captureMessage behind state checks (isUnmounting /
+          // target.isConnected) so transient fetch aborts on mobile infinite
+          // scroll + Capacitor WebView no longer fire. Cached bundles deployed
+          // before that change still emit the unconditional captureMessage —
+          // drop those here until the rollout window closes (remove ~30 days
+          // after deploy). Narrowed to freegletusd- so real load failures on
+          // other providers (e.g. uploadcare) still surface.
+          if (event.message?.startsWith('Failed to fetch image freegletusd-')) {
             return null
           }
 

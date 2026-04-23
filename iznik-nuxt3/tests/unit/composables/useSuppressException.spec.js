@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { suppressException } from '~/composables/useSuppressException'
+import {
+  suppressException,
+  suppressSentryEvent,
+} from '~/composables/useSuppressException'
 
 describe('suppressException', () => {
   let logSpy
@@ -182,5 +185,180 @@ describe('suppressException', () => {
         message: "Cannot read properties of undefined (reading 'foo')",
       })
     ).toBe(false)
+  })
+
+  it('suppresses Leaflet Tooltip._updatePosition null-map errors (NUXT3-D7B)', () => {
+    // Sentry issue NUXT3-D7B (7387861402) + duplicate 7375663927: 83 events /
+    // 21 users. Firefox/Chrome raise this when a Leaflet Tooltip update fires
+    // after the map has been torn down during Vue navigation/unmount. The
+    // message is the telltale match; minified stacks may not retain "leaflet".
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message:
+          "Cannot read properties of null (reading 'latLngToLayerPoint')",
+        stack:
+          "TypeError: Cannot read properties of null (reading 'latLngToLayerPoint')\n" +
+          '    at t._updatePosition (/_nuxt/entry.abc123.js:1:2345)',
+      })
+    ).toBe(true)
+  })
+
+  it('suppresses minified Leaflet errors identified by _updatePosition in stack', () => {
+    // After Vite minification the module name "leaflet" may not survive in the
+    // stack; _updatePosition is a Leaflet-internal signature.
+    expect(
+      suppressException({
+        name: 'TypeError',
+        message: 'null has no properties',
+        stack: '    at _updatePosition (something.abc.js:1:1)',
+      })
+    ).toBe(true)
+  })
+})
+
+describe('suppressSentryEvent', () => {
+  it('returns false for falsy input', () => {
+    expect(suppressSentryEvent(null)).toBe(false)
+    expect(suppressSentryEvent(undefined)).toBe(false)
+    expect(suppressSentryEvent({})).toBe(false)
+  })
+
+  it('returns false when exception has no values', () => {
+    expect(suppressSentryEvent({ exception: {} })).toBe(false)
+    expect(suppressSentryEvent({ exception: { values: [] } })).toBe(false)
+  })
+
+  it('suppresses NUXT3-CES: ftUtils.js getPlacementPosition frame', () => {
+    // Synthetic Sentry event matching the NUXT3-CES signature (issue 6579683231):
+    // TypeError: Cannot read properties of null (reading 'document')
+    //   at Object.getPlacementPosition (.../ftUtils.js)
+    const event = {
+      exception: {
+        values: [
+          {
+            type: 'TypeError',
+            value: "Cannot read properties of null (reading 'document')",
+            stacktrace: {
+              frames: [
+                {
+                  function: 'Object.getPlacementPosition',
+                  filename: 'https://a.pub.network/freegle.org/ftUtils.js',
+                  abs_path: 'https://a.pub.network/freegle.org/ftUtils.js',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(true)
+  })
+
+  it('suppresses NUXT3-D2H: ftUtils.js getInnerDimensions frame', () => {
+    const event = {
+      exception: {
+        values: [
+          {
+            type: 'TypeError',
+            value: "Cannot read properties of null (reading 'display')",
+            stacktrace: {
+              frames: [
+                {
+                  function: 'getInnerDimensions',
+                  filename: 'https://a.pub.network/freegle.org/ftUtils.js',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(true)
+  })
+
+  it('matches when Freestar frame is not the top frame', () => {
+    const event = {
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                { function: 'userCode', filename: '/app.js' },
+                {
+                  function: 'getPlacementPosition',
+                  filename: '/ftUtils.js',
+                },
+                { function: 'innerWrapper', filename: '/lib.js' },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(true)
+  })
+
+  it('does not suppress ftUtils.js frames with unknown function names', () => {
+    // Narrow match: a new bug in ftUtils.js with a different function should
+    // still be reported so we notice it rather than masking it.
+    const event = {
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                {
+                  function: 'someNewFunction',
+                  filename: 'https://a.pub.network/freegle.org/ftUtils.js',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(false)
+  })
+
+  it('does not suppress getPlacementPosition in a non-ftUtils file', () => {
+    // Narrow match: another script happening to define a function called
+    // getPlacementPosition shouldn't be silently dropped.
+    const event = {
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                {
+                  function: 'getPlacementPosition',
+                  filename: '/app/MyComponent.vue',
+                },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(false)
+  })
+
+  it('does not suppress unrelated events', () => {
+    const event = {
+      exception: {
+        values: [
+          {
+            type: 'TypeError',
+            value: "Cannot read properties of null (reading 'foo')",
+            stacktrace: {
+              frames: [
+                { function: 'myHandler', filename: '/app/MyComponent.vue' },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    expect(suppressSentryEvent(event)).toBe(false)
   })
 })

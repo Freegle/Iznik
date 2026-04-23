@@ -2,6 +2,8 @@ import type { ActionDefinition } from 'ai-flower'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
 import {
   getDb,
   getTopicCursor,
@@ -15,6 +17,8 @@ import {
   upsertDiscourseBug,
 } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
+import { getPhaseInfo } from '../phase.js'
+import { modelForAdversarialReview } from '../policy.js'
 
 const exec = promisify(execFile)
 
@@ -22,6 +26,44 @@ const STATE_PATH = '/tmp/freegle-monitor/state.json'
 const SUMMARY_PATH = '/tmp/freegle-monitor/summary.md'
 const DRAFTS_PATH = '/tmp/freegle-monitor/retest-drafts.md'
 const USER_FEEDBACK_PATH = '/tmp/freegle-monitor/user_feedback.md'
+
+// Resolve the `claude` CLI binary once. The Node parent's PATH isn't always
+// inherited the way an interactive shell expects (systemd, cron, npm script
+// launchers strip it), so relying on `spawn('claude', …)` to find it via PATH
+// produced ENOENT crashes mid-iteration. Prefer $CLAUDE_BIN, then the user's
+// ~/.local/bin install (which is where `which claude` resolves to in practice),
+// and only fall back to the bare name if neither is present.
+function resolveClaudeBin(): string {
+  if (process.env.CLAUDE_BIN && existsSync(process.env.CLAUDE_BIN)) {
+    return process.env.CLAUDE_BIN
+  }
+  const home = process.env.HOME
+  if (home) {
+    const localBin = `${home}/.local/bin/claude`
+    if (existsSync(localBin)) return localBin
+  }
+  return 'claude'
+}
+const CLAUDE_BIN = resolveClaudeBin()
+
+// Redact obvious credentials from strings we display on screen or stash in
+// context (the stdoutTail fed back to the FSM). The delegate is explicitly
+// allowed to read ~/.circleci/cli.yml and put the token into a Bash env var
+// — that's legitimate work. But the tool-use event includes the full command
+// as `input.command`, so the raw token flows onto the terminal and into the
+// FSM's context unless we scrub here. Debug.log keeps the raw values so
+// post-hoc investigation still works.
+function redactSecrets(s: string): string {
+  if (!s) return s
+  return s
+    .replace(/\b(CIRCLECI_TOKEN|GITHUB_TOKEN|SENTRY_AUTH_TOKEN|SMTP_PASS|OPENAI_API_KEY|ANTHROPIC_API_KEY)=\S+/g, '$1=<redacted>')
+    .replace(/(Authorization:\s*(?:bearer|token)\s+)\S+/gi, '$1<redacted>')
+    .replace(/(-u\s+[^:\s]+:)\S+/g, '$1<redacted>')
+    .replace(/\bCCIPAT_[A-Za-z0-9_-]+/g, 'CCIPAT_<redacted>')
+    .replace(/\bsk-ant-[A-Za-z0-9_-]+/g, 'sk-ant-<redacted>')
+    .replace(/\bghp_[A-Za-z0-9]+/g, 'ghp_<redacted>')
+    .replace(/\bghs_[A-Za-z0-9]+/g, 'ghs_<redacted>')
+}
 
 async function sh(cmd: string, args: string[], cwd?: string): Promise<{ stdout: string; stderr: string; code: number }> {
   try {
@@ -623,6 +665,7 @@ print(urllib.request.urlopen(req).read().decode())
         task: { type: 'string', description: 'Full task description for the subagent: what to fix, how, acceptance criteria, exact repo path, whether to push to master or a feature branch.' },
         repoCwd: { type: 'string', description: 'Working directory. Defaults to /home/edward/FreegleDockerWSL.' },
         timeoutSec: { type: 'number', description: 'Max seconds. Default 1200 (20 min).' },
+        model: { type: 'string', description: 'Claude model id for the subagent. Omit to use the iteration-active model (Haiku in peak/implementation phase, Sonnet in off-peak/analysis phase).' },
       },
       required: ['task'],
     },
@@ -681,9 +724,17 @@ If you omit the marker, your work is considered failed regardless of what actual
       const HARD_CAP_MS = Math.max(timeoutSec * 1000, 3_600_000)
       const { spawn } = await import('node:child_process')
       type KillReason = 'tool-silence' | 'idle-silence' | 'hardCap' | null
+      // Model selection: explicit param wins; otherwise use the iteration's
+      // active delegate model (set by driver from getPhaseInfo). In peak
+      // (implementation) phase this is Haiku — cheap, fast, sufficient for
+      // fixing CI or writing a coverage test. In off-peak (analysis) phase
+      // this is Sonnet/session-default for heavy diagnosis.
+      const delegateModel = (params.model as string) ?? process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'sonnet'
+      startGroup(`· delegate_to_coder (model=${delegateModel})`)
+      let toolCount = 0
       const result = await new Promise<{ stdout: string; stderr: string; textStream: string; code: number; killReason: KillReason; lastTool: string | null }>((resolve) => {
         const child = spawn(
-          'claude',
+          CLAUDE_BIN,
           [
             '-p',
             '--output-format', 'stream-json',
@@ -691,6 +742,7 @@ If you omit the marker, your work is considered failed regardless of what actual
             '--include-partial-messages',
             '--permission-mode', 'acceptEdits',
             '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob',
+            '--model', delegateModel,
           ],
           { cwd: repoCwd, stdio: ['pipe', 'pipe', 'pipe'] },
         )
@@ -717,6 +769,25 @@ If you omit the marker, your work is considered failed regardless of what actual
               } else if (block.type === 'tool_use' && typeof block.name === 'string') {
                 currentTool = block.name
                 lastTool = block.name
+                toolCount += 1
+                // Surface tool invocations as nested one-liners so a human
+                // watching sees progress while the coder runs. `input` on
+                // tool_use holds the args (Bash command, file path, etc.);
+                // show a terse single-line hint where we can.
+                //
+                // SECURITY: redact obvious secrets before display. Tokens
+                // routinely appear in bash commands (CIRCLECI_TOKEN=..., curl
+                // -u user:TOKEN, gh api -H "Authorization: bearer ..."). The
+                // full command still reaches debug.log but the screen + the
+                // stdoutTail we echo to the FSM are scrubbed.
+                const args = block.input ?? {}
+                let hint = ''
+                if (typeof args.command === 'string') hint = args.command.replace(/\s+/g, ' ').slice(0, 120)
+                else if (typeof args.file_path === 'string') hint = args.file_path
+                else if (typeof args.path === 'string') hint = args.path
+                else if (typeof args.pattern === 'string') hint = args.pattern
+                hint = redactSecrets(hint)
+                out(`▸ ${block.name}${hint ? ': ' + truncate(hint, 90) : ''}`)
               } else if (block.type === 'tool_result') {
                 // Tool completed — resume idle-silence threshold.
                 currentTool = null
@@ -776,6 +847,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       const prMatch = combined.match(/PR_NUMBER=(\d+)/)
       const directMatch = combined.match(/DIRECT_PUSH=([a-f0-9]+)/)
       const commitMatch = combined.match(/COMMIT_PUSHED=([a-f0-9]+)/)
+      const failedMatch = combined.match(/DELEGATE_FAILED=([^\n]+)/)
       // exitCode 143 = SIGTERM (silence watchdog or hard cap fired).
       // Surface an explicit `timedOut` flag and `timeoutReason` so the
       // VERIFY/router prompts don't have to reverse-engineer this from the
@@ -785,6 +857,24 @@ If you omit the marker, your work is considered failed regardless of what actual
       const directPushSha = directMatch ? directMatch[1] : undefined
       const commitPushedSha = commitMatch ? commitMatch[1] : undefined
       const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
+      // Summarise for the human watcher: what did the delegate actually do?
+      let summary: string
+      if (timedOut) {
+        summary = `timed out (${killReason}) after ${toolCount} tool${toolCount === 1 ? '' : 's'}`
+      } else if (prNumber) {
+        summary = `opened PR #${prNumber} (${toolCount} tools)`
+      } else if (commitPushedSha) {
+        summary = `pushed ${commitPushedSha.slice(0, 9)} to existing PR (${toolCount} tools)`
+      } else if (directPushSha) {
+        summary = `pushed ${directPushSha.slice(0, 9)} to master (${toolCount} tools)`
+      } else if (failedMatch) {
+        summary = `DELEGATE_FAILED: ${truncate(failedMatch[1].trim(), 80)}`
+      } else if (code === 0) {
+        summary = `exited 0 but no marker — ${toolCount} tools, no PR`
+      } else {
+        summary = `exited ${code} (${toolCount} tools)`
+      }
+      endGroup(summary)
       return {
         exitCode: code,
         timedOut,
@@ -793,8 +883,8 @@ If you omit the marker, your work is considered failed regardless of what actual
         silenceIdleMs: SILENCE_IDLE_MS,
         hardCapMs: HARD_CAP_MS,
         lastTool,
-        stdoutTail: textStream.slice(-2000),
-        stderrTail: stderr.slice(-2000),
+        stdoutTail: redactSecrets(textStream.slice(-2000)),
+        stderrTail: redactSecrets(stderr.slice(-2000)),
         prNumber,
         directPushSha,
         commitPushedSha,
@@ -883,6 +973,348 @@ print('sent')
     },
     handler: async (params) => {
       return { scheduled: true, delaySeconds: params.delaySeconds, reason: params.reason }
+    },
+  },
+
+  // ─── Tool-node helpers ──────────────────────────────────────────────────
+  // These actions encode logic that used to be LLM decisions. They return a
+  // `_transition` key so the driver's tool-node fast-path can pick the next
+  // state without calling the LLM.
+
+  {
+    name: 'coverage_gate_decide',
+    description: 'Pure-logic branch for COVERAGE_GATE. Reads iterationStartTs from context, counts PRs created/updated this iteration, and checks for red CI on @me open PRs. Returns {count, redPRs, _transition: "CI_ROUTER" | "WRAP_UP" | "WRITE_COVERAGE"}. Used by the COVERAGE_GATE tool node to skip an LLM call.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const verifyDef = actions.find(a => a.name === 'verify_pr_created')!
+      const redDef = actions.find(a => a.name === 'check_my_open_pr_ci')!
+      const iterationStartTs = (context as any)?.iterationStartTs as string | undefined
+      const verify = await verifyDef.handler({ iterationStartTs }, context)
+      const red = await redDef.handler({}, context)
+      const v = verify as any
+      const r = red as any
+      const redCount = Array.isArray(r.redPRs) ? r.redPRs.length : 0
+      const prCount = typeof v.count === 'number' ? v.count : 0
+      let target: string
+      if (redCount > 0) target = 'CI_ROUTER'
+      else if (prCount > 0) target = 'WRAP_UP'
+      else target = 'WRITE_COVERAGE'
+      return {
+        count: prCount,
+        redCount,
+        verify,
+        red,
+        _transition: target,
+      }
+    },
+  },
+
+  {
+    name: 'compose_and_write_summary',
+    description: 'Render the monitor summary markdown from the DB state + this iteration\'s context and write it to /tmp/freegle-monitor/summary.md. Replaces the LLM-composed WRAP_UP step. No params; reads context.bugsFixed, iterationStartTs, and DB rows.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as any
+      const iterationStartTs = ctx?.iterationStartTs ?? new Date().toISOString()
+      const phase = ctx?.phase ?? 'unknown'
+      const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
+      const verify = ctx?._action_coverage_gate_decide?.verify ?? ctx?._action_verify_pr_created ?? {}
+      const prsThisIter: Array<any> = Array.isArray(verify?.prs) ? verify.prs : []
+
+      const lines: string[] = []
+      lines.push('# Freegle Monitor — iteration summary', '')
+      lines.push(`- Iteration start: ${iterationStartTs}`)
+      lines.push(`- Phase: ${phase}`)
+      lines.push('')
+      lines.push('## PRs this iteration', '')
+      if (prsThisIter.length === 0) {
+        lines.push('_None._', '')
+      } else {
+        for (const p of prsThisIter) {
+          const title = p.title ?? ''
+          lines.push(`- [#${p.number}](${p.url ?? `https://github.com/Freegle/Iznik/pull/${p.number}`}) ${title}`)
+        }
+        lines.push('')
+      }
+      const fixed = bugsFixed.filter(b => b.outcome === 'fixed')
+      const deferred = bugsFixed.filter(b => b.outcome === 'deferred')
+      if (fixed.length > 0) {
+        lines.push('## Discourse bugs fixed', '')
+        for (const b of fixed) {
+          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'}${b.prNumber ? ` → PR #${b.prNumber}` : ''}`)
+        }
+        lines.push('')
+      }
+      if (deferred.length > 0) {
+        lines.push('## Discourse bugs deferred', '')
+        for (const b of deferred) {
+          lines.push(`- ${b.topic}.${b.post} @${b.user ?? 'reporter'} — ${b.reason ?? 'no reason recorded'}`)
+        }
+        lines.push('')
+      }
+      const content = lines.join('\n')
+      await writeFile(SUMMARY_PATH, content, 'utf8')
+      return { written: SUMMARY_PATH, bytes: content.length, prCount: prsThisIter.length, fixedCount: fixed.length, deferredCount: deferred.length }
+    },
+  },
+
+  {
+    name: 'compose_and_send_email',
+    description: 'Build an email summary from context + DB state and send it via SMTP with a 1h cooldown. Labels each PR with its REAL state queried from `gh pr view` (open / merged / closed). Never claims "merged" or "deployed" unless gh confirms it — guards against the LLM hallucinating merge status.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const db = getDb()
+      const lastStr = kvGet(db, 'last_email_sent')
+      const last = lastStr ? new Date(lastStr).getTime() : 0
+      const now = Date.now()
+      if (last && now - last < 3600_000) {
+        return { skipped: true, reason: 'cooldown' }
+      }
+      const ctx = context as any
+      const verify = ctx?._action_coverage_gate_decide?.verify ?? ctx?._action_verify_pr_created ?? {}
+      const prs: Array<any> = Array.isArray(verify?.prs) ? verify.prs : []
+      const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
+      if (prs.length === 0 && bugsFixed.length === 0) {
+        return { skipped: true, reason: 'nothing to report' }
+      }
+
+      // ─── Verify PR state from gh. Don't trust context; query the real world. ───
+      // The email you send is factual, not aspirational. A prior iteration
+      // shipped an email that claimed "PR Merged & Deployed" for #210 when
+      // #210 was still open. That was LLM composition; this path is rule-
+      // based, but we also harden it by actively checking each PR's state.
+      const prStates: Array<{ number: number; title: string; url: string; state: string; isMerged: boolean; deployState: string | null }> = []
+      for (const p of prs) {
+        let state = 'UNKNOWN'
+        try {
+          const { stdout } = await exec('gh', ['pr', 'view', String(p.number), '--repo', 'Freegle/Iznik', '--json', 'state'], { maxBuffer: 1024 * 1024 })
+          const parsed = JSON.parse(stdout)
+          state = parsed.state ?? 'UNKNOWN'
+        } catch { /* leave UNKNOWN — better to say nothing than lie */ }
+        // deploy_state, if tracked, lives in the local pr table (populated by
+        // a separate process that polls production). If absent we say nothing
+        // about deploy — we don't assume "live" just because merged.
+        let deployState: string | null = null
+        try {
+          const row = db.prepare('SELECT deploy_state FROM pr WHERE number = ?').get(p.number) as { deploy_state: string | null } | undefined
+          deployState = row?.deploy_state ?? null
+        } catch { /* no pr table or no row — that's fine */ }
+        prStates.push({
+          number: p.number,
+          title: p.title ?? '',
+          url: p.url ?? `https://github.com/Freegle/Iznik/pull/${p.number}`,
+          state,
+          isMerged: state === 'MERGED',
+          deployState,
+        })
+      }
+
+      const lines: string[] = []
+      lines.push(`Phase: ${ctx?.phase ?? 'unknown'}`, '')
+      if (prStates.length > 0) {
+        lines.push('PRs this iteration (state from GitHub; "opened/updated" means NOT merged):')
+        for (const p of prStates) {
+          let label: string
+          if (p.state === 'UNKNOWN') {
+            label = 'state unknown'
+          } else if (p.isMerged) {
+            label = p.deployState === 'live' || p.deployState === 'deployed' ? 'merged + deployed' : 'merged (not yet deployed)'
+          } else if (p.state === 'CLOSED') {
+            label = 'closed (not merged)'
+          } else {
+            // p.state === 'OPEN'
+            label = 'opened/updated — still open'
+          }
+          lines.push(`- #${p.number} [${label}] ${p.title} — ${p.url}`)
+        }
+        lines.push('')
+      }
+      const fixedCount = bugsFixed.filter(b => b.outcome === 'fixed').length
+      const deferredCount = bugsFixed.filter(b => b.outcome === 'deferred').length
+      if (bugsFixed.length > 0) {
+        lines.push(`Discourse bugs: ${fixedCount} fix attempted / ${deferredCount} deferred this iteration.`)
+        lines.push('("fix attempted" = a PR was opened; it does not mean merged, deployed, or accepted.)')
+      }
+
+      const mergedCount = prStates.filter(p => p.isMerged).length
+      const openCount = prStates.filter(p => p.state === 'OPEN').length
+      const subject = `Freegle Monitor: ${openCount} PR${openCount === 1 ? '' : 's'} opened, ${mergedCount} merged, ${fixedCount} bug${fixedCount === 1 ? '' : 's'} attempted`
+      const body = lines.join('\n')
+      const sendDef = actions.find(a => a.name === 'send_email')!
+      const res = await sendDef.handler({ subject, body }, context)
+      return res
+    },
+  },
+
+  {
+    name: 'ci_router_decide',
+    description: 'Phase A router logic. No LLM — pure branch based on CHECK_CI results + iteration context. Returns {_transition: "FIX_MASTER_CI" | "FIX_OPEN_PR_CI" | "FETCH_DISCOURSE" | "COVERAGE_GATE", pickedPR?}.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as any
+      const master = ctx?._action_check_master_ci ?? {}
+      const prCheck = ctx?._action_check_my_open_pr_ci ?? {}
+      const masterFailing = master.failing === true
+      const masterFixAttempted = ctx?.masterFixAttempted === true
+      const redPRs: Array<{ number: number }> = Array.isArray(prCheck.redPRs) ? prCheck.redPRs : []
+      const attempts: Array<{ prNumber: number; terminal?: boolean }> = Array.isArray(ctx?.openPRFixAttempts) ? ctx.openPRFixAttempts : []
+      // Allow re-picking a PR whose latest attempt did not push a commit —
+      // matches the original LLM prompt's "keep trying" rule. A terminal
+      // record (loop-breaker) is respected.
+      const attemptedNums = new Set(attempts.filter(a => a.terminal).map(a => a.prNumber))
+      const pickable = redPRs.find(p => !attemptedNums.has(p.number))
+      // Priority 1: master red
+      if (masterFailing && !masterFixAttempted) {
+        return { _transition: 'FIX_MASTER_CI', reason: `master CI failing on run ${master.latestRun?.databaseId ?? '?'}` }
+      }
+      // Priority 2: any red PR not in terminal-attempts
+      if (pickable) {
+        return { _transition: 'FIX_OPEN_PR_CI', reason: `red PR #${pickable.number} not yet attempted`, pickedPR: pickable.number }
+      }
+      // Priority 3: branch by phase
+      const phase = ctx?.phase ?? 'analysis'
+      if (phase === 'implementation') {
+        return { _transition: 'COVERAGE_GATE', reason: 'CI green, peak phase — skip discovery, go straight to coverage/gate' }
+      }
+      return { _transition: 'FETCH_DISCOURSE', reason: 'CI green, analysis phase — enter discovery' }
+    },
+  },
+
+  {
+    name: 'work_router_decide',
+    description: 'Phase B router logic. No LLM — branches on context.classifications and context.bugsFixed. Returns {_transition: "PICK_DISCOURSE_BUG" | "FIX_SENTRY_ISSUE" | "COVERAGE_GATE"}.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as any
+      const classifications: Array<any> = Array.isArray(ctx?.classifications) ? ctx.classifications : []
+      const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
+      const fixedKeys = new Set(bugsFixed.map(b => `${b.topic}.${b.post}`))
+      const pendingBug = classifications.find(c => (c.type === 'bug' || c.type === 'retest') && !fixedKeys.has(`${c.topic}.${c.post}`))
+      if (pendingBug) {
+        return { _transition: 'PICK_DISCOURSE_BUG', reason: `unfixed bug ${pendingBug.topic}.${pendingBug.post}` }
+      }
+      const sentry = ctx?._action_check_sentry ?? {}
+      const sentryIssues: Array<any> = Array.isArray(sentry.issues) ? sentry.issues : []
+      const sentryFixAttempted = ctx?.sentryFixAttempted === true
+      if (sentryIssues.length > 0 && !sentryFixAttempted) {
+        return { _transition: 'FIX_SENTRY_ISSUE', reason: `${sentryIssues.length} unresolved Sentry issue(s)` }
+      }
+      return { _transition: 'COVERAGE_GATE', reason: 'no pending bug / sentry — advance to gate' }
+    },
+  },
+
+  {
+    name: 'adversarial_review_pr',
+    description: 'Review a PR using Opus model for correctness and unintended changes. Params: {prNumber, repo}. Returns {passed, issues: [{category, description, severity}], summary}.',
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        prNumber: { type: 'number', description: 'PR number to review' },
+        repo: { type: 'string', description: 'Repository in owner/name format', default: 'Freegle/Iznik' },
+      },
+      required: ['prNumber'],
+    },
+    handler: async (params, context) => {
+      const { prNumber, repo = 'Freegle/Iznik' } = params as any
+      try {
+        // Fetch PR diff
+        const { stdout: diff } = await exec('gh', [
+          'pr', 'diff', String(prNumber),
+          '--repo', repo,
+          '--unified=3',
+        ], { maxBuffer: 50 * 1024 * 1024, timeout: 30 * 1000 })
+
+        if (!diff || diff.trim().length === 0) {
+          return {
+            passed: false,
+            issues: [{ category: 'diff', description: 'PR diff is empty or not accessible', severity: 'error' }],
+            summary: 'Failed to fetch PR diff',
+          }
+        }
+
+        // Review with Opus
+        const phaseInfo = getPhaseInfo()
+        const reviewModel = modelForAdversarialReview(phaseInfo)
+
+        const prompt = `You are a code review expert. Review this PR diff for:
+1. Correctness - does the fix actually solve the problem?
+2. Unintended changes - are there any unnecessary or harmful changes?
+3. Test coverage - are there tests for the fix?
+4. Code quality - does it follow the codebase patterns?
+
+Return ONLY a JSON object with:
+{
+  "passed": boolean,
+  "blockers": [{"category": string, "description": string}],
+  "warnings": [{"category": string, "description": string}],
+  "summary": string
+}
+
+If blockers exist, passed = false. Warnings do not block but should be noted.
+
+DIFF:
+\`\`\`
+${diff.slice(0, 20000)}
+\`\`\`
+${diff.length > 20000 ? '\n(diff truncated for length)' : ''}`
+
+        const response = await (global as any).__ai_flower_adapter.query(
+          reviewModel,
+          [{ role: 'user', content: prompt }],
+          { max_tokens: 1000 }
+        )
+
+        let review: any
+        try {
+          const text = response.message?.content?.[0]?.text ?? ''
+          const jsonMatch = text.match(/\{[\s\S]*\}/m)
+          review = jsonMatch ? JSON.parse(jsonMatch[0]) : {}
+        } catch (e) {
+          dbg(`[adversarial-review] JSON parse error: ${e}`)
+          review = {}
+        }
+
+        const passed = review.passed !== false && (!Array.isArray(review.blockers) || review.blockers.length === 0)
+        const issues = [
+          ...(Array.isArray(review.blockers) ? review.blockers.map((b: any) => ({ ...b, severity: 'error' })) : []),
+          ...(Array.isArray(review.warnings) ? review.warnings.map((w: any) => ({ ...w, severity: 'warning' })) : []),
+        ]
+
+        return {
+          passed,
+          issues,
+          summary: review.summary ?? (passed ? 'PR passed review' : 'PR has issues'),
+        }
+      } catch (err: any) {
+        outWarn(`[adversarial-review] error: ${err.message}`)
+        return {
+          passed: false,
+          issues: [{ category: 'error', description: err.message, severity: 'error' }],
+          summary: 'Review failed',
+        }
+      }
+    },
+  },
+
+  {
+    name: 'schedule_next_auto',
+    description: 'Pick the next-wakeup delay deterministically: ≤270s if @me has red or pending CI (inside 5-minute prompt cache), else 1200-1800s idle tick. No LLM input. Returns {scheduled, delaySeconds, reason}.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as any
+      const ciCheck = ctx?._action_coverage_gate_decide?.red ?? ctx?._action_check_my_open_pr_ci ?? {}
+      const redCount = Array.isArray(ciCheck?.redPRs) ? ciCheck.redPRs.length : 0
+      const pendingCount = Array.isArray(ciCheck?.pendingPRs) ? ciCheck.pendingPRs.length : 0
+      let delaySeconds: number
+      let reason: string
+      if (redCount > 0 || pendingCount > 0) {
+        delaySeconds = 270
+        reason = `watching ${redCount} red + ${pendingCount} pending @me PR(s) — stay in prompt cache`
+      } else {
+        delaySeconds = 1500  // 25 min
+        reason = 'no actionable PR state — idle tick'
+      }
+      return { scheduled: true, delaySeconds, reason }
     },
   },
 ]

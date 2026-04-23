@@ -236,6 +236,63 @@ describe('auth store', () => {
     })
   })
 
+  describe('disableGoogleAutoselect', () => {
+    it('returns cleanly when window is undefined (simulates post-teardown setTimeout)', () => {
+      // Reproduces the Vitest unhandled-error seen when logout() scheduled a
+      // 100ms retry via setTimeout and that retry fired AFTER the test env
+      // had been torn down. A bare `window` reference in the guard threw
+      // ReferenceError; the fix uses `typeof window === 'undefined'`.
+      const originalWindow = globalThis.window
+      // eslint-disable-next-line no-undef
+      delete globalThis.window
+      try {
+        expect(() => store.disableGoogleAutoselect()).not.toThrow()
+      } finally {
+        globalThis.window = originalWindow
+      }
+    })
+
+    it('calls disableAutoSelect when window.google.accounts.id is available', () => {
+      const mockDisableAutoSelect = vi.fn()
+      const originalGoogle = globalThis.window.google
+      globalThis.window.google = {
+        accounts: { id: { disableAutoSelect: mockDisableAutoSelect } },
+      }
+      try {
+        expect(() => store.disableGoogleAutoselect()).not.toThrow()
+        expect(mockDisableAutoSelect).toHaveBeenCalled()
+      } finally {
+        if (originalGoogle === undefined) {
+          delete globalThis.window.google
+        } else {
+          globalThis.window.google = originalGoogle
+        }
+      }
+    })
+
+    it('handles disableAutoSelect throwing (catches error silently)', () => {
+      const originalGoogle = globalThis.window.google
+      globalThis.window.google = {
+        accounts: {
+          id: {
+            disableAutoSelect: vi.fn(() => {
+              throw new Error('Google error')
+            }),
+          },
+        },
+      }
+      try {
+        expect(() => store.disableGoogleAutoselect()).not.toThrow()
+      } finally {
+        if (originalGoogle === undefined) {
+          delete globalThis.window.google
+        } else {
+          globalThis.window.google = originalGoogle
+        }
+      }
+    })
+  })
+
   describe('lostPassword', () => {
     it('returns worked=true on success', async () => {
       mockLostPassword.mockResolvedValue({})
