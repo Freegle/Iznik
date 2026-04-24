@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { reactive } from 'vue'
 import ModLogsModal from '~/modtools/components/ModLogsModal.vue'
 
 // Mock stores
@@ -7,11 +8,12 @@ const mockUserStore = {
   byId: vi.fn(),
 }
 
-const mockLogsStore = {
+// reactive() so that the logs computed in ModLogsModal re-evaluates when list is mutated during tests
+const mockLogsStore = reactive({
   list: [],
   fetch: vi.fn(),
   clear: vi.fn(),
-}
+})
 
 const mockMemberStore = {
   getByUserId: vi.fn(),
