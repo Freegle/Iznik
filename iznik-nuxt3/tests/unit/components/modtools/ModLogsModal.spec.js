@@ -49,12 +49,14 @@ describe('ModLogsModal', () => {
   const sampleLogs = [
     {
       id: 1,
+      userid: 123,
       type: 'Message',
       subtype: 'Approved',
       timestamp: '2024-01-15T10:00:00Z',
     },
     {
       id: 2,
+      userid: 123,
       type: 'User',
       subtype: 'Login',
       timestamp: '2024-01-15T11:00:00Z',
@@ -317,6 +319,7 @@ describe('ModLogsModal', () => {
         // Simulate adding new logs to the shared array
         mockLogsStore.list.push({
           id: 1,
+          userid: 123,
           type: 'Test',
           subtype: 'Test',
           timestamp: '2024-01-15T10:00:00Z',
