@@ -587,14 +587,14 @@ commands:
               # Also make actual HTTP requests to verify servers are responding
               # This is needed because Docker status is "running" during npm build
               if [ "$freegle_http_ready" = "false" ]; then
-                if curl -s -f -o /dev/null --max-time 5 http://localhost:3012/ 2>/dev/null; then
+                if curl -s -f -o /dev/null --max-time 5 http://localhost:${PORT_FREEGLE_PROD_LOCAL:-3012}/ 2>/dev/null; then
                   freegle_http_ready=true
                   echo "✅ Freegle production container is responding on HTTP"
                 fi
               fi
 
               if [ "$modtools_http_ready" = "false" ]; then
-                if curl -s -f -o /dev/null --max-time 5 http://localhost:3013/ 2>/dev/null; then
+                if curl -s -f -o /dev/null --max-time 5 http://localhost:${PORT_MODTOOLS_PROD_LOCAL:-3013}/ 2>/dev/null; then
                   modtools_http_ready=true
                   echo "✅ ModTools production container is responding on HTTP"
                 fi
