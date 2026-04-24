@@ -983,6 +983,7 @@ const testWithFixtures = test.extend({
       const startPath = type.toLowerCase() === 'wanted' ? '/find' : '/give'
       await page.gotoAndVerify(startPath, {
         timeout: timeouts.navigation.initial,
+        maxRetries: 1,
       })
 
       // Verify we're on the correct page
@@ -1505,6 +1506,7 @@ const testWithFixtures = test.extend({
       )
       await page.gotoAndVerify(options.path || '/', {
         timeout: timeouts.navigation.initial,
+        maxRetries: 1,
       })
       if (options.waitForLoad !== false) {
         await page.waitForFunction(
@@ -1888,7 +1890,7 @@ const testWithFixtures = test.extend({
 
       // Navigate to the specific message page
       const messageUrl = `/message/${messageId}`
-      await freshPage.gotoAndVerify(messageUrl)
+      await freshPage.gotoAndVerify(messageUrl, { maxRetries: 1 })
       console.log(`Navigated to message page: ${messageUrl}`)
 
       // Wait for the message content to load (the .message-expanded-wrapper contains the loaded message)

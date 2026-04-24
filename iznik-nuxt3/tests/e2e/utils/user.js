@@ -592,6 +592,7 @@ async function loginViaHomepage(
     await page.gotoAndVerify('/', {
       timeout: timeouts.navigation.initial,
       waitUntil: 'domcontentloaded',
+      maxRetries: 1,
     })
   }
 
@@ -1205,6 +1206,7 @@ async function unsubscribeManually(page, email) {
   // Navigate to the unsubscribe page
   await page.gotoAndVerify('/unsubscribe', {
     timeout: timeouts.navigation.default,
+    maxRetries: 1,
   })
 
   try {
