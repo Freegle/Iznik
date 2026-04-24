@@ -1867,7 +1867,6 @@ jobs:
             echo "export SKIP_VITEST=$SKIP_VITEST" >> "$BASH_ENV"
             echo "export SKIP_PLAYWRIGHT=$SKIP_PLAYWRIGHT" >> "$BASH_ENV"
             echo "export SKIP_LARAVEL=$SKIP_LARAVEL" >> "$BASH_ENV"
-            echo "Path filter: GO=$SKIP_GO VITEST=$SKIP_VITEST PW=$SKIP_PLAYWRIGHT LARAVEL=$SKIP_LARAVEL"
 
       - setup-dependencies
 
