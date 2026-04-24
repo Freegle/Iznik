@@ -15,7 +15,7 @@ executors:
       COMPOSE_DOCKER_CLI_BUILD: 1
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle
-      PW_WORKERS: 4
+      PW_WORKERS: 1
 
   machine-executor-local:
     machine:
@@ -1853,43 +1853,19 @@ jobs:
       - run:
           name: Determine changed paths
           command: |
-            # Compare against merge base with master for feature branches (not just last commit)
-            if [ "$CIRCLE_BRANCH" != "master" ]; then
-              git fetch origin master --depth=50 2>/dev/null || true
-              MERGE_BASE=$(git merge-base origin/master HEAD 2>/dev/null || echo "")
-              if [ -n "$MERGE_BASE" ]; then
-                CHANGED=$(git diff --name-only "$MERGE_BASE" HEAD 2>/dev/null || echo "ALL")
-              else
-                CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "ALL")
-              fi
-            else
-              CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "ALL")
-            fi
-
-            SKIP_GO=true
-            SKIP_VITEST=true
-            SKIP_PLAYWRIGHT=true
-            SKIP_LARAVEL=true
-
-            if echo "$CHANGED" | grep -q '^iznik-server-go/'; then SKIP_GO=false; fi
-            if echo "$CHANGED" | grep -q '^iznik-nuxt3/'; then SKIP_VITEST=false; SKIP_PLAYWRIGHT=false; fi
-            if echo "$CHANGED" | grep -q '^iznik-batch/'; then SKIP_LARAVEL=false; fi
-
-            # Shared files → run everything
-            if echo "$CHANGED" | grep -qE '^(docker-compose|\.circleci|scripts/|testenv)'; then
-              SKIP_GO=false; SKIP_VITEST=false; SKIP_PLAYWRIGHT=false; SKIP_LARAVEL=false
-            fi
-
-            # Master branch always runs everything
-            if [ "$CIRCLE_BRANCH" = "master" ]; then
-              SKIP_GO=false; SKIP_VITEST=false; SKIP_PLAYWRIGHT=false; SKIP_LARAVEL=false
-            fi
+            # Always run all test suites on every branch.
+            # Path-based skipping was removed because it caused Coveralls carryforward to
+            # break on new branch PRs: when only one subtree's coverage was uploaded,
+            # Coveralls combined coverage showed a false large decrease vs master.
+            SKIP_GO=false
+            SKIP_VITEST=false
+            SKIP_PLAYWRIGHT=false
+            SKIP_LARAVEL=false
 
             echo "export SKIP_GO=$SKIP_GO" >> "$BASH_ENV"
             echo "export SKIP_VITEST=$SKIP_VITEST" >> "$BASH_ENV"
             echo "export SKIP_PLAYWRIGHT=$SKIP_PLAYWRIGHT" >> "$BASH_ENV"
             echo "export SKIP_LARAVEL=$SKIP_LARAVEL" >> "$BASH_ENV"
-            echo "Path filter: GO=$SKIP_GO VITEST=$SKIP_VITEST PW=$SKIP_PLAYWRIGHT LARAVEL=$SKIP_LARAVEL"
 
       - setup-dependencies
 
