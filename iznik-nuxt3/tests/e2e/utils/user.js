@@ -83,7 +83,8 @@ async function clearSessionData(page) {
  * @returns {Promise<import('@playwright/test').Page>} - Returns the same page object
  */
 async function logoutIfLoggedIn(page, navigateToHome = true) {
-  console.log('Logging out via UI')
+  const entryUrl = page.isClosed && page.isClosed() ? 'CLOSED' : page.url()
+  console.log(`[logoutIfLoggedIn] Start — URL=${entryUrl}`)
 
   try {
     // Clear any lingering modal backdrop from a prior modal (e.g. the login
@@ -157,16 +158,25 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     await clearSessionData(page)
 
     if (navigateToHome) {
-      // Use domcontentloaded instead of the default 'load' event: the post-logout
-      // cleanup only needs to land on a clean page, and waiting for 'load' blocks
-      // on third-party resources (Google FedCM/GSI) that sometimes never resolve
-      // in CI, exhausting the navigation timeout and the whole test timeout.
-      await page.gotoAndVerify('/', {
-        timeout: timeouts.navigation.initial,
-        waitUntil: 'domcontentloaded',
-        maxRetries: 1,
-      })
-      console.log('Navigated to homepage')
+      // Navigate to '/' to reset page state for the next test step.
+      // We use a direct page.goto() rather than gotoAndVerify() because:
+      //   1. We only need the page to be in a clean location, not verified content.
+      //   2. Under CI load the API sometimes fails, rendering "Something went wrong".
+      //      gotoAndVerify() treats that as a fatal error and then tries to take
+      //      screenshots (no timeout), which can hang for hundreds of seconds and
+      //      burn the entire 10-minute test budget.
+      //   3. Any page-content errors here are irrelevant to the test being set up;
+      //      the test will navigate to its actual target URL straight afterwards.
+      console.log('[logoutIfLoggedIn] Navigating to homepage (try block)')
+      try {
+        await page.goto('/', {
+          timeout: timeouts.navigation.initial,
+          waitUntil: 'domcontentloaded',
+        })
+        console.log(`[logoutIfLoggedIn] Navigated to homepage (try block) url=${page.url()}`)
+      } catch (navErr) {
+        console.warn(`[logoutIfLoggedIn] Homepage navigation failed (non-fatal): ${navErr.message.substring(0, 200)}`)
+      }
     }
 
     // Clear again to catch any cookies set by the unauthenticated page load
@@ -178,15 +188,20 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
 
     return page
   } catch (error) {
-    console.error(`Error during logout: ${error.message}`)
+    console.error(`[logoutIfLoggedIn] TRY BLOCK FAILED: ${error.message.substring(0, 300)}`)
     // Fall back to clearing cookies/storage
     await clearSessionData(page)
     if (navigateToHome) {
-      await page.gotoAndVerify('/', {
-        timeout: timeouts.navigation.initial,
-        waitUntil: 'domcontentloaded',
-        maxRetries: 1,
-      })
+      console.log('[logoutIfLoggedIn] Navigating to homepage (catch block)')
+      try {
+        await page.goto('/', {
+          timeout: timeouts.navigation.initial,
+          waitUntil: 'domcontentloaded',
+        })
+        console.log(`[logoutIfLoggedIn] Navigated to homepage (catch block) url=${page.url()}`)
+      } catch (navErr) {
+        console.warn(`[logoutIfLoggedIn] Homepage navigation failed in catch block (non-fatal): ${navErr.message.substring(0, 200)}`)
+      }
     }
     return page
   }
@@ -577,6 +592,7 @@ async function loginViaHomepage(
     await page.gotoAndVerify('/', {
       timeout: timeouts.navigation.initial,
       waitUntil: 'domcontentloaded',
+      maxRetries: 1,
     })
   }
 
@@ -1190,6 +1206,7 @@ async function unsubscribeManually(page, email) {
   // Navigate to the unsubscribe page
   await page.gotoAndVerify('/unsubscribe', {
     timeout: timeouts.navigation.default,
+    maxRetries: 1,
   })
 
   try {

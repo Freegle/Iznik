@@ -37,21 +37,22 @@ test.describe('Reply Flow - Social Login Simulation', () => {
     testEmail,
     getTestEmail,
     withdrawPost,
-  }, testInfo) => {
-    // signUpViaHomepage goes through the full UI signup wizard which can take
-    // several minutes under CI load. The 600s default is too tight.
-    testInfo.setTimeout(1_200_000)
-
+  }) => {
     // First create the user we'll use for social login simulation
     const loginEmail = getTestEmail('sociallogin')
+    console.log(`[4.1] Step 1: signUpViaHomepage start ${new Date().toISOString()}`)
     await signUpViaHomepage(page, loginEmail)
+    console.log(`[4.1] Step 1: signUpViaHomepage done ${new Date().toISOString()}`)
     console.log('[Test] Created sociallogin user')
 
     // Log out so we can post as a different user
+    console.log(`[4.1] Step 2: first logoutIfLoggedIn start ${new Date().toISOString()}`)
     await logoutIfLoggedIn(page)
+    console.log(`[4.1] Step 2: first logoutIfLoggedIn done ${new Date().toISOString()}`)
 
     // Post a message as the poster (testEmail)
     const uniqueItem = `test-social-login-${Date.now()}`
+    console.log(`[4.1] Step 3: postMessage start ${new Date().toISOString()} item=${uniqueItem}`)
     const result = await postMessage({
       type: 'OFFER',
       item: uniqueItem,
@@ -60,10 +61,15 @@ test.describe('Reply Flow - Social Login Simulation', () => {
       email: testEmail,
     })
     expect(result.id).toBeTruthy()
+    console.log(`[4.1] Step 3: postMessage done ${new Date().toISOString()} id=${result.id}`)
 
     // Navigate to message as logged-out user
+    console.log(`[4.1] Step 4: second logoutIfLoggedIn start ${new Date().toISOString()}`)
     await logoutIfLoggedIn(page)
+    console.log(`[4.1] Step 4: second logoutIfLoggedIn done ${new Date().toISOString()}`)
+    console.log(`[4.1] Step 5: gotoAndVerify /message/${result.id} start ${new Date().toISOString()}`)
     await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
+    console.log(`[4.1] Step 5: gotoAndVerify done ${new Date().toISOString()}`)
     await clickReplyButton(page)
 
     // Start typing reply

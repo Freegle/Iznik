@@ -584,41 +584,53 @@ const test = base.test.extend({
       const waitUntil = options.waitUntil || 'load'
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        let failStep = 'none'
         try {
           console.log(
-            `Navigating to ${path} with timeout ${timeout}ms (attempt ${attempt}/${maxRetries})`
+            `[gotoAndVerify] Navigating to ${path} timeout=${timeout}ms waitUntil=${waitUntil} attempt=${attempt}/${maxRetries}`
           )
 
           // Navigate with timeout and configurable waitUntil strategy.
           // Default 'load' waits for all resources; 'domcontentloaded' is faster
           // for pages with external resources (e.g., Stripe, PayPal) that may be slow in CI.
+          failStep = 'page.goto'
           await page.goto(path, { timeout, waitUntil })
+          console.log(`[gotoAndVerify] page.goto done for ${path}`)
 
           // Wait for page to finish hydrating (loading spinner to disappear)
           // The LoadingIndicator component is always in the DOM but uses opacity for visibility.
           // We check if it's actually VISIBLE (opacity > 0), not just present in DOM.
           // Can't use Playwright's toBeVisible assertion since that doesn't check opacity.
+          failStep = 'loading-indicator'
           const loadingIndicator = page.locator('.loading-indicator')
           if ((await loadingIndicator.count()) > 0) {
             await base.expect(loadingIndicator).toHaveCSS('opacity', '0')
           }
+          console.log(`[gotoAndVerify] loading-indicator done for ${path}`)
 
           // Verify page content is visible
+          failStep = 'body-visible'
           const body = page.locator('body')
           await base.expect(body).toBeVisible({
             timeout: Math.min(timeout, 30000),
           })
 
           // Check if page contains error messages
+          failStep = 'content-check'
           const errorTextContent = await body.textContent()
 
           // Check for general error message
           if (errorTextContent.includes('Something went wrong')) {
-            // Take a screenshot of the error page
-            await page.screenshot({
-              path: getScreenshotPath(`error-page-${Date.now()}.png`),
-              fullPage: true,
-            })
+            // Take a screenshot of the error page — bounded so this can't hang indefinitely
+            try {
+              await page.screenshot({
+                path: getScreenshotPath(`error-page-${Date.now()}.png`),
+                fullPage: true,
+                timeout: 15000,
+              })
+            } catch (ssErr) {
+              console.warn(`[gotoAndVerify] error-page screenshot failed: ${ssErr.message}`)
+            }
 
             // Extract the "Error was" text if present
             let errorDetails = ''
@@ -627,7 +639,7 @@ const test = base.test.extend({
             )
             if (errorWasMatch) {
               errorDetails = ` - Error was: ${errorWasMatch[1].trim()}`
-              console.log(`Error details extracted: ${errorWasMatch[1].trim()}`)
+              console.log(`[gotoAndVerify] Error details: ${errorWasMatch[1].trim()}`)
             }
 
             throw new Error(
@@ -639,25 +651,35 @@ const test = base.test.extend({
           if (
             errorTextContent.includes("Oh no! That page doesn't seem to exist")
           ) {
-            // Take a screenshot of the 404 page
-            await page.screenshot({
-              path: getScreenshotPath(`404-error-${Date.now()}.png`),
-              fullPage: true,
-            })
+            // Take a screenshot of the 404 page — bounded timeout
+            try {
+              await page.screenshot({
+                path: getScreenshotPath(`404-error-${Date.now()}.png`),
+                fullPage: true,
+                timeout: 15000,
+              })
+            } catch (ssErr) {
+              console.warn(`[gotoAndVerify] 404-page screenshot failed: ${ssErr.message}`)
+            }
             throw new Error(
               `Page loaded with '404 page not found' error message at ${path}`
             )
           }
         } catch (error) {
-          // Take a screenshot if navigation fails
+          console.error(
+            `[gotoAndVerify] FAILED step='${failStep}' path='${path}' attempt=${attempt}/${maxRetries}: ${error.message.substring(0, 300)}`
+          )
+
+          // Take a screenshot if navigation fails — bounded so this can't hang indefinitely
           try {
             await page.screenshot({
               path: getScreenshotPath(`navigation-error-${Date.now()}.png`),
               fullPage: true,
+              timeout: 15000,
             })
           } catch (screenshotError) {
             console.warn(
-              `Could not take navigation error screenshot: ${screenshotError.message}`
+              `[gotoAndVerify] navigation-error screenshot failed: ${screenshotError.message}`
             )
           }
 
@@ -666,11 +688,11 @@ const test = base.test.extend({
             const currentUrl = page.url()
             const currentTitle = await page.title()
             console.log(
-              `Navigation failed. Current URL: ${currentUrl}, Title: "${currentTitle}"`
+              `[gotoAndVerify] State after failure: URL=${currentUrl} title="${currentTitle}"`
             )
           } catch (debugError) {
             console.warn(
-              `Could not get page state for debugging: ${debugError.message}`
+              `[gotoAndVerify] Could not get page state: ${debugError.message}`
             )
           }
 
@@ -691,7 +713,7 @@ const test = base.test.extend({
 
           if (isRetryable && attempt < maxRetries) {
             console.log(
-              `Retryable connection error on attempt ${attempt}, waiting before retry...`
+              `[gotoAndVerify] Retryable error on attempt ${attempt}, waiting before retry...`
             )
             await new Promise((resolve) =>
               setTimeout(resolve, 1000 * Math.pow(2, attempt - 1))
@@ -704,6 +726,7 @@ const test = base.test.extend({
         }
 
         // If no error, then this navigation succeeded - no need to keep retrying.
+        console.log(`[gotoAndVerify] SUCCESS path='${path}'`)
         break
       }
 
@@ -960,6 +983,7 @@ const testWithFixtures = test.extend({
       const startPath = type.toLowerCase() === 'wanted' ? '/find' : '/give'
       await page.gotoAndVerify(startPath, {
         timeout: timeouts.navigation.initial,
+        maxRetries: 1,
       })
 
       // Verify we're on the correct page
@@ -1482,6 +1506,7 @@ const testWithFixtures = test.extend({
       )
       await page.gotoAndVerify(options.path || '/', {
         timeout: timeouts.navigation.initial,
+        maxRetries: 1,
       })
       if (options.waitForLoad !== false) {
         await page.waitForFunction(
@@ -1865,7 +1890,7 @@ const testWithFixtures = test.extend({
 
       // Navigate to the specific message page
       const messageUrl = `/message/${messageId}`
-      await freshPage.gotoAndVerify(messageUrl)
+      await freshPage.gotoAndVerify(messageUrl, { maxRetries: 1 })
       console.log(`Navigated to message page: ${messageUrl}`)
 
       // Wait for the message content to load (the .message-expanded-wrapper contains the loaded message)
