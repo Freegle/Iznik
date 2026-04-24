@@ -425,7 +425,7 @@ async function main() {
     // etc. as 'tool' — we save one LLM call per state, which on an ~8-state
     // iteration adds up to roughly half the tokens with zero functional change.
     const stateDef: any = (definition.states as any)[current.currentState]
-    if (stateDef?.nodeType === 'tool') {
+    if (stateDef?.nodeType === 'tool' || (stateDef?.nodeType === 'start' && Array.isArray(stateDef?.readActions) && stateDef.readActions.length > 0)) {
       const readActions: string[] = stateDef.readActions ?? []
       const writeActions: string[] = stateDef.writeActions ?? []
       const toolActions = [...readActions, ...writeActions]
