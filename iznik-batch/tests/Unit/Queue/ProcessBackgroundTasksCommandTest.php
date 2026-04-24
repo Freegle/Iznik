@@ -2021,6 +2021,49 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }
 
+    public function test_handle_fatal_shutdown_does_nothing_for_null_error(): void
+    {
+        $command = $this->app->make(\App\Console\Commands\Queue\ProcessBackgroundTasksCommand::class);
+
+        \Illuminate\Support\Facades\Log::shouldReceive('critical')->never();
+
+        $command->handleFatalShutdown(null);
+    }
+
+    public function test_handle_fatal_shutdown_does_nothing_for_non_fatal_error(): void
+    {
+        $command = $this->app->make(\App\Console\Commands\Queue\ProcessBackgroundTasksCommand::class);
+
+        \Illuminate\Support\Facades\Log::shouldReceive('critical')->never();
+
+        $command->handleFatalShutdown([
+            'type' => E_WARNING,
+            'message' => 'Some warning',
+            'file' => '/app/foo.php',
+            'line' => 42,
+        ]);
+    }
+
+    public function test_handle_fatal_shutdown_logs_and_skips_sentry_when_not_bound(): void
+    {
+        $command = $this->app->make(\App\Console\Commands\Queue\ProcessBackgroundTasksCommand::class);
+
+        \Illuminate\Support\Facades\Log::shouldReceive('critical')
+            ->once()
+            ->withArgs(function (string $message, array $context) {
+                return str_contains($message, 'Fatal error in queue:background-tasks')
+                    && str_contains($message, 'Allowed memory size')
+                    && str_contains($message, '/app/Service.php:99');
+            });
+
+        $command->handleFatalShutdown([
+            'type' => E_ERROR,
+            'message' => 'Allowed memory size of 134217728 bytes exhausted',
+            'file' => '/app/Service.php',
+            'line' => 99,
+        ]);
+    }
+
     /**
      * Custom assertion for string containment (PHPUnit 10+ compatible).
      */
