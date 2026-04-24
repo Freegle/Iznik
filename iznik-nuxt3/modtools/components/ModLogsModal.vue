@@ -66,7 +66,11 @@ const busy = ref(false)
 const context = ref(null)
 const bump = ref(0)
 
-const logs = computed(() => logsStore.list)
+const logs = computed(() =>
+  logsStore.list.filter(
+    (log) => log.userid === props.userid || log.byuserid === props.userid
+  )
+)
 
 const user = computed(() => {
   let ret = null
