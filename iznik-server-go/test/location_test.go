@@ -505,7 +505,6 @@ func TestUpdateLocationQueuesTaskRemapPostcodes(t *testing.T) {
 	db := database.DBConn
 
 	// Create initial location directly (simplest way to create a location)
-	initialPolygon := "POLYGON((-0.21 51.5, -0.21 51.6, -0.10 51.6, -0.10 51.5, -0.21 51.5))"
 	db.Exec(fmt.Sprintf(
 		"INSERT INTO locations (name, type, canon, popularity) VALUES (?, 'Polygon', ?, 0)"),
 		"LocTest "+prefix, "loctest "+prefix)
