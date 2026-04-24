@@ -37,7 +37,11 @@ test.describe('Reply Flow - Social Login Simulation', () => {
     testEmail,
     getTestEmail,
     withdrawPost,
-  }) => {
+  }, testInfo) => {
+    // signUpViaHomepage goes through the full UI signup wizard which can take
+    // several minutes under CI load. The 600s default is too tight.
+    testInfo.setTimeout(1_200_000)
+
     // First create the user we'll use for social login simulation
     const loginEmail = getTestEmail('sociallogin')
     await signUpViaHomepage(page, loginEmail)
