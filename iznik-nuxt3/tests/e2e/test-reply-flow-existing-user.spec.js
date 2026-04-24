@@ -158,11 +158,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     getTestEmail,
     withdrawPost,
     testEnv,
-  }, testInfo) => {
-    // Multi-step flow: signup + 2x logout + postMessage + browse-navigate + login + reply.
-    // Under 11-worker parallel CI load each navigation can take 135-202s; 600s default
-    // budget is insufficient. Observed timeout in job 5849 (test ran for 20m).
-    testInfo.setTimeout(1200000)
+  }) => {
     // First create a user by signing up (this will be the "existing" user who will reply)
     const existingEmail = getTestEmail('existing-browse')
     await signUpViaHomepage(page, existingEmail)
@@ -294,9 +290,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     getTestEmail,
     withdrawPost,
     testEnv,
-  }, testInfo) => {
-    // Same multi-step flow as 3.2; same timeout risk under heavy CI load.
-    testInfo.setTimeout(1200000)
+  }) => {
     // First create a user by signing up (this will be the "existing" user who will reply)
     const existingEmail = getTestEmail('existing-explore')
     await signUpViaHomepage(page, existingEmail)
