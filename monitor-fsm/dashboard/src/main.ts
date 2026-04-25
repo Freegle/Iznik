@@ -24,12 +24,12 @@ style.textContent = `
   }
 
   .table-sm {
-    font-size: 0.9rem;
+    font-size: 1rem;
   }
 
   .btn-group-sm .btn {
     padding: 0.25rem 0.5rem;
-    font-size: 0.85rem;
+    font-size: 1rem;
   }
 `
 document.head.appendChild(style)

@@ -211,7 +211,6 @@ if (pendingDrafts.value.length > 0) {
 }
 
 .quote-text {
-  font-size: 0.8rem;
   color: #495057;
   font-style: italic;
 }

@@ -37,7 +37,7 @@
               #{{ pr.number }}
             </a>
           </td>
-          <td class="small" style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          <td style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
             {{ pr.title }}
           </td>
           <td>
@@ -52,7 +52,7 @@
               </div>
             </div>
           </td>
-          <td class="small text-muted">
+          <td class="text-muted">
             {{ formatAge(pr.createdAt) }}
           </td>
         </tr>
@@ -138,7 +138,6 @@ function refresh() {
 
 .table {
   margin-bottom: 0;
-  font-size: 0.875rem;
 }
 
 .spin {

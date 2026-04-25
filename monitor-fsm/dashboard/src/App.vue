@@ -64,7 +64,7 @@
           <span class="badge bg-success ms-1">{{ recentlyFixed.length }}</span>
         </h6>
         <div class="card">
-          <table class="table table-sm mb-0" style="font-size: 0.8125rem;">
+          <table class="table table-sm mb-0">
             <tbody>
               <tr v-for="bug in recentlyFixed" :key="`${bug.topic}-${bug.post}`">
                 <td style="width: 140px;" class="text-muted">{{ (bug as any).group_key || bug.feature_area || 'Uncategorised' }}</td>

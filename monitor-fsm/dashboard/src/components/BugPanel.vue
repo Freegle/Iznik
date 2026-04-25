@@ -37,7 +37,7 @@
           </tr>
           <tr v-for="bug in group" :key="`${bug.topic}-${bug.post}`">
             <td></td>
-            <td class="small">
+            <td>
               <a
                 :href="`https://discourse.ilovefreegle.org/t/${bug.topic}/${bug.post}`"
                 target="_blank"
@@ -47,7 +47,7 @@
                 {{ bug.reporter || 'Unknown' }}
               </a>
             </td>
-            <td class="small" style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">
+            <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">
               {{ truncate(bug.excerpt, 80) }}
             </td>
             <td>
@@ -120,7 +120,6 @@ function refresh() {
 
 .table {
   margin-bottom: 0;
-  font-size: 0.875rem;
 }
 
 .spin {
