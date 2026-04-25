@@ -1300,6 +1300,7 @@ print('sent')
           reporter: c.user ?? null,
           excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
           state,
+          featureArea: c.featureArea ?? null,
           reason: type === 'deferred' ? (c.reason ?? 'deferred by triage') : undefined,
         })
         upserted++

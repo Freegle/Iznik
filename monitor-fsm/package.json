@@ -9,7 +9,8 @@
     "start": "node --enable-source-maps dist/driver.js",
     "run-once": "tsc && node --enable-source-maps dist/driver.js",
     "smoke": "tsc && node --enable-source-maps dist/smoke.js",
-    "test:db": "tsc && node --enable-source-maps dist/db/test.js"
+    "test:db": "tsc && node --enable-source-maps dist/db/test.js",
+    "dashboard": "tsc && node --enable-source-maps dist/dashboard-server.js"
   },
   "dependencies": {
     "ai-flower": "github:Freegle/ai-flower",

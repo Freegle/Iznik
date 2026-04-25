@@ -85,6 +85,7 @@ export interface DiscourseBugRow {
   excerpt: string | null
   state: string
   pr_number: number | null
+  feature_area: string | null
   reason: string | null
   first_seen_at: string
   last_seen_at: string
@@ -100,17 +101,19 @@ export function upsertDiscourseBug(db: DB, bug: {
   excerpt?: string
   state?: DiscourseBugRow['state']
   prNumber?: number
+  featureArea?: string
   reason?: string
 }): void {
   db.prepare(`
-    INSERT INTO discourse_bug (topic, post, topic_title, reporter, excerpt, state, pr_number, reason, last_seen_at)
-    VALUES (?, ?, ?, ?, ?, COALESCE(?, 'open'), ?, ?, datetime('now'))
+    INSERT INTO discourse_bug (topic, post, topic_title, reporter, excerpt, state, pr_number, feature_area, reason, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, COALESCE(?, 'open'), ?, ?, ?, datetime('now'))
     ON CONFLICT(topic, post) DO UPDATE SET
       topic_title = COALESCE(excluded.topic_title, topic_title),
       reporter = COALESCE(excluded.reporter, reporter),
       excerpt = COALESCE(excluded.excerpt, excerpt),
       state = COALESCE(excluded.state, state),
       pr_number = COALESCE(excluded.pr_number, pr_number),
+      feature_area = COALESCE(excluded.feature_area, feature_area),
       reason = COALESCE(excluded.reason, reason),
       last_seen_at = excluded.last_seen_at
   `).run(
@@ -121,6 +124,7 @@ export function upsertDiscourseBug(db: DB, bug: {
     bug.excerpt ?? null,
     bug.state ?? null,
     bug.prNumber ?? null,
+    bug.featureArea ?? null,
     bug.reason ?? null,
   )
 }

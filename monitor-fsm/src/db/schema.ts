@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS discourse_bug (
   reason TEXT,
   first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
   last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  feature_area TEXT,
   fixed_at TEXT,
   deployed_at TEXT,
   PRIMARY KEY (topic, post)
