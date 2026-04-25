@@ -826,7 +826,9 @@ The parent FSM greps your stdout for these exact markers. Your prose does NOT co
   - Opened a NEW PR:                 PR_NUMBER=<n>
   - Pushed to master directly:       DIRECT_PUSH=<sha>
   - Pushed to an existing PR branch: COMMIT_PUSHED=<sha>
+  - Read-only / analysis task done:  ANALYSIS_COMPLETE=<one-line summary>
   - Could NOT complete the task:     DELEGATE_FAILED=<one-line-reason>
+ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse triage, Sentry listing, cursor-advance-only). Use it whenever you finish work that intentionally produces no commit. Do NOT use DELEGATE_FAILED just because you found no bugs or no new posts — that is a successful outcome.
 If you omit the marker, your work is considered failed regardless of what actually happened — the parent will redispatch, wasting another iteration.
 `
       // claude -p (--print) expects the prompt on stdin. Pipe it explicitly.
@@ -975,6 +977,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       const prMatch = combined.match(/PR_NUMBER=(\d+)/)
       const directMatch = combined.match(/DIRECT_PUSH=([a-f0-9]+)/)
       const commitMatch = combined.match(/COMMIT_PUSHED=([a-f0-9]+)/)
+      const analysisMatch = combined.match(/ANALYSIS_COMPLETE=([^\n]+)/)
       const failedMatch = combined.match(/DELEGATE_FAILED=([^\n]+)/)
       // exitCode 143 = SIGTERM (silence watchdog or hard cap fired).
       // Surface an explicit `timedOut` flag and `timeoutReason` so the
@@ -984,6 +987,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       const prNumber = prMatch ? Number(prMatch[1]) : undefined
       const directPushSha = directMatch ? directMatch[1] : undefined
       const commitPushedSha = commitMatch ? commitMatch[1] : undefined
+      const analysisComplete = analysisMatch ? analysisMatch[1].trim() : undefined
       const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
       // Summarise for the human watcher: what did the delegate actually do?
       let summary: string
@@ -995,6 +999,8 @@ If you omit the marker, your work is considered failed regardless of what actual
         summary = `pushed ${commitPushedSha.slice(0, 9)} to existing PR (${toolCount} tools)`
       } else if (directPushSha) {
         summary = `pushed ${directPushSha.slice(0, 9)} to master (${toolCount} tools)`
+      } else if (analysisComplete) {
+        summary = `analysis done: ${truncate(analysisComplete, 80)}`
       } else if (failedMatch) {
         summary = `DELEGATE_FAILED: ${truncate(failedMatch[1].trim(), 80)}`
       } else if (code === 0) {
@@ -1099,7 +1105,9 @@ OUTPUT MARKERS — MANDATORY, MACHINE-PARSED (emit exactly one on its own line a
   - Opened a NEW PR:                 PR_NUMBER=<n>
   - Pushed to master directly:       DIRECT_PUSH=<sha>
   - Pushed to an existing PR branch: COMMIT_PUSHED=<sha>
+  - Read-only / analysis task done:  ANALYSIS_COMPLETE=<one-line summary>
   - Could NOT complete the task:     DELEGATE_FAILED=<one-line-reason>
+ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse triage, Sentry listing). Use it whenever the task completes with no commit. Do NOT use DELEGATE_FAILED just because you found no bugs or no new posts — that is a successful outcome.
 `
         type KillReason = 'tool-silence' | 'idle-silence' | 'hardCap' | null
         let toolCount = 0
@@ -1166,11 +1174,13 @@ OUTPUT MARKERS — MANDATORY, MACHINE-PARSED (emit exactly one on its own line a
         const prMatch = combined.match(/PR_NUMBER=(\d+)/)
         const directMatch = combined.match(/DIRECT_PUSH=([a-f0-9]+)/)
         const commitMatch = combined.match(/COMMIT_PUSHED=([a-f0-9]+)/)
+        const analysisMatch = combined.match(/ANALYSIS_COMPLETE=([^\n]+)/)
         const failedMatch = combined.match(/DELEGATE_FAILED=([^\n]+)/)
         const timedOut = result.killReason !== null || result.code === 143
         const prNumber = prMatch ? Number(prMatch[1]) : undefined
         const directPushSha = directMatch ? directMatch[1] : undefined
         const commitPushedSha = commitMatch ? commitMatch[1] : undefined
+        const analysisComplete = analysisMatch ? analysisMatch[1].trim() : undefined
         const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
 
         let summary: string
@@ -1178,6 +1188,7 @@ OUTPUT MARKERS — MANDATORY, MACHINE-PARSED (emit exactly one on its own line a
         else if (prNumber) summary = `[${t.id}] opened PR #${prNumber} (${toolCount} tools)`
         else if (commitPushedSha) summary = `[${t.id}] pushed ${commitPushedSha.slice(0, 9)} to existing PR (${toolCount} tools)`
         else if (directPushSha) summary = `[${t.id}] pushed ${directPushSha.slice(0, 9)} to master (${toolCount} tools)`
+        else if (analysisComplete) summary = `[${t.id}] analysis done: ${analysisComplete.slice(0, 60)}`
         else if (failedMatch) summary = `[${t.id}] DELEGATE_FAILED: ${failedMatch[1].trim().slice(0, 60)}`
         else summary = `[${t.id}] exited ${result.code} (${toolCount} tools)`
         out(summary)
@@ -1191,6 +1202,7 @@ OUTPUT MARKERS — MANDATORY, MACHINE-PARSED (emit exactly one on its own line a
           directPushSha,
           commitPushedSha,
           pushed,
+          analysisComplete,
           failedReason: failedMatch ? failedMatch[1].trim() : undefined,
           stdoutTail: redactSecrets(result.textStream.slice(-1500)),
           stderrTail: redactSecrets(result.stderr.slice(-500)),
