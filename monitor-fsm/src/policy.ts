@@ -78,7 +78,9 @@ export function getPhaseInfo(policy: PolicyConfig = DEFAULT_POLICY, now: Date = 
 
 /** Which model should the FSM brain use this iteration? */
 export function modelForBrain(p: PhaseInfo): string {
-  return p.phase === 'implementation' ? p.haikuModel : p.heavyModel
+  // Analysis phase: Opus for best reasoning quality on complex triage/dispatch decisions.
+  // Implementation (peak) phase: Haiku for cost and speed on mechanical CI-fix loops.
+  return p.phase === 'implementation' ? p.haikuModel : p.opusModel
 }
 
 /** Which model should a freshly-spawned delegate use by default? */

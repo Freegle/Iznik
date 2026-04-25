@@ -381,6 +381,49 @@ print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
   },
 
   {
+    name: 'discover_active_topics',
+    description: 'Light pre-check: fetches Discourse /latest.json (one API call) and compares post counts against DB cursors to find topics with new posts. Used to decide which topics need a triage delegate. Returns {topics: [{id, title, cursor, postsCount, hasNew}]}.',
+    paramsSchema: { type: 'object', properties: { recentLimit: { type: 'number' } } },
+    handler: async (params) => {
+      const recentLimit = (params.recentLimit as number) ?? 30
+      const script = `
+import json, urllib.request, sys
+p = json.load(open('/home/edward/profile.json'))
+api_key = p['auth_pairs'][0]['user_api_key']
+req = urllib.request.Request(
+    'https://discourse.ilovefreegle.org/latest.json?order=activity&per_page=${recentLimit}',
+    headers={'User-Api-Key': api_key}
+)
+d = json.load(urllib.request.urlopen(req, timeout=15))
+topics = [{'id': t['id'], 'title': t['title'], 'postsCount': t['posts_count']} for t in d['topic_list']['topics']]
+print(json.dumps(topics))
+`
+      const { stdout, stderr, code } = await sh('python3', ['-c', script])
+      if (code !== 0) return { topics: [], error: `discover_active_topics fetch failed: ${stderr.slice(-200)}` }
+
+      let rawTopics: Array<{ id: number; title: string; postsCount: number }> = []
+      try { rawTopics = JSON.parse(stdout.trim()) } catch { return { topics: [], error: 'json parse failed' } }
+
+      // Cross-reference with DB cursors so we know which topics have genuinely new posts.
+      const db = getDb()
+      const cursorRows = listTopicCursors(db) // {topic_id, last_post_number, title}
+      const cursorMap = new Map(cursorRows.map(r => [r.topic_id, r.last_post_number]))
+
+      const topics = rawTopics.map(t => ({
+        id: t.id,
+        title: t.title,
+        postsCount: t.postsCount,
+        cursor: cursorMap.get(t.id) ?? 0,
+        hasNew: t.postsCount > (cursorMap.get(t.id) ?? 0),
+      }))
+
+      const withNew = topics.filter(t => t.hasNew)
+      out(`discover_active_topics: ${withNew.length}/${topics.length} topics have new posts`)
+      return { topics }
+    },
+  },
+
+  {
     name: 'check_sentry',
     description: 'List unresolved Sentry issues for nuxt3 and go projects (top 10 each, by date).',
     handler: async () => {
@@ -1437,13 +1480,16 @@ print('sent')
       if (masterFailing && !masterFixAttempted) {
         return { _transition: 'FIX_MASTER_CI', reason: `master CI failing on run ${master.latestRun?.databaseId ?? '?'}` }
       }
-      // Priority 2: any red PR not in terminal-attempts
-      if (pickable) {
-        return { _transition: 'FIX_OPEN_PR_CI', reason: `red PR #${pickable.number} not yet attempted`, pickedPR: pickable.number }
-      }
-      // Priority 3: always fetch Discourse — phase influences how bugs are handled, not whether to look
+      // Priority 2+: master green — dispatch ALL work in parallel (red PRs + discourse topics + sentry)
+      const activeTopics = (ctx?._action_discover_active_topics?.topics ?? []) as Array<{ id: number; hasNew?: boolean }>
+      const topicsWithNew = activeTopics.filter(t => t.hasNew).length
       const phase = ctx?.phase ?? 'analysis'
-      return { _transition: 'FETCH_DISCOURSE', reason: `CI green (${phase} phase) — enter discovery` }
+      return {
+        _transition: 'PARALLEL_ANALYZE_AND_FIX',
+        reason: `master green — parallel dispatch: ${redPRs.length} red PRs + ${topicsWithNew} active topics (${phase} phase)`,
+        redPRCount: redPRs.length,
+        activeTopicCount: topicsWithNew,
+      }
     },
   },
 
