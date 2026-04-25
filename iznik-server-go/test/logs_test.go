@@ -325,10 +325,12 @@ func TestGetLogsUserReturnsAllTypes(t *testing.T) {
 		"User/Deleted log should be returned for logtype=user")
 }
 
-func TestGetLogsModmailWithMessageSubject(t *testing.T) {
-	// Verify that modmail logs (Message/Replied) include the message subject when msgid is present.
-	// This allows ModTools to display what message the modmail was about (e.g., "add a photo").
-	prefix := uniquePrefix("LogsModmailSubj")
+func TestGetLogsModmailTextIsEmailSubject(t *testing.T) {
+	// Verify that modmail logs (Message/Replied) return log.text containing the email subject
+	// as constructed from the stdmsg (subjpref + ': ' + post subject + subjsuff).
+	// The V2 path stores this in logs.text via the background task; log.text is what ModTools
+	// displays to show what was actually sent in the modmail.
+	prefix := uniquePrefix("LogsModmailText")
 	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	userID := CreateTestUser(t, prefix+"_user", "User")
@@ -338,16 +340,20 @@ func TestGetLogsModmailWithMessageSubject(t *testing.T) {
 
 	db := database.DBConn
 
-	// Create a test message with a subject (simulating a pending message request like "add a photo")
-	result := db.Exec("INSERT INTO messages (fromuser, groupid, type, subject, envelopeto, textbody, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		userID, groupID, "Wanted", "add a photo", userID+"@test.local", "Please add a photo", "Platform")
-	msgID := result.LastInsertId()
+	// Create a test message (simulating a post like "add a photo")
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Wanted', 'add a photo', 'Please add a photo', NOW(), NOW(), 'Platform')",
+		userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 
-	// Create a modmail log (Message/Replied) with the message ID
+	// The stdmsg-constructed email subject: subjpref + ': ' + post_subject
+	emailSubject := "Pending: add a photo"
+
+	// Create a modmail log with the email subject in log.text (as the V2 batch processor does)
 	db.Exec("INSERT INTO logs (type, subtype, groupid, user, msgid, byuser, timestamp, text) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)",
-		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, groupID, userID, msgID, modID, "Pending")
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, groupID, userID, msgID, modID, emailSubject)
 
-	// Fetch logs and verify message subject is included
+	// Fetch logs and verify the email subject is returned in log.text
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?groupid=%d&jwt=%s", groupID, token), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
@@ -360,13 +366,14 @@ func TestGetLogsModmailWithMessageSubject(t *testing.T) {
 	assert.True(t, ok, "logs should be an array")
 	assert.Greater(t, len(logs), 0, "should have at least one log")
 
-	// Find the modmail log
 	logEntry := logs[0].(map[string]interface{})
-	assert.Equal(t, "Message", logEntry["type"], "log type should be Message")
-	assert.Equal(t, "Replied", logEntry["subtype"], "log subtype should be Replied")
+	assert.Equal(t, "Message", logEntry["type"])
+	assert.Equal(t, "Replied", logEntry["subtype"])
 
-	// CRITICAL: msgsubject should be present and contain the message subject
-	msgSubject, hasSubject := logEntry["msgsubject"]
-	assert.True(t, hasSubject, "log should include msgsubject field when msgid is present")
-	assert.Equal(t, "add a photo", msgSubject, "msgsubject should match the message subject")
+	// log.text must contain the stdmsg-constructed email subject, not just "Re: [post subject]"
+	assert.Equal(t, emailSubject, logEntry["text"], "log.text should contain the stdmsg-constructed email subject")
+
+	// msgsubject must NOT be present — the post title is not exposed separately
+	_, hasMsgSubject := logEntry["msgsubject"]
+	assert.False(t, hasMsgSubject, "msgsubject field must not be in the response")
 }

@@ -180,12 +180,12 @@ func GetLogs(c *fiber.Ctx) error {
 		args = append(args, userid, userid)
 	}
 
-	// Build the query - always LEFT JOIN messages to get subject for modmail logs.
-	query := "SELECT logs.*, messages.subject AS msgsubject FROM logs " +
-		"LEFT JOIN messages ON messages.id = logs.msgid "
+	// Build the query.
+	query := "SELECT logs.* FROM logs "
 
 	if search != "" {
-		query += "LEFT JOIN users ON users.id = logs.user "
+		query += "LEFT JOIN users ON users.id = logs.user " +
+			"LEFT JOIN messages ON messages.id = logs.msgid "
 
 		searchLike := "%" + search + "%"
 		where = append(where, "(users.firstname LIKE ? OR users.lastname LIKE ? OR users.fullname LIKE ? "+
@@ -198,18 +198,17 @@ func GetLogs(c *fiber.Ctx) error {
 	args = append(args, limit)
 
 	type LogRow struct {
-		ID         uint64  `json:"id"`
-		Timestamp  string  `json:"timestamp"`
-		Type       string  `json:"type"`
-		Subtype    *string `json:"subtype"`
-		Groupid    *uint64 `json:"groupid"`
-		User       *uint64 `json:"user"`
-		Byuser     *uint64 `json:"byuser"`
-		Msgid      *uint64 `json:"msgid"`
-		Configid   *uint64 `json:"configid"`
-		Stdmsgid   *uint64 `json:"stdmsgid"`
-		Text       *string `json:"text"`
-		Msgsubject *string `json:"msgsubject"`
+		ID        uint64  `json:"id"`
+		Timestamp string  `json:"timestamp"`
+		Type      string  `json:"type"`
+		Subtype   *string `json:"subtype"`
+		Groupid   *uint64 `json:"groupid"`
+		User      *uint64 `json:"user"`
+		Byuser    *uint64 `json:"byuser"`
+		Msgid     *uint64 `json:"msgid"`
+		Configid  *uint64 `json:"configid"`
+		Stdmsgid  *uint64 `json:"stdmsgid"`
+		Text      *string `json:"text"`
 	}
 
 	var rows []LogRow
@@ -238,10 +237,6 @@ func GetLogs(c *fiber.Ctx) error {
 
 		if r.Msgid != nil && *r.Msgid > 0 {
 			entry["msgid"] = *r.Msgid
-		}
-
-		if r.Msgsubject != nil && *r.Msgsubject != "" {
-			entry["msgsubject"] = *r.Msgsubject
 		}
 
 		if r.Stdmsgid != nil && *r.Stdmsgid > 0 {
