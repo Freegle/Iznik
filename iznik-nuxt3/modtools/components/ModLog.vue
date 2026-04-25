@@ -139,6 +139,9 @@
           </span>
           <span v-else-if="log.subtype === 'Replied'" class="text-danger">
             Modmail sent
+            <span v-if="log.msgsubject">
+              re: <em>{{ log.msgsubject }}</em></span
+            >
             <span v-if="log.text && log.text.length > 0">
               with <em>{{ log.text }} </em>
               <span v-if="log.stdmsg">

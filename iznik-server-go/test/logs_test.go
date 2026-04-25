@@ -324,3 +324,49 @@ func TestGetLogsUserReturnsAllTypes(t *testing.T) {
 	assert.True(t, found[logKey{flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_DELETED}],
 		"User/Deleted log should be returned for logtype=user")
 }
+
+func TestGetLogsModmailWithMessageSubject(t *testing.T) {
+	// Verify that modmail logs (Message/Replied) include the message subject when msgid is present.
+	// This allows ModTools to display what message the modmail was about (e.g., "add a photo").
+	prefix := uniquePrefix("LogsModmailSubj")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, modID)
+
+	db := database.DBConn
+
+	// Create a test message with a subject (simulating a pending message request like "add a photo")
+	result := db.Exec("INSERT INTO messages (fromuser, groupid, type, subject, envelopeto, textbody, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		userID, groupID, "Wanted", "add a photo", userID+"@test.local", "Please add a photo", "Platform")
+	msgID := result.LastInsertId()
+
+	// Create a modmail log (Message/Replied) with the message ID
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, msgid, byuser, timestamp, text) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, groupID, userID, msgID, modID, "Pending")
+
+	// Fetch logs and verify message subject is included
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?groupid=%d&jwt=%s", groupID, token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result2 map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result2)
+	assert.Equal(t, float64(0), result2["ret"])
+
+	logs, ok := result2["logs"].([]interface{})
+	assert.True(t, ok, "logs should be an array")
+	assert.Greater(t, len(logs), 0, "should have at least one log")
+
+	// Find the modmail log
+	logEntry := logs[0].(map[string]interface{})
+	assert.Equal(t, "Message", logEntry["type"], "log type should be Message")
+	assert.Equal(t, "Replied", logEntry["subtype"], "log subtype should be Replied")
+
+	// CRITICAL: msgsubject should be present and contain the message subject
+	msgSubject, hasSubject := logEntry["msgsubject"]
+	assert.True(t, hasSubject, "log should include msgsubject field when msgid is present")
+	assert.Equal(t, "add a photo", msgSubject, "msgsubject should match the message subject")
+}
