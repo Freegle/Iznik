@@ -5,6 +5,7 @@ import (
 	json2 "encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -457,4 +458,156 @@ func TestConvertKMLEmptyKML(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 400, resp.StatusCode)
+}
+
+// Comprehensive TDD tests for location and isochrone integration
+
+func TestCreateLocationQueuesTaskRemapPostcodes(t *testing.T) {
+	// Test that creating a location with polygon geometry queues TaskRemapPostcodes
+	prefix := uniquePrefix("locwr_queuetask")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+	polygon := "POLYGON((-0.21 51.5, -0.21 51.6, -0.10 51.6, -0.10 51.5, -0.21 51.5))"
+
+	body := fmt.Sprintf(`{"name":"CreateLocTest %s","polygon":"%s"}`, prefix, polygon)
+
+	req := httptest.NewRequest("PUT", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	locID := int(result["id"].(float64))
+	assert.Greater(t, locID, 0)
+
+	// Wait for async task queueing
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify TaskRemapPostcodes was queued
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID).Scan(&taskCount)
+	assert.Greater(t, taskCount, int64(0), "TaskRemapPostcodes should be queued after location creation")
+
+	// Cleanup
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+	db.Exec("DELETE FROM locations WHERE id = ?", locID)
+}
+
+func TestUpdateLocationQueuesTaskRemapPostcodes(t *testing.T) {
+	// Test that updating a location's geometry queues TaskRemapPostcodes
+	prefix := uniquePrefix("locwr_updatetask")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+
+	// Create initial location directly (simplest way to create a location)
+	db.Exec(fmt.Sprintf(
+		"INSERT INTO locations (name, type, canon, popularity) VALUES (?, 'Polygon', ?, 0)"),
+		"LocTest "+prefix, "loctest "+prefix)
+	var locID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", "LocTest "+prefix).Scan(&locID)
+	assert.Greater(t, locID, uint64(0))
+
+	// Clean up any existing tasks
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+
+	// Update the location geometry using PATCH
+	updatedPolygon := "POLYGON((-0.25 51.4, -0.25 51.7, -0.05 51.7, -0.05 51.4, -0.25 51.4))"
+	updateBody := fmt.Sprintf(`{"id":%d,"polygon":"%s"}`, locID, updatedPolygon)
+
+	updateReq := httptest.NewRequest("PATCH", "/api/locations?jwt="+adminToken, bytes.NewBufferString(updateBody))
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateResp, _ := getApp().Test(updateReq)
+	assert.Equal(t, 200, updateResp.StatusCode)
+
+	// Wait for async task queueing
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify TaskRemapPostcodes was queued
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID).Scan(&taskCount)
+	assert.Greater(t, taskCount, int64(0), "TaskRemapPostcodes should be queued after location update")
+
+	// Cleanup
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+	db.Exec("DELETE FROM locations WHERE id = ?", locID)
+}
+
+func TestLocationCreateWithBoundaryValidation(t *testing.T) {
+	// Test that location creation validates polygon boundaries
+	prefix := uniquePrefix("locwr_boundary")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	// Valid polygon with closed ring
+	validPolygon := "POLYGON((-1.5 53.8, -1.4 53.8, -1.4 53.9, -1.5 53.9, -1.5 53.8))"
+
+	body := fmt.Sprintf(`{"name":"BoundaryTest %s","polygon":"%s"}`, prefix, validPolygon)
+
+	req := httptest.NewRequest("PUT", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	locID := int(result["id"].(float64))
+	assert.Greater(t, locID, 0)
+
+	// Get the created location
+	db := database.DBConn
+
+	// Verify polygon geometry exists and is valid (check COALESCE to handle both ourgeometry and geometry)
+	var geomText string
+	db.Raw("SELECT ST_AsText(COALESCE(ourgeometry, geometry)) FROM locations WHERE id = ?", locID).Scan(&geomText)
+	assert.NotEmpty(t, geomText, "Location geometry should be set")
+	assert.True(t, strings.Contains(geomText, "POLYGON"), "Location geometry should be a polygon")
+
+	// Cleanup
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+	db.Exec("DELETE FROM locations WHERE id = ?", locID)
+}
+
+func TestLocationTaskRemapPostcodesDataStructure(t *testing.T) {
+	// Test that TaskRemapPostcodes has correct data structure with location_id
+	prefix := uniquePrefix("locwr_taskdata")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+	polygon := "POLYGON((-0.1 51.5, -0.1 51.6, 0.0 51.6, 0.0 51.5, -0.1 51.5))"
+
+	body := fmt.Sprintf(`{"name":"TaskDataTest %s","polygon":"%s"}`, prefix, polygon)
+
+	req := httptest.NewRequest("PUT", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	locID := int(result["id"].(float64))
+	assert.Greater(t, locID, 0)
+
+	// Wait for task to be queued
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify task data structure
+	var taskData string
+	db.Raw("SELECT data FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ? LIMIT 1", locID).Scan(&taskData)
+	assert.Greater(t, len(taskData), 0, "Task data should be populated")
+
+	// Parse JSON to verify structure
+	var data map[string]interface{}
+	err := json2.Unmarshal([]byte(taskData), &data)
+	assert.NoError(t, err)
+	assert.NotNil(t, data["location_id"], "Task data should contain location_id")
+
+	// Cleanup
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+	db.Exec("DELETE FROM locations WHERE id = ?", locID)
 }
