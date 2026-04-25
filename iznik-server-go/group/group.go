@@ -821,7 +821,7 @@ func CreateGroup(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO `groups` (nameshort, namedisplay, type, region, publish, onhere) VALUES (?, ?, ?, 'UK', 1, 1)",
+	sqlResult, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, publish, onhere, polyindex) VALUES (?, ?, ?, 1, 1, ST_GeomFromText('POINT(0 0)', %d))", utils.SRID),
 		req.Name, req.Name, req.GroupType)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create group")

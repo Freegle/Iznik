@@ -346,4 +346,76 @@ describe('ChatMessage', () => {
       expect(wrapper.text()).toContain('Delete')
     })
   })
+
+  describe('phone number warning', () => {
+    it('does not show warning for message with no phone number', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({
+          ...mockChatMessage,
+          message: 'Hello, can I come and collect this afternoon?',
+        }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.chat-message-warning').exists()).toBe(false)
+    })
+
+    it('does not show warning for text containing + followed by two non-44 digits but no full phone number (false positive fix)', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({
+          ...mockChatMessage,
+          message: 'I have +12 more items to give away if you need them.',
+        }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.chat-message-warning').exists()).toBe(false)
+    })
+
+    it('does not show warning for text with + and small number like "+30 minutes"', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({
+          ...mockChatMessage,
+          message: 'I can be there in +30 minutes',
+        }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.chat-message-warning').exists()).toBe(false)
+    })
+
+    it('shows warning for message containing a real non-UK international phone number', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({
+          ...mockChatMessage,
+          message: 'Please call +12025551234 to arrange pickup.',
+        }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.chat-message-warning').exists()).toBe(true)
+    })
+
+    it('does not show warning for a UK phone number (+44)', async () => {
+      const { setupChat } = await import('~/composables/useChat')
+      setupChat.mockResolvedValueOnce({
+        chat: ref(mockChat),
+        otheruser: ref(mockOtherUser),
+        chatmessage: ref({
+          ...mockChatMessage,
+          message: 'My number is +447911123456',
+        }),
+      })
+      const wrapper = await createWrapper()
+      expect(wrapper.find('.chat-message-warning').exists()).toBe(false)
+    })
+  })
 })

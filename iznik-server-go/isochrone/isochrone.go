@@ -51,7 +51,7 @@ func ListIsochrones(c *fiber.Ctx) error {
 
 	// Self-heal: if any isochrone has a POINT polygon (broken V2 creation), replace it
 	// with a real Mapbox polygon.
-	isochrones = healPointIsochrones(db, isochrones, myid)
+	isochrones = HealPointIsochrones(db, isochrones, myid)
 
 	if len(isochrones) == 0 {
 		// Auto-create a default isochrone using the user's last known location
@@ -60,7 +60,7 @@ func ListIsochrones(c *fiber.Ctx) error {
 		db.Raw("SELECT lastlocation FROM users WHERE id = ? AND lastlocation IS NOT NULL", myid).Scan(&locationid)
 
 		if locationid > 0 {
-			isoID := ensureIsochroneExists(locationid, "Walk", 15)
+			isoID := EnsureIsochroneExists(locationid, "Walk", 15)
 
 			if isoID > 0 {
 				// Link user to isochrone.
@@ -80,9 +80,9 @@ func ListIsochrones(c *fiber.Ctx) error {
 	return c.JSON(isochrones)
 }
 
-// ensureIsochroneExists finds or creates an isochrone with a real polygon from Mapbox.
+// EnsureIsochroneExists finds or creates an isochrone with a real polygon from Mapbox.
 // Returns the isochrone ID, or 0 on failure.
-func ensureIsochroneExists(locationid uint64, transport string, minutes int) uint64 {
+func EnsureIsochroneExists(locationid uint64, transport string, minutes int) uint64 {
 	db := database.DBConn
 
 	// Check for existing isochrone with a real polygon (not a POINT).
@@ -151,9 +151,9 @@ func ensureIsochroneExists(locationid uint64, transport string, minutes int) uin
 	return isoID
 }
 
-// healPointIsochrones checks if any of the user's isochrones have POINT geometry
+// HealPointIsochrones checks if any of the user's isochrones have POINT geometry
 // (from broken V2 creation) and replaces them with real Mapbox polygons.
-func healPointIsochrones(db *gorm.DB, isochrones []Isochrones, myid uint64) []Isochrones {
+func HealPointIsochrones(db *gorm.DB, isochrones []Isochrones, myid uint64) []Isochrones {
 	needsRefetch := false
 
 	for _, iso := range isochrones {
@@ -163,7 +163,7 @@ func healPointIsochrones(db *gorm.DB, isochrones []Isochrones, myid uint64) []Is
 			if transport == "" {
 				transport = "Walk"
 			}
-			newIsoID := ensureIsochroneExists(iso.Locationid, transport, iso.Minutes)
+			newIsoID := EnsureIsochroneExists(iso.Locationid, transport, iso.Minutes)
 			if newIsoID > 0 {
 				needsRefetch = true
 				if newIsoID != iso.Isochroneid {
@@ -254,7 +254,7 @@ func CreateIsochrone(c *fiber.Ctx) error {
 	}
 
 	// Find or create isochrone with real polygon from Mapbox.
-	isoID := ensureIsochroneExists(uint64(req.Locationid), req.Transport, int(req.Minutes))
+	isoID := EnsureIsochroneExists(uint64(req.Locationid), req.Transport, int(req.Minutes))
 	if isoID == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create isochrone")
 	}
@@ -355,7 +355,7 @@ func EditIsochrone(c *fiber.Ctx) error {
 	}
 
 	// Find or create isochrone with new params and real polygon from Mapbox.
-	isoID := ensureIsochroneExists(current.Locationid, req.Transport, int(req.Minutes))
+	isoID := EnsureIsochroneExists(current.Locationid, req.Transport, int(req.Minutes))
 	if isoID == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create isochrone")
 	}

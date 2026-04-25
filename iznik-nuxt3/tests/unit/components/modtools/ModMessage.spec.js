@@ -1247,4 +1247,34 @@ describe('ModMessage', () => {
       expect(wrapper.text()).not.toContain('Also on')
     })
   })
+
+  describe('Summary view responsive layout (Discourse 9481)', () => {
+    it('username in summary header has text-truncate and max-width to prevent squeezing edit fields', () => {
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'AVeryLongUsernameThatWouldSqueezeEditFields',
+        memberships: [{ id: 789, groupid: 789 }],
+      })
+      const wrapper = mountComponent({ summary: true })
+      const usernameEl = wrapper.find('.text-truncate.d-inline-block')
+      expect(usernameEl.exists()).toBe(true)
+      expect(usernameEl.text()).toContain('AVeryLongUsernameThatWouldSqueezeEditFields')
+      expect(usernameEl.attributes('style')).toContain('max-width: 8rem')
+    })
+
+    it('Back to Pending button uses slot for label so text can be hidden on xs', async () => {
+      const wrapper = mountComponent(
+        { summary: false, contextGroupid: 789 },
+        {
+          groups: [{ groupid: 789, collection: 'Approved' }],
+        }
+      )
+      await wrapper.vm.$nextTick()
+      const spinButton = wrapper.find('.spin-button')
+      expect(spinButton.exists()).toBe(true)
+      const labelSpan = spinButton.find('span.d-none.d-sm-inline')
+      expect(labelSpan.exists()).toBe(true)
+      expect(labelSpan.text()).toBe('Back to Pending')
+    })
+  })
 })

@@ -281,3 +281,237 @@ func TestChangesInvalidSince(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 400, resp.StatusCode)
 }
+
+func TestChangesRatingCommentField(t *testing.T) {
+	// Rating response must include comment field (text column from ratings table).
+	prefix := uniquePrefix("changes_comment")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	raterID := CreateTestUser(t, prefix+"_rater", "User")
+	defer db.Exec("DELETE FROM users WHERE id = ?", raterID)
+
+	rateeID := CreateTestUser(t, prefix+"_ratee", "User")
+	defer db.Exec("DELETE FROM users WHERE id = ?", rateeID)
+
+	// Create a rating with a comment (text field).
+	comment := "Great trader, very responsive!"
+	db.Exec("INSERT INTO ratings (rater, ratee, rating, timestamp, visible, text) VALUES (?, ?, 'Up', NOW(), 1, ?)", raterID, rateeID, comment)
+	defer db.Exec("DELETE FROM ratings WHERE rater = ? AND ratee = ?", raterID, rateeID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s", partnerKey), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	changes := result["changes"].(map[string]interface{})
+	ratings := changes["ratings"].([]interface{})
+
+	found := false
+	for _, r := range ratings {
+		rating := r.(map[string]interface{})
+		if uint64(rating["rater"].(float64)) == raterID {
+			// comment field must be present and contain the inserted text.
+			commentField, ok := rating["comment"]
+			assert.True(t, ok, "rating must have comment field")
+			assert.Equal(t, comment, commentField.(string), "rating comment must match database text field")
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Expected rating with comment in changes")
+}
+
+func TestChangesRatingReasonField(t *testing.T) {
+	// Rating response must include reason field from ratings table.
+	prefix := uniquePrefix("changes_reason")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	raterID := CreateTestUser(t, prefix+"_rater", "User")
+	defer db.Exec("DELETE FROM users WHERE id = ?", raterID)
+
+	rateeID := CreateTestUser(t, prefix+"_ratee", "User")
+	defer db.Exec("DELETE FROM users WHERE id = ?", rateeID)
+
+	// Create a rating with a reason.
+	db.Exec("INSERT INTO ratings (rater, ratee, rating, timestamp, visible, reason) VALUES (?, ?, 'Down', NOW(), 1, 'Ghosted')", raterID, rateeID)
+	defer db.Exec("DELETE FROM ratings WHERE rater = ? AND ratee = ?", raterID, rateeID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s", partnerKey), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	changes := result["changes"].(map[string]interface{})
+	ratings := changes["ratings"].([]interface{})
+
+	found := false
+	for _, r := range ratings {
+		rating := r.(map[string]interface{})
+		if uint64(rating["rater"].(float64)) == raterID {
+			// reason field must be present.
+			reasonField, ok := rating["reason"]
+			assert.True(t, ok, "rating must have reason field")
+			assert.Equal(t, "Ghosted", reasonField.(string), "rating reason must match database value")
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Expected rating with reason in changes")
+}
+
+func TestChangesRatingAllFieldsPresent(t *testing.T) {
+	// Verify that Rating response includes all required fields: id, rating, comment, tn_rating_id, reason.
+	prefix := uniquePrefix("changes_all_fields")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	raterID := CreateTestUser(t, prefix+"_rater", "User")
+	defer db.Exec("DELETE FROM users WHERE id = ?", raterID)
+
+	rateeID := CreateTestUser(t, prefix+"_ratee", "User")
+	defer db.Exec("DELETE FROM users WHERE id = ?", rateeID)
+
+	// Create a fully-populated rating.
+	comment := "Excellent service"
+	db.Exec("INSERT INTO ratings (rater, ratee, rating, timestamp, visible, tn_rating_id, reason, text) VALUES (?, ?, 'Up', NOW(), 1, ?, 'Punctuality', ?)",
+		raterID, rateeID, 999, comment)
+	defer db.Exec("DELETE FROM ratings WHERE rater = ? AND ratee = ?", raterID, rateeID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s", partnerKey), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	changes := result["changes"].(map[string]interface{})
+	ratings := changes["ratings"].([]interface{})
+
+	found := false
+	for _, r := range ratings {
+		rating := r.(map[string]interface{})
+		if uint64(rating["rater"].(float64)) == raterID {
+			// Verify all fields are present in response.
+			assert.NotNil(t, rating["id"], "rating must have id field")
+			assert.NotNil(t, rating["rating"], "rating must have rating field")
+			assert.NotNil(t, rating["comment"], "rating must have comment field")
+			assert.NotNil(t, rating["tn_rating_id"], "rating must have tn_rating_id field")
+			assert.NotNil(t, rating["reason"], "rating must have reason field")
+
+			// Verify values.
+			assert.Greater(t, rating["id"].(float64), float64(0), "id must be > 0")
+			assert.Equal(t, "Up", rating["rating"].(string), "rating value must match")
+			assert.Equal(t, comment, rating["comment"].(string), "comment must match")
+			assert.Equal(t, float64(999), rating["tn_rating_id"].(float64), "tn_rating_id must match")
+			assert.Equal(t, "Punctuality", rating["reason"].(string), "reason must match")
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Expected rating with all fields in changes")
+}
+
+func TestChangesUserLastUpdatedNullHandling(t *testing.T) {
+	// Verify that NULL lastupdated in database scans to empty string, not nil.
+	prefix := uniquePrefix("changes_null_lu")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// Create user with explicit NULL lastupdated.
+	userID := CreateTestUser(t, prefix, "User")
+	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
+
+	// Set lastupdated to NOW to include in results.
+	db.Exec("UPDATE users SET lastupdated = NOW() WHERE id = ?", userID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s", partnerKey), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	changes := result["changes"].(map[string]interface{})
+	users := changes["users"].([]interface{})
+
+	found := false
+	for _, u := range users {
+		user := u.(map[string]interface{})
+		if uint64(user["id"].(float64)) == userID {
+			// lastupdated must be a string, never null in JSON.
+			assert.IsType(t, "", user["lastupdated"], "lastupdated must be string type, not null")
+			lu := user["lastupdated"].(string)
+			assert.NotEmpty(t, lu, "lastupdated must not be empty string when set")
+			assert.Contains(t, lu, "T", "lastupdated must be ISO8601 format")
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "Expected user with lastupdated in changes")
+}
+
+func TestChangesResponseStructure(t *testing.T) {
+	// Verify the complete response structure matches specification.
+	prefix := uniquePrefix("changes_struct")
+	db := database.DBConn
+
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s", partnerKey), nil)
+	resp, err := getApp().Test(req, -1)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	// Top-level fields.
+	assert.Equal(t, float64(0), result["ret"], "ret must be 0 for success")
+	assert.Equal(t, "Success", result["status"], "status must be Success")
+
+	// Changes object structure.
+	changes, ok := result["changes"].(map[string]interface{})
+	require.True(t, ok, "changes must be an object")
+
+	// Must have all three arrays.
+	assert.NotNil(t, changes["messages"], "changes must have messages array")
+	assert.NotNil(t, changes["users"], "changes must have users array")
+	assert.NotNil(t, changes["ratings"], "changes must have ratings array")
+
+	// Arrays must be present even if empty (not null).
+	messages, ok := changes["messages"].([]interface{})
+	assert.True(t, ok, "messages must be an array")
+	assert.NotNil(t, messages, "messages must not be null")
+
+	users, ok := changes["users"].([]interface{})
+	assert.True(t, ok, "users must be an array")
+	assert.NotNil(t, users, "users must not be null")
+
+	ratings, ok := changes["ratings"].([]interface{})
+	assert.True(t, ok, "ratings must be an array")
+	assert.NotNil(t, ratings, "ratings must not be null")
+}
