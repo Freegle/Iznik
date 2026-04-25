@@ -57,6 +57,34 @@
         </div>
       </div>
 
+      <!-- Recently Fixed -->
+      <div v-if="recentlyFixed.length > 0" class="mt-4">
+        <h6 class="text-muted mb-2">
+          Recently Fixed
+          <span class="badge bg-success ms-1">{{ recentlyFixed.length }}</span>
+        </h6>
+        <div class="card">
+          <table class="table table-sm mb-0" style="font-size: 0.8125rem;">
+            <tbody>
+              <tr v-for="bug in recentlyFixed" :key="`${bug.topic}-${bug.post}`">
+                <td style="width: 140px;" class="text-muted">{{ (bug as any).group_key || bug.feature_area || 'Uncategorised' }}</td>
+                <td style="width: 90px;">
+                  <a :href="`https://discourse.ilovefreegle.org/t/${bug.topic}/${bug.post}`" target="_blank" rel="noopener" class="text-decoration-none">
+                    {{ bug.reporter || 'Unknown' }}
+                  </a>
+                </td>
+                <td class="text-muted" style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ bug.excerpt || '—' }}</td>
+                <td style="width: 70px;">
+                  <a v-if="bug.pr_number" :href="`https://github.com/Freegle/Iznik/pull/${bug.pr_number}`" target="_blank" rel="noopener" class="text-decoration-none">#{{ bug.pr_number }}</a>
+                  <span v-else class="text-muted">—</span>
+                </td>
+                <td style="width: 80px;" class="text-muted">{{ formatFixedAge(bug.fixed_at) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- Iteration history (collapsible) -->
       <div class="mt-4">
         <details class="card">
@@ -77,7 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useBugs, useDrafts, useIterations, usePrsLive, pushStatusPost } from './composables/useApi'
 import PrPanel from './components/PrPanel.vue'
 import BugPanel from './components/BugPanel.vue'
@@ -88,6 +116,23 @@ const bugsData = useBugs()
 const draftsData = useDrafts()
 const itersData = useIterations()
 const prsData = usePrsLive()
+
+const recentlyFixed = computed(() => {
+  const sevenDaysAgo = new Date()
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+  return bugsData.state.bugs.filter(bug =>
+    bug.state === 'fixed' && bug.fixed_at && new Date(bug.fixed_at) > sevenDaysAgo
+  )
+})
+
+function formatFixedAge(date: string | null): string {
+  if (!date) return ''
+  const now = new Date()
+  const d = new Date(date)
+  const hours = Math.floor((now.getTime() - d.getTime()) / 3600000)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
 
 const pushing = ref(false)
 const pushResult = ref<{ ok: boolean; msg?: string } | null>(null)

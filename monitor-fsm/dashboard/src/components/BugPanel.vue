@@ -86,16 +86,9 @@ const emit = defineEmits<{
   refresh: []
 }>()
 
-const activeBugs = computed(() => {
-  const sevenDaysAgo = new Date()
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-
-  return props.bugs.filter(bug => {
-    if (['open', 'investigating', 'fix-queued'].includes(bug.state)) return true
-    if (bug.state === 'fixed' && bug.fixed_at && new Date(bug.fixed_at) > sevenDaysAgo) return true
-    return false
-  })
-})
+const activeBugs = computed(() =>
+  props.bugs.filter(bug => ['open', 'investigating', 'fix-queued'].includes(bug.state))
+)
 
 const groupedBugs = computed(() => {
   const groups: Record<string, BugRow[]> = {}
