@@ -37,8 +37,13 @@
               #{{ pr.number }}
             </a>
           </td>
-          <td style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-            {{ pr.title }}
+          <td style="max-width: 220px;">
+            <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ pr.title }}</div>
+            <div v-if="pr.bug" class="text-muted" style="font-size: 0.8em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+              <a :href="`https://discourse.ilovefreegle.org/t/${pr.bug.topic}/${pr.bug.post}`" target="_blank" rel="noopener" class="text-decoration-none text-muted">
+                {{ pr.bug.reporter || '?' }} — {{ truncate(pr.bug.excerpt, 55) }}
+              </a>
+            </div>
           </td>
           <td>
             <div class="d-flex flex-column gap-1">
@@ -121,6 +126,11 @@ function formatAge(date: string): string {
   if (hours < 24) return `${hours}h`
   const days = Math.floor(hours / 24)
   return `${days}d`
+}
+
+function truncate(text: string | null | undefined, len: number): string {
+  if (!text) return ''
+  return text.length > len ? text.slice(0, len) + '…' : text
 }
 
 function refresh() {

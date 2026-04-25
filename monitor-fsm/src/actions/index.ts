@@ -1438,7 +1438,7 @@ print('sent')
 
   {
     name: 'coverage_gate_decide',
-    description: 'Pure-logic branch for COVERAGE_GATE. Reads iterationStartTs from context, counts PRs created/updated this iteration, and checks for red CI on @me open PRs. Returns {count, redPRs, _transition: "CI_ROUTER" | "WRAP_UP" | "WRITE_COVERAGE"}. Used by the COVERAGE_GATE tool node to skip an LLM call.',
+    description: 'Pure-logic branch for COVERAGE_GATE. Priority: (1) red CI → CI_ROUTER; (2) dirty/needs-rebase PRs → REBASE_DIRTY_PRS; (3) PRs created this iteration → WRAP_UP; (4) else → WRITE_COVERAGE.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const verifyDef = actions.find(a => a.name === 'verify_pr_created')!
@@ -1450,17 +1450,28 @@ print('sent')
       const r = red as any
       const redCount = Array.isArray(r.redPRs) ? r.redPRs.length : 0
       const prCount = typeof v.count === 'number' ? v.count : 0
+
+      // Check for PRs that need rebase (mergeStateStatus === 'DIRTY')
+      const listRes = await sh('gh', [
+        'pr', 'list', '--repo', 'Freegle/Iznik', '--author', '@me',
+        '--state', 'open', '--limit', '30', '--json', 'number,title,headRefName',
+      ])
+      const openPRs = listRes.code === 0 ? JSON.parse(listRes.stdout) as Array<{ number: number; title: string; headRefName: string }> : []
+      const dirtyPRs: Array<{ number: number; title: string; branch: string }> = []
+      for (const pr of openPRs) {
+        const viewRes = await sh('gh', ['pr', 'view', String(pr.number), '--repo', 'Freegle/Iznik', '--json', 'mergeStateStatus'])
+        if (viewRes.code === 0) {
+          const { mergeStateStatus } = JSON.parse(viewRes.stdout)
+          if (mergeStateStatus === 'DIRTY') dirtyPRs.push({ number: pr.number, title: pr.title, branch: pr.headRefName })
+        }
+      }
+
       let target: string
       if (redCount > 0) target = 'CI_ROUTER'
+      else if (dirtyPRs.length > 0) target = 'REBASE_DIRTY_PRS'
       else if (prCount > 0) target = 'WRAP_UP'
       else target = 'WRITE_COVERAGE'
-      return {
-        count: prCount,
-        redCount,
-        verify,
-        red,
-        _transition: target,
-      }
+      return { count: prCount, redCount, dirtyPRs, verify, red, _transition: target }
     },
   },
 

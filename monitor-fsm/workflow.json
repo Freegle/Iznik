@@ -113,8 +113,16 @@
         "create_pr"
       ]
     },
+    "REBASE_DIRTY_PRS": {
+      "description": "Rebase all @me open PRs with mergeStateStatus=DIRTY onto master. One delegate per dirty PR in parallel. Returns to COVERAGE_GATE so CI can re-verify after the force-push.",
+      "nodeType": "agent",
+      "prompt": "context._action_coverage_gate_decide.dirtyPRs[] lists PRs that need a rebase. For each, build a task: 'Rebase PR #<n> (branch <branch>) onto master. Steps: (1) git -C /home/edward/FreegleDockerWSL checkout <branch> && git fetch origin master && git rebase origin/master. If rebase succeeds: git push --force-with-lease origin HEAD. If conflicts arise: git rebase --abort, then diagnose and resolve manually before pushing. Emit COMMIT_PUSHED=<sha> when done.' Use id: 'rebase-<n>' for each. Call delegate_parallel_tasks with all rebase tasks. After it returns, propose transition to COVERAGE_GATE.",
+      "readActions": [],
+      "writeActions": ["delegate_parallel_tasks"]
+    },
+
     "COVERAGE_GATE": {
-      "description": "Structural gate: has this iteration produced a PR yet, and does any @me open PR currently have red CI? Tool node — deterministic branching, no LLM turn. The single readAction coverage_gate_decide runs verify_pr_created + check_my_open_pr_ci and returns _transition: CI_ROUTER | WRAP_UP | WRITE_COVERAGE.",
+      "description": "Structural gate: has this iteration produced a PR yet, and does any @me open PR currently have red CI or need rebase? Tool node — deterministic branching, no LLM turn. The single readAction coverage_gate_decide returns _transition: CI_ROUTER | REBASE_DIRTY_PRS | WRAP_UP | WRITE_COVERAGE.",
       "nodeType": "tool",
       "readActions": [
         "coverage_gate_decide"
@@ -254,6 +262,21 @@
       "to": "WORK_ROUTER",
       "trigger": "llm_decision",
       "label": "sentry fix done"
+    },
+    {
+      "id": "t_gate_to_rebase",
+      "from": "COVERAGE_GATE",
+      "to": "REBASE_DIRTY_PRS",
+      "trigger": "llm_decision",
+      "condition": "dirtyPRs non-empty AND redPRs empty",
+      "label": "dirty PRs need rebase — fix before coverage"
+    },
+    {
+      "id": "t_rebase_to_gate",
+      "from": "REBASE_DIRTY_PRS",
+      "to": "COVERAGE_GATE",
+      "trigger": "llm_decision",
+      "label": "rebase attempts done — re-check gate"
     },
     {
       "id": "t_gate_to_wrap",

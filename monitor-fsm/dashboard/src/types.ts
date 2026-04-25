@@ -51,4 +51,5 @@ export interface PrLive {
   mergeStateStatus: string
   ciStatus: 'green' | 'red' | 'pending' | 'unknown'
   failedChecks: string[]
+  bug?: { topic: number; post: number; reporter: string | null; excerpt: string | null }
 }

@@ -138,8 +138,17 @@ async function fetchPrsLive(): Promise<any[]> {
       })
     )
 
-    prCache = { data: results, timestamp: Date.now() }
-    return results
+    // Annotate each PR with its associated bug from the DB
+    const db = getDb()
+    const annotated = results.map((pr: any) => {
+      const bug = db.prepare(
+        'SELECT topic, post, reporter, excerpt FROM discourse_bug WHERE pr_number = ? LIMIT 1'
+      ).get(pr.number) as { topic: number; post: number; reporter: string | null; excerpt: string | null } | undefined
+      return bug ? { ...pr, bug: { topic: bug.topic, post: bug.post, reporter: bug.reporter, excerpt: bug.excerpt } } : pr
+    })
+
+    prCache = { data: annotated, timestamp: Date.now() }
+    return annotated
   } catch (err) {
     console.error('Failed to fetch PRs:', err)
     return []
