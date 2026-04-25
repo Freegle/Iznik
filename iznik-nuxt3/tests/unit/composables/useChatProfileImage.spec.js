@@ -428,6 +428,48 @@ describe('Profile names', () => {
   })
 })
 
+// --- avatarName — strips group suffix from chat.name for avatar seed ---
+// Production code: components/ChatListEntry.vue avatarName computed
+// Ensures the avatar seed used in the chat list matches the member's displayname
+// used in individual chat message avatars (Discourse #9518).
+function chatListAvatarName(chatName) {
+  const name = chatName || ''
+  return name.replace(/ \([^)]+\)$/, '') || name
+}
+
+describe('avatarName — chat list avatar seed (Discourse #9518)', () => {
+  it('strips group suffix from User2Mod chat name (mod viewing)', () => {
+    // Go API adds " (GroupShortName)" for mod-viewed User2Mod chats.
+    // Avatar seed must match member's displayname used in message avatars.
+    expect(chatListAvatarName('John Smith (Freecycle)')).toBe('John Smith')
+  })
+
+  it('strips group suffix with longer group name', () => {
+    expect(chatListAvatarName('Alice Jones (Chippenham Freecycle)')).toBe(
+      'Alice Jones'
+    )
+  })
+
+  it('leaves User2User name unchanged (no group suffix)', () => {
+    expect(chatListAvatarName('John Smith')).toBe('John Smith')
+  })
+
+  it('leaves Mod2Mod name unchanged', () => {
+    expect(chatListAvatarName('Freecycle Mods')).toBe('Freecycle Mods')
+  })
+
+  it('leaves member-view User2Mod name unchanged (no group suffix pattern)', () => {
+    // Member sees "Groupname Volunteers" — no parenthetical, so unchanged.
+    expect(chatListAvatarName('Freecycle Volunteers')).toBe(
+      'Freecycle Volunteers'
+    )
+  })
+
+  it('handles empty string gracefully', () => {
+    expect(chatListAvatarName('')).toBe('')
+  })
+})
+
 describe('Chat list icon (Go API sets chat.icon per-user)', () => {
   // These document the Go API's icon rules (chatroom.go buildUserIcon).
   // The frontend just displays chat.icon — no frontend logic to test,
