@@ -611,3 +611,101 @@ func TestLocationTaskRemapPostcodesDataStructure(t *testing.T) {
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
 	db.Exec("DELETE FROM locations WHERE id = ?", locID)
 }
+
+func TestCreateLocationWithMissingName(t *testing.T) {
+	// Test that CreateLocation requires name field
+	prefix := uniquePrefix("locwr_noname")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	body := `{"polygon":"POLYGON((-0.21 51.5, -0.21 51.6, -0.10 51.6, -0.10 51.5, -0.21 51.5))"}`
+	req := httptest.NewRequest("PUT", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 400, resp.StatusCode, "Should reject location without name")
+}
+
+func TestCreateLocationWithMissingPolygon(t *testing.T) {
+	// Test that CreateLocation requires polygon field
+	prefix := uniquePrefix("locwr_nopoly")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	body := fmt.Sprintf(`{"name":"Test %s"}`, prefix)
+	req := httptest.NewRequest("PUT", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 400, resp.StatusCode, "Should reject location without polygon")
+}
+
+func TestUpdateLocationNonExistentLocation(t *testing.T) {
+	// Test that UpdateLocation handles non-existent location gracefully
+	prefix := uniquePrefix("locwr_notexist")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	nonExistentID := uint64(999999999)
+	body := fmt.Sprintf(`{"id":%d,"name":"New Name"}`, nonExistentID)
+	req := httptest.NewRequest("PATCH", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+}
+
+func TestLocationSpatialIndexSync(t *testing.T) {
+	// Test that CreateLocation syncs to locations_spatial table
+	prefix := uniquePrefix("locwr_spatial")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	db := database.DBConn
+	polygon := "POLYGON((-1.5 53.8, -1.5 53.9, -1.4 53.9, -1.4 53.8, -1.5 53.8))"
+
+	body := fmt.Sprintf(`{"name":"SpatialSync %s","polygon":"%s"}`, prefix, polygon)
+	req := httptest.NewRequest("PUT", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	locID := int(result["id"].(float64))
+	assert.Greater(t, locID, 0)
+
+	// Verify locations_spatial has an entry
+	var spatialGeom string
+	db.Raw("SELECT ST_AsText(geometry) FROM locations_spatial WHERE locationid = ?", locID).Scan(&spatialGeom)
+	assert.NotEmpty(t, spatialGeom, "locations_spatial should have geometry entry")
+
+	// Cleanup
+	db.Exec("DELETE FROM locations_spatial WHERE locationid = ?", locID)
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+	db.Exec("DELETE FROM locations WHERE id = ?", locID)
+}
+
+func TestCreateLocationCanonSetting(t *testing.T) {
+	// Test that CreateLocation sets canon field to lowercase name
+	prefix := uniquePrefix("locwr_canon")
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	locationName := "Test LoC" + prefix
+	body := fmt.Sprintf(`{"name":"%s","polygon":"POLYGON((-1.5 53.8, -1.5 53.9, -1.4 53.9, -1.4 53.8, -1.5 53.8))"}`, locationName)
+	req := httptest.NewRequest("PUT", "/api/locations?jwt="+adminToken, bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	locID := int(result["id"].(float64))
+
+	db := database.DBConn
+	var canon string
+	db.Raw("SELECT canon FROM locations WHERE id = ?", locID).Scan(&canon)
+	assert.Equal(t, strings.ToLower(locationName), canon, "canon should be lowercase name")
+
+	// Cleanup
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ?", locID)
+	db.Exec("DELETE FROM locations WHERE id = ?", locID)
+}
