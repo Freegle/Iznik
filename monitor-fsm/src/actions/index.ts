@@ -15,6 +15,7 @@ import {
   insertReviewerFeedback,
   listUnprocessedFeedback,
   upsertDiscourseBug,
+  upsertPr,
 } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
@@ -113,6 +114,50 @@ export const actions: ActionDefinition[] = [
         },
         iterationStartTs: new Date().toISOString(),
       }
+    },
+  },
+
+  {
+    name: 'sync_pr_states',
+    description: 'Sync PR states from GitHub for all PRs referenced in discourse_bug.pr_number. Updates the pr table so reconcileBugStates can move fix-queued bugs to fixed once their PR is merged. Returns {synced: [{number, state, mergedAt}], updated: number}.',
+    handler: async () => {
+      const db = getDb()
+      // Collect all PR numbers referenced in discourse_bug (fix-queued only — fixed ones don't need updating).
+      const bugPRs = db.prepare(
+        `SELECT DISTINCT pr_number FROM discourse_bug WHERE pr_number IS NOT NULL AND state IN ('open','investigating','fix-queued')`
+      ).all() as Array<{ pr_number: number }>
+      // Also sync any OPEN PRs already in the pr table (may have been merged or closed since last check).
+      const tablePRs = db.prepare(
+        `SELECT DISTINCT number FROM pr WHERE state IS NULL OR state NOT IN ('MERGED','CLOSED')`
+      ).all() as Array<{ number: number }>
+
+      const toSync = new Set([...bugPRs.map(r => r.pr_number), ...tablePRs.map(r => r.number)])
+      if (toSync.size === 0) return { synced: [], updated: 0 }
+
+      const synced: Array<{ number: number; state: string; mergedAt: string | null }> = []
+      let updated = 0
+
+      for (const num of toSync) {
+        const res = await sh('gh', ['pr', 'view', String(num), '--repo', 'Freegle/Iznik', '--json', 'number,state,mergedAt,title,headRefName'])
+        if (res.code !== 0) continue
+        try {
+          const pr = JSON.parse(res.stdout) as { number: number; state: string; mergedAt: string | null; title: string; headRefName: string }
+          // gh returns 'MERGED', 'CLOSED', or 'OPEN'
+          const ghState = pr.state === 'MERGED' ? 'MERGED' : pr.state === 'CLOSED' ? 'CLOSED' : 'OPEN'
+          upsertPr(db, {
+            number: pr.number,
+            title: pr.title,
+            branch: pr.headRefName,
+            state: ghState,
+            // Freegle auto-deploys on merge, so MERGED = live.
+            deployState: ghState === 'MERGED' ? 'live' : undefined,
+          })
+          synced.push({ number: pr.number, state: ghState, mergedAt: pr.mergedAt })
+          updated++
+        } catch { /* malformed JSON from gh — skip */ }
+      }
+
+      return { synced, updated }
     },
   },
 
@@ -1227,6 +1272,39 @@ print('sent')
       // Priority 3: always fetch Discourse — phase influences how bugs are handled, not whether to look
       const phase = ctx?.phase ?? 'analysis'
       return { _transition: 'FETCH_DISCOURSE', reason: `CI green (${phase} phase) — enter discovery` }
+    },
+  },
+
+  {
+    name: 'persist_classifications',
+    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. Upserts each bug/retest classification as "open" (or "deferred" if type is deferred). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as any
+      const classifications: Array<any> = Array.isArray(ctx?.classifications) ? ctx.classifications : []
+      const db = getDb()
+      let upserted = 0, skipped = 0
+      for (const c of classifications) {
+        if (!c.topic || !c.post) { skipped++; continue }
+        // Only persist actionable classifications — skip mine/off_topic/already_fixed/confirmed
+        const type = c.type as string
+        if (!['bug', 'retest', 'deferred', 'question'].includes(type)) { skipped++; continue }
+        const state = type === 'deferred' ? 'deferred' : type === 'question' ? 'deferred' : 'open'
+        // Don't downgrade a bug already in fix-queued or fixed state
+        const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
+        if (existing && ['fix-queued', 'fixed', 'confirmed', 'investigating'].includes(existing.state)) { skipped++; continue }
+        upsertDiscourseBug(db, {
+          topic: Number(c.topic),
+          post: Number(c.post),
+          topicTitle: c.topicTitle ?? null,
+          reporter: c.user ?? null,
+          excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
+          state,
+          reason: type === 'deferred' ? (c.reason ?? 'deferred by triage') : undefined,
+        })
+        upserted++
+      }
+      return { upserted, skipped }
     },
   },
 

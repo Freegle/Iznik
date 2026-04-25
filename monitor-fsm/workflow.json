@@ -10,7 +10,8 @@
       "description": "Load state.json, record iterationStartTs. Start node — ai-flower requires exactly one 'start' nodeType, so we keep this as 'start' but the driver treats start nodes with readActions the same as tool nodes (deterministic, no LLM turn).",
       "nodeType": "start",
       "readActions": [
-        "load_state"
+        "load_state",
+        "sync_pr_states"
       ],
       "writeActions": []
     },
@@ -93,6 +94,7 @@
       "description": "Phase B dispatch. Tool node — work_router_decide branches deterministically on context.classifications + context.bugsFixed + _action_check_sentry. Priority: (1) unfixed 'bug'/'retest' → PICK_DISCOURSE_BUG; (2) actionable Sentry issues → FIX_SENTRY_ISSUE; (3) else → COVERAGE_GATE.",
       "nodeType": "tool",
       "readActions": [
+        "persist_classifications",
         "work_router_decide"
       ],
       "writeActions": []

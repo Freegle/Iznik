@@ -40,7 +40,8 @@ function reconcileBugStates(db: DB): void {
     WHERE b.state = 'fix-queued'
       AND b.pr_number IS NOT NULL
       AND p.state = 'MERGED'
-      AND (p.deploy_state = 'live' OR p.deploy_state = 'deployed')
+      -- deploy_state is rarely populated; Freegle auto-deploys on merge to
+      -- production, so MERGED is sufficient to consider a fix live.
   `).all() as Array<{ topic: number; post: number; pr_number: number }>
   for (const r of rows) {
     markDiscourseBugFixed(db, r.topic, r.post, r.pr_number)
@@ -162,7 +163,8 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
     if (!prNumber) return false
     const pr = prLookup.get(prNumber)
     if (!pr) return false
-    return pr.state === 'MERGED' && (pr.deploy_state === 'live' || pr.deploy_state === 'deployed')
+    // Freegle auto-deploys on merge; deploy_state is rarely populated.
+    return pr.state === 'MERGED'
   }
 
   const ready = pending.filter(d => isLive(d.pr_number))
@@ -194,9 +196,17 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
     lines.push('## Replies on hold (fix not yet live)', '')
     lines.push(`*${onHold.length} reply${onHold.length === 1 ? '' : 'ies'} queued but **don't post yet** — the fix is still being tested or hasn't been deployed. They'll move to "ready to send" above once it's live.*`, '')
     for (const d of onHold) {
-      const prNote = d.pr_number
-        ? `Waiting for [#${d.pr_number}](https://github.com/Freegle/Iznik/pull/${d.pr_number}) to merge & go live.`
-        : 'No PR yet — fix still being prepared.'
+      let prNote: string
+      if (!d.pr_number) {
+        prNote = 'No PR yet — fix still being prepared.'
+      } else {
+        const pr = prLookup.get(d.pr_number)
+        if (pr?.state === 'CLOSED') {
+          prNote = `PR [#${d.pr_number}](https://github.com/Freegle/Iznik/pull/${d.pr_number}) was closed without merging — needs a new fix.`
+        } else {
+          prNote = `Waiting for [#${d.pr_number}](https://github.com/Freegle/Iznik/pull/${d.pr_number}) to merge & go live.`
+        }
+      }
       renderDraft(d, prNote)
     }
   }
