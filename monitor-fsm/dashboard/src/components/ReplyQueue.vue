@@ -47,8 +47,7 @@
         </div>
 
         <div class="quote-section mb-2">
-          <div class="small text-muted fst-italic">Quote:</div>
-          <div class="quote-text">{{ truncate(draft.quote, 120) }}</div>
+          <div class="quote-text">{{ truncate(draft.quote, 150) }}</div>
         </div>
 
         <div class="mb-2">
@@ -78,31 +77,10 @@
           </button>
           <button
             class="btn btn-outline-danger btn-sm"
-            @click="toggleRejectInput(draft.id)"
-          >
-            Reject
-          </button>
-        </div>
-
-        <div v-if="rejectingId === draft.id" class="mt-2">
-          <input
-            v-model="rejectReason[draft.id]"
-            type="text"
-            class="form-control form-control-sm mb-2"
-            placeholder="Reason for rejection..."
-          />
-          <button
-            class="btn btn-danger btn-sm"
             @click="handleReject(draft)"
             :disabled="sending[draft.id]"
           >
-            Confirm Reject
-          </button>
-          <button
-            class="btn btn-outline-secondary btn-sm ms-1"
-            @click="toggleRejectInput(-1)"
-          >
-            Cancel
+            Reject
           </button>
         </div>
       </div>
@@ -126,8 +104,6 @@ const emit = defineEmits<{
 
 const editingBody = ref<Record<number, string>>({})
 const sending = ref<Record<number, boolean>>({})
-const rejectingId = ref<number>(-1)
-const rejectReason = ref<Record<number, string>>({})
 
 const pendingDrafts = computed(() => {
   return props.drafts.filter(d => !d.approved_at && !d.posted_at && !d.rejected_at)
@@ -183,8 +159,7 @@ const handleApprove = async (draft: DraftRow) => {
 const handleReject = async (draft: DraftRow) => {
   sending.value[draft.id] = true
   try {
-    await rejectDraft(draft.id, rejectReason.value[draft.id])
-    rejectingId.value = -1
+    await rejectDraft(draft.id)
     emit('refresh')
   } catch (err: any) {
     console.error('Failed to reject draft:', err)
@@ -192,10 +167,6 @@ const handleReject = async (draft: DraftRow) => {
   } finally {
     sending.value[draft.id] = false
   }
-}
-
-const toggleRejectInput = (draftId: number) => {
-  rejectingId.value = rejectingId.value === draftId ? -1 : draftId
 }
 
 function truncate(text: string | null, length: number): string {

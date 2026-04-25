@@ -100,7 +100,7 @@ const activeBugs = computed(() => {
 const groupedBugs = computed(() => {
   const groups: Record<string, BugRow[]> = {}
   for (const bug of activeBugs.value) {
-    const area = bug.feature_area || 'Uncategorized'
+    const area = (bug as any).group_key || bug.feature_area || 'Uncategorised'
     if (!groups[area]) groups[area] = []
     groups[area].push(bug)
   }

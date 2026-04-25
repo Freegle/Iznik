@@ -200,7 +200,15 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
 
   // GET /api/bugs
   if (req.method === 'GET' && path === '/api/bugs') {
-    const rows = db.prepare('SELECT * FROM discourse_bug ORDER BY feature_area, topic, post').all()
+    const rows = db.prepare(`
+      SELECT b.topic, b.post, b.topic_title, b.reporter, b.excerpt, b.state,
+             b.pr_number, b.reason, b.first_seen_at, b.last_seen_at,
+             b.fixed_at, b.deployed_at, b.feature_area,
+             COALESCE(b.feature_area, tc.title, 'Uncategorised') AS group_key
+      FROM discourse_bug b
+      LEFT JOIN topic_cursor tc ON tc.topic_id = b.topic
+      ORDER BY COALESCE(b.feature_area, tc.title, 'Uncategorised'), b.topic, b.post
+    `).all()
     json(res, 200, rows)
     return
   }
