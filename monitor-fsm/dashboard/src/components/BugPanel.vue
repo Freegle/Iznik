@@ -25,12 +25,13 @@
           <th>Summary</th>
           <th style="width: 80px;">State</th>
           <th style="width: 50px;">PR</th>
+          <th v-if="hasHumanBugs" style="width: 130px;"></th>
         </tr>
       </thead>
       <tbody>
         <template v-for="(group, featureArea) in groupedBugs" :key="featureArea">
           <tr class="table-light">
-            <td colspan="4" class="text-muted fst-italic small">
+            <td :colspan="hasHumanBugs ? 5 : 4" class="text-muted fst-italic small">
               {{ featureArea }}
             </td>
           </tr>
@@ -65,6 +66,20 @@
               </a>
               <span v-else class="text-muted small">—</span>
             </td>
+            <td v-if="hasHumanBugs">
+              <template v-if="bug.state === 'deferred'">
+                <button
+                  class="btn btn-outline-secondary btn-xs me-1"
+                  title="Dismiss — remove from active bugs"
+                  @click="dismiss(bug)"
+                >✕</button>
+                <button
+                  class="btn btn-outline-primary btn-xs"
+                  title="Link a PR — marks bug as fix-queued"
+                  @click="promptLinkPr(bug)"
+                >PR#</button>
+              </template>
+            </td>
           </tr>
         </template>
       </tbody>
@@ -90,6 +105,8 @@ const activeBugs = computed(() =>
   props.bugs.filter(bug => ['open', 'investigating', 'fix-queued', 'deferred'].includes(bug.state))
 )
 
+const hasHumanBugs = computed(() => activeBugs.value.some(b => b.state === 'deferred'))
+
 const groupedBugs = computed(() => {
   const groups: Record<string, BugRow[]> = {}
   for (const bug of activeBugs.value) {
@@ -100,9 +117,26 @@ const groupedBugs = computed(() => {
   return groups
 })
 
-function truncate(text: string | null, length: number): string {
-  if (!text) return '—'
-  return text.length > length ? text.substring(0, length) + '...' : text
+async function dismiss(bug: BugRow) {
+  await fetch(`/api/bugs/${bug.topic}/${bug.post}/state`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state: 'off-topic', reason: 'Dismissed by human' }),
+  })
+  emit('refresh')
+}
+
+async function promptLinkPr(bug: BugRow) {
+  const input = window.prompt(`Link PR to bug ${bug.topic}/${bug.post}:\nEnter PR number:`)
+  if (!input) return
+  const prNumber = parseInt(input.trim(), 10)
+  if (isNaN(prNumber) || prNumber <= 0) { alert('Invalid PR number'); return }
+  await fetch(`/api/bugs/${bug.topic}/${bug.post}/link-pr`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prNumber }),
+  })
+  emit('refresh')
 }
 
 function refresh() {
@@ -120,6 +154,13 @@ function refresh() {
 
 .table {
   margin-bottom: 0;
+}
+
+.btn-xs {
+  padding: 0.1rem 0.35rem;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  border-radius: 0.2rem;
 }
 
 .spin {

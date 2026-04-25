@@ -347,6 +347,26 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     return
   }
 
+  // POST /api/bugs/:topic/:post/link-pr  — link a PR and set fix-queued
+  const bugLinkPr = path.match(/^\/api\/bugs\/(\d+)\/(\d+)\/link-pr$/)
+  if (req.method === 'POST' && bugLinkPr) {
+    const topic = Number(bugLinkPr[1])
+    const post = Number(bugLinkPr[2])
+    const body = await readBody(req)
+    let parsed: { prNumber?: number }
+    try { parsed = JSON.parse(body) } catch { json(res, 400, { error: 'bad json' }); return }
+    if (!parsed.prNumber) { json(res, 400, { error: 'prNumber required' }); return }
+    db.prepare(`
+      UPDATE discourse_bug
+      SET state = 'fix-queued', pr_number = ?, pr_rejections = 0,
+          reason = 'Linked by human', last_seen_at = datetime('now')
+      WHERE topic = ? AND post = ?
+    `).run(parsed.prNumber, topic, post)
+    const row = db.prepare('SELECT * FROM discourse_bug WHERE topic = ? AND post = ?').get(topic, post)
+    json(res, 200, row ?? { error: 'not found' })
+    return
+  }
+
   // POST /api/status/push  — regenerate and push the Discourse wiki post
   if (req.method === 'POST' && path === '/api/status/push') {
     try {
