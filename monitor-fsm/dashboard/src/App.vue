@@ -26,7 +26,7 @@
     </nav>
 
     <!-- Main layout -->
-    <div class="container-fluid" style="padding: 1rem; max-width: 1600px; margin: 0 auto;">
+    <div class="container-fluid" style="padding: 1rem;">
       <div class="row g-3">
         <!-- Left column: Bugs (primary work items) -->
         <div class="col-lg-5">

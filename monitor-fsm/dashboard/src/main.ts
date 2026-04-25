@@ -16,6 +16,7 @@ style.textContent = `
   body {
     background-color: #f8f9fa;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: clamp(14px, 1.1vw, 20px);
   }
 
   .card {
@@ -24,7 +25,7 @@ style.textContent = `
   }
 
   .table-sm {
-    font-size: 1rem;
+    font-size: inherit;
   }
 
   .btn-group-sm .btn {
