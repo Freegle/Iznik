@@ -11,6 +11,7 @@ export interface BugRow {
   first_seen_at: string
   last_seen_at: string
   fixed_at: string | null
+  pr_rejections: number
 }
 
 export interface DraftRow {

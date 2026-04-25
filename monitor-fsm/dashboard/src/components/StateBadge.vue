@@ -22,7 +22,7 @@ const badgeClass = computed(() => {
     case 'fix-queued':
       return 'info'
     case 'deferred':
-      return 'light'
+      return 'warning'
     case 'fixed':
     case 'confirmed':
       return 'success'

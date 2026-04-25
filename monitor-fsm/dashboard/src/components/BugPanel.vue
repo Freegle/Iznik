@@ -34,7 +34,7 @@
               {{ featureArea }}
             </td>
           </tr>
-          <tr v-for="bug in group" :key="`${bug.topic}-${bug.post}`">
+          <tr v-for="bug in group" :key="`${bug.topic}-${bug.post}`" :class="{ 'table-warning': bug.state === 'deferred' }">
             <td>
               <a
                 :href="`https://discourse.ilovefreegle.org/t/${bug.topic}/${bug.post}`"
@@ -46,9 +46,10 @@
               </a>
             </td>
             <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0; width: 100%;">
-              <span :title="bug.excerpt || bug.topic_title || ''">
+              <span :title="bug.state === 'deferred' && bug.reason ? bug.reason : (bug.excerpt || bug.topic_title || '')">
                 {{ bug.excerpt || bug.topic_title || '—' }}
               </span>
+              <span v-if="bug.state === 'deferred'" class="badge bg-danger ms-1" title="Needs human decision">⚠ human</span>
             </td>
             <td>
               <StateBadge :state="bug.state" />
@@ -87,7 +88,7 @@ const emit = defineEmits<{
 }>()
 
 const activeBugs = computed(() =>
-  props.bugs.filter(bug => ['open', 'investigating', 'fix-queued'].includes(bug.state))
+  props.bugs.filter(bug => ['open', 'investigating', 'fix-queued', 'deferred'].includes(bug.state))
 )
 
 const groupedBugs = computed(() => {
