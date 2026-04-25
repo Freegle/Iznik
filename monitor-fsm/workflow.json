@@ -11,7 +11,8 @@
       "nodeType": "start",
       "readActions": [
         "load_state",
-        "sync_pr_states"
+        "sync_pr_states",
+        "check_bug_feedback"
       ],
       "writeActions": []
     },

@@ -118,6 +118,114 @@ export const actions: ActionDefinition[] = [
   },
 
   {
+    name: 'check_bug_feedback',
+    description: 'For each open/investigating bug in discourse_bug, fetch posts after the original report on that Discourse topic and detect reporter confirmation of a fix (keywords: fixed, works now, confirmed, thanks, resolved, etc.). Marks matching bugs as fixed automatically. Returns {checked, markedFixed: [{topic, post, confirmedBy, confirmText}]}.',
+    handler: async () => {
+      const db = getDb()
+      const bugs = db.prepare(
+        "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating')"
+      ).all() as Array<{ topic: number; post: number; reporter: string | null }>
+
+      if (bugs.length === 0) return { checked: 0, markedFixed: [] }
+
+      // Build a Python script that checks each bug's topic for post-report confirmations
+      const bugsJson = JSON.stringify(bugs)
+      const script = `
+import json, urllib.request, re, sys, time
+
+p = json.load(open('/home/edward/profile.json'))
+api_key = p['auth_pairs'][0]['user_api_key']
+headers = {'User-Api-Key': api_key, 'Api-Username': 'Edward_Hibbert'}
+
+CONFIRM_RE = re.compile(
+    r'\\b(fixed|works? now|working now|confirmed?|thanks?|all good|resolved?'
+    r'|seems? (?:to be )?(?:fixed|working|ok|good)|unlimited now|no (?:longer|more)'
+    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?)\\b',
+    re.IGNORECASE
+)
+
+def fetch(url, retries=3):
+    delay = 2.0
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            return json.load(urllib.request.urlopen(req, timeout=20))
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < retries - 1:
+                time.sleep(float(e.headers.get('Retry-After', delay)))
+                delay *= 2
+                continue
+            if e.code == 404:
+                return None
+            raise
+        except Exception:
+            return None
+
+bugs = json.loads('''${bugsJson.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}''')
+results = []
+
+for bug in bugs:
+    topic_id = bug['topic']
+    orig_post = bug['post']
+    reporter = bug.get('reporter') or ''
+
+    d = fetch(f'https://discourse.ilovefreegle.org/t/{topic_id}.json')
+    if not d:
+        continue
+
+    stream = d.get('post_stream', {}).get('stream', [])
+    # stream[N-1] = post_id for post #N; posts after original are at stream[orig_post:]
+    new_ids = stream[orig_post:]
+    if not new_ids:
+        continue
+
+    # Batch-fetch in groups of 50
+    new_posts = []
+    for i in range(0, len(new_ids), 50):
+        batch = new_ids[i:i+50]
+        qs = '&'.join(f'post_ids[]={pid}' for pid in batch)
+        pd = fetch(f'https://discourse.ilovefreegle.org/t/{topic_id}/posts.json?{qs}')
+        if pd:
+            new_posts.extend(pd.get('post_stream', {}).get('posts', []))
+
+    for post in new_posts:
+        username = post.get('username', '')
+        if username == 'Edward_Hibbert':
+            continue  # skip our own posts
+        text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
+        text = re.sub(r'\\s+', ' ', text).strip()
+        if CONFIRM_RE.search(text):
+            results.append({
+                'topic': topic_id,
+                'post': orig_post,
+                'reporter': reporter,
+                'confirmedBy': username,
+                'confirmPostNumber': post.get('post_number'),
+                'confirmText': text[:200],
+            })
+            break  # one confirmation per bug is enough
+
+print(json.dumps(results))
+`
+
+      const { stdout } = await exec('python3', ['-c', script])
+      const confirmations: Array<{ topic: number; post: number; reporter: string | null; confirmedBy: string; confirmPostNumber: number; confirmText: string }> = JSON.parse(stdout.trim() || '[]')
+
+      for (const c of confirmations) {
+        db.prepare(
+          "UPDATE discourse_bug SET state='fixed', fixed_at=datetime('now'), reason=? WHERE topic=? AND post=?"
+        ).run(
+          `Confirmed by ${c.confirmedBy} (post ${c.confirmPostNumber}): "${c.confirmText.slice(0, 120)}"`,
+          c.topic, c.post
+        )
+        out(`check_bug_feedback: marked ${c.topic}/${c.post} fixed — confirmed by ${c.confirmedBy}`)
+      }
+
+      return { checked: bugs.length, markedFixed: confirmations }
+    },
+  },
+
+  {
     name: 'sync_pr_states',
     description: 'Sync PR states from GitHub for all PRs referenced in discourse_bug.pr_number. Updates the pr table so reconcileBugStates can move fix-queued bugs to fixed once their PR is merged. Returns {synced: [{number, state, mergedAt}], updated: number}.',
     handler: async () => {
