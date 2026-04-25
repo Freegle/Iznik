@@ -134,8 +134,8 @@ describe('useFetchRetry', () => {
       const retryFetch = fetchRetry(mockFetch)
       const promise = retryFetch('http://test.com')
 
-      // Advance through retry delays (1000ms for attempt 1, 2000ms for attempt 2)
-      vi.advanceTimersByTime(3000)
+      // Advance through retry delays: attempt 0 retries immediately (0ms), attempt 1 retries after 1000ms
+      await vi.advanceTimersByTimeAsync(3000)
 
       const result = await promise
       expect(result).toEqual([200, responseData])
@@ -160,7 +160,7 @@ describe('useFetchRetry', () => {
       const retryFetch = fetchRetry(mockFetch)
       const promise = retryFetch('http://test.com')
 
-      vi.advanceTimersByTime(1000) // First retry delay
+      await vi.advanceTimersByTimeAsync(1000) // First retry delay
 
       const result = await promise
       expect(result).toEqual([200, responseData])
@@ -185,7 +185,7 @@ describe('useFetchRetry', () => {
       const retryFetch = fetchRetry(mockFetch)
       const promise = retryFetch('http://test.com')
 
-      vi.advanceTimersByTime(1000)
+      await vi.advanceTimersByTimeAsync(1000)
 
       const result = await promise
       expect(result).toEqual([200, responseData])
@@ -208,7 +208,7 @@ describe('useFetchRetry', () => {
       const retryFetch = fetchRetry(mockFetch)
       const promise = retryFetch('http://test.com')
 
-      vi.advanceTimersByTime(1000)
+      await vi.advanceTimersByTimeAsync(1000)
 
       const result = await promise
       expect(result).toEqual([200, responseData])
@@ -233,7 +233,7 @@ describe('useFetchRetry', () => {
       const retryFetch = fetchRetry(mockFetch)
       const promise = retryFetch('http://test.com')
 
-      vi.advanceTimersByTime(1000)
+      await vi.advanceTimersByTimeAsync(1000)
 
       const result = await promise
       expect(result).toEqual([200, responseData])
@@ -258,7 +258,7 @@ describe('useFetchRetry', () => {
       const retryFetch = fetchRetry(mockFetch)
       const promise = retryFetch('http://test.com')
 
-      vi.advanceTimersByTime(1000)
+      await vi.advanceTimersByTimeAsync(1000)
 
       const result = await promise
       expect(result).toEqual([200, responseData])
@@ -280,7 +280,7 @@ describe('useFetchRetry', () => {
       const retryFetch = fetchRetry(mockFetch)
       const promise = retryFetch('http://test.com')
 
-      vi.advanceTimersByTime(1000)
+      await vi.advanceTimersByTimeAsync(1000)
       await promise
 
       expect(miscStore.waitForOnline).toHaveBeenCalled()
@@ -296,14 +296,14 @@ describe('useFetchRetry', () => {
       const retryFetch = fetchRetry(mockFetch)
       const promise = retryFetch('http://test.com')
 
-      // Advance through 10 retry delays (1000, 2000, 3000, ..., 10000)
+      // Advance through 10 retry delays: attempt 0→1 (0ms), 1→2 (1s), ..., 9→10 (9s)
       for (let i = 1; i <= 10; i++) {
-        vi.advanceTimersByTime(i * 1000)
+        await vi.advanceTimersByTimeAsync(i * 1000)
       }
 
       const error = await promise.catch((e) => e)
       expect(error.message).toBe('Too many retries, give up')
-      expect(mockFetch).toHaveBeenCalledTimes(11) // Initial + 10 retries
+      expect(mockFetch).toHaveBeenCalledTimes(11) // Initial + 10 retries (attempts 0-10)
       vi.useRealTimers()
     })
   })
@@ -343,10 +343,10 @@ describe('useFetchRetry', () => {
       const retryFetch = fetchRetry(mockFetch)
       const promise = retryFetch('http://test.com')
 
-      // First retry at 1000ms
-      vi.advanceTimersByTime(1000)
-      // Second retry at 2000ms
-      vi.advanceTimersByTime(2000)
+      // attempt 0 retries immediately (0ms delay), attempt 1 retries after 1000ms
+      await vi.advanceTimersByTimeAsync(1000)
+      // advance past the 2000ms delay for attempt 2
+      await vi.advanceTimersByTimeAsync(2000)
 
       const result = await promise
       expect(result).toEqual([200, responseData])
