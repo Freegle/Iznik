@@ -8,13 +8,22 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve, extname, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { exec } from 'node:child_process'
+import { promisify } from 'node:util'
+import https from 'node:https'
 import { getDb } from './db/index.js'
 import { putStatusPost } from './db/discourse-status.js'
 import type { Database as DB } from 'better-sqlite3'
 
+const execAsync = promisify(exec)
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DIST_DIR = resolve(__dirname, '..', 'dashboard-dist')
 const PORT = 8765
+
+// PR cache: { data, timestamp }
+let prCache: { data: any; timestamp: number } | null = null
+const PR_CACHE_TTL = 30000 // 30 seconds
 
 const MIME: Record<string, string> = {
   '.html': 'text/html',
@@ -33,6 +42,142 @@ function readBody(req: IncomingMessage): Promise<string> {
     req.on('data', c => chunks.push(c))
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
     req.on('error', reject)
+  })
+}
+
+function getDiscourseApiKey(): string {
+  try {
+    const profile = JSON.parse(readFileSync('/home/edward/profile.json', 'utf8'))
+    return profile.auth_pairs[0].user_api_key
+  } catch {
+    throw new Error('Cannot read Discourse API key from profile.json')
+  }
+}
+
+async function fetchPrsLive(): Promise<any[]> {
+  // Check cache
+  if (prCache && Date.now() - prCache.timestamp < PR_CACHE_TTL) {
+    return prCache.data
+  }
+
+  try {
+    // Get PR list
+    const { stdout: listOutput } = await execAsync(
+      'gh pr list --repo Freegle/Iznik --author "@me" --json number,title,headRefName,createdAt,url,isDraft,mergeable --limit 20 2>/dev/null',
+      { maxBuffer: 10 * 1024 * 1024 }
+    )
+    const prs = JSON.parse(listOutput)
+
+    // Get detailed status for each PR in parallel
+    const results = await Promise.all(
+      prs.map(async (pr: any) => {
+        try {
+          const { stdout: statusOutput } = await execAsync(
+            `gh pr view ${pr.number} --repo Freegle/Iznik --json statusCheckRollup,mergeStateStatus,mergeable 2>/dev/null`,
+            { maxBuffer: 10 * 1024 * 1024 }
+          )
+          const status = JSON.parse(statusOutput)
+
+          // Compute CI status
+          let ciStatus = 'unknown'
+          const failedChecks: string[] = []
+
+          if (status.statusCheckRollup && Array.isArray(status.statusCheckRollup)) {
+            const hasFailure = status.statusCheckRollup.some((c: any) =>
+              c.conclusion === 'FAILURE' || c.conclusion === 'ERROR'
+            )
+            const hasPending = status.statusCheckRollup.some((c: any) =>
+              !c.conclusion || c.conclusion === 'PENDING'
+            )
+
+            if (hasFailure) {
+              ciStatus = 'red'
+              failedChecks.push(
+                ...status.statusCheckRollup
+                  .filter((c: any) => c.conclusion === 'FAILURE' || c.conclusion === 'ERROR')
+                  .map((c: any) => c.name)
+              )
+            } else if (hasPending) {
+              ciStatus = 'pending'
+            } else {
+              ciStatus = 'green'
+            }
+          }
+
+          return {
+            number: pr.number,
+            title: pr.title,
+            url: pr.url,
+            branch: pr.headRefName,
+            createdAt: pr.createdAt,
+            isDraft: pr.isDraft,
+            mergeable: pr.mergeable,
+            mergeStateStatus: status.mergeStateStatus,
+            ciStatus,
+            failedChecks,
+          }
+        } catch (err) {
+          console.error(`Failed to get status for PR ${pr.number}:`, err)
+          return {
+            number: pr.number,
+            title: pr.title,
+            url: pr.url,
+            branch: pr.headRefName,
+            createdAt: pr.createdAt,
+            isDraft: pr.isDraft,
+            mergeable: pr.mergeable,
+            mergeStateStatus: 'UNKNOWN',
+            ciStatus: 'unknown',
+            failedChecks: [],
+          }
+        }
+      })
+    )
+
+    prCache = { data: results, timestamp: Date.now() }
+    return results
+  } catch (err) {
+    console.error('Failed to fetch PRs:', err)
+    return []
+  }
+}
+
+function postToDiscourse(topicId: number, raw: string): Promise<{ ok: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    const apiKey = getDiscourseApiKey()
+    const body = JSON.stringify({ topic_id: topicId, raw })
+
+    const options = {
+      hostname: 'discourse.ilovefreegle.org',
+      port: 443,
+      path: '/posts.json',
+      method: 'POST',
+      headers: {
+        'User-Api-Key': apiKey,
+        'Api-Username': 'Edward_Hibbert',
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    }
+
+    const req = https.request(options, (res) => {
+      let data = ''
+      res.on('data', chunk => { data += chunk })
+      res.on('end', () => {
+        if (res.statusCode === 200 || res.statusCode === 201) {
+          resolve({ ok: true })
+        } else {
+          resolve({ ok: false, error: `HTTP ${res.statusCode}` })
+        }
+      })
+    })
+
+    req.on('error', (err) => {
+      resolve({ ok: false, error: String(err) })
+    })
+
+    req.write(body)
+    req.end()
   })
 }
 
@@ -81,6 +226,17 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     return
   }
 
+  // GET /api/prs/live
+  if (req.method === 'GET' && path === '/api/prs/live') {
+    try {
+      const prs = await fetchPrsLive()
+      json(res, 200, prs)
+    } catch (err: any) {
+      json(res, 500, { error: String(err?.message ?? err) })
+    }
+    return
+  }
+
   // PUT /api/drafts/:id  — edit draft body
   const draftEdit = path.match(/^\/api\/drafts\/(\d+)$/)
   if (req.method === 'PUT' && draftEdit) {
@@ -119,6 +275,37 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     db.prepare("UPDATE discourse_draft SET rejected_at = datetime('now'), rejection_reason = ? WHERE id = ?").run(parsed.reason ?? null, id)
     const row = db.prepare('SELECT * FROM discourse_draft WHERE id = ?').get(id)
     json(res, 200, row ?? { error: 'not found' })
+    return
+  }
+
+  // POST /api/drafts/:id/send  — send draft to Discourse
+  const draftSend = path.match(/^\/api\/drafts\/(\d+)\/send$/)
+  if (req.method === 'POST' && draftSend) {
+    const id = Number(draftSend[1])
+    const draft = db.prepare('SELECT * FROM discourse_draft WHERE id = ?').get(id) as any
+    if (!draft) {
+      json(res, 404, { error: 'draft not found' })
+      return
+    }
+
+    try {
+      // Format as Discourse reply with quote
+      const raw = `[quote="${draft.username}, post:${draft.post}, topic:${draft.topic}"]\n${draft.quote}\n[/quote]\n\n${draft.body}`
+
+      // Post to Discourse
+      const result = await postToDiscourse(draft.topic, raw)
+      if (!result.ok) {
+        json(res, 502, { error: result.error ?? 'Failed to post' })
+        return
+      }
+
+      // Mark as posted
+      db.prepare("UPDATE discourse_draft SET posted_at = datetime('now') WHERE id = ?").run(id)
+      const updated = db.prepare('SELECT * FROM discourse_draft WHERE id = ?').get(id)
+      json(res, 200, updated ?? { error: 'not found' })
+    } catch (err: any) {
+      json(res, 500, { error: String(err?.message ?? err) })
+    }
     return
   }
 

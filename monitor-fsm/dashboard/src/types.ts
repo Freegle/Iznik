@@ -39,3 +39,16 @@ export interface IterRow {
   prs_created: number | null
   note: string | null
 }
+
+export interface PrLive {
+  number: number
+  title: string
+  url: string
+  branch: string
+  createdAt: string
+  isDraft: boolean
+  mergeable: boolean
+  mergeStateStatus: string
+  ciStatus: 'green' | 'red' | 'pending' | 'unknown'
+  failedChecks: string[]
+}

@@ -1,108 +1,97 @@
 <template>
   <div id="app">
-    <nav class="navbar navbar-expand-lg navbar-dark" style="background-color: #20c997;">
+    <!-- Top bar -->
+    <nav class="navbar navbar-dark" style="background-color: #20c997;">
       <div class="container-fluid">
-        <span class="navbar-brand mb-0 h1">Monitor FSM Dashboard</span>
-        <button
-          type="button"
-          class="btn btn-light btn-sm ms-auto"
-          @click="handlePushStatus"
-          :disabled="pushing"
-        >
-          <span v-if="pushing" class="spinner-border spinner-border-sm me-1" role="status"></span>
-          <i v-else class="bi bi-arrow-up-circle me-1"></i>
-          Push to Discourse
-        </button>
-        <span v-if="pushResult" :class="['ms-2 small', pushResult.ok ? 'text-white' : 'text-warning']">
-          {{ pushResult.ok ? '✓ posted' : '✗ ' + pushResult.msg }}
-        </span>
+        <span class="navbar-brand mb-0 h4">Freegle Monitor</span>
+        <div class="d-flex gap-3 ms-auto align-items-center">
+          <small v-if="lastRefreshTime" class="text-white-50">
+            Last: {{ lastRefreshTime }}
+          </small>
+          <button
+            class="btn btn-light btn-sm"
+            @click="handlePushStatus"
+            :disabled="pushing"
+            title="Push status to Discourse"
+          >
+            <span v-if="pushing" class="spinner-border spinner-border-sm me-1"></span>
+            <i v-else class="bi bi-arrow-up-circle me-1"></i>
+            Push Status
+          </button>
+          <span v-if="pushResult" :class="['small', pushResult.ok ? 'text-white' : 'text-warning']">
+            {{ pushResult.ok ? '✓' : '✗ ' + pushResult.msg }}
+          </span>
+        </div>
       </div>
     </nav>
 
-    <div class="container-fluid mt-4 pb-4">
-      <ul class="nav nav-tabs mb-4" role="tablist">
-        <li class="nav-item" role="presentation">
-          <button
-            class="nav-link active"
-            data-bs-toggle="tab"
-            data-bs-target="#bugs-panel"
-            type="button"
-            role="tab"
-          >
-            Bugs
-            <span class="badge bg-secondary ms-2">{{ bugsData.state.bugs.length }}</span>
-          </button>
-        </li>
-        <li class="nav-item" role="presentation">
-          <button
-            class="nav-link"
-            data-bs-toggle="tab"
-            data-bs-target="#drafts-panel"
-            type="button"
-            role="tab"
-          >
-            Drafts
-            <span class="badge bg-secondary ms-2">{{ draftsData.state.drafts.length }}</span>
-          </button>
-        </li>
-        <li class="nav-item" role="presentation">
-          <button
-            class="nav-link"
-            data-bs-toggle="tab"
-            data-bs-target="#iters-panel"
-            type="button"
-            role="tab"
-          >
-            Iterations
-            <span class="badge bg-secondary ms-2">{{ itersData.state.iterations.length }}</span>
-          </button>
-        </li>
-      </ul>
+    <!-- Main layout -->
+    <div class="container-fluid" style="padding: 1rem; max-width: 1600px; margin: 0 auto;">
+      <div class="row g-3">
+        <!-- Left column: PRs -->
+        <div class="col-lg-4">
+          <PrPanel
+            :prs="prsData.state.prs"
+            :loading="prsData.state.loading"
+            :lastRefreshed="prsData.state.lastRefreshed"
+            @refresh="prsData.refresh()"
+          />
+        </div>
 
-      <div class="tab-content">
-        <div id="bugs-panel" class="tab-pane fade show active" role="tabpanel">
-          <BugTable
+        <!-- Middle column: Bugs -->
+        <div class="col-lg-5">
+          <BugPanel
             :bugs="bugsData.state.bugs"
             :loading="bugsData.state.loading"
-            @bug-state-change="bugsData.refresh()"
+            @refresh="bugsData.refresh()"
           />
         </div>
 
-        <div id="drafts-panel" class="tab-pane fade" role="tabpanel">
-          <div class="row">
-            <div v-for="draft in draftsData.state.drafts" :key="draft.id" class="col-lg-6">
-              <DraftCard :draft="draft" @updated="draftsData.refresh()" />
-            </div>
-          </div>
-          <div v-if="draftsData.state.drafts.length === 0" class="alert alert-info">
-            No drafts pending.
-          </div>
-        </div>
-
-        <div id="iters-panel" class="tab-pane fade" role="tabpanel">
-          <IterTable
-            :iterations="itersData.state.iterations"
-            :loading="itersData.state.loading"
+        <!-- Right column: Reply Queue -->
+        <div class="col-lg-3">
+          <ReplyQueue
+            :drafts="draftsData.state.drafts"
+            :loading="draftsData.state.loading"
+            @refresh="draftsData.refresh()"
           />
         </div>
+      </div>
+
+      <!-- Iteration history (collapsible) -->
+      <div class="mt-4">
+        <details class="card">
+          <summary class="card-header" style="cursor: pointer; user-select: none;">
+            <span class="ms-2">Iteration History</span>
+            <span class="badge bg-secondary ms-2">{{ itersData.state.iterations.length }}</span>
+          </summary>
+          <div class="card-body" style="padding: 0; overflow-x: auto;">
+            <IterTable
+              :iterations="itersData.state.iterations"
+              :loading="itersData.state.loading"
+            />
+          </div>
+        </details>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useBugs, useDrafts, useIterations, pushStatusPost } from './composables/useApi'
-import BugTable from './components/BugTable.vue'
-import DraftCard from './components/DraftCard.vue'
+import { ref, onMounted } from 'vue'
+import { useBugs, useDrafts, useIterations, usePrsLive, pushStatusPost } from './composables/useApi'
+import PrPanel from './components/PrPanel.vue'
+import BugPanel from './components/BugPanel.vue'
+import ReplyQueue from './components/ReplyQueue.vue'
 import IterTable from './components/IterTable.vue'
 
 const bugsData = useBugs()
 const draftsData = useDrafts()
 const itersData = useIterations()
+const prsData = usePrsLive()
 
 const pushing = ref(false)
 const pushResult = ref<{ ok: boolean; msg?: string } | null>(null)
+const lastRefreshTime = ref<string>('')
 
 const handlePushStatus = async () => {
   pushing.value = true
@@ -117,6 +106,16 @@ const handlePushStatus = async () => {
     pushing.value = false
   }
 }
+
+const updateRefreshTime = () => {
+  lastRefreshTime.value = new Date().toLocaleTimeString()
+}
+
+onMounted(() => {
+  updateRefreshTime()
+  const interval = setInterval(updateRefreshTime, 60000)
+  return () => clearInterval(interval)
+})
 </script>
 
 <style scoped>
@@ -127,32 +126,41 @@ const handlePushStatus = async () => {
 
 nav {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1rem;
 }
 
-.container-fluid {
-  max-width: 1400px;
-  margin: 0 auto;
+details > summary {
+  outline: none;
 }
 
-.nav-tabs {
-  border-bottom: 2px solid #dee2e6;
+details > summary::-webkit-details-marker {
+  display: none;
 }
 
-.nav-link {
-  color: #6c757d;
-  border: none;
-  border-bottom: 3px solid transparent;
+details > summary::before {
+  content: '▶ ';
+  display: inline-block;
+  margin-right: 0.5rem;
+  transition: transform 0.2s;
+}
+
+details[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.card {
+  border: 1px solid #dee2e6;
+  border-radius: 0.25rem;
+}
+
+.card-header {
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #dee2e6;
+  padding: 1rem;
   font-weight: 500;
 }
 
-.nav-link:hover {
-  color: #20c997;
-  border-bottom-color: transparent;
-}
-
-.nav-link.active {
-  color: #20c997;
-  border-bottom-color: #20c997;
-  background-color: transparent;
+.card-header:hover {
+  background-color: #e9ecef;
 }
 </style>

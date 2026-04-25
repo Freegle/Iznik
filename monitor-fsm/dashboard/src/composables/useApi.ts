@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import type { BugRow, DraftRow, IterRow } from '../types'
+import type { BugRow, DraftRow, IterRow, PrLive } from '../types'
 
 export function useBugs() {
   const state = reactive({ bugs: [] as BugRow[], loading: false })
@@ -102,4 +102,32 @@ export async function setBugState(topic: number, post: number, state: string, re
 export async function pushStatusPost(): Promise<{ posted: boolean; reason?: string }> {
   const resp = await fetch('/api/status/push', { method: 'POST' })
   return resp.json()
+}
+
+export function usePrsLive() {
+  const state = reactive({ prs: [] as PrLive[], loading: false, lastRefreshed: null as string | null })
+
+  const refresh = async () => {
+    state.loading = true
+    try {
+      const data = await fetch('/api/prs/live').then(r => r.json())
+      state.prs = Array.isArray(data) ? data : []
+      state.lastRefreshed = new Date().toLocaleTimeString()
+    } catch (error) {
+      console.error('Failed to fetch PRs:', error)
+    } finally {
+      state.loading = false
+    }
+  }
+
+  refresh()
+  const interval = setInterval(refresh, 60000)
+  const stop = () => clearInterval(interval)
+
+  return { state, refresh, stop }
+}
+
+export async function sendDraft(id: number): Promise<void> {
+  const resp = await fetch(`/api/drafts/${id}/send`, { method: 'POST' })
+  if (!resp.ok) throw new Error(`Failed to send draft: ${resp.statusText}`)
 }
