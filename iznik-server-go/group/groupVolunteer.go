@@ -29,6 +29,10 @@ type GroupVolunteer struct {
 	Externalmods json.RawMessage  `json:"externalmods"`
 }
 
+func (GroupVolunteer) TableName() string {
+	return "groupvolunteers"
+}
+
 func GetGroupVolunteers(id uint64) []GroupVolunteer {
 	var ret []GroupVolunteer
 	var all []GroupVolunteer

@@ -1,14 +1,12 @@
 package database
 
 import (
-	"database/sql"
 	"errors"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"gorm.io/gorm"
 )
 
 // MockDB mocks the *sql.DB interface for testing
@@ -50,12 +48,6 @@ func TestNewPingMiddleware_SuccessfulPingContinues(t *testing.T) {
 	}
 
 	app.Get("/", testMiddleware)
-
-	// Make a test request
-	req := fiber.AcquireRequest()
-	req.SetRequestURI("/")
-	req.Header.SetMethod(fiber.MethodGet)
-	defer fiber.ReleaseRequest(req)
 
 	// We can't fully mock DBConn in this test, so we verify the handler type instead
 	handler := NewPingMiddleware(config)

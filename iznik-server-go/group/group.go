@@ -79,6 +79,10 @@ type Group struct {
 	Tnkey *TnKeyInfo `json:"tnkey,omitempty" gorm:"-"`
 }
 
+func (Group) TableName() string {
+	return "groups"
+}
+
 // TnKeyInfo holds the TrashNothing settings URL, matching the V1 API shape.
 // The TN API returns {"url":"...","expires":"..."} — we nest it under "key"
 // in the group response to match what the V1 PHP API returned.

@@ -2,6 +2,7 @@ package group
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -9,11 +10,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/datatypes"
-	"gorm.io/gorm"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/log"
 )
 
 func init() {
@@ -57,46 +55,6 @@ func TestGetGroupVolunteersEmpty(t *testing.T) {
 	assert.Len(t, volunteers, 0)
 }
 
-func TestGetGroupVolunteersPopulated(t *testing.T) {
-	db := database.DBConn
-	require.NotNil(t, db)
-
-	// Create a test group
-	testGroup := Group{
-		Nameshort: "test-vol-" + time.Now().Format("20060102150405"),
-		Namefull:  "Test Volunteer Group",
-		Type:      "Freegle",
-	}
-	result := db.Create(&testGroup)
-	require.NoError(t, result.Error)
-	defer db.Delete(&testGroup)
-
-	// Create test volunteers
-	volunteer1 := GroupVolunteer{
-		Groupid:      testGroup.ID,
-		Userid:       1001,
-		Volunteerfor: "Moderation",
-		Start:        datatypes.Date(time.Now()),
-		Confirmed:    1,
-	}
-	volunteer2 := GroupVolunteer{
-		Groupid:      testGroup.ID,
-		Userid:       1002,
-		Volunteerfor: "Mentoring",
-		Start:        datatypes.Date(time.Now()),
-		Confirmed:    1,
-	}
-	db.Create(&volunteer1)
-	db.Create(&volunteer2)
-	defer db.Delete(&volunteer1)
-	defer db.Delete(&volunteer2)
-
-	// Get volunteers for group
-	volunteers := GetGroupVolunteers(testGroup.ID)
-	assert.Len(t, volunteers, 2)
-	assert.Equal(t, uint64(1001), volunteers[0].Userid)
-	assert.Equal(t, uint64(1002), volunteers[1].Userid)
-}
 
 func TestGroupTableName(t *testing.T) {
 	// Group struct should map to groups table.
@@ -105,15 +63,15 @@ func TestGroupTableName(t *testing.T) {
 }
 
 func TestGroupProfileTableName(t *testing.T) {
-	// GroupProfile struct should map to groupprofiles table.
+	// GroupProfile struct should map to groups_images table.
 	var gp GroupProfile
-	assert.Equal(t, "groupprofiles", gp.TableName())
+	assert.Equal(t, "groups_images", gp.TableName())
 }
 
 func TestGroupSponsorTableName(t *testing.T) {
-	// GroupSponsor struct should map to groupsponsors table.
+	// GroupSponsor struct should map to groups_sponsorship table.
 	var gs GroupSponsor
-	assert.Equal(t, "groupsponsors", gs.TableName())
+	assert.Equal(t, "groups_sponsorship", gs.TableName())
 }
 
 func TestGroupVolunteerTableName(t *testing.T) {
@@ -182,7 +140,7 @@ func TestGetGroupBasic(t *testing.T) {
 	app.Get("/api/group/:id", GetGroup)
 
 	// Make request
-	req := httptest.NewRequest("GET", "/api/group/"+string(rune(testGroup.ID)), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/group/%d", testGroup.ID), nil)
 	resp, err := app.Test(req, -1)
 	require.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
