@@ -62,7 +62,7 @@ describe('ModLog', () => {
           },
           ModLogMessage: {
             template: '<span class="mod-log-message">Message</span>',
-            props: ['logid', 'notext', 'tag'],
+            props: ['logid', 'notext', 'nostdmsg', 'tag'],
           },
           ModLogStdMsg: {
             template: '<span class="mod-log-stdmsg">StdMsg</span>',
@@ -364,6 +364,44 @@ describe('ModLog', () => {
         text: 'Reply text',
       })
       expect(wrapper.text()).toContain('Modmail sent')
+    })
+
+    it('shows ModLogMessage for Message/Replied to identify the pending message', () => {
+      // Regression test: Discourse #9518/211 — modmail logs didn't show which
+      // pending message the modmail was sent about.
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Replied',
+        msgid: 12345,
+        text: 'Please add a photo',
+      })
+      expect(wrapper.find('.mod-log-message').exists()).toBe(true)
+    })
+
+    it('shows ModLogStdMsg for Message/Replied with standard message but no text', () => {
+      // Regression test: Discourse #9518/211 — stdmsg title ("add a photo") was
+      // hidden inside v-if="log.text", so it never showed when text was absent.
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Replied',
+        msgid: 12345,
+        stdmsg: { id: 7, title: 'add a photo' },
+      })
+      expect(wrapper.find('.mod-log-stdmsg').exists()).toBe(true)
+    })
+
+    it('shows ModLogStdMsg for Message/Replied even when log.text is empty', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Replied',
+        msgid: 12345,
+        text: '',
+        stdmsg: { id: 7, title: 'add a photo' },
+      })
+      expect(wrapper.find('.mod-log-stdmsg').exists()).toBe(true)
     })
 
     it('shows Edited with text content for Message/Edit', () => {
