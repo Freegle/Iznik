@@ -28,22 +28,22 @@
     <!-- Main layout -->
     <div class="container-fluid" style="padding: 1rem; max-width: 1600px; margin: 0 auto;">
       <div class="row g-3">
-        <!-- Left column: PRs -->
+        <!-- Left column: Bugs (primary work items) -->
+        <div class="col-lg-5">
+          <BugPanel
+            :bugs="bugsData.state.bugs"
+            :loading="bugsData.state.loading"
+            @refresh="bugsData.refresh()"
+          />
+        </div>
+
+        <!-- Middle column: PRs -->
         <div class="col-lg-4">
           <PrPanel
             :prs="prsData.state.prs"
             :loading="prsData.state.loading"
             :lastRefreshed="prsData.state.lastRefreshed"
             @refresh="prsData.refresh()"
-          />
-        </div>
-
-        <!-- Middle column: Bugs -->
-        <div class="col-lg-5">
-          <BugPanel
-            :bugs="bugsData.state.bugs"
-            :loading="bugsData.state.loading"
-            @refresh="bugsData.refresh()"
           />
         </div>
 

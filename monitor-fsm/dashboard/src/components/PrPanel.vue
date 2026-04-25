@@ -24,11 +24,10 @@
     <table v-else class="table table-sm table-hover">
       <thead>
         <tr>
-          <th style="width: 60px;">PR</th>
+          <th style="width: 55px;">PR</th>
           <th>Title</th>
-          <th style="width: 100px;">CI Status</th>
-          <th style="width: 90px;">Merge State</th>
-          <th style="width: 70px;">Age</th>
+          <th style="width: 120px;">Status</th>
+          <th style="width: 55px;">Age</th>
         </tr>
       </thead>
       <tbody>
@@ -38,26 +37,20 @@
               #{{ pr.number }}
             </a>
           </td>
-          <td class="small" style="max-width: 250px; overflow: hidden; text-overflow: ellipsis;">
+          <td class="small" style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
             {{ pr.title }}
           </td>
           <td>
             <div class="d-flex flex-column gap-1">
-              <span :class="['badge', ciStatusBadgeClass(pr.ciStatus)]">
-                <i :class="ciStatusIcon(pr.ciStatus)" class="me-1"></i>
-                {{ pr.ciStatus }}
+              <span :class="['badge', combinedStatusClass(pr)]">
+                {{ combinedStatusLabel(pr) }}
               </span>
-              <div v-if="pr.failedChecks.length > 0" class="small text-danger">
-                <div v-for="check in pr.failedChecks" :key="check" class="text-truncate">
+              <div v-if="pr.ciStatus === 'red' && pr.failedChecks.length > 0" class="small text-danger lh-sm">
+                <div v-for="check in pr.failedChecks" :key="check" class="text-truncate" style="max-width: 110px;" :title="check">
                   {{ check }}
                 </div>
               </div>
             </div>
-          </td>
-          <td>
-            <span :class="['badge', mergeStateBadgeClass(pr.mergeStateStatus)]">
-              {{ mergeStateLabel(pr.mergeStateStatus) }}
-            </span>
           </td>
           <td class="small text-muted">
             {{ formatAge(pr.createdAt) }}
@@ -82,43 +75,37 @@ const emit = defineEmits<{
   refresh: []
 }>()
 
-function ciStatusBadgeClass(status: string): string {
-  switch (status) {
-    case 'green': return 'bg-success'
-    case 'red': return 'bg-danger'
-    case 'pending': return 'bg-warning text-dark'
-    default: return 'bg-secondary'
-  }
+// Single combined status: what matters right now?
+// Running → nothing else matters yet
+// Failed → CI fix needed
+// Needs rebase → CI passed but conflict (FSM handles)
+// Ready → good to merge
+type CombinedStatus = 'running' | 'failed' | 'needs-rebase' | 'needs-review' | 'ready'
+
+function combinedStatus(pr: PrLive): CombinedStatus {
+  if (pr.mergeStateStatus === 'UNSTABLE' || pr.ciStatus === 'pending' || pr.ciStatus === 'unknown') return 'running'
+  if (pr.ciStatus === 'red') return 'failed'
+  if (pr.mergeStateStatus === 'DIRTY') return 'needs-rebase'
+  if (pr.mergeStateStatus === 'BLOCKED') return 'needs-review'
+  if (pr.mergeStateStatus === 'CLEAN' || pr.mergeStateStatus === 'HAS_HOOKS') return 'ready'
+  return 'running'
 }
 
-function ciStatusIcon(status: string): string {
-  switch (status) {
-    case 'green': return 'bi bi-check-circle'
-    case 'red': return 'bi bi-x-circle'
-    case 'pending': return 'bi bi-hourglass-split'
-    default: return 'bi bi-question-circle'
-  }
+function combinedStatusClass(pr: PrLive): string {
+  const s = combinedStatus(pr)
+  if (s === 'running') return 'bg-secondary'
+  if (s === 'failed') return 'bg-danger'
+  if (s === 'ready') return 'bg-success'
+  return 'bg-warning text-dark' // needs-rebase / needs-review
 }
 
-function mergeStateBadgeClass(status: string): string {
-  switch (status) {
-    case 'CLEAN': case 'HAS_HOOKS': return 'bg-success'
-    case 'DIRTY': return 'bg-danger'
-    case 'BLOCKED': return 'bg-warning text-dark'
-    case 'BEHIND': case 'UNSTABLE': return 'bg-info text-dark'
-    default: return 'bg-secondary'
-  }
-}
-
-function mergeStateLabel(status: string): string {
-  switch (status) {
-    case 'CLEAN': case 'HAS_HOOKS': return 'Ready'
-    case 'DIRTY': return 'Conflict'
-    case 'BLOCKED': return 'Blocked'
-    case 'BEHIND': return 'Behind'
-    case 'UNSTABLE': return 'CI running'
-    case 'UNKNOWN': return '?'
-    default: return status
+function combinedStatusLabel(pr: PrLive): string {
+  switch (combinedStatus(pr)) {
+    case 'running': return 'CI running'
+    case 'failed': return 'CI failed'
+    case 'needs-rebase': return 'Needs rebase'
+    case 'needs-review': return 'Needs review'
+    case 'ready': return 'Ready'
   }
 }
 

@@ -510,10 +510,17 @@ print(json.dumps(out))
 
   {
     name: 'create_pr',
-    description: 'Record that a PR was created. Host validates by running gh pr view on the given number, inspects changed files (for frontendOnly classification), and looks up the Netlify deploy-preview URL from `gh pr checks` so a reply draft can include it when the fix is frontend-only. Params: {prNumber, repo}. Returns {verified, pr, files, frontendOnly, deployPreviewUrl}.',
+    description: 'Record that a PR was created. Host validates by running gh pr view on the given number, inspects changed files (for frontendOnly classification), and looks up the Netlify deploy-preview URL from `gh pr checks` so a reply draft can include it when the fix is frontend-only. Params: {prNumber, repo, topic?, post?, reporter?, excerpt?}. If topic+post are provided, immediately upserts discourse_bug with state=fix-queued so the bug is visible on the dashboard before the reply draft is written. Returns {verified, pr, files, frontendOnly, deployPreviewUrl}.',
     paramsSchema: {
       type: 'object',
-      properties: { prNumber: { type: 'number' }, repo: { type: 'string' } },
+      properties: {
+        prNumber: { type: 'number' },
+        repo: { type: 'string' },
+        topic: { type: 'number', description: 'Discourse topic ID of the bug this PR fixes — persists bug row immediately' },
+        post: { type: 'number', description: 'Discourse post number of the bug this PR fixes' },
+        reporter: { type: 'string' },
+        excerpt: { type: 'string' },
+      },
       required: ['prNumber'],
     },
     handler: async (params) => {
@@ -524,6 +531,21 @@ print(json.dumps(out))
       const viewData = JSON.parse(viewRes.stdout) as { number: number; title: string; url: string; author: any; files?: Array<{ path: string }>; headRefName: string }
       const files = (viewData.files ?? []).map(f => f.path)
       const frontendOnly = files.length > 0 && files.every(p => p.startsWith('iznik-nuxt3/'))
+
+      // If the caller passed the bug coordinates, write the bug row immediately so
+      // the dashboard never shows a PR without an associated bug.
+      const topic = params.topic as number | undefined
+      const post = params.post as number | undefined
+      if (topic && post) {
+        const db = getDb()
+        upsertDiscourseBug(db, {
+          topic, post,
+          reporter: (params.reporter as string | undefined) ?? undefined,
+          excerpt: (params.excerpt as string | undefined) ?? undefined,
+          state: 'fix-queued',
+          prNumber,
+        })
+      }
 
       let deployPreviewUrl: string | undefined
       const checksRes = await sh('gh', ['pr', 'checks', String(prNumber), '--repo', repo])
