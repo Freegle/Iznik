@@ -1,14 +1,13 @@
 package database
 
 import (
-	"database/sql"
 	"errors"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"gorm.io/gorm"
 )
 
 // MockDB mocks the *sql.DB interface for testing
@@ -37,29 +36,19 @@ func TestNewPingMiddleware_CreatesValidHandler(t *testing.T) {
 
 // TestNewPingMiddlewareContinuesOnPingSuccess verifies that successful pings continue to next handler
 func TestNewPingMiddleware_SuccessfulPingContinues(t *testing.T) {
-	// Create a test app with middleware that tracks if next was called
 	app := fiber.New()
-
-	nextCalled := false
 	config := Config{}
 
-	// Register middleware and then a simple route
-	testMiddleware := func(c *fiber.Ctx) error {
-		nextCalled = true
+	app.Use(NewPingMiddleware(config))
+	app.Get("/", func(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
-	}
+	})
 
-	app.Get("/", testMiddleware)
-
-	// Make a test request
-	req := fiber.AcquireRequest()
-	req.SetRequestURI("/")
-	req.Header.SetMethod(fiber.MethodGet)
-	defer fiber.ReleaseRequest(req)
-
-	// We can't fully mock DBConn in this test, so we verify the handler type instead
-	handler := NewPingMiddleware(config)
-	assert.NotNil(t, handler)
+	// Verify the middleware doesn't block a simple GET (DBConn may be nil in unit test context)
+	req := httptest.NewRequest("GET", "/", nil)
+	resp, err := app.Test(req)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
 }
 
 // TestNewPingMiddleware_ConfigAccepted verifies Config struct is used properly
