@@ -365,6 +365,72 @@ describe('ModLogMessage', () => {
     })
   })
 
+  describe('nostdmsg prop', () => {
+    it('renders ModLogStdMsg when nostdmsg is false (default)', () => {
+      const log = { id: 1, msgid: 1050, message: { subject: 'Test' } }
+      mockLogsStore.list = [log]
+      mockLogsStore.byId.mockImplementation(
+        (id) => mockLogsStore.list.find((l) => l.id === id) || null
+      )
+      const wrapper = mount(ModLogMessage, {
+        props: { logid: 1, nostdmsg: false },
+        global: {
+          stubs: {
+            ModLogStdMsg: {
+              name: 'ModLogStdMsg',
+              template: '<span class="stub-stdmsg"></span>',
+              props: ['logid'],
+            },
+            ModLogGroup: {
+              name: 'ModLogGroup',
+              template: '<span class="stub-group"></span>',
+              props: ['logid', 'tag'],
+            },
+            'v-icon': {
+              name: 'v-icon',
+              template: '<span class="stub-icon"></span>',
+              props: ['icon', 'scale'],
+            },
+          },
+        },
+      })
+      expect(wrapper.find('.stub-stdmsg').exists()).toBe(true)
+    })
+
+    it('suppresses ModLogStdMsg when nostdmsg is true', () => {
+      // Regression test: Discourse #9518/211 — the Replied case needs nostdmsg
+      // so the parent ModLog.vue can show stdmsg once without duplication.
+      const log = { id: 1, msgid: 1055, message: { subject: 'Test' } }
+      mockLogsStore.list = [log]
+      mockLogsStore.byId.mockImplementation(
+        (id) => mockLogsStore.list.find((l) => l.id === id) || null
+      )
+      const wrapper = mount(ModLogMessage, {
+        props: { logid: 1, nostdmsg: true },
+        global: {
+          stubs: {
+            ModLogStdMsg: {
+              name: 'ModLogStdMsg',
+              template: '<span class="stub-stdmsg"></span>',
+              props: ['logid'],
+            },
+            ModLogGroup: {
+              name: 'ModLogGroup',
+              template: '<span class="stub-group"></span>',
+              props: ['logid', 'tag'],
+            },
+            'v-icon': {
+              name: 'v-icon',
+              template: '<span class="stub-icon"></span>',
+              props: ['icon', 'scale'],
+            },
+          },
+        },
+      })
+      expect(wrapper.find('.stub-stdmsg').exists()).toBe(false)
+    })
+  })
+
   describe('child component props', () => {
     it('passes logid to ModLogStdMsg', () => {
       const log = { id: 1, msgid: 1100, message: { subject: 'Test' } }
