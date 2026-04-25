@@ -69,18 +69,11 @@
             Send
           </button>
           <button
-            class="btn btn-outline-primary btn-sm"
-            @click="handleApprove(draft)"
-            :disabled="sending[draft.id]"
-          >
-            Approve
-          </button>
-          <button
-            class="btn btn-outline-danger btn-sm"
+            class="btn btn-outline-secondary btn-sm"
             @click="handleReject(draft)"
             :disabled="sending[draft.id]"
           >
-            Reject
+            Dismiss
           </button>
         </div>
       </div>
@@ -91,7 +84,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { DraftRow } from '../types'
-import { approveDraft, rejectDraft, sendDraft } from '../composables/useApi'
+import { rejectDraft, sendDraft } from '../composables/useApi'
 
 const props = defineProps<{
   drafts: DraftRow[]
@@ -137,19 +130,6 @@ const handleSend = async (draft: DraftRow) => {
     emit('refresh')
   } catch (err: any) {
     console.error('Failed to send draft:', err)
-    alert('Error: ' + String(err?.message ?? err))
-  } finally {
-    sending.value[draft.id] = false
-  }
-}
-
-const handleApprove = async (draft: DraftRow) => {
-  sending.value[draft.id] = true
-  try {
-    await approveDraft(draft.id)
-    emit('refresh')
-  } catch (err: any) {
-    console.error('Failed to approve draft:', err)
     alert('Error: ' + String(err?.message ?? err))
   } finally {
     sending.value[draft.id] = false

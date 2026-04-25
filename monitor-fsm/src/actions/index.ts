@@ -109,7 +109,6 @@ export const actions: ActionDefinition[] = [
       return {
         state: {
           topics,
-          last_email_sent: kvGet(db, 'last_email_sent'),
           sentry_last_check: kvGet(db, 'sentry_last_check'),
         },
         iterationStartTs: new Date().toISOString(),
@@ -1363,60 +1362,6 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
     },
   },
 
-  {
-    name: 'send_email',
-    description: 'Send email summary via SMTP. Respects 1h cooldown via state.json last_email_sent. Params: {subject, body}',
-    paramsSchema: {
-      type: 'object',
-      properties: { subject: { type: 'string' }, body: { type: 'string' } },
-      required: ['subject', 'body'],
-    },
-    handler: async (params) => {
-      const db = getDb()
-      const lastStr = kvGet(db, 'last_email_sent')
-      const last = lastStr ? new Date(lastStr).getTime() : 0
-      const now = Date.now()
-      if (last && now - last < 3600_000) {
-        return { skipped: true, reason: 'cooldown' }
-      }
-      const script = `
-import smtplib, sys, os
-from email.mime.text import MIMEText
-env = {}
-for line in open('/home/edward/FreegleDockerWSL/.env'):
-    if '=' in line and not line.startswith('#'):
-        k, v = line.strip().split('=', 1)
-        env[k] = v
-subject = sys.argv[1]
-body = sys.stdin.read()
-msg = MIMEText(body)
-msg['Subject'] = subject
-msg['From'] = env['SMTP_USER']
-msg['To'] = env['SMTP_USER']
-with smtplib.SMTP(env['SMTP_HOST'], int(env['SMTP_PORT'])) as s:
-    s.starttls()
-    s.login(env['SMTP_USER'], env['SMTP_PASS'])
-    s.send_message(msg)
-print('sent')
-`
-      const subject = params.subject as string
-      const body = params.body as string
-      const child = await import('node:child_process').then(m => m.spawn('python3', ['-c', script, subject], { stdio: ['pipe', 'pipe', 'pipe'] }))
-      child.stdin.write(body)
-      child.stdin.end()
-      const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
-        let stdout = ''
-        let stderr = ''
-        child.stdout.on('data', d => (stdout += String(d)))
-        child.stderr.on('data', d => (stderr += String(d)))
-        child.on('close', code => resolve({ code: code ?? 0, stdout, stderr }))
-      })
-      if (result.code !== 0) throw new Error(`send_email failed: ${result.stderr}`)
-      kvSet(db, 'last_email_sent', new Date().toISOString())
-      await renderAllViews(db) // keep state.json view in sync
-      return { sent: true }
-    },
-  },
 
   {
     name: 'schedule_wakeup',
@@ -1526,90 +1471,18 @@ print('sent')
 
   {
     name: 'compose_and_send_email',
-    description: 'Build an email summary from context + DB state and send it via SMTP with a 1h cooldown. Labels each PR with its REAL state queried from `gh pr view` (open / merged / closed). Never claims "merged" or "deployed" unless gh confirms it — guards against the LLM hallucinating merge status.',
+    description: 'No-op: email summaries replaced by the dashboard. Returns skipped immediately.',
     paramsSchema: { type: 'object', properties: {} },
-    handler: async (_params, context) => {
-      const db = getDb()
-      const lastStr = kvGet(db, 'last_email_sent')
-      const last = lastStr ? new Date(lastStr).getTime() : 0
-      const now = Date.now()
-      if (last && now - last < 3600_000) {
-        return { skipped: true, reason: 'cooldown' }
-      }
-      const ctx = context as any
-      const verify = ctx?._action_coverage_gate_decide?.verify ?? ctx?._action_verify_pr_created ?? {}
-      const prs: Array<any> = Array.isArray(verify?.prs) ? verify.prs : []
-      const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
-      if (prs.length === 0 && bugsFixed.length === 0) {
-        return { skipped: true, reason: 'nothing to report' }
-      }
-
-      // ─── Verify PR state from gh. Don't trust context; query the real world. ───
-      // The email you send is factual, not aspirational. A prior iteration
-      // shipped an email that claimed "PR Merged & Deployed" for #210 when
-      // #210 was still open. That was LLM composition; this path is rule-
-      // based, but we also harden it by actively checking each PR's state.
-      const prStates: Array<{ number: number; title: string; url: string; state: string; isMerged: boolean; deployState: string | null }> = []
-      for (const p of prs) {
-        let state = 'UNKNOWN'
-        try {
-          const { stdout } = await exec('gh', ['pr', 'view', String(p.number), '--repo', 'Freegle/Iznik', '--json', 'state'], { maxBuffer: 1024 * 1024 })
-          const parsed = JSON.parse(stdout)
-          state = parsed.state ?? 'UNKNOWN'
-        } catch { /* leave UNKNOWN — better to say nothing than lie */ }
-        // deploy_state, if tracked, lives in the local pr table (populated by
-        // a separate process that polls production). If absent we say nothing
-        // about deploy — we don't assume "live" just because merged.
-        let deployState: string | null = null
-        try {
-          const row = db.prepare('SELECT deploy_state FROM pr WHERE number = ?').get(p.number) as { deploy_state: string | null } | undefined
-          deployState = row?.deploy_state ?? null
-        } catch { /* no pr table or no row — that's fine */ }
-        prStates.push({
-          number: p.number,
-          title: p.title ?? '',
-          url: p.url ?? `https://github.com/Freegle/Iznik/pull/${p.number}`,
-          state,
-          isMerged: state === 'MERGED',
-          deployState,
-        })
-      }
-
-      const lines: string[] = []
-      lines.push(`Phase: ${ctx?.phase ?? 'unknown'}`, '')
-      if (prStates.length > 0) {
-        lines.push('PRs this iteration (state from GitHub; "opened/updated" means NOT merged):')
-        for (const p of prStates) {
-          let label: string
-          if (p.state === 'UNKNOWN') {
-            label = 'state unknown'
-          } else if (p.isMerged) {
-            label = p.deployState === 'live' || p.deployState === 'deployed' ? 'merged + deployed' : 'merged (not yet deployed)'
-          } else if (p.state === 'CLOSED') {
-            label = 'closed (not merged)'
-          } else {
-            // p.state === 'OPEN'
-            label = 'opened/updated — still open'
-          }
-          lines.push(`- #${p.number} [${label}] ${p.title} — ${p.url}`)
-        }
-        lines.push('')
-      }
-      const fixedCount = bugsFixed.filter(b => b.outcome === 'fixed').length
-      const deferredCount = bugsFixed.filter(b => b.outcome === 'deferred').length
-      if (bugsFixed.length > 0) {
-        lines.push(`Discourse bugs: ${fixedCount} fix attempted / ${deferredCount} deferred this iteration.`)
-        lines.push('("fix attempted" = a PR was opened; it does not mean merged, deployed, or accepted.)')
-      }
-
-      const mergedCount = prStates.filter(p => p.isMerged).length
-      const openCount = prStates.filter(p => p.state === 'OPEN').length
-      const subject = `Freegle Monitor: ${openCount} PR${openCount === 1 ? '' : 's'} opened, ${mergedCount} merged, ${fixedCount} bug${fixedCount === 1 ? '' : 's'} attempted`
-      const body = lines.join('\n')
-      const sendDef = actions.find(a => a.name === 'send_email')!
-      const res = await sendDef.handler({ subject, body }, context)
-      return res
+    handler: async (_params, _context) => {
+      return { skipped: true, reason: 'email replaced by dashboard' }
     },
+  },
+
+  {
+    name: '_email_retired',
+    description: 'RETIRED — never called',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async () => ({ skipped: true, reason: 'retired' }),
   },
 
   {
@@ -1656,7 +1529,10 @@ print('sent')
       const db = getDb()
       let upserted = 0, skipped = 0
       for (const c of classifications) {
-        if (!c.topic || !c.post) { skipped++; continue }
+        // Accept both 'post' and 'post_number' — topic delegates emit post_number
+        const post = c.post ?? c.post_number
+        if (!c.topic || !post) { skipped++; continue }
+        c.post = post
         // Only persist actionable classifications — skip mine/off_topic/already_fixed/confirmed
         const type = c.type as string
         if (!['bug', 'retest', 'deferred', 'question'].includes(type)) { skipped++; continue }
@@ -1698,8 +1574,28 @@ print('sent')
       const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
       const fixedKeys = new Set(bugsFixed.map(b => `${b.topic}.${b.post}`))
       const pendingBugs = classifications.filter(c => (c.type === 'bug' || c.type === 'retest') && !fixedKeys.has(`${c.topic}.${c.post}`))
-      if (pendingBugs.length > 0) {
-        return { _transition: 'DISPATCH_ALL_BUGS', reason: `${pendingBugs.length} unfixed bug(s) — parallel dispatch` }
+
+      // Also pick up open bugs from the DB that weren't discovered this iteration
+      // (manually added, missed due to cursor edge cases, etc.)
+      const db = getDb()
+      const dbOpenBugs = (db.prepare(`
+        SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle
+        FROM discourse_bug
+        WHERE state IN ('open', 'investigating') AND pr_number IS NULL
+      `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
+
+      // Merge: DB bugs not already in this iteration's classifications
+      const classificationKeys = new Set(classifications.map((c: any) => `${c.topic}.${c.post}`))
+      const extraBugs = dbOpenBugs.filter(b => !classificationKeys.has(`${b.topic}.${b.post}`))
+
+      const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
+
+      if (allPending.length > 0) {
+        return {
+          _transition: 'DISPATCH_ALL_BUGS',
+          reason: `${allPending.length} unfixed bug(s) (${pendingBugs.length} this iteration + ${extraBugs.length} from DB) — parallel dispatch`,
+          dbOpenBugs: extraBugs,
+        }
       }
       const sentry = ctx?._action_check_sentry ?? {}
       const sentryIssues: Array<any> = Array.isArray(sentry.issues) ? sentry.issues : []

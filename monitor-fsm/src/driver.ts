@@ -303,6 +303,18 @@ async function main() {
   process.env.MONITOR_ACTIVE_BRAIN_MODEL = modelForBrain(phaseInfo)
 
   const innerAdapter = new ClaudeCodeAdapter({ maxTokens: 8192, model: modelForBrain(phaseInfo) })
+
+  // Expose a query(model, messages, options) shim so adversarial_review_pr can
+  // call a specific model (Opus) without going through the FSM engine adapter.
+  ;(global as any).__ai_flower_adapter = {
+    async query(model: string, messages: Array<{ role: string; content: string }>, opts?: { max_tokens?: number }) {
+      const adapter = new ClaudeCodeAdapter({ maxTokens: opts?.max_tokens ?? 4096, model })
+      const userContent = messages.find(m => m.role === 'user')?.content ?? ''
+      const text = await adapter.call('', userContent)
+      return { message: { content: [{ text }] } }
+    },
+  }
+
   // Retry-aware wrapper. ai-flower retries on validation failure by calling us
   // again with the same (system, user) pair. We detect that repetition and
   // prepend an escalating JSON-only preamble with a worked example. The

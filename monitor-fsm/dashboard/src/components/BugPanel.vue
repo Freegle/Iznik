@@ -21,9 +21,8 @@
     <table v-else class="table table-sm table-hover">
       <thead>
         <tr>
-          <th style="width: 140px;">Feature Area</th>
           <th style="width: 100px;">Reporter</th>
-          <th>Excerpt</th>
+          <th>Summary</th>
           <th style="width: 80px;">State</th>
           <th style="width: 50px;">PR</th>
         </tr>
@@ -31,12 +30,11 @@
       <tbody>
         <template v-for="(group, featureArea) in groupedBugs" :key="featureArea">
           <tr class="table-light">
-            <td colspan="5" class="text-muted fst-italic small">
+            <td colspan="4" class="text-muted fst-italic small">
               {{ featureArea }}
             </td>
           </tr>
           <tr v-for="bug in group" :key="`${bug.topic}-${bug.post}`">
-            <td></td>
             <td>
               <a
                 :href="`https://discourse.ilovefreegle.org/t/${bug.topic}/${bug.post}`"
@@ -47,8 +45,10 @@
                 {{ bug.reporter || 'Unknown' }}
               </a>
             </td>
-            <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">
-              {{ truncate(bug.excerpt, 80) }}
+            <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0; width: 100%;">
+              <span :title="bug.excerpt || bug.topic_title || ''">
+                {{ bug.excerpt || bug.topic_title || '—' }}
+              </span>
             </td>
             <td>
               <StateBadge :state="bug.state" />

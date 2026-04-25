@@ -303,6 +303,13 @@ export function queueDiscourseDraft(db: DB, draft: {
   prNumber?: number
   prUrl?: string
 }): number {
+  // Don't create a duplicate if a pending draft for this bug already exists.
+  const existing = db.prepare(`
+    SELECT id FROM discourse_draft
+    WHERE topic = ? AND post = ? AND posted_at IS NULL AND rejected_at IS NULL
+  `).get(draft.topic, draft.post) as { id: number } | undefined
+  if (existing) return existing.id
+
   const info = db.prepare(`
     INSERT INTO discourse_draft (topic, post, username, quote, body, preview_url, pr_number, pr_url)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)

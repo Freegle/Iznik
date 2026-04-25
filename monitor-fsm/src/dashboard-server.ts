@@ -217,10 +217,9 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
       SELECT b.topic, b.post, b.topic_title, b.reporter, b.excerpt, b.state,
              b.pr_number, b.reason, b.first_seen_at, b.last_seen_at,
              b.fixed_at, b.deployed_at, b.feature_area,
-             COALESCE(b.feature_area, tc.title, 'Uncategorised') AS group_key
+             COALESCE(b.feature_area, 'Uncategorised') AS group_key
       FROM discourse_bug b
-      LEFT JOIN topic_cursor tc ON tc.topic_id = b.topic
-      ORDER BY COALESCE(b.feature_area, tc.title, 'Uncategorised'), b.topic, b.post
+      ORDER BY COALESCE(b.feature_area, 'Uncategorised'), b.topic, b.post
     `).all()
     json(res, 200, rows)
     return
@@ -359,6 +358,23 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     return
   }
 
+  // POST /api/prs/:number/merge  — merge a ready PR
+  const prMerge = path.match(/^\/api\/prs\/(\d+)\/merge$/)
+  if (req.method === 'POST' && prMerge) {
+    const prNumber = Number(prMerge[1])
+    try {
+      await execAsync(
+        `gh pr merge ${prNumber} --repo Freegle/Iznik --merge --auto`,
+        { maxBuffer: 1024 * 1024, timeout: 30000 }
+      )
+      prCache = null
+      json(res, 200, { merged: true, prNumber })
+    } catch (err: any) {
+      json(res, 502, { error: String(err?.stderr ?? err?.message ?? err) })
+    }
+    return
+  }
+
   // GET /api/status/preview  — render but don't post
   if (req.method === 'GET' && path === '/api/status/preview') {
     const { renderStatusPostBody } = await import('./db/discourse-status.js')
@@ -393,6 +409,24 @@ function serveStatic(req: IncomingMessage, res: ServerResponse, urlPath: string)
 }
 
 const db = getDb()
+
+// Auto-post Discourse status every 30 minutes
+const STATUS_POST_INTERVAL = 30 * 60 * 1000
+async function autoPostStatus() {
+  try {
+    const result = await putStatusPost(db)
+    if (result.posted) {
+      console.log('[status] auto-posted Discourse status')
+    } else {
+      console.log(`[status] auto-post skipped: ${result.reason ?? 'unknown'}`)
+    }
+  } catch (err: any) {
+    console.error('[status] auto-post error:', err.message)
+  }
+}
+// Run once at startup then on interval
+autoPostStatus()
+setInterval(autoPostStatus, STATUS_POST_INTERVAL)
 
 const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
   const url = req.url ?? '/'

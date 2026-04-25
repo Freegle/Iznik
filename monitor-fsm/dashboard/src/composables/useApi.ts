@@ -131,6 +131,14 @@ export function usePrsLive() {
   return { state, refresh: () => refresh(true), stop }
 }
 
+export async function mergePr(prNumber: number): Promise<void> {
+  const resp = await fetch(`/api/prs/${prNumber}/merge`, { method: 'POST' })
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}))
+    throw new Error(body.error ?? `HTTP ${resp.status}`)
+  }
+}
+
 export async function sendDraft(id: number): Promise<void> {
   const resp = await fetch(`/api/drafts/${id}/send`, { method: 'POST' })
   if (!resp.ok) throw new Error(`Failed to send draft: ${resp.statusText}`)

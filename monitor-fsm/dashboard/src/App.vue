@@ -3,25 +3,7 @@
     <!-- Top bar -->
     <nav class="navbar navbar-dark" style="background-color: #20c997;">
       <div class="container-fluid">
-        <span class="navbar-brand mb-0 h4">Freegle Monitor</span>
-        <div class="d-flex gap-3 ms-auto align-items-center">
-          <small v-if="lastRefreshTime" class="text-white-50">
-            Last: {{ lastRefreshTime }}
-          </small>
-          <button
-            class="btn btn-light btn-sm"
-            @click="handlePushStatus"
-            :disabled="pushing"
-            title="Push status to Discourse"
-          >
-            <span v-if="pushing" class="spinner-border spinner-border-sm me-1"></span>
-            <i v-else class="bi bi-arrow-up-circle me-1"></i>
-            Push Status
-          </button>
-          <span v-if="pushResult" :class="['small', pushResult.ok ? 'text-white' : 'text-warning']">
-            {{ pushResult.ok ? '✓' : '✗ ' + pushResult.msg }}
-          </span>
-        </div>
+        <span class="navbar-brand mb-0 h4">Triage Dashboard</span>
       </div>
     </nav>
 
@@ -59,26 +41,44 @@
 
       <!-- Recently Fixed -->
       <div v-if="recentlyFixed.length > 0" class="mt-4">
-        <h6 class="text-muted mb-2">
-          Recently Fixed
-          <span class="badge bg-success ms-1">{{ recentlyFixed.length }}</span>
-        </h6>
+        <div class="d-flex align-items-center mb-2">
+          <h6 class="mb-0 text-muted">Recently Fixed</h6>
+          <span class="badge bg-success ms-2">{{ recentlyFixed.length }}</span>
+        </div>
         <div class="card">
-          <table class="table table-sm mb-0">
+          <table class="table table-sm mb-0" style="table-layout: fixed; width: 100%;">
+            <colgroup>
+              <col style="width: 14%;">
+              <col style="width: 11%;">
+              <col>
+              <col style="width: 6%;">
+              <col style="width: 7%;">
+            </colgroup>
+            <thead class="table-light">
+              <tr>
+                <th>Area</th>
+                <th>Reporter</th>
+                <th>Summary</th>
+                <th>PR</th>
+                <th>Fixed</th>
+              </tr>
+            </thead>
             <tbody>
               <tr v-for="bug in recentlyFixed" :key="`${bug.topic}-${bug.post}`">
-                <td style="width: 140px;" class="text-muted">{{ (bug as any).group_key || bug.feature_area || 'Uncategorised' }}</td>
-                <td style="width: 90px;">
+                <td class="text-muted small" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ (bug as any).group_key || bug.feature_area || 'Uncategorised' }}</td>
+                <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                   <a :href="`https://discourse.ilovefreegle.org/t/${bug.topic}/${bug.post}`" target="_blank" rel="noopener" class="text-decoration-none">
                     {{ bug.reporter || 'Unknown' }}
                   </a>
                 </td>
-                <td class="text-muted" style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ bug.excerpt || '—' }}</td>
-                <td style="width: 70px;">
+                <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  <span :title="bug.excerpt || bug.topic_title || ''">{{ bug.excerpt || bug.topic_title || '—' }}</span>
+                </td>
+                <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                   <a v-if="bug.pr_number" :href="`https://github.com/Freegle/Iznik/pull/${bug.pr_number}`" target="_blank" rel="noopener" class="text-decoration-none">#{{ bug.pr_number }}</a>
                   <span v-else class="text-muted">—</span>
                 </td>
-                <td style="width: 80px;" class="text-muted">{{ formatFixedAge(bug.fixed_at) }}</td>
+                <td class="text-muted small" style="white-space: nowrap;">{{ formatFixedAge(bug.fixed_at) }}</td>
               </tr>
             </tbody>
           </table>
@@ -105,8 +105,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { useBugs, useDrafts, useIterations, usePrsLive, pushStatusPost } from './composables/useApi'
+import { computed } from 'vue'
+import { useBugs, useDrafts, useIterations, usePrsLive } from './composables/useApi'
 import PrPanel from './components/PrPanel.vue'
 import BugPanel from './components/BugPanel.vue'
 import ReplyQueue from './components/ReplyQueue.vue'
@@ -134,33 +134,7 @@ function formatFixedAge(date: string | null): string {
   return `${Math.floor(hours / 24)}d ago`
 }
 
-const pushing = ref(false)
-const pushResult = ref<{ ok: boolean; msg?: string } | null>(null)
-const lastRefreshTime = ref<string>('')
 
-const handlePushStatus = async () => {
-  pushing.value = true
-  pushResult.value = null
-  try {
-    const result = await pushStatusPost()
-    pushResult.value = { ok: result.posted, msg: result.reason }
-    setTimeout(() => { pushResult.value = null }, 5000)
-  } catch (err: any) {
-    pushResult.value = { ok: false, msg: String(err?.message ?? err) }
-  } finally {
-    pushing.value = false
-  }
-}
-
-const updateRefreshTime = () => {
-  lastRefreshTime.value = new Date().toLocaleTimeString()
-}
-
-onMounted(() => {
-  updateRefreshTime()
-  const interval = setInterval(updateRefreshTime, 60000)
-  return () => clearInterval(interval)
-})
 </script>
 
 <style scoped>
