@@ -8,7 +8,7 @@
   >
     <ChatAvatar
       :icon="resolvedIcon"
-      :name="chat.name"
+      :name="avatarName"
       :supporter="chat.supporter"
       :unread-count="chat.unseen"
     />
@@ -62,6 +62,14 @@ const chat = computed(() => {
 // row (ORDER BY id DESC LIMIT 1). No need to fetch the user separately —
 // that caused avatar flicker when the user store returned a different URL (#327).
 const resolvedIcon = computed(() => chat.value?.icon)
+
+// For User2Mod chats viewed by a moderator, chat.name includes a group suffix
+// like "John Smith (Freecycle)". Strip it so the avatar seed matches the
+// member's displayname used in individual chat message avatars (Discourse #9518).
+const avatarName = computed(() => {
+  const name = chat.value?.name || ''
+  return name.replace(/ \([^)]+\)$/, '') || name
+})
 
 const esnippet = computed(() => {
   if (chat.value?.snippet === 'null') {
