@@ -106,25 +106,29 @@ export async function pushStatusPost(): Promise<{ posted: boolean; reason?: stri
 
 export function usePrsLive() {
   const state = reactive({ prs: [] as PrLive[], loading: false, lastRefreshed: null as string | null })
+  let manualRefresh = false
 
-  const refresh = async () => {
+  const refresh = async (bust = false) => {
     state.loading = true
+    manualRefresh = bust
     try {
-      const data = await fetch('/api/prs/live').then(r => r.json())
+      const url = bust ? '/api/prs/live?refresh=1' : '/api/prs/live'
+      const data = await fetch(url).then(r => r.json())
       state.prs = Array.isArray(data) ? data : []
       state.lastRefreshed = new Date().toLocaleTimeString()
     } catch (error) {
       console.error('Failed to fetch PRs:', error)
     } finally {
       state.loading = false
+      manualRefresh = false
     }
   }
 
   refresh()
-  const interval = setInterval(refresh, 60000)
+  const interval = setInterval(() => refresh(false), 60000)
   const stop = () => clearInterval(interval)
 
-  return { state, refresh, stop }
+  return { state, refresh: () => refresh(true), stop }
 }
 
 export async function sendDraft(id: number): Promise<void> {

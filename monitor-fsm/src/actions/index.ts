@@ -828,7 +828,7 @@ The parent FSM greps your stdout for these exact markers. Your prose does NOT co
   - Pushed to an existing PR branch: COMMIT_PUSHED=<sha>
   - Read-only / analysis task done:  ANALYSIS_COMPLETE=<one-line summary>
   - Could NOT complete the task:     DELEGATE_FAILED=<one-line-reason>
-ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse triage, Sentry listing, cursor-advance-only). Use it whenever you finish work that intentionally produces no commit. Do NOT use DELEGATE_FAILED just because you found no bugs or no new posts — that is a successful outcome.
+ANALYSIS_COMPLETE is ONLY for tasks explicitly described as read-only (e.g. Discourse triage, Sentry listing, cursor-advance-only). If your task was to fix a bug and you investigated but could not make a code change, use DELEGATE_FAILED — not ANALYSIS_COMPLETE. ANALYSIS_COMPLETE means "the task was intentionally read-only from the start, and I completed it".
 If you omit the marker, your work is considered failed regardless of what actually happened — the parent will redispatch, wasting another iteration.
 `
       // claude -p (--print) expects the prompt on stdin. Pipe it explicitly.

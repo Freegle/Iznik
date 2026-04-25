@@ -56,7 +56,7 @@
           </td>
           <td>
             <span :class="['badge', mergeStateBadgeClass(pr.mergeStateStatus)]">
-              {{ pr.mergeStateStatus }}
+              {{ mergeStateLabel(pr.mergeStateStatus) }}
             </span>
           </td>
           <td class="small text-muted">
@@ -102,11 +102,23 @@ function ciStatusIcon(status: string): string {
 
 function mergeStateBadgeClass(status: string): string {
   switch (status) {
-    case 'MERGEABLE': return 'bg-success'
-    case 'CONFLICTING': return 'bg-danger'
+    case 'CLEAN': case 'HAS_HOOKS': return 'bg-success'
+    case 'DIRTY': return 'bg-danger'
     case 'BLOCKED': return 'bg-warning text-dark'
-    case 'BEHIND': return 'bg-info'
+    case 'BEHIND': case 'UNSTABLE': return 'bg-info text-dark'
     default: return 'bg-secondary'
+  }
+}
+
+function mergeStateLabel(status: string): string {
+  switch (status) {
+    case 'CLEAN': case 'HAS_HOOKS': return 'Ready'
+    case 'DIRTY': return 'Conflict'
+    case 'BLOCKED': return 'Blocked'
+    case 'BEHIND': return 'Behind'
+    case 'UNSTABLE': return 'CI running'
+    case 'UNKNOWN': return '?'
+    default: return status
   }
 }
 

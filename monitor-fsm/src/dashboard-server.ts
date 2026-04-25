@@ -83,20 +83,24 @@ async function fetchPrsLive(): Promise<any[]> {
           const failedChecks: string[] = []
 
           if (status.statusCheckRollup && Array.isArray(status.statusCheckRollup)) {
-            const hasFailure = status.statusCheckRollup.some((c: any) =>
-              c.conclusion === 'FAILURE' || c.conclusion === 'ERROR'
-            )
-            const hasPending = status.statusCheckRollup.some((c: any) =>
-              !c.conclusion || c.conclusion === 'PENDING'
-            )
+            const checks: any[] = status.statusCheckRollup
+            // GitHub returns two check types:
+            //   CheckRun   → uses c.conclusion (SUCCESS/FAILURE/NEUTRAL/SKIPPED/...)
+            //   StatusContext → uses c.state (SUCCESS/FAILURE/PENDING/ERROR)
+            const isFailure = (c: any) => c.__typename === 'StatusContext'
+              ? (c.state === 'FAILURE' || c.state === 'ERROR')
+              : (c.conclusion === 'FAILURE' || c.conclusion === 'ERROR')
+            const isPending = (c: any) => c.__typename === 'StatusContext'
+              ? (c.state === 'PENDING' || c.state === 'EXPECTED')
+              : (!c.status || c.status === 'IN_PROGRESS' || c.status === 'QUEUED' || c.status === 'WAITING')
+            // NEUTRAL/SKIPPED are informational — don't count toward pending
+
+            const hasFailure = checks.some(isFailure)
+            const hasPending = checks.some(isPending)
 
             if (hasFailure) {
               ciStatus = 'red'
-              failedChecks.push(
-                ...status.statusCheckRollup
-                  .filter((c: any) => c.conclusion === 'FAILURE' || c.conclusion === 'ERROR')
-                  .map((c: any) => c.name)
-              )
+              failedChecks.push(...checks.filter(isFailure).map(c => c.name ?? c.context ?? '?'))
             } else if (hasPending) {
               ciStatus = 'pending'
             } else {
@@ -234,8 +238,9 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     return
   }
 
-  // GET /api/prs/live
+  // GET /api/prs/live  — ?refresh=1 busts the cache
   if (req.method === 'GET' && path === '/api/prs/live') {
+    if (req.url?.includes('refresh=1')) prCache = null
     try {
       const prs = await fetchPrsLive()
       json(res, 200, prs)
