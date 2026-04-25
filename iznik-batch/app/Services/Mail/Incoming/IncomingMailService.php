@@ -128,6 +128,12 @@ class IncomingMailService
             return $this->handleHumanReplyToBounceAddress($email);
         }
 
+        // Phase 3c: Reply to digest email (sent from noreply@).
+        // Send helpful auto-response explaining how to reply to specific posts.
+        if ($email->isDigestReply()) {
+            return $this->handleDigestReply($email);
+        }
+
         // Check for known dropped senders (Twitter, etc.)
         if ($this->shouldDropSender($email)) {
             return $this->dropped('Known dropped sender (Twitter, etc.)');
@@ -1399,6 +1405,76 @@ class IncomingMailService
             Log::info('Sent bounce address auto-reply', ['to' => $senderAddress]);
         } catch (\Throwable $e) {
             Log::warning('Failed to send bounce address auto-reply', [
+                'to' => $senderAddress,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return RoutingResult::TO_SYSTEM;
+    }
+
+    /**
+     * Handle reply to a digest email.
+     *
+     * Digest emails are sent from noreply@ and contain multiple posts.
+     * When someone replies, we send a friendly auto-response explaining
+     * how to reply to specific posts via the buttons/links in the email.
+     */
+    private function handleDigestReply(ParsedEmail $email): RoutingResult
+    {
+        $senderAddress = strtolower($email->fromAddress ?? $email->envelopeFrom ?? '');
+
+        Log::info('Reply to digest email', [
+            'from' => $senderAddress,
+            'envelope_to' => $email->envelopeTo,
+            'subject' => $email->subject,
+        ]);
+
+        // Loop prevention: never auto-reply to system addresses
+        $suppressPatterns = ['mailer-daemon', 'postmaster', 'noreply', 'no-reply', 'bounce-'];
+        foreach ($suppressPatterns as $pattern) {
+            if (str_contains($senderAddress, $pattern)) {
+                Log::debug('Suppressing digest reply auto-response to system address', ['from' => $senderAddress]);
+
+                return RoutingResult::TO_SYSTEM;
+            }
+        }
+
+        // Loop prevention: never auto-reply to auto-submitted messages
+        if ($email->isAutoReply()) {
+            Log::debug('Suppressing digest reply auto-response to auto-submitted message');
+
+            return RoutingResult::TO_SYSTEM;
+        }
+
+        // Rate limit: max 1 auto-reply per 24h per sender
+        $cacheKey = 'digest_reply_autoreply:' . md5($senderAddress);
+        if (Cache::has($cacheKey)) {
+            Log::debug('Rate limiting digest reply auto-response', ['from' => $senderAddress]);
+
+            return RoutingResult::TO_SYSTEM;
+        }
+
+        // Look up the sender to get their name and user ID
+        $senderName = $email->fromName;
+        $senderUserId = null;
+
+        $userEmail = \App\Models\UserEmail::where('email', $senderAddress)->first();
+        if ($userEmail) {
+            $senderUserId = $userEmail->userid;
+        }
+
+        // Send auto-response
+        try {
+            MailFacade::send(new \App\Mail\Digest\DigestReplyNotice(
+                $senderAddress,
+                $senderName,
+                $senderUserId
+            ));
+            Cache::put($cacheKey, true, now()->addHours(24));
+            Log::info('Sent digest reply auto-response', ['to' => $senderAddress]);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to send digest reply auto-response', [
                 'to' => $senderAddress,
                 'error' => $e->getMessage(),
             ]);
@@ -3372,7 +3448,41 @@ class IncomingMailService
      */
     private function parseSubject(string $subj): array
     {
-        return \App\Support\SubjectParser::parse($subj);
+        $type = null;
+        $item = null;
+        $location = null;
+
+        $p = strpos($subj, ':');
+
+        if ($p !== false) {
+            $startp = $p;
+            $rest = trim(substr($subj, $p + 1));
+            $p = strlen($rest) - 1;
+
+            if (substr($rest, -1) == ')') {
+                $count = 0;
+
+                do {
+                    $curr = substr($rest, $p, 1);
+
+                    if ($curr == '(') {
+                        $count--;
+                    } elseif ($curr == ')') {
+                        $count++;
+                    }
+
+                    $p--;
+                } while ($count > 0 && $p > 0);
+
+                if ($count == 0) {
+                    $type = trim(substr($subj, 0, $startp));
+                    $location = trim(substr($rest, $p + 2, strlen($rest) - $p - 3));
+                    $item = trim(substr($rest, 0, $p));
+                }
+            }
+        }
+
+        return [$type, $item, $location];
     }
 
     /**

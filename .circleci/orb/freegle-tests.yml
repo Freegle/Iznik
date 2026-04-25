@@ -1830,7 +1830,10 @@ jobs:
             if [ "$CIRCLE_BRANCH" = "master" ]; then
               CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD)
             else
-              CHANGED_FILES=$(git diff --name-only origin/master...HEAD)
+              # Fetch master history so origin/master...HEAD has a reachable merge base
+              # (shallow CI clones don't have master history by default)
+              git fetch origin master --depth=100 2>/dev/null || true
+              CHANGED_FILES=$(git diff --name-only origin/master...HEAD 2>/dev/null || echo "ALL_CHANGED")
             fi
 
             if [ -n "$CHANGED_FILES" ]; then
