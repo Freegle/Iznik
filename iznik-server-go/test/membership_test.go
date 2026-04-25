@@ -1327,6 +1327,99 @@ func TestPostMembershipsReviewIgnore(t *testing.T) {
 	assert.False(t, found, "Target should NOT appear in spam members after ignore")
 }
 
+// TestReviewIgnoreMultiGroupMod verifies that clicking Ignore on a member in the Member Review
+// queue clears the review flag for ALL groups the mod moderates — not just the one clicked.
+// Regression test for Discourse topic 9618: "Clicking Ignore on a member stuck in Member Review
+// has no effect — member remains in review queue across multiple attempts."
+func TestReviewIgnoreMultiGroupMod(t *testing.T) {
+	prefix := uniquePrefix("rvign_multi")
+	db := database.DBConn
+
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+
+	// Mod moderates BOTH groups.
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, group1ID, "Moderator")
+	CreateTestMembership(t, modID, group2ID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Target user is a member of both groups.
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	CreateTestMembership(t, targetID, group1ID, "Member")
+	CreateTestMembership(t, targetID, group2ID, "Member")
+
+	// Both memberships are flagged for review — simulating a month-old cross-group flag
+	// as described in Discourse topic 9618.
+	db.Exec(
+		"UPDATE memberships SET reviewrequestedat = DATE_SUB(NOW(), INTERVAL 40 DAY), reviewreason = 'Note flagged to other groups' WHERE userid = ? AND groupid IN ?",
+		targetID, []uint64{group1ID, group2ID},
+	)
+
+	// Verify target appears for BOTH groups before Ignore.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/memberships?collection=Spam&limit=50&jwt=%s", token), nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	var membersBefore []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&membersBefore)
+	foundG1Before, foundG2Before := false, false
+	for _, m := range membersBefore {
+		if uint64(m["userid"].(float64)) == targetID {
+			gid := uint64(m["groupid"].(float64))
+			if gid == group1ID {
+				foundG1Before = true
+			}
+			if gid == group2ID {
+				foundG2Before = true
+			}
+		}
+	}
+	assert.True(t, foundG1Before, "Target should appear on group1 before Ignore")
+	assert.True(t, foundG2Before, "Target should appear on group2 before Ignore")
+
+	// Mod clicks Ignore — sending groupid=group1 (as the UI would for the first card).
+	body := map[string]interface{}{
+		"userid":  targetID,
+		"groupid": group1ID,
+		"action":  "ReviewIgnore",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/memberships?jwt=%s", token)
+	req = httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// After Ignore, the target should NOT appear in the Spam list for EITHER group.
+	// The mod has reviewed the member and clicked Ignore — the member should be gone
+	// from ALL of the mod's moderated groups, not just group1.
+	req = httptest.NewRequest("GET", fmt.Sprintf("/api/memberships?collection=Spam&limit=50&jwt=%s", token), nil)
+	resp, err = getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	var membersAfter []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&membersAfter)
+	foundG1After, foundG2After := false, false
+	for _, m := range membersAfter {
+		if uint64(m["userid"].(float64)) == targetID {
+			gid := uint64(m["groupid"].(float64))
+			if gid == group1ID {
+				foundG1After = true
+			}
+			if gid == group2ID {
+				foundG2After = true
+			}
+		}
+	}
+	assert.False(t, foundG1After, "Target should NOT appear on group1 after Ignore")
+	assert.False(t, foundG2After, "Target should NOT appear on group2 after Ignore — Ignore clears all mod's groups")
+}
+
 func TestPostMembershipsHappinessReviewed(t *testing.T) {
 	prefix := uniquePrefix("mod_happy")
 	db := database.DBConn
