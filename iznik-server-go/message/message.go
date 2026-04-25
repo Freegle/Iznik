@@ -3211,13 +3211,22 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Received outcome only valid for Wanted messages")
 	}
 
-	// For Withdrawn: if the message is still pending on any group, delete it entirely
-	// instead of recording an outcome.
+	// For Withdrawn: if the message is still pending on any group, soft-delete it
+	// instead of recording an outcome.  We use UPDATE ... SET deleted = NOW() (matching
+	// the rest of the codebase) rather than a hard DELETE so that moderators who loaded
+	// the pending queue before the withdrawal can still reject / delete the message
+	// without getting a spurious 403 from getMessageModContext failing to scan a
+	// now-absent messages row.
 	if req.Outcome == utils.OUTCOME_WITHDRAWN {
 		var pendingCount int64
 		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).Scan(&pendingCount)
 		if pendingCount > 0 {
-			db.Exec("DELETE FROM messages WHERE id = ?", req.ID)
+			db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID)
+			if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
+				"msgid": req.ID,
+			}); err != nil {
+				log.Printf("Failed to queue freebie alerts remove for withdrawn pending message %d: %v", req.ID, err)
+			}
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "deleted": true})
 		}
 	}
