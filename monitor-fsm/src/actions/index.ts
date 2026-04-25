@@ -262,9 +262,12 @@ print(json.dumps(results))
 
           // A CLOSED (not merged) PR means the reviewer rejected the fix.
           // Reopen the linked bug so it can be re-dispatched or escalated.
+          // Check all non-terminal states (not just fix-queued) in case the bug was
+          // manually reopened or is in another active state.
           if (ghState === 'CLOSED') {
             const bugs = db.prepare(
-              `SELECT topic, post, pr_rejections FROM discourse_bug WHERE pr_number = ? AND state = 'fix-queued'`
+              `SELECT topic, post, pr_rejections FROM discourse_bug
+               WHERE pr_number = ? AND state NOT IN ('fixed','confirmed','deferred','off-topic','duplicate')`
             ).all(pr.number) as Array<{ topic: number; post: number; pr_rejections: number }>
             for (const bug of bugs) {
               reopenBugAfterRejection(db, bug.topic, bug.post, pr.number)
@@ -1595,8 +1598,10 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         WHERE state IN ('open', 'investigating') AND pr_number IS NULL
       `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
 
-      // Bugs whose PRs have been rejected 2+ times need human review — escalate them.
-      const ESCALATION_THRESHOLD = 2
+      // Bugs whose PRs have been rejected once need human review — escalate them.
+      // One rejection is enough: if the reviewer closed a PR, they've signalled the
+      // approach is wrong and the FSM shouldn't guess again without guidance.
+      const ESCALATION_THRESHOLD = 1
       const toEscalate = dbOpenBugs.filter(b => (b.prRejections ?? 0) >= ESCALATION_THRESHOLD)
       for (const bug of toEscalate) {
         db.prepare(`
