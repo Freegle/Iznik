@@ -80,9 +80,14 @@ get_container_info() {
         fi
         echo "$targets"
     elif [[ "$relative_path" == iznik-nuxt3/* ]]; then
-        # Sync to both Freegle and Playwright containers for test files
-        if [[ "$relative_path" == iznik-nuxt3/tests/* || "$relative_path" == iznik-nuxt3/playwright.config.js ]]; then
+        if [[ "$relative_path" == iznik-nuxt3/playwright.config.js || "$relative_path" == iznik-nuxt3/tests/e2e/* ]]; then
+            # Playwright tests and config go to the Playwright container only
             echo "${CN}-playwright /app/${relative_path#iznik-nuxt3/} Playwright"
+        elif [[ "$relative_path" == iznik-nuxt3/tests/* || "$relative_path" == iznik-nuxt3/vitest.config.mts ]]; then
+            # Unit test files and vitest config go to the vitest runner container (modtools-dev-local)
+            # Playwright container does not run vitest, so these are not needed there
+            local targets="${CN}-modtools-dev-local /app/${relative_path#iznik-nuxt3/} ModTools-Dev-Local"
+            echo "$targets"
         else
             local targets="${CN}-dev-local /app/${relative_path#iznik-nuxt3/} Freegle-Dev-Local"
             # Only include dev-live if the container is running
