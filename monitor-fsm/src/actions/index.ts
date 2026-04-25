@@ -15,6 +15,7 @@ import {
   insertReviewerFeedback,
   listUnprocessedFeedback,
   upsertDiscourseBug,
+  reopenBugAfterRejection,
   upsertPr,
 } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
@@ -226,22 +227,21 @@ print(json.dumps(results))
 
   {
     name: 'sync_pr_states',
-    description: 'Sync PR states from GitHub for all PRs referenced in discourse_bug.pr_number. Updates the pr table so reconcileBugStates can move fix-queued bugs to fixed once their PR is merged. Returns {synced: [{number, state, mergedAt}], updated: number}.',
+    description: 'Sync PR states from GitHub for all PRs referenced in discourse_bug.pr_number. Updates the pr table, moves fix-queued bugs to fixed on merge, and reopens bugs whose PRs were closed (rejected) by the reviewer — tracking rejection count so escalation logic can fire. Returns {synced, updated, reopened: [{topic, post, prNumber, rejections}]}.',
     handler: async () => {
       const db = getDb()
-      // Collect all PR numbers referenced in discourse_bug (fix-queued only — fixed ones don't need updating).
       const bugPRs = db.prepare(
         `SELECT DISTINCT pr_number FROM discourse_bug WHERE pr_number IS NOT NULL AND state IN ('open','investigating','fix-queued')`
       ).all() as Array<{ pr_number: number }>
-      // Also sync any OPEN PRs already in the pr table (may have been merged or closed since last check).
       const tablePRs = db.prepare(
         `SELECT DISTINCT number FROM pr WHERE state IS NULL OR state NOT IN ('MERGED','CLOSED')`
       ).all() as Array<{ number: number }>
 
       const toSync = new Set([...bugPRs.map(r => r.pr_number), ...tablePRs.map(r => r.number)])
-      if (toSync.size === 0) return { synced: [], updated: 0 }
+      if (toSync.size === 0) return { synced: [], updated: 0, reopened: [] }
 
       const synced: Array<{ number: number; state: string; mergedAt: string | null }> = []
+      const reopened: Array<{ topic: number; post: number; prNumber: number; rejections: number }> = []
       let updated = 0
 
       for (const num of toSync) {
@@ -249,22 +249,41 @@ print(json.dumps(results))
         if (res.code !== 0) continue
         try {
           const pr = JSON.parse(res.stdout) as { number: number; state: string; mergedAt: string | null; title: string; headRefName: string }
-          // gh returns 'MERGED', 'CLOSED', or 'OPEN'
           const ghState = pr.state === 'MERGED' ? 'MERGED' : pr.state === 'CLOSED' ? 'CLOSED' : 'OPEN'
           upsertPr(db, {
             number: pr.number,
             title: pr.title,
             branch: pr.headRefName,
             state: ghState,
-            // Freegle auto-deploys on merge, so MERGED = live.
             deployState: ghState === 'MERGED' ? 'live' : undefined,
           })
           synced.push({ number: pr.number, state: ghState, mergedAt: pr.mergedAt })
           updated++
+
+          // A CLOSED (not merged) PR means the reviewer rejected the fix.
+          // Reopen the linked bug so it can be re-dispatched or escalated.
+          if (ghState === 'CLOSED') {
+            const bugs = db.prepare(
+              `SELECT topic, post, pr_rejections FROM discourse_bug WHERE pr_number = ? AND state = 'fix-queued'`
+            ).all(pr.number) as Array<{ topic: number; post: number; pr_rejections: number }>
+            for (const bug of bugs) {
+              reopenBugAfterRejection(db, bug.topic, bug.post, pr.number)
+              insertReviewerFeedback(db, {
+                kind: 'pr_rejected',
+                prNumber: pr.number,
+                bugTopic: bug.topic,
+                bugPost: bug.post,
+                raw: `PR #${pr.number} (${pr.title}) closed by reviewer`,
+              })
+              const newRejections = bug.pr_rejections + 1
+              out(`sync_pr_states: PR #${pr.number} CLOSED — reopened bug ${bug.topic}/${bug.post} (rejections now ${newRejections})`)
+              reopened.push({ topic: bug.topic, post: bug.post, prNumber: pr.number, rejections: newRejections })
+            }
+          }
         } catch { /* malformed JSON from gh — skip */ }
       }
 
-      return { synced, updated }
+      return { synced, updated, reopened }
     },
   },
 
@@ -1568,22 +1587,42 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const fixedKeys = new Set(bugsFixed.map(b => `${b.topic}.${b.post}`))
       const pendingBugs = classifications.filter(c => (c.type === 'bug' || c.type === 'retest') && !fixedKeys.has(`${c.topic}.${c.post}`))
 
-      // Always check DB for open bugs regardless of phase — bugs that have been
-      // sitting unaddressed for iterations must not be indefinitely deferred.
+      // Always check DB for open bugs regardless of phase.
       const db = getDb()
       const dbOpenBugs = (db.prepare(`
-        SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle
+        SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle, pr_rejections AS prRejections
         FROM discourse_bug
         WHERE state IN ('open', 'investigating') AND pr_number IS NULL
       `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
 
-      // Merge: DB bugs not already in this iteration's classifications
-      const classificationKeys = new Set(classifications.map((c: any) => `${c.topic}.${c.post}`))
-      const extraBugs = dbOpenBugs.filter(b => !classificationKeys.has(`${b.topic}.${b.post}`))
+      // Bugs whose PRs have been rejected 2+ times need human review — escalate them.
+      const ESCALATION_THRESHOLD = 2
+      const toEscalate = dbOpenBugs.filter(b => (b.prRejections ?? 0) >= ESCALATION_THRESHOLD)
+      for (const bug of toEscalate) {
+        db.prepare(`
+          UPDATE discourse_bug SET state = 'deferred',
+            reason = 'Escalated: ' || ? || ' rejected PR(s) — needs human triage',
+            last_seen_at = datetime('now')
+          WHERE topic = ? AND post = ?
+        `).run(bug.prRejections, bug.topic, bug.post)
+        // Queue a Discourse reply so the human sees it in the dashboard.
+        queueDiscourseDraft(db, {
+          topic: bug.topic,
+          post: bug.post,
+          username: bug.reporter ?? 'you',
+          quote: (bug.excerpt ?? '').slice(0, 120),
+          body: `I've tried fixing this ${bug.prRejections} time(s) but my approaches have been rejected. I'm not confident I understand the root cause well enough to fix it correctly. Could you advise on the right direction?`,
+        })
+        out(`work_router_decide: escalated ${bug.topic}/${bug.post} after ${bug.prRejections} rejected PRs`)
+      }
 
-      // During peak phase, defer only if there are no pre-existing DB backlog bugs.
-      // New classification bugs (discovered this iteration) wait for off-peak.
-      // Backlog bugs that have been open across multiple iterations proceed immediately.
+      // Bugs with < ESCALATION_THRESHOLD rejections can be dispatched.
+      const classificationKeys = new Set(classifications.map((c: any) => `${c.topic}.${c.post}`))
+      const extraBugs = dbOpenBugs
+        .filter(b => (b.prRejections ?? 0) < ESCALATION_THRESHOLD)
+        .filter(b => !classificationKeys.has(`${b.topic}.${b.post}`))
+
+      // During peak phase, defer only if there are no backlog bugs to dispatch.
       if (phase === 'implementation' && extraBugs.length === 0) {
         const pendingCount = pendingBugs.length
         return { _transition: 'COVERAGE_GATE', reason: `peak phase — no backlog bugs; deferring ${pendingCount} new bug(s) to off-peak` }

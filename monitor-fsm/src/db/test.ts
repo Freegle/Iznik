@@ -17,6 +17,7 @@ import {
   getDiscourseBug,
   listOpenDiscourseBugs,
   markDiscourseBugFixed,
+  reopenBugAfterRejection,
   upsertSentryIssue,
   setSentryDisposition,
   getSentryIssue,
@@ -53,7 +54,7 @@ try {
 
   // --- schema_version ---
   const sv = db.prepare('SELECT version FROM schema_version').get() as { version: number }
-  assertEq(sv.version, 1, 'schema_version seeded to 1')
+  assertEq(sv.version, 2, 'schema_version seeded to 2')
 
   // --- topic_cursor ---
   assertEq(getTopicCursor(db, 9585), 0, 'unseen topic → cursor 0')
@@ -99,6 +100,23 @@ try {
   const openBugs = listOpenDiscourseBugs(db)
   assertEq(openBugs.length, 1, 'only one open bug (Derek) — Jos is fixed')
   assertEq(openBugs[0].topic, 9588, 'correct open bug')
+
+  // --- reopenBugAfterRejection ---
+  upsertDiscourseBug(db, { topic: 9600, post: 1, reporter: 'TestUser', excerpt: 'Test bug', state: 'fix-queued', prNumber: 999 })
+  const bugFq = getDiscourseBug(db, 9600, 1)
+  assertEq(bugFq!.state, 'fix-queued', 'bug is fix-queued')
+  assertEq(bugFq!.pr_number, 999, 'pr_number set')
+  assertEq(bugFq!.pr_rejections, 0, 'pr_rejections starts at 0')
+
+  reopenBugAfterRejection(db, 9600, 1, 999, 'Bad fix — approach was wrong')
+  const bugReopened = getDiscourseBug(db, 9600, 1)
+  assertEq(bugReopened!.state, 'open', 'reopened to open state')
+  assert(bugReopened!.pr_number === null, 'pr_number cleared')
+  assertEq(bugReopened!.pr_rejections, 1, 'pr_rejections incremented to 1')
+
+  reopenBugAfterRejection(db, 9600, 1, 1000, 'Still wrong')
+  const bugReopened2 = getDiscourseBug(db, 9600, 1)
+  assertEq(bugReopened2!.pr_rejections, 2, 'pr_rejections incremented to 2')
 
   // --- sentry_issue ---
   upsertSentryIssue(db, {

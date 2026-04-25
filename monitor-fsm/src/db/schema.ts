@@ -2,7 +2,13 @@
 // Inlined (not a .sql file) so TS compilation produces a single self-contained
 // dist/ without needing a post-build copy step.
 
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
+
+// v2 migration: add pr_rejections column to discourse_bug.
+// Applied in applySchema() via ALTER TABLE (idempotent — caught by DUPLICATE COLUMN error).
+export const MIGRATION_V2_SQL = `
+ALTER TABLE discourse_bug ADD COLUMN pr_rejections INTEGER NOT NULL DEFAULT 0;
+`
 
 export const SCHEMA_SQL = `
 PRAGMA foreign_keys = ON;

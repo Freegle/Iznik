@@ -2,7 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
+import { MIGRATION_V2_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -33,7 +33,11 @@ export function resetDbForTests(): void {
 function applySchema(db: DB): void {
   db.exec(SCHEMA_SQL)
   const row = db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number | null }
-  if ((row?.v ?? 0) < SCHEMA_VERSION) {
+  const current = row?.v ?? 0
+  if (current < 2) {
+    try { db.exec(MIGRATION_V2_SQL) } catch { /* column already exists */ }
+  }
+  if (current < SCHEMA_VERSION) {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION)
   }
 }
@@ -91,6 +95,7 @@ export interface DiscourseBugRow {
   last_seen_at: string
   fixed_at: string | null
   deployed_at: string | null
+  pr_rejections: number
 }
 
 export function upsertDiscourseBug(db: DB, bug: {
@@ -139,6 +144,21 @@ export function listOpenDiscourseBugs(db: DB): DiscourseBugRow[] {
     WHERE state NOT IN ('fixed','confirmed','off-topic','duplicate')
     ORDER BY topic, post
   `).all() as DiscourseBugRow[]
+}
+
+export function reopenBugAfterRejection(db: DB, topic: number, post: number, rejectedPrNumber: number, reason?: string): void {
+  db.prepare(`
+    UPDATE discourse_bug
+    SET state = 'open',
+        pr_number = NULL,
+        pr_rejections = pr_rejections + 1,
+        reason = ?,
+        last_seen_at = datetime('now')
+    WHERE topic = ? AND post = ?
+  `).run(
+    reason ?? `PR #${rejectedPrNumber} closed by reviewer`,
+    topic, post
+  )
 }
 
 export function markDiscourseBugFixed(db: DB, topic: number, post: number, prNumber: number): void {
