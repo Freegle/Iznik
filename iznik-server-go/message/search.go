@@ -34,7 +34,7 @@ func GetWords(search string) []string {
 		"freegle", "freecycle", "for", "large", "small", "are", "but", "not", "you", "all", "any", "can", "her", "was", "one", "our",
 		"out", "day", "get", "has", "him", "how", "now", "see", "two", "who", "did", "its", "let", "she", "too", "use", "plz",
 		"of", "to", "in", "it", "is", "be", "as", "at", "so", "we", "he", "by", "or", "on", "do", "if", "me", "my", "up", "an", "go", "no", "us", "am",
-		"working", "broken", "black", "white", "grey", "blue", "green", "red", "yellow", "brown", "orange", "pink", "machine", "size", "set",
+		"working", "broken", "black", "machine", "size", "set",
 		"various", "assorted", "different", "bits", "ladies", "gents", "kids", "nice", "brand", "pack", "soft", "single", "double",
 		"top", "plastic", "electric", "unopened",
 	}
@@ -157,7 +157,7 @@ func GetWordsExact(db *gorm.DB, words []string, limit int64, groupids []uint64, 
 	sql += ") " +
 		groupFilter(groupids) +
 		typeFilter(msgtype) +
-		"GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?;"
+		"GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, messages_spatial.arrival DESC, popularity DESC LIMIT ?;"
 
 	args = append(args, limit)
 
@@ -197,7 +197,7 @@ func GetWordsTypo(db *gorm.DB, words []string, limit int64, groupids []uint64, m
 
 		sql += ")" + groupFilter(groupids) +
 			typeFilter(msgtype) +
-			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
+			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, messages_spatial.arrival DESC, popularity DESC LIMIT ?"
 
 		args = append(args, limit)
 
@@ -239,7 +239,7 @@ func GetWordsStarts(db *gorm.DB, words []string, limit int64, groupids []uint64,
 
 		sql += ") " + groupFilter(groupids) +
 			typeFilter(msgtype) +
-			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
+			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, messages_spatial.arrival DESC, popularity DESC LIMIT ?"
 
 		args = append(args, limit)
 
@@ -279,7 +279,7 @@ func GetWordsSounds(db *gorm.DB, words []string, limit int64, groupids []uint64,
 
 		sql += ") " + groupFilter(groupids) +
 			typeFilter(msgtype) +
-			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, popularity DESC LIMIT ?"
+			" GROUP BY msgid HAVING wordmatch > 0 ORDER BY wordmatch DESC, messages_spatial.arrival DESC, popularity DESC LIMIT ?"
 
 		args = append(args, limit)
 

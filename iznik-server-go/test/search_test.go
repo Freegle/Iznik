@@ -135,3 +135,35 @@ func TestAPISearch_V2Path(t *testing.T) {
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/apiv2/message/search/chair", nil), 60000)
 	assert.Equal(t, 200, resp.StatusCode)
 }
+
+func TestSearchWhiteGoods(t *testing.T) {
+	// Regression test for issue #9585: "white goods" and "white good" search
+	// Create messages with color + product terms
+	prefix := uniquePrefix("whitegoods")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// Create recent message with "white goods" in subject
+	CreateTestMessage(t, userID, groupID, "White Goods Fridge Freezer - Free", 55.9533, -3.1883)
+	CreateTestMessage(t, userID, groupID, "White Washing Machine available", 55.9533, -3.1883)
+	CreateTestMessage(t, userID, groupID, "White Microwave oven", 55.9533, -3.1883)
+	CreateTestMessage(t, userID, groupID, "White Cabinet for storage", 55.9533, -3.1883)
+
+	// Test plural form "white goods"
+	words := message.GetWords("white goods")
+	assert.Greater(t, len(words), 0, "should extract at least one word from 'white goods'")
+	assert.Contains(t, words, "goods", "'goods' should not be filtered as stopword")
+	assert.Contains(t, words, "white", "'white' should not be filtered as stopword for color-based searches")
+
+	resultsPlural := message.GetWordsExact(database.DBConn, words, 100, []uint64{groupID}, "All", 0, 0, 0, 0)
+	assert.Greater(t, len(resultsPlural), 0, "should find recent messages matching 'white goods'")
+
+	// Test singular form "white good"
+	words2 := message.GetWords("white good")
+	assert.Greater(t, len(words2), 0, "should extract at least one word from 'white good'")
+	assert.Contains(t, words2, "white", "'white' should not be filtered")
+
+	resultsSingular := message.GetWordsExact(database.DBConn, words2, 100, []uint64{groupID}, "All", 0, 0, 0, 0)
+	assert.Greater(t, len(resultsSingular), 0, "should find messages matching 'white good'")
+}
