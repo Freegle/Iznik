@@ -1562,21 +1562,14 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as any
-      // During peak/implementation phase, Discourse is fetched (so the monitor
-      // knows what's there) but bug-fixing is deferred to off-peak analysis phase.
       const phase = ctx?.phase ?? 'analysis'
-      if (phase === 'implementation') {
-        const classifications: Array<any> = Array.isArray(ctx?.classifications) ? ctx.classifications : []
-        const pendingCount = classifications.filter(c => c.type === 'bug' || c.type === 'retest').length
-        return { _transition: 'COVERAGE_GATE', reason: `peak phase — ${pendingCount} bug(s) found, deferring fixes to off-peak` }
-      }
       const classifications: Array<any> = Array.isArray(ctx?.classifications) ? ctx.classifications : []
       const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
       const fixedKeys = new Set(bugsFixed.map(b => `${b.topic}.${b.post}`))
       const pendingBugs = classifications.filter(c => (c.type === 'bug' || c.type === 'retest') && !fixedKeys.has(`${c.topic}.${c.post}`))
 
-      // Also pick up open bugs from the DB that weren't discovered this iteration
-      // (manually added, missed due to cursor edge cases, etc.)
+      // Always check DB for open bugs regardless of phase — bugs that have been
+      // sitting unaddressed for iterations must not be indefinitely deferred.
       const db = getDb()
       const dbOpenBugs = (db.prepare(`
         SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle
@@ -1587,6 +1580,14 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       // Merge: DB bugs not already in this iteration's classifications
       const classificationKeys = new Set(classifications.map((c: any) => `${c.topic}.${c.post}`))
       const extraBugs = dbOpenBugs.filter(b => !classificationKeys.has(`${b.topic}.${b.post}`))
+
+      // During peak phase, defer only if there are no pre-existing DB backlog bugs.
+      // New classification bugs (discovered this iteration) wait for off-peak.
+      // Backlog bugs that have been open across multiple iterations proceed immediately.
+      if (phase === 'implementation' && extraBugs.length === 0) {
+        const pendingCount = pendingBugs.length
+        return { _transition: 'COVERAGE_GATE', reason: `peak phase — no backlog bugs; deferring ${pendingCount} new bug(s) to off-peak` }
+      }
 
       const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
 
