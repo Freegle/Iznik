@@ -674,10 +674,33 @@ print(urllib.request.urlopen(req).read().decode())
       const task = params.task as string
       const repoCwd = (params.repoCwd as string) ?? '/home/edward/FreegleDockerWSL'
       const timeoutSec = (params.timeoutSec as number) ?? 1200
+
+      // Isolate the delegate's filesystem work in a throwaway git worktree so
+      // its `git checkout` calls (onto branches that may predate the
+      // monitor-fsm/ directory itself) cannot wipe files out from under the
+      // running FSM driver.
+      const { execFileSync } = await import('node:child_process')
+      const worktreeDir = `/tmp/monitor-fsm-delegate-${process.pid}-${Date.now()}`
+      let worktreeCreated = false
+      let worktreeError: string | null = null
+      for (const base of ['master', 'HEAD']) {
+        try {
+          execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], {
+            cwd: repoCwd, stdio: 'pipe',
+          })
+          worktreeCreated = true
+          break
+        } catch (err: any) {
+          worktreeError = String(err?.stderr?.toString?.() || err?.message || err).slice(-500)
+        }
+      }
+      const spawnCwd = worktreeCreated ? worktreeDir : repoCwd
+
       const fullPrompt = `${task}
 
 ==== CRITICAL EXECUTION CONTRAINTS — READ FIRST ====
-You are a HEADLESS, ONE-SHOT subprocess. When your response ends, your process exits. You have NO persistence, NO wakeups, NO /loop, NO ScheduleWakeup, NO Monitor, NO TaskCreate — those tools do not exist for you. A parent FSM (monitor-fsm) invoked you and is waiting on your stdout.
+${worktreeCreated ? `Your working directory is an ISOLATED git worktree at \`${worktreeDir}\`, detached from master. Run all git operations here: \`git checkout <branch>\` / \`git checkout -b <branch>\` are safe and will not affect the parent FSM driver's own checkout. Push your work to origin before emitting the output marker — the worktree is deleted when you return, so anything not pushed is lost.
+` : ''}You are a HEADLESS, ONE-SHOT subprocess. When your response ends, your process exits. You have NO persistence, NO wakeups, NO /loop, NO ScheduleWakeup, NO Monitor, NO TaskCreate — those tools do not exist for you. A parent FSM (monitor-fsm) invoked you and is waiting on your stdout.
 
 You MUST do all the work in this single session:
   1. Create or checkout the branch — see BRANCH RULES below.
@@ -761,7 +784,7 @@ If you omit the marker, your work is considered failed regardless of what actual
             '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob',
             '--model', delegateModel,
           ],
-          { cwd: repoCwd, stdio: ['pipe', 'pipe', 'pipe'] },
+          { cwd: spawnCwd, stdio: ['pipe', 'pipe', 'pipe'] },
         )
         let stdout = ''
         let stderr = ''
@@ -892,20 +915,33 @@ If you omit the marker, your work is considered failed regardless of what actual
         summary = `exited ${code} (${toolCount} tools)`
       }
       endGroup(summary)
-      return {
-        exitCode: code,
-        timedOut,
-        timeoutReason: killReason,
-        silenceToolMs: SILENCE_TOOL_MS,
-        silenceIdleMs: SILENCE_IDLE_MS,
-        hardCapMs: HARD_CAP_MS,
-        lastTool,
-        stdoutTail: redactSecrets(textStream.slice(-2000)),
-        stderrTail: redactSecrets(stderr.slice(-2000)),
-        prNumber,
-        directPushSha,
-        commitPushedSha,
-        pushed,
+      try {
+        return {
+          exitCode: code,
+          timedOut,
+          timeoutReason: killReason,
+          silenceToolMs: SILENCE_TOOL_MS,
+          silenceIdleMs: SILENCE_IDLE_MS,
+          hardCapMs: HARD_CAP_MS,
+          lastTool,
+          stdoutTail: redactSecrets(textStream.slice(-2000)),
+          stderrTail: redactSecrets(stderr.slice(-2000)),
+          prNumber,
+          directPushSha,
+          commitPushedSha,
+          pushed,
+          worktreeCreated,
+          worktreeError,
+          worktreeDir: worktreeCreated ? worktreeDir : null,
+        }
+      } finally {
+        if (worktreeCreated) {
+          try {
+            execFileSync('git', ['worktree', 'remove', '--force', worktreeDir], {
+              cwd: repoCwd, stdio: 'pipe',
+            })
+          } catch { /* best effort */ }
+        }
       }
     },
   },
