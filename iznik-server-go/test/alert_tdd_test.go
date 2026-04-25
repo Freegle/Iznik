@@ -21,11 +21,11 @@ func TestAlert_GetAlert_PublicAccess(t *testing.T) {
 	prefix := uniquePrefix("alert_public")
 	db := database.DBConn
 
-	db.Exec("INSERT INTO alerts (createdby, subject, text, html, `from`, `to`, created) VALUES (?, ?, ?, ?, ?, 'Users', NOW())",
-		1, "Test Alert "+prefix, "Test message", "<p>Test message</p>", "admin@example.com")
+	db.Exec("INSERT INTO alerts (subject, text, html, `from`, `to`, created) VALUES (?, ?, ?, ?, 'Users', NOW())",
+		"Test Alert"+prefix, "Test message", "<p>Test message</p>", "admin@example.com")
 
 	var alertID uint64
-	db.Raw("SELECT id FROM alerts WHERE subject = ? ORDER BY id DESC LIMIT 1", "Test Alert "+prefix).Scan(&alertID)
+	db.Raw("SELECT id FROM alerts WHERE subject = ? ORDER BY id DESC LIMIT 1", "Test Alert"+prefix).Scan(&alertID)
 	assert.Greater(t, alertID, uint64(0))
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/alert/%d", alertID), nil))
@@ -147,8 +147,7 @@ func TestAlert_CreateAlert_DefaultHTML(t *testing.T) {
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
 	_, token := CreateTestSession(t, adminID)
 
-	textBody := "Line 1\nLine 2\nLine 3"
-	body := fmt.Sprintf(`{"from":"admin@example.com","subject":"Test %s","text":"Line 1\\nLine 2\\nLine 3"}`, prefix)
+	body := fmt.Sprintf(`{"from":"admin@example.com","subject":"Test %s","text":"Line 1\nLine 2\nLine 3"}`, prefix)
 	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/alert?jwt=%s", token), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -192,7 +191,6 @@ func TestAlert_RecordAlert_NoTrackid(t *testing.T) {
 }
 
 func TestAlert_RecordAlert_ValidClick(t *testing.T) {
-	prefix := uniquePrefix("alert_record")
 	db := database.DBConn
 
 	db.Exec("INSERT INTO alerts_tracking (alertid, response) VALUES (1, NULL)")

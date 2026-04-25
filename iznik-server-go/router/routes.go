@@ -164,6 +164,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} map[string]interface{}
 		rg.Get("/modtools/alert", alert.ListAlerts)
+		rg.Get("/alert", alert.ListAlerts)
 
 		// @Router /alert/{id} [get]
 		// @Summary Get alert by ID
@@ -173,6 +174,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Param id path integer true "Alert ID"
 		// @Success 200 {object} map[string]interface{}
 		rg.Get("/modtools/alert/:id", alert.GetAlert)
+		rg.Get("/alert/:id", alert.GetAlert)
 
 		// @Router /alert [put]
 		// @Summary Create a new alert
@@ -183,6 +185,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Security BearerAuth
 		// @Success 200 {object} map[string]interface{}
 		rg.Put("/modtools/alert", alert.CreateAlert)
+		rg.Put("/alert", alert.CreateAlert)
 
 		// @Router /alert [post]
 		// @Summary Record alert click
@@ -192,6 +195,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Produce json
 		// @Success 200 {object} map[string]interface{}
 		rg.Post("/modtools/alert", alert.RecordAlert)
+		rg.Post("/alert", alert.RecordAlert)
 
 		// Admin
 		rg.Get("/modtools/admin", admin.ListAdmins)

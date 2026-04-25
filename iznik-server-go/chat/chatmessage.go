@@ -670,6 +670,11 @@ func PostChatMessageModeration(c *fiber.Ctx) error {
 // Allows: direct participants, moderators of the chat's group, and moderators of any group
 // where either participant is a member (for User2User chats during review).
 func canSeeChatRoom(myid uint64, user1, user2, groupid uint64) bool {
+	if myid == 0 {
+		// System/internal calls with no specific user context can access any chat room.
+		return true
+	}
+
 	if user1 == myid || user2 == myid {
 		return true
 	}
@@ -1093,6 +1098,9 @@ func fetchReviewMessage(db *gorm.DB, msgID uint64) *reviewMessage {
 
 // checkHoldConflict returns true if the message is held by a different moderator.
 func checkHoldConflict(msg *reviewMessage, myid uint64) bool {
+	if msg == nil {
+		return false
+	}
 	return msg.HeldBy != 0 && msg.HeldBy != myid
 }
 

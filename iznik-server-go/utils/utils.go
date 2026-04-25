@@ -94,7 +94,7 @@ const SPAM_COLLECTION_PENDING_REMOVE = "PendingRemove"
 
 const EMAIL_REGEXP = "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\b"
 const PHONE_REGEXP = "[0-9]{4,}"
-const TN_REGEXP = "^([\\s\\S]+?)-g[0-9]+$"
+const TN_REGEXP = "^([\\s\\S]*?)-g[0-9]+$"
 
 const OPEN_AGE = 90
 const OPEN_AGE_CHITCHAT = 365
@@ -351,13 +351,15 @@ func TidyName(name string) string {
 		name = name + "."
 	}
 
+	// We hide the "-gxxx" part of names, which will almost always be for TN members.
+	// This runs before the empty-fallback so a bare TN suffix (e.g. "-g123456") also
+	// resolves to "A freegler".
+	name = tnRegexp.ReplaceAllString(name, "$1")
+
 	if len(name) == 0 {
 		// Fallback display name when no name can be derived.
 		name = "A freegler"
 	}
-
-	// We hide the "-gxxx" part of names, which will almost always be for TN members.
-	name = tnRegexp.ReplaceAllString(name, "$1")
 
 	return name
 }

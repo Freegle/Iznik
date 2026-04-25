@@ -18,6 +18,82 @@ func TestGetWords(t *testing.T) {
 	assert.Equal(t, "which", words[1])
 }
 
+// TestGetWords_WhiteGoodsPreservesWhite verifies that "white" is not stripped
+// from search queries. "white goods" is a UK English term for household
+// appliances; stripping "white" makes the query search only for "goods",
+// which is too broad and misses the specificity of the compound term.
+// Regression for Discourse #9585 post 18.
+func TestGetWords_WhiteGoodsPreservesWhite(t *testing.T) {
+	words := message.GetWords("white goods")
+	assert.Contains(t, words, "white", "white carries semantic meaning in 'white goods' and must not be a stopword")
+	assert.Contains(t, words, "goods", "goods must be kept as a search term")
+}
+
+// TestGetWords_WhiteGoodSingularPreservesWhite verifies both words survive
+// tokenisation when the query uses the singular form.
+func TestGetWords_WhiteGoodSingularPreservesWhite(t *testing.T) {
+	words := message.GetWords("white good")
+	assert.Contains(t, words, "white", "white must not be filtered from 'white good' query")
+}
+
+// TestSearchWhiteGoodsFindsRecentMessages is an integration test: a message
+// whose subject contains "white goods" must appear in the results for the
+// query "white goods". Before the stopword fix this test still passes because
+// GetWordsStarts("goods%") finds "goods"-indexed messages; it is kept as a
+// regression guard.
+func TestSearchWhiteGoodsFindsRecentMessages(t *testing.T) {
+	prefix := uniquePrefix("wgsearch")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	msgID := CreateTestMessage(t, userID, groupID, "White goods washing machine", 55.9533, -3.1883)
+
+	groupidStr := strconv.FormatUint(groupID, 10)
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/message/search/white%%20goods?groupids=%s", groupidStr), nil), 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var results []message.SearchResult
+	json2.Unmarshal(rsp(resp), &results)
+
+	found := false
+	for _, r := range results {
+		if r.Msgid == msgID {
+			found = true
+		}
+	}
+	assert.True(t, found, "message with 'white goods' in subject must appear in search results for 'white goods'")
+}
+
+// TestSearchWhiteGoodSingularFindsGoodsMessages verifies that the singular
+// form "white good" finds messages indexed with "goods" via prefix (starts-
+// with) matching: GetWordsStarts("good%") must match the word "goods".
+// After the stopword fix GetWordsStarts also tries "white%" which adds
+// coverage. Both before and after the fix, "good%" must match "goods".
+func TestSearchWhiteGoodSingularFindsGoodsMessages(t *testing.T) {
+	prefix := uniquePrefix("wgsingular")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	msgID := CreateTestMessage(t, userID, groupID, "White goods washing machine", 55.9533, -3.1883)
+
+	groupidStr := strconv.FormatUint(groupID, 10)
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/message/search/white%%20good?groupids=%s", groupidStr), nil), 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var results []message.SearchResult
+	json2.Unmarshal(rsp(resp), &results)
+
+	found := false
+	for _, r := range results {
+		if r.Msgid == msgID {
+			found = true
+		}
+	}
+	assert.True(t, found, "searching 'white good' must find messages whose subject contains 'white goods' via prefix matching")
+}
+
 func TestSearchExact(t *testing.T) {
 	// Create a message with searchable words
 	prefix := uniquePrefix("searchexact")
