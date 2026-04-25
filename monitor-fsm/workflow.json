@@ -46,15 +46,15 @@
       ]
     },
     "FIX_OPEN_PR_CI": {
-      "description": "Fix red CI on one of my OPEN PRs. Iteration cannot leave Phase A while any redPR is present. No deferring, no rationalizing the failure as flaky. Returns to CHECK_CI to re-verify.",
+      "description": "Fix red CI on ALL open PRs in parallel. Master is green so each PR's failure is PR-specific and can be fixed independently. Returns to CHECK_CI to re-verify all at once.",
       "nodeType": "agent",
-      "prompt": "Pick the first entry from context._action_check_my_open_pr_ci.redPRs. Its failedChecks[] contain the CircleCI / coverage / netlify URLs. (1) Record the attempt: append { prNumber, attemptedAt: <now> } to contextUpdates.openPRFixAttempts. (2) Call delegate_to_coder with a task that: (a) checks out the PR branch; (b) reads the failing check logs from the URLs provided (for CircleCI, use the v1.1 API with the CIRCLECI_TOKEN from ~/.circleci/cli.yml; follow the pattern in .circleci/README.md); (c) identifies a CONCRETE root cause \u2014 not 'flaky', 'transient', 'environmental', 'pre-existing', 'unrelated', 'polluted DB', or any equivalent evasion \u2014 and fixes it in code; (d) pushes a new commit to the PR branch. The delegate MUST NOT close the PR and MUST NOT rebase/squash. The fix may be a test change, a code change, a fixture reset, a CI-config change, or an orb bump \u2014 whatever the root cause requires. (3) After delegate returns, do NOT call create_pr (the PR already exists). Set contextUpdates.lastOpenPRFix = { prNumber, exitCode, stdoutTail }. Propose transition to CHECK_CI. CHECK_CI re-reads check_my_open_pr_ci so if a new commit is now pending, the PR moves out of redPRs into pendingPRs and CI_ROUTER will advance to Phase B (or pick the next red PR if any remain).",
+      "prompt": "Master CI is green. context._action_check_my_open_pr_ci.redPRs contains all PRs with failing checks. Fix them ALL simultaneously using delegate_parallel_tasks (one task per red PR).\n\n(1) For each PR in redPRs: record { prNumber, attemptedAt: now } and build a task string that: (a) checks out the PR branch with `gh pr checkout <n> -R Freegle/Iznik`; (b) reads the failing check logs from the failedChecks[] URLs (for CircleCI, use the v1.1 API with CIRCLECI_TOKEN from ~/.circleci/cli.yml per .circleci/README.md); (c) identifies a CONCRETE root cause \u2014 not 'flaky', 'transient', 'environmental', 'pre-existing', 'unrelated' \u2014 and fixes it in code; (d) pushes a new commit to the PR branch. Use id: \"pr-<prNumber>\" for each task.\n\n(2) Call delegate_parallel_tasks with the full tasks array.\n\n(3) After parallel_tasks returns, set contextUpdates.openPRFixAttempts to the attempt records and contextUpdates.lastOpenPRFix = results. Do NOT call create_pr \u2014 existing PRs only. Propose transition to CHECK_CI.",
       "readActions": [
         "fetch_ci_failure_logs",
         "search_code"
       ],
       "writeActions": [
-        "delegate_to_coder"
+        "delegate_parallel_tasks"
       ]
     },
     "FETCH_DISCOURSE": {
@@ -91,7 +91,7 @@
       "writeActions": []
     },
     "WORK_ROUTER": {
-      "description": "Phase B dispatch. Tool node \u2014 work_router_decide branches deterministically on context.classifications + context.bugsFixed + _action_check_sentry. Priority: (1) unfixed 'bug'/'retest' \u2192 PICK_DISCOURSE_BUG; (2) actionable Sentry issues \u2192 FIX_SENTRY_ISSUE; (3) else \u2192 COVERAGE_GATE.",
+      "description": "Phase B dispatch. Tool node \u2014 work_router_decide branches deterministically on context.classifications + context.bugsFixed + _action_check_sentry. Priority: (1) unfixed 'bug'/'retest' \u2192 DISPATCH_ALL_BUGS; (2) actionable Sentry issues \u2192 FIX_SENTRY_ISSUE; (3) else \u2192 COVERAGE_GATE.",
       "nodeType": "tool",
       "readActions": [
         "persist_classifications",
@@ -136,6 +136,30 @@
         "post_discourse_reply_draft"
       ]
     },
+    "DISPATCH_ALL_BUGS": {
+      "description": "Parallel coder dispatch: launches one Claude agent per pending bug, all running simultaneously in separate git worktrees. Replaces the serial PICK→DELEGATE loop. Returns to VERIFY_DISCOURSE_BATCH once all agents finish.",
+      "nodeType": "agent",
+      "prompt": "Collect ALL bugs that still need fixing: from context.classifications, take every entry with type=='bug' or type=='retest' that is NOT already in contextUpdates.bugsFixed (check by topic+post). Also apply the deferred-skip rule: if the most recent post on the same topic is a 'mine' classification that asks a question AND the classification has no reviewerRejected flag, skip it (append { topic, post, user, outcome:'deferred', reason:'awaiting reporter clarification' } to contextUpdates.bugsFixed).\n\nFor each remaining actionable bug, build a task string using the SAME template as DELEGATE_DISCOURSE_BUG_FIX's prompt (REPORTED SYMPTOM, SYMPTOM CROSS-CHECK, EVIDENCE REQUIREMENT, TASK, BRANCH/PR SELECTION sections). Use id: \"bug-<topic>-<post>\" for each task.\n\nCall delegate_parallel_tasks with all tasks in a single call. Store contextUpdates.pendingBugBatch = [{ topic, post, user, summary, screenshotUrl, originalPostText, reviewerReason, rejectedPrNumber }] (one entry per dispatched bug in the same order as tasks[]).\n\nAfter delegate_parallel_tasks returns, set contextUpdates.bugBatchResults = the action result. Propose transition to VERIFY_DISCOURSE_BATCH.",
+      "readActions": [
+        "search_code"
+      ],
+      "writeActions": [
+        "delegate_parallel_tasks"
+      ]
+    },
+
+    "VERIFY_DISCOURSE_BATCH": {
+      "description": "Process results from DISPATCH_ALL_BUGS: for each agent result call adversarial_review_pr, post_discourse_reply_draft, record bugsFixed. Serial review of what was fixed in parallel.",
+      "nodeType": "agent",
+      "prompt": "context.bugBatchResults.results[] contains one entry per dispatched bug. context.pendingBugBatch[] has the bug metadata in the same order. Process each result:\n\nFor each result[i]:\n  - bug = context.pendingBugBatch[i]\n  - D = result[i]\n\n  SUCCESS: D.exitCode === 0 AND D.prNumber is a number AND D.timedOut !== true:\n    (A) Call create_pr with { prNumber: D.prNumber }.\n    (B) Call adversarial_review_pr with { prNumber: D.prNumber, repo: 'Freegle/Iznik' }.\n    (C) If review passed: call post_discourse_reply_draft (same rules as VERIFY_DISCOURSE_BUG_FIX: quote 15-25 words verbatim, one-sentence plain-English body, no jargon). Append { ...bug, prNumber: D.prNumber, frontendOnly: create_pr result.frontendOnly, outcome: 'fixed' } to contextUpdates.bugsFixed.\n    (D) If review failed (blockers): do NOT post a draft. Append { ...bug, outcome: 'deferred', reason: 'adversarial review blocked: ' + review.summary.slice(0,80) } to contextUpdates.bugsFixed.\n\n  FAILURE: D.exitCode !== 0 OR D.prNumber missing OR D.timedOut === true:\n    Do NOT call create_pr or post_discourse_reply_draft.\n    Append { ...bug, outcome: 'deferred', reason: D.timedOut ? 'delegate timed out — re-run next iteration' : (D.failedReason ?? 'delegate failed') } to contextUpdates.bugsFixed.\n\nAfter processing ALL results, set contextUpdates.currentBug = null. Propose transition to WORK_ROUTER.",
+      "readActions": [],
+      "writeActions": [
+        "create_pr",
+        "adversarial_review_pr",
+        "post_discourse_reply_draft"
+      ]
+    },
+
     "FIX_SENTRY_ISSUE": {
       "description": "Fix one Sentry issue. Feature branch + PR.",
       "nodeType": "agent",
@@ -285,11 +309,25 @@
       "label": "classified"
     },
     {
-      "id": "t_work_router_to_pick_bug",
+      "id": "t_work_router_to_dispatch_bugs",
       "from": "WORK_ROUTER",
-      "to": "PICK_DISCOURSE_BUG",
+      "to": "DISPATCH_ALL_BUGS",
       "trigger": "llm_decision",
-      "label": "bug pending"
+      "label": "bugs pending — parallel dispatch"
+    },
+    {
+      "id": "t_dispatch_bugs_to_verify_batch",
+      "from": "DISPATCH_ALL_BUGS",
+      "to": "VERIFY_DISCOURSE_BATCH",
+      "trigger": "llm_decision",
+      "label": "all agents finished"
+    },
+    {
+      "id": "t_verify_batch_to_work_router",
+      "from": "VERIFY_DISCOURSE_BATCH",
+      "to": "WORK_ROUTER",
+      "trigger": "llm_decision",
+      "label": "batch processed"
     },
     {
       "id": "t_work_router_to_sentry_fix",

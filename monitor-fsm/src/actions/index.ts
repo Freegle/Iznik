@@ -991,6 +991,178 @@ If you omit the marker, your work is considered failed regardless of what actual
     },
   },
 
+  // ---- Parallel delegate ----
+  // Sibling of delegate_to_coder. Same spawn mechanics but runs N tasks
+  // simultaneously, each in its own throwaway git worktree. Use when master is
+  // green and multiple independent tasks (red PRs, pending bugs) can be fixed
+  // concurrently without conflicting branches.
+  {
+    name: 'delegate_parallel_tasks',
+    description: 'Spawn N headless Claude Code sessions in parallel, each in its own isolated git worktree. Tasks run concurrently — use when master CI is green and each task touches a different branch. Params: {tasks: [{id, task, timeoutSec?}], repoCwd?}. Returns {results: [{id, exitCode, prNumber?, directPushSha?, commitPushedSha?, timedOut?, pushed, stdoutTail, stderrTail, summary}]}.',
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        tasks: {
+          type: 'array',
+          description: 'Array of tasks to run in parallel. Each must have a unique id string and a full task description.',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Unique identifier for this task (e.g. "pr-208", "bug-9594-5").' },
+              task: { type: 'string', description: 'Full task description, same format as delegate_to_coder.' },
+              timeoutSec: { type: 'number', description: 'Per-task timeout seconds. Default 1200.' },
+            },
+            required: ['id', 'task'],
+          },
+        },
+        repoCwd: { type: 'string', description: 'Repository root. Defaults to /home/edward/FreegleDockerWSL.' },
+      },
+      required: ['tasks'],
+    },
+    handler: async (params) => {
+      const tasks = params.tasks as Array<{ id: string; task: string; timeoutSec?: number }>
+      const repoCwd = (params.repoCwd as string) ?? '/home/edward/FreegleDockerWSL'
+      const { execFileSync, spawn } = await import('node:child_process')
+      const delegateModel = process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'sonnet'
+      const SILENCE_TOOL_MS = 1_800_000
+      const SILENCE_IDLE_MS = 180_000
+
+      const runTask = async (t: { id: string; task: string; timeoutSec?: number }, idx: number) => {
+        const timeoutSec = t.timeoutSec ?? 1200
+        const HARD_CAP_MS = Math.max(timeoutSec * 1000, 3_600_000)
+        const worktreeDir = `/tmp/monitor-fsm-parallel-${process.pid}-${Date.now()}-${idx}`
+        let worktreeCreated = false
+        for (const base of ['master', 'HEAD']) {
+          try {
+            execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], {
+              cwd: repoCwd, stdio: 'pipe',
+            })
+            worktreeCreated = true
+            break
+          } catch { /* try next base */ }
+        }
+        const spawnCwd = worktreeCreated ? worktreeDir : repoCwd
+
+        const fullPrompt = `${t.task}
+
+==== CRITICAL EXECUTION CONSTRAINTS — READ FIRST ====
+${worktreeCreated ? `Your working directory is an ISOLATED git worktree at \`${worktreeDir}\`, detached from master. Run all git operations here: \`git checkout <branch>\` / \`git checkout -b <branch>\` are safe. Push your work to origin before emitting the output marker — the worktree is deleted when you return.
+` : ''}You are a HEADLESS, ONE-SHOT subprocess. You MUST complete all work and push to origin in this single session. No wakeups, no ScheduleWakeup, no /loop.
+
+BRANCH RULES: always \`git fetch origin && git checkout -b branch-name origin/master\` for new branches. For existing PR branches: \`gh pr checkout <n> -R Freegle/Iznik\`.
+STAGING RULES: never \`git add -A\`. Always stage explicit paths.
+
+OUTPUT MARKERS — MANDATORY, MACHINE-PARSED (emit exactly one on its own line at the very end):
+  - Opened a NEW PR:                 PR_NUMBER=<n>
+  - Pushed to master directly:       DIRECT_PUSH=<sha>
+  - Pushed to an existing PR branch: COMMIT_PUSHED=<sha>
+  - Could NOT complete the task:     DELEGATE_FAILED=<one-line-reason>
+`
+        type KillReason = 'tool-silence' | 'idle-silence' | 'hardCap' | null
+        let toolCount = 0
+        const result = await new Promise<{ stdout: string; stderr: string; textStream: string; code: number; killReason: KillReason }>((resolve) => {
+          const child = spawn(
+            CLAUDE_BIN,
+            ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+              '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob',
+              '--model', delegateModel],
+            { cwd: spawnCwd, stdio: ['pipe', 'pipe', 'pipe'] },
+          )
+          let stdout = '', stderr = '', textStream = '', lineBuffer = ''
+          let lastEventAt = Date.now()
+          let currentTool: string | null = null
+          let killReason: KillReason = null
+
+          const processLine = (line: string) => {
+            const trimmed = line.trim()
+            if (!trimmed) return
+            let ev: any
+            try { ev = JSON.parse(trimmed) } catch { return }
+            const content = ev?.message?.content ?? ev?.content
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block.type === 'text' && typeof block.text === 'string') textStream += block.text
+                else if (block.type === 'tool_use') { currentTool = block.name; toolCount++ }
+                else if (block.type === 'tool_result') currentTool = null
+              }
+            } else if (typeof content === 'string') textStream += content
+            if (ev?.type === 'result' && typeof ev.result === 'string') textStream += ev.result
+          }
+
+          child.stdout.on('data', (d) => {
+            const chunk = String(d); stdout += chunk; lastEventAt = Date.now()
+            lineBuffer += chunk
+            const lines = lineBuffer.split('\n'); lineBuffer = lines.pop() ?? ''
+            for (const l of lines) processLine(l)
+          })
+          child.stderr.on('data', (d) => { stderr += String(d); lastEventAt = Date.now() })
+
+          const silenceTick = setInterval(() => {
+            const silence = Date.now() - lastEventAt
+            if (silence > (currentTool ? SILENCE_TOOL_MS : SILENCE_IDLE_MS)) {
+              killReason = currentTool ? 'tool-silence' : 'idle-silence'
+              child.kill('SIGTERM')
+            }
+          }, 30_000)
+          const hardCap = setTimeout(() => { killReason = 'hardCap'; child.kill('SIGTERM') }, HARD_CAP_MS)
+
+          child.on('close', (code) => {
+            clearInterval(silenceTick); clearTimeout(hardCap)
+            if (lineBuffer) processLine(lineBuffer)
+            resolve({ stdout, stderr, textStream, code: code ?? 1, killReason })
+          })
+          child.stdin.write(fullPrompt)
+          child.stdin.end()
+        })
+
+        if (worktreeCreated) {
+          try { execFileSync('git', ['worktree', 'remove', '--force', worktreeDir], { cwd: repoCwd, stdio: 'pipe' }) } catch { /* best effort */ }
+        }
+
+        const combined = `${result.textStream}\n${result.stderr}`
+        const prMatch = combined.match(/PR_NUMBER=(\d+)/)
+        const directMatch = combined.match(/DIRECT_PUSH=([a-f0-9]+)/)
+        const commitMatch = combined.match(/COMMIT_PUSHED=([a-f0-9]+)/)
+        const failedMatch = combined.match(/DELEGATE_FAILED=([^\n]+)/)
+        const timedOut = result.killReason !== null || result.code === 143
+        const prNumber = prMatch ? Number(prMatch[1]) : undefined
+        const directPushSha = directMatch ? directMatch[1] : undefined
+        const commitPushedSha = commitMatch ? commitMatch[1] : undefined
+        const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
+
+        let summary: string
+        if (timedOut) summary = `[${t.id}] timed out (${result.killReason}) after ${toolCount} tools`
+        else if (prNumber) summary = `[${t.id}] opened PR #${prNumber} (${toolCount} tools)`
+        else if (commitPushedSha) summary = `[${t.id}] pushed ${commitPushedSha.slice(0, 9)} to existing PR (${toolCount} tools)`
+        else if (directPushSha) summary = `[${t.id}] pushed ${directPushSha.slice(0, 9)} to master (${toolCount} tools)`
+        else if (failedMatch) summary = `[${t.id}] DELEGATE_FAILED: ${failedMatch[1].trim().slice(0, 60)}`
+        else summary = `[${t.id}] exited ${result.code} (${toolCount} tools)`
+        out(summary)
+
+        return {
+          id: t.id,
+          exitCode: result.code,
+          timedOut,
+          timeoutReason: result.killReason,
+          prNumber,
+          directPushSha,
+          commitPushedSha,
+          pushed,
+          failedReason: failedMatch ? failedMatch[1].trim() : undefined,
+          stdoutTail: redactSecrets(result.textStream.slice(-1500)),
+          stderrTail: redactSecrets(result.stderr.slice(-500)),
+          summary,
+        }
+      }
+
+      out(`▸ delegate_parallel_tasks: launching ${tasks.length} agents in parallel`)
+      const results = await Promise.all(tasks.map((t, i) => runTask(t, i)))
+      const succeeded = results.filter(r => r.pushed).length
+      out(`◂ delegate_parallel_tasks: ${succeeded}/${tasks.length} tasks pushed`)
+      return { results }
+    },
+  },
+
   {
     name: 'write_summary',
     description: 'Write /tmp/freegle-monitor/summary.md. Params: {content: string}',
@@ -1311,7 +1483,7 @@ print('sent')
 
   {
     name: 'work_router_decide',
-    description: 'Phase B router logic. No LLM — branches on context.classifications and context.bugsFixed. Returns {_transition: "PICK_DISCOURSE_BUG" | "FIX_SENTRY_ISSUE" | "COVERAGE_GATE"}.',
+    description: 'Phase B router logic. No LLM — branches on context.classifications and context.bugsFixed. Returns {_transition: "DISPATCH_ALL_BUGS" | "FIX_SENTRY_ISSUE" | "COVERAGE_GATE"}.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as any
@@ -1326,9 +1498,9 @@ print('sent')
       const classifications: Array<any> = Array.isArray(ctx?.classifications) ? ctx.classifications : []
       const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
       const fixedKeys = new Set(bugsFixed.map(b => `${b.topic}.${b.post}`))
-      const pendingBug = classifications.find(c => (c.type === 'bug' || c.type === 'retest') && !fixedKeys.has(`${c.topic}.${c.post}`))
-      if (pendingBug) {
-        return { _transition: 'PICK_DISCOURSE_BUG', reason: `unfixed bug ${pendingBug.topic}.${pendingBug.post}` }
+      const pendingBugs = classifications.filter(c => (c.type === 'bug' || c.type === 'retest') && !fixedKeys.has(`${c.topic}.${c.post}`))
+      if (pendingBugs.length > 0) {
+        return { _transition: 'DISPATCH_ALL_BUGS', reason: `${pendingBugs.length} unfixed bug(s) — parallel dispatch` }
       }
       const sentry = ctx?._action_check_sentry ?? {}
       const sentryIssues: Array<any> = Array.isArray(sentry.issues) ? sentry.issues : []
