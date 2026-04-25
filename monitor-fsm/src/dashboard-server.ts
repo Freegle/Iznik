@@ -216,7 +216,7 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     const rows = db.prepare(`
       SELECT b.topic, b.post, b.topic_title, b.reporter, b.excerpt, b.state,
              b.pr_number, b.reason, b.first_seen_at, b.last_seen_at,
-             b.fixed_at, b.deployed_at, b.feature_area,
+             b.fixed_at, b.deployed_at, b.feature_area, b.pr_rejections,
              COALESCE(b.feature_area, 'Uncategorised') AS group_key
       FROM discourse_bug b
       ORDER BY COALESCE(b.feature_area, 'Uncategorised'), b.topic, b.post
@@ -342,6 +342,26 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
       db.prepare("UPDATE discourse_bug SET state = ?, reason = COALESCE(?, reason), last_seen_at = datetime('now') WHERE topic = ? AND post = ?")
         .run(parsed.state, parsed.reason ?? null, topic, post)
     }
+    const row = db.prepare('SELECT * FROM discourse_bug WHERE topic = ? AND post = ?').get(topic, post)
+    json(res, 200, row ?? { error: 'not found' })
+    return
+  }
+
+  // POST /api/bugs/:topic/:post/link-pr  — link a PR and set fix-queued
+  const bugLinkPr = path.match(/^\/api\/bugs\/(\d+)\/(\d+)\/link-pr$/)
+  if (req.method === 'POST' && bugLinkPr) {
+    const topic = Number(bugLinkPr[1])
+    const post = Number(bugLinkPr[2])
+    const body = await readBody(req)
+    let parsed: { prNumber?: number }
+    try { parsed = JSON.parse(body) } catch { json(res, 400, { error: 'bad json' }); return }
+    if (!parsed.prNumber) { json(res, 400, { error: 'prNumber required' }); return }
+    db.prepare(`
+      UPDATE discourse_bug
+      SET state = 'fix-queued', pr_number = ?, pr_rejections = 0,
+          reason = 'Linked by human', last_seen_at = datetime('now')
+      WHERE topic = ? AND post = ?
+    `).run(parsed.prNumber, topic, post)
     const row = db.prepare('SELECT * FROM discourse_bug WHERE topic = ? AND post = ?').get(topic, post)
     json(res, 200, row ?? { error: 'not found' })
     return

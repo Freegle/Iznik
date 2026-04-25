@@ -21,6 +21,7 @@ import (
 	"github.com/freegle/iznik-server-go/location"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -2510,6 +2511,8 @@ func PatchMessage(c *fiber.Ctx) error {
 	// req.Attachments is nil when the field is absent from JSON (don't touch).
 	// req.Attachments is [] (empty, non-nil) when all attachments are removed (#338).
 	if req.Attachments != nil {
+		recordAIDeletions(db, myid, req.ID, req.Attachments)
+
 		if len(req.Attachments) > 0 {
 			for i, attid := range req.Attachments {
 				primary := i == 0
@@ -3520,4 +3523,53 @@ func stringPtrEqual(a, b *string) bool {
 		return false
 	}
 	return *a == *b
+}
+
+// recordAIDeletions checks which attachments on msgID will be removed by the new keepList,
+// and for each AI-generated attachment being removed, records a Reject microaction.
+func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint64) {
+	type aiCandidate struct {
+		ID          uint64
+		Externaluid string
+		Externalmods json.RawMessage
+	}
+
+	var candidates []aiCandidate
+	if len(keepList) > 0 {
+		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ? AND id NOT IN (?)", msgID, keepList).Scan(&candidates)
+	} else {
+		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ?", msgID).Scan(&candidates)
+	}
+
+	for _, att := range candidates {
+		if att.Externaluid == "" || !isAIAttachment(att.Externalmods) {
+			continue
+		}
+		var aiImageID uint64
+		db.Raw("SELECT id FROM ai_images WHERE externaluid = ? LIMIT 1", att.Externaluid).Scan(&aiImageID)
+		if aiImageID > 0 {
+			microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
+		}
+	}
+}
+
+// isAIAttachment returns true if the externalmods JSON contains {"ai": true}.
+func isAIAttachment(mods json.RawMessage) bool {
+	if len(mods) == 0 {
+		return false
+	}
+	var m struct {
+		AI interface{} `json:"ai"`
+	}
+	if err := json.Unmarshal(mods, &m); err != nil {
+		return false
+	}
+	switch v := m.AI.(type) {
+	case bool:
+		return v
+	case float64:
+		return v != 0
+	default:
+		return false
+	}
 }
