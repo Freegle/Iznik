@@ -1,6 +1,6 @@
 <template>
   <span :class="`badge bg-${badgeClass}`">
-    {{ state }}
+    {{ label }}
   </span>
 </template>
 
@@ -12,6 +12,12 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+
+const LABELS: Record<string, string> = {
+  'deferred': 'human',
+}
+
+const label = computed(() => LABELS[props.state] ?? props.state)
 
 const badgeClass = computed(() => {
   switch (props.state) {

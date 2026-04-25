@@ -49,7 +49,6 @@
               <span :title="bug.state === 'deferred' && bug.reason ? bug.reason : (bug.excerpt || bug.topic_title || '')">
                 {{ bug.excerpt || bug.topic_title || '—' }}
               </span>
-              <span v-if="bug.state === 'deferred'" class="badge bg-danger ms-1" title="Needs human decision">⚠ human</span>
             </td>
             <td>
               <StateBadge :state="bug.state" />
