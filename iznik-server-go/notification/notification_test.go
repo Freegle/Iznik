@@ -12,27 +12,21 @@ import (
 )
 
 func init() {
-	database.InitDB()
-}
-
-func TestNotificationTableName(t *testing.T) {
-	// Notification struct should map to notifications table
-	var notif Notification
-	assert.Equal(t, "notifications", notif.TableName())
+	database.InitDatabase()
 }
 
 func TestNotificationJSONMarshal(t *testing.T) {
 	// Test Notification marshals/unmarshals correctly
-	now := time.Now()
+	now := time.Now().Truncate(time.Second)
 	notif := Notification{
-		ID:        1,
-		Userid:    2,
-		Type:      "NEW_MESSAGE",
-		MessageID: 3,
-		Title:     "New message",
-		Message:   "You have a new message",
-		Seen:      0,
-		Created:   now,
+		ID:         1,
+		Touser:     2,
+		Type:       "NEW_MESSAGE",
+		Newsfeedid: 3,
+		Title:      "New message",
+		Text:       "You have a new message",
+		Seen:       false,
+		Timestamp:  now,
 	}
 
 	data, err := json.Marshal(notif)
@@ -42,11 +36,11 @@ func TestNotificationJSONMarshal(t *testing.T) {
 	err = json.Unmarshal(data, &notif2)
 	require.NoError(t, err)
 	assert.Equal(t, notif.ID, notif2.ID)
-	assert.Equal(t, notif.Userid, notif2.Userid)
+	assert.Equal(t, notif.Touser, notif2.Touser)
 	assert.Equal(t, notif.Type, notif2.Type)
-	assert.Equal(t, notif.MessageID, notif2.MessageID)
+	assert.Equal(t, notif.Newsfeedid, notif2.Newsfeedid)
 	assert.Equal(t, notif.Title, notif2.Title)
-	assert.Equal(t, notif.Message, notif2.Message)
+	assert.Equal(t, notif.Text, notif2.Text)
 	assert.Equal(t, notif.Seen, notif2.Seen)
 }
 
@@ -68,30 +62,30 @@ func TestNotificationTypes(t *testing.T) {
 }
 
 func TestNotificationSeen(t *testing.T) {
-	// Test notification seen flag
+	// Test notification seen flag (Seen is bool)
 	unseenNotif := Notification{
-		Seen: 0,
+		Seen: false,
 	}
-	assert.Equal(t, int8(0), unseenNotif.Seen)
+	assert.Equal(t, false, unseenNotif.Seen)
 
 	seenNotif := Notification{
-		Seen: 1,
+		Seen: true,
 	}
-	assert.Equal(t, int8(1), seenNotif.Seen)
+	assert.Equal(t, true, seenNotif.Seen)
 }
 
-func TestNotificationWithoutMessageID(t *testing.T) {
-	// Some notifications may not have a message ID (e.g., system notifications)
+func TestNotificationWithoutNewsfeedID(t *testing.T) {
+	// Some notifications (e.g. system) may not have a newsfeed ID
 	notif := Notification{
 		ID:     1,
-		Userid: 2,
+		Touser: 2,
 		Type:   "SYSTEM",
 		Title:  "Welcome",
-		Message: "Welcome to Freegle",
-		Seen:   0,
+		Text:   "Welcome to Freegle",
+		Seen:   false,
 	}
 
-	assert.Equal(t, uint64(0), notif.MessageID)
+	assert.Equal(t, int64(0), notif.Newsfeedid)
 	assert.Equal(t, "SYSTEM", notif.Type)
 	assert.NotEmpty(t, notif.Title)
 }
@@ -100,11 +94,11 @@ func TestNotificationTimestamp(t *testing.T) {
 	// Test that notification preserves creation timestamp
 	now := time.Now()
 	notif := Notification{
-		Created: now,
+		Timestamp: now,
 	}
 
 	// Time should be preserved (allowing for some rounding)
-	assert.WithinDuration(t, now, notif.Created, time.Second)
+	assert.WithinDuration(t, now, notif.Timestamp, time.Second)
 }
 
 func TestMultipleNotifications(t *testing.T) {
@@ -112,19 +106,19 @@ func TestMultipleNotifications(t *testing.T) {
 	notifs := []Notification{
 		{
 			ID:     1,
-			Userid: 1,
+			Touser: 1,
 			Type:   "MESSAGE",
 			Title:  "Msg 1",
 		},
 		{
 			ID:     2,
-			Userid: 1,
+			Touser: 1,
 			Type:   "REPLY",
 			Title:  "Msg 2",
 		},
 		{
 			ID:     3,
-			Userid: 2,
+			Touser: 2,
 			Type:   "MENTION",
 			Title:  "Msg 3",
 		},
@@ -139,19 +133,19 @@ func TestMultipleNotifications(t *testing.T) {
 	assert.Len(t, notifs2, 3)
 	assert.Equal(t, notifs[0].ID, notifs2[0].ID)
 	assert.Equal(t, notifs[1].Type, notifs2[1].Type)
-	assert.Equal(t, notifs[2].Userid, notifs2[2].Userid)
+	assert.Equal(t, notifs[2].Touser, notifs2[2].Touser)
 }
 
-func TestNotificationEmptyMessage(t *testing.T) {
-	// Test notification with empty message
+func TestNotificationEmptyText(t *testing.T) {
+	// Test notification with empty text
 	notif := Notification{
 		ID:     1,
-		Userid: 2,
+		Touser: 2,
 		Type:   "SYSTEM",
 		Title:  "Empty",
-		Message: "",
+		Text:   "",
 	}
 
-	assert.Equal(t, "", notif.Message)
+	assert.Equal(t, "", notif.Text)
 	assert.NotEmpty(t, notif.Title)
 }

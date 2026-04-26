@@ -381,7 +381,7 @@ func TestTidyName_31CharMixedLettersDigitsNotTidied(t *testing.T) {
 
 func TestTidyName_33CharMixedLettersDigitsTruncated(t *testing.T) {
 	// 33-char string should be truncated to 32 chars + "..."
-	mixed33 := "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5pq" // 33 chars
+	mixed33 := "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5pqr" // 33 chars
 	result := TidyName(mixed33)
 	assert.Equal(t, mixed33[:32]+"...", result)
 }
