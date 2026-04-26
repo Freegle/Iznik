@@ -4019,7 +4019,8 @@ func TestGetChats_Success(t *testing.T) {
 // TestGetChats_UnseenFiltering tests that unseen message count respects the 31-day window.
 func TestGetChats_UnseenFiltering(t *testing.T) {
 	prefix := uniquePrefix("UnseenFilter")
-	user1ID, user1Token := CreateTestSession(t, CreateTestUser(t, prefix+"_user1", "Member"))
+	user1ID := CreateTestUser(t, prefix+"_user1", "Member")
+	_, user1Token := CreateTestSession(t, user1ID)
 	user2ID := CreateTestUser(t, prefix+"_user2", "Member")
 	db := database.DBConn
 
@@ -4091,7 +4092,8 @@ func TestGetChats_Pagination(t *testing.T) {
 // TestGetChats_CompletedChats tests handling of completed/closed chats.
 func TestGetChats_CompletedChats(t *testing.T) {
 	prefix := uniquePrefix("Completed")
-	user1ID, user1Token := CreateTestSession(t, CreateTestUser(t, prefix+"_user1", "Member"))
+	user1ID := CreateTestUser(t, prefix+"_user1", "Member")
+	_, user1Token := CreateTestSession(t, user1ID)
 	user2ID := CreateTestUser(t, prefix+"_user2", "Member")
 	db := database.DBConn
 
@@ -4160,7 +4162,8 @@ func TestGetChats_EdgeCases(t *testing.T) {
 	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode, "Invalid JWT should return 401")
 
 	// Test 3: Valid authentication returns 200 even with no chats
-	userID, token := CreateTestSession(t, CreateTestUser(t, prefix+"_user", "Member"))
+	userID := CreateTestUser(t, prefix+"_user", "Member")
+	_, token := CreateTestSession(t, userID)
 	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat?jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode, "Valid auth with no chats should return 200")
 
