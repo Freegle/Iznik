@@ -52,9 +52,9 @@ func TestCanSeeChatRoomSecondUser(t *testing.T) {
 }
 
 func TestCanSeeChatRoomZeroUser(t *testing.T) {
-	// User ID 0 (group chat) should always return true
+	// User ID 0 (unauthenticated) cannot see a private chat between two other users.
 	result := canSeeChatRoom(0, 1, 2, 1)
-	assert.True(t, result)
+	assert.False(t, result)
 }
 
 func TestCheckHoldConflictNilMessage(t *testing.T) {
