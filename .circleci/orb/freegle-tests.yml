@@ -225,6 +225,17 @@ commands:
             sudo sysctl vm.overcommit_memory=1
             echo "Set vm.overcommit_memory=1 for Redis"
 
+            # Docker 28/29 uses nftables (via iptables-nft) for its firewall rules, but
+            # older Docker runs may have left stale iptables-legacy rules with FORWARD
+            # policy DROP. Since both rule sets are active simultaneously, the legacy DROP
+            # policy blocks all container traffic for networks not in those stale rules.
+            # Resetting legacy FORWARD to ACCEPT unblocks container-to-container and
+            # container-to-internet without affecting Docker's nftables-managed rules.
+            sudo iptables-legacy -P FORWARD ACCEPT 2>/dev/null || true
+            sudo iptables-legacy -P INPUT ACCEPT 2>/dev/null || true
+            sudo iptables-legacy -P OUTPUT ACCEPT 2>/dev/null || true
+            echo "Reset iptables-legacy policies to ACCEPT"
+
             # Create secrets files after cleanup, right before Docker startup
             echo "Creating secrets files after cleanup:"
             mkdir -p secrets
@@ -404,6 +415,13 @@ commands:
       - run:
           name: Fix memory overcommit for Redis
           command: sudo sysctl vm.overcommit_memory=1 || true
+      - run:
+          name: Fix stale iptables-legacy FORWARD policy
+          command: |
+            sudo iptables-legacy -P FORWARD ACCEPT 2>/dev/null || true
+            sudo iptables-legacy -P INPUT ACCEPT 2>/dev/null || true
+            sudo iptables-legacy -P OUTPUT ACCEPT 2>/dev/null || true
+            echo "Reset iptables-legacy policies to ACCEPT"
       - run:
           name: Start Docker services (two-phase)
           command: |
