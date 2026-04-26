@@ -1398,7 +1398,7 @@ class MessageTest extends IznikTestCase {
         $m = new Message($this->dbhr, $this->dbhm);
         $text = "I'd like this please.\r\nSent from Outlook for iOS<https://krs.microsoft.com/redirect?id=-crYd9Lj>";
         $stripped = $m->stripSigs($text);
-        $this->assertEquals("I'd like this please.\r\n", $stripped);
+        $this->assertEquals("I'd like this please.", $stripped);
     }
 }
 
