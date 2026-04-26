@@ -245,10 +245,13 @@ func PostMemberships(c *fiber.Ctx) error {
 		// confusing behaviour reported in Discourse topic 9618 where a mod clicks Ignore
 		// and the member reappears immediately because they are flagged on another of the
 		// mod's groups. PHP User.php:6805 sets reviewrequestedat = NULL on review completion.
+		// V1 parity: memberReview() never touches heldby.
+		// Skip held memberships (heldby IS NOT NULL) — a mod explicitly held them and Ignore
+		// must not evict them from the review queue.
 		modGroupIDs := user.GetActiveModGroupIDs(myid)
 		if len(modGroupIDs) > 0 {
-			db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL, heldby = NULL "+
-				"WHERE userid = ? AND groupid IN ?",
+			db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL "+
+				"WHERE userid = ? AND groupid IN ? AND heldby IS NULL",
 				req.Userid, modGroupIDs)
 		}
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
