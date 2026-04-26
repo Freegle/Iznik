@@ -151,7 +151,7 @@ services:
         condition: service_healthy
         required: false
       spamassassin-app:
-        condition: service_healthy
+        condition: service_started
       rspamd:
         condition: service_healthy
       reverse-proxy:
@@ -203,12 +203,6 @@ services:
     environment:
       - CONTAINER_NAME=spamassassin-app
     restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 783"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 120s
 
   rspamd:
     image: rspamd/rspamd:latest
