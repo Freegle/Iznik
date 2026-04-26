@@ -19,10 +19,11 @@ func TestAlert_GetAlert_NotFound(t *testing.T) {
 
 func TestAlert_GetAlert_PublicAccess(t *testing.T) {
 	prefix := uniquePrefix("alert_public")
+	createdbyID := CreateTestUser(t, prefix+"_creator", "User")
 	db := database.DBConn
 
 	db.Exec("INSERT INTO alerts (createdby, subject, text, html, `from`, `to`, created) VALUES (?, ?, ?, ?, ?, 'Users', NOW())",
-		1, "Test Alert "+prefix, "Test message", "<p>Test message</p>", "admin@example.com")
+		createdbyID, "Test Alert "+prefix, "Test message", "<p>Test message</p>", "admin@example.com")
 
 	var alertID uint64
 	db.Raw("SELECT id FROM alerts WHERE subject = ? ORDER BY id DESC LIMIT 1", "Test Alert "+prefix).Scan(&alertID)
@@ -35,9 +36,11 @@ func TestAlert_GetAlert_PublicAccess(t *testing.T) {
 	json.Unmarshal(rsp(resp), &result)
 	assert.Equal(t, float64(0), result["ret"])
 	assert.Equal(t, "Success", result["status"])
-	alertObj := result["alert"].(map[string]interface{})
-	assert.Equal(t, float64(alertID), alertObj["id"])
-	assert.Equal(t, "Test Alert"+prefix, alertObj["subject"])
+	alertObj, ok := result["alert"].(map[string]interface{})
+	if assert.True(t, ok, "alert should be a map in the response") {
+		assert.Equal(t, float64(alertID), alertObj["id"])
+		assert.Equal(t, "Test Alert "+prefix, alertObj["subject"])
+	}
 }
 
 func TestAlert_GetAlert_InvalidID(t *testing.T) {
