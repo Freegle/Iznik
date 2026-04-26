@@ -304,6 +304,7 @@ var isoCountries = map[string]string{
 
 // Pre-compiled regexps to avoid recompiling on every TidyName call.
 var tnRegexp = regexp.MustCompile(TN_REGEXP)
+var tnOnlyRegexp = regexp.MustCompile(`^-g[0-9]+$`)
 var yahooIDRegexp = regexp.MustCompile("[A-Za-z].*[0-9]|[0-9].*[A-Za-z]")
 
 func OurDomain(email string) int {
@@ -357,7 +358,12 @@ func TidyName(name string) string {
 	}
 
 	// We hide the "-gxxx" part of names, which will almost always be for TN members.
+	// tnRegexp requires ≥1 char before the suffix; a name that IS only a TN suffix
+	// (e.g., "-g123456") won't be matched, so clear it explicitly here.
 	name = tnRegexp.ReplaceAllString(name, "$1")
+	if tnOnlyRegexp.MatchString(name) {
+		name = "A freegler"
+	}
 
 	return name
 }
