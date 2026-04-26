@@ -209,20 +209,14 @@ export const useMemberStore = defineStore({
         params.groupid
       )
 
-      // Remove just the acted-on membership from the member's memberships
-      // array, not the whole entry. If the member is in review on multiple
-      // groups, the mod needs to act on each one (#324).
+      // The backend clears review flags for ALL of the mod's moderated groups at once
+      // (Discourse #9618 fix). Remove the whole user entry from the store so the card
+      // disappears immediately instead of reappearing with another group's Ignore button.
       const key = Object.keys(this.list).find(
         (k) => parseInt(this.list[k].userid) === parseInt(params.userid)
       )
-      if (key && this.list[key].memberships) {
-        this.list[key].memberships = this.list[key].memberships.filter(
-          (m) => parseInt(m.groupid) !== parseInt(params.groupid)
-        )
-        // Remove the whole entry only when no memberships remain.
-        if (this.list[key].memberships.length === 0) {
-          delete this.list[key]
-        }
+      if (key) {
+        delete this.list[key]
       }
     },
 

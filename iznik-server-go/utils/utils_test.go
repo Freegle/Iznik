@@ -74,10 +74,25 @@ func TestFlexInt_NullJSON(t *testing.T) {
 	assert.Equal(t, FlexInt(0), s.V)
 }
 
+func TestFlexInt_EmptyStringJSON(t *testing.T) {
+	type S struct{ V FlexInt }
+	var s S
+	s.V = 7
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":""}`), &s))
+	assert.Equal(t, FlexInt(0), s.V)
+}
+
 func TestFlexInt_InvalidJSON(t *testing.T) {
 	type S struct{ V FlexInt }
 	var s S
 	assert.Error(t, json.Unmarshal([]byte(`{"V":"xyz"}`), &s))
+}
+
+func TestFlexInt_NegativeStringJSON(t *testing.T) {
+	type S struct{ V FlexInt }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":"-123"}`), &s))
+	assert.Equal(t, FlexInt(-123), s.V)
 }
 
 // ---------------------------------------------------------------------------
@@ -103,6 +118,29 @@ func TestFlexFloat64_NullJSON(t *testing.T) {
 	var s S
 	s.V = 1.5
 	assert.NoError(t, json.Unmarshal([]byte(`{"V":null}`), &s))
+	assert.Equal(t, FlexFloat64(0), s.V)
+}
+
+func TestFlexFloat64_EmptyStringJSON(t *testing.T) {
+	type S struct{ V FlexFloat64 }
+	var s S
+	s.V = 2.5
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":""}`), &s))
+	assert.Equal(t, FlexFloat64(0), s.V)
+}
+
+func TestFlexFloat64_NegativeStringJSON(t *testing.T) {
+	type S struct{ V FlexFloat64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":"-3.14159"}`), &s))
+	assert.InDelta(t, -3.14159, float64(s.V), 1e-9)
+}
+
+func TestFlexFloat64_ZeroStringJSON(t *testing.T) {
+	type S struct{ V FlexFloat64 }
+	var s S
+	s.V = 5.5
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":"0"}`), &s))
 	assert.Equal(t, FlexFloat64(0), s.V)
 }
 
@@ -319,4 +357,66 @@ func TestTidyName_StripsTNSuffix(t *testing.T) {
 
 func TestTidyName_PlainNameUnchanged(t *testing.T) {
 	assert.Equal(t, "Bob", TidyName("Bob"))
+}
+
+func TestTidyName_32CharLettersOnlyNotTidied(t *testing.T) {
+	// 32-char string with only letters should NOT be treated as Yahoo ID.
+	letters32 := "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHH" // 32 chars, all letters
+	assert.Equal(t, letters32, TidyName(letters32))
+}
+
+func TestTidyName_32CharDigitsOnlyNotTidied(t *testing.T) {
+	// 32-char string with only digits should NOT be treated as Yahoo ID.
+	digits32 := "12345678901234567890123456789012" // 32 chars, all digits
+	assert.Equal(t, digits32, TidyName(digits32))
+}
+
+func TestTidyName_31CharMixedLettersDigitsNotTidied(t *testing.T) {
+	// 31-char string with mixed letters and digits should NOT be treated as Yahoo ID
+	// (Yahoo ID check only applies to 32-char strings).
+	mixed31 := "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p" // 31 chars, mixed
+	result := TidyName(mixed31)
+	assert.Equal(t, mixed31, result)
+}
+
+func TestTidyName_33CharMixedLettersDigitsTruncated(t *testing.T) {
+	// 33-char string should be truncated to 32 chars + "..."
+	mixed33 := "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5pq" // 33 chars
+	result := TidyName(mixed33)
+	assert.Equal(t, mixed33[:32]+"...", result)
+}
+
+func TestTidyName_JustTNSuffixBecomesAFreegler(t *testing.T) {
+	// Name that's only a TN suffix should resolve to "A freegler".
+	assert.Equal(t, "A freegler", TidyName("-g123456"))
+}
+
+func TestTidyName_TNSuffixInMiddle(t *testing.T) {
+	// A TN suffix in the middle of a name should be preserved
+	// (regex only matches at the end: "-gXXXX$").
+	result := TidyName("User-g123-name")
+	assert.Equal(t, "User-g123-name", result)
+}
+
+func TestTidyName_EmailWithTNSuffix(t *testing.T) {
+	// Email stripping happens first, then TN suffix removal.
+	result := TidyName("john-g123@example.com")
+	// '@' is found, so name becomes "john-g123"
+	// Then TN suffix is removed, leaving "john"
+	assert.Equal(t, "john", result)
+}
+
+func TestTidyName_FBUserWithNumbers(t *testing.T) {
+	// "FBUser" anywhere in the name triggers empty -> "A freegler".
+	assert.Equal(t, "A freegler", TidyName("MyFBUser123"))
+}
+
+func TestTidyName_FBUserAtEnd(t *testing.T) {
+	// "FBUser" at end still triggers empty -> "A freegler".
+	assert.Equal(t, "A freegler", TidyName("TestFBUser"))
+}
+
+func TestTidyName_FBUserAtStart(t *testing.T) {
+	// "FBUser" at start still triggers empty -> "A freegler".
+	assert.Equal(t, "A freegler", TidyName("FBUser"))
 }

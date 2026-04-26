@@ -366,6 +366,39 @@ describe('ModLog', () => {
       expect(wrapper.text()).toContain('Modmail sent')
     })
 
+    it('shows ModLogMessage for Message/Replied to identify the pending message', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Replied',
+        msgid: 123,
+        text: 'Reply text',
+      })
+      expect(wrapper.find('.mod-log-message').exists()).toBe(true)
+    })
+
+    it('shows ModLogStdMsg for Message/Replied with standard message but no text', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Replied',
+        msgid: 123,
+        stdmsg: { id: 1, title: 'Welcome' },
+      })
+      expect(wrapper.find('.mod-log-stdmsg').exists()).toBe(true)
+    })
+
+    it('shows ModLogStdMsg for Message/Replied even when log.text is empty', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Replied',
+        msgid: 123,
+        text: '',
+      })
+      expect(wrapper.find('.mod-log-stdmsg').exists()).toBe(true)
+    })
+
     it('shows Edited with text content for Message/Edit', () => {
       const wrapper = createWrapper({
         id: 1,

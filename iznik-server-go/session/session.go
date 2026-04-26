@@ -701,15 +701,16 @@ func GetSession(c *fiber.Ctx) error {
 	}
 
 	type MembershipRow struct {
-		Groupid             uint64  `json:"groupid"`
-		Role                string  `json:"role"`
-		Emailfrequency      int     `json:"emailfrequency"`
-		Eventsallowed       int     `json:"eventsallowed"`
-		Volunteeringallowed int     `json:"volunteeringallowed"`
-		Configid            *uint64 `json:"configid"`
-		Active              int     `json:"active"`  // 1=active mod, 0=backup mod
-		Type                string  `json:"-"`        // Used server-side for moderator detection, not returned to client
-		Settings            *string `json:"-"`        // Per-group membership settings JSON, used to determine active/inactive
+		Groupid                  uint64  `json:"groupid"`
+		Role                     string  `json:"role"`
+		Emailfrequency           int     `json:"emailfrequency"`
+		Eventsallowed            int     `json:"eventsallowed"`
+		Volunteeringallowed      int     `json:"volunteeringallowed"`
+		Microvolunteeringallowed int     `json:"microvolunteeringallowed"`
+		Configid                 *uint64 `json:"configid"`
+		Active                   int     `json:"active"`  // 1=active mod, 0=backup mod
+		Type                     string  `json:"-"`        // Used server-side for moderator detection, not returned to client
+		Settings                 *string `json:"-"`        // Per-group membership settings JSON, used to determine active/inactive
 	}
 
 	type LocationRow struct {
@@ -755,7 +756,7 @@ func GetSession(c *fiber.Ctx) error {
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, g.type, m.settings "+
+		db.Raw("SELECT m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed "+
 			"FROM memberships m JOIN `groups` g ON g.id = m.groupid "+
 			"WHERE m.userid = ? AND m.collection = ? ORDER BY LOWER(CASE WHEN g.namefull IS NOT NULL THEN g.namefull ELSE g.nameshort END)", myid, utils.COLLECTION_APPROVED).Scan(&memberships)
 	}()

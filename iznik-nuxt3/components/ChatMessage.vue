@@ -202,7 +202,10 @@ const phoneNumber = computed(() => {
   let ret = false
 
   if (chatmessage.value?.message) {
-    const re = /\+(\d\d)[^:]/gm
+    // Require at least 8 digits total after '+' to avoid false positives on
+    // things like "+12 more items" or "+30 minutes". Real international numbers
+    // have a country code (1-3 digits) plus a subscriber number (6-14 digits).
+    const re = /\+(\d\d)\d{6,}/gm
     const matches = re.exec(chatmessage.value.message)
 
     if (matches && matches.length > 1) {

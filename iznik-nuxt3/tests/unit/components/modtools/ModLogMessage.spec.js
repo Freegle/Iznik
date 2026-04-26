@@ -42,6 +42,7 @@ describe('ModLogMessage', () => {
       props: {
         logid: logId,
         ...(props.notext !== undefined ? { notext: props.notext } : {}),
+        ...(props.nostdmsg !== undefined ? { nostdmsg: props.nostdmsg } : {}),
         ...(props.tag !== undefined ? { tag: props.tag } : {}),
       },
       global: {
@@ -362,6 +363,23 @@ describe('ModLogMessage', () => {
       })
       // log is null, so v-if="log && log.msgid" is false
       expect(wrapper.find('span').exists()).toBe(false)
+    })
+  })
+
+  describe('nostdmsg prop', () => {
+    it('renders ModLogStdMsg when nostdmsg is false (default)', () => {
+      const wrapper = createWrapper({
+        log: { id: 1, msgid: 200, message: { subject: 'Test' } },
+      })
+      expect(wrapper.find('.stub-stdmsg').exists()).toBe(true)
+    })
+
+    it('suppresses ModLogStdMsg when nostdmsg is true', () => {
+      const wrapper = createWrapper({
+        log: { id: 1, msgid: 200, message: { subject: 'Test' } },
+        nostdmsg: true,
+      })
+      expect(wrapper.find('.stub-stdmsg').exists()).toBe(false)
     })
   })
 

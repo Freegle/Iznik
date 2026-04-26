@@ -11,7 +11,7 @@
       <span v-if="!notext && log.text && log.text.length > 0">
         with <em>{{ log.text }} </em></span
       >
-      <ModLogStdMsg :logid="logid" /> <ModLogGroup :logid="logid" :tag="tag" />
+      <ModLogStdMsg v-if="!nostdmsg" :logid="logid" /> <ModLogGroup :logid="logid" :tag="tag" />
     </span>
     <span v-else>
       <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{ log.msgid }}
@@ -30,6 +30,11 @@ const props = defineProps({
     required: true,
   },
   notext: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
+  nostdmsg: {
     type: Boolean,
     required: false,
     default: false,

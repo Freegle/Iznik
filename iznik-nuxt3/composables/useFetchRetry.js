@@ -19,7 +19,7 @@ export function fetchRetry(fetch) {
     const miscStore = useMiscStore()
     await miscStore.waitForOnline()
 
-    if (attempt > 10) {
+    if (attempt >= 10) {
       return [false, false, null, new Error('Too many retries, give up')]
     }
 

@@ -30,7 +30,7 @@ describe('member store', () => {
   })
 
   describe('spamignore', () => {
-    it('removes only the acted-on membership, keeps entry for other groups', async () => {
+    it('removes entire user entry on ignore (backend clears all mod groups at once)', async () => {
       const store = useMemberStore()
       store.config = {}
 
@@ -44,17 +44,15 @@ describe('member store', () => {
         ],
       }
 
-      // Ignore on group 789 only.
+      // Ignore on group 789 — backend now clears ALL mod groups, so the
+      // whole entry should be removed immediately (Discourse #9618 fix).
       await store.spamignore({ userid: 456, groupid: 789 })
 
       expect(mockReviewIgnore).toHaveBeenCalledWith(456, 789)
-      // Entry should still exist with the remaining membership.
-      expect(store.list[123]).toBeTruthy()
-      expect(store.list[123].memberships).toHaveLength(1)
-      expect(store.list[123].memberships[0].groupid).toBe(999)
+      expect(store.list[123]).toBeUndefined()
     })
 
-    it('removes entire entry when last membership is ignored', async () => {
+    it('removes entire entry when single membership is ignored', async () => {
       const store = useMemberStore()
       store.config = {}
 
