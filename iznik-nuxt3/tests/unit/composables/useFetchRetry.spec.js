@@ -295,11 +295,13 @@ describe('useFetchRetry', () => {
       vi.useFakeTimers()
       const retryFetch = fetchRetry(mockFetch)
       const promise = retryFetch('http://test.com')
+      // Attach catch before advancing to prevent unhandled rejection during timer advance
+      const errorPromise = promise.catch((e) => e)
 
-      // Advance through all 10 retry delays (1000+2000+...+10000 = 55000ms)
+      // Advance through all 10 retry delays (0+1000+2000+...+9000 = 45000ms; 55000ms is safe)
       await vi.advanceTimersByTimeAsync(55000)
 
-      const error = await promise.catch((e) => e)
+      const error = await errorPromise
       expect(error.message).toBe('Too many retries, give up')
       expect(mockFetch).toHaveBeenCalledTimes(11) // Initial + 10 retries
       vi.useRealTimers()
