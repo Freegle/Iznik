@@ -1663,6 +1663,8 @@ volumes:
 networks:
   default:
     driver: bridge
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: nat-unprotected
 
 secrets:
   LOVE_JUNK_API:
