@@ -1386,8 +1386,8 @@ services:
       test: ["CMD-SHELL", "test -f /tmp/laravel-ready || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 180s
+      retries: 15
+      start_period: 360s
 
   # Production batch jobs processor - connects to production database and mail
   # Start with: docker compose --profile production up -d

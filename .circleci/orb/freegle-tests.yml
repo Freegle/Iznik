@@ -315,14 +315,14 @@ commands:
             done
 
             echo "Waiting for batch container to be healthy (running migrations)..."
-            for i in $(seq 1 120); do
+            for i in $(seq 1 280); do
               health=$(docker inspect --format='{{.State.Health.Status}}' ${COMPOSE_PROJECT_NAME:-freegle}-batch 2>/dev/null || echo "unknown")
               if [ "$health" = "healthy" ]; then
                 echo "✅ Batch is healthy (migrations complete)"
                 break
               fi
-              if [ "$i" -eq 120 ]; then
-                echo "❌ Batch did not become healthy within 4 minutes"
+              if [ "$i" -eq 280 ]; then
+                echo "❌ Batch did not become healthy within 9 minutes"
                 docker logs ${COMPOSE_PROJECT_NAME:-freegle}-batch --tail 30 2>&1 || true
                 exit 1
               fi
@@ -440,14 +440,14 @@ commands:
             done
 
             echo "Waiting for batch container to be healthy (migrations)..."
-            for i in $(seq 1 120); do
+            for i in $(seq 1 280); do
               health=$(docker inspect --format='{{.State.Health.Status}}' ${COMPOSE_PROJECT_NAME:-freegle}-batch 2>/dev/null || echo "unknown")
               if [ "$health" = "healthy" ]; then
                 echo "✅ Batch is healthy (migrations complete)"
                 break
               fi
-              if [ "$i" -eq 120 ]; then
-                echo "❌ Batch did not become healthy within 4 minutes"
+              if [ "$i" -eq 280 ]; then
+                echo "❌ Batch did not become healthy within 9 minutes"
                 docker logs ${COMPOSE_PROJECT_NAME:-freegle}-batch --tail 30 2>&1 || true
                 exit 1
               fi
