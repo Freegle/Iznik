@@ -1393,5 +1393,12 @@ class MessageTest extends IznikTestCase {
         $declined = $this->dbhr->preQuery("SELECT * FROM messages_ai_declined WHERE msgid = ?", [$msgid]);
         $this->assertEquals(0, count($declined), "Should NOT record AI decline for non-AI attachment removal");
     }
+
+    public function testStripSigsOutlookIOS() {
+        $m = new Message($this->dbhr, $this->dbhm);
+        $text = "I'd like this please.\r\nSent from Outlook for iOS<https://krs.microsoft.com/redirect?id=-crYd9Lj>";
+        $stripped = $m->stripSigs($text);
+        $this->assertEquals("I'd like this please.\r\n", $stripped);
+    }
 }
 
