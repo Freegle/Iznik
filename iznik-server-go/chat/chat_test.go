@@ -7,13 +7,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/freegle/iznik-server-go/database"
 )
 
 func init() {
-	database.InitDB()
+	database.InitDatabase()
 }
 
 func TestChatMessageQueryTableName(t *testing.T) {
@@ -95,14 +94,9 @@ func TestChatRoomJSONMarshal(t *testing.T) {
 	// Test ChatRoom marshals/unmarshals correctly
 	cr := ChatRoom{
 		ID:       1,
+		Chattype: "User2User",
 		User1:    2,
 		User2:    3,
-		Groupid:  4,
-		Created:  time.Now(),
-		LastMsg:  time.Now(),
-		Unseenby1: 0,
-		Unseenby2: 0,
-		Status:   "ACTIVE",
 	}
 
 	data, err := json.Marshal(cr)
@@ -114,22 +108,19 @@ func TestChatRoomJSONMarshal(t *testing.T) {
 	assert.Equal(t, cr.ID, cr2.ID)
 	assert.Equal(t, cr.User1, cr2.User1)
 	assert.Equal(t, cr.User2, cr2.User2)
-	assert.Equal(t, cr.Groupid, cr2.Groupid)
-	assert.Equal(t, cr.Status, cr2.Status)
+	assert.Equal(t, cr.Chattype, cr2.Chattype)
 }
 
 func TestChatMessageJSONMarshal(t *testing.T) {
 	// Test ChatMessage marshals/unmarshals correctly
-	now := time.Now()
+	now := time.Now().Truncate(time.Second)
 	msg := ChatMessage{
-		ID:       1,
-		Chatid:   2,
-		Userid:   3,
-		Body:     "Test message",
-		Created:  now,
-		Edited:   now,
-		Status:   "APPROVED",
-		HasImage: 0,
+		ID:      1,
+		Chatid:  2,
+		Userid:  3,
+		Type:    "Chat",
+		Date:    now,
+		Message: "Test message",
 	}
 
 	data, err := json.Marshal(msg)
@@ -140,23 +131,22 @@ func TestChatMessageJSONMarshal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, msg.ID, msg2.ID)
 	assert.Equal(t, msg.Chatid, msg2.Chatid)
-	assert.Equal(t, msg.Body, msg2.Body)
-	assert.Equal(t, msg.Status, msg2.Status)
+	assert.Equal(t, msg.Message, msg2.Message)
+	assert.Equal(t, msg.Type, msg2.Type)
 }
 
 func TestChatMessageQueryJSONMarshal(t *testing.T) {
 	// Test ChatMessageQuery marshals/unmarshals correctly
-	now := time.Now()
+	now := time.Now().Truncate(time.Second)
 	cmq := ChatMessageQuery{
-		ID:        1,
-		Chatid:    2,
-		Userid:    3,
-		Body:      "Query message",
-		Created:   now,
-		Status:    "APPROVED",
-		Firstname: "John",
-		Lastname:  "Doe",
-		Username:  "johndoe",
+		ChatMessage: ChatMessage{
+			ID:      1,
+			Chatid:  2,
+			Userid:  3,
+			Date:    now,
+			Message: "Query message",
+			Type:    "Chat",
+		},
 	}
 
 	data, err := json.Marshal(cmq)
@@ -167,20 +157,17 @@ func TestChatMessageQueryJSONMarshal(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, cmq.ID, cmq2.ID)
 	assert.Equal(t, cmq.Chatid, cmq2.Chatid)
-	assert.Equal(t, cmq.Body, cmq2.Body)
-	assert.Equal(t, cmq.Firstname, cmq2.Firstname)
+	assert.Equal(t, cmq.Message, cmq2.Message)
 }
 
 func TestChatRosterEntryJSONMarshal(t *testing.T) {
 	// Test ChatRosterEntry marshals/unmarshals correctly
-	now := time.Now()
+	now := time.Now().Truncate(time.Second)
 	cre := ChatRosterEntry{
-		ID:       1,
-		Chatid:   2,
-		Userid:   3,
-		Date:     now,
-		Unseenby1: 5,
-		Unseenby2: 3,
+		Id:     1,
+		Chatid: 2,
+		Userid: 3,
+		Date:   &now,
 	}
 
 	data, err := json.Marshal(cre)
@@ -189,10 +176,9 @@ func TestChatRosterEntryJSONMarshal(t *testing.T) {
 	var cre2 ChatRosterEntry
 	err = json.Unmarshal(data, &cre2)
 	require.NoError(t, err)
-	assert.Equal(t, cre.ID, cre2.ID)
+	assert.Equal(t, cre.Id, cre2.Id)
 	assert.Equal(t, cre.Chatid, cre2.Chatid)
 	assert.Equal(t, cre.Userid, cre2.Userid)
-	assert.Equal(t, cre.Unseenby1, cre2.Unseenby1)
 }
 
 func TestFetchChatMessagesEmpty(t *testing.T) {
@@ -221,9 +207,9 @@ func TestFetchReviewMessageNotFound(t *testing.T) {
 	assert.Nil(t, msg)
 }
 
-func TestChatRoomStatusValues(t *testing.T) {
-	// Test common status values are strings
-	cr := ChatRoom{
+func TestChatRoomListEntryStatusValues(t *testing.T) {
+	// Test common status values on ChatRoomListEntry (which has a Status field)
+	cr := ChatRoomListEntry{
 		Status: "ACTIVE",
 	}
 	assert.Equal(t, "ACTIVE", cr.Status)
@@ -235,32 +221,26 @@ func TestChatRoomStatusValues(t *testing.T) {
 	assert.Equal(t, "BLOCKED", cr.Status)
 }
 
-func TestChatMessageStatusValues(t *testing.T) {
-	// Test common message status values
-	msg := ChatMessage{
-		Status: "APPROVED",
+func TestChatRosterEntryStatusValues(t *testing.T) {
+	// Test common status values on ChatRosterEntry (which has a Status field)
+	cre := ChatRosterEntry{
+		Status: "ONLINE",
 	}
-	assert.Equal(t, "APPROVED", msg.Status)
+	assert.Equal(t, "ONLINE", cre.Status)
 
-	msg.Status = "REJECTED"
-	assert.Equal(t, "REJECTED", msg.Status)
-
-	msg.Status = "PENDING"
-	assert.Equal(t, "PENDING", msg.Status)
-
-	msg.Status = "HELD"
-	assert.Equal(t, "HELD", msg.Status)
+	cre.Status = "OFFLINE"
+	assert.Equal(t, "OFFLINE", cre.Status)
 }
 
-func TestChatMessageImageFlag(t *testing.T) {
-	// Test message image flags
-	msgWithoutImage := ChatMessage{
-		HasImage: 0,
+func TestChatMessageReviewFlags(t *testing.T) {
+	// Test review flags on ChatMessage
+	msg := ChatMessage{
+		Reviewrequired: true,
+		Reviewrejected: false,
 	}
-	assert.Equal(t, int8(0), msgWithoutImage.HasImage)
+	assert.True(t, msg.Reviewrequired)
+	assert.False(t, msg.Reviewrejected)
 
-	msgWithImage := ChatMessage{
-		HasImage: 1,
-	}
-	assert.Equal(t, int8(1), msgWithImage.HasImage)
+	msg.Reviewrejected = true
+	assert.True(t, msg.Reviewrejected)
 }
