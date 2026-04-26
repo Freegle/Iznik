@@ -137,7 +137,7 @@ export function fetchRetry(fetch) {
         const delay = retryDelay(attempt, error, response)
 
         setTimeout(function () {
-          wrappedFetch(++attempt)
+          wrappedFetch(++attempt).catch(reject)
         }, delay)
       }
 

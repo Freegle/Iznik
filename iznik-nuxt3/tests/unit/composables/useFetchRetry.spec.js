@@ -295,13 +295,18 @@ describe('useFetchRetry', () => {
       vi.useFakeTimers()
       const retryFetch = fetchRetry(mockFetch)
       const promise = retryFetch('http://test.com')
+      // Attach .catch() before advancing timers — the rejection fires during timer
+      // advancement (at 45s virtual time, inside the i=9 iteration), before the
+      // loop exits and we would otherwise add the handler.  Without this, Vitest
+      // detects the rejection window as unhandled and fails the suite.
+      const resultPromise = promise.catch((e) => e)
 
       // Advance through 10 retry delays: attempt 0→1 (0ms), 1→2 (1s), ..., 9→10 (9s)
       for (let i = 1; i <= 10; i++) {
         await vi.advanceTimersByTimeAsync(i * 1000)
       }
 
-      const error = await promise.catch((e) => e)
+      const error = await resultPromise
       expect(error.message).toBe('Too many retries, give up')
       expect(mockFetch).toHaveBeenCalledTimes(11) // Initial + 10 retries (attempts 0-10)
       vi.useRealTimers()
