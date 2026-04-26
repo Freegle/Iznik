@@ -2612,6 +2612,23 @@ jobs:
               echo "Download test-output/*.out files for complete details"
               exit 1
             fi
+
+            # Always scan for SSR error pages — visible even when all tests pass.
+            # The [CRITICAL-SSR-ERROR] marker is logged by fixtures.js on every
+            # page load that shows "Something went wrong", including cases where
+            # direct page.goto() bypasses gotoAndVerify.
+            if [ -f ~/test-output/playwright.out ] && grep -q '\[CRITICAL-SSR-ERROR\]' ~/test-output/playwright.out; then
+              echo ""
+              echo "###############################################################"
+              echo "### ⚠️  WARNING: NUXT SSR ERROR PAGES DURING PLAYWRIGHT  ⚠️  ###"
+              echo "###############################################################"
+              grep '\[CRITICAL-SSR-ERROR\]' ~/test-output/playwright.out
+              echo "###############################################################"
+              echo "### These error pages cause intermittent test hangs/failures ###"
+              echo "### Investigate: Go API SSR failures, container health, logs ###"
+              echo "###############################################################"
+              echo ""
+            fi
           when: always
 
       - run:
