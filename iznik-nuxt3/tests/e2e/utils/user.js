@@ -50,14 +50,21 @@ async function clearSessionData(page) {
   }
 
   try {
-    await page.evaluate(() => {
-      try {
-        localStorage.clear()
-      } catch {}
-      try {
-        sessionStorage.clear()
-      } catch {}
-    })
+    // Race against a 5-second timeout: if the renderer is unresponsive (common
+    // under CI load after a complex prior test), the evaluate will hang forever
+    // because Node can't cancel a pending Promise. We treat storage clearing as
+    // best-effort — cookies are what matter for auth state.
+    await Promise.race([
+      page.evaluate(() => {
+        try {
+          localStorage.clear()
+        } catch {}
+        try {
+          sessionStorage.clear()
+        } catch {}
+      }),
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+    ])
   } catch (e) {
     if (!/closed|Target .* closed|Execution context was destroyed/i.test(e.message)) {
       throw e

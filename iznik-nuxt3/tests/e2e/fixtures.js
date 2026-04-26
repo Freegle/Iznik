@@ -468,6 +468,27 @@ const test = base.test.extend({
       }
     })
 
+    // Detect Nuxt SSR error pages on every load — catches cases where direct
+    // page.goto() bypasses gotoAndVerify. Logs a [CRITICAL-SSR-ERROR] marker
+    // that the CI "Evaluate overall test results" step scans for and surfaces
+    // even when the test suite passes overall.
+    page.on('load', () => {
+      // Fire-and-forget — never throw from an event handler.
+      // Use a short timeout so a slow/stuck renderer doesn't compound the problem.
+      Promise.race([
+        page.locator('body').textContent({ timeout: 2000 }),
+        new Promise((resolve) => setTimeout(() => resolve(''), 2000)),
+      ])
+        .then((bodyText) => {
+          if (bodyText && bodyText.includes('Something went wrong')) {
+            console.error(
+              `[CRITICAL-SSR-ERROR] Nuxt SSR error page at ${page.url()}`
+            )
+          }
+        })
+        .catch(() => {})
+    })
+
     // Track API error responses with full request details for diagnostics.
     // Browser console only shows "Failed to load resource: 400" with no method,
     // body, or response — this captures everything needed to debug.
@@ -621,6 +642,10 @@ const test = base.test.extend({
 
           // Check for general error message
           if (errorTextContent.includes('Something went wrong')) {
+            // Log critical marker — picked up by CI Evaluate step even when tests pass
+            console.error(
+              `[CRITICAL-SSR-ERROR] Nuxt SSR error page at ${path} (gotoAndVerify attempt ${attempt}/${maxRetries})`
+            )
             // Take a screenshot of the error page — bounded so this can't hang indefinitely
             try {
               await page.screenshot({

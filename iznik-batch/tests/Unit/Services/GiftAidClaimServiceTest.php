@@ -113,6 +113,9 @@ class GiftAidClaimServiceTest extends TestCase
     {
         $user = $this->createTestUser();
 
+        DB::insert("INSERT INTO locations (name, type) VALUES ('M1 1AA', 'Postcode')");
+        $locationId = DB::getPdo()->lastInsertId();
+
         // Gift aid record with no postcode and no saved addresses; postcode in homeaddress text
         DB::insert(
             "INSERT INTO giftaid (userid, period, fullname, homeaddress, reviewed, timestamp)
@@ -128,6 +131,7 @@ class GiftAidClaimServiceTest extends TestCase
 
         // Cleanup
         DB::delete('DELETE FROM giftaid WHERE userid = ?', [$user->id]);
+        DB::delete('DELETE FROM locations WHERE id = ?', [$locationId]);
     }
 
     // -------------------------------------------------------------------------

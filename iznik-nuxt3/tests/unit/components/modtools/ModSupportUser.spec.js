@@ -477,23 +477,36 @@ describe('ModSupportUser', () => {
       expect(wrapper.vm.showSpamModal).toBe(true)
     })
 
-    it('setPassword calls store edit with password', async () => {
+    it('setPassword shows confirm modal', async () => {
       const wrapper = await mountComponent()
       wrapper.vm.newpassword = 'newpass123'
       const callback = vi.fn()
-      await wrapper.vm.setPassword(callback)
+      wrapper.vm.setPassword(callback)
+      expect(wrapper.vm.showPasswordConfirm).toBe(true)
+      expect(mockEdit).not.toHaveBeenCalled()
+      expect(callback).not.toHaveBeenCalled()
+    })
+
+    it('setPasswordConfirmed calls store edit with password and invokes callback', async () => {
+      const wrapper = await mountComponent()
+      wrapper.vm.newpassword = 'newpass123'
+      const callback = vi.fn()
+      wrapper.vm.setPassword(callback)
+      await wrapper.vm.setPasswordConfirmed()
       expect(mockEdit).toHaveBeenCalledWith({
         id: 123,
         password: 'newpass123',
       })
       expect(callback).toHaveBeenCalled()
+      expect(wrapper.vm.showPasswordConfirm).toBe(false)
     })
 
-    it('setPassword does nothing when password is empty', async () => {
+    it('setPasswordConfirmed does nothing when password is empty', async () => {
       const wrapper = await mountComponent()
       wrapper.vm.newpassword = null
       const callback = vi.fn()
-      await wrapper.vm.setPassword(callback)
+      wrapper.vm.setPassword(callback)
+      await wrapper.vm.setPasswordConfirmed()
       expect(mockEdit).not.toHaveBeenCalled()
       expect(callback).toHaveBeenCalled()
     })
