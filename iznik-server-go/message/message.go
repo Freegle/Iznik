@@ -21,6 +21,7 @@ import (
 	"github.com/freegle/iznik-server-go/location"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -1296,6 +1297,8 @@ func getPrimaryGroupForMessage(db *gorm.DB, msgid uint64) uint64 {
 }
 
 // getAllGroupsForMessage returns all groupids for a message.
+// Returns groups regardless of deleted state, so mods can still moderate and reject
+// messages even after the poster has deleted them.
 func getAllGroupsForMessage(db *gorm.DB, msgid uint64) []uint64 {
 	var groupids []uint64
 	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ?", msgid).Scan(&groupids)
@@ -1361,7 +1364,8 @@ func getGroupKeyword(db *gorm.DB, groupid uint64, msgType string) string {
 }
 
 // isModForMessage checks if the user is a system admin/support or a moderator/owner
-// of any group the message is on.
+// of any group the message is on. Returns true even if messages_groups rows are soft-deleted,
+// so mods can reject or delete messages even after the poster has deleted them.
 func isModForMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	// Check system admin/support.
 	if auth.IsAdminOrSupport(myid) {
@@ -1369,6 +1373,7 @@ func isModForMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	}
 
 	// Check if mod of any group the message is on.
+	// Don't filter on mg.deleted = 0 so mods can still moderate after poster deletes.
 	var count int64
 	result := db.Raw(`SELECT COUNT(*) FROM messages_groups mg
 		JOIN memberships m ON m.groupid = mg.groupid
@@ -2506,6 +2511,8 @@ func PatchMessage(c *fiber.Ctx) error {
 	// req.Attachments is nil when the field is absent from JSON (don't touch).
 	// req.Attachments is [] (empty, non-nil) when all attachments are removed (#338).
 	if req.Attachments != nil {
+		recordAIDeletions(db, myid, req.ID, req.Attachments)
+
 		if len(req.Attachments) > 0 {
 			for i, attid := range req.Attachments {
 				primary := i == 0
@@ -3207,13 +3214,22 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Received outcome only valid for Wanted messages")
 	}
 
-	// For Withdrawn: if the message is still pending on any group, delete it entirely
-	// instead of recording an outcome.
+	// For Withdrawn: if the message is still pending on any group, soft-delete it
+	// instead of recording an outcome.  We use UPDATE ... SET deleted = NOW() (matching
+	// the rest of the codebase) rather than a hard DELETE so that moderators who loaded
+	// the pending queue before the withdrawal can still reject / delete the message
+	// without getting a spurious 403 from getMessageModContext failing to scan a
+	// now-absent messages row.
 	if req.Outcome == utils.OUTCOME_WITHDRAWN {
 		var pendingCount int64
 		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).Scan(&pendingCount)
 		if pendingCount > 0 {
-			db.Exec("DELETE FROM messages WHERE id = ?", req.ID)
+			db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID)
+			if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
+				"msgid": req.ID,
+			}); err != nil {
+				log.Printf("Failed to queue freebie alerts remove for withdrawn pending message %d: %v", req.ID, err)
+			}
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "deleted": true})
 		}
 	}
@@ -3507,4 +3523,53 @@ func stringPtrEqual(a, b *string) bool {
 		return false
 	}
 	return *a == *b
+}
+
+// recordAIDeletions checks which attachments on msgID will be removed by the new keepList,
+// and for each AI-generated attachment being removed, records a Reject microaction.
+func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint64) {
+	type aiCandidate struct {
+		ID          uint64
+		Externaluid string
+		Externalmods json.RawMessage
+	}
+
+	var candidates []aiCandidate
+	if len(keepList) > 0 {
+		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ? AND id NOT IN (?)", msgID, keepList).Scan(&candidates)
+	} else {
+		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ?", msgID).Scan(&candidates)
+	}
+
+	for _, att := range candidates {
+		if att.Externaluid == "" || !isAIAttachment(att.Externalmods) {
+			continue
+		}
+		var aiImageID uint64
+		db.Raw("SELECT id FROM ai_images WHERE externaluid = ? LIMIT 1", att.Externaluid).Scan(&aiImageID)
+		if aiImageID > 0 {
+			microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
+		}
+	}
+}
+
+// isAIAttachment returns true if the externalmods JSON contains {"ai": true}.
+func isAIAttachment(mods json.RawMessage) bool {
+	if len(mods) == 0 {
+		return false
+	}
+	var m struct {
+		AI interface{} `json:"ai"`
+	}
+	if err := json.Unmarshal(mods, &m); err != nil {
+		return false
+	}
+	switch v := m.AI.(type) {
+	case bool:
+		return v
+	case float64:
+		return v != 0
+	default:
+		return false
+	}
 }

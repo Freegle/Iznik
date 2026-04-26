@@ -59,6 +59,20 @@ Shows each worktree, its branch, container count, and URL.
 
 This stops containers, removes volumes, and removes the git worktree.
 
+## CRITICAL: Worktree Isolation is Absolute
+
+**A worktree is a fully isolated environment. You MUST NOT cross these boundaries under any circumstances:**
+
+- ❌ Never connect a worktree container to a main-instance Docker network
+- ❌ Never query or modify the main instance's database (`freegle-percona`, `freegle_default` network)
+- ❌ Never add IP routes or `/etc/hosts` entries inside a worktree container that point to main-instance containers
+- ❌ Never patch the worktree's status container to fall back to main-instance resources
+- ❌ Never use `docker network connect` to bridge a worktree container into the main `freegle_default` network
+
+If a worktree's internal networking is broken (e.g. containers on the same bridge can't talk to each other), the fix must stay **inside the worktree** — recreate the network, recreate the containers, or restart Docker. Do not reach outside.
+
+Violating isolation can silently corrupt the main instance's test database, cause test cross-contamination, and is strictly forbidden.
+
 ## How Isolation Works
 
 | Resource | Primary | Worktree (slot 1) |

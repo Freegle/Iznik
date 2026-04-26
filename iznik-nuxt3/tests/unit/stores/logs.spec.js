@@ -174,22 +174,28 @@ describe('logs store', () => {
   })
 
   it('dedupes logs when sequential fetch returns overlapping rows', async () => {
+    // Reproduces pagination with DESC-ordered logs from Go API.
+    // The API query is: SELECT ... WHERE logs.id < context ORDER BY logs.id DESC
+    // So pagination moves backwards through log IDs (newest → oldest).
     const store = useLogsStore()
     store.init({})
+    // First fetch: newest logs (e.g., IDs 100, 99)
     mockLogsFetch.mockResolvedValueOnce({
-      logs: [{ id: 1 }, { id: 2 }],
-      context: { id: 2 },
+      logs: [{ id: 100 }, { id: 99 }],
+      context: { id: 99 }, // context = oldest in this page, used for next fetch's WHERE id < 99
     })
+    // Second fetch with context=99: gets id < 99, so returns [98, 97]
     mockLogsFetch.mockResolvedValueOnce({
-      logs: [{ id: 2 }, { id: 3 }],
-      context: { id: 3 },
+      logs: [{ id: 98 }, { id: 97 }],
+      context: { id: 97 },
     })
 
     await store.fetch({})
     await store.fetch({})
 
-    expect(store.list).toHaveLength(3)
-    expect(store.list.map((l) => l.id)).toEqual([1, 2, 3])
+    expect(store.list).toHaveLength(4)
+    // List builds chronologically: [100, 99] then append [98, 97] = [100, 99, 98, 97]
+    expect(store.list.map((l) => l.id)).toEqual([100, 99, 98, 97])
   })
 
   it('setParams stores params', () => {
@@ -251,5 +257,54 @@ describe('logs store', () => {
 
     expect(mockUserFetchMultiple).not.toHaveBeenCalled()
     expect(mockMessageFetchMultiple).not.toHaveBeenCalled()
+  })
+
+  it('stores accumulate logs from multiple users without filtering', async () => {
+    // The shared store accumulates logs from ALL users. This test verifies
+    // that the store itself doesn't filter, and that the filtering must
+    // happen in ModLogsModal to prevent cross-user log mixing (Discourse #9564).
+    const store = useLogsStore()
+    store.init({})
+
+    // Simulate fetching logs for user 10
+    mockLogsFetch.mockResolvedValueOnce({
+      logs: [
+        { id: 100, userid: 10, byuserid: 999, type: 'Message' },
+        { id: 101, userid: 10, byuserid: null, type: 'User' },
+      ],
+      context: { id: 101 },
+    })
+    await store.fetch({ userid: 10 })
+
+    // Simulate fetching logs for user 20 (rapid modal re-open)
+    mockLogsFetch.mockResolvedValueOnce({
+      logs: [
+        { id: 200, userid: 20, byuserid: 999, type: 'Message' },
+        { id: 201, userid: 20, byuserid: null, type: 'User' },
+      ],
+      context: { id: 201 },
+    })
+    await store.fetch({ userid: 20 })
+
+    // The STORE contains all logs from both users
+    expect(store.list).toHaveLength(4)
+    expect(store.list.map((l) => l.id)).toContain(100)
+    expect(store.list.map((l) => l.id)).toContain(101)
+    expect(store.list.map((l) => l.id)).toContain(200)
+    expect(store.list.map((l) => l.id)).toContain(201)
+
+    // This demonstrates that ModLogsModal MUST filter to show only
+    // logs where (userid === targetUser OR byuserid === targetUser)
+    const logsForUser10 = store.list.filter(
+      (log) => log.userid === 10 || log.byuserid === 10
+    )
+    const logsForUser20 = store.list.filter(
+      (log) => log.userid === 20 || log.byuserid === 20
+    )
+
+    expect(logsForUser10).toHaveLength(2)
+    expect(logsForUser20).toHaveLength(2)
+    expect(logsForUser10.map((l) => l.id)).toEqual([100, 101])
+    expect(logsForUser20.map((l) => l.id)).toEqual([200, 201])
   })
 })

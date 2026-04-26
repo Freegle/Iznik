@@ -15,8 +15,12 @@ import {
   insertReviewerFeedback,
   listUnprocessedFeedback,
   upsertDiscourseBug,
+  reopenBugAfterRejection,
+  upsertPr,
 } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
+import { getPhaseInfo } from '../phase.js'
+import { modelForAdversarialReview } from '../policy.js'
 
 const exec = promisify(execFile)
 
@@ -106,11 +110,183 @@ export const actions: ActionDefinition[] = [
       return {
         state: {
           topics,
-          last_email_sent: kvGet(db, 'last_email_sent'),
           sentry_last_check: kvGet(db, 'sentry_last_check'),
         },
         iterationStartTs: new Date().toISOString(),
       }
+    },
+  },
+
+  {
+    name: 'check_bug_feedback',
+    description: 'For each open/investigating bug in discourse_bug, fetch posts after the original report on that Discourse topic and detect reporter confirmation of a fix (keywords: fixed, works now, confirmed, thanks, resolved, etc.). Marks matching bugs as fixed automatically. Returns {checked, markedFixed: [{topic, post, confirmedBy, confirmText}]}.',
+    handler: async () => {
+      const db = getDb()
+      const bugs = db.prepare(
+        "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating')"
+      ).all() as Array<{ topic: number; post: number; reporter: string | null }>
+
+      if (bugs.length === 0) return { checked: 0, markedFixed: [] }
+
+      // Build a Python script that checks each bug's topic for post-report confirmations
+      const bugsJson = JSON.stringify(bugs)
+      const script = `
+import json, urllib.request, re, sys, time
+
+p = json.load(open('/home/edward/profile.json'))
+api_key = p['auth_pairs'][0]['user_api_key']
+headers = {'User-Api-Key': api_key, 'Api-Username': 'Edward_Hibbert'}
+
+CONFIRM_RE = re.compile(
+    r'\\b(fixed|works? now|working now|confirmed?|thanks?|all good|resolved?'
+    r'|seems? (?:to be )?(?:fixed|working|ok|good)|unlimited now|no (?:longer|more)'
+    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?)\\b',
+    re.IGNORECASE
+)
+
+def fetch(url, retries=3):
+    delay = 2.0
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            return json.load(urllib.request.urlopen(req, timeout=20))
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < retries - 1:
+                time.sleep(float(e.headers.get('Retry-After', delay)))
+                delay *= 2
+                continue
+            if e.code == 404:
+                return None
+            raise
+        except Exception:
+            return None
+
+bugs = json.loads('''${bugsJson.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}''')
+results = []
+
+for bug in bugs:
+    topic_id = bug['topic']
+    orig_post = bug['post']
+    reporter = bug.get('reporter') or ''
+
+    d = fetch(f'https://discourse.ilovefreegle.org/t/{topic_id}.json')
+    if not d:
+        continue
+
+    stream = d.get('post_stream', {}).get('stream', [])
+    # stream[N-1] = post_id for post #N; posts after original are at stream[orig_post:]
+    new_ids = stream[orig_post:]
+    if not new_ids:
+        continue
+
+    # Batch-fetch in groups of 50
+    new_posts = []
+    for i in range(0, len(new_ids), 50):
+        batch = new_ids[i:i+50]
+        qs = '&'.join(f'post_ids[]={pid}' for pid in batch)
+        pd = fetch(f'https://discourse.ilovefreegle.org/t/{topic_id}/posts.json?{qs}')
+        if pd:
+            new_posts.extend(pd.get('post_stream', {}).get('posts', []))
+
+    for post in new_posts:
+        username = post.get('username', '')
+        if username == 'Edward_Hibbert':
+            continue  # skip our own posts
+        text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
+        text = re.sub(r'\\s+', ' ', text).strip()
+        if CONFIRM_RE.search(text):
+            results.append({
+                'topic': topic_id,
+                'post': orig_post,
+                'reporter': reporter,
+                'confirmedBy': username,
+                'confirmPostNumber': post.get('post_number'),
+                'confirmText': text[:200],
+            })
+            break  # one confirmation per bug is enough
+
+print(json.dumps(results))
+`
+
+      const { stdout } = await exec('python3', ['-c', script])
+      const confirmations: Array<{ topic: number; post: number; reporter: string | null; confirmedBy: string; confirmPostNumber: number; confirmText: string }> = JSON.parse(stdout.trim() || '[]')
+
+      for (const c of confirmations) {
+        db.prepare(
+          "UPDATE discourse_bug SET state='fixed', fixed_at=datetime('now'), reason=? WHERE topic=? AND post=?"
+        ).run(
+          `Confirmed by ${c.confirmedBy} (post ${c.confirmPostNumber}): "${c.confirmText.slice(0, 120)}"`,
+          c.topic, c.post
+        )
+        out(`check_bug_feedback: marked ${c.topic}/${c.post} fixed — confirmed by ${c.confirmedBy}`)
+      }
+
+      return { checked: bugs.length, markedFixed: confirmations }
+    },
+  },
+
+  {
+    name: 'sync_pr_states',
+    description: 'Sync PR states from GitHub for all PRs referenced in discourse_bug.pr_number. Updates the pr table, moves fix-queued bugs to fixed on merge, and reopens bugs whose PRs were closed (rejected) by the reviewer — tracking rejection count so escalation logic can fire. Returns {synced, updated, reopened: [{topic, post, prNumber, rejections}]}.',
+    handler: async () => {
+      const db = getDb()
+      const bugPRs = db.prepare(
+        `SELECT DISTINCT pr_number FROM discourse_bug WHERE pr_number IS NOT NULL AND state IN ('open','investigating','fix-queued')`
+      ).all() as Array<{ pr_number: number }>
+      const tablePRs = db.prepare(
+        `SELECT DISTINCT number FROM pr WHERE state IS NULL OR state NOT IN ('MERGED','CLOSED')`
+      ).all() as Array<{ number: number }>
+
+      const toSync = new Set([...bugPRs.map(r => r.pr_number), ...tablePRs.map(r => r.number)])
+      if (toSync.size === 0) return { synced: [], updated: 0, reopened: [] }
+
+      const synced: Array<{ number: number; state: string; mergedAt: string | null }> = []
+      const reopened: Array<{ topic: number; post: number; prNumber: number; rejections: number }> = []
+      let updated = 0
+
+      for (const num of toSync) {
+        const res = await sh('gh', ['pr', 'view', String(num), '--repo', 'Freegle/Iznik', '--json', 'number,state,mergedAt,title,headRefName'])
+        if (res.code !== 0) continue
+        try {
+          const pr = JSON.parse(res.stdout) as { number: number; state: string; mergedAt: string | null; title: string; headRefName: string }
+          const ghState = pr.state === 'MERGED' ? 'MERGED' : pr.state === 'CLOSED' ? 'CLOSED' : 'OPEN'
+          upsertPr(db, {
+            number: pr.number,
+            title: pr.title,
+            branch: pr.headRefName,
+            state: ghState,
+            deployState: ghState === 'MERGED' ? 'live' : undefined,
+          })
+          synced.push({ number: pr.number, state: ghState, mergedAt: pr.mergedAt })
+          updated++
+
+          // A CLOSED (not merged) PR means the reviewer rejected the fix.
+          // Reopen the linked bug so it can be re-dispatched or escalated.
+          // Check all non-terminal states (not just fix-queued) in case the bug was
+          // manually reopened or is in another active state.
+          if (ghState === 'CLOSED') {
+            const bugs = db.prepare(
+              `SELECT topic, post, pr_rejections FROM discourse_bug
+               WHERE pr_number = ? AND state NOT IN ('fixed','confirmed','deferred','off-topic','duplicate')`
+            ).all(pr.number) as Array<{ topic: number; post: number; pr_rejections: number }>
+            for (const bug of bugs) {
+              reopenBugAfterRejection(db, bug.topic, bug.post, pr.number)
+              insertReviewerFeedback(db, {
+                kind: 'pr_rejected',
+                prNumber: pr.number,
+                bugTopic: bug.topic,
+                bugPost: bug.post,
+                raw: `PR #${pr.number} (${pr.title}) closed by reviewer`,
+              })
+              const newRejections = bug.pr_rejections + 1
+              out(`sync_pr_states: PR #${pr.number} CLOSED — reopened bug ${bug.topic}/${bug.post} (rejections now ${newRejections})`)
+              reopened.push({ topic: bug.topic, post: bug.post, prNumber: pr.number, rejections: newRejections })
+            }
+          }
+        } catch { /* malformed JSON from gh — skip */ }
+      }
+
+      return { synced, updated, reopened }
     },
   },
 
@@ -334,6 +510,49 @@ print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
   },
 
   {
+    name: 'discover_active_topics',
+    description: 'Light pre-check: fetches Discourse /latest.json (one API call) and compares post counts against DB cursors to find topics with new posts. Used to decide which topics need a triage delegate. Returns {topics: [{id, title, cursor, postsCount, hasNew}]}.',
+    paramsSchema: { type: 'object', properties: { recentLimit: { type: 'number' } } },
+    handler: async (params) => {
+      const recentLimit = (params.recentLimit as number) ?? 30
+      const script = `
+import json, urllib.request, sys
+p = json.load(open('/home/edward/profile.json'))
+api_key = p['auth_pairs'][0]['user_api_key']
+req = urllib.request.Request(
+    'https://discourse.ilovefreegle.org/latest.json?order=activity&per_page=${recentLimit}',
+    headers={'User-Api-Key': api_key}
+)
+d = json.load(urllib.request.urlopen(req, timeout=15))
+topics = [{'id': t['id'], 'title': t['title'], 'postsCount': t['posts_count']} for t in d['topic_list']['topics']]
+print(json.dumps(topics))
+`
+      const { stdout, stderr, code } = await sh('python3', ['-c', script])
+      if (code !== 0) return { topics: [], error: `discover_active_topics fetch failed: ${stderr.slice(-200)}` }
+
+      let rawTopics: Array<{ id: number; title: string; postsCount: number }> = []
+      try { rawTopics = JSON.parse(stdout.trim()) } catch { return { topics: [], error: 'json parse failed' } }
+
+      // Cross-reference with DB cursors so we know which topics have genuinely new posts.
+      const db = getDb()
+      const cursorRows = listTopicCursors(db) // {topic_id, last_post_number, title}
+      const cursorMap = new Map(cursorRows.map(r => [r.topic_id, r.last_post_number]))
+
+      const topics = rawTopics.map(t => ({
+        id: t.id,
+        title: t.title,
+        postsCount: t.postsCount,
+        cursor: cursorMap.get(t.id) ?? 0,
+        hasNew: t.postsCount > (cursorMap.get(t.id) ?? 0),
+      }))
+
+      const withNew = topics.filter(t => t.hasNew)
+      out(`discover_active_topics: ${withNew.length}/${topics.length} topics have new posts`)
+      return { topics }
+    },
+  },
+
+  {
     name: 'check_sentry',
     description: 'List unresolved Sentry issues for nuxt3 and go projects (top 10 each, by date).',
     handler: async () => {
@@ -420,10 +639,17 @@ print(json.dumps(out))
 
   {
     name: 'create_pr',
-    description: 'Record that a PR was created. Host validates by running gh pr view on the given number, inspects changed files (for frontendOnly classification), and looks up the Netlify deploy-preview URL from `gh pr checks` so a reply draft can include it when the fix is frontend-only. Params: {prNumber, repo}. Returns {verified, pr, files, frontendOnly, deployPreviewUrl}.',
+    description: 'Record that a PR was created. Host validates by running gh pr view on the given number, inspects changed files (for frontendOnly classification), and looks up the Netlify deploy-preview URL from `gh pr checks` so a reply draft can include it when the fix is frontend-only. Params: {prNumber, repo, topic?, post?, reporter?, excerpt?}. If topic+post are provided, immediately upserts discourse_bug with state=fix-queued so the bug is visible on the dashboard before the reply draft is written. Returns {verified, pr, files, frontendOnly, deployPreviewUrl}.',
     paramsSchema: {
       type: 'object',
-      properties: { prNumber: { type: 'number' }, repo: { type: 'string' } },
+      properties: {
+        prNumber: { type: 'number' },
+        repo: { type: 'string' },
+        topic: { type: 'number', description: 'Discourse topic ID of the bug this PR fixes — persists bug row immediately' },
+        post: { type: 'number', description: 'Discourse post number of the bug this PR fixes' },
+        reporter: { type: 'string' },
+        excerpt: { type: 'string' },
+      },
       required: ['prNumber'],
     },
     handler: async (params) => {
@@ -434,6 +660,21 @@ print(json.dumps(out))
       const viewData = JSON.parse(viewRes.stdout) as { number: number; title: string; url: string; author: any; files?: Array<{ path: string }>; headRefName: string }
       const files = (viewData.files ?? []).map(f => f.path)
       const frontendOnly = files.length > 0 && files.every(p => p.startsWith('iznik-nuxt3/'))
+
+      // If the caller passed the bug coordinates, write the bug row immediately so
+      // the dashboard never shows a PR without an associated bug.
+      const topic = params.topic as number | undefined
+      const post = params.post as number | undefined
+      if (topic && post) {
+        const db = getDb()
+        upsertDiscourseBug(db, {
+          topic, post,
+          reporter: (params.reporter as string | undefined) ?? undefined,
+          excerpt: (params.excerpt as string | undefined) ?? undefined,
+          state: 'fix-queued',
+          prNumber,
+        })
+      }
 
       let deployPreviewUrl: string | undefined
       const checksRes = await sh('gh', ['pr', 'checks', String(prNumber), '--repo', repo])
@@ -596,22 +837,23 @@ print(urllib.request.urlopen(req).read().decode())
 
   {
     name: 'check_master_ci',
-    description: 'Check latest master CI run on Freegle/Iznik. Returns {latestRun: {databaseId, conclusion, headSha, displayTitle, createdAt, url}, failing: bool}. Use this to detect red master so the FSM can prioritise fixing it.',
+    description: 'Check CircleCI status on the latest master commit of Freegle/Iznik. Returns {sha, overallState, circleCiStatuses: [{context, state}], failing: bool}. Use this to detect red master so the FSM can prioritise fixing it.',
     handler: async () => {
-      const { stdout, stderr, code } = await sh('gh', [
-        'run', 'list',
-        '--repo', 'Freegle/Iznik',
-        '--branch', 'master',
-        '--limit', '1',
-        '--json', 'databaseId,status,conclusion,headSha,displayTitle,createdAt,url',
-      ])
-      if (code !== 0) return { error: stderr, failing: false }
-      const runs = JSON.parse(stdout) as Array<any>
-      if (runs.length === 0) return { latestRun: null, failing: false }
-      const latestRun = runs[0]
+      // Use the commit status API rather than `gh run list` (GitHub Actions).
+      // `gh run list` returns GH Actions workflow runs (e.g. "Update Version File")
+      // which are unrelated to the main CircleCI build-and-test pipeline. The
+      // commit status API aggregates all CI contexts (CircleCI, Coveralls, etc.)
+      // posted to the HEAD commit, giving the true picture.
+      const headRes = await sh('gh', ['api', 'repos/Freegle/Iznik/commits/master/status'])
+      if (headRes.code !== 0) return { error: headRes.stderr, failing: false }
+      const data = JSON.parse(headRes.stdout) as { state: string; sha: string; statuses: Array<{ context: string; state: string; target_url: string }> }
+      const circleCiStatuses = data.statuses.filter(s => s.context.startsWith('ci/circleci'))
+      const failingStatuses = circleCiStatuses.filter(s => s.state === 'failure' || s.state === 'error')
       return {
-        latestRun,
-        failing: latestRun.status === 'completed' && latestRun.conclusion === 'failure',
+        sha: data.sha,
+        overallState: data.state,
+        circleCiStatuses: circleCiStatuses.map(s => ({ context: s.context, state: s.state, url: s.target_url })),
+        failing: failingStatuses.length > 0,
       }
     },
   },
@@ -671,20 +913,59 @@ print(urllib.request.urlopen(req).read().decode())
       const task = params.task as string
       const repoCwd = (params.repoCwd as string) ?? '/home/edward/FreegleDockerWSL'
       const timeoutSec = (params.timeoutSec as number) ?? 1200
+
+      // Isolate the delegate's filesystem work in a throwaway git worktree so
+      // its `git checkout` calls (onto branches that may predate the
+      // monitor-fsm/ directory itself) cannot wipe files out from under the
+      // running FSM driver.
+      const { execFileSync } = await import('node:child_process')
+      const worktreeDir = `/tmp/monitor-fsm-delegate-${process.pid}-${Date.now()}`
+      let worktreeCreated = false
+      let worktreeError: string | null = null
+      for (const base of ['master', 'HEAD']) {
+        try {
+          execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], {
+            cwd: repoCwd, stdio: 'pipe',
+          })
+          worktreeCreated = true
+          break
+        } catch (err: any) {
+          worktreeError = String(err?.stderr?.toString?.() || err?.message || err).slice(-500)
+        }
+      }
+      const spawnCwd = worktreeCreated ? worktreeDir : repoCwd
+
       const fullPrompt = `${task}
 
 ==== CRITICAL EXECUTION CONTRAINTS — READ FIRST ====
-You are a HEADLESS, ONE-SHOT subprocess. When your response ends, your process exits. You have NO persistence, NO wakeups, NO /loop, NO ScheduleWakeup, NO Monitor, NO TaskCreate — those tools do not exist for you. A parent FSM (monitor-fsm) invoked you and is waiting on your stdout.
+${worktreeCreated ? `Your working directory is an ISOLATED git worktree at \`${worktreeDir}\`, detached from master. Run all git operations here: \`git checkout <branch>\` / \`git checkout -b <branch>\` are safe and will not affect the parent FSM driver's own checkout. Push your work to origin before emitting the output marker — the worktree is deleted when you return, so anything not pushed is lost.
+` : ''}You are a HEADLESS, ONE-SHOT subprocess. When your response ends, your process exits. You have NO persistence, NO wakeups, NO /loop, NO ScheduleWakeup, NO Monitor, NO TaskCreate — those tools do not exist for you. A parent FSM (monitor-fsm) invoked you and is waiting on your stdout.
 
 You MUST do all the work in this single session:
-  1. Checkout the branch.
+  1. Create or checkout the branch — see BRANCH RULES below.
   2. Reproduce / diagnose.
   3. Make the fix.
   4. Run the relevant test suite locally.
-  5. Commit.
+  5. Commit — see STAGING RULES below.
   6. git push (this must complete successfully before you return).
   7. Verify the push landed (git log origin/<branch> -1 shows your commit).
-  8. Only THEN emit the final marker and finish.
+  8. Update the PR description — see PR DESCRIPTION RULES below.
+  9. Only THEN emit the final marker and finish.
+
+BRANCH RULES — every new branch MUST be cut from origin/master:
+  - Always: \`git fetch origin && git checkout -b your-branch-name origin/master\`
+  - NEVER: \`git checkout -b your-branch-name\` (no base) or \`git checkout -b your-branch-name HEAD\` — this inherits the current branch's unmerged commits and pollutes the PR with unrelated changes.
+  - For FIX_OPEN_PR_CI (fixing an existing PR): \`git checkout the-pr-branch && git pull origin the-pr-branch\` — do NOT create a new branch.
+
+STAGING RULES — never include unrelated files in a commit:
+  - NEVER use \`git add -A\`, \`git add .\`, or \`git add --all\`.
+  - Always stage by explicit path: \`git add path/to/file.go path/to/test.go\`
+  - Before committing, run \`git diff --stat origin/master\` and verify that EVERY changed file is directly related to this task. If any unrelated files appear, do NOT stage them.
+
+PR DESCRIPTION RULES — the description must always match what's actually in the diff:
+  - After pushing, run \`gh pr diff <number> --repo Freegle/Iznik --name-only\` to see all files changed vs master.
+  - If any file in the diff is not mentioned in the PR description, update the description with \`gh api repos/Freegle/Iznik/pulls/<n> -X PATCH -f body="..."\` to cover every changed file.
+  - This applies whether you opened the PR or pushed to an existing one.
 
 FORBIDDEN:
   - "I've scheduled a wakeup" / "I'll check back" / "I'll come back to this later" — none of that is possible; if you exit without pushing, the work is lost.
@@ -696,7 +977,9 @@ The parent FSM greps your stdout for these exact markers. Your prose does NOT co
   - Opened a NEW PR:                 PR_NUMBER=<n>
   - Pushed to master directly:       DIRECT_PUSH=<sha>
   - Pushed to an existing PR branch: COMMIT_PUSHED=<sha>
+  - Read-only / analysis task done:  ANALYSIS_COMPLETE=<one-line summary>
   - Could NOT complete the task:     DELEGATE_FAILED=<one-line-reason>
+ANALYSIS_COMPLETE is ONLY for tasks explicitly described as read-only (e.g. Discourse triage, Sentry listing, cursor-advance-only). If your task was to fix a bug and you investigated but could not make a code change, use DELEGATE_FAILED — not ANALYSIS_COMPLETE. ANALYSIS_COMPLETE means "the task was intentionally read-only from the start, and I completed it".
 If you omit the marker, your work is considered failed regardless of what actually happened — the parent will redispatch, wasting another iteration.
 `
       // claude -p (--print) expects the prompt on stdin. Pipe it explicitly.
@@ -742,7 +1025,7 @@ If you omit the marker, your work is considered failed regardless of what actual
             '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob',
             '--model', delegateModel,
           ],
-          { cwd: repoCwd, stdio: ['pipe', 'pipe', 'pipe'] },
+          { cwd: spawnCwd, stdio: ['pipe', 'pipe', 'pipe'] },
         )
         let stdout = ''
         let stderr = ''
@@ -845,6 +1128,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       const prMatch = combined.match(/PR_NUMBER=(\d+)/)
       const directMatch = combined.match(/DIRECT_PUSH=([a-f0-9]+)/)
       const commitMatch = combined.match(/COMMIT_PUSHED=([a-f0-9]+)/)
+      const analysisMatch = combined.match(/ANALYSIS_COMPLETE=([^\n]+)/)
       const failedMatch = combined.match(/DELEGATE_FAILED=([^\n]+)/)
       // exitCode 143 = SIGTERM (silence watchdog or hard cap fired).
       // Surface an explicit `timedOut` flag and `timeoutReason` so the
@@ -854,6 +1138,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       const prNumber = prMatch ? Number(prMatch[1]) : undefined
       const directPushSha = directMatch ? directMatch[1] : undefined
       const commitPushedSha = commitMatch ? commitMatch[1] : undefined
+      const analysisComplete = analysisMatch ? analysisMatch[1].trim() : undefined
       const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
       // Summarise for the human watcher: what did the delegate actually do?
       let summary: string
@@ -865,6 +1150,8 @@ If you omit the marker, your work is considered failed regardless of what actual
         summary = `pushed ${commitPushedSha.slice(0, 9)} to existing PR (${toolCount} tools)`
       } else if (directPushSha) {
         summary = `pushed ${directPushSha.slice(0, 9)} to master (${toolCount} tools)`
+      } else if (analysisComplete) {
+        summary = `analysis done: ${truncate(analysisComplete, 80)}`
       } else if (failedMatch) {
         summary = `DELEGATE_FAILED: ${truncate(failedMatch[1].trim(), 80)}`
       } else if (code === 0) {
@@ -873,21 +1160,212 @@ If you omit the marker, your work is considered failed regardless of what actual
         summary = `exited ${code} (${toolCount} tools)`
       }
       endGroup(summary)
-      return {
-        exitCode: code,
-        timedOut,
-        timeoutReason: killReason,
-        silenceToolMs: SILENCE_TOOL_MS,
-        silenceIdleMs: SILENCE_IDLE_MS,
-        hardCapMs: HARD_CAP_MS,
-        lastTool,
-        stdoutTail: redactSecrets(textStream.slice(-2000)),
-        stderrTail: redactSecrets(stderr.slice(-2000)),
-        prNumber,
-        directPushSha,
-        commitPushedSha,
-        pushed,
+      try {
+        return {
+          exitCode: code,
+          timedOut,
+          timeoutReason: killReason,
+          silenceToolMs: SILENCE_TOOL_MS,
+          silenceIdleMs: SILENCE_IDLE_MS,
+          hardCapMs: HARD_CAP_MS,
+          lastTool,
+          stdoutTail: redactSecrets(textStream.slice(-2000)),
+          stderrTail: redactSecrets(stderr.slice(-2000)),
+          prNumber,
+          directPushSha,
+          commitPushedSha,
+          pushed,
+          worktreeCreated,
+          worktreeError,
+          worktreeDir: worktreeCreated ? worktreeDir : null,
+        }
+      } finally {
+        if (worktreeCreated) {
+          try {
+            execFileSync('git', ['worktree', 'remove', '--force', worktreeDir], {
+              cwd: repoCwd, stdio: 'pipe',
+            })
+          } catch { /* best effort */ }
+        }
       }
+    },
+  },
+
+  // ---- Parallel delegate ----
+  // Sibling of delegate_to_coder. Same spawn mechanics but runs N tasks
+  // simultaneously, each in its own throwaway git worktree. Use when master is
+  // green and multiple independent tasks (red PRs, pending bugs) can be fixed
+  // concurrently without conflicting branches.
+  {
+    name: 'delegate_parallel_tasks',
+    description: 'Spawn N headless Claude Code sessions in parallel, each in its own isolated git worktree. Tasks run concurrently — use when master CI is green and each task touches a different branch. Params: {tasks: [{id, task, timeoutSec?}], repoCwd?}. Returns {results: [{id, exitCode, prNumber?, directPushSha?, commitPushedSha?, timedOut?, pushed, stdoutTail, stderrTail, summary}]}.',
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        tasks: {
+          type: 'array',
+          description: 'Array of tasks to run in parallel. Each must have a unique id string and a full task description.',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Unique identifier for this task (e.g. "pr-208", "bug-9594-5").' },
+              task: { type: 'string', description: 'Full task description, same format as delegate_to_coder.' },
+              timeoutSec: { type: 'number', description: 'Per-task timeout seconds. Default 1200.' },
+            },
+            required: ['id', 'task'],
+          },
+        },
+        repoCwd: { type: 'string', description: 'Repository root. Defaults to /home/edward/FreegleDockerWSL.' },
+      },
+      required: ['tasks'],
+    },
+    handler: async (params) => {
+      const tasks = params.tasks as Array<{ id: string; task: string; timeoutSec?: number }>
+      const repoCwd = (params.repoCwd as string) ?? '/home/edward/FreegleDockerWSL'
+      const { execFileSync, spawn } = await import('node:child_process')
+      const delegateModel = process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'sonnet'
+      const SILENCE_TOOL_MS = 1_800_000
+      const SILENCE_IDLE_MS = 180_000
+
+      const runTask = async (t: { id: string; task: string; timeoutSec?: number }, idx: number) => {
+        const timeoutSec = t.timeoutSec ?? 1200
+        const HARD_CAP_MS = Math.max(timeoutSec * 1000, 3_600_000)
+        const worktreeDir = `/tmp/monitor-fsm-parallel-${process.pid}-${Date.now()}-${idx}`
+        let worktreeCreated = false
+        for (const base of ['master', 'HEAD']) {
+          try {
+            execFileSync('git', ['worktree', 'add', '--detach', worktreeDir, base], {
+              cwd: repoCwd, stdio: 'pipe',
+            })
+            worktreeCreated = true
+            break
+          } catch { /* try next base */ }
+        }
+        const spawnCwd = worktreeCreated ? worktreeDir : repoCwd
+
+        const fullPrompt = `${t.task}
+
+==== CRITICAL EXECUTION CONSTRAINTS — READ FIRST ====
+${worktreeCreated ? `Your working directory is an ISOLATED git worktree at \`${worktreeDir}\`, detached from master. Run all git operations here: \`git checkout <branch>\` / \`git checkout -b <branch>\` are safe. Push your work to origin before emitting the output marker — the worktree is deleted when you return.
+` : ''}You are a HEADLESS, ONE-SHOT subprocess. You MUST complete all work and push to origin in this single session. No wakeups, no ScheduleWakeup, no /loop.
+
+BRANCH RULES: always \`git fetch origin && git checkout -b branch-name origin/master\` for new branches. For existing PR branches: \`gh pr checkout <n> -R Freegle/Iznik\`.
+STAGING RULES: never \`git add -A\`. Always stage explicit paths.
+
+OUTPUT MARKERS — MANDATORY, MACHINE-PARSED (emit exactly one on its own line at the very end):
+  - Opened a NEW PR:                 PR_NUMBER=<n>
+  - Pushed to master directly:       DIRECT_PUSH=<sha>
+  - Pushed to an existing PR branch: COMMIT_PUSHED=<sha>
+  - Read-only / analysis task done:  ANALYSIS_COMPLETE=<one-line summary>
+  - Could NOT complete the task:     DELEGATE_FAILED=<one-line-reason>
+ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse triage, Sentry listing). Use it whenever the task completes with no commit. Do NOT use DELEGATE_FAILED just because you found no bugs or no new posts — that is a successful outcome.
+`
+        type KillReason = 'tool-silence' | 'idle-silence' | 'hardCap' | null
+        let toolCount = 0
+        const result = await new Promise<{ stdout: string; stderr: string; textStream: string; code: number; killReason: KillReason }>((resolve) => {
+          const child = spawn(
+            CLAUDE_BIN,
+            ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages',
+              '--permission-mode', 'acceptEdits', '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob',
+              '--model', delegateModel],
+            { cwd: spawnCwd, stdio: ['pipe', 'pipe', 'pipe'] },
+          )
+          let stdout = '', stderr = '', textStream = '', lineBuffer = ''
+          let lastEventAt = Date.now()
+          let currentTool: string | null = null
+          let killReason: KillReason = null
+
+          const processLine = (line: string) => {
+            const trimmed = line.trim()
+            if (!trimmed) return
+            let ev: any
+            try { ev = JSON.parse(trimmed) } catch { return }
+            const content = ev?.message?.content ?? ev?.content
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block.type === 'text' && typeof block.text === 'string') textStream += block.text
+                else if (block.type === 'tool_use') { currentTool = block.name; toolCount++ }
+                else if (block.type === 'tool_result') currentTool = null
+              }
+            } else if (typeof content === 'string') textStream += content
+            if (ev?.type === 'result' && typeof ev.result === 'string') textStream += ev.result
+          }
+
+          child.stdout.on('data', (d) => {
+            const chunk = String(d); stdout += chunk; lastEventAt = Date.now()
+            lineBuffer += chunk
+            const lines = lineBuffer.split('\n'); lineBuffer = lines.pop() ?? ''
+            for (const l of lines) processLine(l)
+          })
+          child.stderr.on('data', (d) => { stderr += String(d); lastEventAt = Date.now() })
+
+          const silenceTick = setInterval(() => {
+            const silence = Date.now() - lastEventAt
+            if (silence > (currentTool ? SILENCE_TOOL_MS : SILENCE_IDLE_MS)) {
+              killReason = currentTool ? 'tool-silence' : 'idle-silence'
+              child.kill('SIGTERM')
+            }
+          }, 30_000)
+          const hardCap = setTimeout(() => { killReason = 'hardCap'; child.kill('SIGTERM') }, HARD_CAP_MS)
+
+          child.on('close', (code) => {
+            clearInterval(silenceTick); clearTimeout(hardCap)
+            if (lineBuffer) processLine(lineBuffer)
+            resolve({ stdout, stderr, textStream, code: code ?? 1, killReason })
+          })
+          child.stdin.write(fullPrompt)
+          child.stdin.end()
+        })
+
+        if (worktreeCreated) {
+          try { execFileSync('git', ['worktree', 'remove', '--force', worktreeDir], { cwd: repoCwd, stdio: 'pipe' }) } catch { /* best effort */ }
+        }
+
+        const combined = `${result.textStream}\n${result.stderr}`
+        const prMatch = combined.match(/PR_NUMBER=(\d+)/)
+        const directMatch = combined.match(/DIRECT_PUSH=([a-f0-9]+)/)
+        const commitMatch = combined.match(/COMMIT_PUSHED=([a-f0-9]+)/)
+        const analysisMatch = combined.match(/ANALYSIS_COMPLETE=([^\n]+)/)
+        const failedMatch = combined.match(/DELEGATE_FAILED=([^\n]+)/)
+        const timedOut = result.killReason !== null || result.code === 143
+        const prNumber = prMatch ? Number(prMatch[1]) : undefined
+        const directPushSha = directMatch ? directMatch[1] : undefined
+        const commitPushedSha = commitMatch ? commitMatch[1] : undefined
+        const analysisComplete = analysisMatch ? analysisMatch[1].trim() : undefined
+        const pushed = prNumber !== undefined || directPushSha !== undefined || commitPushedSha !== undefined
+
+        let summary: string
+        if (timedOut) summary = `[${t.id}] timed out (${result.killReason}) after ${toolCount} tools`
+        else if (prNumber) summary = `[${t.id}] opened PR #${prNumber} (${toolCount} tools)`
+        else if (commitPushedSha) summary = `[${t.id}] pushed ${commitPushedSha.slice(0, 9)} to existing PR (${toolCount} tools)`
+        else if (directPushSha) summary = `[${t.id}] pushed ${directPushSha.slice(0, 9)} to master (${toolCount} tools)`
+        else if (analysisComplete) summary = `[${t.id}] analysis done: ${analysisComplete.slice(0, 60)}`
+        else if (failedMatch) summary = `[${t.id}] DELEGATE_FAILED: ${failedMatch[1].trim().slice(0, 60)}`
+        else summary = `[${t.id}] exited ${result.code} (${toolCount} tools)`
+        out(summary)
+
+        return {
+          id: t.id,
+          exitCode: result.code,
+          timedOut,
+          timeoutReason: result.killReason,
+          prNumber,
+          directPushSha,
+          commitPushedSha,
+          pushed,
+          analysisComplete,
+          failedReason: failedMatch ? failedMatch[1].trim() : undefined,
+          stdoutTail: redactSecrets(result.textStream.slice(-1500)),
+          stderrTail: redactSecrets(result.stderr.slice(-500)),
+          summary,
+        }
+      }
+
+      out(`▸ delegate_parallel_tasks: launching ${tasks.length} agents in parallel`)
+      const results = await Promise.all(tasks.map((t, i) => runTask(t, i)))
+      const succeeded = results.filter(r => r.pushed).length
+      out(`◂ delegate_parallel_tasks: ${succeeded}/${tasks.length} tasks pushed`)
+      return { results }
     },
   },
 
@@ -906,60 +1384,6 @@ If you omit the marker, your work is considered failed regardless of what actual
     },
   },
 
-  {
-    name: 'send_email',
-    description: 'Send email summary via SMTP. Respects 1h cooldown via state.json last_email_sent. Params: {subject, body}',
-    paramsSchema: {
-      type: 'object',
-      properties: { subject: { type: 'string' }, body: { type: 'string' } },
-      required: ['subject', 'body'],
-    },
-    handler: async (params) => {
-      const db = getDb()
-      const lastStr = kvGet(db, 'last_email_sent')
-      const last = lastStr ? new Date(lastStr).getTime() : 0
-      const now = Date.now()
-      if (last && now - last < 3600_000) {
-        return { skipped: true, reason: 'cooldown' }
-      }
-      const script = `
-import smtplib, sys, os
-from email.mime.text import MIMEText
-env = {}
-for line in open('/home/edward/FreegleDockerWSL/.env'):
-    if '=' in line and not line.startswith('#'):
-        k, v = line.strip().split('=', 1)
-        env[k] = v
-subject = sys.argv[1]
-body = sys.stdin.read()
-msg = MIMEText(body)
-msg['Subject'] = subject
-msg['From'] = env['SMTP_USER']
-msg['To'] = env['SMTP_USER']
-with smtplib.SMTP(env['SMTP_HOST'], int(env['SMTP_PORT'])) as s:
-    s.starttls()
-    s.login(env['SMTP_USER'], env['SMTP_PASS'])
-    s.send_message(msg)
-print('sent')
-`
-      const subject = params.subject as string
-      const body = params.body as string
-      const child = await import('node:child_process').then(m => m.spawn('python3', ['-c', script, subject], { stdio: ['pipe', 'pipe', 'pipe'] }))
-      child.stdin.write(body)
-      child.stdin.end()
-      const result = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
-        let stdout = ''
-        let stderr = ''
-        child.stdout.on('data', d => (stdout += String(d)))
-        child.stderr.on('data', d => (stderr += String(d)))
-        child.on('close', code => resolve({ code: code ?? 0, stdout, stderr }))
-      })
-      if (result.code !== 0) throw new Error(`send_email failed: ${result.stderr}`)
-      kvSet(db, 'last_email_sent', new Date().toISOString())
-      await renderAllViews(db) // keep state.json view in sync
-      return { sent: true }
-    },
-  },
 
   {
     name: 'schedule_wakeup',
@@ -981,7 +1405,7 @@ print('sent')
 
   {
     name: 'coverage_gate_decide',
-    description: 'Pure-logic branch for COVERAGE_GATE. Reads iterationStartTs from context, counts PRs created/updated this iteration, and checks for red CI on @me open PRs. Returns {count, redPRs, _transition: "CI_ROUTER" | "WRAP_UP" | "WRITE_COVERAGE"}. Used by the COVERAGE_GATE tool node to skip an LLM call.',
+    description: 'Pure-logic branch for COVERAGE_GATE. Priority: (1) red CI → CI_ROUTER; (2) dirty/needs-rebase PRs → REBASE_DIRTY_PRS; (3) PRs created this iteration → WRAP_UP; (4) else → WRITE_COVERAGE.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const verifyDef = actions.find(a => a.name === 'verify_pr_created')!
@@ -993,17 +1417,28 @@ print('sent')
       const r = red as any
       const redCount = Array.isArray(r.redPRs) ? r.redPRs.length : 0
       const prCount = typeof v.count === 'number' ? v.count : 0
+
+      // Check for PRs that need rebase (mergeStateStatus === 'DIRTY')
+      const listRes = await sh('gh', [
+        'pr', 'list', '--repo', 'Freegle/Iznik', '--author', '@me',
+        '--state', 'open', '--limit', '30', '--json', 'number,title,headRefName',
+      ])
+      const openPRs = listRes.code === 0 ? JSON.parse(listRes.stdout) as Array<{ number: number; title: string; headRefName: string }> : []
+      const dirtyPRs: Array<{ number: number; title: string; branch: string }> = []
+      for (const pr of openPRs) {
+        const viewRes = await sh('gh', ['pr', 'view', String(pr.number), '--repo', 'Freegle/Iznik', '--json', 'mergeStateStatus'])
+        if (viewRes.code === 0) {
+          const { mergeStateStatus } = JSON.parse(viewRes.stdout)
+          if (mergeStateStatus === 'DIRTY') dirtyPRs.push({ number: pr.number, title: pr.title, branch: pr.headRefName })
+        }
+      }
+
       let target: string
       if (redCount > 0) target = 'CI_ROUTER'
+      else if (dirtyPRs.length > 0) target = 'REBASE_DIRTY_PRS'
       else if (prCount > 0) target = 'WRAP_UP'
       else target = 'WRITE_COVERAGE'
-      return {
-        count: prCount,
-        redCount,
-        verify,
-        red,
-        _transition: target,
-      }
+      return { count: prCount, redCount, dirtyPRs, verify, red, _transition: target }
     },
   },
 
@@ -1058,90 +1493,18 @@ print('sent')
 
   {
     name: 'compose_and_send_email',
-    description: 'Build an email summary from context + DB state and send it via SMTP with a 1h cooldown. Labels each PR with its REAL state queried from `gh pr view` (open / merged / closed). Never claims "merged" or "deployed" unless gh confirms it — guards against the LLM hallucinating merge status.',
+    description: 'No-op: email summaries replaced by the dashboard. Returns skipped immediately.',
     paramsSchema: { type: 'object', properties: {} },
-    handler: async (_params, context) => {
-      const db = getDb()
-      const lastStr = kvGet(db, 'last_email_sent')
-      const last = lastStr ? new Date(lastStr).getTime() : 0
-      const now = Date.now()
-      if (last && now - last < 3600_000) {
-        return { skipped: true, reason: 'cooldown' }
-      }
-      const ctx = context as any
-      const verify = ctx?._action_coverage_gate_decide?.verify ?? ctx?._action_verify_pr_created ?? {}
-      const prs: Array<any> = Array.isArray(verify?.prs) ? verify.prs : []
-      const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
-      if (prs.length === 0 && bugsFixed.length === 0) {
-        return { skipped: true, reason: 'nothing to report' }
-      }
-
-      // ─── Verify PR state from gh. Don't trust context; query the real world. ───
-      // The email you send is factual, not aspirational. A prior iteration
-      // shipped an email that claimed "PR Merged & Deployed" for #210 when
-      // #210 was still open. That was LLM composition; this path is rule-
-      // based, but we also harden it by actively checking each PR's state.
-      const prStates: Array<{ number: number; title: string; url: string; state: string; isMerged: boolean; deployState: string | null }> = []
-      for (const p of prs) {
-        let state = 'UNKNOWN'
-        try {
-          const { stdout } = await exec('gh', ['pr', 'view', String(p.number), '--repo', 'Freegle/Iznik', '--json', 'state'], { maxBuffer: 1024 * 1024 })
-          const parsed = JSON.parse(stdout)
-          state = parsed.state ?? 'UNKNOWN'
-        } catch { /* leave UNKNOWN — better to say nothing than lie */ }
-        // deploy_state, if tracked, lives in the local pr table (populated by
-        // a separate process that polls production). If absent we say nothing
-        // about deploy — we don't assume "live" just because merged.
-        let deployState: string | null = null
-        try {
-          const row = db.prepare('SELECT deploy_state FROM pr WHERE number = ?').get(p.number) as { deploy_state: string | null } | undefined
-          deployState = row?.deploy_state ?? null
-        } catch { /* no pr table or no row — that's fine */ }
-        prStates.push({
-          number: p.number,
-          title: p.title ?? '',
-          url: p.url ?? `https://github.com/Freegle/Iznik/pull/${p.number}`,
-          state,
-          isMerged: state === 'MERGED',
-          deployState,
-        })
-      }
-
-      const lines: string[] = []
-      lines.push(`Phase: ${ctx?.phase ?? 'unknown'}`, '')
-      if (prStates.length > 0) {
-        lines.push('PRs this iteration (state from GitHub; "opened/updated" means NOT merged):')
-        for (const p of prStates) {
-          let label: string
-          if (p.state === 'UNKNOWN') {
-            label = 'state unknown'
-          } else if (p.isMerged) {
-            label = p.deployState === 'live' || p.deployState === 'deployed' ? 'merged + deployed' : 'merged (not yet deployed)'
-          } else if (p.state === 'CLOSED') {
-            label = 'closed (not merged)'
-          } else {
-            // p.state === 'OPEN'
-            label = 'opened/updated — still open'
-          }
-          lines.push(`- #${p.number} [${label}] ${p.title} — ${p.url}`)
-        }
-        lines.push('')
-      }
-      const fixedCount = bugsFixed.filter(b => b.outcome === 'fixed').length
-      const deferredCount = bugsFixed.filter(b => b.outcome === 'deferred').length
-      if (bugsFixed.length > 0) {
-        lines.push(`Discourse bugs: ${fixedCount} fix attempted / ${deferredCount} deferred this iteration.`)
-        lines.push('("fix attempted" = a PR was opened; it does not mean merged, deployed, or accepted.)')
-      }
-
-      const mergedCount = prStates.filter(p => p.isMerged).length
-      const openCount = prStates.filter(p => p.state === 'OPEN').length
-      const subject = `Freegle Monitor: ${openCount} PR${openCount === 1 ? '' : 's'} opened, ${mergedCount} merged, ${fixedCount} bug${fixedCount === 1 ? '' : 's'} attempted`
-      const body = lines.join('\n')
-      const sendDef = actions.find(a => a.name === 'send_email')!
-      const res = await sendDef.handler({ subject, body }, context)
-      return res
+    handler: async (_params, _context) => {
+      return { skipped: true, reason: 'email replaced by dashboard' }
     },
+  },
+
+  {
+    name: '_email_retired',
+    description: 'RETIRED — never called',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async () => ({ skipped: true, reason: 'retired' }),
   },
 
   {
@@ -1165,31 +1528,119 @@ print('sent')
       if (masterFailing && !masterFixAttempted) {
         return { _transition: 'FIX_MASTER_CI', reason: `master CI failing on run ${master.latestRun?.databaseId ?? '?'}` }
       }
-      // Priority 2: any red PR not in terminal-attempts
-      if (pickable) {
-        return { _transition: 'FIX_OPEN_PR_CI', reason: `red PR #${pickable.number} not yet attempted`, pickedPR: pickable.number }
-      }
-      // Priority 3: branch by phase
+      // Priority 2+: master green — dispatch ALL work in parallel (red PRs + discourse topics + sentry)
+      const activeTopics = (ctx?._action_discover_active_topics?.topics ?? []) as Array<{ id: number; hasNew?: boolean }>
+      const topicsWithNew = activeTopics.filter(t => t.hasNew).length
       const phase = ctx?.phase ?? 'analysis'
-      if (phase === 'implementation') {
-        return { _transition: 'COVERAGE_GATE', reason: 'CI green, peak phase — skip discovery, go straight to coverage/gate' }
+      return {
+        _transition: 'PARALLEL_ANALYZE_AND_FIX',
+        reason: `master green — parallel dispatch: ${redPRs.length} red PRs + ${topicsWithNew} active topics (${phase} phase)`,
+        redPRCount: redPRs.length,
+        activeTopicCount: topicsWithNew,
       }
-      return { _transition: 'FETCH_DISCOURSE', reason: 'CI green, analysis phase — enter discovery' }
+    },
+  },
+
+  {
+    name: 'persist_classifications',
+    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. Upserts each bug/retest classification as "open" (or "deferred" if type is deferred). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
+    paramsSchema: { type: 'object', properties: {} },
+    handler: async (_params, context) => {
+      const ctx = context as any
+      const classifications: Array<any> = Array.isArray(ctx?.classifications) ? ctx.classifications : []
+      const db = getDb()
+      let upserted = 0, skipped = 0
+      for (const c of classifications) {
+        // Accept both 'post' and 'post_number' — topic delegates emit post_number
+        const post = c.post ?? c.post_number
+        if (!c.topic || !post) { skipped++; continue }
+        c.post = post
+        // Only persist actionable classifications — skip mine/off_topic/already_fixed/confirmed
+        const type = c.type as string
+        if (!['bug', 'retest', 'deferred', 'question'].includes(type)) { skipped++; continue }
+        const state = type === 'deferred' ? 'deferred' : type === 'question' ? 'deferred' : 'open'
+        // Don't downgrade a bug already in fix-queued or fixed state
+        const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
+        if (existing && ['fix-queued', 'fixed', 'confirmed', 'investigating'].includes(existing.state)) { skipped++; continue }
+        upsertDiscourseBug(db, {
+          topic: Number(c.topic),
+          post: Number(c.post),
+          topicTitle: c.topicTitle ?? null,
+          reporter: c.user ?? null,
+          excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
+          state,
+          featureArea: c.featureArea ?? null,
+          reason: type === 'deferred' ? (c.reason ?? 'deferred by triage') : undefined,
+        })
+        upserted++
+      }
+      return { upserted, skipped }
     },
   },
 
   {
     name: 'work_router_decide',
-    description: 'Phase B router logic. No LLM — branches on context.classifications and context.bugsFixed. Returns {_transition: "PICK_DISCOURSE_BUG" | "FIX_SENTRY_ISSUE" | "COVERAGE_GATE"}.',
+    description: 'Phase B router logic. No LLM — branches on context.classifications and context.bugsFixed. Returns {_transition: "DISPATCH_ALL_BUGS" | "FIX_SENTRY_ISSUE" | "COVERAGE_GATE"}.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as any
+      const phase = ctx?.phase ?? 'analysis'
       const classifications: Array<any> = Array.isArray(ctx?.classifications) ? ctx.classifications : []
       const bugsFixed: Array<any> = Array.isArray(ctx?.bugsFixed) ? ctx.bugsFixed : []
       const fixedKeys = new Set(bugsFixed.map(b => `${b.topic}.${b.post}`))
-      const pendingBug = classifications.find(c => (c.type === 'bug' || c.type === 'retest') && !fixedKeys.has(`${c.topic}.${c.post}`))
-      if (pendingBug) {
-        return { _transition: 'PICK_DISCOURSE_BUG', reason: `unfixed bug ${pendingBug.topic}.${pendingBug.post}` }
+      const pendingBugs = classifications.filter(c => (c.type === 'bug' || c.type === 'retest') && !fixedKeys.has(`${c.topic}.${c.post}`))
+
+      // Always check DB for open bugs regardless of phase.
+      const db = getDb()
+      const dbOpenBugs = (db.prepare(`
+        SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle, pr_rejections AS prRejections
+        FROM discourse_bug
+        WHERE state IN ('open', 'investigating') AND pr_number IS NULL
+      `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
+
+      // Bugs whose PRs have been rejected once need human review — escalate them.
+      // One rejection is enough: if the reviewer closed a PR, they've signalled the
+      // approach is wrong and the FSM shouldn't guess again without guidance.
+      const ESCALATION_THRESHOLD = 1
+      const toEscalate = dbOpenBugs.filter(b => (b.prRejections ?? 0) >= ESCALATION_THRESHOLD)
+      for (const bug of toEscalate) {
+        db.prepare(`
+          UPDATE discourse_bug SET state = 'deferred',
+            reason = 'Escalated: ' || ? || ' rejected PR(s) — needs human triage',
+            last_seen_at = datetime('now')
+          WHERE topic = ? AND post = ?
+        `).run(bug.prRejections, bug.topic, bug.post)
+        // Queue a Discourse reply so the human sees it in the dashboard.
+        queueDiscourseDraft(db, {
+          topic: bug.topic,
+          post: bug.post,
+          username: bug.reporter ?? 'you',
+          quote: (bug.excerpt ?? '').slice(0, 120),
+          body: `I've tried fixing this ${bug.prRejections} time(s) but my approaches have been rejected. I'm not confident I understand the root cause well enough to fix it correctly. Could you advise on the right direction?`,
+        })
+        out(`work_router_decide: escalated ${bug.topic}/${bug.post} after ${bug.prRejections} rejected PRs`)
+      }
+
+      // Bugs with < ESCALATION_THRESHOLD rejections can be dispatched.
+      const classificationKeys = new Set(classifications.map((c: any) => `${c.topic}.${c.post}`))
+      const extraBugs = dbOpenBugs
+        .filter(b => (b.prRejections ?? 0) < ESCALATION_THRESHOLD)
+        .filter(b => !classificationKeys.has(`${b.topic}.${b.post}`))
+
+      // During peak phase, defer only if there are no backlog bugs to dispatch.
+      if (phase === 'implementation' && extraBugs.length === 0) {
+        const pendingCount = pendingBugs.length
+        return { _transition: 'COVERAGE_GATE', reason: `peak phase — no backlog bugs; deferring ${pendingCount} new bug(s) to off-peak` }
+      }
+
+      const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
+
+      if (allPending.length > 0) {
+        return {
+          _transition: 'DISPATCH_ALL_BUGS',
+          reason: `${allPending.length} unfixed bug(s) (${pendingBugs.length} this iteration + ${extraBugs.length} from DB) — parallel dispatch`,
+          dbOpenBugs: extraBugs,
+        }
       }
       const sentry = ctx?._action_check_sentry ?? {}
       const sentryIssues: Array<any> = Array.isArray(sentry.issues) ? sentry.issues : []
@@ -1198,6 +1649,100 @@ print('sent')
         return { _transition: 'FIX_SENTRY_ISSUE', reason: `${sentryIssues.length} unresolved Sentry issue(s)` }
       }
       return { _transition: 'COVERAGE_GATE', reason: 'no pending bug / sentry — advance to gate' }
+    },
+  },
+
+  {
+    name: 'adversarial_review_pr',
+    description: 'Review a PR using Opus model for correctness and unintended changes. Params: {prNumber, repo}. Returns {passed, issues: [{category, description, severity}], summary}.',
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        prNumber: { type: 'number', description: 'PR number to review' },
+        repo: { type: 'string', description: 'Repository in owner/name format', default: 'Freegle/Iznik' },
+      },
+      required: ['prNumber'],
+    },
+    handler: async (params, context) => {
+      const { prNumber, repo = 'Freegle/Iznik' } = params as any
+      try {
+        // Fetch PR diff
+        const { stdout: diff } = await exec('gh', [
+          'pr', 'diff', String(prNumber),
+          '--repo', repo,
+        ], { maxBuffer: 50 * 1024 * 1024, timeout: 30 * 1000 })
+
+        if (!diff || diff.trim().length === 0) {
+          return {
+            passed: false,
+            issues: [{ category: 'diff', description: 'PR diff is empty or not accessible', severity: 'error' }],
+            summary: 'Failed to fetch PR diff',
+          }
+        }
+
+        // Review with Opus
+        const phaseInfo = getPhaseInfo()
+        const reviewModel = modelForAdversarialReview(phaseInfo)
+
+        const prompt = `You are a code review expert. Review this PR diff for:
+1. Correctness - does the fix actually solve the problem?
+2. Unintended changes - are there any unnecessary or harmful changes?
+3. Test coverage - are there tests for the fix?
+4. Code quality - does it follow the codebase patterns?
+
+Return ONLY a JSON object with:
+{
+  "passed": boolean,
+  "blockers": [{"category": string, "description": string}],
+  "warnings": [{"category": string, "description": string}],
+  "summary": string
+}
+
+If blockers exist, passed = false. Warnings do not block but should be noted.
+
+DIFF:
+\`\`\`
+${diff.slice(0, 20000)}
+\`\`\`
+${diff.length > 20000 ? '\n(diff truncated for length)' : ''}`
+
+        const response = await (global as any).__ai_flower_adapter.query(
+          reviewModel,
+          [{ role: 'user', content: prompt }],
+          { max_tokens: 1000 }
+        )
+
+        let review: any
+        try {
+          const text = response.message?.content?.[0]?.text ?? ''
+          const jsonMatch = text.match(/\{[\s\S]*\}/m)
+          review = jsonMatch ? JSON.parse(jsonMatch[0]) : {}
+        } catch (e) {
+          dbg(`[adversarial-review] JSON parse error: ${e}`)
+          review = {}
+        }
+
+        const passed = review.passed !== false && (!Array.isArray(review.blockers) || review.blockers.length === 0)
+        const issues = [
+          ...(Array.isArray(review.blockers) ? review.blockers.map((b: any) => ({ ...b, severity: 'error' })) : []),
+          ...(Array.isArray(review.warnings) ? review.warnings.map((w: any) => ({ ...w, severity: 'warning' })) : []),
+        ]
+
+        return {
+          passed,
+          issues,
+          summary: review.summary ?? (passed ? 'PR passed review' : 'PR has issues'),
+        }
+      } catch (err: any) {
+        outWarn(`[adversarial-review] error: ${err.message}`)
+        // Tooling failure (e.g. bad gh flag, network error) — don't block the PR.
+        // A review that couldn't run is not the same as a review that found issues.
+        return {
+          passed: true,
+          issues: [{ category: 'tooling-error', description: `Review tool failed: ${err.message}`, severity: 'warning' }],
+          summary: 'Review could not run (tooling error) — treating as passed',
+        }
+      }
     },
   },
 

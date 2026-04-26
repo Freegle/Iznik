@@ -13,7 +13,8 @@ class GiftAidClaimCommand extends Command
      */
     protected $signature = 'donations:giftaid-claim
         {--dry-run : Preview the CSV output without marking donations as claimed or invalidating records}
-        {--output= : Write CSV output to this file path instead of stdout}';
+        {--output= : Write CSV output to this file path instead of stdout}
+        {--end-date= : Only include donations on or before this date (YYYY-MM-DD, inclusive)}';
 
     /**
      * The console command description.
@@ -27,19 +28,30 @@ class GiftAidClaimCommand extends Command
     {
         $dryRun = (bool) $this->option('dry-run');
         $outputPath = $this->option('output');
+        $endDate = $this->option('end-date');
+
+        if ($endDate !== null && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $endDate)) {
+            $this->error("Invalid --end-date '{$endDate}'. Expected YYYY-MM-DD.");
+
+            return Command::FAILURE;
+        }
 
         if ($dryRun) {
             $this->warn('DRY RUN — no donations will be marked as claimed, no records invalidated');
         }
 
-        Log::info('Starting Gift Aid claim', ['dry_run' => $dryRun, 'output' => $outputPath]);
+        if ($endDate !== null) {
+            $this->info("Limiting donations to those on or before {$endDate} (inclusive)");
+        }
+
+        Log::info('Starting Gift Aid claim', ['dry_run' => $dryRun, 'output' => $outputPath, 'end_date' => $endDate]);
 
         $result = $claimService->generateClaim($dryRun, function (array $row) use ($outputPath) {
             // Rows are streamed one at a time via this callback
             if ($outputPath === null) {
                 $this->outputCsvRow($row);
             }
-        }, $outputPath);
+        }, $outputPath, $endDate);
 
         $this->info("Total claimed: £{$result['total']}");
         $this->info("Rows output: {$result['rows']}");

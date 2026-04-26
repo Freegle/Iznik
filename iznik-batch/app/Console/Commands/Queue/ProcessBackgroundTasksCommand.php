@@ -72,6 +72,7 @@ class ProcessBackgroundTasksCommand extends Command
         $iteration = 0;
 
         $this->registerShutdownHandlers();
+        $this->registerFatalErrorHandler();
         $this->info("Processing background tasks (limit={$limit}, max-iterations={$maxIterations})");
 
         while (TRUE) {
@@ -94,6 +95,44 @@ class ProcessBackgroundTasksCommand extends Command
         }
 
         return Command::SUCCESS;
+    }
+
+    // Fatal errors bypass try/catch; this shutdown function is the only hook that runs after them.
+    protected function registerFatalErrorHandler(): void
+    {
+        if ($this->isTestingEnvironment()) {
+            return;
+        }
+
+        // 2 MB reserve freed at shutdown entry — ensures we have heap for Log/Sentry after OOM.
+        $memoryReserve = str_repeat("\0", 2 * 1024 * 1024);
+
+        register_shutdown_function(function () use (&$memoryReserve) {
+            unset($memoryReserve);
+            $this->handleFatalShutdown(error_get_last());
+        });
+    }
+
+    public function handleFatalShutdown(?array $error): void
+    {
+        $fatalTypes = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR];
+
+        if ($error === null || ! in_array($error['type'], $fatalTypes, TRUE)) {
+            return;
+        }
+
+        $message = sprintf(
+            'Fatal error in queue:background-tasks: %s in %s:%d',
+            $error['message'],
+            $error['file'],
+            $error['line']
+        );
+
+        Log::critical($message, ['error' => $error]);
+
+        if (app()->bound('sentry')) {
+            app('sentry')->captureMessage($message, \Sentry\Severity::fatal());
+        }
     }
 
     /**

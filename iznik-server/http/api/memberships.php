@@ -311,6 +311,13 @@ function memberships() {
                             $n->notifyGroupMods($groupid);
                             break;
                         }
+                        case 'ReviewIgnore': {
+                            # Mark the member as reviewed so they drop off the Member Review queue.
+                            # Fixes Discourse topic 9618: Ignore had no effect on iOS because this
+                            # action was missing from the PHP V1 API.
+                            $u->memberReview($groupid, FALSE, '');
+                            break;
+                        }
                     }
                 }
 

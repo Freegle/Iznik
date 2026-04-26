@@ -25,12 +25,14 @@ import (
 
 const FREEGLE = utils.GROUP_TYPE_FREEGLE
 
+func (Group) TableName() string { return "groups" }
+
 // Full group details.
 type Group struct {
 	ID                   uint64           `json:"id" gorm:"primary_key"`
 	Nameshort            string           `json:"nameshort"`
 	Namefull             string           `json:"namefull"`
-	Namedisplay          string           `json:"namedisplay"`
+	Namedisplay          string           `json:"namedisplay" gorm:"-"`
 	Settings             json.RawMessage  `json:"settings"` // This is JSON stored in the DB as a string.
 	Rules                json.RawMessage  `json:"rules"`    // Group rules, nullable JSON.
 	Region               string           `json:"region"`
@@ -821,7 +823,7 @@ func CreateGroup(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO `groups` (nameshort, namedisplay, type, region, publish, onhere) VALUES (?, ?, ?, 'UK', 1, 1)",
+	sqlResult, err := sqlDB.Exec(fmt.Sprintf("INSERT INTO `groups` (nameshort, namefull, type, publish, onhere, polyindex) VALUES (?, ?, ?, 1, 1, ST_GeomFromText('POINT(0 0)', %d))", utils.SRID),
 		req.Name, req.Name, req.GroupType)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create group")

@@ -214,6 +214,46 @@ func TestGetSession(t *testing.T) {
 	assert.NotNil(t, result["persistent"])
 }
 
+func TestGetSessionMicrovolunteeringallowed(t *testing.T) {
+	// /api/session must return microvolunteeringallowed in each group entry so that
+	// MicroVolunteering.vue gate can decide whether to offer challenges.
+	prefix := uniquePrefix("sess_mv")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	db.Exec("UPDATE `groups` SET microvolunteering = 1 WHERE id = ?", groupID)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	groups, ok := result["groups"].([]interface{})
+	assert.True(t, ok, "groups should be an array")
+	assert.GreaterOrEqual(t, len(groups), 1)
+
+	found := false
+	for _, g := range groups {
+		gmap, ok := g.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if gmap["groupid"] == float64(groupID) {
+			val, exists := gmap["microvolunteeringallowed"]
+			assert.True(t, exists, "microvolunteeringallowed must be present in session groups")
+			assert.Equal(t, float64(1), val, "microvolunteeringallowed should be 1 for groups with microvolunteering enabled")
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "test group not found in session groups response")
+}
+
 func TestGetSessionReturnsDonorFields(t *testing.T) {
 	// Session endpoint must return supporter, donated, and donatedtype so the
 	// frontend can suppress ads for recent donors (recentDonor computed prop).

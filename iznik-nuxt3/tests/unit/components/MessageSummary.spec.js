@@ -410,4 +410,24 @@ describe('MessageSummary', () => {
       expect(true).toBe(true)
     })
   })
+
+  describe('image lazy loading', () => {
+    it('NuxtPicture for externaluid must have :loading attribute to prevent render-blocking on mobile', () => {
+      // Reporter bug: "30 seconds for pictures to load / can't do anything until photos load"
+      // Root cause: NuxtPicture for externaluid images had no loading attribute, so the browser
+      // loaded all images eagerly, saturating bandwidth and freezing the page on slow mobile.
+      // OurUploadedImage and ProxyImage both default to loading="lazy"; NuxtPicture here must too.
+      const { readFileSync } = require('fs')
+      const { resolve } = require('path')
+      const source = readFileSync(
+        resolve(__dirname, '../../../components/MessageSummary.vue'),
+        'utf-8'
+      )
+      const start = source.indexOf('v-else-if="message.attachments[0]?.externaluid"')
+      expect(start).toBeGreaterThan(-1)
+      const end = source.indexOf('/>', start)
+      const nuxtPictureBlock = source.substring(start, end)
+      expect(nuxtPictureBlock).toContain(':loading=')
+    })
+  })
 })

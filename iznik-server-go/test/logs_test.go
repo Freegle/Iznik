@@ -114,6 +114,110 @@ func TestGetLogsV2Path(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode)
 }
 
+func TestGetLogsModmailsonly(t *testing.T) {
+	// Verify that modmailsonly=true filters to only modmail-related logs.
+	// V1 includes: Message (Rejected, Deleted, Replied) and User (Mailed, Rejected, Deleted).
+	prefix := uniquePrefix("LogsModmail")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, modID)
+
+	db := database.DBConn
+
+	// 1. Message/Rejected (SHOULD be included)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'rejected')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REJECTED, groupID, userID)
+
+	// 2. Message/Deleted (SHOULD be included)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'deleted')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, groupID, userID)
+
+	// 3. Message/Replied (SHOULD be included)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'replied')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, groupID, userID)
+
+	// 4. User/Mailed (SHOULD be included)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'mailed')",
+		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_MAILED, groupID, userID)
+
+	// 5. User/Rejected (SHOULD be included)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'user rejected')",
+		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_REJECTED, groupID, userID)
+
+	// 6. User/Deleted (SHOULD be included)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'user deleted')",
+		flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_DELETED, groupID, userID)
+
+	// 7. Message/Received (SHOULD NOT be included)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'received')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, groupID, userID)
+
+	// 8. Message/Approved (SHOULD NOT be included)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'approved')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_APPROVED, groupID, userID)
+
+	// 9. Group/Joined (SHOULD NOT be included)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, timestamp, text) VALUES (?, ?, ?, ?, NOW(), 'joined')",
+		flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, groupID, userID)
+
+	// Query with modmailsonly=true
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?groupid=%d&modmailsonly=true&limit=100&jwt=%s",
+		groupID, token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	logs, ok := result["logs"].([]interface{})
+	assert.True(t, ok, "logs should be an array")
+
+	// Collect the type/subtype pairs returned.
+	type logKey struct {
+		Type    string
+		Subtype string
+	}
+	found := map[logKey]bool{}
+	for _, entry := range logs {
+		e := entry.(map[string]interface{})
+		logType, _ := e["type"].(string)
+		logSubtype := ""
+		if s, ok := e["subtype"].(string); ok {
+			logSubtype = s
+		}
+		found[logKey{logType, logSubtype}] = true
+	}
+
+	// Count of included logs should be exactly 6 (the modmail-related ones).
+	assert.Equal(t, 6, len(found), "modmailsonly should return exactly 6 modmail logs")
+
+	// Verify the 6 included logs
+	assert.True(t, found[logKey{flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REJECTED}],
+		"Message/Rejected should be included")
+	assert.True(t, found[logKey{flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED}],
+		"Message/Deleted should be included")
+	assert.True(t, found[logKey{flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED}],
+		"Message/Replied should be included")
+	assert.True(t, found[logKey{flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_MAILED}],
+		"User/Mailed should be included")
+	assert.True(t, found[logKey{flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_REJECTED}],
+		"User/Rejected should be included")
+	assert.True(t, found[logKey{flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_DELETED}],
+		"User/Deleted should be included")
+
+	// Verify the non-modmail logs are excluded
+	assert.False(t, found[logKey{flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED}],
+		"Message/Received should NOT be included")
+	assert.False(t, found[logKey{flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_APPROVED}],
+		"Message/Approved should NOT be included")
+	assert.False(t, found[logKey{flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED}],
+		"Group/Joined should NOT be included")
+}
+
 func TestGetLogsUserReturnsAllTypes(t *testing.T) {
 	// Verify that logtype=user returns logs of ALL types (not just Message/User),
 	// but excludes User/Created and User/Merged subtypes.

@@ -20,7 +20,7 @@
               otheruser?.profile?.paththumb ||
               chat.icon
             "
-            :name="chat.name"
+            :name="otheruser?.displayname || chat.name"
             class="pe-1 clickme d-none d-md-flex"
             is-thumbnail
             size="xl"
