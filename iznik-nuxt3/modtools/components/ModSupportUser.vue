@@ -551,6 +551,13 @@
       message="<p><strong>This can't be undone.</strong></p><p>Are you completely sure you want to do this?</p>"
       @confirm="purgeConfirmed"
     />
+    <ConfirmModal
+      v-if="showPasswordConfirm"
+      ref="passwordConfirmRef"
+      :title="'Reset password for ' + user.displayname + '?'"
+      message="<p>Are you sure you want to reset this user's password?</p>"
+      @confirm="setPasswordConfirmed"
+    />
     <ProfileModal
       v-if="showProfile && user && user.info"
       :id="id"
@@ -625,6 +632,9 @@ const logs = ref(null)
 const profileRef = ref(null)
 const purgeConfirmRef = ref(null)
 const spamConfirm = ref(null)
+const showPasswordConfirm = ref(false)
+const passwordConfirmRef = ref(null)
+let passwordCallback = null
 
 const preferredemail = usePreferredEmail(user)
 
@@ -853,14 +863,24 @@ function spamReport() {
   spamConfirm.value?.show()
 }
 
-async function setPassword(callback) {
+function setPassword(callback) {
+  passwordCallback = callback
+  showPasswordConfirm.value = true
+  passwordConfirmRef.value?.show()
+}
+
+async function setPasswordConfirmed() {
   if (newpassword.value) {
     await userStore.edit({
       id: user.value.id,
       password: newpassword.value,
     })
   }
-  callback()
+  showPasswordConfirm.value = false
+  if (passwordCallback) {
+    passwordCallback()
+    passwordCallback = null
+  }
 }
 
 async function addEmail(callback) {
