@@ -66,7 +66,7 @@ func TestCheckHoldConflictNilMessage(t *testing.T) {
 func TestCheckHoldConflictNoHold(t *testing.T) {
 	// Message without hold should return false
 	msg := &reviewMessage{
-		heldBy: uint64(0),
+		HeldBy: uint64(0),
 	}
 	result := checkHoldConflict(msg, 1)
 	assert.False(t, result)
@@ -75,7 +75,7 @@ func TestCheckHoldConflictNoHold(t *testing.T) {
 func TestCheckHoldConflictDifferentUser(t *testing.T) {
 	// Message held by different user should return true (conflict)
 	msg := &reviewMessage{
-		heldBy: uint64(2),
+		HeldBy: uint64(2),
 	}
 	result := checkHoldConflict(msg, 1)
 	assert.True(t, result)
@@ -84,7 +84,7 @@ func TestCheckHoldConflictDifferentUser(t *testing.T) {
 func TestCheckHoldConflictSameUser(t *testing.T) {
 	// Message held by same user should return false (no conflict)
 	msg := &reviewMessage{
-		heldBy: uint64(1),
+		HeldBy: uint64(1),
 	}
 	result := checkHoldConflict(msg, 1)
 	assert.False(t, result)
