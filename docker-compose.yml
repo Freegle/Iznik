@@ -207,8 +207,8 @@ services:
       test: ["CMD-SHELL", "nc -z 127.0.0.1 783"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 60s
+      retries: 12
+      start_period: 120s
 
   rspamd:
     image: rspamd/rspamd:latest
