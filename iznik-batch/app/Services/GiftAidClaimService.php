@@ -22,7 +22,9 @@ class GiftAidClaimService
      *
      * First checks the user's saved addresses (users_addresses → paf_addresses → locations)
      * for a postcode that appears in their homeaddress text. Falls back to UK postcode
-     * regex extraction from homeaddress if no saved address matches.
+     * regex extraction from homeaddress if no saved address matches. Any candidate
+     * found is validated against the locations table (canonical name) before storing,
+     * matching V1 Donations::identifyGiftAidPostcode().
      */
     public function identifyPostcodes(): int
     {
@@ -33,16 +35,51 @@ class GiftAidClaimService
         );
 
         foreach ($records as $record) {
-            $postcode = $this->findPostcodeFromSavedAddresses($record->userid, $record->homeaddress)
+            $candidate = $this->findPostcodeFromSavedAddresses($record->userid, $record->homeaddress)
                 ?? $this->extractPostcodeFromAddress($record->homeaddress);
 
-            if ($postcode !== null) {
-                DB::update('UPDATE giftaid SET postcode = ? WHERE id = ?', [$postcode, $record->id]);
-                $found++;
+            if ($candidate === null) {
+                continue;
             }
+
+            $canonical = $this->lookupCanonicalPostcode($candidate);
+            if ($canonical === null) {
+                continue;
+            }
+
+            DB::update('UPDATE giftaid SET postcode = ? WHERE id = ?', [$canonical, $record->id]);
+            $found++;
         }
 
         return $found;
+    }
+
+    /**
+     * Validate a postcode candidate against the locations table and return the
+     * canonical name. Mirrors V1 Location::typeahead() — exact match preferred,
+     * else first prefix match.
+     */
+    private function lookupCanonicalPostcode(string $candidate): ?string
+    {
+        $normalised = strtoupper(preg_replace('/\s+/', ' ', trim($candidate)));
+
+        $exact = DB::select(
+            "SELECT name FROM locations WHERE type = 'Postcode' AND name = ? LIMIT 1",
+            [$normalised]
+        );
+        if (!empty($exact)) {
+            return $exact[0]->name;
+        }
+
+        $prefix = DB::select(
+            "SELECT name FROM locations WHERE type = 'Postcode' AND name LIKE ? ORDER BY name LIMIT 1",
+            [$normalised.'%']
+        );
+        if (!empty($prefix)) {
+            return $prefix[0]->name;
+        }
+
+        return null;
     }
 
     /**
@@ -94,6 +131,34 @@ class GiftAidClaimService
         }
 
         return $found;
+    }
+
+    /**
+     * Link anonymous donations (userid IS NULL) to a user when their `Payer`
+     * email matches a known users_emails row. Mirrors V1
+     * Donations::correctUserIdInDonations(). Without this, donations made
+     * before a user signed up — or after they leave and rejoin — never get
+     * their userid backfilled and so are never gift-aided.
+     */
+    public function correctUserIdInDonations(): int
+    {
+        $missing = DB::select(
+            "SELECT users_emails.userid AS emailid, users_donations.id AS donationid
+             FROM users_donations
+             INNER JOIN users_emails ON users_emails.email = users_donations.Payer
+             WHERE users_donations.userid IS NULL
+               AND users_donations.Payer != ''
+               AND users_emails.email != ''"
+        );
+
+        foreach ($missing as $m) {
+            DB::update(
+                'UPDATE users_donations SET userid = ? WHERE id = ?',
+                [$m->emailid, $m->donationid]
+            );
+        }
+
+        return count($missing);
     }
 
     /**
@@ -155,15 +220,17 @@ class GiftAidClaimService
      * @param  callable|null  $rowCallback  Called for each output row (array of strings).
      *                                      Used when writing to stdout row-by-row.
      * @param  string|null  $outputPath  Write CSV to this file; null means use $rowCallback.
+     * @param  string|null  $endDate  Only include donations on or before this YYYY-MM-DD (inclusive).
      * @return array{rows: int, invalid: int, total: float}
      */
-    public function generateClaim(bool $dryRun, ?callable $rowCallback = null, ?string $outputPath = null): array
+    public function generateClaim(bool $dryRun, ?callable $rowCallback = null, ?string $outputPath = null, ?string $endDate = null): array
     {
         $this->identifyPostcodes();
         $this->identifyHouseNumbers();
+        $this->correctUserIdInDonations();
         $this->identifyGiftAidedDonations();
 
-        $donations = DB::select("
+        $sql = "
             SELECT users_donations.*,
                    giftaid.id AS giftaidid,
                    giftaid.fullname,
@@ -180,8 +247,15 @@ class GiftAidClaimService
               AND giftaid.reviewed IS NOT NULL
               AND GrossAmount > 0
               AND source IN ('DonateWithPayPal', 'Stripe')
-            ORDER BY users_donations.timestamp ASC
-        ");
+        ";
+        $bindings = [];
+        if ($endDate !== null) {
+            $sql .= ' AND users_donations.timestamp < ? ';
+            $bindings[] = date('Y-m-d', strtotime($endDate.' +1 day'));
+        }
+        $sql .= ' ORDER BY users_donations.timestamp ASC';
+
+        $donations = DB::select($sql, $bindings);
 
         $handle = null;
         if ($outputPath !== null) {
@@ -237,35 +311,37 @@ class GiftAidClaimService
             $key = "{$donation->userid}-{$donation->GrossAmount}-{$date}";
 
             if (isset($dups[$key])) {
+                // Same user, same amount, same day — skipped from CSV but still
+                // marked as claimed so it doesn't resurface on the next run.
+                // Matches V1 donations_giftaid_claim.php behaviour.
                 Log::info('Skipping duplicate donation', [
                     'userid' => $donation->userid,
                     'amount' => $donation->GrossAmount,
                     'date' => $date,
                 ]);
-                continue;
+            } else {
+                $dups[$key] = true;
+
+                $row = [
+                    '',
+                    $firstname,
+                    $lastname,
+                    $donation->housenameornumber . "\t",  // tab forces quoting in Excel
+                    $donation->postcode,
+                    '',
+                    '',
+                    $date,
+                    $donation->GrossAmount,
+                    $donation->Payer ?? '',
+                    $donation->userid,
+                    $donation->giftaidid,
+                    date('d/m/y', strtotime($donation->declarationdate)),
+                ];
+
+                $this->writeRow($row, $handle, $rowCallback);
+                $rows++;
+                $total += (float) $donation->GrossAmount;
             }
-
-            $dups[$key] = true;
-
-            $row = [
-                '',
-                $firstname,
-                $lastname,
-                $donation->housenameornumber . "\t",  // tab forces quoting in Excel
-                $donation->postcode,
-                '',
-                '',
-                $date,
-                $donation->GrossAmount,
-                $donation->Payer ?? '',
-                $donation->userid,
-                $donation->giftaidid,
-                date('d/m/y', strtotime($donation->declarationdate)),
-            ];
-
-            $this->writeRow($row, $handle, $rowCallback);
-            $rows++;
-            $total += (float) $donation->GrossAmount;
 
             if (!$dryRun) {
                 DB::update(
@@ -326,9 +402,9 @@ class GiftAidClaimService
      */
     private function extractPostcodeFromAddress(string $homeaddress): ?string
     {
-        $pattern = '/[A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2}/i';
+        $pattern = '/([A-Z]{1,2}[0-9][0-9A-Z]?)\s*([0-9][A-Z]{2})/i';
         if (preg_match($pattern, $homeaddress, $matches)) {
-            return strtoupper(preg_replace('/\s+/', ' ', trim($matches[0])));
+            return strtoupper($matches[1] . ' ' . $matches[2]);
         }
 
         return null;

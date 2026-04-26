@@ -4,6 +4,12 @@ import { useMiscStore } from '@/stores/misc'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
 
+// Skip beep on the first checkWork() call after page load. The first call
+// establishes the baseline work count; beeping at that point would interrupt
+// background audio on iOS (podcasts, BBC Sounds) simply because the user opened
+// the app. Beeps fire normally for any increase detected on subsequent calls.
+let isFirstCheckWork = true
+
 async function makebeep() {
   const sound = new Audio('/alert.wav')
   try {
@@ -97,9 +103,14 @@ export function useModMe() {
       const chatcount = chatStore ? Math.min(99, chatStore.unreadCount) : 0
       const work = authStore.work
       const totalCount = work?.total + chatcount
+
+      const skipBeep = isFirstCheckWork
+      isFirstCheckWork = false
+
       if (
         work &&
         totalCount > currentTotal &&
+        !skipBeep &&
         authStore.user &&
         (!authStore.user.settings ||
           !Object.keys(authStore.user.settings).includes('playbeep') ||

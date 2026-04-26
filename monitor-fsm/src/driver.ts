@@ -303,6 +303,18 @@ async function main() {
   process.env.MONITOR_ACTIVE_BRAIN_MODEL = modelForBrain(phaseInfo)
 
   const innerAdapter = new ClaudeCodeAdapter({ maxTokens: 8192, model: modelForBrain(phaseInfo) })
+
+  // Expose a query(model, messages, options) shim so adversarial_review_pr can
+  // call a specific model (Opus) without going through the FSM engine adapter.
+  ;(global as any).__ai_flower_adapter = {
+    async query(model: string, messages: Array<{ role: string; content: string }>, opts?: { max_tokens?: number }) {
+      const adapter = new ClaudeCodeAdapter({ maxTokens: opts?.max_tokens ?? 4096, model })
+      const userContent = messages.find(m => m.role === 'user')?.content ?? ''
+      const text = await adapter.call('', userContent)
+      return { message: { content: [{ text }] } }
+    },
+  }
+
   // Retry-aware wrapper. ai-flower retries on validation failure by calling us
   // again with the same (system, user) pair. We detect that repetition and
   // prepend an escalating JSON-only preamble with a worked example. The
@@ -425,7 +437,7 @@ async function main() {
     // etc. as 'tool' — we save one LLM call per state, which on an ~8-state
     // iteration adds up to roughly half the tokens with zero functional change.
     const stateDef: any = (definition.states as any)[current.currentState]
-    if (stateDef?.nodeType === 'tool') {
+    if (stateDef?.nodeType === 'tool' || (stateDef?.nodeType === 'start' && Array.isArray(stateDef?.readActions) && stateDef.readActions.length > 0)) {
       const readActions: string[] = stateDef.readActions ?? []
       const writeActions: string[] = stateDef.writeActions ?? []
       const toolActions = [...readActions, ...writeActions]

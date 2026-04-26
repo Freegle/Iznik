@@ -170,7 +170,8 @@
           <div class="d-flex flex-shrink-0">
             <div
               v-if="summary && message && fromUser"
-              class="text-info fw-bold me-2"
+              class="text-info fw-bold me-2 text-truncate d-inline-block"
+              style="max-width: 8rem"
             >
               {{ fromUser.displayname }}
               <span v-if="fromUser.deleted" class="badge bg-danger ms-1">
@@ -205,10 +206,10 @@
                   class="mt-2"
                   variant="white"
                   icon-name="reply"
-                  label="Back to Pending"
                   confirm
                   @handle="backToPending"
-                />
+                  ><span class="d-none d-sm-inline">Back to Pending</span></SpinButton
+                >
               </div>
               <div class="ms-2">
                 <b-button

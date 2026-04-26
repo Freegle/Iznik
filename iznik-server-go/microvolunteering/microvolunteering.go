@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -507,17 +508,12 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 		return nil
 	}
 
-	imagesHost := os.Getenv("IMAGES_HOST")
-	if imagesHost == "" {
-		imagesHost = "https://images.ilovefreegle.org"
-	}
-
 	return &Challenge{
 		Type: ChallengeAIImageReview,
 		AIImage: &AIImageChallenge{
 			ID:         img.ID,
 			Name:       img.Name,
-			URL:        imagesHost + "/" + img.Externaluid,
+			URL:        misc.GetImageDeliveryUrl(img.Externaluid, ""),
 			UsageCount: img.UsageCount,
 		},
 	}
@@ -818,4 +814,14 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		"microvolunteerings": items,
 		"context":            newCtx,
 	})
+}
+
+// RecordAIAttachmentDeletion records a Reject microaction for an AI image when a human
+// (poster or moderator) deletes an AI-generated attachment from a message. This signals
+// that the AI illustration was inappropriate for the item.
+func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
+	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version)
+		VALUES (?, ?, ?, 'Reject', ?)
+		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
+		ChallengeAIImageReview, userID, aiImageID, Version, Version)
 }

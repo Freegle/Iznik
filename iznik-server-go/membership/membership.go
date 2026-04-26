@@ -240,11 +240,17 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewIgnore":
-		// ReviewIgnore marks a spam/review member as reviewed so they drop off the Member Review list.
-		// clear reviewrequestedat so the member doesn't reappear in review.
-		// PHP User.php:6805 sets reviewrequestedat = NULL on review completion.
-		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL, heldby = NULL WHERE userid = ? AND groupid = ?",
-			req.Userid, req.Groupid)
+		// ReviewIgnore clears the Member Review flag for the target user across ALL groups
+		// the calling moderator moderates (not just the one clicked). This prevents the
+		// confusing behaviour reported in Discourse topic 9618 where a mod clicks Ignore
+		// and the member reappears immediately because they are flagged on another of the
+		// mod's groups. PHP User.php:6805 sets reviewrequestedat = NULL on review completion.
+		modGroupIDs := user.GetActiveModGroupIDs(myid)
+		if len(modGroupIDs) > 0 {
+			db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL, heldby = NULL "+
+				"WHERE userid = ? AND groupid IN ?",
+				req.Userid, modGroupIDs)
+		}
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "HappinessReviewed":

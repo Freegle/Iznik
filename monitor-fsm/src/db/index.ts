@@ -2,7 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
+import { MIGRATION_V2_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -33,7 +33,11 @@ export function resetDbForTests(): void {
 function applySchema(db: DB): void {
   db.exec(SCHEMA_SQL)
   const row = db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number | null }
-  if ((row?.v ?? 0) < SCHEMA_VERSION) {
+  const current = row?.v ?? 0
+  if (current < 2) {
+    try { db.exec(MIGRATION_V2_SQL) } catch { /* column already exists */ }
+  }
+  if (current < SCHEMA_VERSION) {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION)
   }
 }
@@ -85,11 +89,13 @@ export interface DiscourseBugRow {
   excerpt: string | null
   state: string
   pr_number: number | null
+  feature_area: string | null
   reason: string | null
   first_seen_at: string
   last_seen_at: string
   fixed_at: string | null
   deployed_at: string | null
+  pr_rejections: number
 }
 
 export function upsertDiscourseBug(db: DB, bug: {
@@ -100,17 +106,19 @@ export function upsertDiscourseBug(db: DB, bug: {
   excerpt?: string
   state?: DiscourseBugRow['state']
   prNumber?: number
+  featureArea?: string
   reason?: string
 }): void {
   db.prepare(`
-    INSERT INTO discourse_bug (topic, post, topic_title, reporter, excerpt, state, pr_number, reason, last_seen_at)
-    VALUES (?, ?, ?, ?, ?, COALESCE(?, 'open'), ?, ?, datetime('now'))
+    INSERT INTO discourse_bug (topic, post, topic_title, reporter, excerpt, state, pr_number, feature_area, reason, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, COALESCE(?, 'open'), ?, ?, ?, datetime('now'))
     ON CONFLICT(topic, post) DO UPDATE SET
       topic_title = COALESCE(excluded.topic_title, topic_title),
       reporter = COALESCE(excluded.reporter, reporter),
       excerpt = COALESCE(excluded.excerpt, excerpt),
       state = COALESCE(excluded.state, state),
       pr_number = COALESCE(excluded.pr_number, pr_number),
+      feature_area = COALESCE(excluded.feature_area, feature_area),
       reason = COALESCE(excluded.reason, reason),
       last_seen_at = excluded.last_seen_at
   `).run(
@@ -121,6 +129,7 @@ export function upsertDiscourseBug(db: DB, bug: {
     bug.excerpt ?? null,
     bug.state ?? null,
     bug.prNumber ?? null,
+    bug.featureArea ?? null,
     bug.reason ?? null,
   )
 }
@@ -135,6 +144,21 @@ export function listOpenDiscourseBugs(db: DB): DiscourseBugRow[] {
     WHERE state NOT IN ('fixed','confirmed','off-topic','duplicate')
     ORDER BY topic, post
   `).all() as DiscourseBugRow[]
+}
+
+export function reopenBugAfterRejection(db: DB, topic: number, post: number, rejectedPrNumber: number, reason?: string): void {
+  db.prepare(`
+    UPDATE discourse_bug
+    SET state = 'open',
+        pr_number = NULL,
+        pr_rejections = pr_rejections + 1,
+        reason = ?,
+        last_seen_at = datetime('now')
+    WHERE topic = ? AND post = ?
+  `).run(
+    reason ?? `PR #${rejectedPrNumber} closed by reviewer`,
+    topic, post
+  )
 }
 
 export function markDiscourseBugFixed(db: DB, topic: number, post: number, prNumber: number): void {
@@ -299,6 +323,13 @@ export function queueDiscourseDraft(db: DB, draft: {
   prNumber?: number
   prUrl?: string
 }): number {
+  // Don't create a duplicate if a pending draft for this bug already exists.
+  const existing = db.prepare(`
+    SELECT id FROM discourse_draft
+    WHERE topic = ? AND post = ? AND posted_at IS NULL AND rejected_at IS NULL
+  `).get(draft.topic, draft.post) as { id: number } | undefined
+  if (existing) return existing.id
+
   const info = db.prepare(`
     INSERT INTO discourse_draft (topic, post, username, quote, body, preview_url, pr_number, pr_url)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)

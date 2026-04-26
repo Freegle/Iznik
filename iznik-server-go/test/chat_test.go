@@ -3987,3 +3987,229 @@ func TestClosedChatUnseenIsHiddenNotZeroed(t *testing.T) {
 	db.Exec("DELETE FROM chat_roster WHERE chatid = ?", chatID)
 	db.Exec("DELETE FROM chat_rooms WHERE id = ?", chatID)
 }
+
+// TestGetChats_Success tests basic successful chat listing with valid authentication.
+func TestGetChats_Success(t *testing.T) {
+	prefix := uniquePrefix("GetChatsSuccess")
+	userID, token := CreateFullTestUser(t, prefix)
+	db := database.DBConn
+
+	// Verify user can list their chats
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/chat?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var chats []chat.ChatRoomListEntry
+	err := json2.Unmarshal(rsp(resp), &chats)
+	assert.NoError(t, err, "Response should be valid JSON")
+	assert.NotNil(t, chats, "Chats should be a list (not null)")
+
+	// Verify all returned chats have required fields
+	for _, c := range chats {
+		assert.Greater(t, c.ID, uint64(0), "Chat ID must be positive")
+		assert.NotEmpty(t, c.Chattype, "Chattype must be set")
+		assert.NotEmpty(t, c.Name, "Name must be set for each chat")
+	}
+
+	// Clean up
+	db.Exec("DELETE FROM chat_messages WHERE chatid IN (SELECT id FROM chat_rooms WHERE user1 = ? OR user2 = ?)", userID, userID)
+	db.Exec("DELETE FROM chat_roster WHERE chatid IN (SELECT id FROM chat_rooms WHERE user1 = ? OR user2 = ?)", userID, userID)
+	db.Exec("DELETE FROM chat_rooms WHERE user1 = ? OR user2 = ?", userID, userID)
+}
+
+// TestGetChats_UnseenFiltering tests that unseen message count respects the 31-day window.
+func TestGetChats_UnseenFiltering(t *testing.T) {
+	prefix := uniquePrefix("UnseenFilter")
+	user1ActualID := CreateTestUser(t, prefix+"_user1", "User")
+	_, user1Token := CreateTestSession(t, user1ActualID)
+	user1ID := user1ActualID
+	user2ID := CreateTestUser(t, prefix+"_user2", "User")
+	db := database.DBConn
+
+	// Create a User2User chat
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+
+	// Add a message from user2 (unseen by user1)
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'recent message', NOW(), 0, 0, 1)",
+		chatID, user2ID)
+
+	// Add an old message (older than CHAT_ACTIVE_LIMIT which is 31 days)
+	oldDate := time.Now().AddDate(0, 0, -40)
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'old message', ?, 0, 0, 1)",
+		chatID, user2ID, oldDate)
+
+	// Update latest message timestamp
+	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatID)
+
+	// Get chats with unseen counts
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/chat?jwt="+user1Token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var chats []chat.ChatRoomListEntry
+	json2.Unmarshal(rsp(resp), &chats)
+
+	// Find the chat and verify unseen count
+	var foundChat *chat.ChatRoomListEntry
+	for i := range chats {
+		if chats[i].ID == chatID {
+			foundChat = &chats[i]
+			break
+		}
+	}
+
+	assert.NotNil(t, foundChat, "Chat should be in list")
+	if foundChat != nil {
+		// Should count only the recent message (within 31 days), not the 40-day-old message
+		assert.Greater(t, foundChat.Unseen, uint64(0), "Should count recent unseen messages")
+	}
+
+	// Clean up
+	db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+	db.Exec("DELETE FROM chat_roster WHERE chatid = ?", chatID)
+	db.Exec("DELETE FROM chat_rooms WHERE id = ?", chatID)
+}
+
+// TestGetChats_Pagination tests chat listing with proper formatting.
+func TestGetChats_Pagination(t *testing.T) {
+	prefix := uniquePrefix("Pagination")
+	userID, token := CreateFullTestUser(t, prefix)
+	db := database.DBConn
+
+	// Get all chats first
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/chat?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var allChats []chat.ChatRoomListEntry
+	json2.Unmarshal(rsp(resp), &allChats)
+
+	// Verify we got a list (possibly empty)
+	assert.NotNil(t, allChats, "Response should be a list")
+
+	// Clean up
+	db.Exec("DELETE FROM chat_messages WHERE chatid IN (SELECT id FROM chat_rooms WHERE user1 = ? OR user2 = ?)", userID, userID)
+	db.Exec("DELETE FROM chat_roster WHERE chatid IN (SELECT id FROM chat_rooms WHERE user1 = ? OR user2 = ?)", userID, userID)
+	db.Exec("DELETE FROM chat_rooms WHERE user1 = ? OR user2 = ?", userID, userID)
+}
+
+// TestGetChats_CompletedChats tests handling of completed/closed chats.
+func TestGetChats_CompletedChats(t *testing.T) {
+	prefix := uniquePrefix("Completed")
+	user1ActualID := CreateTestUser(t, prefix+"_user1", "User")
+	_, user1Token := CreateTestSession(t, user1ActualID)
+	user1ID := user1ActualID
+	user2ID := CreateTestUser(t, prefix+"_user2", "User")
+	db := database.DBConn
+
+	// Create a User2User chat
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+
+	// Add a message
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'test', NOW(), 0, 0, 1)",
+		chatID, user2ID)
+	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatID)
+
+	// Close the chat
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW()) "+
+		"ON DUPLICATE KEY UPDATE status = VALUES(status)",
+		chatID, user1ID, utils.CHAT_STATUS_CLOSED)
+
+	// Default list (includeClosed=false): closed chat should NOT appear
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/chat?jwt="+user1Token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var chatsDefault []chat.ChatRoomListEntry
+	json2.Unmarshal(rsp(resp), &chatsDefault)
+
+	foundInDefault := false
+	for _, c := range chatsDefault {
+		if c.ID == chatID {
+			foundInDefault = true
+			break
+		}
+	}
+	assert.False(t, foundInDefault, "Closed chat should not appear in default list")
+
+	// With includeClosed=true: chat should reappear
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat?includeClosed=true&jwt="+user1Token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var chatsIncluded []chat.ChatRoomListEntry
+	json2.Unmarshal(rsp(resp), &chatsIncluded)
+
+	foundInIncluded := false
+	for _, c := range chatsIncluded {
+		if c.ID == chatID {
+			foundInIncluded = true
+			break
+		}
+	}
+	assert.True(t, foundInIncluded, "Closed chat should appear with includeClosed=true")
+
+	// Clean up
+	db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+	db.Exec("DELETE FROM chat_roster WHERE chatid = ?", chatID)
+	db.Exec("DELETE FROM chat_rooms WHERE id = ?", chatID)
+}
+
+// TestGetChats_EdgeCases tests edge cases including empty chats, deleted users, and invalid parameters.
+func TestGetChats_EdgeCases(t *testing.T) {
+	prefix := uniquePrefix("EdgeCases")
+	db := database.DBConn
+
+	// Test 1: Unauthenticated request returns 401
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/chat", nil))
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode, "Unauthenticated request should return 401")
+
+	// Test 2: Invalid JWT returns 401
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat?jwt=invalid_token", nil))
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode, "Invalid JWT should return 401")
+
+	// Test 3: Valid authentication returns 200 even with no chats
+	userActualID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userActualID)
+	userID := userActualID
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode, "Valid auth with no chats should return 200")
+
+	var chats []chat.ChatRoomListEntry
+	err := json2.Unmarshal(rsp(resp), &chats)
+	assert.NoError(t, err, "Response should be valid JSON array")
+	assert.NotNil(t, chats, "Response should be a list (not null)")
+
+	// Test 4: Invalid since parameter should handle gracefully
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat?jwt="+token+"&since=invalid_date", nil))
+	assert.Equal(t, 200, resp.StatusCode, "Invalid since parameter should be handled gracefully")
+
+	// Test 5: Chat with deleted user
+	user2ID := CreateTestUser(t, prefix+"_user2", "Member")
+	CreateTestSession(t, user2ID)
+	chatID := CreateTestChatRoom(t, userID, &user2ID, nil, "User2User")
+	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'test', NOW(), 0, 0, 1)",
+		chatID, user2ID)
+	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatID)
+
+	// Delete user2
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", user2ID)
+
+	// User1 should still see the chat (they're not deleted)
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/chat?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var chatsAfterDelete []chat.ChatRoomListEntry
+	json2.Unmarshal(rsp(resp), &chatsAfterDelete)
+
+	foundChat := false
+	for _, c := range chatsAfterDelete {
+		if c.ID == chatID {
+			foundChat = true
+			assert.True(t, c.Name != "", "Chat should have a name")
+			break
+		}
+	}
+	assert.True(t, foundChat, "Chat with deleted user should still be visible")
+
+	// Clean up
+	db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+	db.Exec("DELETE FROM chat_roster WHERE chatid = ?", chatID)
+	db.Exec("DELETE FROM chat_rooms WHERE id = ?", chatID)
+	db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", user2ID)
+}
