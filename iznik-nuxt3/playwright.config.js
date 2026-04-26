@@ -54,7 +54,7 @@ module.exports = defineConfig({
               // Disable auto-opening of reports to prevent hanging
               open: 'never',
               coverage: {
-                reports: ['v8', 'lcov', 'lcovonly'],
+                reports: ['lcovonly'],
                 lcov: true,
                 outputDir: 'coverage',
                 entryFilter: (entry) => {
