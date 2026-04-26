@@ -1801,7 +1801,7 @@ jobs:
             if [ "${SELF_HOSTED_RUNNER:-false}" = "true" ]; then
               echo "Self-hosted runner: cleaning up previous Docker resources..."
               docker compose down --volumes --remove-orphans 2>/dev/null || true
-              sudo rm -rf logs data test-results ssl/certs status/data 2>/dev/null || true
+              sudo rm -rf logs test-results ssl/certs status/data 2>/dev/null || true
               # Remove stale git lock files left by crashed previous runs
               find . -name "*.lock" -path "*/.git/*" -delete 2>/dev/null || true
             fi
