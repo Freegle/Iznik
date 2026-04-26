@@ -139,13 +139,11 @@
           </span>
           <span v-else-if="log.subtype === 'Replied'" class="text-danger">
             Modmail sent
+            <ModLogMessage :logid="logid" notext nostdmsg />
             <span v-if="log.text && log.text.length > 0">
               with <em>{{ log.text }} </em>
-              <span v-if="log.stdmsg">
-                using <em>{{ log.stdmsg.title }} </em></span
-              >
-              <span v-else> mail </span>
             </span>
+            <ModLogStdMsg :logid="logid" />
           </span>
           <span v-else-if="log.subtype === 'Deleted'" class="text-danger">
             Deleted <ModLogMessage :logid="logid" />

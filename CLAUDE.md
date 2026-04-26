@@ -240,3 +240,11 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
   - `iznik-nuxt3/tests/e2e/utils/user.js`: 3 gotoAndVerify calls now use `maxRetries: 1`
   - `iznik-nuxt3/tests/e2e/test-repost-group-change.spec.js`: Added `.first()` to button selector
 - **Status**: Pushed to PR branch, awaiting CI job to validate
+
+### 2026-04-26 - ReviewIgnore held-member fix + ModLog/ModLogMessage fix + PR template
+- **ReviewIgnore fix** (PR #284, branch `fix/review-ignore-held-members`): Go `ReviewIgnore` case in `membership.go` now adds `AND heldby IS NULL` — held members are skipped. TDD: test written first, verified red, then green.
+- **ModLogMessage nostdmsg prop**: New `nostdmsg` Boolean prop suppresses embedded `<ModLogStdMsg>` to prevent double-rendering when parent template renders it separately.
+- **ModLog Replied case**: Rewrote to use `<ModLogMessage :logid notext nostdmsg />` + `<ModLogStdMsg :logid />` — shows both message identity and standard message. 3 new tests in ModLog.spec.js, 2 in ModLogMessage.spec.js.
+- **Vitest/Go tests**: 11928✓ 0✗ Vitest, 2129✓ 0✗ Go. All pass.
+- **PR #283 closed**: GitHub PR template (`.github/pull_request_template.md`) landed on master (`5d958bc27`). Sentry investigation checklist incorporated into monitor FSM memory. PR closed.
+- **Outstanding**: PR #284 waiting for CI. PRs #281, #282 — fixes included but CI not yet rerun.
