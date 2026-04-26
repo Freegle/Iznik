@@ -248,7 +248,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		modGroupIDs := user.GetActiveModGroupIDs(myid)
 		if len(modGroupIDs) > 0 {
 			db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL, heldby = NULL "+
-				"WHERE userid = ? AND groupid IN ?",
+				"WHERE userid = ? AND groupid IN ? AND heldby IS NULL",
 				req.Userid, modGroupIDs)
 		}
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
