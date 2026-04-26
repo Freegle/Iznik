@@ -150,7 +150,7 @@ func TestAlert_CreateAlert_DefaultHTML(t *testing.T) {
 	adminID := CreateTestUser(t, prefix+"_admin", "Support")
 	_, token := CreateTestSession(t, adminID)
 
-	body := fmt.Sprintf(`{"from":"admin@example.com","subject":"Test %s","text":"Line 1\\nLine 2\\nLine 3"}`, prefix)
+	body := fmt.Sprintf(`{"from":"admin@example.com","subject":"Test %s","text":"Line 1\nLine 2\nLine 3"}`, prefix)
 	req := httptest.NewRequest("PUT", fmt.Sprintf("/api/alert?jwt=%s", token), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 
