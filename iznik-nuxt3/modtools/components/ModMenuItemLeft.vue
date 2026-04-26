@@ -8,6 +8,9 @@
     <b-badge v-if="othercount && getCount(othercount)" variant="info">
       {{ getCount(othercount) }}
     </b-badge>
+    <b-badge v-if="directcount > 0" variant="info">
+      {{ directcount }}
+    </b-badge>
   </div>
 </template>
 <script setup>
@@ -39,6 +42,11 @@ const props = defineProps({
     type: String,
     required: false,
     default: 'danger',
+  },
+  directcount: {
+    type: Number,
+    required: false,
+    default: 0,
   },
   indent: {
     type: Boolean,

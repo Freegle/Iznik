@@ -290,7 +290,16 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT id, msgid, archived, externaluid, externalmods FROM messages_attachments WHERE msgid = ? ORDER BY `primary` DESC, id ASC", id).Scan(&messageAttachments)
+				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
+			// that is no longer active, return an empty externaluid so the frontend shows
+			// a placeholder instead of the rejected illustration.
+			db.Raw(`SELECT ma.id, ma.msgid, ma.archived,
+				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
+				ma.externalmods
+				FROM messages_attachments ma
+				LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating')
+				WHERE ma.msgid = ?
+				ORDER BY ma.`+"`primary`"+` DESC, ma.id ASC`, id).Scan(&messageAttachments)
 			}()
 
 			var messageReply []MessageReply

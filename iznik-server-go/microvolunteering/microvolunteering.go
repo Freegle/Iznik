@@ -659,6 +659,9 @@ func PostResponse(c *fiber.Ctx) error {
 				ON DUPLICATE KEY UPDATE result = ?, containspeople = ?, version = ?`,
 				ChallengeAIImageReview, myid, req.AIImageID, response, containsPeople, Version,
 				response, containsPeople, Version)
+
+			// After recording the vote, check if reject quorum is reached.
+			checkAIImageRejectQuorum(db, req.AIImageID)
 		}
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -824,4 +827,20 @@ func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
 		VALUES (?, ?, ?, 'Reject', ?)
 		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
 		ChallengeAIImageReview, userID, aiImageID, Version, Version)
+	checkAIImageRejectQuorum(db, aiImageID)
+}
+
+// checkAIImageRejectQuorum checks whether an AI image has reached the reject quorum
+// (≥ AIImageReviewQuorum votes with a majority being Reject). If so, sets status='rejected'
+// so the image is hidden from end users and surfaced for admin regeneration.
+func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
+	var totalVotes, rejectVotes int64
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ?`,
+		aiImageID, ChallengeAIImageReview).Scan(&totalVotes)
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ? AND result = 'Reject'`,
+		aiImageID, ChallengeAIImageReview).Scan(&rejectVotes)
+
+	if totalVotes >= int64(AIImageReviewQuorum) && rejectVotes > totalVotes/2 {
+		db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
+	}
 }

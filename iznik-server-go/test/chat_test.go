@@ -13,7 +13,6 @@ import (
 	"net/http/httptest"
 	url2 "net/url"
 	"os"
-	"strings"
 	"testing"
 	"time"
 )
@@ -4176,7 +4175,6 @@ func TestGetChats_EdgeCases(t *testing.T) {
 
 	// Test 5: Chat with deleted user
 	user2ID := CreateTestUser(t, prefix+"_user2", "Member")
-	_, user2Token := CreateTestSession(t, user2ID)
 	chatID := CreateTestChatRoom(t, userID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'test', NOW(), 0, 0, 1)",
 		chatID, user2ID)
@@ -4200,6 +4198,7 @@ func TestGetChats_EdgeCases(t *testing.T) {
 			break
 		}
 	}
+	assert.True(t, foundChat, "Chat with deleted user should still be visible to remaining user")
 
 	// Clean up
 	db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)

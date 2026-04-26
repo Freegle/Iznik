@@ -94,7 +94,7 @@ const SPAM_COLLECTION_PENDING_REMOVE = "PendingRemove"
 
 const EMAIL_REGEXP = "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\b"
 const PHONE_REGEXP = "[0-9]{4,}"
-const TN_REGEXP = "^([\\s\\S]+?)-g[0-9]+$"
+const TN_REGEXP = "^([\\s\\S]*)-g[0-9]+$"
 
 const OPEN_AGE = 90
 const OPEN_AGE_CHITCHAT = 365
@@ -358,6 +358,10 @@ func TidyName(name string) string {
 
 	// We hide the "-gxxx" part of names, which will almost always be for TN members.
 	name = tnRegexp.ReplaceAllString(name, "$1")
+
+	if len(name) == 0 {
+		name = "A freegler"
+	}
 
 	return name
 }

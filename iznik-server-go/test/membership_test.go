@@ -1266,9 +1266,9 @@ func TestPostMembershipsReviewIgnore(t *testing.T) {
 	targetID := CreateTestUser(t, prefix+"_target", "User")
 	CreateTestMembership(t, targetID, groupID, "Member")
 
-	// Flag member for review (simulates spam detection).
-	db.Exec("UPDATE memberships SET reviewrequestedat = NOW(), heldby = ? WHERE userid = ? AND groupid = ?",
-		modID, targetID, groupID)
+	// Flag member for review (simulates spam detection — only reviewrequestedat, not heldby).
+	db.Exec("UPDATE memberships SET reviewrequestedat = NOW() WHERE userid = ? AND groupid = ?",
+		targetID, groupID)
 
 	// Verify member appears in spam members list before ignore.
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/memberships?collection=Spam&groupid=%d&jwt=%s", groupID, token), nil)
@@ -1303,13 +1303,11 @@ func TestPostMembershipsReviewIgnore(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(0), result["ret"])
 
-	// Verify reviewedat is set and heldby is cleared.
+	// Verify reviewedat is set (ReviewIgnore does not touch heldby).
 	var reviewedat *string
-	var heldby uint64
-	db.Raw("SELECT reviewedat, COALESCE(heldby, 0) FROM memberships WHERE userid = ? AND groupid = ?",
-		targetID, groupID).Row().Scan(&reviewedat, &heldby)
+	db.Raw("SELECT reviewedat FROM memberships WHERE userid = ? AND groupid = ?",
+		targetID, groupID).Row().Scan(&reviewedat)
 	assert.NotNil(t, reviewedat, "reviewedat should be set after ReviewIgnore")
-	assert.Equal(t, uint64(0), heldby, "heldby should be cleared after ReviewIgnore")
 
 	// Verify member no longer appears in spam members list.
 	req = httptest.NewRequest("GET", fmt.Sprintf("/api/memberships?collection=Spam&groupid=%d&jwt=%s", groupID, token), nil)
@@ -1418,6 +1416,103 @@ func TestReviewIgnoreMultiGroupMod(t *testing.T) {
 	}
 	assert.False(t, foundG1After, "Target should NOT appear on group1 after Ignore")
 	assert.False(t, foundG2After, "Target should NOT appear on group2 after Ignore — Ignore clears all mod's groups")
+}
+
+// TestReviewIgnoreSkipsHeldMembers verifies that ReviewIgnore does NOT clear the
+// review flag on memberships where the member is held (heldby IS NOT NULL).
+// If a mod has explicitly held a member, an Ignore click must leave that held
+// membership in the review queue and must not touch heldby.
+func TestReviewIgnoreSkipsHeldMembers(t *testing.T) {
+	prefix := uniquePrefix("rvign_held")
+	db := database.DBConn
+
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, group1ID, "Moderator")
+	CreateTestMembership(t, modID, group2ID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	CreateTestMembership(t, targetID, group1ID, "Member")
+	CreateTestMembership(t, targetID, group2ID, "Member")
+
+	// Both memberships flagged for review (stale enough to appear in Spam list).
+	db.Exec(
+		"UPDATE memberships SET reviewrequestedat = DATE_SUB(NOW(), INTERVAL 40 DAY), reviewreason = 'flagged' WHERE userid = ? AND groupid IN ?",
+		targetID, []uint64{group1ID, group2ID},
+	)
+
+	// group2 is held — a mod explicitly held this member there.
+	db.Exec("UPDATE memberships SET heldby = ? WHERE userid = ? AND groupid = ?",
+		modID, targetID, group2ID)
+
+	// Verify both appear before Ignore.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/memberships?collection=Spam&limit=50&jwt=%s", token), nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	var membersBefore []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&membersBefore)
+	foundG1Before, foundG2Before := false, false
+	for _, m := range membersBefore {
+		if uint64(m["userid"].(float64)) == targetID {
+			gid := uint64(m["groupid"].(float64))
+			if gid == group1ID {
+				foundG1Before = true
+			}
+			if gid == group2ID {
+				foundG2Before = true
+			}
+		}
+	}
+	assert.True(t, foundG1Before, "Target should appear on group1 before Ignore")
+	assert.True(t, foundG2Before, "Target should appear on group2 (held) before Ignore")
+
+	// Mod clicks Ignore on group1.
+	body := map[string]interface{}{
+		"userid":  targetID,
+		"groupid": group1ID,
+		"action":  "ReviewIgnore",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/memberships?jwt=%s", token)
+	req = httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// After Ignore: group1 (not held) cleared; group2 (held) must remain.
+	req = httptest.NewRequest("GET", fmt.Sprintf("/api/memberships?collection=Spam&limit=50&jwt=%s", token), nil)
+	resp, err = getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+	var membersAfter []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&membersAfter)
+	foundG1After, foundG2After := false, false
+	for _, m := range membersAfter {
+		if uint64(m["userid"].(float64)) == targetID {
+			gid := uint64(m["groupid"].(float64))
+			if gid == group1ID {
+				foundG1After = true
+			}
+			if gid == group2ID {
+				foundG2After = true
+			}
+		}
+	}
+	assert.False(t, foundG1After, "group1 (not held) should be cleared by Ignore")
+	assert.True(t, foundG2After, "group2 (held) should remain in review after Ignore")
+
+	// ReviewIgnore must not touch heldby on the held membership.
+	var heldby *uint64
+	db.Raw("SELECT heldby FROM memberships WHERE userid = ? AND groupid = ?", targetID, group2ID).Scan(&heldby)
+	assert.NotNil(t, heldby, "heldby should still be set on held membership after ReviewIgnore")
 }
 
 func TestPostMembershipsHappinessReviewed(t *testing.T) {
