@@ -341,7 +341,7 @@ type adminResponse struct {
 // Alert
 // ============================================================================
 
-// swagger:route GET /modtools/alert modtools listAlerts
+// swagger:route GET /alert modtools listAlerts
 // List all alerts
 //
 // Returns all alerts (Admin/Support only)
@@ -362,7 +362,7 @@ type alertsResponse struct {
 	Body []alert.Alert
 }
 
-// swagger:route GET /modtools/alert/{id} modtools getAlert
+// swagger:route GET /alert/{id} modtools getAlert
 // Get alert by ID
 //
 // Returns a single alert by ID (public access)
@@ -388,7 +388,7 @@ type alertResponse struct {
 	Body alert.Alert
 }
 
-// swagger:route PUT /modtools/alert modtools createAlert
+// swagger:route PUT /alert modtools createAlert
 // Create a new alert
 //
 // Creates a new alert (Admin/Support only)
@@ -402,7 +402,7 @@ type alertResponse struct {
 //	401: errorResponse
 //	403: errorResponse
 
-// swagger:route POST /modtools/alert modtools recordAlert
+// swagger:route POST /alert modtools recordAlert
 // Record alert click
 //
 // Records a click on an alert tracking entry (public access)
