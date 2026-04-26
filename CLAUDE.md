@@ -6,8 +6,7 @@
 - **NEVER skip or make coverage optional in tests.** Fix the root cause if coverage upload fails.
 - **NEVER dismiss test failures as "pre-existing" or "unrelated".** Investigate and fix all failures.
 - **NEVER push unless explicitly told to** by the user.
-  - **Exception**: When CI is failing on master, you may push fixes directly to master (no PR required) — same as you would fix CI failures on an open PR. Still follow the SSH-rerun mandate below.
-- **MANDATORY: After every `git push` to master that triggers CI, cancel the auto-triggered pipeline and rerun with SSH enabled.** See `.circleci/README.md` "SSH Debugging" section.
+  - **Exception**: When CI is failing on master, you may push fixes directly to master (no PR required) — same as you would fix CI failures on an open PR.
 
 ## Container Quick Reference
 
