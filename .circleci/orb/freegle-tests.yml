@@ -225,6 +225,16 @@ commands:
             sudo sysctl vm.overcommit_memory=1
             echo "Set vm.overcommit_memory=1 for Redis"
 
+            # Docker Compose v5 adds raw PREROUTING DROP rules per container IP for network
+            # isolation. When bridge-nf-call-iptables=1, bridged (container-to-container) traffic
+            # passes through iptables with iifname=veth, incorrectly matching those DROP rules.
+            # Result: inter-container TCP silently dropped pre-conntrack, so containers can't
+            # reach each other even though Docker DNS resolves correctly.
+            # Setting to 0 makes bridge traffic bypass iptables entirely, which is safe in CI.
+            sudo sysctl -w net.bridge.bridge-nf-call-iptables=0 || true
+            sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=0 || true
+            echo "Disabled bridge-nf-call-iptables to prevent Docker Compose v5 network isolation from dropping inter-container traffic"
+
             # Create secrets files after cleanup, right before Docker startup
             echo "Creating secrets files after cleanup:"
             mkdir -p secrets
@@ -404,6 +414,18 @@ commands:
       - run:
           name: Fix memory overcommit for Redis
           command: sudo sysctl vm.overcommit_memory=1 || true
+      - run:
+          name: Fix bridge-nf-call-iptables for Docker Compose v5
+          command: |
+            # Docker Compose v5 adds raw PREROUTING DROP rules per container IP for network
+            # isolation. When bridge-nf-call-iptables=1, bridged (container-to-container) traffic
+            # passes through iptables with iifname=veth, incorrectly matching those DROP rules.
+            # Result: inter-container TCP silently dropped pre-conntrack, so containers can't
+            # reach each other even though Docker DNS resolves correctly.
+            # Setting to 0 makes bridge traffic bypass iptables entirely, which is safe in CI.
+            sudo sysctl -w net.bridge.bridge-nf-call-iptables=0 || true
+            sudo sysctl -w net.bridge.bridge-nf-call-ip6tables=0 || true
+            echo "Disabled bridge-nf-call-iptables to prevent Docker Compose v5 network isolation from dropping inter-container traffic"
       - run:
           name: Start Docker services (two-phase)
           command: |
