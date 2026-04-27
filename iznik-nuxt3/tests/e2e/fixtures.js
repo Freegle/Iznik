@@ -637,7 +637,18 @@ const test = base.test.extend({
     page.gotoAndVerify = async (path, options = {}) => {
       const timeout = options.timeout || timeouts.navigation.default
       const maxRetries = options.maxRetries || 3
-      const waitUntil = options.waitUntil || 'load'
+      const waitUntil = options.waitUntil || 'domcontentloaded'
+
+      // waitUntil:'load' blocks until ALL resources (GA, Maps, social SDKs) finish.
+      // External scripts are blocked in CI, so 'load' hangs for the full 202500ms
+      // timeout on every navigation — burning test budgets and causing flaky failures.
+      // Two days were lost diagnosing this. Do not re-introduce it.
+      if (options.waitUntil === 'load') {
+        throw new Error(
+          "[gotoAndVerify] waitUntil:'load' is banned. External scripts never " +
+            "complete in CI, causing 202500ms navigation hangs. Use 'domcontentloaded'."
+        )
+      }
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         let failStep = 'none'
@@ -1635,7 +1646,7 @@ const testWithFixtures = test.extend({
         // Load My Posts page from scratch
         await page.goto('/myposts', {
           timeout: timeouts.navigation.default,
-          waitUntil: 'load',
+          waitUntil: 'domcontentloaded',
         })
 
         // Find the post we want to withdraw.
