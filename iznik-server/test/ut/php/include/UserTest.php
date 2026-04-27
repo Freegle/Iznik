@@ -794,6 +794,73 @@ class UserTest extends IznikTestCase {
         ];
     }
 
+    public function testProcessMembershipDoesNotReflagReviewedMember() {
+        $mod = User::get($this->dbhr, $this->dbhm);
+        $modid = $mod->create('Mod', 'User', NULL);
+        $member = User::get($this->dbhr, $this->dbhm);
+        $memberid = $member->create('Member', 'User', NULL);
+        list($dummy, $gid) = $this->createTestGroup();
+        $mod->addMembership($gid, User::ROLE_MODERATOR);
+        $member->addMembership($gid, User::ROLE_MEMBER);
+
+        # Add a flagged comment written yesterday.
+        $this->dbhm->preExec(
+            "INSERT INTO users_comments (userid, groupid, byuserid, date, reviewed, user1, flag) VALUES (?, ?, ?, DATE_SUB(NOW(), INTERVAL 1 DAY), NOW(), 'Suspicious', 1)",
+            [$memberid, $gid, $modid]
+        );
+
+        # Mod reviews (Ignore): sets reviewedat to NOW, clears reviewrequestedat.
+        $member->memberReview($gid, FALSE, '');
+        $this->assertNull($member->getMembershipAtt($gid, 'reviewrequestedat'));
+
+        # Simulate a new membership event on the same group.
+        $this->dbhm->preExec(
+            "INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, 'Approved', 1)",
+            [$memberid, $gid]
+        );
+        $member->processMemberships();
+
+        $this->assertNull(
+            $member->getMembershipAtt($gid, 'reviewrequestedat'),
+            'Member should not be re-flagged when mod reviewed after the comment was written'
+        );
+    }
+
+    public function testProcessMembershipReflagsWhenCommentNewerThanReview() {
+        $mod = User::get($this->dbhr, $this->dbhm);
+        $modid = $mod->create('Mod', 'User', NULL);
+        $member = User::get($this->dbhr, $this->dbhm);
+        $memberid = $member->create('Member', 'User', NULL);
+        list($dummy, $gid) = $this->createTestGroup();
+        $mod->addMembership($gid, User::ROLE_MODERATOR);
+        $member->addMembership($gid, User::ROLE_MEMBER);
+
+        # Set reviewedat to yesterday (old review).
+        $this->dbhm->preExec(
+            "UPDATE memberships SET reviewedat = DATE_SUB(NOW(), INTERVAL 1 DAY), reviewrequestedat = NULL WHERE userid = ? AND groupid = ?",
+            [$memberid, $gid]
+        );
+
+        # Add a flagged comment written today (after the old review).
+        $this->dbhm->preExec(
+            "INSERT INTO users_comments (userid, groupid, byuserid, date, reviewed, user1, flag) VALUES (?, ?, ?, NOW(), NOW(), 'New suspicious', 1)",
+            [$memberid, $gid, $modid]
+        );
+        $this->assertNull($member->getMembershipAtt($gid, 'reviewrequestedat'));
+
+        # Simulate a new membership event.
+        $this->dbhm->preExec(
+            "INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, 'Approved', 1)",
+            [$memberid, $gid]
+        );
+        $member->processMemberships();
+
+        $this->assertNotNull(
+            $member->getMembershipAtt($gid, 'reviewrequestedat'),
+            'Member should be re-flagged when a comment is newer than the last review'
+        );
+    }
+
     public function testVerifyMail() {
         $_SERVER['HTTP_HOST'] = 'localhost';
 
