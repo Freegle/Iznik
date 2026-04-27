@@ -4,6 +4,7 @@
  */
 
 const path = require('path')
+const { expect } = require('@playwright/test')
 const { timeouts, DEFAULT_TEST_PASSWORD } = require('../config')
 const { SCREENSHOTS_DIR } = require('../config')
 const { waitForModal } = require('./ui')
