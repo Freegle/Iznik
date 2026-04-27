@@ -1700,7 +1700,9 @@ const testWithFixtures = test.extend({
         }
 
         // Ensure button is enabled before clicking
-        const isEnabled = await withdrawButton.isEnabled()
+        const isEnabled = await withdrawButton
+          .isEnabled({ timeout: 5000 })
+          .catch(() => false)
         if (!isEnabled) {
           console.log(
             'Withdraw button is disabled, checking if broad selector button is enabled'
@@ -1709,7 +1711,9 @@ const testWithFixtures = test.extend({
             .locator('.action-btn, .btn')
             .filter({ hasText: /withdraw/i })
             .first()
-          const isBroadEnabled = await broadWithdrawButton.isEnabled()
+          const isBroadEnabled = await broadWithdrawButton
+            .isEnabled({ timeout: 5000 })
+            .catch(() => false)
           if (!isBroadEnabled) {
             throw new Error('All withdraw buttons are disabled')
           }

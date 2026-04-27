@@ -499,13 +499,17 @@ async function signUpViaHomepage(
 
     if (marketingConsent === true) {
       // Ensure it's checked (should be by default)
-      const isChecked = await marketingCheckbox.isChecked()
+      const isChecked = await marketingCheckbox
+        .isChecked({ timeout: 5000 })
+        .catch(() => false)
       if (!isChecked) {
         await marketingCheckbox.check()
       }
     } else if (marketingConsent === false) {
       // Uncheck it
-      const isChecked = await marketingCheckbox.isChecked()
+      const isChecked = await marketingCheckbox
+        .isChecked({ timeout: 5000 })
+        .catch(() => true)
       if (isChecked) {
         await marketingCheckbox.uncheck()
       }
@@ -834,7 +838,7 @@ async function loginViaHomepage(
           .isVisible({ timeout: 5000 })
           .catch(() => false)
         const fullnameEnabled = await fullnameField
-          .isEnabled()
+          .isEnabled({ timeout: 5000 })
           .catch(() => false)
         console.log(
           `Fullname field - value: "${fullnameValue}", visible: ${fullnameVisible}, enabled: ${fullnameEnabled}`
@@ -940,7 +944,9 @@ async function loginViaHomepage(
       timeout: timeouts.ui.appearance,
     })
 
-    const isChecked = await marketingCheckbox.isChecked()
+    const isChecked = await marketingCheckbox
+      .isChecked({ timeout: 5000 })
+      .catch(() => false)
     if (expectedMarketingConsent !== isChecked) {
       console.error(
         `Marketing consent mismatch: expected ${expectedMarketingConsent}, got ${isChecked}`
@@ -1075,7 +1081,7 @@ async function loginViaHomepage(
           .catch(() => false)
         const isEnabled = await button
           .first()
-          .isEnabled()
+          .isEnabled({ timeout: 5000 })
           .catch(() => false)
         console.log(
           `    First button: visible=${isVisible}, enabled=${isEnabled}`
@@ -1119,7 +1125,9 @@ async function loginViaHomepage(
   })
 
   // Double check that the button is enabled
-  const isEnabled = await submitButton.isEnabled()
+  const isEnabled = await submitButton
+    .isEnabled({ timeout: 5000 })
+    .catch(() => false)
   if (!isEnabled) {
     console.error('Submit button is disabled')
     return false
