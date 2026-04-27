@@ -65,8 +65,21 @@ test.describe('ModTools Pending Messages', () => {
   test('pending messages show text content, not "This message is blank"', async ({
     page,
     testEnv,
+    testEmail,
+    postMessage,
+    withdrawPost,
   }) => {
     // Issue #29: pending messages display "This message is blank"
+    // Post a message first so there is guaranteed pending content to view.
+    const item = `test-pending-blank-${Date.now()}`
+    const posted = await postMessage({
+      type: 'OFFER',
+      item,
+      description: 'Test item for pending messages blank check',
+      email: testEmail,
+    })
+    expect(posted.id).toBeTruthy()
+
     await loginViaModTools(page, testEnv.mod.email)
 
     await page.goto(`${MODTOOLS_URL}/messages/pending`, {
@@ -92,13 +105,29 @@ test.describe('ModTools Pending Messages', () => {
     // Verify no message shows "This message is blank"
     const bodyText = await page.textContent('body')
     expect(bodyText).not.toContain('This message is blank')
+
+    // Cleanup
+    await withdrawPost({ item: posted.item })
   })
 
   test('pending messages show correct group membership, not "not on any community"', async ({
     page,
     testEnv,
+    testEmail,
+    postMessage,
+    withdrawPost,
   }) => {
     // Issue #19: member info shows "not on any community"
+    // Post a message first so there is guaranteed pending content to view.
+    const item = `test-pending-membership-${Date.now()}`
+    const posted = await postMessage({
+      type: 'OFFER',
+      item,
+      description: 'Test item for pending messages membership check',
+      email: testEmail,
+    })
+    expect(posted.id).toBeTruthy()
+
     await loginViaModTools(page, testEnv.mod.email)
 
     await page.goto(`${MODTOOLS_URL}/messages/pending`, {
@@ -124,6 +153,9 @@ test.describe('ModTools Pending Messages', () => {
     // The member info area should not say "not on any community"
     const bodyText = await page.textContent('body')
     expect(bodyText).not.toContain('not on any community')
+
+    // Cleanup
+    await withdrawPost({ item: posted.item })
   })
 
   test('notification count badge is reasonable', async ({ page, testEnv }) => {
