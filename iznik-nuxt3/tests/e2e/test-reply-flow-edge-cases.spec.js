@@ -416,9 +416,15 @@ test.describe('Reply Flow - Edge Cases', () => {
       await expect
         .poll(
           async () => {
-            const loginVisible = await loginSubmitButton.first().isVisible().catch(() => false)
+            const loginVisible = await loginSubmitButton
+              .first()
+              .isVisible({ timeout: 5000 })
+              .catch(() => false)
             if (loginVisible) return true
-            const joinVisible = await joinSubmitButton.first().isVisible().catch(() => false)
+            const joinVisible = await joinSubmitButton
+              .first()
+              .isVisible({ timeout: 5000 })
+              .catch(() => false)
             if (joinVisible) {
               const switchBtn = loginModal.locator('button.test-already-a-freegler')
               await switchBtn.first().click().catch(() => {})
@@ -468,7 +474,7 @@ test.describe('Reply Flow - Edge Cases', () => {
         .filter({ visible: true })
 
       // May need to click reply button again if section collapsed
-      if (!(await restoredTextarea.isVisible().catch(() => false))) {
+      if (!(await restoredTextarea.isVisible({ timeout: 5000 }).catch(() => false))) {
         await clickReplyButton(page)
       }
 
