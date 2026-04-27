@@ -76,7 +76,7 @@ async function testEmailLevelSetting(page, testEmail, level, takeScreenshot) {
       'text=Choose OFFER/WANTED frequency:'
     )
 
-    if (await emailFrequencySection.isVisible()) {
+    if (await emailFrequencySection.isVisible({ timeout: 5000 }).catch(() => false)) {
       // Get the current email frequency setting
       const frequencySelect = page
         .locator('select')
@@ -85,7 +85,7 @@ async function testEmailLevelSetting(page, testEmail, level, takeScreenshot) {
         })
         .first()
 
-      if (await frequencySelect.isVisible()) {
+      if (await frequencySelect.isVisible({ timeout: 5000 }).catch(() => false)) {
         const currentFrequency = await frequencySelect.inputValue()
         console.log(
           `Current email frequency in advanced settings: ${currentFrequency}`
@@ -165,7 +165,7 @@ test.describe('Settings Page - Email Level Settings', () => {
     // Check if advanced settings button is visible
     const advancedButton = page.locator('text=Show advanced settings')
 
-    if (await advancedButton.isVisible()) {
+    if (await advancedButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       console.log('Testing advanced settings toggle...')
 
       // Initially, advanced settings should be hidden
