@@ -132,7 +132,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
       const sendButtonAgain = page
         .locator('.btn:has-text("Send your reply")')
         .filter({ visible: true })
-      if (await sendButtonAgain.isVisible()) {
+      if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
         await sendButtonAgain.click()
         await page.waitForURL(/\/chats\//, {
           timeout: timeouts.navigation.default,
@@ -269,7 +269,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
       const sendButtonAgain = page
         .locator('.btn:has-text("Send your reply")')
         .filter({ visible: true })
-      if (await sendButtonAgain.isVisible()) {
+      if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
         await sendButtonAgain.click()
         await page.waitForURL(/\/chats\//, {
           timeout: timeouts.navigation.default,
@@ -398,7 +398,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
       const sendButtonAgain = page
         .locator('.btn:has-text("Send your reply")')
         .filter({ visible: true })
-      if (await sendButtonAgain.isVisible()) {
+      if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
         await sendButtonAgain.click()
         await page.waitForURL(/\/chats\//, {
           timeout: timeouts.navigation.default,

@@ -137,10 +137,14 @@ test.describe('Reply Flow - Social Login Simulation', () => {
     )
 
     // Check if we're in signup mode and switch to login mode if needed
-    const fullnameVisible = await fullnameField.isVisible().catch(() => false)
+    const fullnameVisible = await fullnameField
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
     if (fullnameVisible) {
       console.log('[Test] Modal opened in signup mode, switching to login')
-      const loginLinkVisible = await loginLink.isVisible().catch(() => false)
+      const loginLinkVisible = await loginLink
+        .isVisible({ timeout: 5000 })
+        .catch(() => false)
       if (loginLinkVisible) {
         await loginLink.click()
         await fullnameField
@@ -180,7 +184,7 @@ test.describe('Reply Flow - Social Login Simulation', () => {
     const restoredTextarea = page
       .locator('textarea[name="reply"]')
       .filter({ visible: true })
-    if (!(await restoredTextarea.isVisible().catch(() => false))) {
+    if (!(await restoredTextarea.isVisible({ timeout: 5000 }).catch(() => false))) {
       console.log(
         '[Test] Reply section collapsed after re-render, expanding...'
       )
