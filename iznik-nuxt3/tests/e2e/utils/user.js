@@ -1148,9 +1148,7 @@ async function loginViaHomepage(
     try {
       const button = allButtons[i]
       const text = await button.textContent().catch(() => 'NO_TEXT')
-      const isVisible = await button
-        .isVisible({ timeout: 5000 })
-        .catch(() => false)
+      const isVisible = await button.isVisible({ timeout: 5000 }).catch(() => false)
       const isDisabled = await button.isDisabled().catch(() => 'UNKNOWN')
       const classes = await button.getAttribute('class').catch(() => 'NO_CLASS')
       const type = await button.getAttribute('type').catch(() => 'NO_TYPE')
@@ -1165,9 +1163,7 @@ async function loginViaHomepage(
   // Debug: Check form state
   try {
     const modal = page.locator('#loginModal')
-    const modalVisible = await modal
-      .isVisible({ timeout: 5000 })
-      .catch(() => false)
+    const modalVisible = await modal.isVisible({ timeout: 5000 }).catch(() => false)
     console.log(`Login modal visible: ${modalVisible}`)
 
     if (modalVisible) {
@@ -1295,9 +1291,7 @@ async function loginViaHomepage(
         )
         for (let i = 0; i < allErrorElements.length; i++) {
           const element = allErrorElements[i]
-          const isVisible = await element
-            .isVisible({ timeout: 5000 })
-            .catch(() => false)
+          const isVisible = await element.isVisible({ timeout: 5000 }).catch(() => false)
           const text = await element.textContent().catch(() => '')
           console.log(`  ${i}: visible=${isVisible}, text="${text.trim()}"`)
         }
