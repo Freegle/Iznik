@@ -1862,6 +1862,27 @@ jobs:
             fi
 
       - run:
+          name: Check for banned test patterns
+          command: |
+            # waitUntil:'load' hangs in CI because external scripts (GA, Maps) never
+            # complete, burning the full 202500ms navigation timeout on every page load.
+            # Two days of debugging were spent on this. gotoAndVerify now throws at
+            # runtime if 'load' is passed, but catch it statically too.
+            echo "=== Checking for banned waitUntil:'load' in test files ==="
+            # Match 'waitUntil: "load"' or "waitUntil: 'load'" as a property assignment
+            # (colon + whitespace + quote). Excludes: === checks, comments (no space),
+            # and string literals in error messages (also no space after colon).
+            if grep -rn "waitUntil:[[:space:]]*['\"]load['\"]" iznik-nuxt3/tests/e2e/ 2>/dev/null \
+                | grep -vE "^[^:]+:[0-9]+:[[:space:]]*//" \
+                | grep -v "is banned" \
+                | grep .; then
+              echo "ERROR: Found waitUntil:'load' in test files. This causes 202500ms CI hangs."
+              echo "Use waitUntil:'domcontentloaded' instead."
+              exit 1
+            fi
+            echo "OK: No banned waitUntil:'load' patterns found."
+
+      - run:
           name: Verify monorepo subtree directories
           command: |
             echo "=== Verifying subtree directories ==="
