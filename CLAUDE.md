@@ -102,8 +102,8 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 | 6 | Fix isVisible()/waitForAuthPersistence renderer freeze | ✅ | Commit `7ca24d6e7` — job 6880 stuck 45min on loginModal check with no timeout |
 | 7 | Fix ALL bare isVisible() calls across test suite | ✅ | Commit `a14caf71e` — comprehensive { timeout: 5000 } on every bare isVisible() |
 | 8 | Fix isEnabled/isChecked CDP-freeze risk | ✅ | Commit `c219651b2` — same pattern applied to isEnabled/isChecked |
-| 9 | Master CI job 7030 passes | 🔄 | Running (pipeline 3934, commit c219651b2) |
-| 10 | All 9 PR CIs green | 🔄 | Jobs 7038-7062 queued after master |
+| 9 | Master CI passes | ✅ | Pipeline 3944, commit `94dd64aa6` — SUCCESS |
+| 10 | All 9 PR CIs green | ✅ | Pipelines 3935-3943 all SUCCESS — 2026-04-27 |
 
 ---
 
