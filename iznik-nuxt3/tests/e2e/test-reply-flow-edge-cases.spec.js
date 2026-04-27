@@ -352,14 +352,18 @@ test.describe('Reply Flow - Edge Cases', () => {
       testEmail,
       getTestEmail,
       withdrawPost,
-    }) => {
+    }, testInfo) => {
+      // Multi-step setup: signup + 2x logout + postMessage can each take 135-202s
+      // under parallel CI load. Default 600s budget is insufficient.
+      testInfo.setTimeout(1200000)
+
       // First sign up the user we'll use for navbar login (so they exist in the system)
       const loginEmail = getTestEmail('navbarlogin')
       await signUpViaHomepage(page, loginEmail)
       console.log('[Test] Created navbarlogin user')
 
-      // Log out so we can post as a different user
-      await logoutIfLoggedIn(page)
+      // Clear session without navigating — postMessage handles its own navigation
+      await logoutIfLoggedIn(page, false)
 
       // Post a message as the poster (testEmail)
       const uniqueItem = `test-navbar-login-${Date.now()}`
@@ -372,8 +376,8 @@ test.describe('Reply Flow - Edge Cases', () => {
       })
       expect(result.id).toBeTruthy()
 
-      // Log out from poster and navigate to message
-      await logoutIfLoggedIn(page)
+      // Clear session without navigating — gotoAndVerify below handles navigation
+      await logoutIfLoggedIn(page, false)
       await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
       await clickReplyButton(page)
 
@@ -407,20 +411,30 @@ test.describe('Reply Flow - Edge Cases', () => {
         timeout: timeouts.ui.appearance,
       })
 
-      // The modal may open in signup mode (showing name field + "Join Freegle!").
-      // Click the "Log in" button in the modal header to switch to login mode.
-      const logInButton = loginModal.locator(
-        'button:has-text("Log in"), a:has-text("Log in")'
-      )
-      if (
-        await logInButton
-          .first()
-          .isVisible()
-          .catch(() => false)
-      ) {
-        await logInButton.first().click()
-        console.log('[Test] Switched modal to login mode')
-      }
+      // Wait for submit button to be in login mode ("Log in"), switching if needed.
+      // Same expect.poll pattern as loginViaModTools to avoid Vue hydration race.
+      const loginSubmitButton = loginModal.locator('button[type="submit"]:has-text("Log in")')
+      const joinSubmitButton = loginModal.locator('button[type="submit"]:has-text("Join Freegle")')
+      await expect
+        .poll(
+          async () => {
+            const loginVisible = await loginSubmitButton.first().isVisible().catch(() => false)
+            if (loginVisible) return true
+            const joinVisible = await joinSubmitButton.first().isVisible().catch(() => false)
+            if (joinVisible) {
+              const switchBtn = loginModal.locator('button.test-already-a-freegler')
+              await switchBtn.first().click().catch(() => {})
+            }
+            return false
+          },
+          {
+            message: 'Waiting for navbar login modal to be in login mode',
+            timeout: timeouts.ui.appearance,
+            intervals: [500, 500, 500, 1000, 1000, 2000],
+          }
+        )
+        .toBe(true)
+      console.log('[Test] Navbar login modal is in login mode')
 
       // Wait for email input to be fully rendered and interactive
       const emailInput = loginModal.locator('input[type="email"]')
@@ -437,11 +451,8 @@ test.describe('Reply Flow - Edge Cases', () => {
       })
       await passwordInput.fill(DEFAULT_TEST_PASSWORD)
 
-      // Click the Log in button to submit
-      const submitButton = loginModal.locator(
-        'button:has-text("Log in"), button[type="submit"]'
-      )
-      await submitButton.last().click()
+      // Click the submit button (already confirmed to say "Log in")
+      await loginSubmitButton.first().click()
       console.log('[Test] Completed navbar login')
 
       // Wait for login modal to close

@@ -27,13 +27,19 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     testEmail,
     getTestEmail,
     withdrawPost,
-  }) => {
+  }, testInfo) => {
+    // Same multi-step flow as 3.2/3.3; same timeout risk under heavy CI load.
+    // logoutIfLoggedIn(page, false) skips the redundant second goto('/') that
+    // logoutIfLoggedIn(true) does after the logout-triggered navigation. Saves ~135s per
+    // call under CI load.
+    testInfo.setTimeout(900000)
     // First create a user by signing up (this will be the "existing" user who will reply)
     const existingEmail = getTestEmail('existing')
     await signUpViaHomepage(page, existingEmail)
 
-    // Log out so we can post as a different user (the poster)
-    await logoutIfLoggedIn(page)
+    // Log out without navigating to '/' — logout click handles the navigation,
+    // the extra goto('/') is redundant.
+    await logoutIfLoggedIn(page, false)
 
     // Post a message as the poster (testEmail)
     const uniqueItem = `test-existing-msg-${Date.now()}`
@@ -46,8 +52,8 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     })
     expect(result.id).toBeTruthy()
 
-    // Log out from poster to simulate session expiry for the existing user
-    await logoutIfLoggedIn(page)
+    // Log out without extra homepage navigation
+    await logoutIfLoggedIn(page, false)
 
     // Navigate to message page
     await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
@@ -162,13 +168,18 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     // Multi-step flow: signup + 2x logout + postMessage + browse-navigate + login + reply.
     // Under 11-worker parallel CI load each navigation can take 135-202s; 600s default
     // budget is insufficient. Observed timeout in job 5849 (test ran for 20m).
+    // logoutIfLoggedIn(page, false) replaces logoutIfLoggedIn(page, true): proper Pinia
+    // store clear via logout button click, but skips the redundant second goto('/') that
+    // logoutIfLoggedIn(true) does after the logout-triggered navigation. Saves ~135s per
+    // call under CI load.
     testInfo.setTimeout(1200000)
     // First create a user by signing up (this will be the "existing" user who will reply)
     const existingEmail = getTestEmail('existing-browse')
     await signUpViaHomepage(page, existingEmail)
 
-    // Log out so we can post as a different user (the poster)
-    await logoutIfLoggedIn(page)
+    // Log out without navigating to '/' — logout click handles the navigation,
+    // the extra goto('/') is redundant.
+    await logoutIfLoggedIn(page, false)
 
     // Post a message as the poster (testEmail)
     const uniqueItem = `test-existing-browse-${Date.now()}`
@@ -181,8 +192,8 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     })
     expect(result.id).toBeTruthy()
 
-    // Log out from poster
-    await logoutIfLoggedIn(page)
+    // Log out without extra homepage navigation
+    await logoutIfLoggedIn(page, false)
 
     // Navigate via browse page (use specific group since /browse might be empty)
     await navigateToMessageViaBrowse(
@@ -296,13 +307,19 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     testEnv,
   }, testInfo) => {
     // Same multi-step flow as 3.2; same timeout risk under heavy CI load.
+    // logoutIfLoggedIn(page, false) skips the redundant second goto('/') that
+    // logoutIfLoggedIn(true) does after the logout-triggered navigation. Saves ~135s per
+    // call under CI load. clearSessionData is NOT used here because Pinia's localStorage
+    // persistence plugin immediately re-persists in-memory auth state after clearSessionData,
+    // defeating the storage clear and leaving the user still logged in.
     testInfo.setTimeout(1200000)
     // First create a user by signing up (this will be the "existing" user who will reply)
     const existingEmail = getTestEmail('existing-explore')
     await signUpViaHomepage(page, existingEmail)
 
-    // Log out so we can post as a different user (the poster)
-    await logoutIfLoggedIn(page)
+    // Log out without navigating to '/' — logout click handles the navigation,
+    // the extra goto('/') is redundant.
+    await logoutIfLoggedIn(page, false)
 
     // Post a message as the poster (testEmail)
     const uniqueItem = `test-existing-explore-${Date.now()}`
@@ -315,8 +332,8 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     })
     expect(result.id).toBeTruthy()
 
-    // Log out from poster
-    await logoutIfLoggedIn(page)
+    // Log out without extra homepage navigation
+    await logoutIfLoggedIn(page, false)
 
     // Navigate via explore page and find our specific message
     await navigateToMessageViaExplore(page, testEnv.group.name, uniqueItem)

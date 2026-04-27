@@ -1369,40 +1369,42 @@ async function loginViaModTools(page, email, password = 'freegle') {
     timeout: timeouts.navigation.slowPage,
   })
 
-  // Wait for the modal's submit button to appear (either "Log in" or "Join Freegle")
-  // before checking mode. A point-in-time isVisible() on the fullname field races
-  // with Vue hydration — the modal may switch to signup mode after the check.
-  const anySubmitButton = page.locator(
-    '#loginModal button[type="submit"]'
-  )
-  await anySubmitButton.first().waitFor({
-    state: 'visible',
-    timeout: timeouts.ui.appearance,
-  })
-
-  // Now check if we're in signup mode (fullname field visible) and switch if needed
-  const fullnameField = page.locator('#fullname, input[name="fullname"]')
-  const fullnameVisible = await fullnameField.isVisible().catch(() => false)
-  if (fullnameVisible) {
-    console.log('In signup mode, switching to login mode')
-    const loginLink = page
-      .locator('.test-already-a-freegler')
-      .filter({ visible: true })
-      .first()
-    await loginLink.click()
-    // Wait until fullname field is hidden — this confirms we're in login mode
-    await fullnameField.waitFor({ state: 'hidden', timeout: 10000 })
-    console.log('Switched to login mode')
-  }
-
-  // Now the submit button should say "Log in"
+  // Wait for the submit button to stabilise in either login or signup mode.
+  // We wait for the EXACT text we need ("Log in") with the full appearance
+  // timeout. If it's in signup mode ("Join Freegle!") we click the switch
+  // link and keep waiting — the single waitFor handles both branches without
+  // the point-in-time fullname visibility race that previously caused CI failures.
   const loginButton = page.locator(
     '#loginModal button[type="submit"]:has-text("Log in")'
   )
-  await loginButton.first().waitFor({
-    state: 'visible',
-    timeout: timeouts.ui.appearance,
-  })
+  const joinButton = page.locator(
+    '#loginModal button[type="submit"]:has-text("Join Freegle")'
+  )
+
+  // Poll until we either see "Log in" or need to switch from "Join Freegle"
+  await expect
+    .poll(
+      async () => {
+        const loginVisible = await loginButton.first().isVisible().catch(() => false)
+        if (loginVisible) {
+          return true
+        }
+        const joinVisible = await joinButton.first().isVisible().catch(() => false)
+        if (joinVisible) {
+          console.log('In signup mode, clicking switch to login mode')
+          const loginLink = page.locator('.test-already-a-freegler').first()
+          await loginLink.click().catch(() => {})
+        }
+        return false
+      },
+      {
+        message: 'Waiting for login modal to show "Log in" button',
+        timeout: timeouts.ui.appearance,
+        intervals: [500, 500, 500, 1000, 1000, 2000],
+      }
+    )
+    .toBe(true)
+  console.log('Login modal is in login mode')
 
   // Fill credentials — emailField already declared above (scoped to loginModal)
   const passwordField = page

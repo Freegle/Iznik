@@ -327,6 +327,8 @@ const test = base.test.extend({
       /compute-pressure is not allowed/, // YouTube player Permissions-Policy violation — external script, not our code
       /\[Exc?eption for Sentry\]:.*SpinButton.*callback not called/, // Bootstrap-Vue SpinButton internal timing error — component issue, not user-visible
       /Failed to fetch dynamically imported module.*\.localhost/, // Transient network error loading JS chunks from local dev server under parallel test load — not a production code bug
+      /net::ERR_SOCKET_NOT_CONNECTED.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
+      /Failed to load resource.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
     ]
 
     // Initialize the working copy of allowed error patterns
