@@ -491,6 +491,26 @@ const test = base.test.extend({
         .catch(() => {})
     })
 
+    // Detect client-side "Something went wrong" error pages (Vue-rendered, not
+    // caught by the load handler above). Runs inside the browser via addInitScript
+    // so it survives client-side navigations. Uses a debounced MutationObserver to
+    // avoid false positives during partial renders.
+    await page.addInitScript(() => {
+      let t = null
+      const obs = new MutationObserver(() => {
+        clearTimeout(t)
+        t = setTimeout(() => {
+          if (document.body?.textContent?.includes('Something went wrong')) {
+            console.error(
+              '[CRITICAL-CLIENT-ERROR] client-side error page at ' +
+                location.href
+            )
+          }
+        }, 200)
+      })
+      obs.observe(document.documentElement, { childList: true, subtree: true })
+    })
+
     // Track API error responses with full request details for diagnostics.
     // Browser console only shows "Failed to load resource: 400" with no method,
     // body, or response — this captures everything needed to debug.

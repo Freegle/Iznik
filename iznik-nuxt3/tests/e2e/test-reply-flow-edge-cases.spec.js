@@ -362,8 +362,7 @@ test.describe('Reply Flow - Edge Cases', () => {
       await signUpViaHomepage(page, loginEmail)
       console.log('[Test] Created navbarlogin user')
 
-      // Clear session without navigating — postMessage handles its own navigation
-      await logoutIfLoggedIn(page, false)
+      await logoutIfLoggedIn(page)
 
       // Post a message as the poster (testEmail)
       const uniqueItem = `test-navbar-login-${Date.now()}`
@@ -376,8 +375,7 @@ test.describe('Reply Flow - Edge Cases', () => {
       })
       expect(result.id).toBeTruthy()
 
-      // Clear session without navigating — gotoAndVerify below handles navigation
-      await logoutIfLoggedIn(page, false)
+      await logoutIfLoggedIn(page)
       await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
       await clickReplyButton(page)
 

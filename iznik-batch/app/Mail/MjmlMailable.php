@@ -123,12 +123,24 @@ abstract class MjmlMailable extends Mailable
             $compiler = app(MjmlCompilerService::class);
             return $compiler->compile($mjml);
         } catch (\Exception $e) {
-            // Log and throw on MJML compilation failure - never send broken emails.
-            $error = 'MJML compilation failed: ' . $e->getMessage();
+            // Distinguish HTTP-call failures (genuine MJML compile failure) from
+            // anything else (Redis pool init, DI, view render). Mislabelling
+            // network/infra failures as "MJML compilation failed" sent us down
+            // a wrong path during the 2026-04-27 Docker network incident.
+            $msg = $e->getMessage();
+            $isMjmlCompilation = str_contains($msg, 'MJML compilation')
+                || str_contains($msg, 'mjml')
+                || str_contains(get_class($e), 'Http');
+
+            $label = $isMjmlCompilation
+                ? 'MJML compilation failed'
+                : 'Email build failed before MJML compile';
+            $error = $label.': '.$msg;
             \Log::error($error, [
                 'mailable' => static::class,
                 'template' => $this->mjmlTemplate ?? 'unknown',
-                'exception' => $e->getMessage(),
+                'exception_class' => get_class($e),
+                'exception' => $msg,
             ]);
             throw new \RuntimeException($error, 0, $e);
         }
