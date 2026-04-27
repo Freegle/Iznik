@@ -947,9 +947,9 @@ const test = base.test.extend({
         `Navigation summary: ${navSummary.total} total (${navSummary.hardCount} hard, ${navSummary.softCount} soft)`
       )
     } catch (error) {
-      // Take a full page screenshot on any test failure
+      // Take a full page screenshot on any test failure — bounded timeout prevents hang on unresponsive renderer
       const screenshotPath = getScreenshotPath(`test-failure-${Date.now()}.png`)
-      await loggingPage.screenshot({ path: screenshotPath, fullPage: true })
+      await loggingPage.screenshot({ path: screenshotPath, fullPage: true, timeout: 15000 }).catch(() => {})
 
       // Log the navigation history on failure for debugging
       console.log('Navigation history:')
@@ -1038,36 +1038,6 @@ const testWithFixtures = test.extend({
       if (!email) {
         throw new Error('Email is required for posting a message')
       }
-
-      // Debug: Check login state before starting message posting
-      console.log('=== POST MESSAGE DEBUG START ===')
-      console.log(`Posting as email: ${email}`)
-
-      try {
-        const currentUrl = page.url()
-        console.log(`Current URL before posting: ${currentUrl}`)
-
-        // Check for logged-in indicators
-        const loggedInElements = await page
-          .locator(
-            '.test-user-dropdown, a[href*="logout"], .btn:has-text("My account")'
-          )
-          .count()
-        console.log(
-          `Found ${loggedInElements} logged-in indicators before posting`
-        )
-
-        // Take a screenshot
-        await page.screenshot({
-          path: `playwright-screenshots/before-post-message-${Date.now()}.png`,
-          fullPage: true,
-        })
-      } catch (debugError) {
-        console.log(`Debug error: ${debugError.message}`)
-      }
-      console.log('=== POST MESSAGE DEBUG END ===')
-
-      // Using maximized browser window instead of setting viewport size
 
       // Navigate to the correct page based on type
       const startPath = type.toLowerCase() === 'wanted' ? '/find' : '/give'
@@ -1291,14 +1261,15 @@ const testWithFixtures = test.extend({
         )
       }
 
-      // Take a debug screenshot
+      // Take a debug screenshot — bounded timeout prevents hang on unresponsive renderer
       const emailScreenshotTimestamp = new Date()
         .toISOString()
         .replace(/[:.]/g, '-')
       await page.screenshot({
         path: `playwright-screenshots/email-filled-${emailScreenshotTimestamp}.png`,
         fullPage: true,
-      })
+        timeout: 10000,
+      }).catch(() => {})
 
       // Wait for validation to complete and the button to appear using web assertions
       console.log(
@@ -1502,12 +1473,13 @@ const testWithFixtures = test.extend({
 
       console.log('=== POST-SUBMISSION NAVIGATION DEBUG END ===')
 
-      // Take a screenshot of the success
+      // Take a screenshot of the success — bounded timeout prevents hang on unresponsive renderer
       const screenshotTimestamp = new Date().toISOString().replace(/[:.]/g, '-')
       await page.screenshot({
         path: `playwright-screenshots/item-post-success-${screenshotTimestamp}.png`,
         fullPage: true,
-      })
+        timeout: 10000,
+      }).catch(() => {})
 
       // Check for the posted item
       // Look for the message card which uses .message-card class (with hyphen)
