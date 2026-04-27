@@ -106,7 +106,9 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 | 10 | All 9 PR CIs green | 🔄 | Pipelines 3935-3943 passed but PRs 280/281/282 failed on new runs; fix applied |
 | 11 | Fix postMessage waitUntil:load CI hang | ✅ | Commit `c0bbbb7d3` (master `dd1888590`) — domcontentloaded on postMessage gotoAndVerify('/give'); test 4.1 gets 1200000ms budget; pushed to all 9 PR branches |
 | 12 | Add waitUntil:'load' guard | ✅ | Commit `00026ce02` (master) — default changed to domcontentloaded, runtime throw, CI grep, orb 1.1.220; cherry-picked to all 9 PR branches |
-| 13 | All 9 PR CIs green (guard commit) | 🔄 | Jobs 7125/7128/7131/7134/7137/7140/7143/7146/7149/7152 queued; runner sequential; job 7110 (production) running first |
+| 13 | All 9 PR CIs green (guard commit) | 🔄 | Jobs 7125/7128/7131/7134/7137/7140/7143/7146/7149/7152 queued then canceled; |
+| 14 | Merge master into all 9 PR branches | ✅ | All clean (no conflicts); new jobs 7164/7167/7170/7173/7176/7179/7182/7185/7188 queued |
+| 15 | All 9 PRs show MERGEABLE (not BEHIND) | ✅ | State=BLOCKED only pending CI; ready to merge once CI green |
 
 ---
 
@@ -173,15 +175,15 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 - Fix: commit `0f491c5f1` — remove debug section; add timeout: 10000 to remaining screenshots
 - All 9 PR branches + master updated
 
-**9 PR branches** (all now include guard commit `00026ce02` — CI triggered 2026-04-27 ~15:53 UTC):
-- fix/review-ignore-held-members (PR#284): tip `68f780bcf` — job #7128 queued
-- feature/android-coldstart-safe (PR#282): tip `5a2d26705` — job #7152 queued
-- fix/modmail-log-test-9518 (PR#281): tip `d945f499b` — job #7125 queued
-- test/go-coverage-namevalidation-helpers (PR#280): tip `f8498069d` — job #7131 queued
-- test/laravel-coverage-mail-helper (PR#279): tip `2505dc04a` — job #7137 queued
-- coverage/vitest-use-trace-20260425 (PR#278): tip `f9b1004b8` — job #7146 queued
-- feature/reply-to-chat (PR#149): tip `742255405` — job #7149 queued
-- feature/mobile-feel (PR#90): tip `d91bf9a89` — job #7134 queued
-- feature/unified-digest-revision (PR#77): tip `13687d43d` — job #7140 queued
+**9 PR branches** (master merged in 2026-04-27 ~16:05 UTC — all MERGEABLE, BLOCKED pending CI):
+- fix/review-ignore-held-members (PR#284): tip `851d58c9c` — job #7164 queued
+- feature/android-coldstart-safe (PR#282): tip `c511f689d` — job #7179 queued
+- fix/modmail-log-test-9518 (PR#281): tip `afd5617db` — job #7170 queued
+- test/go-coverage-namevalidation-helpers (PR#280): tip `c77bcea59` — job #7185 queued
+- test/laravel-coverage-mail-helper (PR#279): tip `262f98a94` — job #7173 queued
+- coverage/vitest-use-trace-20260425 (PR#278): tip `b4661c025` — job #7176 queued
+- feature/reply-to-chat (PR#149): tip `098d96610` — job #7188 queued
+- feature/mobile-feel (PR#90): tip `5bc58d72b` — job #7182 queued
+- feature/unified-digest-revision (PR#77): tip `4f48472a7` — job #7167 queued
 
 **Instruction from user**: Keep monitoring until master CI passes AND all 9 PR CIs show green ticks. Do not stop. Use CircleCI runner directly for debugging (localhost:17081 status API, or check runner containers). Record every theory and result. Before making any fix, check against previous failed attempts above.
