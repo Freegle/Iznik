@@ -1032,6 +1032,7 @@ const testWithFixtures = test.extend({
       const startPath = type.toLowerCase() === 'wanted' ? '/find' : '/give'
       await page.gotoAndVerify(startPath, {
         timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
         maxRetries: 1,
       })
 

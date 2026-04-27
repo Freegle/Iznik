@@ -37,7 +37,9 @@ test.describe('Reply Flow - Social Login Simulation', () => {
     testEmail,
     getTestEmail,
     withdrawPost,
-  }) => {
+  }, testInfo) => {
+    // signup + logout + postMessage + social-login-sim = 4 navigations; each up to 202s
+    testInfo.setTimeout(1200000)
     // First create the user we'll use for social login simulation
     const loginEmail = getTestEmail('sociallogin')
     console.log(`[4.1] Step 1: signUpViaHomepage start ${new Date().toISOString()}`)
