@@ -56,7 +56,7 @@ test.describe('Explore Page Tests', () => {
       timeout: timeouts.ui.appearance,
     })
 
-    if (await loginModal.isVisible().catch(() => false)) {
+    if (await loginModal.isVisible({ timeout: 5000 }).catch(() => false)) {
       // Session was lost — dismiss modal and skip this test iteration
       console.log('Login modal appeared after Join click — session lost')
       throw new Error(
