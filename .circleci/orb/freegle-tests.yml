@@ -23,6 +23,11 @@ executors:
     resource_class: freegle/circleci-docker-runner
     environment:
       DOCKER_BUILDKIT: 1
+      # IMPORTANT: Docker on the self-hosted runner is pinned to 27.5.1 (apt-mark hold).
+      # Docker 28+ introduced per-container DROP rules in PREROUTING that break
+      # container-to-container networking with bridge networks, causing Playwright
+      # renderer freezes and test timeouts. Do NOT upgrade Docker on the runner
+      # without testing thoroughly. See commit 5ec47b823 for the investigation.
       COMPOSE_DOCKER_CLI_BUILD: 1
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
