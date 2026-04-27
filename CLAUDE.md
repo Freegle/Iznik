@@ -56,6 +56,7 @@ Uses `docker-compose.override.yesterday.yml` (copy to `docker-compose.override.y
 - **Docker build caching**: Controlled by `ENABLE_DOCKER_CACHE` env var in CircleCI. Bump version suffixes in orb YAML to invalidate cache. Set to `false` for immediate rollback.
 - **Auto-merge**: When all tests pass on master, auto-merges to production branch in iznik-nuxt3.
 - **Self-hosted runner**: Runs in a separate WSL2 distro (`circleci-runner`), NOT in the main dev WSL. Never create worktrees for runner work.
+- **Docker version on runner is pinned to 27.5.1** (`apt-mark hold docker-ce docker-ce-cli containerd.io`). Docker 28+ breaks container-to-container networking via bridge networks (per-container PREROUTING DROP rules), causing Playwright renderer freezes and test timeouts. Do NOT upgrade. See commit `5ec47b823`.
 
 ## Batch Production Container
 
@@ -89,7 +90,7 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Goal**: Master CI job must pass. Then push all 9 PR branches and ensure their CI jobs all show green ticks on GitHub.
 
-**Current state**: Job 7030 (master CI, `c219651b2`, pipeline 3934) at "Fix file ownership" step ~13:25 UTC. All 9 PR jobs (7038-7062) queued. Queue depth: 10 jobs (9 PRs + 1 master, ~6-7 hours total).
+**Current state**: Master pipeline #3975 (job #7192) running — Docker 27.5.1 now on both local and CI runner (downgraded from 29.4.0). nat-unprotected removed from docker-compose.yml. Investigating Docker version difference as root cause of CI failures.
 
 **Status table**:
 | # | Task | Status | Notes |
@@ -109,6 +110,7 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 | 13 | All 9 PR CIs green (guard commit) | 🔄 | Jobs 7125/7128/7131/7134/7137/7140/7143/7146/7149/7152 queued then canceled; |
 | 14 | Merge master into all 9 PR branches | ✅ | All clean (no conflicts); new jobs 7164/7167/7170/7173/7176/7179/7182/7185/7188 queued |
 | 15 | All 9 PRs show MERGEABLE (not BEHIND) | ✅ | State=BLOCKED only pending CI; ready to merge once CI green |
+| 16 | Fix Docker version mismatch — pin CI runner to 27.5.1 | ✅ | Commit `5ec47b823` — revert nat-unprotected; downgraded CI runner to 27.5.1; job #7192 SUCCESS (all 130 Playwright + Go + Laravel passed) |
 
 ---
 
