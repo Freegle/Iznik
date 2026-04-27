@@ -17,22 +17,35 @@ const { waitForModal } = require('./ui')
  */
 async function waitForAuthPersistence(page) {
   console.log('Waiting for auth to be persisted to localStorage...')
-  await page.waitForFunction(
-    () => {
-      try {
-        const authData = localStorage.getItem('auth')
-        if (!authData) return false
-        const parsed = JSON.parse(authData)
-        // Check the nested auth object for jwt or persistent token
-        const tokens = parsed?.auth
-        return !!(tokens?.jwt || tokens?.persistent)
-      } catch (e) {
-        return false
-      }
-    },
-    null,
-    { timeout: timeouts.ui.appearance }
-  )
+  await Promise.race([
+    page.waitForFunction(
+      () => {
+        try {
+          const authData = localStorage.getItem('auth')
+          if (!authData) return false
+          const parsed = JSON.parse(authData)
+          // Check the nested auth object for jwt or persistent token
+          const tokens = parsed?.auth
+          return !!(tokens?.jwt || tokens?.persistent)
+        } catch (e) {
+          return false
+        }
+      },
+      null,
+      { timeout: timeouts.ui.appearance }
+    ),
+    new Promise((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error('waitForAuthPersistence timed out (renderer unresponsive)')
+          ),
+        timeouts.ui.appearance + 5000
+      )
+    ),
+  ]).catch((e) => {
+    console.warn('waitForAuthPersistence timed out:', e.message)
+  })
   console.log('Auth persisted to localStorage')
 }
 
@@ -1172,7 +1185,7 @@ async function loginViaHomepage(
     // If we get here and don't see login modal anymore, assume success
     const loginModalVisible = await page
       .locator('#loginModal')
-      .isVisible()
+      .isVisible({ timeout: 5000 })
       .catch(() => false)
     if (!loginModalVisible) {
       console.log('Login appears successful - modal closed')
