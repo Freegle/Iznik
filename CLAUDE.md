@@ -89,7 +89,7 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Goal**: Master CI job must pass. Then push all 9 PR branches and ensure their CI jobs all show green ticks on GitHub.
 
-**Current state**: Job 6921 (master CI, new push `7ca24d6e7`) at Build containers step ~12:55 UTC (pipeline 3905). All 9 PR branches updated with cherry-picked fix.
+**Current state**: Job 7030 (master CI, `c219651b2`, pipeline 3934) at "Fix file ownership" step ~13:25 UTC. All 9 PR jobs (7038-7062) queued. Queue depth: 10 jobs (9 PRs + 1 master, ~6-7 hours total).
 
 **Status table**:
 | # | Task | Status | Notes |
@@ -100,8 +100,10 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 | 4 | Fix MutationObserver null guard | ✅ | Commit `77de32ad4` — addInitScript runs before HTML parsed |
 | 5 | Fix postMessage debug section hang | ✅ | Commit `0f491c5f1` — locator.count()+screenshot without timeout hung 12min |
 | 6 | Fix isVisible()/waitForAuthPersistence renderer freeze | ✅ | Commit `7ca24d6e7` — job 6880 stuck 45min on loginModal check with no timeout |
-| 7 | Master CI job 6921 passes | 🔄 | Running (pipeline 3905) |
-| 8 | All 9 PR CIs green | 🔄 | Jobs 6951-6978 queued; will run after job 6921 finishes |
+| 7 | Fix ALL bare isVisible() calls across test suite | ✅ | Commit `a14caf71e` — comprehensive { timeout: 5000 } on every bare isVisible() |
+| 8 | Fix isEnabled/isChecked CDP-freeze risk | ✅ | Commit `c219651b2` — same pattern applied to isEnabled/isChecked |
+| 9 | Master CI job 7030 passes | 🔄 | Running (pipeline 3934, commit c219651b2) |
+| 10 | All 9 PR CIs green | 🔄 | Jobs 7038-7062 queued after master |
 
 ---
 
@@ -119,7 +121,9 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 | `77de32ad4` | MutationObserver null guard in addInitScript — documentElement is null before HTML parsed | ✅ |
 | `a5494d87d` | Go test race: 100ms sleep before async task DB query in location_test.go | ✅ |
 | `0f491c5f1` | Remove postMessage debug section — locator.count()+screenshot hang indefinitely on unresponsive renderer | ✅ |
-| `7ca24d6e7` | Guard isVisible() and waitForAuthPersistence — loginModal check with no timeout hung test 3.2 for 45min in job 6880 | 🔄 in CI |
+| `7ca24d6e7` | Guard isVisible() and waitForAuthPersistence — loginModal check with no timeout hung test 3.2 for 45min in job 6880 | ✅ |
+| `a14caf71e` | Add { timeout: 5000 } to ALL bare isVisible() calls across test suite | ✅ |
+| `c219651b2` | Add timeout to isEnabled/isChecked calls in user.js and fixtures.js | 🔄 in CI |
 
 **Why logoutIfLoggedIn(false) was tried**: Setup phases in long reply-flow tests called logoutIfLoggedIn multiple times; each call does page.goto('/') which takes up to 202s under CI load; compound = test budget exceeded. The `false` param skipped that goto. WRONG: clearSessionData's page.evaluate() runs while page is mid-navigation → hangs.
 
@@ -164,15 +168,15 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 - Fix: commit `0f491c5f1` — remove debug section; add timeout: 10000 to remaining screenshots
 - All 9 PR branches + master updated
 
-**9 PR branches** (all now include `7ca24d6e7` fix — CI pipelines 3914-3922):
-- fix/review-ignore-held-members: rebased on master → tip `fea1b21b1` (pipeline 3914, job 6969)
-- feature/android-coldstart-safe: cherry-pick on `84b4fd67e` → tip `0dfa52bbd` (pipeline 3921, job 6975)
-- fix/modmail-log-test-9518: rebased on master → tip `185372eb4` (pipeline 3915, job 6957)
-- test/go-coverage-namevalidation-helpers: rebased on master → tip `a6097f3d3` (pipeline 3916, job 6951)
-- test/laravel-coverage-mail-helper: rebased on master → tip `3d3ac8ea1` (pipeline 3917, job 6954)
-- coverage/vitest-use-trace-20260425: rebased on master → tip `f728ccede` (pipeline 3918, job 6964)
-- feature/reply-to-chat: cherry-pick on `fd3a25d49` → tip `976a42a05` (pipeline 3922, job 6978)
-- feature/mobile-feel: rebased on master → tip `c66079acd` (pipeline 3919, job 6960)
-- feature/unified-digest-revision: cherry-pick (conflict in rebase, skip) → tip `dea1c6224` (pipeline 3920, job 6972)
+**9 PR branches** (all now include `c219651b2` fix — CI pipelines 3935-3943):
+- fix/review-ignore-held-members: tip `bf6faf1e7` (pipeline 3935, job 7062)
+- feature/android-coldstart-safe: tip `c419f066b` (pipeline 3936, job 7041)
+- fix/modmail-log-test-9518: tip `85f82ebf1` (pipeline 3937, job 7038)
+- test/go-coverage-namevalidation-helpers: tip `fa26cb24b` (pipeline 3938, job 7044)
+- test/laravel-coverage-mail-helper: tip `3f3ac713f` (pipeline 3939, job 7047)
+- coverage/vitest-use-trace-20260425: tip `e553ac51b` (pipeline 3940, job 7059)
+- feature/reply-to-chat: tip `899b8a358` (pipeline 3941, job 7052)
+- feature/mobile-feel: tip `4c645154f` (pipeline 3942, job 7051)
+- feature/unified-digest-revision: tip `d181ea968` (pipeline 3943, job 7050)
 
 **Instruction from user**: Keep monitoring until master CI passes AND all 9 PR CIs show green ticks. Do not stop. Use CircleCI runner directly for debugging (localhost:17081 status API, or check runner containers). Record every theory and result. Before making any fix, check against previous failed attempts above.
