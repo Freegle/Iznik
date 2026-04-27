@@ -59,7 +59,7 @@ async function signUpAndJoinGroup(page, testEmail, userName, groupName) {
     timeout: timeouts.ui.appearance,
   })
 
-  if (await leaveButton.isVisible().catch(() => false)) {
+  if (await leaveButton.isVisible({ timeout: 5000 }).catch(() => false)) {
     console.log(`Already a member of ${groupName}`)
     return
   }
@@ -71,7 +71,7 @@ async function signUpAndJoinGroup(page, testEmail, userName, groupName) {
     timeout: timeouts.ui.appearance,
   })
 
-  if (await loginModal.isVisible().catch(() => false)) {
+  if (await loginModal.isVisible({ timeout: 5000 }).catch(() => false)) {
     console.log(
       'Login modal appeared after Join click — session lost, logging in'
     )
@@ -91,7 +91,7 @@ async function signUpAndJoinGroup(page, testEmail, userName, groupName) {
     await expect(joinButton.or(leaveButton)).toBeVisible({
       timeout: timeouts.ui.appearance,
     })
-    if (await leaveButton.isVisible().catch(() => false)) {
+    if (await leaveButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       console.log(`Already a member of ${groupName} after re-login`)
       return
     }

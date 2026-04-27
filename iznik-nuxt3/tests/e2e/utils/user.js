@@ -151,8 +151,12 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
         .catch(() => {}),
     ])
 
-    const isDesktopVisible = await desktopLogout.isVisible().catch(() => false)
-    const isMobileVisible = await mobileLogout.isVisible().catch(() => false)
+    const isDesktopVisible = await desktopLogout
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
+    const isMobileVisible = await mobileLogout
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
 
     // Allow 401 errors from in-flight API requests that complete after logout
     // (addAllowedErrorPattern only exists on fixture-enhanced pages)
@@ -682,14 +686,22 @@ async function loginViaHomepage(
   console.log('Checking modal mode...')
 
   // First check current field visibility
-  const emailVisible = await emailField.isVisible().catch(() => false)
-  const passwordVisible = await passwordField.isVisible().catch(() => false)
-  const fullnameVisible = await fullnameField.isVisible().catch(() => false)
+  const emailVisible = await emailField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
+  const passwordVisible = await passwordField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
+  const fullnameVisible = await fullnameField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
   console.log(
     `Current field visibility - email: ${emailVisible}, password: ${passwordVisible}, fullname: ${fullnameVisible}`
   )
 
-  const loginLinkVisible = await loginLink.isVisible().catch(() => false)
+  const loginLinkVisible = await loginLink
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
   console.log(`Login link visible: ${loginLinkVisible}`)
 
   // If we have all three fields, we're in signup mode - try to work with it
@@ -729,12 +741,14 @@ async function loginViaHomepage(
   }
 
   // Final verification - check if we're in login mode
-  const finalEmailVisible = await emailField.isVisible().catch(() => false)
+  const finalEmailVisible = await emailField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
   const finalPasswordVisible = await passwordField
-    .isVisible()
+    .isVisible({ timeout: 5000 })
     .catch(() => false)
   const finalFullnameVisible = await fullnameField
-    .isVisible()
+    .isVisible({ timeout: 5000 })
     .catch(() => false)
 
   // Accept either login mode OR signup mode (we can work with both)
@@ -780,7 +794,9 @@ async function loginViaHomepage(
         setTimeout(() => reject(new Error('inputValue timeout after 3s')), 3000)
       ),
     ]).catch(() => 'NO_VALUE')
-    const emailVisible = await emailField.isVisible().catch(() => false)
+    const emailVisible = await emailField
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
     const emailEnabled = await emailField.isEnabled().catch(() => false)
     console.log(
       `Email field - value: "${emailValue}", visible: ${emailVisible}, enabled: ${emailEnabled}`
@@ -792,7 +808,9 @@ async function loginViaHomepage(
         setTimeout(() => reject(new Error('inputValue timeout after 3s')), 3000)
       ),
     ]).catch(() => 'NO_VALUE')
-    const passwordVisible = await passwordField.isVisible().catch(() => false)
+    const passwordVisible = await passwordField
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
     const passwordEnabled = await passwordField.isEnabled().catch(() => false)
     console.log(
       `Password field - value: "${passwordValue}", visible: ${passwordVisible}, enabled: ${passwordEnabled}`
@@ -813,7 +831,7 @@ async function loginViaHomepage(
         console.log('Got fullname value in debug section')
 
         const fullnameVisible = await fullnameField
-          .isVisible()
+          .isVisible({ timeout: 5000 })
           .catch(() => false)
         const fullnameEnabled = await fullnameField
           .isEnabled()
@@ -997,7 +1015,7 @@ async function loginViaHomepage(
     try {
       const button = allButtons[i]
       const text = await button.textContent().catch(() => 'NO_TEXT')
-      const isVisible = await button.isVisible().catch(() => false)
+      const isVisible = await button.isVisible({ timeout: 5000 }).catch(() => false)
       const isDisabled = await button.isDisabled().catch(() => 'UNKNOWN')
       const classes = await button.getAttribute('class').catch(() => 'NO_CLASS')
       const type = await button.getAttribute('type').catch(() => 'NO_TYPE')
@@ -1012,7 +1030,7 @@ async function loginViaHomepage(
   // Debug: Check form state
   try {
     const modal = page.locator('#loginModal')
-    const modalVisible = await modal.isVisible().catch(() => false)
+    const modalVisible = await modal.isVisible({ timeout: 5000 }).catch(() => false)
     console.log(`Login modal visible: ${modalVisible}`)
 
     if (modalVisible) {
@@ -1138,7 +1156,7 @@ async function loginViaHomepage(
         )
         for (let i = 0; i < allErrorElements.length; i++) {
           const element = allErrorElements[i]
-          const isVisible = await element.isVisible().catch(() => false)
+          const isVisible = await element.isVisible({ timeout: 5000 }).catch(() => false)
           const text = await element.textContent().catch(() => '')
           console.log(`  ${i}: visible=${isVisible}, text="${text.trim()}"`)
         }
@@ -1399,11 +1417,17 @@ async function loginViaModTools(page, email, password = 'freegle') {
   await expect
     .poll(
       async () => {
-        const loginVisible = await loginButton.first().isVisible().catch(() => false)
+        const loginVisible = await loginButton
+          .first()
+          .isVisible({ timeout: 5000 })
+          .catch(() => false)
         if (loginVisible) {
           return true
         }
-        const joinVisible = await joinButton.first().isVisible().catch(() => false)
+        const joinVisible = await joinButton
+          .first()
+          .isVisible({ timeout: 5000 })
+          .catch(() => false)
         if (joinVisible) {
           console.log('In signup mode, clicking switch to login mode')
           const loginLink = page.locator('.test-already-a-freegler').first()
