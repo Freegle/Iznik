@@ -763,80 +763,85 @@ const test = base.test.extend({
     const performTeardown = async (options = {}) => {
       const timeout = options.timeout || timeouts.teardown.networkIdle
       try {
-        // Clear browser storage before ending the test
+        // Clear browser storage before ending the test.
+        // Wrapped in Promise.race — page.evaluate() hangs indefinitely when
+        // the Chrome renderer is unresponsive (same failure mode as clearSessionData).
         try {
-          await page
-            .evaluate(() => {
-              try {
-                // Check if localStorage is accessible before trying to clear it
-                if (typeof Storage !== 'undefined' && window.localStorage) {
-                  localStorage.clear()
-                  console.log('LocalStorage cleared during teardown')
-                }
-              } catch (e) {
-                console.warn('Could not clear localStorage:', e.message)
-              }
-
-              try {
-                // Check if sessionStorage is accessible before trying to clear it
-                if (typeof Storage !== 'undefined' && window.sessionStorage) {
-                  sessionStorage.clear()
-                  console.log('SessionStorage cleared during teardown')
-                }
-              } catch (e) {
-                console.warn('Could not clear sessionStorage:', e.message)
-              }
-
-              // Safe IndexedDB cleanup
-              if (window.indexedDB) {
+          await Promise.race([
+            page
+              .evaluate(() => {
                 try {
-                  // Add common database names that might be used in the application
-                  // This approach is more reliable than indexedDB.databases() which is not widely supported
-                  const possibleDBNames = [
-                    'localforage',
-                    'keyval-store',
-                    'firebaseLocalStorageDb',
-                    'iznik-db', // Add app-specific DB names
-                    'app-state',
-                    'user-data',
-                  ]
-
-                  for (const dbName of possibleDBNames) {
-                    try {
-                      console.log(`Attempting to delete IndexedDB: ${dbName}`)
-                      indexedDB.deleteDatabase(dbName)
-                    } catch (e) {
-                      // Silent fail is acceptable for DB deletion attempts
-                    }
+                  // Check if localStorage is accessible before trying to clear it
+                  if (typeof Storage !== 'undefined' && window.localStorage) {
+                    localStorage.clear()
+                    console.log('LocalStorage cleared during teardown')
                   }
                 } catch (e) {
-                  // Ignore IndexedDB errors during cleanup
+                  console.warn('Could not clear localStorage:', e.message)
                 }
-              }
 
-              // Clear all cookies via JavaScript as an extra precaution
-              try {
-                if (document.cookie) {
-                  const cookies = document.cookie.split(';')
-                  cookies.forEach((cookie) => {
-                    const name = cookie.split('=')[0].trim()
-                    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/;`
-                  })
-                  console.log('Cookies cleared during teardown')
+                try {
+                  // Check if sessionStorage is accessible before trying to clear it
+                  if (typeof Storage !== 'undefined' && window.sessionStorage) {
+                    sessionStorage.clear()
+                    console.log('SessionStorage cleared during teardown')
+                  }
+                } catch (e) {
+                  console.warn('Could not clear sessionStorage:', e.message)
                 }
-              } catch (e) {
-                console.warn('Could not clear cookies:', e.message)
-              }
-            })
-            .catch((e) => {
-              // Only log if it's not a SecurityError about localStorage access
-              if (
-                !e.message.includes('localStorage') &&
-                !e.message.includes('Access is denied')
-              ) {
-                console.warn(`Storage cleanup error: ${e.message}`)
-              }
-            })
+
+                // Safe IndexedDB cleanup
+                if (window.indexedDB) {
+                  try {
+                    // Add common database names that might be used in the application
+                    // This approach is more reliable than indexedDB.databases() which is not widely supported
+                    const possibleDBNames = [
+                      'localforage',
+                      'keyval-store',
+                      'firebaseLocalStorageDb',
+                      'iznik-db', // Add app-specific DB names
+                      'app-state',
+                      'user-data',
+                    ]
+
+                    for (const dbName of possibleDBNames) {
+                      try {
+                        console.log(`Attempting to delete IndexedDB: ${dbName}`)
+                        indexedDB.deleteDatabase(dbName)
+                      } catch (e) {
+                        // Silent fail is acceptable for DB deletion attempts
+                      }
+                    }
+                  } catch (e) {
+                    // Ignore IndexedDB errors during cleanup
+                  }
+                }
+
+                // Clear all cookies via JavaScript as an extra precaution
+                try {
+                  if (document.cookie) {
+                    const cookies = document.cookie.split(';')
+                    cookies.forEach((cookie) => {
+                      const name = cookie.split('=')[0].trim()
+                      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/;`
+                    })
+                    console.log('Cookies cleared during teardown')
+                  }
+                } catch (e) {
+                  console.warn('Could not clear cookies:', e.message)
+                }
+              })
+              .catch((e) => {
+                // Only log if it's not a SecurityError about localStorage access
+                if (
+                  !e.message.includes('localStorage') &&
+                  !e.message.includes('Access is denied')
+                ) {
+                  console.warn(`Storage cleanup error: ${e.message}`)
+                }
+              }),
+            new Promise((resolve) => setTimeout(resolve, 5000)),
+          ])
         } catch (err) {
           // Log but continue if this fails
           console.warn(`Unable to clear page storage: ${err.message}`)
@@ -847,10 +852,12 @@ const test = base.test.extend({
         return true
       } catch (error) {
         console.warn(`Teardown warning: ${error.message}`)
-        // Take a screenshot if network doesn't become idle
-        await page.screenshot({
-          path: getScreenshotPath(`teardown-warning-${Date.now()}.png`),
-        })
+        // Take a screenshot if network doesn't become idle — guarded with
+        // a timeout because page.screenshot() also hangs on an unresponsive renderer.
+        await Promise.race([
+          page.screenshot({ path: getScreenshotPath(`teardown-warning-${Date.now()}.png`) }).catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, 5000)),
+        ])
         return false
       }
     }
@@ -910,20 +917,32 @@ const test = base.test.extend({
       // Re-throw the error to fail the test
       throw error
     } finally {
-      // Stop coverage collection and save results before teardown
+      // Stop coverage collection and save results before teardown.
+      // Wrap CDP coverage stops in a Promise.race timeout — if the Chrome
+      // renderer is unresponsive the stop calls never return, hanging the
+      // entire afterEach hook indefinitely (same failure mode as clearSessionData).
       if (coverageStarted) {
         try {
-          const [jsCoverage, cssCoverage] = await Promise.all([
-            page.coverage.stopJSCoverage(),
-            page.coverage.stopCSSCoverage(),
+          const coverageTimeout = new Promise((resolve) => setTimeout(resolve, 10000))
+          const coverageResult = await Promise.race([
+            Promise.all([
+              page.coverage.stopJSCoverage(),
+              page.coverage.stopCSSCoverage(),
+            ]),
+            coverageTimeout,
           ])
 
-          // Combine coverage data
-          const coverage = [...jsCoverage, ...cssCoverage]
-          if (coverage.length > 0) {
-            // Add coverage data to monocart-reporter using the proper API
-            await addCoverageReport(coverage, test.info())
-            console.log(`Collected ${coverage.length} coverage entries`)
+          if (Array.isArray(coverageResult)) {
+            const [jsCoverage, cssCoverage] = coverageResult
+            // Combine coverage data
+            const coverage = [...jsCoverage, ...cssCoverage]
+            if (coverage.length > 0) {
+              // Add coverage data to monocart-reporter using the proper API
+              await addCoverageReport(coverage, test.info())
+              console.log(`Collected ${coverage.length} coverage entries`)
+            }
+          } else {
+            console.warn('Coverage collection timed out (renderer unresponsive) — skipping')
           }
         } catch (error) {
           console.warn('Failed to collect coverage data:', error.message)
