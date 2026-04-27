@@ -327,6 +327,8 @@ const test = base.test.extend({
       /compute-pressure is not allowed/, // YouTube player Permissions-Policy violation — external script, not our code
       /\[Exc?eption for Sentry\]:.*SpinButton.*callback not called/, // Bootstrap-Vue SpinButton internal timing error — component issue, not user-visible
       /Failed to fetch dynamically imported module.*\.localhost/, // Transient network error loading JS chunks from local dev server under parallel test load — not a production code bug
+      /net::ERR_SOCKET_NOT_CONNECTED.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
+      /Failed to load resource.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
     ]
 
     // Initialize the working copy of allowed error patterns
@@ -487,6 +489,39 @@ const test = base.test.extend({
           }
         })
         .catch(() => {})
+    })
+
+    // Detect client-side "Something went wrong" error pages (Vue-rendered, not
+    // caught by the load handler above). Runs inside the browser via addInitScript
+    // so it survives client-side navigations. Uses a debounced MutationObserver to
+    // avoid false positives during partial renders.
+    await page.addInitScript(() => {
+      let t = null
+      const obs = new MutationObserver(() => {
+        clearTimeout(t)
+        t = setTimeout(() => {
+          if (document.body?.textContent?.includes('Something went wrong')) {
+            console.error(
+              '[CRITICAL-CLIENT-ERROR] client-side error page at ' +
+                location.href
+            )
+          }
+        }, 200)
+      })
+      // document.documentElement may be null when addInitScript runs before HTML
+      // is parsed (early navigation events). Guard against the TypeError.
+      if (document.documentElement) {
+        obs.observe(document.documentElement, { childList: true, subtree: true })
+      } else {
+        window.addEventListener('DOMContentLoaded', () => {
+          if (document.documentElement) {
+            obs.observe(document.documentElement, {
+              childList: true,
+              subtree: true,
+            })
+          }
+        })
+      }
     })
 
     // Track API error responses with full request details for diagnostics.
@@ -901,9 +936,9 @@ const test = base.test.extend({
         `Navigation summary: ${navSummary.total} total (${navSummary.hardCount} hard, ${navSummary.softCount} soft)`
       )
     } catch (error) {
-      // Take a full page screenshot on any test failure
+      // Take a full page screenshot on any test failure — bounded timeout prevents hang on unresponsive renderer
       const screenshotPath = getScreenshotPath(`test-failure-${Date.now()}.png`)
-      await loggingPage.screenshot({ path: screenshotPath, fullPage: true })
+      await loggingPage.screenshot({ path: screenshotPath, fullPage: true, timeout: 15000 }).catch(() => {})
 
       // Log the navigation history on failure for debugging
       console.log('Navigation history:')
@@ -993,40 +1028,11 @@ const testWithFixtures = test.extend({
         throw new Error('Email is required for posting a message')
       }
 
-      // Debug: Check login state before starting message posting
-      console.log('=== POST MESSAGE DEBUG START ===')
-      console.log(`Posting as email: ${email}`)
-
-      try {
-        const currentUrl = page.url()
-        console.log(`Current URL before posting: ${currentUrl}`)
-
-        // Check for logged-in indicators
-        const loggedInElements = await page
-          .locator(
-            '.test-user-dropdown, a[href*="logout"], .btn:has-text("My account")'
-          )
-          .count()
-        console.log(
-          `Found ${loggedInElements} logged-in indicators before posting`
-        )
-
-        // Take a screenshot
-        await page.screenshot({
-          path: `playwright-screenshots/before-post-message-${Date.now()}.png`,
-          fullPage: true,
-        })
-      } catch (debugError) {
-        console.log(`Debug error: ${debugError.message}`)
-      }
-      console.log('=== POST MESSAGE DEBUG END ===')
-
-      // Using maximized browser window instead of setting viewport size
-
       // Navigate to the correct page based on type
       const startPath = type.toLowerCase() === 'wanted' ? '/find' : '/give'
       await page.gotoAndVerify(startPath, {
         timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
         maxRetries: 1,
       })
 
@@ -1244,14 +1250,15 @@ const testWithFixtures = test.extend({
         )
       }
 
-      // Take a debug screenshot
+      // Take a debug screenshot — bounded timeout prevents hang on unresponsive renderer
       const emailScreenshotTimestamp = new Date()
         .toISOString()
         .replace(/[:.]/g, '-')
       await page.screenshot({
         path: `playwright-screenshots/email-filled-${emailScreenshotTimestamp}.png`,
         fullPage: true,
-      })
+        timeout: 10000,
+      }).catch(() => {})
 
       // Wait for validation to complete and the button to appear using web assertions
       console.log(
@@ -1455,12 +1462,13 @@ const testWithFixtures = test.extend({
 
       console.log('=== POST-SUBMISSION NAVIGATION DEBUG END ===')
 
-      // Take a screenshot of the success
+      // Take a screenshot of the success — bounded timeout prevents hang on unresponsive renderer
       const screenshotTimestamp = new Date().toISOString().replace(/[:.]/g, '-')
       await page.screenshot({
         path: `playwright-screenshots/item-post-success-${screenshotTimestamp}.png`,
         fullPage: true,
-      })
+        timeout: 10000,
+      }).catch(() => {})
 
       // Check for the posted item
       // Look for the message card which uses .message-card class (with hyphen)
@@ -1532,7 +1540,7 @@ const testWithFixtures = test.extend({
         const button = page.locator(modifiedSelector)
         if (
           (await button.count()) > 0 &&
-          (await button.isVisible().catch(() => false))
+          (await button.isVisible({ timeout: 5000 }).catch(() => false))
         ) {
           await button.click()
           return true
@@ -1665,7 +1673,9 @@ const testWithFixtures = test.extend({
         }
 
         // Ensure button is enabled before clicking
-        const isEnabled = await withdrawButton.isEnabled()
+        const isEnabled = await withdrawButton
+          .isEnabled({ timeout: 5000 })
+          .catch(() => false)
         if (!isEnabled) {
           console.log(
             'Withdraw button is disabled, checking if broad selector button is enabled'
@@ -1674,7 +1684,9 @@ const testWithFixtures = test.extend({
             .locator('.action-btn, .btn')
             .filter({ hasText: /withdraw/i })
             .first()
-          const isBroadEnabled = await broadWithdrawButton.isEnabled()
+          const isBroadEnabled = await broadWithdrawButton
+            .isEnabled({ timeout: 5000 })
+            .catch(() => false)
           if (!isBroadEnabled) {
             throw new Error('All withdraw buttons are disabled')
           }
@@ -1766,7 +1778,7 @@ const testWithFixtures = test.extend({
 
         // Debug: Check if our specific post card is still visible
         const isSpecificPostVisible = await postCard
-          .isVisible()
+          .isVisible({ timeout: 5000 })
           .catch(() => false)
         console.log(
           `Specific post card still visible: ${isSpecificPostVisible}`

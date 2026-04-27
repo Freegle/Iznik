@@ -79,7 +79,7 @@ async function dismissLoginModalIfPresent(page) {
     const closeButton = page.locator(
       '.modal-header .btn-close, .modal-header button[aria-label="Close"]'
     )
-    if (await closeButton.isVisible()) {
+    if (await closeButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await closeButton.click()
       console.log('[Auth] Clicked modal close button')
     } else {
@@ -322,7 +322,8 @@ async function clickReplyButton(page) {
   // Now check which button to use
   const footerButtonCount = await replyButton.count()
   const footerButtonVisible =
-    footerButtonCount > 0 && (await replyButton.isVisible())
+    footerButtonCount > 0 &&
+    (await replyButton.isVisible({ timeout: 5000 }).catch(() => false))
   if (!footerButtonVisible) {
     replyButton = anyReplyButton
   }
@@ -427,7 +428,7 @@ async function clickSendAndWait(page, { expectWelcomeModal = false } = {}) {
     const postcodeInput = contactDetailsModal.locator(
       'input[placeholder*="postcode"], input[type="text"]'
     )
-    if (await postcodeInput.isVisible()) {
+    if (await postcodeInput.isVisible({ timeout: 5000 }).catch(() => false)) {
       await postcodeInput.fill(environment.postcode)
       console.log('[Reply] Filled postcode in contact details modal')
     }

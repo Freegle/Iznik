@@ -29,7 +29,10 @@ test.describe('ModTools login tests', () => {
     // Compare hostnames because browsers normalise away default ports (:80,
     // :443) — a raw substring match on modtoolsBaseUrl fails when CI sets
     // TEST_MODTOOLS_BASE_URL=http://...localhost:80.
-    const isModalVisible = await loginModal.first().isVisible()
+    const isModalVisible = await loginModal
+      .first()
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
     expect(isModalVisible).toBe(true)
     const expected = new URL(environment.modtoolsBaseUrl)
     const actual = new URL(page.url())
@@ -79,7 +82,10 @@ test.describe('ModTools login tests', () => {
     })
 
     // Verify the login modal is displayed
-    const isModalVisible = await loginModal.first().isVisible()
+    const isModalVisible = await loginModal
+      .first()
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
     expect(isModalVisible).toBe(true)
   })
 })
