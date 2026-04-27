@@ -508,7 +508,20 @@ const test = base.test.extend({
           }
         }, 200)
       })
-      obs.observe(document.documentElement, { childList: true, subtree: true })
+      // document.documentElement may be null when addInitScript runs before HTML
+      // is parsed (early navigation events). Guard against the TypeError.
+      if (document.documentElement) {
+        obs.observe(document.documentElement, { childList: true, subtree: true })
+      } else {
+        window.addEventListener('DOMContentLoaded', () => {
+          if (document.documentElement) {
+            obs.observe(document.documentElement, {
+              childList: true,
+              subtree: true,
+            })
+          }
+        })
+      }
     })
 
     // Track API error responses with full request details for diagnostics.
