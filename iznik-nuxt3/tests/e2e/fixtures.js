@@ -1567,7 +1567,7 @@ const testWithFixtures = test.extend({
         const button = page.locator(modifiedSelector)
         if (
           (await button.count()) > 0 &&
-          (await button.isVisible().catch(() => false))
+          (await button.isVisible({ timeout: 5000 }).catch(() => false))
         ) {
           await button.click()
           return true
@@ -1801,7 +1801,7 @@ const testWithFixtures = test.extend({
 
         // Debug: Check if our specific post card is still visible
         const isSpecificPostVisible = await postCard
-          .isVisible()
+          .isVisible({ timeout: 5000 })
           .catch(() => false)
         console.log(
           `Specific post card still visible: ${isSpecificPostVisible}`

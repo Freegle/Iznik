@@ -175,7 +175,7 @@ test.describe('ModTools Spammer List', () => {
     // If all visible cards are held, release one first to create a Hold-able card.
     // Previous test runs may have held many entries leaving no Hold buttons visible.
     const holdBtn = page.locator('.member-card button:has-text("Hold")').first()
-    const holdVisible = await holdBtn.isVisible().catch(() => false)
+    const holdVisible = await holdBtn.isVisible({ timeout: 5000 }).catch(() => false)
 
     if (!holdVisible) {
       const releaseBtn = page
@@ -310,7 +310,7 @@ test.describe('ModTools Spammer List', () => {
     const confirmBtn = page
       .locator('.member-card button:has-text("Confirm add to spammer list")')
       .first()
-    const confirmVisible = await confirmBtn.isVisible().catch(() => false)
+    const confirmVisible = await confirmBtn.isVisible({ timeout: 5000 }).catch(() => false)
 
     if (!confirmVisible) {
       const releaseBtn = page
@@ -435,7 +435,7 @@ test.describe('ModTools Spammer List', () => {
     const rejectBtn = page
       .locator('.member-card button:has-text("Reject add to spammer list")')
       .first()
-    const rejectVisible = await rejectBtn.isVisible().catch(() => false)
+    const rejectVisible = await rejectBtn.isVisible({ timeout: 5000 }).catch(() => false)
 
     if (!rejectVisible) {
       const releaseBtn = page
