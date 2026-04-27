@@ -102,7 +102,9 @@ onMounted(async () => {
     // Restore the group — setPostcode doesn't touch it, but the reactive
     // cascade from changing postcode data could cause b-form-select to lose
     // its value if the options momentarily change.
-    if (savedGroup) {
+    // Only restore if the user hasn't changed the group themselves during the async fetch.
+    const currentGroup = composeStore.group
+    if (savedGroup && (!currentGroup || currentGroup === savedGroup)) {
       composeStore.group = savedGroup
     }
   }
