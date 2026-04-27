@@ -56,6 +56,7 @@ Uses `docker-compose.override.yesterday.yml` (copy to `docker-compose.override.y
 - **Docker build caching**: Controlled by `ENABLE_DOCKER_CACHE` env var in CircleCI. Bump version suffixes in orb YAML to invalidate cache. Set to `false` for immediate rollback.
 - **Auto-merge**: When all tests pass on master, auto-merges to production branch in iznik-nuxt3.
 - **Self-hosted runner**: Runs in a separate WSL2 distro (`circleci-runner`), NOT in the main dev WSL. Never create worktrees for runner work.
+- **Docker version on runner is pinned to 27.5.1** (`apt-mark hold docker-ce docker-ce-cli containerd.io`). Docker 28+ breaks container-to-container networking via bridge networks (per-container PREROUTING DROP rules), causing Playwright renderer freezes and test timeouts. Do NOT upgrade. See commit `5ec47b823`.
 
 ## Batch Production Container
 
@@ -89,7 +90,7 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Goal**: Master CI job must pass. Then push all 9 PR branches and ensure their CI jobs all show green ticks on GitHub.
 
-**Current state**: Job 7030 (master CI, `c219651b2`, pipeline 3934) at "Fix file ownership" step ~13:25 UTC. All 9 PR jobs (7038-7062) queued. Queue depth: 10 jobs (9 PRs + 1 master, ~6-7 hours total).
+**Current state**: Master pipeline #3975 (job #7192) running — Docker 27.5.1 now on both local and CI runner (downgraded from 29.4.0). nat-unprotected removed from docker-compose.yml. Investigating Docker version difference as root cause of CI failures.
 
 **Status table**:
 | # | Task | Status | Notes |
@@ -103,7 +104,13 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 | 7 | Fix ALL bare isVisible() calls across test suite | ✅ | Commit `a14caf71e` — comprehensive { timeout: 5000 } on every bare isVisible() |
 | 8 | Fix isEnabled/isChecked CDP-freeze risk | ✅ | Commit `c219651b2` — same pattern applied to isEnabled/isChecked |
 | 9 | Master CI passes | ✅ | Pipeline 3944, commit `94dd64aa6` — SUCCESS |
-| 10 | All 9 PR CIs green | ✅ | Pipelines 3935-3943 all SUCCESS — 2026-04-27 |
+| 10 | All 9 PR CIs green | 🔄 | Pipelines 3935-3943 passed but PRs 280/281/282 failed on new runs; fix applied |
+| 11 | Fix postMessage waitUntil:load CI hang | ✅ | Commit `c0bbbb7d3` (master `dd1888590`) — domcontentloaded on postMessage gotoAndVerify('/give'); test 4.1 gets 1200000ms budget; pushed to all 9 PR branches |
+| 12 | Add waitUntil:'load' guard | ✅ | Commit `00026ce02` (master) — default changed to domcontentloaded, runtime throw, CI grep, orb 1.1.220; cherry-picked to all 9 PR branches |
+| 13 | All 9 PR CIs green (guard commit) | 🔄 | Jobs 7125/7128/7131/7134/7137/7140/7143/7146/7149/7152 queued then canceled; |
+| 14 | Merge master into all 9 PR branches | ✅ | All clean (no conflicts); new jobs 7164/7167/7170/7173/7176/7179/7182/7185/7188 queued |
+| 15 | All 9 PRs show MERGEABLE (not BEHIND) | ✅ | State=BLOCKED only pending CI; ready to merge once CI green |
+| 16 | Fix Docker version mismatch — pin CI runner to 27.5.1 | ✅ | Commit `5ec47b823` — revert nat-unprotected; downgraded CI runner to 27.5.1; job #7192 SUCCESS (all 130 Playwright + Go + Laravel passed) |
 
 ---
 
@@ -123,7 +130,9 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 | `0f491c5f1` | Remove postMessage debug section — locator.count()+screenshot hang indefinitely on unresponsive renderer | ✅ |
 | `7ca24d6e7` | Guard isVisible() and waitForAuthPersistence — loginModal check with no timeout hung test 3.2 for 45min in job 6880 | ✅ |
 | `a14caf71e` | Add { timeout: 5000 } to ALL bare isVisible() calls across test suite | ✅ |
-| `c219651b2` | Add timeout to isEnabled/isChecked calls in user.js and fixtures.js | 🔄 in CI |
+| `c219651b2` | Add timeout to isEnabled/isChecked calls in user.js and fixtures.js | ✅ |
+| `dd1888590` | postMessage gotoAndVerify('/give') uses waitUntil:load — hangs in CI; switch to domcontentloaded; test 4.1 needs 1200s budget | ✅ master job 7078 passed |
+| `00026ce02` | Guard: ban waitUntil:'load' — default changed, runtime throw, CI grep (orb 1.1.220), withdrawPost fixed | 🔄 job 7143 queued |
 
 **Why logoutIfLoggedIn(false) was tried**: Setup phases in long reply-flow tests called logoutIfLoggedIn multiple times; each call does page.goto('/') which takes up to 202s under CI load; compound = test budget exceeded. The `false` param skipped that goto. WRONG: clearSessionData's page.evaluate() runs while page is mid-navigation → hangs.
 
@@ -168,15 +177,15 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 - Fix: commit `0f491c5f1` — remove debug section; add timeout: 10000 to remaining screenshots
 - All 9 PR branches + master updated
 
-**9 PR branches** (all now include `c219651b2` fix — CI pipelines 3935-3943):
-- fix/review-ignore-held-members: tip `bf6faf1e7` (pipeline 3935, job 7062)
-- feature/android-coldstart-safe: tip `c419f066b` (pipeline 3936, job 7041)
-- fix/modmail-log-test-9518: tip `85f82ebf1` (pipeline 3937, job 7038)
-- test/go-coverage-namevalidation-helpers: tip `fa26cb24b` (pipeline 3938, job 7044)
-- test/laravel-coverage-mail-helper: tip `3f3ac713f` (pipeline 3939, job 7047)
-- coverage/vitest-use-trace-20260425: tip `e553ac51b` (pipeline 3940, job 7059)
-- feature/reply-to-chat: tip `899b8a358` (pipeline 3941, job 7052)
-- feature/mobile-feel: tip `4c645154f` (pipeline 3942, job 7051)
-- feature/unified-digest-revision: tip `d181ea968` (pipeline 3943, job 7050)
+**9 PR branches** (master merged in 2026-04-27 ~16:05 UTC — all MERGEABLE, BLOCKED pending CI):
+- fix/review-ignore-held-members (PR#284): tip `851d58c9c` — job #7164 queued
+- feature/android-coldstart-safe (PR#282): tip `c511f689d` — job #7179 queued
+- fix/modmail-log-test-9518 (PR#281): tip `afd5617db` — job #7170 queued
+- test/go-coverage-namevalidation-helpers (PR#280): tip `c77bcea59` — job #7185 queued
+- test/laravel-coverage-mail-helper (PR#279): tip `262f98a94` — job #7173 queued
+- coverage/vitest-use-trace-20260425 (PR#278): tip `b4661c025` — job #7176 queued
+- feature/reply-to-chat (PR#149): tip `098d96610` — job #7188 queued
+- feature/mobile-feel (PR#90): tip `5bc58d72b` — job #7182 queued
+- feature/unified-digest-revision (PR#77): tip `4f48472a7` — job #7167 queued
 
 **Instruction from user**: Keep monitoring until master CI passes AND all 9 PR CIs show green ticks. Do not stop. Use CircleCI runner directly for debugging (localhost:17081 status API, or check runner containers). Record every theory and result. Before making any fix, check against previous failed attempts above.
