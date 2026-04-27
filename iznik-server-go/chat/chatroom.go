@@ -138,27 +138,25 @@ func ListForUser(c *fiber.Ctx) error {
 
 	var start string
 
+	// Default lookback based on chat types.
+	hasMod := false
+	for _, ct := range chattypes {
+		if ct == utils.CHAT_TYPE_USER2MOD || ct == utils.CHAT_TYPE_MOD2MOD {
+			hasMod = true
+			break
+		}
+	}
+	if hasMod {
+		start = time.Now().AddDate(0, 0, -chatActiveLimitMT).Format("2006-01-02")
+	} else {
+		start = time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
+	}
 	if since != "" {
 		t, err := time.Parse(time.RFC3339, since)
-
 		if err == nil {
 			start = t.Format("2006-01-02")
 		}
-	} else {
-		// Use a longer lookback for moderator chat types.
-		hasMod := false
-		for _, ct := range chattypes {
-			if ct == utils.CHAT_TYPE_USER2MOD || ct == utils.CHAT_TYPE_MOD2MOD {
-				hasMod = true
-				break
-			}
-		}
-
-		if hasMod {
-			start = time.Now().AddDate(0, 0, -chatActiveLimitMT).Format("2006-01-02")
-		} else {
-			start = time.Now().AddDate(0, 0, -utils.CHAT_ACTIVE_LIMIT).Format("2006-01-02")
-		}
+		// Invalid since: leave start at default (avoids empty-string TIMESTAMP bug)
 	}
 
 	search := c.Query("search")
@@ -195,14 +193,13 @@ func ListForUserMT(c *fiber.Ctx) error {
 
 	var start string
 
+	start = time.Now().AddDate(0, 0, -chatActiveLimitMT).Format("2006-01-02")
 	if since != "" {
 		t, err := time.Parse(time.RFC3339, since)
-
 		if err == nil {
 			start = t.Format("2006-01-02")
 		}
-	} else {
-		start = time.Now().AddDate(0, 0, -chatActiveLimitMT).Format("2006-01-02")
+		// Invalid since: leave start at default (avoids empty-string TIMESTAMP bug)
 	}
 
 	search := c.Query("search")
