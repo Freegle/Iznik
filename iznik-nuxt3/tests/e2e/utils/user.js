@@ -34,13 +34,11 @@ async function waitForAuthPersistence(page) {
       null,
       { timeout: timeouts.ui.appearance }
     ),
-    new Promise((_resolve, reject) =>
+    new Promise((_, reject) =>
       setTimeout(
         () =>
           reject(
-            new Error(
-              'waitForAuthPersistence timed out (renderer unresponsive)'
-            )
+            new Error('waitForAuthPersistence timed out (renderer unresponsive)')
           ),
         timeouts.ui.appearance + 5000
       )
