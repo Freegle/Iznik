@@ -29,8 +29,8 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     withdrawPost,
   }, testInfo) => {
     // Multi-step flow: signup + 2x logout + postMessage can each take 135-202s under
-    // parallel CI load. Default 600s budget is insufficient.
-    testInfo.setTimeout(900000)
+    // parallel CI load. Align with 3.2/3.3 which use 1200000ms for the same reason.
+    testInfo.setTimeout(1200000)
     // First create a user by signing up (this will be the "existing" user who will reply)
     const existingEmail = getTestEmail('existing')
     await signUpViaHomepage(page, existingEmail)
