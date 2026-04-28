@@ -111,6 +111,12 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 | 14 | Merge master into all 9 PR branches | ✅ | All clean (no conflicts); new jobs 7164/7167/7170/7173/7176/7179/7182/7185/7188 queued |
 | 15 | All 9 PRs show MERGEABLE (not BEHIND) | ✅ | State=BLOCKED only pending CI; ready to merge once CI green |
 | 16 | Fix Docker version mismatch — pin CI runner to 27.5.1 | ✅ | Commit `5ec47b823` — revert nat-unprotected; downgraded CI runner to 27.5.1; job #7192 SUCCESS (all 130 Playwright + Go + Laravel passed) |
+| 17 | Fix ComposeGroup.vue savedGroup overwrite bug | ✅ | Commit `9f74d04e9` (master) — only restore savedGroup if user hasn't changed it during async typeahead |
+| 18 | Merge ComposeGroup fix into all 9 PR branches + push | ✅ | All 9 branches pushed; new CI runs queued |
+| 19 | All 9 PR CIs green | ✅ | All 9 PRs GREEN + MERGEABLE — jobs 7288-7296 all SUCCESS; new round (7297-7324 with ComposeGroup fix) queued |
+| 20 | Update PR#284 description | ✅ | Updated via REST API to describe all 4 fixes accurately |
+| 21 | Master CI for ComposeGroup fix | 🔄 | Job #7297 (pipeline 3998) running since 23:01 UTC; step 19 (parallel tests) running |
+| 22 | All 9 PR CIs green (ComposeGroup round) | 🔄 | Jobs 7300-7324 all not_running; queued sequentially after #7297; ~4.5h total wait |
 
 ---
 
