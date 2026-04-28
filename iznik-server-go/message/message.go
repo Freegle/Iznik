@@ -3233,6 +3233,11 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		var pendingCount int64
 		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).Scan(&pendingCount)
 		if pendingCount > 0 {
+			// V1 parity (Message::delete()): soft-delete messages_groups first, then the
+			// message itself.  Without this, the orphaned Pending row (deleted=0) gets
+			// picked up by AutoApproveService 48 hours later and auto-approved as if the
+			// member never withdrew it — making the message reappear in ModTools.
+			db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING)
 			db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID)
 			if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
 				"msgid": req.ID,

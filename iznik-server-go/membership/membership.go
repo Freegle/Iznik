@@ -245,6 +245,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		// confusing behaviour reported in Discourse topic 9618 where a mod clicks Ignore
 		// and the member reappears immediately because they are flagged on another of the
 		// mod's groups. PHP User.php:6805 sets reviewrequestedat = NULL on review completion.
+		// heldby IS NULL guard: must not clear held memberships — those need explicit mod action.
 		modGroupIDs := user.GetActiveModGroupIDs(myid)
 		if len(modGroupIDs) > 0 {
 			db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL, heldby = NULL "+
@@ -522,12 +523,9 @@ func enrichMembers(members []GetMembershipsMember) {
 	}
 }
 
-// getSpamMembers returns members flagged for review (reviewrequestedat IS NOT NULL).
-// Two-step query:
-//  1. Find userids who have a flagged membership on at least one group the viewer moderates.
-//  2. Return ALL flagged memberships for those users (including groups the viewer doesn't moderate),
-//     so the frontend can show the full picture and disable action buttons for non-moderated groups.
-//
+// getSpamMembers returns members flagged for review (reviewrequestedat IS NOT NULL and
+// the flag is more recent than the last review, or never reviewed).
+// Only returns memberships on groups the viewer moderates.
 // Used by the Member Review page.
 func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error {
 	db := database.DBConn
@@ -560,12 +558,14 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 		"JOIN users u ON u.id = m.userid " +
 		"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid"
 
-	// Show members where reviewrequestedat is set AND either never
-	// reviewed or the review is stale (more than 31 days old).
+	// Show members where reviewrequestedat is set AND either never reviewed or the flag
+	// is more recent than the last review. This matches the frontend needsReview logic
+	// exactly, preventing "no buttons" where the backend returns a member but the
+	// frontend considers them already reviewed.
 	result := db.Raw("SELECT "+selectCols+" "+
 		fromClause+" "+
 		"WHERE m.groupid IN ? AND m.reviewrequestedat IS NOT NULL "+
-		"AND (m.reviewedat IS NULL OR DATE(m.reviewedat) < DATE_SUB(NOW(), INTERVAL 31 DAY)) "+
+		"AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat) "+
 		"ORDER BY m.userid DESC LIMIT ?",
 		modGroupIDs, limit).Scan(&members)
 	if result.Error != nil {

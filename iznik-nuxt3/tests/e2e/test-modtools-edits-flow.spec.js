@@ -10,7 +10,7 @@
 
 const { test, expect } = require('./fixtures')
 const { timeouts, environment } = require('./config')
-const { loginViaModTools } = require('./utils/user')
+const { loginViaModTools, clearSessionData } = require('./utils/user')
 
 const MODTOOLS_URL = environment.modtoolsBaseUrl
 const API_V2 = environment.apiV2BaseUrl
@@ -163,7 +163,7 @@ test.describe('ModTools Edits Flow', () => {
     // Step 3: Log in as mod and verify edit appears on the edits page.
     console.log('\n--- Step 3: Check edits page as mod ---')
     console.log(`Message ID: ${posted.id}, Edit text: ${editText}`)
-    await page.context().clearCookies()
+    await clearSessionData(page)
     await loginViaModTools(page, modEmail)
 
     await page.goto(`${MODTOOLS_URL}/messages/edits`, {

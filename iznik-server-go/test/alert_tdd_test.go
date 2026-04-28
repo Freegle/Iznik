@@ -10,7 +10,6 @@ import (
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestAlert_GetAlert_NotFound(t *testing.T) {
@@ -20,27 +19,29 @@ func TestAlert_GetAlert_NotFound(t *testing.T) {
 
 func TestAlert_GetAlert_PublicAccess(t *testing.T) {
 	prefix := uniquePrefix("alert_public")
-	userID := CreateTestUser(t, prefix, "User")
+	adminID := CreateTestUser(t, prefix+"_admin", "Support")
 	db := database.DBConn
 
 	db.Exec("INSERT INTO alerts (createdby, subject, text, html, `from`, `to`, created) VALUES (?, ?, ?, ?, ?, 'Users', NOW())",
-		userID, "Test Alert "+prefix, "Test message", "<p>Test message</p>", "admin@example.com")
+		adminID, "Test Alert "+prefix, "Test message", "<p>Test message</p>", "admin@example.com")
 
 	var alertID uint64
 	db.Raw("SELECT id FROM alerts WHERE subject = ? ORDER BY id DESC LIMIT 1", "Test Alert "+prefix).Scan(&alertID)
-	require.Greater(t, alertID, uint64(0))
+	assert.Greater(t, alertID, uint64(0))
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/alert/%d", alertID), nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result map[string]interface{}
-	require.NoError(t, json.Unmarshal(rsp(resp), &result))
+	json.Unmarshal(rsp(resp), &result)
 	assert.Equal(t, float64(0), result["ret"])
 	assert.Equal(t, "Success", result["status"])
-	require.NotNil(t, result["alert"])
-	alertObj := result["alert"].(map[string]interface{})
-	assert.Equal(t, float64(alertID), alertObj["id"])
-	assert.Equal(t, "Test Alert "+prefix, alertObj["subject"])
+	if alertObj, ok := result["alert"].(map[string]interface{}); ok {
+		assert.Equal(t, float64(alertID), alertObj["id"])
+		assert.Equal(t, "Test Alert "+prefix, alertObj["subject"])
+	} else {
+		assert.Fail(t, "alert field missing or not a map in response")
+	}
 }
 
 func TestAlert_GetAlert_InvalidID(t *testing.T) {
@@ -78,8 +79,11 @@ func TestAlert_ListAlerts_AdminAccess(t *testing.T) {
 	json.Unmarshal(rsp(resp), &result)
 	assert.Equal(t, float64(0), result["ret"])
 	assert.Equal(t, "Success", result["status"])
-	alerts := result["alerts"].([]interface{})
-	assert.Greater(t, len(alerts), 0)
+	if alerts, ok := result["alerts"].([]interface{}); ok {
+		assert.Greater(t, len(alerts), 0)
+	} else {
+		assert.Fail(t, "alerts field missing or not a slice in response")
+	}
 }
 
 func TestAlert_CreateAlert_Unauthorized(t *testing.T) {
@@ -136,14 +140,16 @@ func TestAlert_CreateAlert_DefaultTo(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result map[string]interface{}
-	require.NoError(t, json.Unmarshal(rsp(resp), &result))
-	require.NotNil(t, result["id"], "expected id in response")
-	alertID := uint64(result["id"].(float64))
-
-	var createdAlert alert.Alert
-	db := database.DBConn
-	db.Raw("SELECT id, `to` FROM alerts WHERE id = ?", alertID).Scan(&createdAlert)
-	assert.Equal(t, "Mods", createdAlert.To)
+	json.Unmarshal(rsp(resp), &result)
+	if idVal, ok := result["id"].(float64); ok {
+		alertID := uint64(idVal)
+		var createdAlert alert.Alert
+		db := database.DBConn
+		db.Raw("SELECT id, `to` FROM alerts WHERE id = ?", alertID).Scan(&createdAlert)
+		assert.Equal(t, "Mods", createdAlert.To)
+	} else {
+		assert.Fail(t, "id field missing or not a number in response")
+	}
 }
 
 func TestAlert_CreateAlert_DefaultHTML(t *testing.T) {
@@ -160,12 +166,15 @@ func TestAlert_CreateAlert_DefaultHTML(t *testing.T) {
 
 	var result map[string]interface{}
 	json.Unmarshal(rsp(resp), &result)
-	alertID := uint64(result["id"].(float64))
-
-	var createdAlert alert.Alert
-	db := database.DBConn
-	db.Raw("SELECT id, html FROM alerts WHERE id = ?", alertID).Scan(&createdAlert)
-	assert.Contains(t, createdAlert.Html, "<br>")
+	if idVal, ok := result["id"].(float64); ok {
+		alertID := uint64(idVal)
+		var createdAlert alert.Alert
+		db := database.DBConn
+		db.Raw("SELECT id, html FROM alerts WHERE id = ?", alertID).Scan(&createdAlert)
+		assert.Contains(t, createdAlert.Html, "<br>")
+	} else {
+		assert.Fail(t, "id field missing or not a number in response")
+	}
 }
 
 func TestAlert_RecordAlert_InvalidRequest(t *testing.T) {

@@ -23,11 +23,16 @@ executors:
     resource_class: freegle/circleci-docker-runner
     environment:
       DOCKER_BUILDKIT: 1
+      # IMPORTANT: Docker on the self-hosted runner is pinned to 27.5.1 (apt-mark hold).
+      # Docker 28+ introduced per-container DROP rules in PREROUTING that break
+      # container-to-container networking with bridge networks, causing Playwright
+      # renderer freezes and test timeouts. Do NOT upgrade Docker on the runner
+      # without testing thoroughly. See commit 5ec47b823 for the investigation.
       COMPOSE_DOCKER_CLI_BUILD: 1
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
-      PW_WORKERS: 6
+      PW_WORKERS: 4
       # Port offsets (+9000) to avoid conflicts with any local dev stack
       PORT_TRAEFIK_HTTP: 9080
       PORT_TRAEFIK_API: 17192
@@ -225,6 +230,17 @@ commands:
             sudo sysctl vm.overcommit_memory=1
             echo "Set vm.overcommit_memory=1 for Redis"
 
+            # Docker 28/29 uses nftables (via iptables-nft) for its firewall rules, but
+            # older Docker runs may have left stale iptables-legacy rules with FORWARD
+            # policy DROP. Since both rule sets are active simultaneously, the legacy DROP
+            # policy blocks all container traffic for networks not in those stale rules.
+            # Resetting legacy FORWARD to ACCEPT unblocks container-to-container and
+            # container-to-internet without affecting Docker's nftables-managed rules.
+            sudo iptables-legacy -P FORWARD ACCEPT 2>/dev/null || true
+            sudo iptables-legacy -P INPUT ACCEPT 2>/dev/null || true
+            sudo iptables-legacy -P OUTPUT ACCEPT 2>/dev/null || true
+            echo "Reset iptables-legacy policies to ACCEPT"
+
             # Create secrets files after cleanup, right before Docker startup
             echo "Creating secrets files after cleanup:"
             mkdir -p secrets
@@ -315,14 +331,14 @@ commands:
             done
 
             echo "Waiting for batch container to be healthy (running migrations)..."
-            for i in $(seq 1 120); do
+            for i in $(seq 1 280); do
               health=$(docker inspect --format='{{.State.Health.Status}}' ${COMPOSE_PROJECT_NAME:-freegle}-batch 2>/dev/null || echo "unknown")
               if [ "$health" = "healthy" ]; then
                 echo "✅ Batch is healthy (migrations complete)"
                 break
               fi
-              if [ "$i" -eq 120 ]; then
-                echo "❌ Batch did not become healthy within 4 minutes"
+              if [ "$i" -eq 280 ]; then
+                echo "❌ Batch did not become healthy within 9 minutes"
                 docker logs ${COMPOSE_PROJECT_NAME:-freegle}-batch --tail 30 2>&1 || true
                 exit 1
               fi
@@ -405,6 +421,13 @@ commands:
           name: Fix memory overcommit for Redis
           command: sudo sysctl vm.overcommit_memory=1 || true
       - run:
+          name: Fix stale iptables-legacy FORWARD policy
+          command: |
+            sudo iptables-legacy -P FORWARD ACCEPT 2>/dev/null || true
+            sudo iptables-legacy -P INPUT ACCEPT 2>/dev/null || true
+            sudo iptables-legacy -P OUTPUT ACCEPT 2>/dev/null || true
+            echo "Reset iptables-legacy policies to ACCEPT"
+      - run:
           name: Start Docker services (two-phase)
           command: |
             cd "$HOME/FreegleDocker"
@@ -440,14 +463,14 @@ commands:
             done
 
             echo "Waiting for batch container to be healthy (migrations)..."
-            for i in $(seq 1 120); do
+            for i in $(seq 1 280); do
               health=$(docker inspect --format='{{.State.Health.Status}}' ${COMPOSE_PROJECT_NAME:-freegle}-batch 2>/dev/null || echo "unknown")
               if [ "$health" = "healthy" ]; then
                 echo "✅ Batch is healthy (migrations complete)"
                 break
               fi
-              if [ "$i" -eq 120 ]; then
-                echo "❌ Batch did not become healthy within 4 minutes"
+              if [ "$i" -eq 280 ]; then
+                echo "❌ Batch did not become healthy within 9 minutes"
                 docker logs ${COMPOSE_PROJECT_NAME:-freegle}-batch --tail 30 2>&1 || true
                 exit 1
               fi
@@ -1801,7 +1824,9 @@ jobs:
             if [ "${SELF_HOSTED_RUNNER:-false}" = "true" ]; then
               echo "Self-hosted runner: cleaning up previous Docker resources..."
               docker compose down --volumes --remove-orphans 2>/dev/null || true
-              sudo rm -rf logs data test-results ssl/certs status/data 2>/dev/null || true
+              sudo rm -rf logs test-results ssl/certs status/data 2>/dev/null || true
+              # Remove stale git lock files left by crashed previous runs
+              find . -name "*.lock" -path "*/.git/*" -delete 2>/dev/null || true
             fi
             echo "Fixing file ownership..."
             sudo chown -R $(id -u):$(id -g) . 2>/dev/null || true
@@ -1840,6 +1865,27 @@ jobs:
                 circleci-agent step halt
               fi
             fi
+
+      - run:
+          name: Check for banned test patterns
+          command: |
+            # waitUntil:'load' hangs in CI because external scripts (GA, Maps) never
+            # complete, burning the full 202500ms navigation timeout on every page load.
+            # Two days of debugging were spent on this. gotoAndVerify now throws at
+            # runtime if 'load' is passed, but catch it statically too.
+            echo "=== Checking for banned waitUntil:'load' in test files ==="
+            # Match 'waitUntil: "load"' or "waitUntil: 'load'" as a property assignment
+            # (colon + whitespace + quote). Excludes: === checks, comments (no space),
+            # and string literals in error messages (also no space after colon).
+            if grep -rn "waitUntil:[[:space:]]*['\"]load['\"]" iznik-nuxt3/tests/e2e/ 2>/dev/null \
+                | grep -vE "^[^:]+:[0-9]+:[[:space:]]*//" \
+                | grep -v "is banned" \
+                | grep .; then
+              echo "ERROR: Found waitUntil:'load' in test files. This causes 202500ms CI hangs."
+              echo "Use waitUntil:'domcontentloaded' instead."
+              exit 1
+            fi
+            echo "OK: No banned waitUntil:'load' patterns found."
 
       - run:
           name: Verify monorepo subtree directories
@@ -2213,12 +2259,16 @@ jobs:
               elapsed_min=$((elapsed / 60))
               LARAVEL_STATUS=$([ -f /tmp/laravel-result ] && cat /tmp/laravel-result || echo 'running')
               LARAVEL_COMPLETED=$([ -f /tmp/laravel-completed ] && cat /tmp/laravel-completed || echo '0')
+              LARAVEL_COMPLETED=${LARAVEL_COMPLETED:-0}
               LARAVEL_TOTAL=$([ -f /tmp/laravel-total ] && cat /tmp/laravel-total || echo '0')
+              LARAVEL_TOTAL=${LARAVEL_TOTAL:-0}
               LARAVEL_DISPLAY=$([ "$LARAVEL_STATUS" = "running" ] && echo "running ($LARAVEL_COMPLETED/$LARAVEL_TOTAL)" || echo "$LARAVEL_STATUS")
 
               GO_STATUS=$([ -f /tmp/go-result ] && cat /tmp/go-result || echo 'running')
               GO_COMPLETED=$([ -f /tmp/go-completed ] && cat /tmp/go-completed || echo '0')
+              GO_COMPLETED=${GO_COMPLETED:-0}
               GO_TOTAL=$([ -f /tmp/go-total ] && cat /tmp/go-total || echo '0')
+              GO_TOTAL=${GO_TOTAL:-0}
               # Go doesn't have a pre-count, so show just completed when total is 0
               if [ "$GO_STATUS" = "running" ]; then
                 if [ "$GO_TOTAL" -gt 0 ]; then
@@ -2232,12 +2282,16 @@ jobs:
 
               PHP_STATUS=$([ -f /tmp/php-result ] && cat /tmp/php-result || echo 'running')
               PHP_COMPLETED=$([ -f /tmp/php-completed ] && cat /tmp/php-completed || echo '0')
+              PHP_COMPLETED=${PHP_COMPLETED:-0}
               PHP_TOTAL=$([ -f /tmp/php-total ] && cat /tmp/php-total || echo '0')
+              PHP_TOTAL=${PHP_TOTAL:-0}
               PHP_DISPLAY=$([ "$PHP_STATUS" = "running" ] && echo "running ($PHP_COMPLETED/$PHP_TOTAL)" || echo "$PHP_STATUS")
 
               PLAYWRIGHT_STATUS=$([ -f /tmp/playwright-result ] && cat /tmp/playwright-result || echo 'running')
               PLAYWRIGHT_COMPLETED=$([ -f /tmp/playwright-completed ] && cat /tmp/playwright-completed || echo '0')
+              PLAYWRIGHT_COMPLETED=${PLAYWRIGHT_COMPLETED:-0}
               PLAYWRIGHT_TOTAL=$([ -f /tmp/playwright-total ] && cat /tmp/playwright-total || echo '0')
+              PLAYWRIGHT_TOTAL=${PLAYWRIGHT_TOTAL:-0}
               # Cap completed at total for display (symbol counting can double-count at end)
               if [ "$PLAYWRIGHT_STATUS" = "running" ]; then
                 if [ "$PLAYWRIGHT_TOTAL" -gt 0 ] && [ "$PLAYWRIGHT_COMPLETED" -gt "$PLAYWRIGHT_TOTAL" ]; then
@@ -2591,6 +2645,23 @@ jobs:
               echo "=== Full logs available in artifacts ==="
               echo "Download test-output/*.out files for complete details"
               exit 1
+            fi
+
+            # Always scan for SSR error pages — visible even when all tests pass.
+            # The [CRITICAL-SSR-ERROR] marker is logged by fixtures.js on every
+            # page load that shows "Something went wrong", including cases where
+            # direct page.goto() bypasses gotoAndVerify.
+            if [ -f ~/test-output/playwright.out ] && grep -q '\[CRITICAL-SSR-ERROR\]' ~/test-output/playwright.out; then
+              echo ""
+              echo "###############################################################"
+              echo "### ⚠️  WARNING: NUXT SSR ERROR PAGES DURING PLAYWRIGHT  ⚠️  ###"
+              echo "###############################################################"
+              grep '\[CRITICAL-SSR-ERROR\]' ~/test-output/playwright.out
+              echo "###############################################################"
+              echo "### These error pages cause intermittent test hangs/failures ###"
+              echo "### Investigate: Go API SSR failures, container health, logs ###"
+              echo "###############################################################"
+              echo ""
             fi
           when: always
 

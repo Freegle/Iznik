@@ -402,9 +402,9 @@ class GiftAidClaimService
      */
     private function extractPostcodeFromAddress(string $homeaddress): ?string
     {
-        $pattern = '/[A-Z]{1,2}[0-9][0-9A-Z]?\s*[0-9][A-Z]{2}/i';
+        $pattern = '/([A-Z]{1,2}[0-9][0-9A-Z]?)\s*([0-9][A-Z]{2})/i';
         if (preg_match($pattern, $homeaddress, $matches)) {
-            return strtoupper(preg_replace('/\s+/', ' ', trim($matches[0])));
+            return strtoupper($matches[1] . ' ' . $matches[2]);
         }
 
         return null;

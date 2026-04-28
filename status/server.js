@@ -1833,7 +1833,7 @@ const httpServer = http.createServer(async (req, res) => {
 
     // Build test command - add race detection and coverage for CI
     const testCmd = withCoverage
-      ? "export CGO_ENABLED=1 && export MYSQL_DBNAME=iznik_go_test && go mod tidy && go test -v -race -coverprofile=coverage.out ./test/... -coverpkg ./..."
+      ? "export CGO_ENABLED=1 && export MYSQL_DBNAME=iznik_go_test && go test -v -race -coverprofile=coverage.out ./test/... -coverpkg ./..."
       : "export MYSQL_DBNAME=iznik_go_test && go test ./test/... -v";
 
     // Run tests asynchronously

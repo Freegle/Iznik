@@ -3551,6 +3551,13 @@ func TestPostMessageWithdrawnPending(t *testing.T) {
 	var msgDeleted *string
 	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&msgDeleted)
 	assert.NotNil(t, msgDeleted, "Message should be soft-deleted (deleted IS NOT NULL), not hard-deleted")
+
+	// V1 parity: messages_groups.deleted must also be set to 1 so the orphaned
+	// Pending row doesn't get picked up by AutoApproveService 48 hours later and
+	// auto-approved as if the member never withdrew it.
+	var mgDeleted int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&mgDeleted)
+	assert.Equal(t, 1, mgDeleted, "messages_groups.deleted must be 1 after withdrawing a pending message (V1 parity)")
 }
 
 func TestPostMessageWithdrawnApproved(t *testing.T) {

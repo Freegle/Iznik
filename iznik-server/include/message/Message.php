@@ -3608,6 +3608,7 @@ ORDER BY lastdate DESC;";
         $textbody = preg_replace('/^Sent from Samsung Mobile.*/ims', '', $textbody);
         $textbody = preg_replace('/^(\r\n|\r|\n)---(\r\n|\r|\n)This email has been checked for viruses.*/ims', '', $textbody);
         $textbody = preg_replace('/^Sent from TypeApp.*/ims', '', $textbody);
+        $textbody = preg_replace('/^Sent from Outlook for iOS.*/ims', '', $textbody);
         $textbody = preg_replace('/^Enviado a partir do meu smartphone.*/ims', '', $textbody);
         $textbody = preg_replace('/^Getting too many emails from.*Free your inbox.*trashnothing.com/ims', '', $textbody);
         $textbody = preg_replace('/^Use your phone to browse and post to.*trashnothing.com/ims', '', $textbody);

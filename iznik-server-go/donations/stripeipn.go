@@ -14,7 +14,8 @@ import (
 )
 
 // MANUAL_THANKS is the minimum one-off donation amount (GBP) that triggers a thank-you request.
-const MANUAL_THANKS = 10.0
+// Must match Donations::MANUAL_THANKS in iznik-server/include/misc/Donations.php.
+const MANUAL_THANKS = 20.0
 
 // StripeIPN handles Stripe webhook notifications (charge.succeeded).
 // This is the Go equivalent of iznik-server/http/stripeipn.php.
