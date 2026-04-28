@@ -6,7 +6,7 @@
   />
 </template>
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, nextTick, onMounted } from 'vue'
 import { useComposeStore } from '~/stores/compose'
 import { useAuthStore } from '~/stores/auth'
 import api from '~/api'
@@ -89,22 +89,31 @@ onMounted(async () => {
   if (postcode.value) {
     const savedGroup = composeStore.group
 
+    let location
     try {
-      const location = await api(runtimeConfig).location.typeahead(
-        postcode.value.name
-      )
-
-      composeStore.setPostcode(location[0])
+      location = await api(runtimeConfig).location.typeahead(postcode.value.name)
     } catch (e) {
       console.error('Failed to fetch postcode', e)
     }
 
-    // Restore the group — setPostcode doesn't touch it, but the reactive
-    // cascade from changing postcode data could cause b-form-select to lose
-    // its value if the options momentarily change.
-    // Only restore if the user hasn't changed the group themselves during the async fetch.
-    const currentGroup = composeStore.group
-    if (savedGroup && (!currentGroup || currentGroup === savedGroup)) {
+    if (location) {
+      // Snapshot the group AFTER the async wait but BEFORE setPostcode.
+      // If the user changed the group during the typeahead, this captures their intent.
+      const groupAfterTypeahead = composeStore.group
+
+      composeStore.setPostcode(location[0])
+
+      // b-form-select may auto-update composeStore.group when its options change
+      // (because the current value is no longer in the new options list).
+      // Wait for Vue's reactive cycle to settle, then restore the intended group.
+      await nextTick()
+
+      if (!composeStore.group || composeStore.group !== groupAfterTypeahead) {
+        // Reactive cascade cleared or replaced the group — restore the right value:
+        // user's choice if they changed it during typeahead, otherwise savedGroup.
+        composeStore.group = groupAfterTypeahead || savedGroup
+      }
+    } else if (savedGroup && !composeStore.group) {
       composeStore.group = savedGroup
     }
   }
