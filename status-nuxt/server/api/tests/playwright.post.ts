@@ -1,4 +1,5 @@
 import { spawn, execSync } from 'child_process'
+import path from 'path'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
 
 export default defineEventHandler(async (event) => {
@@ -129,6 +130,19 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', `Warning: Failed to restart container: ${restartError.message}\n`)
     }
 
+    // Sync playwright.config.js from the mounted volume — it's baked in at
+    // image build time and not covered by the entrypoint's /host-tests sync,
+    // so local changes (e.g. retries, flags) would otherwise be silently ignored.
+    try {
+      execSync(
+        `docker exec ${pfx}-playwright cp /host-playwright-config/playwright.config.js /app/playwright.config.js`,
+        { encoding: 'utf8', timeout: 5000 }
+      )
+      appendTestLogs('playwright', 'playwright.config.js synced from host\n')
+    } catch (syncError: any) {
+      appendTestLogs('playwright', `Warning: Failed to sync playwright.config.js: ${syncError.message}\n`)
+    }
+
     // Wait for Playwright container to be ready
     await new Promise(resolve => setTimeout(resolve, 3000))
 
@@ -169,46 +183,52 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
     const testCmd = `npx playwright test${testArgs}`
 
+    // Clear freeze-specs file before run so we only capture freezes from this run
+    try {
+      execSync(
+        `docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt"`,
+        { encoding: 'utf8', timeout: 5000 }
+      )
+    } catch {}
+
     setTestState('playwright', { message: 'Running Playwright tests...' })
     appendTestLogs('playwright', `Running: ${testCmd}\n`)
 
-    // Run tests - NODE_PATH needed so require('@playwright/test') finds global install
-    const testProcess = spawn('sh', ['-c', `
-      docker exec ${pfx}-playwright sh -c "cd /app && export NODE_PATH=/usr/lib/node_modules && ${testCmd} 2>&1"
-    `], { stdio: 'pipe' })
+    const initialCode = await spawnPlaywrightProcess(testCmd, pfx)
 
-    testProcess.stdout.on('data', (data) => {
-      const text = data.toString()
-      appendTestLogs('playwright', text)
-      parsePlaywrightOutput(text)
+    // Check whether any specs were recorded as frozen and re-run them in a
+    // fresh Playwright process (fresh V8 state, no accumulated async contexts)
+    let finalCode = initialCode
+    try {
+      const freezeOutput = execSync(
+        `docker exec ${pfx}-playwright sh -c "cat /tmp/playwright-freeze-specs.txt 2>/dev/null || true"`,
+        { encoding: 'utf8', timeout: 5000 }
+      ).trim()
+      const freezeSpecs = [...new Set(
+        freezeOutput.split('\n').filter((s) => s.trim())
+      )]
+
+      if (freezeSpecs.length > 0) {
+        const retryFiles = freezeSpecs.map((f) => path.basename(f)).join(' ')
+        appendTestLogs('playwright', `\n[FREEZE-RETRY] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process: ${retryFiles}\n`)
+        const retryCode = await spawnPlaywrightProcess(`npx playwright test ${retryFiles}`, pfx)
+        if (retryCode !== 0) finalCode = retryCode
+      }
+    } catch (freezeErr: any) {
+      appendTestLogs('playwright', `[FREEZE-RETRY] Could not check freeze file: ${freezeErr.message}\n`)
+    }
+
+    const state = getTestState('playwright')
+    const p = state.progress
+    setTestState('playwright', {
+      status: finalCode === 0 ? 'completed' : 'failed',
+      success: finalCode === 0,
+      endTime: Date.now(),
+      message: finalCode === 0
+        ? `All tests passed (${p.passed}✓)`
+        : `Tests failed (${p.passed}✓ ${p.failed}✗)`,
     })
-
-    testProcess.stderr.on('data', (data) => {
-      appendTestLogs('playwright', data.toString())
-    })
-
-    testProcess.on('close', (code) => {
-      const state = getTestState('playwright')
-      const p = state.progress
-
-      setTestState('playwright', {
-        status: code === 0 ? 'completed' : 'failed',
-        success: code === 0,
-        endTime: Date.now(),
-        message: code === 0
-          ? `All tests passed (${p.passed}✓)`
-          : `Tests failed (${p.passed}✓ ${p.failed}✗)`,
-      })
-      console.log(`Playwright tests completed with code ${code}`)
-    })
-
-    testProcess.on('error', (error) => {
-      setTestState('playwright', {
-        status: 'failed',
-        message: `Error: ${error.message}`,
-        endTime: Date.now(),
-      })
-    })
+    console.log(`Playwright tests completed with code ${finalCode}`)
   } catch (error: any) {
     setTestState('playwright', {
       status: 'failed',
@@ -217,6 +237,33 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     })
     throw error
   }
+}
+
+function spawnPlaywrightProcess(cmd: string, pfx: string): Promise<number> {
+  return new Promise((resolve) => {
+    const proc = spawn('sh', ['-c', `
+      docker exec ${pfx}-playwright sh -c "cd /app && export NODE_PATH=/usr/lib/node_modules && ${cmd} 2>&1"
+    `], { stdio: 'pipe' })
+
+    proc.stdout.on('data', (data) => {
+      const text = data.toString()
+      appendTestLogs('playwright', text)
+      parsePlaywrightOutput(text)
+    })
+
+    proc.stderr.on('data', (data) => {
+      appendTestLogs('playwright', data.toString())
+    })
+
+    proc.on('close', (code) => {
+      resolve(code ?? 1)
+    })
+
+    proc.on('error', (error) => {
+      appendTestLogs('playwright', `Spawn error: ${error.message}\n`)
+      resolve(1)
+    })
+  })
 }
 
 function parsePlaywrightOutput(text: string) {

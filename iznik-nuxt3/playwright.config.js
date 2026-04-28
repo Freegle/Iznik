@@ -30,7 +30,7 @@ module.exports = defineConfig({
   testMatch,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: 1,
+  retries: 0,
   // PW_WORKERS env var takes precedence (set per-executor in CircleCI orb).
   // Fallback: self-hosted runner has more resources; cloud CI needs fewer workers to avoid flakiness.
   workers: process.env.PW_WORKERS
