@@ -1633,15 +1633,17 @@ func TestGetMemberships(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
 	// Should have at least 3 members (mod + 2 regular members).
-	assert.GreaterOrEqual(t, len(members), 3)
+	assert.GreaterOrEqual(t, len(membersRaw), 3)
 
 	// Check that member IDs are present.
 	foundMember1 := false
 	foundMember2 := false
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == member1ID {
 			foundMember1 = true
@@ -1730,12 +1732,14 @@ func TestGetMembershipsPendingCollection(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
-	assert.GreaterOrEqual(t, len(members), 1)
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+	assert.GreaterOrEqual(t, len(membersRaw), 1)
 
 	found := false
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == targetID {
 			found = true
@@ -1757,6 +1761,64 @@ func TestGetMembershipsMissingGroupid(t *testing.T) {
 	assert.NoError(t, err)
 	// Without groupid, GET returns empty list (graceful degradation).
 	assert.Equal(t, 200, resp.StatusCode)
+}
+
+func TestGetMembershipsPagination(t *testing.T) {
+	prefix := uniquePrefix("mod_page")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Create 5 members so we can paginate with limit=3.
+	memberIDs := make([]uint64, 5)
+	for i := 0; i < 5; i++ {
+		memberIDs[i] = CreateTestUser(t, fmt.Sprintf("%s_m%d", prefix, i), "User")
+		CreateTestMembership(t, memberIDs[i], groupID, "Member")
+	}
+
+	// Fetch first page (limit=3).
+	url := fmt.Sprintf("/api/memberships?groupid=%d&limit=3&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var page1 map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&page1)
+	page1Members, _ := page1["members"].([]interface{})
+	assert.Equal(t, 3, len(page1Members), "first page should return exactly limit members")
+
+	// Context should be set (cursor for second page).
+	cursor, hasCursor := page1["context"]
+	assert.True(t, hasCursor, "response should include context cursor")
+	assert.NotNil(t, cursor, "context should not be nil when a full page is returned")
+
+	// Fetch second page using the cursor.
+	cursorID := uint64(cursor.(float64))
+	url2 := fmt.Sprintf("/api/memberships?groupid=%d&limit=3&context=%d&jwt=%s", groupID, cursorID, token)
+	req2 := httptest.NewRequest("GET", url2, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&page2)
+	page2Members, _ := page2["members"].([]interface{})
+	assert.GreaterOrEqual(t, len(page2Members), 1, "second page should return at least one member")
+
+	// No member should appear on both pages.
+	page1IDs := map[uint64]bool{}
+	for _, raw := range page1Members {
+		m := raw.(map[string]interface{})
+		page1IDs[uint64(m["id"].(float64))] = true
+	}
+	for _, raw := range page2Members {
+		m := raw.(map[string]interface{})
+		id := uint64(m["id"].(float64))
+		assert.False(t, page1IDs[id], "member id %d should not appear on both pages", id)
+	}
 }
 
 // --- GET /memberships?collection=Happiness ---
