@@ -209,10 +209,46 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       )]
 
       if (freezeSpecs.length > 0) {
-        const retryFiles = freezeSpecs.map((f) => path.basename(f)).join(' ')
+        // Capture main-run stats before the retry overwrites progress counters.
+        const stateBeforeRetry = getTestState('playwright')
+        const mainPassed = stateBeforeRetry.progress.passed
+        const mainFailed = stateBeforeRetry.progress.failed
+        const mainTotal  = stateBeforeRetry.progress.total
+
+        // Determine which spec files had failures in the main run by parsing
+        // the Playwright list-reporter failure lines (e.g. "✘  N [chromium] › tests/e2e/foo.spec.js:…").
+        const mainLogs = stateBeforeRetry.logs || ''
+        const failedSpecBasenames = new Set<string>()
+        const failedLines = mainLogs.match(/[✘✗×]\s+\d+\s+\[chromium\][^\n]*/g) || []
+        for (const line of failedLines) {
+          const m = line.match(/›\s+(tests\/e2e\/[^:\s]+\.spec\.js)/)
+          if (m) failedSpecBasenames.add(path.basename(m[1]))
+        }
+        const frozenBasenames = new Set(freezeSpecs.map((f) => path.basename(f)))
+        const unaccountedFailures = [...failedSpecBasenames].filter((f) => !frozenBasenames.has(f))
+
+        const retryFiles = [...frozenBasenames].join(' ')
         appendTestLogs('playwright', `\n[FREEZE-RETRY] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process: ${retryFiles}\n`)
         const retryCode = await spawnPlaywrightProcess(`npx playwright test ${retryFiles}`, pfx)
-        if (retryCode !== 0) finalCode = retryCode
+
+        if (retryCode !== 0) {
+          finalCode = retryCode
+        } else if (unaccountedFailures.length === 0) {
+          // All main-run failures were frozen specs that passed in a fresh env — overall success.
+          finalCode = 0
+          // Restore correct progress counters (retry run resets total/passed to the small retry count).
+          const totalTests = mainTotal || (mainPassed + mainFailed)
+          setTestState('playwright', {
+            progress: {
+              ...stateBeforeRetry.progress,
+              passed: totalTests,
+              failed: 0,
+              completed: totalTests,
+            },
+          })
+          appendTestLogs('playwright', `[FREEZE-RETRY] All frozen failures resolved — marking run as passed (${totalTests}✓)\n`)
+        }
+        // else: retry passed but non-frozen failures remain — finalCode stays as initialCode (non-zero)
       }
     } catch (freezeErr: any) {
       appendTestLogs('playwright', `[FREEZE-RETRY] Could not check freeze file: ${freezeErr.message}\n`)
