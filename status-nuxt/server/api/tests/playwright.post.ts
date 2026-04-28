@@ -197,61 +197,77 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     const initialCode = await spawnPlaywrightProcess(testCmd, pfx)
 
     // Check whether any specs were recorded as frozen and re-run them in a
-    // fresh Playwright process (fresh V8 state, no accumulated async contexts)
+    // fresh Playwright process (fresh V8 state, no accumulated async contexts).
+    // Up to 2 retry rounds: the first retry can itself encounter a freeze, so a
+    // second round handles that without giving up on a run that is otherwise clean.
     let finalCode = initialCode
-    try {
-      const freezeOutput = execSync(
-        `docker exec ${pfx}-playwright sh -c "cat /tmp/playwright-freeze-specs.txt 2>/dev/null || true"`,
-        { encoding: 'utf8', timeout: 5000 }
-      ).trim()
-      const freezeSpecs = [...new Set(
-        freezeOutput.split('\n').filter((s) => s.trim())
-      )]
 
-      if (freezeSpecs.length > 0) {
-        // Capture main-run stats before the retry overwrites progress counters.
-        const stateBeforeRetry = getTestState('playwright')
-        const mainPassed = stateBeforeRetry.progress.passed
-        const mainFailed = stateBeforeRetry.progress.failed
-        const mainTotal  = stateBeforeRetry.progress.total
+    // Capture main-run progress before any retry overwrites the counters.
+    const stateAfterMain = getTestState('playwright')
+    const mainRunPassed = stateAfterMain.progress.passed
+    const mainRunFailed = stateAfterMain.progress.failed
+    const mainRunTotal  = stateAfterMain.progress.total
 
-        // Determine which spec files had failures in the main run by parsing
-        // the Playwright list-reporter failure lines (e.g. "✘  N [chromium] › tests/e2e/foo.spec.js:…").
-        const mainLogs = stateBeforeRetry.logs || ''
+    for (let freezeRound = 0; freezeRound < 2; freezeRound++) {
+      try {
+        const freezeOutput = execSync(
+          `docker exec ${pfx}-playwright sh -c "cat /tmp/playwright-freeze-specs.txt 2>/dev/null || true"`,
+          { encoding: 'utf8', timeout: 5000 }
+        ).trim()
+        const freezeSpecs = [...new Set(
+          freezeOutput.split('\n').filter((s) => s.trim())
+        )]
+
+        if (freezeSpecs.length === 0) break  // no frozen specs — done
+
+        // Determine which spec files have failures in the cumulative logs so far.
+        // If any failing spec is NOT in the frozen list it is a genuine failure
+        // that the retry cannot fix — leave finalCode non-zero and bail out.
+        const currentLogs = getTestState('playwright').logs || ''
         const failedSpecBasenames = new Set<string>()
-        const failedLines = mainLogs.match(/[✘✗×]\s+\d+\s+\[chromium\][^\n]*/g) || []
+        const failedLines = currentLogs.match(/[✘✗×]\s+\d+\s+\[chromium\][^\n]*/g) || []
         for (const line of failedLines) {
           const m = line.match(/›\s+(tests\/e2e\/[^:\s]+\.spec\.js)/)
           if (m) failedSpecBasenames.add(path.basename(m[1]))
         }
         const frozenBasenames = new Set(freezeSpecs.map((f) => path.basename(f)))
         const unaccountedFailures = [...failedSpecBasenames].filter((f) => !frozenBasenames.has(f))
+        if (unaccountedFailures.length > 0) {
+          appendTestLogs('playwright', `[FREEZE-RETRY round ${freezeRound + 1}] Non-frozen failures present (${unaccountedFailures.join(', ')}) — not retrying\n`)
+          break
+        }
 
         const retryFiles = [...frozenBasenames].join(' ')
-        appendTestLogs('playwright', `\n[FREEZE-RETRY] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process: ${retryFiles}\n`)
+        appendTestLogs('playwright', `\n[FREEZE-RETRY round ${freezeRound + 1}] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process: ${retryFiles}\n`)
+
+        // Clear freeze file before retry so the next round picks up only NEW freezes.
+        try {
+          execSync(`docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt"`, { encoding: 'utf8', timeout: 5000 })
+        } catch {}
+
         const retryCode = await spawnPlaywrightProcess(`npx playwright test ${retryFiles}`, pfx)
 
-        if (retryCode !== 0) {
-          finalCode = retryCode
-        } else if (unaccountedFailures.length === 0) {
-          // All main-run failures were frozen specs that passed in a fresh env — overall success.
+        if (retryCode === 0) {
+          // All frozen specs passed in the fresh process — overall run is a success.
           finalCode = 0
-          // Restore correct progress counters (retry run resets total/passed to the small retry count).
-          const totalTests = mainTotal || (mainPassed + mainFailed)
+          const totalTests = mainRunTotal || (mainRunPassed + mainRunFailed)
           setTestState('playwright', {
             progress: {
-              ...stateBeforeRetry.progress,
+              ...stateAfterMain.progress,
               passed: totalTests,
               failed: 0,
               completed: totalTests,
             },
           })
-          appendTestLogs('playwright', `[FREEZE-RETRY] All frozen failures resolved — marking run as passed (${totalTests}✓)\n`)
+          appendTestLogs('playwright', `[FREEZE-RETRY round ${freezeRound + 1}] All frozen failures resolved — marking run as passed (${totalTests}✓)\n`)
+          break
         }
-        // else: retry passed but non-frozen failures remain — finalCode stays as initialCode (non-zero)
+        // retryCode !== 0: retry itself had issues (possibly more freezes) — loop again
+        finalCode = retryCode
+      } catch (freezeErr: any) {
+        appendTestLogs('playwright', `[FREEZE-RETRY round ${freezeRound + 1}] Could not check freeze file: ${freezeErr.message}\n`)
+        break
       }
-    } catch (freezeErr: any) {
-      appendTestLogs('playwright', `[FREEZE-RETRY] Could not check freeze file: ${freezeErr.message}\n`)
     }
 
     const state = getTestState('playwright')

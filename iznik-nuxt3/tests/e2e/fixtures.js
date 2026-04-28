@@ -937,12 +937,18 @@ const test = base.test.extend({
     console.log('Ensured user is logged out for fresh test state')
 
     // Freeze-detection heartbeat. Sends a trivial page.evaluate() every 5s with a
-    // 3s timeout. If the renderer stops responding, the spec file is appended to
+    // 10s timeout. If the renderer stops responding the spec file is appended to
     // /tmp/playwright-freeze-specs.txt so the status container can re-run it in a
     // fresh Playwright process, and the page is closed to abort the frozen test in
     // seconds rather than waiting for the 600s test timeout.
+    //
+    // The timeout is 10s (not 3s) to avoid false positives: page.evaluate() can
+    // legitimately block while a slow navigation completes (e.g. Explore page
+    // loading hundreds of posts). Genuine V8 renderer freezes are indefinite, so
+    // 10s is still far more than enough to catch them.
     const FREEZE_SPECS_FILE = '/tmp/playwright-freeze-specs.txt'
     let heartbeatTimer = null
+    let heartbeatBusy = false
     let heartbeatFreezeDetected = false
     heartbeatTimer = setInterval(async () => {
       if (heartbeatFreezeDetected || page.isClosed()) {
@@ -950,15 +956,17 @@ const test = base.test.extend({
         heartbeatTimer = null
         return
       }
+      if (heartbeatBusy) return  // previous check still in flight — skip this tick
+      heartbeatBusy = true
       try {
         await Promise.race([
           page.evaluate(() => 1),
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('freeze')), 3000)
+            setTimeout(() => reject(new Error('freeze')), 10000)
           ),
         ])
       } catch (err) {
-        // Only treat as a renderer freeze if the race was won by OUR 3s timeout
+        // Only treat as a renderer freeze if the race was won by OUR 10s timeout
         // sentinel. page.evaluate() can also throw immediately (e.g. "Execution
         // context was destroyed" during a navigation) — that is healthy renderer
         // behaviour, not a freeze. Treating any exception as a freeze produces
@@ -978,6 +986,8 @@ const test = base.test.extend({
             await page.close()
           } catch {}
         }
+      } finally {
+        heartbeatBusy = false
       }
     }, 5000)
 
