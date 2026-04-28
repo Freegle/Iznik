@@ -146,5 +146,25 @@ describe('ModAddMemberModal', () => {
 
       expect(wrapper.vm.addedId).toBe(123)
     })
+
+    // Regression: PUT /user previously returned 409 for existing emails even when the caller
+    // was an authenticated moderator. The Go fix makes it return 200 + existing id, so
+    // userStore.add resolves with the existing id and memberStore.add is still called.
+    // See https://discourse.ilovefreegle.org/t/9618/14
+    it('calls memberStore.add when userStore.add returns id for an already-registered email', async () => {
+      mockUserStore.add.mockResolvedValue(456)
+
+      const wrapper = mountComponent({ groupid: 789 })
+
+      wrapper.vm.email = 'existing@example.com'
+      await wrapper.vm.$nextTick()
+
+      await wrapper.vm.add()
+      await flushPromises()
+
+      expect(mockUserStore.add).toHaveBeenCalledWith({ email: 'existing@example.com' })
+      expect(mockMemberStore.add).toHaveBeenCalledWith({ userid: 456, groupid: 789 })
+      expect(wrapper.vm.addedId).toBe(456)
+    })
   })
 })

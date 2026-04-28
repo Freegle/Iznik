@@ -928,6 +928,37 @@ func TestPutUserDuplicateEmail(t *testing.T) {
 	assert.Contains(t, result["status"], "already in use")
 }
 
+// TestPutUserDuplicateEmailAuthenticated verifies that an authenticated user (e.g. a moderator
+// using Add Member in ModTools) receives the existing user's ID rather than a 409 conflict.
+// Regression test for https://discourse.ilovefreegle.org/t/9618/14.
+func TestPutUserDuplicateEmailAuthenticated(t *testing.T) {
+	prefix := uniquePrefix("putdupauth")
+	existingID := CreateTestUser(t, prefix+"_existing", "User")
+	db := database.DBConn
+
+	var existingEmail string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? LIMIT 1", existingID).Scan(&existingEmail)
+
+	// Caller is an authenticated moderator.
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{
+		"email": existingEmail,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PUT", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+	assert.Equal(t, float64(existingID), result["id"])
+}
+
 func TestPutUserWithGroup(t *testing.T) {
 	prefix := uniquePrefix("putwgroup")
 	groupID := CreateTestGroup(t, prefix)
