@@ -85,6 +85,18 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Active plan**: none currently active.
 
+### 2026-04-28 - Freeze-detection heartbeat + fresh-process retry (commit 82c491e02)
+
+**Problem**: Chrome flags push the V8 async-context freeze threshold from ~73 to ~130+ tests but can't eliminate accumulation entirely. With `retries: 1`, frozen tests were silently retried in the same environment — useless and masks real bugs.
+
+**Solution**: `retries: 0` + 5s/3s heartbeat in `fixtures.js` + fresh-process retry in `playwright.post.ts`:
+- Heartbeat: `setInterval` doing `page.evaluate(() => 1)` with 3s timeout. On freeze: closes page (fast abort) + appends spec file to `/tmp/playwright-freeze-specs.txt`
+- `playwright.post.ts` reads that file after run completion and re-spawns only frozen specs via a second `npx playwright test <specs>` call in a fully fresh Playwright/V8 process
+- Non-freeze failures are NOT retried — test quality improvement
+- `playwright.config.js` is now synced from host-mounted volume on every pre-run container restart (was baked in at build time only)
+
+**Status**: Local run in progress (commit 82c491e02). Monitoring.
+
 ### 2026-04-28 - feature/ai-image-regen: moderator force-reject + challenge filter (commit c656e0740)
 
 **Status**: Feature complete, all Go tests pass (2155✓). Vitest tests updated but can't run (no frontend container in worktree — will run on CI).
@@ -97,7 +109,7 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Files changed**: `microvolunteering.go`, `message.go`, `ModPhoto.vue`, `ModPhotoModal.vue`, `ModPhotoModal.spec.js`, plus 2 new Go test files.
 
-**PR**: https://github.com/Freegle/Iznik/pull/286 (needs updating — may need a new PR or amendments)
+**PR**: https://github.com/Freegle/Iznik/pull/286 — updated, pushed (a92dbc0a5), CI running
 
 **Previous work** (all Go tests green from strict-mode fixes): Committed as `683911368`.
 
