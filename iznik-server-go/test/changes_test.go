@@ -319,8 +319,9 @@ func TestChangesRatingCommentField(t *testing.T) {
 		if uint64(rating["rater"].(float64)) == raterID {
 			// comment field must be present and contain the inserted text.
 			commentField, ok := rating["comment"]
-			assert.True(t, ok, "rating must have comment field")
-			assert.Equal(t, comment, commentField.(string), "rating comment must match database text field")
+			if assert.True(t, ok, "rating must have comment field") {
+				assert.Equal(t, comment, commentField.(string), "rating comment must match database text field")
+			}
 			found = true
 			break
 		}
@@ -364,8 +365,9 @@ func TestChangesRatingReasonField(t *testing.T) {
 		if uint64(rating["rater"].(float64)) == raterID {
 			// reason field must be present.
 			reasonField, ok := rating["reason"]
-			assert.True(t, ok, "rating must have reason field")
-			assert.Equal(t, "Ghosted", reasonField.(string), "rating reason must match database value")
+			if assert.True(t, ok, "rating must have reason field") {
+				assert.Equal(t, "Ghosted", reasonField.(string), "rating reason must match database value")
+			}
 			found = true
 			break
 		}
