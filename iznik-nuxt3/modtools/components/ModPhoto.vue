@@ -100,8 +100,6 @@ function hideAiDeleteModal() {
 }
 
 async function removePhoto(id) {
-  console.log('MP removePhoto', id, props.messageid)
-
   if (mods.value?.ai) {
     pendingRemoveId.value = id
     aiDeleteModal.value?.show()
