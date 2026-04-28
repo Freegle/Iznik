@@ -2528,6 +2528,14 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		{"UPDATE IGNORE trysts SET user2 = ? WHERE user2 = ?", []interface{}{req.ID2, req.ID1}},
 		{"UPDATE IGNORE isochrones_users SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
 		{"UPDATE IGNORE microactions SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
+		// volunteering has no FK on userid (communityevents does — ON DELETE SET NULL).
+		// Without this rewrite, merging id1 leaves their volunteering opportunities pointing
+		// at a userid that vanishes when id1 is deleted at the end of the merge.
+		{"UPDATE volunteering SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
+		{"UPDATE volunteering SET deletedby = ? WHERE deletedby = ?", []interface{}{req.ID2, req.ID1}},
+		{"UPDATE volunteering SET heldby = ? WHERE heldby = ?", []interface{}{req.ID2, req.ID1}},
+		{"UPDATE communityevents SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
+		{"UPDATE communityevents SET heldby = ? WHERE heldby = ?", []interface{}{req.ID2, req.ID1}},
 	}
 	for _, u := range simpleUpdates {
 		tx.Exec(u.sql, u.args...)
