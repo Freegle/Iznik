@@ -241,7 +241,7 @@ const test = base.test.extend({
   ],
 
   // Override the page fixture to use our isolated context
-  page: async ({ context }, use) => {
+  page: async ({ context }, use, testInfo) => {
     // Create a page in our isolated context
     const page = await context.newPage()
     console.log(`Created new page in isolated context`)
@@ -936,6 +936,61 @@ const test = base.test.extend({
     await logoutIfLoggedIn(loggingPage)
     console.log('Ensured user is logged out for fresh test state')
 
+    // Freeze-detection heartbeat. Sends a trivial page.evaluate() every 5s with a
+    // 10s timeout. If the renderer stops responding the spec file is appended to
+    // /tmp/playwright-freeze-specs.txt so the status container can re-run it in a
+    // fresh Playwright process, and the page is closed to abort the frozen test in
+    // seconds rather than waiting for the 600s test timeout.
+    //
+    // The timeout is 10s (not 3s) to avoid false positives: page.evaluate() can
+    // legitimately block while a slow navigation completes (e.g. Explore page
+    // loading hundreds of posts). Genuine V8 renderer freezes are indefinite, so
+    // 10s is still far more than enough to catch them.
+    const FREEZE_SPECS_FILE = '/tmp/playwright-freeze-specs.txt'
+    let heartbeatTimer = null
+    let heartbeatBusy = false
+    let heartbeatFreezeDetected = false
+    heartbeatTimer = setInterval(async () => {
+      if (heartbeatFreezeDetected || page.isClosed()) {
+        clearInterval(heartbeatTimer)
+        heartbeatTimer = null
+        return
+      }
+      if (heartbeatBusy) return  // previous check still in flight — skip this tick
+      heartbeatBusy = true
+      try {
+        await Promise.race([
+          page.evaluate(() => 1),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('freeze')), 10000)
+          ),
+        ])
+      } catch (err) {
+        // Only treat as a renderer freeze if the race was won by OUR 10s timeout
+        // sentinel. page.evaluate() can also throw immediately (e.g. "Execution
+        // context was destroyed" during a navigation) — that is healthy renderer
+        // behaviour, not a freeze. Treating any exception as a freeze produces
+        // false positives that abort tests unnecessarily.
+        const isOurTimeout = err && err.message === 'freeze'
+        if (isOurTimeout && !heartbeatFreezeDetected && !page.isClosed()) {
+          heartbeatFreezeDetected = true
+          clearInterval(heartbeatTimer)
+          heartbeatTimer = null
+          console.error(
+            `[FREEZE-DETECTED] Renderer unresponsive in ${testInfo.file}`
+          )
+          try {
+            fs.appendFileSync(FREEZE_SPECS_FILE, testInfo.file + '\n')
+          } catch {}
+          try {
+            await page.close()
+          } catch {}
+        }
+      } finally {
+        heartbeatBusy = false
+      }
+    }, 5000)
+
     // Wrap the use() call in a try-catch block to add automatic screenshot capturing
     try {
       // Call use() with the logging page instead of the original page
@@ -963,6 +1018,16 @@ const test = base.test.extend({
       // Re-throw the error to fail the test
       throw error
     } finally {
+      // Disarm the heartbeat. Setting the flag FIRST ensures any async heartbeat
+      // callback that is already in-flight (e.g. awaiting page.evaluate() during
+      // teardown) will see heartbeatFreezeDetected=true and skip freeze detection.
+      // clearInterval alone doesn't cancel an in-flight async callback.
+      heartbeatFreezeDetected = true
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer)
+        heartbeatTimer = null
+      }
+
       // Stop coverage collection and save results before teardown.
       // Wrap CDP coverage stops in a Promise.race timeout — if the Chrome
       // renderer is unresponsive the stop calls never return, hanging the
