@@ -95,7 +95,10 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 - Non-freeze failures are NOT retried — test quality improvement
 - `playwright.config.js` is now synced from host-mounted volume on every pre-run container restart (was baked in at build time only)
 
-**Status**: Local run in progress (commit 82c491e02). Monitoring.
+**Status**: CONFIRMED 130/130 clean, freeze file empty after run. Three follow-up fixes applied:
+- `c590b4913` — heartbeat only triggers on our 3s sentinel, not navigation errors ("context destroyed")
+- `cb56ceffe` — set `heartbeatFreezeDetected = true` in finally BEFORE clearInterval to disarm in-flight callbacks
+- Status container rebuilt to pick up compiled `playwright.post.ts` changes
 
 ### 2026-04-28 - feature/ai-image-regen: moderator force-reject + challenge filter (commit c656e0740)
 
