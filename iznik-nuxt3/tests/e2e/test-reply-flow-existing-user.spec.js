@@ -20,7 +20,7 @@ const {
   waitForNuxtHydration,
 } = require('./utils/reply-helpers')
 
-test.describe.parallel('Reply Flow - Existing User Forced Login', () => {
+test.describe('Reply Flow - Existing User Forced Login', () => {
   test('3.1 can login and reply from Message Page', async ({
     page,
     postMessage,
