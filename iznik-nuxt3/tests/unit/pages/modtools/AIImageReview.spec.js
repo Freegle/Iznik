@@ -3,6 +3,9 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 
+// definePageMeta is a Nuxt compiler macro not available in Vitest
+globalThis.definePageMeta = vi.fn()
+
 // Mock useMe composable
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
