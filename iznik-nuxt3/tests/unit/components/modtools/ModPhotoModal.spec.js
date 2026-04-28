@@ -85,13 +85,12 @@ describe('ModPhotoModal', () => {
           'b-modal': {
             template: `
               <div class="b-modal" :id="id" :title="title" :size="size">
-                <slot />
                 <slot name="default" />
                 <slot name="footer" />
               </div>
             `,
             props: ['id', 'title', 'size', 'noStacking', 'okOnly'],
-            methods: { show: vi.fn() },
+            methods: { show: vi.fn(), hide: vi.fn() },
           },
           'b-button': {
             template:
