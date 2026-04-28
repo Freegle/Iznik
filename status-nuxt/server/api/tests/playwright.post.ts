@@ -129,18 +129,6 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', `Warning: Failed to restart container: ${restartError.message}\n`)
     }
 
-    // Copy run-specs.sh from the mounted iznik-nuxt3 volume — always the current version,
-    // no manual docker cp needed when the status container is rebuilt.
-    try {
-      execSync(`docker exec ${pfx}-playwright cp /host-playwright-config/run-specs.sh /app/run-specs.sh`, {
-        encoding: 'utf8',
-        timeout: 10000,
-      })
-      appendTestLogs('playwright', 'Copied run-specs.sh to playwright container\n')
-    } catch (copyError: any) {
-      appendTestLogs('playwright', `Warning: Could not copy run-specs.sh: ${copyError.message}\n`)
-    }
-
     // Wait for Playwright container to be ready
     await new Promise(resolve => setTimeout(resolve, 3000))
 
@@ -179,16 +167,9 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', 'Could not pre-count tests, will determine from output\n')
     }
 
-    // For full-suite runs use the per-spec parallel script — one Playwright process per
-    // spec file prevents cumulative V8 PromiseHookAfter overhead that freezes the
-    // renderer at ~128 tests in a single long-lived process.
-    // Filtered runs (specific file or grep) still use npx playwright test directly.
-    const useParallelScript = !testFile && !testName
-    const testCmd = useParallelScript
-      ? 'bash run-specs.sh'
-      : `npx playwright test${testArgs}`
+    const testCmd = `npx playwright test${testArgs}`
 
-    setTestState('playwright', { message: useParallelScript ? 'Running all specs (parallel per-spec)...' : 'Running Playwright tests...' })
+    setTestState('playwright', { message: 'Running Playwright tests...' })
     appendTestLogs('playwright', `Running: ${testCmd}\n`)
 
     // Run tests - NODE_PATH needed so require('@playwright/test') finds global install
@@ -242,36 +223,6 @@ function parsePlaywrightOutput(text: string) {
   const state = getTestState('playwright')
   const allLogs = state.logs || ''
 
-  // --- run-specs.sh parallel mode ---
-  // Detect "=== Parallel spec run: N specs, M concurrent ===" to set total spec count
-  const specRunMatch = allLogs.match(/Parallel spec run:\s*(\d+)\s+specs/)
-  if (specRunMatch) {
-    const specTotal = parseInt(specRunMatch[1])
-    // Only update total once (prevents it being reset on every chunk)
-    if (state.progress.total !== specTotal) {
-      state.progress.total = specTotal
-    }
-
-    // Count [PASS] and [FAIL] lines from accumulated log
-    const passSpecs = (allLogs.match(/^\[PASS\]/gm) || []).length
-    const failSpecs = (allLogs.match(/^\[FAIL\]/gm) || []).length
-    state.progress.passed = passSpecs
-    state.progress.failed = failSpecs
-    state.progress.completed = passSpecs + failSpecs
-
-    // Final summary: "=== Complete: X/N passed, Y failed ==="
-    const completeMatch = allLogs.match(/Complete:\s*(\d+)\/\d+\s+passed,\s*(\d+)\s+failed/)
-    if (completeMatch) {
-      state.progress.passed = parseInt(completeMatch[1])
-      state.progress.failed = parseInt(completeMatch[2])
-      state.progress.completed = state.progress.passed + state.progress.failed
-    }
-
-    setTestState('playwright', state)
-    return
-  }
-
-  // --- Single spec / standard Playwright output ---
   // Look for test counts in JSON output (if available)
   const jsonPassedMatch = text.match(/"passed":\s*(\d+)/)
   const jsonFailedMatch = text.match(/"failed":\s*(\d+)/)

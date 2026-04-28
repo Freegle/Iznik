@@ -85,19 +85,22 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Active plan**: none currently active.
 
-### 2026-04-28 - Renderer freeze: AsyncCallStackDepth experiment
+### 2026-04-28 - AsyncCallStackDepth fix: merged to master, monitoring PR queue
 
-**Current hypothesis**: CDP's async call stack tracking (`Debugger.setAsyncCallStackDepth`) registers a V8 PromiseHookAfter callback. Vue's scheduler fires `Promise.resolve().then(flushJobs)` on every reactive update; over a long run the tracked async context list grows until iterating it on every Promise resolution saturates the renderer thread.
+**Fix**: `--disable-features=AsyncCallStackDepth` in `playwright.config.js` Chromium launch args. Merged via `fix/modmail-log-test-9518` → master.
 
-**Fix applied** (in `playwright.config.js`): `--disable-features=AsyncCallStackDepth` in Chromium launch args. Landed on master via `fix/modmail-log-test-9518` merge.
+**Confirmed runs so far**: master 38/38 ✅, PR 77 (or PR 149) 38/38 ✅ (queue order: 77 → 149 → master → 280)
 
-**If this works**: Revisit dropping `run-specs.sh` and returning to native Playwright multi-worker mode (simpler, and would fix monocart coverage collection in parallel mode — see memory entry). Need several clean CI runs before concluding it's fixed.
+**PR queue status** (as of ~14:30):
+- PRs 278, 279, 281, 282, 284 — merged
+- PR 280 — previous failure was V8 freeze BEFORE fix; CI now queued with fix
+- PR 149 — CI queued on runner
+- PR 77 — CI likely just passed (queue ran: 38/38)
+- 2 more jobs running in queue
 
-**If this doesn't work**: The per-spec parallel runner (`run-specs.sh`) with 900s timeout + spec-level retry is the active workaround.
+**If AsyncCallStackDepth fix sticks** (need several more clean CI runs): revisit dropping `run-specs.sh` and returning to native Playwright multi-worker mode — would also fix monocart coverage in parallel mode (see memory).
 
-**Other changes in master from today's session**:
-- `run-specs.sh`: spec-level 900s timeout + retry on failure
-- orb 1.1.223: `${VAR:-0}` guards on all temp-file reads (fixes `integer expression expected` when curl blip writes empty to `/tmp/playwright-completed`)
+**Safety net** (still in place): `run-specs.sh` with 900s SPEC_TIMEOUT + spec-level retry, orb 1.1.223 with `${VAR:-0}` guards.
 
 ### 2026-04-28 - Diagnose renderer freeze on test 3.2
 
@@ -113,18 +116,7 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Approach**: Run spec files in parallel batches via `run-specs.sh` — N concurrent Playwright processes (11 local, 4 CI), each handling one spec file. Each process gets a fresh Chromium renderer with no accumulated V8 promise hook overhead. The status API full-suite trigger now uses this script automatically.
 
-**Status**: Parallel per-spec script created (`iznik-nuxt3/run-specs.sh`, npm script `test:sequential`). Status API `playwright.post.ts` updated to use it for full-suite runs. Running 5 consecutive local test runs to verify. **Do not rebuild the status container while a run is in progress** — it kills the tracking connection and orphans the playwright process.
-
-**Note**: The script file lives in the status container at `/app/run-specs.sh` (copied in, not built into image) and is copied to the playwright container after each restart. If status container is rebuilt, recopy: `docker cp iznik-nuxt3/run-specs.sh freegle-status:/app/run-specs.sh`.
-
-**Reverted papering-over fixes** (commit `21ca3ac1a` on `fix/modmail-log-test-9518`, not pushed):
-- Removed `nonfatal` timeout (9aadfa7f5)
-- Restored test 3.1 budget to 900000ms (1f0ad9b8b)
-- Restored orb watchdog to 45min / 50m no_output_timeout (55dd1f33b)
-
-**Current branch**: `fix/modmail-log-test-9518`
-
-**9 PR branches** still waiting for green CI — all have the reverts above NOT yet applied to them or master.
+**Status**: `run-specs.sh` is built into the orb/CI pipeline. The status container at `/app/run-specs.sh` must be recopy-ed after a status container rebuild: `docker cp iznik-nuxt3/run-specs.sh freegle-status:/app/run-specs.sh`.
 
 ### 2026-04-27 - Get master CI green + all 9 PR CIs green (SUPERSEDED)
 
