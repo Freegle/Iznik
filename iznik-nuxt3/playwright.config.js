@@ -30,7 +30,7 @@ module.exports = defineConfig({
   testMatch,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: 1,
+  retries: 0,
   // PW_WORKERS env var takes precedence (set per-executor in CircleCI orb).
   // Fallback: self-hosted runner has more resources; cloud CI needs fewer workers to avoid flakiness.
   workers: process.env.PW_WORKERS
@@ -183,6 +183,34 @@ module.exports = defineConfig({
             // per reactive cycle, so over a long spec run the tracked context list grows until
             // iterating it on every resolution saturates the renderer thread (issue #285).
             '--disable-features=AsyncCallStackDepth',
+            // Prevent Chrome from keeping navigated-away pages frozen in the BFCache.
+            // Across hundreds of navigations in a long run, accumulated V8 heap
+            // (compiled code, closures) builds up and can contribute to GC pauses.
+            '--disable-features=BackForwardCache',
+            // Stop V8 from scheduling background optimization/GC during idle periods,
+            // which can cause latency spikes mid-test.
+            '--disable-v8-idle-tasks',
+            // Prevent Chrome's background network activity (update checks, safebrowsing
+            // fetches, etc.) from generating Promise chains in the renderer.
+            '--disable-background-networking',
+            // Prevent renderer from being deprioritised when Playwright switches between
+            // pages — deprioritisation causes timer/Promise batching which then resolves
+            // in a burst and stresses the V8 hook machinery when focus returns.
+            '--disable-renderer-backgrounding',
+            // Same idea for background timers: keep them firing at normal rate so
+            // they don't batch up and produce Promise bursts on re-focus.
+            '--disable-background-timer-throttling',
+            // Disable Chrome profile sync — generates IPC and network traffic in the
+            // background throughout the test run.
+            '--disable-sync',
+            // Disable the hang monitor — it can kill a renderer that's momentarily
+            // slow under load, producing a false crash rather than a recoverable freeze.
+            '--disable-hang-monitor',
+            // Skip Chrome's first-run setup flow and component update checks.
+            '--no-first-run',
+            '--disable-component-update',
+            // Disable media routing (Chromecast/Cast) background discovery traffic.
+            '--disable-features=MediaRouter',
             // Force V8 to eagerly parse/compile all JS. Removing this caused
             // test-reply-flow-existing-user.spec.js 3.1 to hit a 20m timeout
             // (job 5179) because the post-signup gotoAndVerify('/') in
