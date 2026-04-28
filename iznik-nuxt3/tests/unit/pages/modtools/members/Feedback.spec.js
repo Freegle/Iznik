@@ -111,6 +111,12 @@ describe('Feedback Page', () => {
             template: '<select class="b-form-select"><slot /></select>',
             props: ['modelValue'],
           },
+          'b-form-checkbox': {
+            template:
+              '<label class="b-form-checkbox"><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" /><slot /></label>',
+            props: ['modelValue'],
+            emits: ['update:modelValue'],
+          },
           'b-button': {
             template:
               '<button class="b-button" @click="$emit(\'click\')"><slot /></button>',
@@ -188,6 +194,11 @@ describe('Feedback Page', () => {
 
       expect(wrapper.find('.notice-message').exists()).toBe(true)
     })
+
+    it('renders showExpired checkbox', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.find('.b-form-checkbox').exists()).toBe(true)
+    })
   })
 
   describe('computed properties', () => {
@@ -205,9 +216,10 @@ describe('Feedback Page', () => {
     })
 
     it('sortedItems creates member objects with type and timestamp', () => {
+      mockFilter.value = ''
       mockMembers.value = [
-        { id: 1, timestamp: '2024-01-15T10:00:00Z' },
-        { id: 2, timestamp: '2024-01-16T10:00:00Z' },
+        { id: 1, timestamp: '2024-01-15T10:00:00Z', happiness: 'Happy' },
+        { id: 2, timestamp: '2024-01-16T10:00:00Z', happiness: 'Happy' },
       ]
       const wrapper = mountComponent()
       const sorted = wrapper.vm.sortedItems
@@ -219,10 +231,11 @@ describe('Feedback Page', () => {
     })
 
     it('sortedItems sorts by timestamp descending', () => {
+      mockFilter.value = ''
       mockMembers.value = [
-        { id: 1, timestamp: '2024-01-10T10:00:00Z' },
-        { id: 2, timestamp: '2024-01-20T10:00:00Z' },
-        { id: 3, timestamp: '2024-01-15T10:00:00Z' },
+        { id: 1, timestamp: '2024-01-10T10:00:00Z', happiness: 'Happy' },
+        { id: 2, timestamp: '2024-01-20T10:00:00Z', happiness: 'Happy' },
+        { id: 3, timestamp: '2024-01-15T10:00:00Z', happiness: 'Happy' },
       ]
       const wrapper = mountComponent()
       const sorted = wrapper.vm.sortedItems
@@ -233,16 +246,66 @@ describe('Feedback Page', () => {
     })
 
     it('visibleItems limits to show value', () => {
+      mockFilter.value = ''
       mockMembers.value = [
-        { id: 1, timestamp: '2024-01-15T10:00:00Z' },
-        { id: 2, timestamp: '2024-01-16T10:00:00Z' },
-        { id: 3, timestamp: '2024-01-17T10:00:00Z' },
+        { id: 1, timestamp: '2024-01-15T10:00:00Z', happiness: 'Happy' },
+        { id: 2, timestamp: '2024-01-16T10:00:00Z', happiness: 'Happy' },
+        { id: 3, timestamp: '2024-01-17T10:00:00Z', happiness: 'Happy' },
       ]
       mockShow.value = 2
       const wrapper = mountComponent()
       const visible = wrapper.vm.visibleItems
 
       expect(visible).toHaveLength(2)
+    })
+
+    it('sortedItems pre-filters: only matching items are included', () => {
+      // Without pre-filtering, non-matching items would accumulate as empty
+      // divs and cause the infinite loader to jump multiple rows at a time.
+      mockFilter.value = 'Comments'
+      mockMembers.value = [
+        {
+          id: 1,
+          timestamp: '2024-01-15T10:00:00Z',
+          comments: 'Great!',
+          happiness: 'Happy',
+        },
+        {
+          id: 2,
+          timestamp: '2024-01-16T10:00:00Z',
+          comments: '',
+          happiness: 'Happy',
+        }, // no comment
+        {
+          id: 3,
+          timestamp: '2024-01-17T10:00:00Z',
+          comments: 'Thanks',
+          happiness: 'Unhappy',
+        },
+      ]
+      const wrapper = mountComponent()
+      const sorted = wrapper.vm.sortedItems
+
+      // Only items with comments should be included
+      expect(sorted).toHaveLength(2)
+      expect(sorted.map((i) => i.object.id)).toEqual([3, 1]) // descending by timestamp
+    })
+
+    it('sortedItems excludes all non-matching items from visibleItems', () => {
+      // Each show++ should reveal exactly one visible item, not empty rows.
+      mockFilter.value = 'Happy'
+      mockMembers.value = [
+        { id: 1, timestamp: '2024-01-10T10:00:00Z', happiness: 'Happy' },
+        { id: 2, timestamp: '2024-01-11T10:00:00Z', happiness: 'Unhappy' },
+        { id: 3, timestamp: '2024-01-12T10:00:00Z', happiness: 'Happy' },
+        { id: 4, timestamp: '2024-01-13T10:00:00Z', happiness: 'Unhappy' },
+      ]
+      mockShow.value = 1
+      const wrapper = mountComponent()
+
+      // visibleItems should have exactly 1 item (show=1, sortedItems has 2 Happy items)
+      expect(wrapper.vm.visibleItems).toHaveLength(1)
+      expect(wrapper.vm.visibleItems[0].object.happiness).toBe('Happy')
     })
   })
 
@@ -303,6 +366,173 @@ describe('Feedback Page', () => {
 
       expect(wrapper.vm.filterMatch({ happiness: 'Happy' })).toBe(true)
       expect(wrapper.vm.filterMatch({ happiness: null })).toBe(true)
+    })
+
+    it('returns true when filter is the initial "0" sentinel', () => {
+      const wrapper = mountComponent()
+      wrapper.vm.filter = '0'
+
+      expect(wrapper.vm.filterMatch({ happiness: 'Happy' })).toBe(true)
+    })
+  })
+
+  describe('expired post filtering', () => {
+    it('showExpired defaults to true (expired posts visible)', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.vm.showExpired).toBe(true)
+    })
+
+    it('showExpired=true includes posts with non-standard outcomes', () => {
+      const wrapper = mountComponent()
+      wrapper.vm.filter = ''
+      wrapper.vm.showExpired = true
+
+      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Expired' })).toBe(true)
+      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Withdrawn' })).toBe(true)
+      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: null })).toBe(true)
+    })
+
+    it('showExpired=false excludes posts where outcome is not Taken or Received', () => {
+      const wrapper = mountComponent()
+      wrapper.vm.filter = ''
+      wrapper.vm.showExpired = false
+
+      // Successful outcomes should still show
+      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Taken' })).toBe(true)
+      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Received' })).toBe(true)
+
+      // Non-successful outcomes should be hidden
+      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Expired' })).toBe(false)
+      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: 'Withdrawn' })).toBe(false)
+    })
+
+    it('showExpired=false still shows posts with null outcome', () => {
+      // Posts with no outcome (e.g. just posted) should remain visible
+      const wrapper = mountComponent()
+      wrapper.vm.filter = ''
+      wrapper.vm.showExpired = false
+
+      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: null })).toBe(true)
+      expect(wrapper.vm.filterMatch({ happiness: 'Happy', outcome: undefined })).toBe(true)
+    })
+
+    it('sortedItems excludes expired posts when showExpired=false', async () => {
+      mockFilter.value = ''
+      mockMembers.value = [
+        {
+          id: 1,
+          timestamp: '2024-01-10T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Taken',
+        },
+        {
+          id: 2,
+          timestamp: '2024-01-11T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Expired',
+        },
+        {
+          id: 3,
+          timestamp: '2024-01-12T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Received',
+        },
+      ]
+      const wrapper = mountComponent()
+      wrapper.vm.showExpired = false
+      await flushPromises()
+
+      const sorted = wrapper.vm.sortedItems
+      expect(sorted).toHaveLength(2)
+      expect(sorted.map((i) => i.object.id).sort()).toEqual([1, 3])
+    })
+  })
+
+  describe('scroll behaviour: loadMore uses filtered count', () => {
+    it('loadMore calls baseLoadMore for initial fetch when members is empty', async () => {
+      mockMembers.value = []
+      mockShow.value = 0
+      const wrapper = mountComponent()
+
+      const state = { loaded: vi.fn(), complete: vi.fn() }
+      await wrapper.vm.loadMore(state)
+
+      expect(mockLoadMore).toHaveBeenCalledWith(state)
+    })
+
+    it('loadMore increments show when filtered items remain', async () => {
+      mockFilter.value = 'Comments'
+      mockMembers.value = [
+        {
+          id: 1,
+          timestamp: '2024-01-15T10:00:00Z',
+          comments: 'Hello',
+          happiness: 'Happy',
+        },
+        {
+          id: 2,
+          timestamp: '2024-01-16T10:00:00Z',
+          comments: 'World',
+          happiness: 'Happy',
+        },
+      ]
+      mockShow.value = 0
+      const wrapper = mountComponent()
+
+      const state = { loaded: vi.fn(), complete: vi.fn() }
+      await wrapper.vm.loadMore(state)
+
+      expect(mockShow.value).toBe(1)
+      expect(state.loaded).toHaveBeenCalled()
+      expect(state.complete).not.toHaveBeenCalled()
+    })
+
+    it('loadMore calls baseLoadMore (not infinite-loops) when all filtered items shown', async () => {
+      mockFilter.value = 'Comments'
+      mockMembers.value = [
+        {
+          id: 1,
+          timestamp: '2024-01-15T10:00:00Z',
+          comments: 'Hello',
+          happiness: 'Happy',
+        },
+        // Item 2 has no comment — excluded from sortedItems
+        {
+          id: 2,
+          timestamp: '2024-01-16T10:00:00Z',
+          comments: '',
+          happiness: 'Happy',
+        },
+      ]
+      // show=1 means the 1 comment item is already displayed (sortedItems.length=1)
+      mockShow.value = 1
+      const wrapper = mountComponent()
+
+      // sortedItems should have 1 item; show(1) >= sortedItems.length(1)
+      expect(wrapper.vm.sortedItems).toHaveLength(1)
+
+      const state = { loaded: vi.fn(), complete: vi.fn() }
+      await wrapper.vm.loadMore(state)
+
+      // Should delegate to baseLoadMore to check for more API pages / call complete
+      expect(mockLoadMore).toHaveBeenCalledWith(state)
+    })
+
+    it('does not include filtered-out items in visibleItems', () => {
+      mockFilter.value = 'Happy'
+      mockMembers.value = [
+        { id: 1, timestamp: '2024-01-10T10:00:00Z', happiness: 'Happy' },
+        { id: 2, timestamp: '2024-01-11T10:00:00Z', happiness: 'Unhappy' },
+        { id: 3, timestamp: '2024-01-12T10:00:00Z', happiness: 'Happy' },
+      ]
+      mockShow.value = 10 // show more than available
+      const wrapper = mountComponent()
+
+      // visibleItems should only contain Happy items (2 out of 3)
+      expect(wrapper.vm.visibleItems).toHaveLength(2)
+      expect(
+        wrapper.vm.visibleItems.every((i) => i.object.happiness === 'Happy')
+      ).toBe(true)
     })
   })
 
