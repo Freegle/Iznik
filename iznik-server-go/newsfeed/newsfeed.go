@@ -349,43 +349,71 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 	start := time.Now().AddDate(0, 0, -utils.OPEN_AGE_CHITCHAT).Format("2006-01-02")
 
 	if gotLatLng {
+		// Three-way UNION:
+		// 1. Regular posts (non-event types) in the user's geographic area, capped at 100.
+		// 2. Event/volunteering posts in the user's area, capped at NEWSFEED_EVENTS_PER_FEED so a
+		//    flood of these cannot push regular posts out of the feed (Discourse #9624).
+		// 3. Pinned alerts (any location), capped at 5.
 		db.Raw(
-			"(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, "+
-				"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
-				"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
-				"(CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending "+
-				"FROM newsfeed FORCE INDEX (position) "+
-				"LEFT JOIN users ON users.id = newsfeed.userid "+
-				"LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) "+
-				"LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? "+
-				"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
-				"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
-				"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
-				"WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND "+
-				"newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 "+
-				"AND users.deleted IS NULL "+
-				"AND spam_users.id IS NULL "+
-				"ORDER BY timestamp DESC "+
-				"LIMIT 100 "+
-				") UNION ("+
-				"SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, "+
-				"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
-				"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
-				"(CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending "+
-				"FROM newsfeed FORCE INDEX (position) "+
-				"LEFT JOIN users ON users.id = newsfeed.userid "+
-				"LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) "+
-				"LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? "+
-				"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
-				"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
-				"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
-				"WHERE newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.type = ? AND "+
-				"newsfeed.deleted IS NULL AND reviewrequired = 0 "+
-				"AND users.deleted IS NULL "+
-				"AND spam_users.id IS NULL "+
-				"ORDER BY pinned DESC, timestamp DESC "+
-				"LIMIT 5) "+
-				"ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
+			fmt.Sprintf(
+				"(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, "+
+					"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
+					"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
+					"(CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending "+
+					"FROM newsfeed FORCE INDEX (position) "+
+					"LEFT JOIN users ON users.id = newsfeed.userid "+
+					"LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) "+
+					"LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? "+
+					"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
+					"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
+					"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
+					"WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND "+
+					"newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 "+
+					"AND users.deleted IS NULL "+
+					"AND spam_users.id IS NULL "+
+					"AND newsfeed.type NOT IN (?, ?) "+
+					"ORDER BY timestamp DESC "+
+					"LIMIT 100 "+
+					") UNION ("+
+					"SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, "+
+					"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
+					"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
+					"(CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending "+
+					"FROM newsfeed FORCE INDEX (position) "+
+					"LEFT JOIN users ON users.id = newsfeed.userid "+
+					"LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) "+
+					"LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? "+
+					"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
+					"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
+					"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
+					"WHERE MBRContains(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?), position) AND "+
+					"newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 "+
+					"AND users.deleted IS NULL "+
+					"AND spam_users.id IS NULL "+
+					"AND newsfeed.type IN (?, ?) "+
+					"ORDER BY timestamp DESC "+
+					"LIMIT %d "+
+					") UNION ("+
+					"SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, "+
+					"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
+					"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
+					"(CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending "+
+					"FROM newsfeed FORCE INDEX (position) "+
+					"LEFT JOIN users ON users.id = newsfeed.userid "+
+					"LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) "+
+					"LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? "+
+					"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
+					"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
+					"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
+					"WHERE newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.type = ? AND "+
+					"newsfeed.deleted IS NULL AND reviewrequired = 0 "+
+					"AND users.deleted IS NULL "+
+					"AND spam_users.id IS NULL "+
+					"ORDER BY pinned DESC, timestamp DESC "+
+					"LIMIT 5) "+
+					"ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
+				utils.NEWSFEED_EVENTS_PER_FEED),
+			// UNION 1: regular posts in geographic area
 			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
 			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
 			myid,
@@ -396,6 +424,20 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 			swlng, swlat,
 			utils.SRID,
 			start,
+			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
+			// UNION 2: event/volunteering posts in geographic area (flood-capped)
+			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+			myid,
+			swlng, swlat,
+			swlng, nelat,
+			nelng, nelat,
+			nelng, swlat,
+			swlng, swlat,
+			utils.SRID,
+			start,
+			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
+			// UNION 3: pinned alerts (any location)
 			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
 			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
 			myid,
@@ -403,25 +445,60 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 			utils.NEWSFEED_TYPE_ALERT,
 		).Scan(&newsfeed)
 	} else {
-		db.Raw("SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, "+
-			"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
-			"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
-			"(CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending "+
-			"FROM newsfeed FORCE INDEX (timestamp) "+
-			"LEFT JOIN users ON users.id = newsfeed.userid "+
-			"LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) "+
-			"LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? "+
-			"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
-			"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
-			"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
-			"WHERE newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 "+
-			"AND users.deleted IS NULL "+
-			"AND spam_users.id IS NULL "+
-			"ORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT 100;",
+		// Two-way UNION for the no-location path:
+		// 1. Regular posts (non-event types), capped at 100.
+		// 2. Event/volunteering posts, capped at NEWSFEED_EVENTS_PER_FEED.
+		db.Raw(
+			fmt.Sprintf(
+				"(SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, "+
+					"pinned, newsfeed.timestamp, "+
+					"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
+					"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
+					"(CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending "+
+					"FROM newsfeed FORCE INDEX (timestamp) "+
+					"LEFT JOIN users ON users.id = newsfeed.userid "+
+					"LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) "+
+					"LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? "+
+					"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
+					"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
+					"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
+					"WHERE newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 "+
+					"AND users.deleted IS NULL "+
+					"AND spam_users.id IS NULL "+
+					"AND newsfeed.type NOT IN (?, ?) "+
+					"ORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT 100 "+
+					") UNION ("+
+					"SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, "+
+					"pinned, newsfeed.timestamp, "+
+					"(CASE WHEN communityevents.id IS NOT NULL AND communityevents.pending THEN 1 ELSE 0 END) AS eventpending,"+
+					"(CASE WHEN volunteering.id IS NOT NULL AND volunteering.pending THEN 1 ELSE 0 END) AS volunteeringpending, "+
+					"(CASE WHEN users_stories.id IS NOT NULL AND (users_stories.public = 0 OR users_stories.reviewed = 0) THEN 1 ELSE 0 END) AS storypending "+
+					"FROM newsfeed FORCE INDEX (timestamp) "+
+					"LEFT JOIN users ON users.id = newsfeed.userid "+
+					"LEFT JOIN spam_users ON spam_users.userid = newsfeed.userid AND collection IN (?, ?) "+
+					"LEFT JOIN newsfeed_unfollow ON newsfeed.id = newsfeed_unfollow.newsfeedid AND newsfeed_unfollow.userid = ? "+
+					"LEFT JOIN communityevents ON newsfeed.eventid = communityevents.id "+
+					"LEFT JOIN volunteering ON newsfeed.volunteeringid = volunteering.id "+
+					"LEFT JOIN users_stories ON newsfeed.storyid = users_stories.id "+
+					"WHERE newsfeed.timestamp >= ? AND replyto IS NULL AND newsfeed.deleted IS NULL AND reviewrequired = 0 "+
+					"AND users.deleted IS NULL "+
+					"AND spam_users.id IS NULL "+
+					"AND newsfeed.type IN (?, ?) "+
+					"ORDER BY newsfeed.timestamp DESC LIMIT %d "+
+					") ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
+				utils.NEWSFEED_EVENTS_PER_FEED),
+			// UNION 1: regular posts
 			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
 			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
 			myid,
 			start,
+			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
+			// UNION 2: event/volunteering posts (flood-capped)
+			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
+			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
+			myid,
+			start,
+			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
 		).Scan(&newsfeed)
 	}
 

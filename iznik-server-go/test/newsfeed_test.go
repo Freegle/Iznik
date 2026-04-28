@@ -1018,3 +1018,47 @@ func TestCreateNewsfeedEntryDuplicateProtection(t *testing.T) {
 	db.Exec("DELETE FROM communityevents WHERE id = ?", eventID)
 	db.Exec("DELETE FROM volunteering WHERE id = ?", volID)
 }
+
+// TestFeedEventFloodDoesNotDisplaceMessages is a regression test for Discourse topic 9624.
+// A burst of VolunteerOpportunity/CommunityEvent posts must be capped so they cannot fill
+// every slot in the 100-item feed window.  With the old single-bucket LIMIT 100, 25 events
+// all appeared; the fix caps them at NEWSFEED_EVENTS_PER_FEED (20).
+func TestFeedEventFloodDoesNotDisplaceMessages(t *testing.T) {
+	prefix := uniquePrefix("evflood")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	lat := 55.9533
+	lng := -3.1883
+
+	// 25 volunteer-opportunity posts — more than the NEWSFEED_EVENTS_PER_FEED cap of 20.
+	for i := 0; i < 25; i++ {
+		CreateTestNewsfeedWithType(t, userID, lat, lng,
+			fmt.Sprintf("Vol Op %d %s", i, prefix), "VolunteerOpportunity", 0)
+	}
+
+	// Use distance=anywhere so no geocoding is needed.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/newsfeed?distance=anywhere&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var feed []newsfeed2.NewsfeedSummary
+	json2.Unmarshal(rsp(resp), &feed)
+
+	// Count volunteer-op posts from this user that appear in the feed.
+	// No other test creates VolunteerOpportunity-type newsfeed entries, so any found
+	// with userid == userID belong to this test run.
+	db := database.DBConn
+	volunteerOpsInFeed := 0
+	for _, item := range feed {
+		if item.Userid == userID {
+			var nfType string
+			db.Raw("SELECT type FROM newsfeed WHERE id = ?", item.ID).Scan(&nfType)
+			if nfType == "VolunteerOpportunity" {
+				volunteerOpsInFeed++
+			}
+		}
+	}
+
+	assert.LessOrEqual(t, volunteerOpsInFeed, utils.NEWSFEED_EVENTS_PER_FEED,
+		"Feed must cap VolunteerOpportunity posts at NEWSFEED_EVENTS_PER_FEED; got %d", volunteerOpsInFeed)
+}
