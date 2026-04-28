@@ -799,7 +799,7 @@ class UserTest extends IznikTestCase {
         $modid = $mod->create('Mod', 'User', NULL);
         $member = User::get($this->dbhr, $this->dbhm);
         $memberid = $member->create('Member', 'User', NULL);
-        list($dummy, $gid) = $this->createTestGroup();
+        list($dummy, $gid) = $this->createTestGroup('testgroup', Group::GROUP_REUSE);
         $mod->addMembership($gid, User::ROLE_MODERATOR);
         $member->addMembership($gid, User::ROLE_MEMBER);
 
@@ -831,7 +831,7 @@ class UserTest extends IznikTestCase {
         $modid = $mod->create('Mod', 'User', NULL);
         $member = User::get($this->dbhr, $this->dbhm);
         $memberid = $member->create('Member', 'User', NULL);
-        list($dummy, $gid) = $this->createTestGroup();
+        list($dummy, $gid) = $this->createTestGroup('testgroup', Group::GROUP_REUSE);
         $mod->addMembership($gid, User::ROLE_MODERATOR);
         $member->addMembership($gid, User::ROLE_MEMBER);
 
