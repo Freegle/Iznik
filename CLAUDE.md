@@ -120,9 +120,11 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 | 23 | Fix ComposeGroup.vue nextTick regression | ✅ | Commit `f882bf2c6` (master) — capture groupAfterTypeahead BEFORE setPostcode; await nextTick() before restoring |
 | 24 | Master CI (nextTick fix) | ❌ | Job #7336 canceled by session-log push; job #7368 queued then all canceled by Vitest fix push |
 | 25 | Fix Vitest: add setPostcode mock to ComposeGroup.spec.js | ✅ | Commit `376c418c7` — mockComposeStore.setPostcode = vi.fn(); 12011 tests pass locally |
-| 26 | Master CI (Vitest fix) | 🔄 | Job #7380 (pipeline 4019) running since ~00:40 UTC |
-| 27 | Merge Vitest fix into all 9 PR branches | ✅ | All 9 branches merged and pushed; pipelines 4020-4028; jobs 7384/7387/7390/7393/7396/7399/7402/7405/7408 |
-| 28 | All 9 PR CIs green (Vitest fix round) | 🔄 | All 9 jobs not_running; queued after master #7380 |
+| 26 | Master CI (Vitest fix) | ❌ | Job #7380 canceled; #7412 queued (pipeline 4029, session-log push) |
+| 27 | fix/review-ignore-held-members CI | ❌ | Job #7384 failed — PHP tests 882/955: createTestGroup() called with 0 args in 2 new tests |
+| 28 | Fix PHP test: createTestGroup() missing args | ✅ | Commit `ddf308b7a` (fix branch only) — 'testgroup', Group::GROUP_REUSE; 953 tests pass locally |
+| 29 | fix/review-ignore-held-members CI (PHP fix) | 🔄 | Job #7416 queued (pipeline 4030) |
+| 30 | Other 8 PR branch jobs | 🔄 | #7387 running (15min at step 117); 7390/7393/7396/7399/7402/7405/7408 queued; master #7412 queued last |
 
 ---
 
