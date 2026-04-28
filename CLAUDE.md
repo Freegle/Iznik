@@ -85,6 +85,20 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Active plan**: none currently active.
 
+### 2026-04-28 - Renderer freeze: AsyncCallStackDepth experiment
+
+**Current hypothesis**: CDP's async call stack tracking (`Debugger.setAsyncCallStackDepth`) registers a V8 PromiseHookAfter callback. Vue's scheduler fires `Promise.resolve().then(flushJobs)` on every reactive update; over a long run the tracked async context list grows until iterating it on every Promise resolution saturates the renderer thread.
+
+**Fix applied** (in `playwright.config.js`): `--disable-features=AsyncCallStackDepth` in Chromium launch args. Landed on master via `fix/modmail-log-test-9518` merge.
+
+**If this works**: Revisit dropping `run-specs.sh` and returning to native Playwright multi-worker mode (simpler, and would fix monocart coverage collection in parallel mode — see memory entry). Need several clean CI runs before concluding it's fixed.
+
+**If this doesn't work**: The per-spec parallel runner (`run-specs.sh`) with 900s timeout + spec-level retry is the active workaround.
+
+**Other changes in master from today's session**:
+- `run-specs.sh`: spec-level 900s timeout + retry on failure
+- orb 1.1.223: `${VAR:-0}` guards on all temp-file reads (fixes `integer expression expected` when curl blip writes empty to `/tmp/playwright-completed`)
+
 ### 2026-04-28 - Diagnose renderer freeze on test 3.2
 
 **Goal**: Find root cause of Chromium renderer spinning at 106% CPU on test 3.2 after ~128 prior tests.
