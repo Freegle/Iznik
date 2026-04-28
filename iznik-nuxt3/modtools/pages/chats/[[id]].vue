@@ -234,16 +234,8 @@ function loadMore($state) {
 }
 
 async function markAllRead() {
-  console.log('markAllRead A')
   loading.value = true
-  for (const chat of filteredChats.value) {
-    if (chat.unseen) {
-      console.log('markAllRead B', chat.unseen, chat.lastmsg)
-      await chatStore.markRead(chat.id)
-    }
-  }
-  console.log('markAllRead C')
-
+  await chatStore.markAllReadMT()
   chatStore.clear()
   await listChats()
   loading.value = false
