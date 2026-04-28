@@ -373,7 +373,71 @@ func TestGetLogsModmailTextIsEmailSubject(t *testing.T) {
 	// log.text must contain the stdmsg-constructed email subject, not just "Re: [post subject]"
 	assert.Equal(t, emailSubject, logEntry["text"], "log.text should contain the stdmsg-constructed email subject")
 
-	// msgsubject must NOT be present — the post title is not exposed separately
-	_, hasMsgSubject := logEntry["msgsubject"]
-	assert.False(t, hasMsgSubject, "msgsubject field must not be in the response")
+	// msgsubject must be the message's own subject (from the messages JOIN), distinct from log.text
+	// which holds the modmail email subject
+	assert.Equal(t, "add a photo", logEntry["msgsubject"], "msgsubject should be the message's own subject")
+}
+
+func TestGetLogsMsgsubjectHistoricalIsPreserved(t *testing.T) {
+	// Regression test for Discourse topic #9518 post 215:
+	// The message log was showing the edited item name retroactively for events that
+	// occurred before the edit.  After this fix, each log event stores and returns the
+	// message subject as it was at the time of that event (logs.msgsubject), taking
+	// precedence over the current (possibly edited) messages.subject.
+	prefix := uniquePrefix("LogsMsgS")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Owner")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+
+	// Check the msgsubject column exists (requires the 2026_04_28_000001 migration).
+	var hasColumn int64
+	db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'logs' AND column_name = 'msgsubject'").Scan(&hasColumn)
+	if hasColumn == 0 {
+		t.Skip("msgsubject column not in schema; run: php artisan migrate")
+	}
+
+	// Create a message with the original subject.
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', 'Offer: Original Item', 'body', NOW(), NOW(), 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+
+	// Insert a Received log entry that stores the original subject at the time of the event.
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, msgid, timestamp, msgsubject) VALUES (?, ?, ?, ?, ?, DATE_SUB(NOW(), INTERVAL 1 HOUR), ?)",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, groupID, userID, msgID, "Offer: Original Item")
+
+	// Simulate the message being edited to a new name after the Received event.
+	db.Exec("UPDATE messages SET subject = ? WHERE id = ?", "Offer: Edited Item", msgID)
+
+	// Fetch the message log.
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?logtype=messages&groupid=%d&limit=10&jwt=%s", groupID, token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	logs, ok := result["logs"].([]interface{})
+	assert.True(t, ok, "logs should be an array")
+	assert.Greater(t, len(logs), 0, "should have at least one log entry")
+
+	// Find the Received log entry for our message.
+	var logEntry map[string]interface{}
+	for _, l := range logs {
+		e := l.(map[string]interface{})
+		if subtype, ok := e["subtype"].(string); ok && subtype == flog.LOG_SUBTYPE_RECEIVED {
+			if mid, ok := e["msgid"].(float64); ok && uint64(mid) == msgID {
+				logEntry = e
+				break
+			}
+		}
+	}
+	assert.NotNil(t, logEntry, "should find the Received log entry for the test message")
+
+	// The stored historical msgsubject must take precedence over the current (edited) subject.
+	assert.Equal(t, "Offer: Original Item", logEntry["msgsubject"],
+		"log event should show the subject as it was at the time of the event, not the current edited subject")
 }

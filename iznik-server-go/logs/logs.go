@@ -181,11 +181,13 @@ func GetLogs(c *fiber.Ctx) error {
 	}
 
 	// Build the query.
-	query := "SELECT logs.* FROM logs "
+	// Always LEFT JOIN messages so we can return the current subject as a fallback
+	// when logs.msgsubject is not stored (pre-migration rows).
+	query := "SELECT logs.*, messages.subject AS msg_subject_current FROM logs " +
+		"LEFT JOIN messages ON messages.id = logs.msgid "
 
 	if search != "" {
-		query += "LEFT JOIN users ON users.id = logs.user " +
-			"LEFT JOIN messages ON messages.id = logs.msgid "
+		query += "LEFT JOIN users ON users.id = logs.user "
 
 		searchLike := "%" + search + "%"
 		where = append(where, "(users.firstname LIKE ? OR users.lastname LIKE ? OR users.fullname LIKE ? "+
@@ -198,17 +200,19 @@ func GetLogs(c *fiber.Ctx) error {
 	args = append(args, limit)
 
 	type LogRow struct {
-		ID        uint64  `json:"id"`
-		Timestamp string  `json:"timestamp"`
-		Type      string  `json:"type"`
-		Subtype   *string `json:"subtype"`
-		Groupid   *uint64 `json:"groupid"`
-		User      *uint64 `json:"user"`
-		Byuser    *uint64 `json:"byuser"`
-		Msgid     *uint64 `json:"msgid"`
-		Configid  *uint64 `json:"configid"`
-		Stdmsgid  *uint64 `json:"stdmsgid"`
-		Text      *string `json:"text"`
+		ID                uint64  `json:"id"`
+		Timestamp         string  `json:"timestamp"`
+		Type              string  `json:"type"`
+		Subtype           *string `json:"subtype"`
+		Groupid           *uint64 `json:"groupid"`
+		User              *uint64 `json:"user"`
+		Byuser            *uint64 `json:"byuser"`
+		Msgid             *uint64 `json:"msgid"`
+		Configid          *uint64 `json:"configid"`
+		Stdmsgid          *uint64 `json:"stdmsgid"`
+		Text              *string `json:"text"`
+		Msgsubject        *string `gorm:"column:msgsubject"`         // stored at log creation time
+		MsgSubjectCurrent *string `gorm:"column:msg_subject_current"` // from messages JOIN (fallback)
 	}
 
 	var rows []LogRow
@@ -252,6 +256,14 @@ func GetLogs(c *fiber.Ctx) error {
 		if r.Subtype != nil && *r.Subtype == log.LOG_SUBTYPE_OUTCOME && r.Text != nil && *r.Text != "" {
 			firstWord := strings.SplitN(*r.Text, " ", 2)[0]
 			entry["text"] = &firstWord
+		}
+
+		// msgsubject: prefer the value stored at log creation time (historical accuracy);
+		// fall back to the current message subject from the JOIN for pre-migration rows.
+		if r.Msgsubject != nil {
+			entry["msgsubject"] = *r.Msgsubject
+		} else if r.MsgSubjectCurrent != nil {
+			entry["msgsubject"] = *r.MsgSubjectCurrent
 		}
 
 		result[i] = entry

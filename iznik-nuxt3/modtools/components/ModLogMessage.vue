@@ -1,6 +1,6 @@
 <template>
   <span v-if="log && log.msgid">
-    <span v-if="message">
+    <span v-if="message || log.msgsubject">
       <a
         :href="'https://www.ilovefreegle.org/message/' + log.msgid"
         target="_blank"
@@ -63,12 +63,16 @@ const message = computed(() => {
 })
 
 const messagesubject = computed(() => {
+  // Prefer the subject stored at the time of the log event (historical accuracy).
+  // Falls back to the current message subject for pre-migration log entries.
+  if (log.value?.msgsubject) {
+    return log.value.msgsubject
+  }
   if (message.value) {
     return message.value.subject
       ? message.value.subject
       : '(Blank subject line)'
-  } else {
-    return '(Message now deleted)'
   }
+  return '(Message now deleted)'
 })
 </script>

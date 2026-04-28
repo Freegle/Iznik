@@ -339,6 +339,48 @@ describe('ModLogMessage', () => {
       })
       expect(wrapper.vm.messagesubject).toBe('(Message now deleted)')
     })
+
+    // Regression tests for Discourse #9518 post 215:
+    // log.msgsubject (historical) must take priority over message.subject (current).
+    it('uses log.msgsubject instead of message.subject when both are present', () => {
+      // Simulates the case where a message was edited after the log event was recorded.
+      // The log.msgsubject holds the subject at the time of the event; message.subject
+      // holds the current (edited) subject.  The log should show the historical value.
+      const wrapper = createWrapper({
+        log: {
+          id: 1,
+          msgid: 905,
+          msgsubject: 'Wanted: Escooter',
+          message: { subject: 'Wanted: Cycle' },
+        },
+      })
+      expect(wrapper.vm.messagesubject).toBe('Wanted: Escooter')
+    })
+
+    it('uses log.msgsubject when message store object is not loaded', () => {
+      // The API now includes msgsubject so the frontend can display the subject
+      // even before the message store is populated.
+      const wrapper = createWrapper({
+        log: {
+          id: 1,
+          msgid: 906,
+          msgsubject: 'Offer: Free table',
+        },
+      })
+      expect(wrapper.vm.messagesubject).toBe('Offer: Free table')
+    })
+
+    it('falls back to message.subject when log.msgsubject is absent', () => {
+      // Pre-migration log entries will not have msgsubject; fall back to current subject.
+      const wrapper = createWrapper({
+        log: {
+          id: 1,
+          msgid: 907,
+          message: { subject: 'OFFER: Old item' },
+        },
+      })
+      expect(wrapper.vm.messagesubject).toBe('OFFER: Old item')
+    })
   })
 
   describe('props', () => {
@@ -494,6 +536,17 @@ describe('ModLogMessage', () => {
       })
       expect(wrapper.find('.stub-stdmsg').exists()).toBe(false)
       expect(wrapper.find('.stub-group').exists()).toBe(false)
+    })
+
+    it('shows link section when message is null but msgsubject is set', () => {
+      // Deleted messages no longer exist in the store but the historical subject
+      // is still available from the API response via log.msgsubject.
+      const wrapper = createWrapper({
+        log: { id: 1, msgid: 2200, msgsubject: 'Offer: Gone item', message: null },
+      })
+      expect(wrapper.find('a').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('(no info available)')
+      expect(wrapper.find('em').text()).toBe('Offer: Gone item')
     })
   })
 })

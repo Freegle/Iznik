@@ -406,6 +406,7 @@ class Message
                 'type' => Log::TYPE_MESSAGE,
                 'subtype' => Log::SUBTYPE_EDIT,
                 'msgid' => $this->id,
+                'msgsubject' => $this->subject,
                 'byuser' => $me ? $me->getId() : NULL,
                 'text' => $text
             ]);
@@ -2790,6 +2791,7 @@ ORDER BY lastdate DESC;";
                     'type' => Log::TYPE_MESSAGE,
                     'subtype' => Log::SUBTYPE_RECEIVED,
                     'msgid' => $this->id,
+                    'msgsubject' => $this->subject,
                     'user' => $this->fromuser,
                     'text' => $this->messageid,
                     'groupid' => $this->groupid
@@ -3032,6 +3034,7 @@ ORDER BY lastdate DESC;";
             'type' => Log::TYPE_MESSAGE,
             'subtype' => $subject ? Log::SUBTYPE_REJECTED : Log::SUBTYPE_DELETED,
             'msgid' => $this->id,
+            'msgsubject' => $this->subject,
             'byuser' => $me ? $me->getId() : NULL,
             'user' => $this->fromuser,
             'groupid' => $groupid,
@@ -3076,6 +3079,7 @@ ORDER BY lastdate DESC;";
             'type' => Log::TYPE_MESSAGE,
             'subtype' => Log::SUBTYPE_APPROVED,
             'msgid' => $this->id,
+            'msgsubject' => $this->subject,
             'user' => $this->fromuser,
             'byuser' => $myid,
             'groupid' => $groupid,
@@ -3164,6 +3168,7 @@ ORDER BY lastdate DESC;";
             'type' => Log::TYPE_MESSAGE,
             'subtype' => Log::SUBTYPE_REPLIED,
             'msgid' => $this->id,
+            'msgsubject' => $this->subject,
             'user' => $this->fromuser,
             'byuser' => $me ? $me->getId() : NULL,
             'groupid' => $groupid,
@@ -3189,6 +3194,7 @@ ORDER BY lastdate DESC;";
                 'type' => Log::TYPE_MESSAGE,
                 'subtype' => Log::SUBTYPE_HOLD,
                 'msgid' => $this->id,
+                'msgsubject' => $this->subject,
                 'byuser' => $me ? $me->getId() : NULL
             ]);
 
@@ -3211,6 +3217,7 @@ ORDER BY lastdate DESC;";
                 'type' => Log::TYPE_MESSAGE,
                 'subtype' => Log::SUBTYPE_RELEASE,
                 'msgid' => $this->id,
+                'msgsubject' => $this->subject,
                 'byuser' => $me ? $me->getId() : NULL
             ]);
 
@@ -3262,6 +3269,7 @@ ORDER BY lastdate DESC;";
                     'type' => Log::TYPE_MESSAGE,
                     'subtype' => Log::SUBTYPE_DELETED,
                     'msgid' => $this->id,
+                    'msgsubject' => $this->subject,
                     'user' => $this->fromuser,
                     'byuser' => $me ? $me->getId() : NULL,
                     'text' => $reason,
@@ -4432,6 +4440,7 @@ ORDER BY lastdate DESC;";
                                 'type' => Log::TYPE_MESSAGE,
                                 'subtype' => Log::SUBTYPE_OUTCOME,
                                 'msgid' => $this->id,
+                                'msgsubject' => $this->subject,
                                 'user' => $this->getFromuser(),
                                 'byuser' => $byuser,
                                 'groupid' => $groupid,
@@ -4531,6 +4540,7 @@ WHERE refmsgid = ? AND chat_messages.type = ? AND reviewrejected = 0 AND message
             'type' => Log::TYPE_MESSAGE,
             'subtype' => Log::SUBTYPE_OUTCOME,
             'msgid' => $this->id,
+            'msgsubject' => $this->subject,
             'user' => $this->getFromuser(),
             'byuser' => $me ? $me->getId() : NULL,
             'text' => $intcomment ? "Withdrawn: $comment" : "Withdrawn"
@@ -5242,6 +5252,7 @@ $mq", [
                 'type' => Log::TYPE_MESSAGE,
                 'subtype' => Log::SUBTYPE_AUTO_REPOSTED,
                 'msgid' => $this->id,
+                'msgsubject' => $this->subject,
                 'groupid' => $groupid,
                 'user' => $this->getFromuser(),
                 'text' => "$reposts / $max"
@@ -5473,6 +5484,7 @@ $mq", [
                                                 'subtype' => Log::SUBTYPE_AUTO_APPROVED,
                                                 'groupid' => $message['groupid'],
                                                 'msgid' => $message['msgid'],
+                                                'msgsubject' => $m->getSubject(),
                                                 'user' => $m->getFromuser()
                                             ]);
 
