@@ -957,8 +957,14 @@ const test = base.test.extend({
             setTimeout(() => reject(new Error('freeze')), 3000)
           ),
         ])
-      } catch {
-        if (!heartbeatFreezeDetected && !page.isClosed()) {
+      } catch (err) {
+        // Only treat as a renderer freeze if the race was won by OUR 3s timeout
+        // sentinel. page.evaluate() can also throw immediately (e.g. "Execution
+        // context was destroyed" during a navigation) — that is healthy renderer
+        // behaviour, not a freeze. Treating any exception as a freeze produces
+        // false positives that abort tests unnecessarily.
+        const isOurTimeout = err && err.message === 'freeze'
+        if (isOurTimeout && !heartbeatFreezeDetected && !page.isClosed()) {
           heartbeatFreezeDetected = true
           clearInterval(heartbeatTimer)
           heartbeatTimer = null
