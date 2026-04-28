@@ -365,7 +365,7 @@ func PostModConfig(c *fiber.Ctx) error {
 		if newID == 0 {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new config ID")
 		}
-		db.Exec("UPDATE mod_configs SET name = ?, createdby = ? WHERE id = ?", req.Name, myid, newID)
+		db.Exec("UPDATE mod_configs SET createdby = ? WHERE id = ?", myid, newID)
 
 		// Copy stdmsgs.
 		var srcMsgs []StdMsg
