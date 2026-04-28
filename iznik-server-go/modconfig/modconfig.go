@@ -347,11 +347,11 @@ func PostModConfig(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Database error")
 		}
-		sqlResult, err := sqlDB.Exec("INSERT INTO mod_configs (ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
+		sqlResult, err := sqlDB.Exec("INSERT INTO mod_configs (name, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
 			"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen) "+
-			"SELECT ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
+			"SELECT ?, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
 			"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen "+
-			"FROM mod_configs WHERE id = ?", req.ID)
+			"FROM mod_configs WHERE id = ?", req.Name, req.ID)
 		if err != nil {
 			stdlog.Printf("Failed to copy mod config %d: %v", req.ID, err)
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to copy config")
@@ -390,7 +390,7 @@ func PostModConfig(c *fiber.Ctx) error {
 	}
 
 	// Simple create.
-	result := db.Exec("INSERT INTO mod_configs (name, createdby) VALUES (?, ?)", req.Name, myid)
+	result := db.Exec("INSERT INTO mod_configs (name, createdby, ccrejectaddr, ccfollowupaddr, ccrejmembaddr, ccfollmembaddr, network) VALUES (?, ?, '', '', '', '', '')", req.Name, myid)
 	if result.Error != nil {
 		stdlog.Printf("Failed to create mod config: %v", result.Error)
 		return fiber.NewError(fiber.StatusInternalServerError, "Create failed")

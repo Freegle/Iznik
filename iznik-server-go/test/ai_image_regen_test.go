@@ -141,9 +141,9 @@ func TestAIImageRegen_AdminListReview_ReturnsList(t *testing.T) {
 	// Add some votes with known users.
 	voter1 := CreateTestUser(t, prefix+"_v1", "User")
 	voter2 := CreateTestUser(t, prefix+"_v2", "User")
-	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, containspeople, version) VALUES (?, ?, ?, 'Reject', 0, 4)",
+	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, containspeople, version, score_negative) VALUES (?, ?, ?, 'Reject', 0, 4, 0)",
 		microvolunteering.ChallengeAIImageReview, voter1, imgID)
-	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, containspeople, version) VALUES (?, ?, ?, 'Reject', 0, 4)",
+	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, containspeople, version, score_negative) VALUES (?, ?, ?, 'Reject', 0, 4, 0)",
 		microvolunteering.ChallengeAIImageReview, voter2, imgID)
 
 	t.Cleanup(func() {
@@ -277,12 +277,12 @@ func TestAIImageRegen_Accept_UpdatesExternaluidAndResetStatus(t *testing.T) {
 
 	// Create some microactions (votes) for this image — should be deleted on accept.
 	voter := CreateTestUser(t, prefix+"_voter", "User")
-	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, version) VALUES (?, ?, ?, 'Reject', 4)",
+	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative) VALUES (?, ?, ?, 'Reject', 4, 0)",
 		microvolunteering.ChallengeAIImageReview, voter, imgID)
 
 	// Create a message attachment pointing to the old externaluid.
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, subject, type, arrival) VALUES (?, 'Test', 'Offer', NOW())", supportID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) VALUES (?, 'Test', 'Test body', 'Test body', 'Offer', NOW())", supportID)
 	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgID)
 	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods) VALUES (?, ?, ?)",
 		msgID, oldUID, `{"ai":true}`)

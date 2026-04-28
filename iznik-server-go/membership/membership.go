@@ -240,18 +240,10 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewIgnore":
-		// ReviewIgnore clears the Member Review flag for the target user across ALL groups
-		// the calling moderator moderates (not just the one clicked). This prevents the
-		// confusing behaviour reported in Discourse topic 9618 where a mod clicks Ignore
-		// and the member reappears immediately because they are flagged on another of the
-		// mod's groups. PHP User.php:6805 sets reviewrequestedat = NULL on review completion.
-		// heldby IS NULL guard: must not clear held memberships — those need explicit mod action.
-		modGroupIDs := user.GetActiveModGroupIDs(myid)
-		if len(modGroupIDs) > 0 {
-			db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL, heldby = NULL "+
-				"WHERE userid = ? AND groupid IN ? AND heldby IS NULL",
-				req.Userid, modGroupIDs)
-		}
+		// Per-group: mods on adjacent communities make independent decisions (Discourse 9618 #8).
+		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL "+
+			"WHERE userid = ? AND groupid = ?",
+			req.Userid, req.Groupid)
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "HappinessReviewed":

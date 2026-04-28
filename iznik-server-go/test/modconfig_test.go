@@ -14,7 +14,7 @@ import (
 
 func createTestModConfig(t *testing.T, name string, createdby uint64) uint64 {
 	db := database.DBConn
-	result := db.Exec("INSERT INTO mod_configs (name, createdby) VALUES (?, ?)", name, createdby)
+	result := db.Exec("INSERT INTO mod_configs (name, createdby, ccrejectaddr, ccfollowupaddr, ccrejmembaddr, ccfollmembaddr, network) VALUES (?, ?, '', '', '', '', '')", name, createdby)
 	assert.NoError(t, result.Error)
 
 	var id uint64

@@ -139,7 +139,7 @@ func TestFreegleHidesModeratorUser2ModChats(t *testing.T) {
 	db := database.DBConn
 
 	// Create a member and a mod on a group.
-	memberID := CreateTestUser(t, prefix+"_member", "Member")
+	memberID := CreateTestUser(t, prefix+"_member", "User")
 	modID, modToken := CreateFullTestUser(t, prefix+"_mod")
 	groupID := CreateTestGroup(t, prefix+"_group")
 	CreateTestMembership(t, memberID, groupID, "Member")
@@ -196,9 +196,9 @@ func TestKeepChatIncludesOldChat(t *testing.T) {
 	prefix := uniquePrefix("keepChat")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 
 	// Create a User2User chat and backdate it to 90 days ago (past the 31-day cutoff).
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -247,7 +247,7 @@ func TestGroupChatIconUsesNewestImage(t *testing.T) {
 	db := database.DBConn
 
 	groupID := CreateTestGroup(t, prefix)
-	memberID := CreateTestUser(t, prefix+"_m", "Member")
+	memberID := CreateTestUser(t, prefix+"_m", "User")
 	_, memberToken := CreateTestSession(t, memberID)
 	CreateTestMembership(t, memberID, groupID, "Member")
 
@@ -1881,7 +1881,7 @@ func TestReviewChatMessagesWithImage(t *testing.T) {
 	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgID)
 
 	// Create a chat_images entry for this message.
-	db.Exec("INSERT INTO chat_images (chatmsgid, externaluid, externalmods) VALUES (?, 'test-uid-123', '{}')", msgID)
+	db.Exec("INSERT INTO chat_images (chatmsgid, externaluid, externalmods, contenttype) VALUES (?, 'test-uid-123', '{}', 'image/jpeg')", msgID)
 	// Update the message to point to the image.
 	db.Exec("UPDATE chat_messages SET imageid = (SELECT id FROM chat_images WHERE chatmsgid = ?) WHERE id = ?", msgID, msgID)
 	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", u2uChatID)
@@ -2118,6 +2118,10 @@ func TestReviewChatOwnGroupFirst(t *testing.T) {
 	widerMsgID := CreateTestChatMessage(t, widerChatID, widerSender, "Wider spam")
 	db.Exec("UPDATE chat_messages SET processingsuccessful = 1, reviewrequired = 1, reviewrejected = 0, reportreason = 'Spam' WHERE id = ?", widerMsgID)
 	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", widerChatID)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM chat_messages WHERE id = ?", widerMsgID)
+		db.Exec("DELETE FROM chat_rooms WHERE id = ?", widerChatID)
+	})
 
 	// Create an own-group message (recipient on mod's group).
 	ownSender := CreateTestUser(t, prefix+"_osender", "User")
@@ -2128,8 +2132,12 @@ func TestReviewChatOwnGroupFirst(t *testing.T) {
 	ownMsgID := CreateTestChatMessage(t, ownChatID, ownSender, "Own group spam")
 	db.Exec("UPDATE chat_messages SET processingsuccessful = 1, reviewrequired = 1, reviewrejected = 0, reportreason = 'Spam' WHERE id = ?", ownMsgID)
 	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", ownChatID)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM chat_messages WHERE id = ?", ownMsgID)
+		db.Exec("DELETE FROM chat_rooms WHERE id = ?", ownChatID)
+	})
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chatmessages?limit=10&jwt=%s", modToken), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chatmessages?limit=1000&jwt=%s", modToken), nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -2396,7 +2404,7 @@ func TestModSeesReviewMessagesInUser2ModChat(t *testing.T) {
 
 	// Review message from member.
 	reviewMsgID := CreateTestChatMessage(t, chatID, memberID, "Check this link out")
-	db.Exec("UPDATE chat_messages SET processingsuccessful = 1, reviewrequired = 1, reviewrejected = 0, reportreason = 'Link' WHERE id = ?", reviewMsgID)
+	db.Exec("UPDATE chat_messages SET processingsuccessful = 1, reviewrequired = 1, reviewrejected = 0, reportreason = 'Spam' WHERE id = ?", reviewMsgID)
 
 	// Mod is NOT user1 or user2 but moderates the group.
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
@@ -2558,8 +2566,8 @@ func TestCompletedSnippetOfferNoMessage(t *testing.T) {
 	// When a Completed chat message references an Offer and has no message text,
 	// the snippet should say "Item is no longer available" (not "Item marked as TAKEN").
 	prefix := uniquePrefix("CompSnip")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User1")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User2")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 	groupID := CreateTestGroup(t, prefix+"_grp")
 	CreateTestMembership(t, user1ID, groupID, "Member")
 	CreateTestMembership(t, user2ID, groupID, "Member")
@@ -2599,8 +2607,8 @@ func TestCompletedSnippetOfferNoMessage(t *testing.T) {
 func TestCompletedSnippetWithMessage(t *testing.T) {
 	// When a Completed message has user-provided text, snippet should show that text.
 	prefix := uniquePrefix("CompSnipMsg")
-	user1ID := CreateTestUser(t, prefix+"_u1", "User1")
-	user2ID := CreateTestUser(t, prefix+"_u2", "User2")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 	groupID := CreateTestGroup(t, prefix+"_grp")
 	CreateTestMembership(t, user1ID, groupID, "Member")
 	CreateTestMembership(t, user2ID, groupID, "Member")
@@ -3345,9 +3353,9 @@ func TestUnseenCountExcludesOldMessages(t *testing.T) {
 	prefix := uniquePrefix("unseenOld")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 
 	// Create a User2User chat with a recent latestmessage so it appears in the list.
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -3404,9 +3412,9 @@ func TestCreateChatMessageReopensClosedChat(t *testing.T) {
 	prefix := uniquePrefix("chatreopn")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 
 	// Create a User2User chat.
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -3446,9 +3454,9 @@ func TestCreateChatMessageDoesNotReopenBlockedChat(t *testing.T) {
 	prefix := uniquePrefix("chatblkd")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 
 	// Create a User2User chat.
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -3488,7 +3496,7 @@ func TestCreateChatMessageReopensClosedUser2ModChat(t *testing.T) {
 	CreateTestMembership(t, modUserID, groupID, "Moderator")
 	_, modToken := CreateTestSession(t, modUserID)
 
-	userID := CreateTestUser(t, prefix+"_usr", "Member")
+	userID := CreateTestUser(t, prefix+"_usr", "User")
 
 	// Create a User2Mod chat.
 	chatID := CreateTestChatRoom(t, userID, nil, &groupID, "User2Mod")
@@ -3532,9 +3540,9 @@ func TestClosedChatHiddenFromUserChatList(t *testing.T) {
 	prefix := uniquePrefix("notifClosed")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'hello', NOW(), 0, 0, 1)",
@@ -3583,9 +3591,9 @@ func TestBlockedChatHiddenFromUserChatList(t *testing.T) {
 	prefix := uniquePrefix("notifBlocked")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'hello', NOW(), 0, 0, 1)",
@@ -3622,9 +3630,9 @@ func TestClosedChatVisibleWithIncludeClosed(t *testing.T) {
 	prefix := uniquePrefix("notifInclCl")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'hello', NOW(), 0, 0, 1)",
@@ -3675,9 +3683,9 @@ func TestOnlySenderClosedChatRecipientStillSees(t *testing.T) {
 	prefix := uniquePrefix("notifPerUser")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 	_, user2Token := CreateTestSession(t, user2ID)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -3728,9 +3736,9 @@ func TestBothUsersClosedNeitherSeeChat(t *testing.T) {
 	prefix := uniquePrefix("notifBothCl")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 	_, user2Token := CreateTestSession(t, user2ID)
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
@@ -3784,9 +3792,9 @@ func TestNullRosterStatusShowsChat(t *testing.T) {
 	prefix := uniquePrefix("notifNull")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'hey', NOW(), 0, 0, 1)",
@@ -3822,7 +3830,7 @@ func TestUser2ModClosedByMemberHiddenFromMember(t *testing.T) {
 	prefix := uniquePrefix("notifU2MClosed")
 	db := database.DBConn
 
-	memberID := CreateTestUser(t, prefix+"_mbr", "Member")
+	memberID := CreateTestUser(t, prefix+"_mbr", "User")
 	_, memberToken := CreateTestSession(t, memberID)
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	_, modToken := CreateTestSession(t, modID)
@@ -3887,7 +3895,7 @@ func TestMTUnseenCountExcludesClosedModChat(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	CreateTestMembership(t, modID, groupID, "Moderator")
 
-	memberID := CreateTestUser(t, prefix+"_mbr", "Member")
+	memberID := CreateTestUser(t, prefix+"_mbr", "User")
 	CreateTestMembership(t, memberID, groupID, "Member")
 
 	chatID, err := chat.GetOrCreateUser2ModChat(db, memberID, groupID)
@@ -3937,9 +3945,9 @@ func TestClosedChatUnseenIsHiddenNotZeroed(t *testing.T) {
 	prefix := uniquePrefix("notifUnseenCl")
 	db := database.DBConn
 
-	user1ID := CreateTestUser(t, prefix+"_u1", "Member")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	_, user1Token := CreateTestSession(t, user1ID)
-	user2ID := CreateTestUser(t, prefix+"_u2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 
 	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'message from u2', NOW(), 0, 0, 1)",
@@ -4180,7 +4188,7 @@ func TestGetChats_EdgeCases(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode, "Invalid since parameter should be handled gracefully")
 
 	// Test 5: Chat with deleted user
-	user2ID := CreateTestUser(t, prefix+"_user2", "Member")
+	user2ID := CreateTestUser(t, prefix+"_user2", "User")
 	CreateTestSession(t, user2ID)
 	chatID := CreateTestChatRoom(t, userID, &user2ID, nil, "User2User")
 	db.Exec("INSERT INTO chat_messages (chatid, userid, message, date, reviewrequired, processingrequired, processingsuccessful) VALUES (?, ?, 'test', NOW(), 0, 0, 1)",

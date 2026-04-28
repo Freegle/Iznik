@@ -304,8 +304,8 @@ func getInviteChallenge(db *gorm.DB, userID uint64) *Challenge {
 	if count == 0 {
 		// Record a placeholder to ensure we don't ask too often
 		db.Exec(`
-			INSERT INTO microactions (actiontype, userid, version, comments)
-			VALUES (?, ?, 4, 'Ask to invite')
+			INSERT INTO microactions (actiontype, userid, version, comments, score_negative)
+			VALUES (?, ?, 4, 'Ask to invite', 0)
 		`, ChallengeInvite, userID)
 
 		return &Challenge{
@@ -579,8 +579,8 @@ func PostResponse(c *fiber.Ctx) error {
 				comments = *req.Comments
 			}
 
-			db.Exec(`INSERT INTO microactions (actiontype, userid, msgid, result, msgcategory, comments, version)
-				VALUES (?, ?, ?, ?, ?, ?, ?)
+			db.Exec(`INSERT INTO microactions (actiontype, userid, msgid, result, msgcategory, comments, version, score_negative)
+				VALUES (?, ?, ?, ?, ?, ?, ?, 0)
 				ON DUPLICATE KEY UPDATE result = ?, comments = ?, version = ?, msgcategory = ?`,
 				ChallengeCheckMessage, myid, req.Msgid, response, msgcategory, comments, Version,
 				response, comments, Version, msgcategory)
@@ -607,8 +607,8 @@ func PostResponse(c *fiber.Ctx) error {
 		// Response to a SearchTerm challenge.
 		// The result column is enum('Approve','Reject') NOT NULL with no default.
 		// Set to 'Approve' since search term responses don't map to approve/reject.
-		db.Exec(`INSERT INTO microactions (actiontype, userid, item1, item2, version, result)
-			VALUES (?, ?, ?, ?, ?, 'Approve')
+		db.Exec(`INSERT INTO microactions (actiontype, userid, item1, item2, version, result, score_negative)
+			VALUES (?, ?, ?, ?, ?, 'Approve', 0)
 			ON DUPLICATE KEY UPDATE userid = userid, version = ?`,
 			ChallengeSearchTerm, myid, req.Searchterm1, req.Searchterm2, Version, Version)
 
@@ -621,8 +621,8 @@ func PostResponse(c *fiber.Ctx) error {
 			response = *req.Response
 		}
 
-		db.Exec(`INSERT IGNORE INTO microactions (actiontype, userid, rotatedimage, result, version)
-			VALUES (?, ?, ?, ?, ?)`,
+		db.Exec(`INSERT IGNORE INTO microactions (actiontype, userid, rotatedimage, result, version, score_negative)
+			VALUES (?, ?, ?, ?, ?, 0)`,
 			ChallengePhotoRotate, myid, req.Photoid, response, Version)
 
 		// Check if we have enough votes to rotate the photo
@@ -654,8 +654,8 @@ func PostResponse(c *fiber.Ctx) error {
 				}
 			}
 
-			db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, containspeople, version)
-				VALUES (?, ?, ?, ?, ?, ?)
+			db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, containspeople, version, score_negative)
+				VALUES (?, ?, ?, ?, ?, ?, 0)
 				ON DUPLICATE KEY UPDATE result = ?, containspeople = ?, version = ?`,
 				ChallengeAIImageReview, myid, req.AIImageID, response, containsPeople, Version,
 				response, containsPeople, Version)
@@ -823,8 +823,8 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 // (poster or moderator) deletes an AI-generated attachment from a message. This signals
 // that the AI illustration was inappropriate for the item.
 func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
-	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version)
-		VALUES (?, ?, ?, 'Reject', ?)
+	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative)
+		VALUES (?, ?, ?, 'Reject', ?, 0)
 		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
 		ChallengeAIImageReview, userID, aiImageID, Version, Version)
 	checkAIImageRejectQuorum(db, aiImageID)

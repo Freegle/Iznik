@@ -32,7 +32,7 @@ func TestABTest_GetABTest_NoVariants(t *testing.T) {
 func TestABTest_GetABTest_WithVariants(t *testing.T) {
 	uid := uniquePrefix("abtest_with_variants")
 	db := database.DBConn
-	db.Exec("INSERT INTO abtest (uid, variant, suggest, rate) VALUES (?, 'variant_a', 1, 0.8), (?, 'variant_b', 1, 0.5)",
+	db.Exec("INSERT INTO abtest (uid, variant, shown, action, suggest, rate) VALUES (?, 'variant_a', 0, 0, 1, 0.8), (?, 'variant_b', 0, 0, 1, 0.5)",
 		uid, uid)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/abtest?uid="+uid, nil))

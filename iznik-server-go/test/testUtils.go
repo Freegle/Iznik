@@ -429,8 +429,8 @@ func CreateTestChatMessage(t *testing.T, chatID uint64, userID uint64, message s
 func CreateTestVolunteering(t *testing.T, userID uint64, groupID uint64) uint64 {
 	db := database.DBConn
 
-	result := db.Exec("INSERT INTO volunteering (userid, title, description, pending, deleted) "+
-		"VALUES (?, 'Test Volunteering', 'Test volunteering opportunity', 0, 0)",
+	result := db.Exec("INSERT INTO volunteering (userid, title, location, description, pending, deleted) "+
+		"VALUES (?, 'Test Volunteering', 'Test Location', 'Test volunteering opportunity', 0, 0)",
 		userID)
 
 	if result.Error != nil {
@@ -467,8 +467,8 @@ func CreateTestVolunteering(t *testing.T, userID uint64, groupID uint64) uint64 
 func CreateTestCommunityEvent(t *testing.T, userID uint64, groupID uint64) uint64 {
 	db := database.DBConn
 
-	result := db.Exec("INSERT INTO communityevents (userid, title, description, pending, deleted) "+
-		"VALUES (?, 'Test Event', 'Test community event', 0, 0)",
+	result := db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) "+
+		"VALUES (?, 'Test Event', 'Test Location', 'Test community event', 0, 0)",
 		userID)
 
 	if result.Error != nil {
@@ -508,8 +508,8 @@ func CreateTestMessage(t *testing.T, userID uint64, groupID uint64, subject stri
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Offer', ?, NOW())",
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, NOW())",
 		userID, subject, locationID)
 
 	if result.Error != nil {
@@ -660,8 +660,8 @@ func CreateTestMessageWithArrival(t *testing.T, userID uint64, groupID uint64, s
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL ? DAY))",
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL ? DAY))",
 		userID, subject, locationID, daysAgo)
 
 	if result.Error != nil {
@@ -803,8 +803,8 @@ func CreateTestMessageWithoutGroup(t *testing.T, userID uint64, subject string) 
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Offer', ?, NOW())",
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, NOW())",
 		userID, subject, locationID)
 
 	if result.Error != nil {

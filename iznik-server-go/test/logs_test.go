@@ -341,7 +341,7 @@ func TestGetLogsModmailTextIsEmailSubject(t *testing.T) {
 	db := database.DBConn
 
 	// Create a test message (simulating a post like "add a photo")
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Wanted', 'add a photo', 'Please add a photo', NOW(), NOW(), 'Platform')",
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Wanted', 'add a photo', 'Please add a photo', 'Please add a photo', NOW(), NOW(), 'Platform')",
 		userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)

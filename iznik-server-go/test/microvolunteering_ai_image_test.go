@@ -61,7 +61,7 @@ func createTestAIImage(t *testing.T, name string, usageCount int) uint64 {
 // blockInviteChallenge prevents the invite challenge from being served, so we get to the AI image challenge.
 func blockInviteChallenge(t *testing.T, userID uint64) {
 	db := database.DBConn
-	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp, result) VALUES (?, ?, 4, 'Test block', NOW(), 'Approve')",
+	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp, result, score_negative) VALUES (?, ?, 4, 'Test block', NOW(), 'Approve', 0)",
 		microvolunteering.ChallengeInvite, userID)
 
 	t.Cleanup(func() {
@@ -292,7 +292,7 @@ func TestAIImageReview_SkipAlreadyReviewed(t *testing.T) {
 	unreviewed := createTestAIImage(t, "unreviewed-"+prefix, 50)
 
 	// User has already reviewed the first image.
-	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, version) VALUES (?, ?, ?, 'Approve', 4)",
+	db.Exec("INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative) VALUES (?, ?, ?, 'Approve', 4, 0)",
 		microvolunteering.ChallengeAIImageReview, userID, reviewedID)
 
 	// Should get the unreviewed image.
@@ -338,7 +338,7 @@ func TestAIImageReview_RandomizationWithCheckMessage(t *testing.T) {
 
 	// Create an approved message from sender (in spatial index, today).
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, subject, type, arrival, lat, lng) VALUES (?, 'Test Offer', 'Offer', NOW(), 0, 0)", senderID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival, lat, lng) VALUES (?, 'Test Offer', 'Test body', 'Test body', 'Offer', NOW(), 0, 0)", senderID)
 	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgID)
 	t.Cleanup(func() { db.Exec("DELETE FROM messages WHERE id = ?", msgID) })
 

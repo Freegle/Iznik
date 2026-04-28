@@ -15,7 +15,7 @@ import (
 func TestCreateImageAttachment(t *testing.T) {
 	prefix := uniquePrefix("CreateImage")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
@@ -40,7 +40,7 @@ func TestCreateImageAttachment(t *testing.T) {
 func TestCreateImageAttachmentWithParent(t *testing.T) {
 	prefix := uniquePrefix("CreateImageParent")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
@@ -71,7 +71,7 @@ func TestCreateImageNoAuth(t *testing.T) {
 	// Image POST does not require auth - images are uploaded before the user signs up.
 	prefix := uniquePrefix("CreateImageNoAuth")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 	msgID := CreateTestMessage(t, userID, groupID, "NoAuth test "+prefix, 55.9533, -3.1883)
 
@@ -91,7 +91,7 @@ func TestCreateImageNoAuth(t *testing.T) {
 
 func TestCreateImageMissingUID(t *testing.T) {
 	prefix := uniquePrefix("CreateImageNoUID")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"imgtype":"Message"}`
@@ -104,7 +104,7 @@ func TestCreateImageMissingUID(t *testing.T) {
 
 func TestCreateImageInvalidType(t *testing.T) {
 	prefix := uniquePrefix("CreateImageBadType")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"externaluid":"freegletusd-test-badtype","imgtype":"InvalidType"}`
@@ -118,7 +118,7 @@ func TestCreateImageInvalidType(t *testing.T) {
 func TestCreateImageDefaultType(t *testing.T) {
 	prefix := uniquePrefix("CreateImageDefault")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
@@ -142,7 +142,7 @@ func TestCreateImageDefaultType(t *testing.T) {
 func TestRotateImage(t *testing.T) {
 	prefix := uniquePrefix("RotateImage")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
@@ -180,7 +180,7 @@ func TestRotateImage(t *testing.T) {
 
 func TestRotateImageWithBooleanFlag(t *testing.T) {
 	prefix := uniquePrefix("RotateBoolFlag")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 
 	// Create a community event image.
@@ -218,7 +218,7 @@ func TestRotateImageNoAuth(t *testing.T) {
 	// Rotate also works without auth - consistent with create.
 	prefix := uniquePrefix("RotateNoAuth")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 	msgID := CreateTestMessage(t, userID, groupID, "RotateNoAuth test "+prefix, 55.9533, -3.1883)
 

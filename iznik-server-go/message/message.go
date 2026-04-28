@@ -2907,8 +2907,8 @@ func PutMessage(c *fiber.Ctx) error {
 	if req.Groupid > 0 {
 		messageid = fmt.Sprintf("%s-%d", messageid, req.Groupid)
 	}
-	result := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
-		myid, req.Type, req.Subject, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
+	result := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
+		myid, req.Type, req.Subject, req.Textbody, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
 
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
