@@ -85,107 +85,58 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Active plan**: none currently active.
 
+### 2026-04-28 - Renderer freeze: AsyncCallStackDepth experiment
 
-### 2026-04-27 - Get master CI green + all 9 PR CIs green
+**Current hypothesis**: CDP's async call stack tracking (`Debugger.setAsyncCallStackDepth`) registers a V8 PromiseHookAfter callback. Vue's scheduler fires `Promise.resolve().then(flushJobs)` on every reactive update; over a long run the tracked async context list grows until iterating it on every Promise resolution saturates the renderer thread.
 
-**Goal**: Master CI job must pass. Then push all 9 PR branches and ensure their CI jobs all show green ticks on GitHub.
+**Fix applied** (in `playwright.config.js`): `--disable-features=AsyncCallStackDepth` in Chromium launch args. Landed on master via `fix/modmail-log-test-9518` merge.
 
-**Current state**: Master pipeline #3975 (job #7192) running — Docker 27.5.1 now on both local and CI runner (downgraded from 29.4.0). nat-unprotected removed from docker-compose.yml. Investigating Docker version difference as root cause of CI failures.
+**If this works**: Revisit dropping `run-specs.sh` and returning to native Playwright multi-worker mode (simpler, and would fix monocart coverage collection in parallel mode — see memory entry). Need several clean CI runs before concluding it's fixed.
 
-**Status table**:
-| # | Task | Status | Notes |
-|---|------|--------|-------|
-| 1 | Fix logoutIfLoggedIn(false) instability | ✅ | Commit `d210359f2` — reverted false param in reply-flow tests |
-| 2 | Fix missing expect import in user.js | ✅ | Commit `a4ae43db9` — was causing ReferenceError in all modtools tests |
-| 3 | Fix Go test race condition | ✅ | Commit `a5494d87d` — add 100ms sleep + guard in TestLocationTaskRemapIntegrationWithPostgresSync |
-| 4 | Fix MutationObserver null guard | ✅ | Commit `77de32ad4` — addInitScript runs before HTML parsed |
-| 5 | Fix postMessage debug section hang | ✅ | Commit `0f491c5f1` — locator.count()+screenshot without timeout hung 12min |
-| 6 | Fix isVisible()/waitForAuthPersistence renderer freeze | ✅ | Commit `7ca24d6e7` — job 6880 stuck 45min on loginModal check with no timeout |
-| 7 | Fix ALL bare isVisible() calls across test suite | ✅ | Commit `a14caf71e` — comprehensive { timeout: 5000 } on every bare isVisible() |
-| 8 | Fix isEnabled/isChecked CDP-freeze risk | ✅ | Commit `c219651b2` — same pattern applied to isEnabled/isChecked |
-| 9 | Master CI passes | ✅ | Pipeline 3944, commit `94dd64aa6` — SUCCESS |
-| 10 | All 9 PR CIs green | 🔄 | Pipelines 3935-3943 passed but PRs 280/281/282 failed on new runs; fix applied |
-| 11 | Fix postMessage waitUntil:load CI hang | ✅ | Commit `c0bbbb7d3` (master `dd1888590`) — domcontentloaded on postMessage gotoAndVerify('/give'); test 4.1 gets 1200000ms budget; pushed to all 9 PR branches |
-| 12 | Add waitUntil:'load' guard | ✅ | Commit `00026ce02` (master) — default changed to domcontentloaded, runtime throw, CI grep, orb 1.1.220; cherry-picked to all 9 PR branches |
-| 13 | All 9 PR CIs green (guard commit) | 🔄 | Jobs 7125/7128/7131/7134/7137/7140/7143/7146/7149/7152 queued then canceled; |
-| 14 | Merge master into all 9 PR branches | ✅ | All clean (no conflicts); new jobs 7164/7167/7170/7173/7176/7179/7182/7185/7188 queued |
-| 15 | All 9 PRs show MERGEABLE (not BEHIND) | ✅ | State=BLOCKED only pending CI; ready to merge once CI green |
-| 16 | Fix Docker version mismatch — pin CI runner to 27.5.1 | ✅ | Commit `5ec47b823` — revert nat-unprotected; downgraded CI runner to 27.5.1; job #7192 SUCCESS (all 130 Playwright + Go + Laravel passed) |
+**If this doesn't work**: The per-spec parallel runner (`run-specs.sh`) with 900s timeout + spec-level retry is the active workaround.
 
----
+**Other changes in master from today's session**:
+- `run-specs.sh`: spec-level 900s timeout + retry on failure
+- orb 1.1.223: `${VAR:-0}` guards on all temp-file reads (fixes `integer expression expected` when curl blip writes empty to `/tmp/playwright-completed`)
 
-**History of Playwright CI fix attempts (this session)**:
+### 2026-04-28 - Diagnose renderer freeze on test 3.2
 
-| Commit | What it fixed | Result |
-|--------|--------------|--------|
-| `78609f1c6` | postcodeSelect group guard (repost-group-change) + clearSessionData for edits-flow | ✅ those 2 fixed |
-| `99c08a823` | timeout guards on coverage stop/teardown page.evaluate() | ✅ |
-| `0edbe5fca` | Flag SSR error pages clearly in CI output | ✅ |
-| `bc40b0fdb` | Timeout race in clearSessionData to prevent renderer hang | ✅ |
-| `1c35bc65f` | CDN 404 allowed; expect.poll in loginViaModTools; logoutIfLoggedIn(false) in reply-flow setup; spammers self-heal; pending-messages posts own messages | ❌ introduced JS context instability |
-| `a4ae43db9` | Add missing `expect` import to user.js (required by expect.poll added in 1c35bc65f) | ✅ |
-| `d210359f2` | Revert logoutIfLoggedIn(false) — causes page.evaluate() to hang indefinitely mid-navigation; add MutationObserver for client-side SSR error detection | ✅ stability |
-| `77de32ad4` | MutationObserver null guard in addInitScript — documentElement is null before HTML parsed | ✅ |
-| `a5494d87d` | Go test race: 100ms sleep before async task DB query in location_test.go | ✅ |
-| `0f491c5f1` | Remove postMessage debug section — locator.count()+screenshot hang indefinitely on unresponsive renderer | ✅ |
-| `7ca24d6e7` | Guard isVisible() and waitForAuthPersistence — loginModal check with no timeout hung test 3.2 for 45min in job 6880 | ✅ |
-| `a14caf71e` | Add { timeout: 5000 } to ALL bare isVisible() calls across test suite | ✅ |
-| `c219651b2` | Add timeout to isEnabled/isChecked calls in user.js and fixtures.js | ✅ |
-| `dd1888590` | postMessage gotoAndVerify('/give') uses waitUntil:load — hangs in CI; switch to domcontentloaded; test 4.1 needs 1200s budget | ✅ master job 7078 passed |
-| `00026ce02` | Guard: ban waitUntil:'load' — default changed, runtime throw, CI grep (orb 1.1.220), withdrawPost fixed | 🔄 job 7143 queued |
+**Goal**: Find root cause of Chromium renderer spinning at 106% CPU on test 3.2 after ~128 prior tests.
 
-**Why logoutIfLoggedIn(false) was tried**: Setup phases in long reply-flow tests called logoutIfLoggedIn multiple times; each call does page.goto('/') which takes up to 202s under CI load; compound = test budget exceeded. The `false` param skipped that goto. WRONG: clearSessionData's page.evaluate() runs while page is mid-navigation → hangs.
+**Source map analysis** (decoded `D9YAJGtQ.js` — modtools bundle at `/app/modtools/.nuxt/dist/client/_nuxt/`):
+- `Ww` (col 2438, line 14) = `queueFlush` in `@vue/runtime-core` — schedules `Promise.resolve().then(flushJobs)`
+- `I1` (col 2313, line 14) = `queueJob` in `@vue/runtime-core` — adds a job and calls `queueFlush`
+- These are **Vue's own scheduler internals**, not application-specific code
+- The storm is normal Vue reactivity machinery, not an app bug per se
 
-**Why it was kept in fixtures.js:1241**: That instance is inside postMessage fixture, immediately followed by retryEmailInput.waitFor() (locator wait, not evaluate) — different code path, not affected.
+**Updated theory**: V8's `PromiseHookAfter` callback fires on every promise resolution. A long Playwright run accumulates thousands of promises from Vue's scheduler flushing across 128+ tests in a single Playwright process. Eventually the cumulative V8 overhead tips the renderer into 100% CPU spin. This is a **test-runner process lifetime problem**, not a specific Vue reactive loop in application code.
 
----
+**Approach**: Run spec files in parallel batches via `run-specs.sh` — N concurrent Playwright processes (11 local, 4 CI), each handling one spec file. Each process gets a fresh Chromium renderer with no accumulated V8 promise hook overhead. The status API full-suite trigger now uses this script automatically.
 
-**Root cause of previous failures (CONFIRMED from job 6740 artifacts)**:
-- Job 6740 (pipeline 3863, commit `a4ae43db9`): test 3.1 reply-flow-existing-user failed after 30 MINUTES
-- Error: `page.goto: Target page, context or browser has been closed` during withdrawPost cleanup
-- Root cause: `logoutIfLoggedIn(page, false)` in setup steps — the `false` skips `page.goto('/')` stabilisation, causing `clearSessionData`'s `page.evaluate()` to run mid-navigation → hang → eventually page context destroyed
-- Fix: `d210359f2` — reverts all `logoutIfLoggedIn(page, false)` back to `logoutIfLoggedIn(page)` in test-reply-flow-* files
-- Job 6779 includes this fix — rerun triggered 2026-04-27T09:25 BST
+**Status**: Parallel per-spec script created (`iznik-nuxt3/run-specs.sh`, npm script `test:sequential`). Status API `playwright.post.ts` updated to use it for full-suite runs. Running 5 consecutive local test runs to verify. **Do not rebuild the status container while a run is in progress** — it kills the tracking connection and orphans the playwright process.
 
-**NEW root cause found (from job 6793 artifacts, 11 ModTools failures)**:
-- `MutationObserver.observe()` called with null arg in `fixtures.js` addInitScript
-- `addInitScript` runs BEFORE HTML is parsed; `document.documentElement` is null at that point
-- `obs.observe(document.documentElement, ...)` → TypeError: parameter 1 is not of type 'Node'
-- Fix: commit `77de32ad4` — guard with null check + DOMContentLoaded fallback
-- All 9 PR branches + master now include this fix
+**Note**: The script file lives in the status container at `/app/run-specs.sh` (copied in, not built into image) and is copied to the playwright container after each restart. If status container is rebuilt, recopy: `docker cp iznik-nuxt3/run-specs.sh freegle-status:/app/run-specs.sh`.
 
-**NEW root cause found (from job 6782 artifacts)**:
-- `TestLocationTaskRemapIntegrationWithPostgresSync` in `iznik-server-go/test/location_test.go:920`
-- Missing `time.Sleep(100ms)` before DB query for async `go queue.QueueTask()` call
-- Causes Go FAIL-FAST which kills ALL other tests (Laravel, Playwright, Go)
-- Fix: commit `a5494d87d` — add 100ms sleep + nil guard
-- All 9 PR branches and master now include this fix
+**Reverted papering-over fixes** (commit `21ca3ac1a` on `fix/modmail-log-test-9518`, not pushed):
+- Removed `nonfatal` timeout (9aadfa7f5)
+- Restored test 3.1 budget to 900000ms (1f0ad9b8b)
+- Restored orb watchdog to 45min / 50m no_output_timeout (55dd1f33b)
 
-**NEW root cause found (from job 6880 artifacts, 45-min watchdog)**:
-- Tests 3.2 and 3.3 of test-reply-flow-existing-user.spec.js hung — last output was loginModal check at 10:59:14
-- Root cause: `page.locator('#loginModal').isVisible()` at user.js:1173 has NO timeout → hangs forever if renderer unresponsive
-- Also: `waitForAuthPersistence` uses page.waitForFunction without Promise.race guard → same CDP-freeze risk
-- Fix: commit `7ca24d6e7` — add `{ timeout: 5000 }` to isVisible(); wrap waitForAuthPersistence in Promise.race
-- All 9 PR branches updated via cherry-pick/rebase
+**Current branch**: `fix/modmail-log-test-9518`
 
-**NEW root cause found (from job 6841 artifacts)**:
-- Test 3.1 (reply-flow-existing-user) timed out at 900s with "page context closed" in gotoAndVerify('/give')
-- postMessage() starts at 10:01:46, gotoAndVerify('/give') doesn't start until 10:13:48 — 12 min gap!
-- Root cause: debug section in postMessage called `locator.count()` then `page.screenshot()` with NO timeouts
-- Renderer was unresponsive (confirmed by "Coverage collection timed out (renderer unresponsive)" in cleanup)
-- locator.count() on unresponsive renderer hangs indefinitely — consumed entire 900s budget
-- Fix: commit `0f491c5f1` — remove debug section; add timeout: 10000 to remaining screenshots
-- All 9 PR branches + master updated
+**9 PR branches** still waiting for green CI — all have the reverts above NOT yet applied to them or master.
 
-**9 PR branches** (master merged in 2026-04-27 ~16:05 UTC — all MERGEABLE, BLOCKED pending CI):
-- fix/review-ignore-held-members (PR#284): tip `851d58c9c` — job #7164 queued
-- feature/android-coldstart-safe (PR#282): tip `c511f689d` — job #7179 queued
-- fix/modmail-log-test-9518 (PR#281): tip `afd5617db` — job #7170 queued
-- test/go-coverage-namevalidation-helpers (PR#280): tip `c77bcea59` — job #7185 queued
-- test/laravel-coverage-mail-helper (PR#279): tip `262f98a94` — job #7173 queued
-- coverage/vitest-use-trace-20260425 (PR#278): tip `b4661c025` — job #7176 queued
-- feature/reply-to-chat (PR#149): tip `098d96610` — job #7188 queued
-- feature/mobile-feel (PR#90): tip `5bc58d72b` — job #7182 queued
-- feature/unified-digest-revision (PR#77): tip `4f48472a7` — job #7167 queued
+### 2026-04-27 - Get master CI green + all 9 PR CIs green (SUPERSEDED)
 
-**Instruction from user**: Keep monitoring until master CI passes AND all 9 PR CIs show green ticks. Do not stop. Use CircleCI runner directly for debugging (localhost:17081 status API, or check runner containers). Record every theory and result. Before making any fix, check against previous failed attempts above.
+**Outcome**: Many genuine fixes landed (see commits). CI still not fully green due to renderer freeze on test 3.2. Root cause now being investigated — see 2026-04-28 entry above.
+
+**Key commits from this session**:
+- `5ec47b823` — Docker 27 networking fix (confirmed root cause of original failures)
+- `d37b44223` — Chat timestamp SQL bug (empty string TIMESTAMP → MySQL error 1525)
+- `9f74d04e9` + `f882bf2c6` — ComposeGroup savedGroup overwrite bug
+- `376c418c7` — Vitest mock fix for ComposeGroup
+- Various test infrastructure fixes (isVisible timeouts, MutationObserver guard, Go race, etc.)
+
+**Papering-over commits that were later reverted** (commit `21ca3ac1a`):
+- `9aadfa7f5` nonfatal timeout, `1f0ad9b8b` budget increase, `55dd1f33b` watchdog extension
+

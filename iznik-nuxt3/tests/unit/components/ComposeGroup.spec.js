@@ -11,6 +11,7 @@ const mockComposeStore = {
     ],
   },
   group: null,
+  setPostcode: vi.fn(),
 }
 
 const mockAuthStore = {
@@ -58,6 +59,7 @@ describe('ComposeGroup', () => {
       ],
     }
     mockComposeStore.group = null
+    mockComposeStore.setPostcode = vi.fn()
     mockAuthStore.groups = [
       { groupid: 3, namedisplay: 'My Group', nameshort: 'my-group' },
     ]
@@ -189,6 +191,17 @@ describe('ComposeGroup', () => {
       createWrapper()
       await flushPromises()
       expect(mockApi.location.typeahead).toHaveBeenCalledWith('SW1A 1AA')
+    })
+
+    it('updates postcode store with fresh data after typeahead', async () => {
+      createWrapper()
+      await flushPromises()
+      expect(mockComposeStore.setPostcode).toHaveBeenCalledWith({
+        name: 'SW1A 1AA',
+        groupsnear: [
+          { id: 1, namedisplay: 'London Central', nameshort: 'london-central' },
+        ],
+      })
     })
 
     it('auto-selects first group when postcode has groups but no group selected', async () => {
