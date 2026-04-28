@@ -123,8 +123,12 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 | 26 | Master CI (Vitest fix) | ❌ | Job #7380 canceled; #7412 queued (pipeline 4029, session-log push) |
 | 27 | fix/review-ignore-held-members CI | ❌ | Job #7384 failed — PHP tests 882/955: createTestGroup() called with 0 args in 2 new tests |
 | 28 | Fix PHP test: createTestGroup() missing args | ✅ | Commit `ddf308b7a` (fix branch only) — 'testgroup', Group::GROUP_REUSE; 953 tests pass locally |
-| 29 | fix/review-ignore-held-members CI (PHP fix) | 🔄 | Job #7416 queued (pipeline 4030) |
-| 30 | Other 8 PR branch jobs | 🔄 | #7387 running (15min at step 117); 7390/7393/7396/7399/7402/7405/7408 queued; master #7412 queued last |
+| 29 | fix/review-ignore-held-members CI (PHP fix) | ✅ | Job #7416 queued; pipeline 4030 succeeded (fix/modmail-log-test-9518 workflow=success) |
+| 30 | Other PR branch jobs round 1 | ✅ | #7387 SUCCESS; #7393 SUCCESS; #7390 FAILED (Playwright test #113 hit 20-min budget — logoutIfLoggedIn wasted 2×202s) |
+| 31 | Fix logoutIfLoggedIn non-fatal nav timeout | ✅ | Commit `9aadfa7f5` (master) — added `nonfatal: 30000` to config.js; logoutIfLoggedIn uses it (→45s in CI) |
+| 32 | Merge nonfatal fix into all 9 PR branches + push | ✅ | All 9 branches pushed; master job #7425 + 9 PR jobs #7428/7436/7443/7446/7439/7450/7453/7457/7460 queued |
+| 33 | Master CI (nonfatal timeout fix) | 🔄 | Job #7425 running (pipeline 4032, step 14 at ~02:30 UTC) |
+| 34 | All 9 PR CIs green (nonfatal fix round) | 🔄 | Jobs #7428/7436/7443/7446/7439/7450/7453/7457/7460 all not_running (queued) |
 
 ---
 
@@ -191,15 +195,15 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 - Fix: commit `0f491c5f1` — remove debug section; add timeout: 10000 to remaining screenshots
 - All 9 PR branches + master updated
 
-**9 PR branches** (master Vitest fix merged 2026-04-28 ~00:40 UTC — all MERGEABLE, BLOCKED pending CI):
-- fix/review-ignore-held-members (PR#284): job #7384 not_running (pipeline 4020)
-- feature/android-coldstart-safe (PR#282): job #7405 not_running (pipeline 4027)
-- fix/modmail-log-test-9518 (PR#281): job #7393 not_running (pipeline 4021)
-- test/go-coverage-namevalidation-helpers (PR#280): job #7387 not_running (pipeline 4022)
-- test/laravel-coverage-mail-helper (PR#279): job #7390 not_running (pipeline 4023)
-- coverage/vitest-use-trace-20260425 (PR#278): job #7396 not_running (pipeline 4024)
-- feature/reply-to-chat (PR#149): job #7408 not_running (pipeline 4028)
-- feature/mobile-feel (PR#90): job #7399 not_running (pipeline 4025)
-- feature/unified-digest-revision (PR#77): job #7402 not_running (pipeline 4026)
+**9 PR branches** (nonfatal timeout fix merged 2026-04-28 ~02:30 UTC — all MERGEABLE, BLOCKED pending CI):
+- fix/review-ignore-held-members (PR#284): job #7443 not_running (pipeline 4034)
+- feature/android-coldstart-safe (PR#282): job #7453 not_running (pipeline 4039)
+- fix/modmail-log-test-9518 (PR#281): job #7436 not_running (pipeline 4035)
+- test/go-coverage-namevalidation-helpers (PR#280): job #7446 not_running (pipeline 4036)
+- test/laravel-coverage-mail-helper (PR#279): job #7428 not_running (pipeline 4033)
+- coverage/vitest-use-trace-20260425 (PR#278): job #7460 not_running (pipeline 4041)
+- feature/reply-to-chat (PR#149): job #7457 not_running (pipeline 4040)
+- feature/mobile-feel (PR#90): job #7439 not_running (pipeline 4037)
+- feature/unified-digest-revision (PR#77): job #7450 not_running (pipeline 4038)
 
 **Instruction from user**: Keep monitoring until master CI passes AND all 9 PR CIs show green ticks. Do not stop. Use CircleCI runner directly for debugging (localhost:17081 status API, or check runner containers). Record every theory and result. Before making any fix, check against previous failed attempts above.
