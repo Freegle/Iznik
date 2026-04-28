@@ -35,6 +35,21 @@ else
   PARALLEL=11
 fi
 
+# Wall-clock timeout per spec process. Playwright's per-test timeout (600s × 2 retries)
+# can't fire when the Chromium renderer is frozen in V8 PromiseHookAfter — CDP messages
+# never get responses, so the process hangs indefinitely. This outer timeout kills the
+# entire spec process and triggers a spec-level retry with a fresh renderer.
+# 900s (15m) in CI: full 38-spec run completes in < 10m normally, so any spec running
+# > 15m is frozen. The per-test Playwright timeout is 600s; with retries:1 a frozen
+# test would hang 20m total — this outer kill fires first at 15m and triggers a fresh retry.
+if [ -n "$SPEC_TIMEOUT_SECS" ]; then
+  SPEC_TIMEOUT=$SPEC_TIMEOUT_SECS
+elif [ -n "$CIRCLECI" ]; then
+  SPEC_TIMEOUT=900
+else
+  SPEC_TIMEOUT=1800
+fi
+
 RESULTS_DIR=$(mktemp -d)
 trap "rm -rf '$RESULTS_DIR'" EXIT
 
@@ -57,6 +72,13 @@ declare -A pid_spec
 declare -A pid_num
 running_pids=()
 
+run_spec() {
+  local spec="$1" num="$2" suffix="${3:-}"
+  local outdir="test-results-${num}${suffix}"
+  local logfile="$RESULTS_DIR/log-${num}${suffix}"
+  CI=true timeout "$SPEC_TIMEOUT" npx playwright test "$spec" --workers=1 --output="$outdir" > "$logfile" 2>&1
+}
+
 collect_one() {
   while true; do
     for j in "${!running_pids[@]}"; do
@@ -70,11 +92,22 @@ collect_one() {
           echo "[PASS] [$num/$TOTAL] $spec"
           echo "PASS" > "$RESULTS_DIR/$num"
         else
-          echo "[FAIL] [$num/$TOTAL] $spec"
-          echo "FAIL:$spec" > "$RESULTS_DIR/$num"
-          echo "=== Last 50 lines of output for failed spec ==="
+          echo "[FAIL] [$num/$TOTAL] $spec (rc=$rc, retrying with fresh renderer)"
+          echo "=== Last 50 lines of first attempt ==="
           tail -50 "$RESULTS_DIR/log-$num"
           echo "==="
+          run_spec "$spec" "$num" "-retry"
+          local retry_rc=$?
+          if [ $retry_rc -eq 0 ]; then
+            echo "[PASS] [$num/$TOTAL] $spec (retry succeeded)"
+            echo "PASS" > "$RESULTS_DIR/$num"
+          else
+            echo "[FAIL] [$num/$TOTAL] $spec (failed after retry, rc=$retry_rc)"
+            echo "FAIL:$spec" > "$RESULTS_DIR/$num"
+            echo "=== Last 50 lines of retry ==="
+            tail -50 "$RESULTS_DIR/log-${num}-retry"
+            echo "==="
+          fi
         fi
         unset "pid_spec[$pid]"
         unset "pid_num[$pid]"
@@ -96,13 +129,7 @@ for i in "${!SPECS[@]}"; do
   done
 
   echo "[START] [$num/$TOTAL] $spec"
-  # --workers=1: each process handles one spec file serially; extra workers would
-  # just launch idle browsers (11 processes × 11 workers = 121 browsers vs 11).
-  # --output=test-results-$num: each process gets a unique artifact directory so
-  # .playwright-artifacts-0/ dirs don't collide between parallel processes (ENOENT
-  # on trace files when one process cleans up another's artifacts).
-  # CI=true: suppresses HTML reporter auto-open (avoid 11 browsers trying port 9323).
-  CI=true npx playwright test "$spec" --workers=1 --output="test-results-$num" > "$RESULTS_DIR/log-$num" 2>&1 &
+  run_spec "$spec" "$num" &
   pid=$!
   running_pids+=("$pid")
   pid_spec[$pid]="$spec"
