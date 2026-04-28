@@ -183,6 +183,13 @@ module.exports = defineConfig({
             // per reactive cycle, so over a long spec run the tracked context list grows until
             // iterating it on every resolution saturates the renderer thread (issue #285).
             '--disable-features=AsyncCallStackDepth',
+            // Prevent Chrome from keeping navigated-away pages frozen in the BFCache.
+            // Across hundreds of navigations in a long run, accumulated V8 heap
+            // (compiled code, closures) builds up and can contribute to GC pauses.
+            '--disable-features=BackForwardCache',
+            // Stop V8 from scheduling background optimization/GC during idle periods,
+            // which can cause latency spikes mid-test.
+            '--disable-v8-idle-tasks',
             // Force V8 to eagerly parse/compile all JS. Removing this caused
             // test-reply-flow-existing-user.spec.js 3.1 to hit a 20m timeout
             // (job 5179) because the post-signup gotoAndVerify('/') in
