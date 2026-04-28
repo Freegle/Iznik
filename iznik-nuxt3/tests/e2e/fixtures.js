@@ -1008,7 +1008,11 @@ const test = base.test.extend({
       // Re-throw the error to fail the test
       throw error
     } finally {
-      // Stop the freeze-detection heartbeat immediately on test end
+      // Disarm the heartbeat. Setting the flag FIRST ensures any async heartbeat
+      // callback that is already in-flight (e.g. awaiting page.evaluate() during
+      // teardown) will see heartbeatFreezeDetected=true and skip freeze detection.
+      // clearInterval alone doesn't cancel an in-flight async callback.
+      heartbeatFreezeDetected = true
       if (heartbeatTimer) {
         clearInterval(heartbeatTimer)
         heartbeatTimer = null
