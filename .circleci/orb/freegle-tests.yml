@@ -2223,7 +2223,7 @@ jobs:
             # Unified monitoring loop for all 4 tests
             echo "📊 Monitoring all tests..."
             start_time=$(date +%s)
-            timeout_duration=3600  # 60 minutes
+            timeout_duration=2700  # 45 minutes
             TESTS_KILLED_EARLY=false
 
             while true; do
@@ -2232,7 +2232,7 @@ jobs:
               elapsed_min=$((elapsed / 60))
 
               if [ $elapsed -gt $timeout_duration ]; then
-                echo "⏰ Tests timed out after 60 minutes"
+                echo "⏰ Tests timed out after 45 minutes"
                 kill $LARAVEL_PID $GO_PID $PHPUNIT_PID $PLAYWRIGHT_PID 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
@@ -2448,7 +2448,7 @@ jobs:
             else
               echo "✅ All tests passed!"
             fi
-          no_output_timeout: 70m
+          no_output_timeout: 50m
 
       - store_artifacts:
           path: ~/test-output
