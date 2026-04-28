@@ -22,8 +22,6 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
       WebView.setWebContentsDebuggingEnabled(true);
       Log.d("MainActivity", "WebView debugging enabled for chrome://inspect");
     }
-
-    registerPlugin(com.getcapacitor.community.stripe.StripePlugin.class);
   }
 
   @Override
