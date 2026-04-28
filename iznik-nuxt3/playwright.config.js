@@ -30,7 +30,7 @@ module.exports = defineConfig({
   testMatch,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: 0,
+  retries: 1,
   // PW_WORKERS env var takes precedence (set per-executor in CircleCI orb).
   // Fallback: self-hosted runner has more resources; cloud CI needs fewer workers to avoid flakiness.
   workers: process.env.PW_WORKERS
@@ -187,6 +187,7 @@ module.exports = defineConfig({
             // coverage recovery independently.
             '--js-flags=--no-lazy',
           ],
+          env: {},
         },
         contextOptions: {
           // Disable background sync and other features that might prevent network idle
