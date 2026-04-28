@@ -380,3 +380,39 @@ func TestAIImageReview_RandomizationWithCheckMessage(t *testing.T) {
 	assert.GreaterOrEqual(t, checkCount, 5, "CheckMessage should be served at least 5/40 times, got %d", checkCount)
 	t.Logf("Distribution over 40 calls: CheckMessage=%d, AIImageReview=%d", checkCount, aiCount)
 }
+
+// TestGetChallenge_SkipsRejectedImages verifies that AI images with status='rejected'
+// are not served as microvolunteering challenges.
+func TestGetChallenge_SkipsRejectedImages(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mv_airejected")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+	blockInviteChallenge(t, userID)
+
+	rejectedUID := "freegletusd-test-rejected-" + prefix
+	db.Exec("INSERT INTO ai_images (name, externaluid, usage_count, status) VALUES (?, ?, 100, 'rejected')",
+		"rejected-"+prefix, rejectedUID)
+	var rejectedID uint64
+	db.Raw("SELECT id FROM ai_images WHERE name = ? ORDER BY id DESC LIMIT 1", "rejected-"+prefix).Scan(&rejectedID)
+	assert.NotZero(t, rejectedID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM ai_images WHERE id = ?", rejectedID)
+	})
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		"/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+
+	if typ, ok := result["type"]; ok && typ == microvolunteering.ChallengeAIImageReview {
+		aiimage, ok := result["aiimage"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.NotEqual(t, float64(rejectedID), aiimage["id"],
+			"Rejected AI image must not be served as a challenge")
+	}
+	// If no challenge at all that's also correct — no active images to review.
+}

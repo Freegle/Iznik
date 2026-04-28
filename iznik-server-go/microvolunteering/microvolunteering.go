@@ -481,7 +481,8 @@ const Version = 4
 
 // getAIImageReviewChallenge returns an AI image for the user to review.
 // Images are served in descending order of usage_count (most-used first),
-// skipping images the user has already reviewed and images that have reached quorum.
+// skipping images the user has already reviewed, images that have reached quorum,
+// and images that are not in 'active' status (e.g. already rejected/regenerating).
 func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 	type AIImageResult struct {
 		ID          uint64 `json:"id"`
@@ -498,6 +499,7 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 		LEFT JOIN microactions ma ON ma.aiimageid = ai.id AND ma.userid = ? AND ma.actiontype = ?
 		WHERE ai.externaluid IS NOT NULL
 			AND ai.externaluid != ''
+			AND ai.status = 'active'
 			AND ma.id IS NULL
 			AND (SELECT COUNT(*) FROM microactions WHERE aiimageid = ai.id AND actiontype = ?) < ?
 		ORDER BY ai.usage_count DESC
@@ -828,6 +830,18 @@ func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
 		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
 		ChallengeAIImageReview, userID, aiImageID, Version, Version)
 	checkAIImageRejectQuorum(db, aiImageID)
+}
+
+// ForceRejectAIImage immediately sets an AI image to rejected status, bypassing
+// the normal quorum process. Used when a moderator explicitly signals the image
+// is bad for any post of that item (not just irrelevant to the current post).
+// Records an audit microaction so the rejection is traceable.
+func ForceRejectAIImage(db *gorm.DB, userID uint64, aiImageID uint64) {
+	db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
+	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version, score_negative)
+		VALUES (?, ?, ?, 'Reject', ?, 0)
+		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
+		ChallengeAIImageReview, userID, aiImageID, Version, Version)
 }
 
 // checkAIImageRejectQuorum checks whether an AI image has reached the reject quorum
