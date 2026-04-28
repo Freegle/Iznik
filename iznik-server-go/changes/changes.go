@@ -29,7 +29,7 @@ type Rating struct {
 	Visible    int     `json:"visible"`
 	TnRatingID *uint64 `json:"tn_rating_id"`
 	Comment    *string `json:"comment" gorm:"column:text"`
-	Reason     *string `json:"reason"`
+	Reason     *string `json:"reason" gorm:"column:reason"`
 }
 
 // ChangesData contains the three collections of changes.

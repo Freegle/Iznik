@@ -2223,7 +2223,7 @@ jobs:
             # Unified monitoring loop for all 4 tests
             echo "📊 Monitoring all tests..."
             start_time=$(date +%s)
-            timeout_duration=3600  # 60 minutes
+            timeout_duration=2700  # 45 minutes
             TESTS_KILLED_EARLY=false
 
             while true; do
@@ -2232,7 +2232,7 @@ jobs:
               elapsed_min=$((elapsed / 60))
 
               if [ $elapsed -gt $timeout_duration ]; then
-                echo "⏰ Tests timed out after 60 minutes"
+                echo "⏰ Tests timed out after 45 minutes"
                 kill $LARAVEL_PID $GO_PID $PHPUNIT_PID $PLAYWRIGHT_PID 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
@@ -2259,12 +2259,16 @@ jobs:
               elapsed_min=$((elapsed / 60))
               LARAVEL_STATUS=$([ -f /tmp/laravel-result ] && cat /tmp/laravel-result || echo 'running')
               LARAVEL_COMPLETED=$([ -f /tmp/laravel-completed ] && cat /tmp/laravel-completed || echo '0')
+              LARAVEL_COMPLETED=${LARAVEL_COMPLETED:-0}
               LARAVEL_TOTAL=$([ -f /tmp/laravel-total ] && cat /tmp/laravel-total || echo '0')
+              LARAVEL_TOTAL=${LARAVEL_TOTAL:-0}
               LARAVEL_DISPLAY=$([ "$LARAVEL_STATUS" = "running" ] && echo "running ($LARAVEL_COMPLETED/$LARAVEL_TOTAL)" || echo "$LARAVEL_STATUS")
 
               GO_STATUS=$([ -f /tmp/go-result ] && cat /tmp/go-result || echo 'running')
               GO_COMPLETED=$([ -f /tmp/go-completed ] && cat /tmp/go-completed || echo '0')
+              GO_COMPLETED=${GO_COMPLETED:-0}
               GO_TOTAL=$([ -f /tmp/go-total ] && cat /tmp/go-total || echo '0')
+              GO_TOTAL=${GO_TOTAL:-0}
               # Go doesn't have a pre-count, so show just completed when total is 0
               if [ "$GO_STATUS" = "running" ]; then
                 if [ "$GO_TOTAL" -gt 0 ]; then
@@ -2278,12 +2282,16 @@ jobs:
 
               PHP_STATUS=$([ -f /tmp/php-result ] && cat /tmp/php-result || echo 'running')
               PHP_COMPLETED=$([ -f /tmp/php-completed ] && cat /tmp/php-completed || echo '0')
+              PHP_COMPLETED=${PHP_COMPLETED:-0}
               PHP_TOTAL=$([ -f /tmp/php-total ] && cat /tmp/php-total || echo '0')
+              PHP_TOTAL=${PHP_TOTAL:-0}
               PHP_DISPLAY=$([ "$PHP_STATUS" = "running" ] && echo "running ($PHP_COMPLETED/$PHP_TOTAL)" || echo "$PHP_STATUS")
 
               PLAYWRIGHT_STATUS=$([ -f /tmp/playwright-result ] && cat /tmp/playwright-result || echo 'running')
               PLAYWRIGHT_COMPLETED=$([ -f /tmp/playwright-completed ] && cat /tmp/playwright-completed || echo '0')
+              PLAYWRIGHT_COMPLETED=${PLAYWRIGHT_COMPLETED:-0}
               PLAYWRIGHT_TOTAL=$([ -f /tmp/playwright-total ] && cat /tmp/playwright-total || echo '0')
+              PLAYWRIGHT_TOTAL=${PLAYWRIGHT_TOTAL:-0}
               # Cap completed at total for display (symbol counting can double-count at end)
               if [ "$PLAYWRIGHT_STATUS" = "running" ]; then
                 if [ "$PLAYWRIGHT_TOTAL" -gt 0 ] && [ "$PLAYWRIGHT_COMPLETED" -gt "$PLAYWRIGHT_TOTAL" ]; then
@@ -2448,7 +2456,7 @@ jobs:
             else
               echo "✅ All tests passed!"
             fi
-          no_output_timeout: 70m
+          no_output_timeout: 50m
 
       - store_artifacts:
           path: ~/test-output
