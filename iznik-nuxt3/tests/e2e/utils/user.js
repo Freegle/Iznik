@@ -195,7 +195,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       console.log('[logoutIfLoggedIn] Navigating to homepage (try block)')
       try {
         await page.goto('/', {
-          timeout: timeouts.navigation.initial,
+          timeout: timeouts.navigation.nonfatal,
           waitUntil: 'domcontentloaded',
         })
         console.log(`[logoutIfLoggedIn] Navigated to homepage (try block) url=${page.url()}`)
@@ -220,7 +220,7 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       console.log('[logoutIfLoggedIn] Navigating to homepage (catch block)')
       try {
         await page.goto('/', {
-          timeout: timeouts.navigation.initial,
+          timeout: timeouts.navigation.nonfatal,
           waitUntil: 'domcontentloaded',
         })
         console.log(`[logoutIfLoggedIn] Navigated to homepage (catch block) url=${page.url()}`)
