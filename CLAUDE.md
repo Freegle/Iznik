@@ -85,19 +85,66 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Active plan**: none currently active.
 
-### 2026-04-28 - Renderer freeze: AsyncCallStackDepth experiment
+### 2026-04-28 - Freeze-detection heartbeat + fresh-process retry (commit 82c491e02)
 
-**Current hypothesis**: CDP's async call stack tracking (`Debugger.setAsyncCallStackDepth`) registers a V8 PromiseHookAfter callback. Vue's scheduler fires `Promise.resolve().then(flushJobs)` on every reactive update; over a long run the tracked async context list grows until iterating it on every Promise resolution saturates the renderer thread.
+**Problem**: Chrome flags push the V8 async-context freeze threshold from ~73 to ~130+ tests but can't eliminate accumulation entirely. With `retries: 1`, frozen tests were silently retried in the same environment — useless and masks real bugs.
 
-**Fix applied** (in `playwright.config.js`): `--disable-features=AsyncCallStackDepth` in Chromium launch args. Landed on master via `fix/modmail-log-test-9518` merge.
+**Solution**: `retries: 0` + 5s/3s heartbeat in `fixtures.js` + fresh-process retry in `playwright.post.ts`:
+- Heartbeat: `setInterval` doing `page.evaluate(() => 1)` with 3s timeout. On freeze: closes page (fast abort) + appends spec file to `/tmp/playwright-freeze-specs.txt`
+- `playwright.post.ts` reads that file after run completion and re-spawns only frozen specs via a second `npx playwright test <specs>` call in a fully fresh Playwright/V8 process
+- Non-freeze failures are NOT retried — test quality improvement
+- `playwright.config.js` is now synced from host-mounted volume on every pre-run container restart (was baked in at build time only)
 
-**If this works**: Revisit dropping `run-specs.sh` and returning to native Playwright multi-worker mode (simpler, and would fix monocart coverage collection in parallel mode — see memory entry). Need several clean CI runs before concluding it's fixed.
+**Status**: CONFIRMED 130/130 clean, freeze file empty after run. Three follow-up fixes applied:
+- `c590b4913` — heartbeat only triggers on our 3s sentinel, not navigation errors ("context destroyed")
+- `cb56ceffe` — set `heartbeatFreezeDetected = true` in finally BEFORE clearInterval to disarm in-flight callbacks
+- Status container rebuilt to pick up compiled `playwright.post.ts` changes
 
-**If this doesn't work**: The per-spec parallel runner (`run-specs.sh`) with 900s timeout + spec-level retry is the active workaround.
+### 2026-04-28 - feature/ai-image-regen: moderator force-reject + challenge filter (commit c656e0740)
 
-**Other changes in master from today's session**:
-- `run-specs.sh`: spec-level 900s timeout + retry on failure
-- orb 1.1.223: `${VAR:-0}` guards on all temp-file reads (fixes `integer expression expected` when curl blip writes empty to `/tmp/playwright-completed`)
+**Status**: Feature complete, all Go tests pass (2155✓). Vitest tests updated but can't run (no frontend container in worktree — will run on CI).
+
+**New feature**: When a moderator removes an AI image in ModTools, a popup asks:
+- "Not relevant to this post" → normal deletion vote (RecordAIAttachmentDeletion)
+- "Bad AI for any post of this item" → ForceRejectAIImage (bypasses quorum, immediate rejection)
+
+**Bug fixed**: `getAIImageReviewChallenge` was serving rejected images as challenges — added `AND ai.status = 'active'` filter.
+
+**Files changed**: `microvolunteering.go`, `message.go`, `ModPhoto.vue`, `ModPhotoModal.vue`, `ModPhotoModal.spec.js`, plus 2 new Go test files.
+
+**PR**: https://github.com/Freegle/Iznik/pull/286 — updated, pushed (a92dbc0a5), CI running
+
+**Previous work** (all Go tests green from strict-mode fixes): Committed as `683911368`.
+
+### 2026-04-28 - AsyncCallStackDepth fix: merged to master, monitoring PR queue
+
+**Fix confirmed**: `--disable-features=AsyncCallStackDepth` (playwright.config.js). Multiple 38/38 clean runs observed.
+
+**Reverted to native Playwright multi-worker mode** (commit `26b9f1e81`, orb 1.1.224):
+- `run-specs.sh` per-spec isolation was the workaround — no longer needed
+- Orb: PW_WORKERS 4 (cloud), 11 (self-hosted runner)
+- `playwright.post.ts`: always uses `npx playwright test` directly
+- PRs 280, 149, 77 all have master merged in; CI triggered on all three
+
+**If CI passes**: all 3 PRs will be mergeable. Also fixes monocart coverage collection (was broken in parallel mode).
+
+### 2026-04-28 - V8 PromiseHookAfter freeze: root cause confirmed
+
+**Root cause confirmed** (CPU profile captured, 8.5MB, 106,933 samples):
+- 66.8% `(idle)` + 14.4% `(program)` — renderer spinning in V8 C++, invisible to JS profiler
+- V8 maintains a linked list of async contexts (CDP async call stack tracking). Each Promise resolution traverses the whole list via `Runtime_PromiseHookAfter`. After 73+ tests with thousands of API calls (each `useFetchRetry.js:103` `new Promise()` creates 6+ entries), the list is so large that a burst of concurrent store fetches on navigation saturates the renderer thread
+- It is NOT a Vue reactive loop — Vue component update counts (1600-4000 for InfiniteLoading) are normal data loading, not a storm
+
+**Fix**: `--disable-features=AsyncCallStackDepth` (already in `playwright.config.js`). Disables the CDP async context tracking that causes the list to grow.
+
+**Side fix** (commit `39cb20fea`): InfiniteLoading `fallback()` loop now stops at `'complete'` state instead of running indefinitely, reducing unnecessary Promise creation. Timer restarts when `identifier` watch resets the component.
+
+**Instrumentation used** (all removed from working tree after investigation):
+- CDP CPU profiler + heartbeat freeze detector (saved `/tmp/freeze-profile-*.json`)
+- Vue DevTools `component:updated` hook (requires `__VUE_PROD_DEVTOOLS__: true` in vite.define)
+- VUE-PERF console forwarder
+
+**Without the fix** (local run without AsyncCallStackDepth): 128/130 pass, 2 needed retry due to freeze. 4 freeze events captured at tests 73, ~100, ~115, ~125.
 
 ### 2026-04-28 - Diagnose renderer freeze on test 3.2
 
@@ -113,18 +160,7 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Approach**: Run spec files in parallel batches via `run-specs.sh` — N concurrent Playwright processes (11 local, 4 CI), each handling one spec file. Each process gets a fresh Chromium renderer with no accumulated V8 promise hook overhead. The status API full-suite trigger now uses this script automatically.
 
-**Status**: Parallel per-spec script created (`iznik-nuxt3/run-specs.sh`, npm script `test:sequential`). Status API `playwright.post.ts` updated to use it for full-suite runs. Running 5 consecutive local test runs to verify. **Do not rebuild the status container while a run is in progress** — it kills the tracking connection and orphans the playwright process.
-
-**Note**: The script file lives in the status container at `/app/run-specs.sh` (copied in, not built into image) and is copied to the playwright container after each restart. If status container is rebuilt, recopy: `docker cp iznik-nuxt3/run-specs.sh freegle-status:/app/run-specs.sh`.
-
-**Reverted papering-over fixes** (commit `21ca3ac1a` on `fix/modmail-log-test-9518`, not pushed):
-- Removed `nonfatal` timeout (9aadfa7f5)
-- Restored test 3.1 budget to 900000ms (1f0ad9b8b)
-- Restored orb watchdog to 45min / 50m no_output_timeout (55dd1f33b)
-
-**Current branch**: `fix/modmail-log-test-9518`
-
-**9 PR branches** still waiting for green CI — all have the reverts above NOT yet applied to them or master.
+**Status**: `run-specs.sh` is built into the orb/CI pipeline. The status container at `/app/run-specs.sh` must be recopy-ed after a status container rebuild: `docker cp iznik-nuxt3/run-specs.sh freegle-status:/app/run-specs.sh`.
 
 ### 2026-04-27 - Get master CI green + all 9 PR CIs green (SUPERSEDED)
 

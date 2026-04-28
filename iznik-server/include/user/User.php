@@ -7043,9 +7043,20 @@ memberships.groupid IN $groupq
             $s->checkUser($userid, $groupid);
 
             # We might have mod notes which require this member to be flagged up.
+            # Only flag if there is a flagged comment written after the last mod review on this group.
+            # This prevents a member from reappearing indefinitely after a mod has already reviewed them:
+            # once reviewedat >= the comment date, the flag is considered handled.
             $comments = $this->dbhr->preQuery(
-                "SELECT COUNT(*) AS count FROM users_comments WHERE userid = ? AND flag = 1;", [
+                "SELECT COUNT(*) AS count FROM users_comments uc
+                 WHERE uc.userid = ? AND uc.flag = 1
+                 AND NOT EXISTS (
+                     SELECT 1 FROM memberships m
+                     WHERE m.userid = uc.userid AND m.groupid = ?
+                     AND m.reviewedat IS NOT NULL
+                     AND m.reviewedat >= uc.date
+                 );", [
                     $userid,
+                    $groupid,
                 ]
             );
 
