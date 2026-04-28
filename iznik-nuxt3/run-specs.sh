@@ -53,20 +53,6 @@ fi
 RESULTS_DIR=$(mktemp -d)
 trap "rm -rf '$RESULTS_DIR'" EXIT
 
-# Background renderer CPU monitor — samples every 10s so we have a timeline of when
-# a freeze starts relative to how many tests have run in the spec. Written to
-# $RESULTS_DIR/renderer-cpu.log — included in CI artifacts for post-mortem analysis.
-monitor_renderers() {
-  while true; do
-    ps -C headless_shell -o pid,%cpu,rss,etimes --no-headers 2>/dev/null \
-      | awk -v ts="$(date +%s)" '{print ts, $0}' >> "$RESULTS_DIR/renderer-cpu.log"
-    sleep 10
-  done
-}
-monitor_renderers &
-MONITOR_PID=$!
-trap "kill $MONITOR_PID 2>/dev/null; rm -rf '$RESULTS_DIR'" EXIT
-
 SPECS=()
 if [ -f "tests/e2e/ordered-tests.txt" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
@@ -168,15 +154,8 @@ for f in "$RESULTS_DIR"/[0-9]*; do
   fi
 done
 
-kill "$MONITOR_PID" 2>/dev/null
-
 echo ""
 echo "=== Complete: $PASS/$TOTAL passed, $FAIL failed ==="
-if [ -s "$RESULTS_DIR/renderer-cpu.log" ]; then
-  echo "=== Renderer CPU timeline (timestamp pid %cpu rss_kb elapsed_s) ==="
-  cat "$RESULTS_DIR/renderer-cpu.log"
-  echo "==="
-fi
 if [ "${#FAILED[@]}" -gt 0 ]; then
   echo "Failed specs:"
   printf '  %s\n' "${FAILED[@]}"
