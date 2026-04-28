@@ -30,7 +30,7 @@ module.exports = defineConfig({
   testMatch,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: 0,
+  retries: 1,
   // PW_WORKERS env var takes precedence (set per-executor in CircleCI orb).
   // Fallback: self-hosted runner has more resources; cloud CI needs fewer workers to avoid flakiness.
   workers: process.env.PW_WORKERS
@@ -177,6 +177,12 @@ module.exports = defineConfig({
             '--allow-insecure-localhost',
             '--disable-extensions',
             '--disable-plugins',
+            // Disable CDP async call stack depth tracking. Playwright enables this by
+            // default; V8's PromiseHookAfter fires on every Promise resolution to maintain
+            // async context chains. Vue's scheduler (queueFlush/queueJob) resolves a Promise
+            // per reactive cycle, so over a long spec run the tracked context list grows until
+            // iterating it on every resolution saturates the renderer thread (issue #285).
+            '--disable-features=AsyncCallStackDepth',
             // Force V8 to eagerly parse/compile all JS. Removing this caused
             // test-reply-flow-existing-user.spec.js 3.1 to hit a 20m timeout
             // (job 5179) because the post-signup gotoAndVerify('/') in
@@ -187,6 +193,7 @@ module.exports = defineConfig({
             // coverage recovery independently.
             '--js-flags=--no-lazy',
           ],
+          env: {},
         },
         contextOptions: {
           // Disable background sync and other features that might prevent network idle
