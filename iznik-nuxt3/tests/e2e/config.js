@@ -16,7 +16,6 @@ const timeouts = {
     default: 60000 * M, // Default navigation timeout (increased for slow loading)
     initial: 135000, // First page load timeout (already generous)
     slowPage: 90000 * M, // Extra long timeout for known slow pages
-    nonfatal: 30000, // Non-fatal navigations — fail fast to preserve test budget when renderer frozen
   },
 
   // UI interaction timeouts

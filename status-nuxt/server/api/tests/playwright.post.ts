@@ -129,6 +129,18 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', `Warning: Failed to restart container: ${restartError.message}\n`)
     }
 
+    // Copy run-specs.sh from the mounted iznik-nuxt3 volume — always the current version,
+    // no manual docker cp needed when the status container is rebuilt.
+    try {
+      execSync(`docker exec ${pfx}-playwright cp /host-playwright-config/run-specs.sh /app/run-specs.sh`, {
+        encoding: 'utf8',
+        timeout: 10000,
+      })
+      appendTestLogs('playwright', 'Copied run-specs.sh to playwright container\n')
+    } catch (copyError: any) {
+      appendTestLogs('playwright', `Warning: Could not copy run-specs.sh: ${copyError.message}\n`)
+    }
+
     // Wait for Playwright container to be ready
     await new Promise(resolve => setTimeout(resolve, 3000))
 
@@ -167,11 +179,16 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', 'Could not pre-count tests, will determine from output\n')
     }
 
-    // Build test command - use default reporters from playwright.config.js (list, html, junit)
-    // This ensures HTML report is generated for CI artifacts
-    const testCmd = `npx playwright test${testArgs}`
+    // For full-suite runs use the per-spec parallel script — one Playwright process per
+    // spec file prevents cumulative V8 PromiseHookAfter overhead that freezes the
+    // renderer at ~128 tests in a single long-lived process.
+    // Filtered runs (specific file or grep) still use npx playwright test directly.
+    const useParallelScript = !testFile && !testName
+    const testCmd = useParallelScript
+      ? 'bash run-specs.sh'
+      : `npx playwright test${testArgs}`
 
-    setTestState('playwright', { message: 'Running Playwright tests...' })
+    setTestState('playwright', { message: useParallelScript ? 'Running all specs (parallel per-spec)...' : 'Running Playwright tests...' })
     appendTestLogs('playwright', `Running: ${testCmd}\n`)
 
     // Run tests - NODE_PATH needed so require('@playwright/test') finds global install
@@ -223,7 +240,38 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
 function parsePlaywrightOutput(text: string) {
   const state = getTestState('playwright')
+  const allLogs = state.logs || ''
 
+  // --- run-specs.sh parallel mode ---
+  // Detect "=== Parallel spec run: N specs, M concurrent ===" to set total spec count
+  const specRunMatch = allLogs.match(/Parallel spec run:\s*(\d+)\s+specs/)
+  if (specRunMatch) {
+    const specTotal = parseInt(specRunMatch[1])
+    // Only update total once (prevents it being reset on every chunk)
+    if (state.progress.total !== specTotal) {
+      state.progress.total = specTotal
+    }
+
+    // Count [PASS] and [FAIL] lines from accumulated log
+    const passSpecs = (allLogs.match(/^\[PASS\]/gm) || []).length
+    const failSpecs = (allLogs.match(/^\[FAIL\]/gm) || []).length
+    state.progress.passed = passSpecs
+    state.progress.failed = failSpecs
+    state.progress.completed = passSpecs + failSpecs
+
+    // Final summary: "=== Complete: X/N passed, Y failed ==="
+    const completeMatch = allLogs.match(/Complete:\s*(\d+)\/\d+\s+passed,\s*(\d+)\s+failed/)
+    if (completeMatch) {
+      state.progress.passed = parseInt(completeMatch[1])
+      state.progress.failed = parseInt(completeMatch[2])
+      state.progress.completed = state.progress.passed + state.progress.failed
+    }
+
+    setTestState('playwright', state)
+    return
+  }
+
+  // --- Single spec / standard Playwright output ---
   // Look for test counts in JSON output (if available)
   const jsonPassedMatch = text.match(/"passed":\s*(\d+)/)
   const jsonFailedMatch = text.match(/"failed":\s*(\d+)/)
@@ -236,7 +284,6 @@ function parsePlaywrightOutput(text: string) {
   // Look for list reporter summary format: "X passed" or "X failed"
   const listPassedMatch = text.match(/(\d+)\s+passed/)
   const listFailedMatch = text.match(/(\d+)\s+failed/)
-  const listSkippedMatch = text.match(/(\d+)\s+skipped/)
 
   if (listPassedMatch) state.progress.passed = parseInt(listPassedMatch[1])
   if (listFailedMatch) state.progress.failed = parseInt(listFailedMatch[1])
@@ -251,7 +298,6 @@ function parsePlaywrightOutput(text: string) {
   // Check accumulated logs for the final summary line (not just current chunk)
   // The summary line is authoritative because symbol counting over-counts retries
   // Playwright summary format: "  82 passed (5.2m)" — has time in parens
-  const allLogs = state.logs || ''
   const allPassedMatch = allLogs.match(/(\d+)\s+passed\s*\(/)
   const allFailedMatch = allLogs.match(/(\d+)\s+failed\s*\(/)
 

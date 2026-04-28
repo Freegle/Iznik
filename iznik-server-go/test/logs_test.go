@@ -324,3 +324,56 @@ func TestGetLogsUserReturnsAllTypes(t *testing.T) {
 	assert.True(t, found[logKey{flog.LOG_TYPE_USER, flog.LOG_SUBTYPE_DELETED}],
 		"User/Deleted log should be returned for logtype=user")
 }
+
+func TestGetLogsModmailTextIsEmailSubject(t *testing.T) {
+	// Verify that modmail logs (Message/Replied) return log.text containing the email subject
+	// as constructed from the stdmsg (subjpref + ': ' + post subject + subjsuff).
+	// The V2 path stores this in logs.text via the background task; log.text is what ModTools
+	// displays to show what was actually sent in the modmail.
+	prefix := uniquePrefix("LogsModmailText")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, modID)
+
+	db := database.DBConn
+
+	// Create a test message (simulating a post like "add a photo")
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Wanted', 'add a photo', 'Please add a photo', NOW(), NOW(), 'Platform')",
+		userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+
+	// The stdmsg-constructed email subject: subjpref + ': ' + post_subject
+	emailSubject := "Pending: add a photo"
+
+	// Create a modmail log with the email subject in log.text (as the V2 batch processor does)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, msgid, byuser, timestamp, text) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_REPLIED, groupID, userID, msgID, modID, emailSubject)
+
+	// Fetch logs and verify the email subject is returned in log.text
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?groupid=%d&jwt=%s", groupID, token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result2 map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result2)
+	assert.Equal(t, float64(0), result2["ret"])
+
+	logs, ok := result2["logs"].([]interface{})
+	assert.True(t, ok, "logs should be an array")
+	assert.Greater(t, len(logs), 0, "should have at least one log")
+
+	logEntry := logs[0].(map[string]interface{})
+	assert.Equal(t, "Message", logEntry["type"])
+	assert.Equal(t, "Replied", logEntry["subtype"])
+
+	// log.text must contain the stdmsg-constructed email subject, not just "Re: [post subject]"
+	assert.Equal(t, emailSubject, logEntry["text"], "log.text should contain the stdmsg-constructed email subject")
+
+	// msgsubject must NOT be present — the post title is not exposed separately
+	_, hasMsgSubject := logEntry["msgsubject"]
+	assert.False(t, hasMsgSubject, "msgsubject field must not be in the response")
+}
