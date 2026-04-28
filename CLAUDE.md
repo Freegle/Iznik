@@ -118,9 +118,11 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 | 21 | Master CI for ComposeGroup fix | ❌ | Job #7297 (pipeline 3998) FAILED — stale test-status.json false failure; both tests actually passed |
 | 22 | All 9 PR CIs green (ComposeGroup round) | ❌ | Jobs 7300-7324 canceled after master failure |
 | 23 | Fix ComposeGroup.vue nextTick regression | ✅ | Commit `f882bf2c6` (master) — capture groupAfterTypeahead BEFORE setPostcode; await nextTick() before restoring |
-| 24 | Master CI (nextTick fix) | 🔄 | Job #7336 (pipeline 4008) running since 00:19 UTC |
-| 25 | Merge nextTick fix into all 9 PR branches | ✅ | All 9 branches merged and pushed; pipelines 4009-4017 queued; jobs 7340/7343/7346/7349/7352/7355/7358/7361/7364 |
-| 26 | All 9 PR CIs green (nextTick round) | 🔄 | Jobs 7340-7364 all not_running; waiting for master #7336 first |
+| 24 | Master CI (nextTick fix) | ❌ | Job #7336 canceled by session-log push; job #7368 queued then all canceled by Vitest fix push |
+| 25 | Fix Vitest: add setPostcode mock to ComposeGroup.spec.js | ✅ | Commit `376c418c7` — mockComposeStore.setPostcode = vi.fn(); 12011 tests pass locally |
+| 26 | Master CI (Vitest fix) | 🔄 | Job #7380 (pipeline 4019) running since ~00:40 UTC |
+| 27 | Merge Vitest fix into all 9 PR branches | ✅ | All 9 branches merged and pushed; pipelines 4020-4028; jobs 7384/7387/7390/7393/7396/7399/7402/7405/7408 |
+| 28 | All 9 PR CIs green (Vitest fix round) | 🔄 | All 9 jobs not_running; queued after master #7380 |
 
 ---
 
@@ -187,15 +189,15 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 - Fix: commit `0f491c5f1` — remove debug section; add timeout: 10000 to remaining screenshots
 - All 9 PR branches + master updated
 
-**9 PR branches** (master nextTick fix merged 2026-04-28 ~00:20 UTC — all MERGEABLE, BLOCKED pending CI):
-- fix/review-ignore-held-members (PR#284): job #7358 queued (pipeline 4009)
-- feature/android-coldstart-safe (PR#282): job #7361 queued (pipeline 4015)
-- fix/modmail-log-test-9518 (PR#281): job #7340 queued (pipeline 4010)
-- test/go-coverage-namevalidation-helpers (PR#280): job #7349 queued (pipeline 4011)
-- test/laravel-coverage-mail-helper (PR#279): job #7364 queued (pipeline 4017)
-- coverage/vitest-use-trace-20260425 (PR#278): job #7346 queued (pipeline 4012)
-- feature/reply-to-chat (PR#149): job #7355 queued (pipeline 4016)
-- feature/mobile-feel (PR#90): job #7343 queued (pipeline 4013)
-- feature/unified-digest-revision (PR#77): job #7352 queued (pipeline 4014)
+**9 PR branches** (master Vitest fix merged 2026-04-28 ~00:40 UTC — all MERGEABLE, BLOCKED pending CI):
+- fix/review-ignore-held-members (PR#284): job #7384 not_running (pipeline 4020)
+- feature/android-coldstart-safe (PR#282): job #7405 not_running (pipeline 4027)
+- fix/modmail-log-test-9518 (PR#281): job #7393 not_running (pipeline 4021)
+- test/go-coverage-namevalidation-helpers (PR#280): job #7387 not_running (pipeline 4022)
+- test/laravel-coverage-mail-helper (PR#279): job #7390 not_running (pipeline 4023)
+- coverage/vitest-use-trace-20260425 (PR#278): job #7396 not_running (pipeline 4024)
+- feature/reply-to-chat (PR#149): job #7408 not_running (pipeline 4028)
+- feature/mobile-feel (PR#90): job #7399 not_running (pipeline 4025)
+- feature/unified-digest-revision (PR#77): job #7402 not_running (pipeline 4026)
 
 **Instruction from user**: Keep monitoring until master CI passes AND all 9 PR CIs show green ticks. Do not stop. Use CircleCI runner directly for debugging (localhost:17081 status API, or check runner containers). Record every theory and result. Before making any fix, check against previous failed attempts above.
