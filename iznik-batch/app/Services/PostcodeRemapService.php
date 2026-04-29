@@ -66,8 +66,19 @@ class PostcodeRemapService
         $params = [];
 
         if ($polygon) {
-            $geomFilter = "ST_Contains(ST_GeomFromText(?, {$this->srid}), locations_spatial.geometry) AND";
-            $params[] = $polygon;
+            // Include postcodes that either fall within the polygon OR currently point at
+            // the affected location via areaid. The latter catches postcodes whose areaid
+            // was assigned by KNN (buffered intersection / nearest-neighbour) rather than
+            // strict containment — those sit outside the polygon but still need remapping
+            // when the location they reference is excluded or its geometry changes.
+            if ($locationId) {
+                $geomFilter = "(ST_Contains(ST_GeomFromText(?, {$this->srid}), locations_spatial.geometry) OR locations.areaid = ?) AND";
+                $params[] = $polygon;
+                $params[] = $locationId;
+            } else {
+                $geomFilter = "ST_Contains(ST_GeomFromText(?, {$this->srid}), locations_spatial.geometry) AND";
+                $params[] = $polygon;
+            }
         }
 
         // Fetch all full postcodes (contain a space) within the scope.
@@ -122,35 +133,35 @@ class PostcodeRemapService
             WITH ourpoint AS (
                 SELECT ST_MakePoint(?, ?) AS p
             )
-            SELECT
-                locationid,
-                name,
-                ST_Area(location) AS area,
-                dist,
-                CASE
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.00015625), ?)) THEN 1
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.0003125), ?)) THEN 2
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.000625), ?)) THEN 3
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.00125), ?)) THEN 4
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.0025), ?)) THEN 5
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.005), ?)) THEN 6
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.01), ?)) THEN 7
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.02), ?)) THEN 8
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.04), ?)) THEN 9
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.08), ?)) THEN 10
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.16), ?)) THEN 11
-                    WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.32), ?)) THEN 12
-                END AS intersects
-            FROM (
-                SELECT locationid,
-                       name,
-                       location,
-                       location <-> ST_SetSRID((SELECT p FROM ourpoint), ?) AS dist
-                FROM locations
-                WHERE ST_Area(location) BETWEEN 0.00001 AND 0.15
-                ORDER BY location <-> ST_SetSRID((SELECT p FROM ourpoint), ?)
-                LIMIT 10
-            ) q
+            SELECT locationid FROM (
+                SELECT
+                    locationid,
+                    ST_Area(location) AS area,
+                    CASE
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.00015625), ?)) THEN 1
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.0003125), ?)) THEN 2
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.000625), ?)) THEN 3
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.00125), ?)) THEN 4
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.0025), ?)) THEN 5
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.005), ?)) THEN 6
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.01), ?)) THEN 7
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.02), ?)) THEN 8
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.04), ?)) THEN 9
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.08), ?)) THEN 10
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.16), ?)) THEN 11
+                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.32), ?)) THEN 12
+                    END AS intersects
+                FROM (
+                    SELECT locationid,
+                           location,
+                           location <-> ST_SetSRID((SELECT p FROM ourpoint), ?) AS dist
+                    FROM locations
+                    WHERE ST_Area(location) BETWEEN 0.00001 AND 0.15
+                    ORDER BY location <-> ST_SetSRID((SELECT p FROM ourpoint), ?)
+                    LIMIT 10
+                ) q
+            ) candidates
+            WHERE intersects IS NOT NULL
             ORDER BY intersects ASC, area ASC
             LIMIT 1
         ", [
@@ -245,6 +256,25 @@ class PostcodeRemapService
      */
     private function syncLocationsInPolygon(string $polygon): void
     {
+        // First remove any now-excluded locations within the polygon scope from PostgreSQL.
+        // Without this, a location excluded after being synced would remain in PG's KNN
+        // index until the nightly syncAllLocations table-swap rebuilds from scratch,
+        // meaning exclusions wouldn't take effect for postcode remapping until then.
+        $excludedInScope = DB::select("
+            SELECT DISTINCT le.locationid
+            FROM locations_excluded le
+            INNER JOIN locations_spatial ls ON ls.locationid = le.locationid
+            WHERE ST_Intersects(ls.geometry, ST_GeomFromText(?, {$this->srid}))
+        ", [$polygon]);
+
+        if (!empty($excludedInScope)) {
+            $ids = array_map(fn ($r) => (int) $r->locationid, $excludedInScope);
+            DB::connection('pgsql')->delete(
+                'DELETE FROM locations WHERE locationid IN (' . implode(',', $ids) . ')'
+            );
+            Log::info('PostcodeRemapService: removed ' . count($ids) . ' excluded locations from PostgreSQL within polygon scope');
+        }
+
         $locations = DB::select("
             SELECT locations.id, locations.name, locations.type,
                    ST_AsText(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE ls.geometry END) AS geom
@@ -332,6 +362,7 @@ class PostcodeRemapService
         // Atomic swap: rename current to old, temp to current, drop old.
         $pgsql->statement("ALTER TABLE IF EXISTS locations RENAME TO locations_old{$uniq}");
         $pgsql->statement("ALTER TABLE locations_tmp{$uniq} RENAME TO locations");
+        $pgsql->statement("DROP INDEX IF EXISTS idx_locations_location");
         $pgsql->statement("ALTER INDEX idx_loc_tmp{$uniq} RENAME TO idx_locations_location");
         $pgsql->statement("DROP TABLE IF EXISTS locations_old{$uniq}");
 

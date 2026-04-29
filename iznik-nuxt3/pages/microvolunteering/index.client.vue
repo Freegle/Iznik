@@ -165,6 +165,7 @@ import { useMiscStore } from '~/stores/misc'
 import { useAuthStore } from '~/stores/auth'
 import { ref, useRouter } from '#imports'
 import { useMe } from '~/composables/useMe'
+import { useClientLog } from '~/composables/useClientLog'
 
 const MicroVolunteeringFacebook = defineAsyncComponent(() =>
   import('~/components/MicroVolunteeringFacebook')
@@ -195,6 +196,7 @@ definePageMeta({
 const microVolunteeringStore = useMicroVolunteeringStore()
 const miscStore = useMiscStore()
 const authStore = useAuthStore()
+const clientLog = useClientLog()
 const debug = false
 
 if (debug) {
@@ -249,6 +251,11 @@ async function getTask() {
   })
 
   if (task.value) {
+    clientLog.info('Microvolunteering challenge received', {
+      event_type: 'microvolunteering',
+      challenge_type: task.value.type,
+    })
+
     miscStore.set({
       key: 'microvolunteeringlastask',
       value: Date.now(),
@@ -269,6 +276,11 @@ async function getTask() {
     } else if (task.value.type === 'Invite') {
       showTask.value = true
     }
+  } else {
+    clientLog.info('Microvolunteering no challenge available', {
+      event_type: 'microvolunteering',
+      challenge_type: 'none',
+    })
   }
 
   bump.value++

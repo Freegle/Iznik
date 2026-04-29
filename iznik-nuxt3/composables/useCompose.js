@@ -258,7 +258,7 @@ export function postcodeSelect(pc) {
 
       if (!found) {
         console.log('Current group not found in list')
-        if (pc.groupsnear.length) {
+        if (!groupid && pc.groupsnear.length) {
           console.log('Use new nearby group', pc.groupsnear[0].id)
           composeStore.group = pc.groupsnear[0].id
         }

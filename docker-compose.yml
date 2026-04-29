@@ -151,7 +151,7 @@ services:
         condition: service_healthy
         required: false
       spamassassin-app:
-        condition: service_healthy
+        condition: service_started
       rspamd:
         condition: service_healthy
       reverse-proxy:
@@ -203,12 +203,6 @@ services:
     environment:
       - CONTAINER_NAME=spamassassin-app
     restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z 127.0.0.1 783"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 60s
 
   rspamd:
     image: rspamd/rspamd:latest
@@ -440,7 +434,7 @@ services:
       context: ./docker/embedding-sidecar
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3200/health || exit 1"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3200/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -712,6 +706,8 @@ services:
       - AMP_SECRET=${AMP_SECRET:-test-amp-secret-for-docker}
       - TNKEY=${TNKEY:-}
       - MAPBOX_KEY=${MAPBOX_KEY:-}
+      - DONATION_TARGET=${DONATION_TARGET:-}
+      - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
     volumes:
       - apiv2_logs:/var/log/freegle
@@ -784,6 +780,8 @@ services:
       - AMP_SECRET=${AMP_SECRET:-test-amp-secret-for-docker}
       - TNKEY=${TNKEY:-}
       - MAPBOX_KEY=${MAPBOX_KEY:-}
+      - DONATION_TARGET=${DONATION_TARGET:-}
+      - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
     volumes:
       - apiv2_logs:/var/log/freegle
     healthcheck:
@@ -1388,8 +1386,8 @@ services:
       test: ["CMD-SHELL", "test -f /tmp/laravel-ready || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 180s
+      retries: 15
+      start_period: 360s
 
   # Production batch jobs processor - connects to production database and mail
   # Start with: docker compose --profile production up -d
@@ -1470,7 +1468,7 @@ services:
       # Freegle Mail Configuration
       - FREEGLE_NOREPLY_ADDR=noreply@ilovefreegle.org
       - FREEGLE_USER_DOMAIN=users.ilovefreegle.org
-      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest
       # Freegle Images
       - FREEGLE_IMAGES_DOMAIN=https://images.ilovefreegle.org
       - FREEGLE_DELIVERY_URL=https://delivery.ilovefreegle.org

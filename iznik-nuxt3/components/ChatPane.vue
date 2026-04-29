@@ -5,7 +5,7 @@
       v-else-if="!id"
       class="empty-state-pane chatHolder"
       :class="{
-        stickyAdRendered,
+        allowAd,
       }"
     >
       <div class="empty-state-content">
@@ -20,7 +20,7 @@
       v-else-if="me"
       class="chatHolder"
       :class="{
-        stickyAdRendered,
+        allowAd,
         navBarHidden,
       }"
     >
@@ -196,7 +196,6 @@ import SupporterInfo from './SupporterInfo'
 import { navBarHidden } from '~/composables/useNavbar'
 import { useUserStore } from '~/stores/user'
 import { useChatStore } from '~/stores/chat'
-import { useMiscStore } from '~/stores/misc'
 import { setupChat } from '~/composables/useChat'
 import { timeago } from '~/composables/useTimeFormat'
 
@@ -204,6 +203,7 @@ import { timeago } from '~/composables/useTimeFormat'
 import ChatMessage from '~/components/ChatMessage.vue'
 import { useRouter } from '#imports'
 import { useAuthStore } from '~/stores/auth'
+import { useMe } from '~/composables/useMe'
 
 const ProfileModal = defineAsyncComponent(() =>
   import('~/components/ProfileModal')
@@ -220,8 +220,8 @@ const ChatReportModal = defineAsyncComponent(() =>
 
 const chatStore = useChatStore()
 const userStore = useUserStore()
-const miscStore = useMiscStore()
 const authStore = useAuthStore()
+const { recentDonor } = useMe()
 
 const props = defineProps({
   id: { type: Number, required: true },
@@ -233,7 +233,8 @@ function resize() {
   windowHeight.value = window.innerHeight
 }
 
-const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
+// Pre-reserve sticky-ad height for non-donors so chatHolder doesn't shrink when the ad renders.
+const allowAd = computed(() => !recentDonor.value)
 
 const ChatNotVisible = defineAsyncComponent(() =>
   import('~/components/ChatNotVisible.vue')
@@ -458,7 +459,6 @@ function typing() {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  transition: height 1s;
 
   height: calc(100vh - 60px);
 
@@ -470,7 +470,7 @@ function typing() {
     height: 100vh;
   }
 
-  &.stickyAdRendered {
+  &.allowAd {
     height: calc(100vh - 60px - $sticky-banner-height-mobile);
 
     @media (min-height: $mobile-tall) {
@@ -513,7 +513,7 @@ function typing() {
       height: 100dvh;
     }
 
-    &.stickyAdRendered {
+    &.allowAd {
       height: calc(100dvh - 60px - $sticky-banner-height-mobile);
 
       @media (min-height: $mobile-tall) {

@@ -24,7 +24,7 @@ func TestGetDonations(t *testing.T) {
 	assert.Contains(t, result, "target")
 	assert.Contains(t, result, "raised")
 
-	// Target should be the default (2000 unless DONATION_TARGET env var is set)
+	// Target should be the default (5000 unless DONATION_TARGET env var is set)
 	target, ok := result["target"].(float64)
 	assert.True(t, ok, "target should be a number")
 	assert.Greater(t, target, float64(0), "target should be positive")
@@ -112,6 +112,11 @@ func TestAddDonationExternal(t *testing.T) {
 	var taskCount int64
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_donate_external' AND processed_at IS NULL").Scan(&taskCount)
 	assert.Greater(t, taskCount, int64(0))
+
+	// Source field must be 'external' so the email is worded correctly.
+	var source string
+	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(data, '$.source')) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL ORDER BY id DESC LIMIT 1", targetUserID).Scan(&source)
+	assert.Equal(t, "external", source, "Manually-added donation must tag thank-you task with source=external")
 }
 
 func TestAddDonationZeroAmount(t *testing.T) {

@@ -6,7 +6,7 @@
 - **NEVER skip or make coverage optional in tests.** Fix the root cause if coverage upload fails.
 - **NEVER dismiss test failures as "pre-existing" or "unrelated".** Investigate and fix all failures.
 - **NEVER push unless explicitly told to** by the user.
-- **MANDATORY: After every `git push` to master that triggers CI, cancel the auto-triggered pipeline and rerun with SSH enabled.** See `.circleci/README.md` "SSH Debugging" section.
+  - **Exception**: When CI is failing on master, you may push fixes directly to master (no PR required) — same as you would fix CI failures on an open PR.
 
 ## Container Quick Reference
 
@@ -56,6 +56,7 @@ Uses `docker-compose.override.yesterday.yml` (copy to `docker-compose.override.y
 - **Docker build caching**: Controlled by `ENABLE_DOCKER_CACHE` env var in CircleCI. Bump version suffixes in orb YAML to invalidate cache. Set to `false` for immediate rollback.
 - **Auto-merge**: When all tests pass on master, auto-merges to production branch in iznik-nuxt3.
 - **Self-hosted runner**: Runs in a separate WSL2 distro (`circleci-runner`), NOT in the main dev WSL. Never create worktrees for runner work.
+- **Docker version on runner is pinned to 27.5.1** (`apt-mark hold docker-ce docker-ce-cli containerd.io`). Docker 28+ breaks container-to-container networking via bridge networks (per-container PREROUTING DROP rules), causing Playwright renderer freezes and test timeouts. Do NOT upgrade. See commit `5ec47b823`.
 
 ## Batch Production Container
 
@@ -82,140 +83,96 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Auto-prune rule**: Keep only entries from the last 7 days.
 
-**Active plan**: `plans/active/v1-to-v2-api-migration.md` - READ THIS ON EVERY RESUME/COMPACTION.
+**Active plan**: none currently active.
 
-### 2026-04-09 - V1 parity fixes, status page, banned member improvements
-- **Go fixes** (all pushed): Chat unseen 31-day filter (`e8ffdbf`), expired promised posts (`19a5782`), non-spatial message marking (`9f4b03a`), chat completed snippets neutral language (`e619c2b`), `IsModOfUser()` checks `users_banned` table (`e619c2b`).
-- **Nuxt fixes** (all pushed): Old posts toggle infinite scroll reset (`99e8465f`), ChatMessageCompleted automated message removal (`975cf83`), MyMessage auto-open outcome modal (`975cf83`).
-- **Status page** (pushed): Go/Vitest test count accuracy (`af013f60`).
-- **Banned member view** (Nuxt, uncommitted): Simplified ModMember for banned users — hides settings, toggles, ModMemberButtons, ModRole. 9 new tests in ModMember.spec.js.
-- **Playwright CI**: ERR_ABORTED fix in `loginViaModTools` — added `waitForLoadState('load')`. Needs local validation before push.
+### 2026-04-28 - Freeze-detection heartbeat + fresh-process retry (commit 82c491e02)
 
-### 2026-04-10 - Session log cleanup
-- Pruned session log per 7-day rule. Answered GDPR question re banned users (data not exempted from removal; `users_banned` records are orphaned but not cleaned up by `User::forget()`).
+**Problem**: Chrome flags push the V8 async-context freeze threshold from ~73 to ~130+ tests but can't eliminate accumulation entirely. With `retries: 1`, frozen tests were silently retried in the same environment — useless and masks real bugs.
 
-### 2026-04-11 - Coveralls coverage upload for build-and-test
-- **Root cause**: `build-and-test` job (master builds) never uploaded coverage to Coveralls.
-- **Fix round 1** (`ff100ebd`): Added unified coverage upload step. Orb `freegle/tests@1.1.173`.
-- **CI job 3348 results**: Vitest coverage uploaded (empty source_files), Go/Laravel/Playwright/PHP all failed.
-  - Go: Default 10m `go test` timeout exceeded with `-race -coverpkg ./...`. Fix: added `-timeout 30m`.
-  - Go coverage: gcov2lcov conversion failed — Go not installed on CI host. Fix: run gcov2lcov inside container, sed paths `/app/` → `iznik-server-go/`.
-  - Vitest: empty source_files — paths relative to iznik-nuxt3/ but coveralls ran from project root. Fix: sed prefix `iznik-nuxt3/` on lcov paths.
-  - Laravel: `cronLog()` redeclaration error — pre-existing issue (not coverage-related).
-  - PHP/Playwright: killed by cascading timeout.
-- **Local verification**: Go tests with coverage pass (1325✓, 0✗). gcov2lcov conversion verified locally with correct path mapping.
-- **Fix round 2** (`c2f87a5e`): Go timeout, gcov2lcov in container, Vitest path prefix. Orb `freegle/tests@1.1.174`.
-- **CI job 3350 results**: Go ✅, Laravel ✅, PHP ✅, Vitest coverage ✅ (source_files populated). Playwright ❌ (1/129 failed — navigation race in loginViaModTools). Playwright coverage empty source_files. Laravel coverage upload failed (php-coveralls needs git in container).
-- **Fix round 3** (`5cc3d931`): Split coverage upload into per-suite CI steps (2048-char limit). Laravel coverage: Python clover-to-lcov on host. Playwright coverage: sed path prefix. Playwright test: networkidle in loginViaModTools. Orb `freegle/tests@1.1.175`.
-- **CI job 3355 RESULTS**: ALL tests passed. ALL 4 coverage suites uploaded to Coveralls (Go ✅, Laravel ✅, Vitest ✅, Playwright ✅). Webhook sent. Auto-merged to production.
-- **Root cause Playwright login race**: `login.vue`'s `watch(me, redirectIfLoggedIn)` fires multiple times causing duplicate `router.push()`. Fixed with `hasRedirected` ref guard (`b35ce43d` / `8a15a2f4`). Reverted networkidle back to `waitForLoadState('load')`.
-- **CI job 3359 RESULTS**: ALL tests passed (including Playwright — login.vue fix confirmed). ALL 4 coverage suites uploaded to Coveralls. Auto-merged to production. Coverage infrastructure complete.
+**Solution**: `retries: 0` + 5s/3s heartbeat in `fixtures.js` + fresh-process retry in `playwright.post.ts`:
+- Heartbeat: `setInterval` doing `page.evaluate(() => 1)` with 3s timeout. On freeze: closes page (fast abort) + appends spec file to `/tmp/playwright-freeze-specs.txt`
+- `playwright.post.ts` reads that file after run completion and re-spawns only frozen specs via a second `npx playwright test <specs>` call in a fully fresh Playwright/V8 process
+- Non-freeze failures are NOT retried — test quality improvement
+- `playwright.config.js` is now synced from host-mounted volume on every pre-run container restart (was baked in at build time only)
 
-### 2026-04-12 - ModTools auth simplification (flaky login fix)
-- **Branch**: `feature/modtools-auth-simplify` in iznik-nuxt3
-- **PR**: Freegle/iznik-nuxt3#236
-- **Root cause**: `authuser.global.ts` middleware creates multi-hop redirect chain that races with Playwright navigation
-- **Fix**: Removed middleware entirely — layout already handles auth inline via `fetchUser` + `LoginModal` (same as Freegle)
-- **Changes**: Deleted `authuser.global.ts`, simplified `login.vue` to u/k-only, added backdrop cleanup in `loginViaModTools()`, updated 5 test files
-- **Edits-flow fix**: V2 API for approve + `Number()` cast for Go integer types. Added Step 1b: approve message + set user MODERATED.
-- **Spammers fix**: Self-healing "release first" pattern for Hold/Confirm/Reject tests.
-- **Local**: All 31 ModTools Playwright tests pass. Lint clean.
-- **CI runs 1-3**: 10-12 modtools failures — all "Execution context destroyed" during `loginViaModTools`.
-- **Root cause found**: `app.vue`'s `loginCount` watcher calls `reloadNuxtApp({ force: true })` after login. The `page.evaluate()` (backdrop cleanup) raced against this reload — locally it wins, in CI the reload destroys the context first.
-- **Fix** (commit `9c63e2ea`): Removed `page.evaluate` and `waitForAuthPersistence` between modal close and sidebar nav wait. Playwright locators auto-retry across navigations; `page.evaluate` does not.
-- **Local**: All 130 Playwright tests pass. CI run 4 in progress.
+**Status**: CONFIRMED 130/130 clean, freeze file empty after run. Three follow-up fixes applied:
+- `c590b4913` — heartbeat only triggers on our 3s sentinel, not navigation errors ("context destroyed")
+- `cb56ceffe` — set `heartbeatFreezeDetected = true` in finally BEFORE clearInterval to disarm in-flight callbacks
+- Status container rebuilt to pick up compiled `playwright.post.ts` changes
 
-### 2026-04-13 - Reply-to-Chat UX redesign
-- **Worktree**: `FreegleDocker-reply-to-chat`, branch `feature/reply-to-chat`
-- **Design**: On mobile/tablet (below lg breakpoint), Reply button navigates to `/chats/reply?replyto=MSG_ID` showing a chat-style reply pane. Desktop keeps inline reply section so users see post details alongside.
-- **New components**: `ChatReplyPane.vue` (chat-styled reply form), `pages/chats/reply.vue` (page)
-- **Modified**: `MessageExpanded.vue` (expandReply checks breakpoint), `MessageExpanded.spec.js` (updated test for breakpoint-aware behavior)
-- **Playwright tests**: `test-reply-to-chat.spec.js` — mobile reply, tablet reply, desktop inline preserved, back button, WANTED message (no collection time)
-- **Committed**: `00934688f`. Not pushed yet. Needs user review and push.
-- **Pre-existing failures**: PostMessage/PostMessageTablet placeholder tests (4 tests) — not related to this change.
+### 2026-04-28 - feature/ai-image-regen: moderator force-reject + challenge filter (commit c656e0740)
 
-### 2026-04-13 - Monorepo migration complete (Phases 1-8)
-- All phases complete except Phase 8.8 (archive old repos — human-only).
-- Merged monorepo branch to master. Created production branch. Repo renamed to `Freegle/Iznik`.
-- Netlify: Both sites repointed. ModTools fixed with separate base dir (`iznik-nuxt3/modtools/`).
-- Mobile CI: Merged iznik-nuxt3 CircleCI workflows into monorepo. Orb `freegle/tests@1.1.178`.
-- **Secrets fix**: Original 19-secret copy truncated 20 values by 1 char. Re-extracted via SSH on old project job, all 19 now match. Orb coverage token unified to `COVERALLS_REPO_TOKEN`.
-- **Coveralls**: New token (`...0fRa`) set for `Freegle/Iznik`. Old `COVERALLS_REPO_TOKEN_IZNIK_SERVER` still exists (unused by unified section).
-- Google login: Added `onGoogleLibraryLoad` retry for Firefox/Brave.
-- Phase 7: 18 issues transferred, 19 PRs migrated (branches recreated on monorepo).
-- README rewritten for monorepo. Sub-repo READMEs updated to redirect.
-- Go API: TN partner auth, tnpostid, expiresat, mod-add-member committed (`9df835715`). Partner auth on PATCH /message committed (`946c7ad02`). 1360 Go tests pass.
-- Commit `a6702445f` pushed: repo rename refs, 18 restored test files, orb 1.1.178 coverage token fix.
-- CI job #3492 (build-test): ALL tests passed, ALL 4 coverage suites uploaded. Auto-merged to production.
-- CI job #3501 (build-test SSH): ALL tests passed, ALL 4 coverage suites uploaded, auto-merged to production. ✅
-- Deploy-apps (jobs 3502/3503): ALL 4 jobs passed (increment-version, build-ios, build-android, check-hotfix-promote). ✅
-- **Monorepo CI fully verified**: build-test ✅, deploy-apps ✅, Coveralls ✅, auto-merge ✅.
-- **Remaining**: Archive old repos (human-only).
+**Status**: Feature complete, all Go tests pass (2155✓). Vitest tests updated but can't run (no frontend container in worktree — will run on CI).
 
-### 2026-04-14 - Self-hosted CircleCI runner (in progress)
-- **Branch**: `feature/circleci-self-hosted-runner` in worktree `FreegleDocker-circleci-runner`
-- **Runner distro**: `circleci-runner` (separate WSL2 distro)
-- **Runner config**: `/opt/circleci-runner/circleci-runner-config.yaml` — `cleanup_working_directory: false`, `max_run_time: 2h`
-- **Boot script**: `/opt/circleci-runner/start.sh` — uses `exec sudo` to keep boot process as PID 1
-- **Keepalive**: Two persistent `wsl.exe -d circleci-runner` sessions from main distro prevent WSL idle termination
-- **Orb versions published**: 1.1.182 (COMPOSE_PROJECT_NAME fix), 1.1.183 (Docker cleanup), 1.1.184 (path fix)
-- **Key fixes applied**:
-  1. `COMPOSE_PROJECT_NAME=freegle` (not `freegle-ci`) — matches 88 hardcoded container refs in orb
-  2. `cleanup_working_directory: false` + Docker cleanup in orb pre-checkout step (gated by `SELF_HOSTED_RUNNER` env var)
-  3. `./scripts/setup-test-database.sh` as first path check (CWD-relative works on both cloud and self-hosted)
-  4. Same for `./iznik-nuxt3` and coverage paths
-  5. Installed `sysstat` for resource monitor step
-- **Orb versions**: 1.1.182–1.1.187 (compose name, docker cleanup, path fix, cache, skip prune, pipefail)
-- **Key fixes applied** (8 total):
-  1. `COMPOSE_PROJECT_NAME=freegle` — matches 88 hardcoded container refs in orb
-  2. `cleanup_working_directory: false` + Docker cleanup gated by `SELF_HOSTED_RUNNER`
-  3. CWD-relative paths for setup-test-database.sh and coverage
-  4. Docker layer cache (skip `--no-cache` on self-hosted)
-  5. Skip `docker system prune` on self-hosted (preserves layer cache)
-  6. `set +o pipefail` in Evaluate step (SIGPIPE from grep|head)
-  7. `STATUS_API_URL` env var in Playwright container (`2ac4c8fcc`) — PORT_STATUS=17081 on runner vs 8081 on main
-  8. Drop/recreate `iznik` DB on self-hosted runner (`183ae0661`) — stale test data from persistent volumes
-- **Speed**: Build 109-149s (cached) vs 497s (cloud). Vitest 204-216s. Parallel 377-398s. Total ~12 min vs ~42 min cloud.
-- **Job 3707**: 121/130 Playwright passed (5 failed: wrong STATUS_API_URL port)
-- **Job 3714**: 128/130 passed (2 failed: stale DB state — edits-flow timeout, repost-group-change stale group ID)
-- **Job 3723**: Same 2 Playwright failures (repost-group-change 55 vs 69615). Fresh DB still wrong because both dev and CI shared same Percona container (`freegle-percona`).
-- **Root cause**: `COMPOSE_PROJECT_NAME=freegle` on both dev and CI → same Docker containers. CI reads main instance's DB.
-- **Fix** (orb 1.1.188, `c79c5ebf1`): Changed CI to `COMPOSE_PROJECT_NAME=freegle-ci`. Replaced all 106 hardcoded `freegle-<container>` refs with `${COMPOSE_PROJECT_NAME:-freegle}-<container>`.
-- **Job 3727**: "Build containers" failed — port conflict. Old `freegle-*` CI containers still running.
-- **Fix** (orb 1.1.189, `d3e1ceb94`): Added old container cleanup by Docker labels. Made `setup-test-database.sh` use `$COMPOSE_PROJECT_NAME` prefix.
-- **Job 3731** (pipeline 3133): Build 274s, Vitest 202s ✅, Go ✅, Laravel ✅. Playwright 126/130 passed, 4 failed. PHP killed by fail-fast.
-  - **Root cause**: Playwright container uses host networking. `TEST_BASE_URL` was `http://freegle-prod-local.localhost` (port 80 = dev Traefik). CI Traefik is on port 9080. Browser loaded dev Nuxt app → dev API → dev DB (group 69615).
-  - **Fix** (`61a5230a4`): `TEST_BASE_URL=http://freegle-prod-local.localhost:${PORT_TRAEFIK_HTTP:-80}` and same for `TEST_MODTOOLS_BASE_URL`. Fixed hardcoded modtools URL in `test-modtools-edit-message.spec.js`.
-- **Job 3738** (pipeline 3135): ALL test suites passed (Vitest ✅, Go ✅, Laravel ✅, parallel 359s ✅), but Evaluate step failed.
-  - **Root cause**: 97/130 Playwright tests failed from `CRITICAL CONSOLE ERROR: 404 at /200w`. CI Nuxt SSR rendered `<img srcset=" 200w, 400w">` (empty image URLs).
-  - **Deep root cause**: `docker-compose.yml` env vars used hardcoded `freegle-tusd` hostname for inter-container DNS. With `COMPOSE_PROJECT_NAME=freegle-ci`, the CI tusd container is `freegle-ci-tusd` on a separate Docker network — `freegle-tusd` doesn't resolve. Tusd uploads fail silently during `create-test-env.php`, leaving all 64 attachments with `externaluid='freegletusd-'` (empty UUID). NuxtPicture generates empty srcset URLs → browser tries to load `/200w` → 404 → critical console error.
-  - **Fix** (`f67192c09`): Replaced all hardcoded `freegle-<service>` hostnames in docker-compose.yml env vars with Docker Compose service names (`tusd`, `apiv1`, `percona`, `mcp-pseudonymizer`). Service names resolve within any project network. Container names in `docker ps` unchanged.
-- **Job 3742** (pipeline 3136): 128/130 Playwright passed, 2 failed. Service name fix resolved 97→2 failures.
-  - **test-post-flow:60**: `waitForResponse` hardcoded `http://apiv2.localhost/api/chat` (port 80). CI browser sends to `:9080` → predicate never matches → timeout.
-  - **test-modtools-edits-flow:33**: `page.request.post('http://apiv2.localhost/api/session')` hits dev API on port 80 → creates data in dev DB → CI browser on port 9080 can't find it.
-  - **Fix** (`8440818df`): Added `TEST_API_V2_BASE_URL` env var to Playwright container, `apiV2BaseUrl` to config.js, replaced all 7 hardcoded `http://apiv2.localhost/api/...` refs in 4 test files with configurable URL.
-- **Pipeline 3138**: Errored — orb 1.1.190 (published from master) lacks `use-executor` parameter that feature branch's continue-config requires. Fixed by publishing orb 1.1.191 from this branch.
-- **Pipeline 3139** (job 3750): **ALL TESTS PASSED.** ALL 4 coverage suites uploaded. Auto-merged to production. 130/130 Playwright tests green.
-  - Build 243s, Vitest 210s, Parallel 406s, Total ~16.5 min on self-hosted runner.
-- **Self-hosted runner fully working**: 130/130 Playwright, Go, Laravel, Vitest, PHP all pass. Coveralls uploads. Auto-merge.
-- **Coveralls**: Uploads work from feature branch but don't show on main Coveralls page (shows master only)
+**New feature**: When a moderator removes an AI image in ModTools, a popup asks:
+- "Not relevant to this post" → normal deletion vote (RecordAIAttachmentDeletion)
+- "Bad AI for any post of this item" → ForceRejectAIImage (bypasses quorum, immediate rejection)
 
-### 2026-04-14 - Bug fixes batch (CI promote, spamignore, TN member, feedback badge, /changes, swagger)
-- **CI manual-promote fix** (`f6763c266`): "Conflicting pipeline parameters" — skip runner check for promote/testflight, only pass `use_self_hosted` in continuation. Cherry-picked to production (`8b1d34853`). All 3 promote jobs succeeded.
-- **Spamignore** (`f9e380950`): ModMemberButton "Ignore" was a no-op — wired up to `memberStore.spamignore()`. 67/67 Vitest pass.
-- **TN member number** (`60175c409`): ModMessageUserInfo fallback shows `user.id` when membership missing. 39/39 Vitest pass.
-- **Feedback badge** (`41bd6a036`): Store NULL for empty outcome comments (`*string` in Go), exclude empty strings in happiness filter (Go + PHP). 1365/1365 Go tests pass.
-- **/changes endpoint** (`ad109c584`): User `lastupdated` was empty string (NULL→string scan), ratings missing `id`/`tn_rating_id`. Fixed with `*string` + `gorm:"column:lastupdated"` tag, added fields to Rating struct/query. Swagger HTTPS-only. 1367/1367 Go tests pass.
-- **Bulletin frequency "Never"** (`81cc432be`): PATCH /memberships returned 400 for string emailfrequency. HTML `<select>` emits `"0"` not `0`. Changed `*int` to `*utils.FlexInt` for emailfrequency, eventsallowed, volunteeringallowed (membership), relevantallowed, newslettersallowed (session + user). 1368/1368 Go tests pass. Posted on Discourse #9582.
-- **chat_rooms.refmsgid** (`554fe8ae8`): Column doesn't exist — changed to chat_messages.refmsgid. Test added.
-- **CI OOM** (`e65fd6ac7`): NODE_OPTIONS max-old-space-size=3584 for Nuxt generate. Orb 1.1.195.
-- **Discourse posts**: Notified Jo (member number fix), Neville (feedback badge fix), Dee (bulletin fix).
+**Bug fixed**: `getAIImageReviewChallenge` was serving rejected images as challenges — added `AND ai.status = 'active'` filter.
 
-### 2026-04-14 - Isochrone fix + Postcode remapping V2 migration
-- **Isochrone fix** (pushed `c8bd26502`): Browse page only showed own posts because Go API stored POINT instead of Mapbox POLYGON. Added `mapbox.go`, `ensureIsochroneExists()`, self-healing `healPointIsochrones()`. CI pipeline 3126 running.
-- **Postcode remapping** (in progress): V1 `Location::remapPostcodes()` uses PostgreSQL KNN — missing from V2.
-  - Go: Added `TaskRemapPostcodes` to queue, fired from `CreateLocation`/`UpdateLocation` with location_id + polygon
-  - Laravel: `PostcodeRemapService` — syncs MySQL polygon locations to PostgreSQL, runs PostGIS KNN to find nearest area for each postcode
-  - Docker: Added `pdo_pgsql` to batch Dockerfile, `PGSQL_*` env vars to batch dev + batch-prod, postgres dependency
-  - Tests: Go test checks background_task queued; Laravel test checks PostgreSQL KNN + task dispatch
-  - Go tests running, Laravel tests running
+**Files changed**: `microvolunteering.go`, `message.go`, `ModPhoto.vue`, `ModPhotoModal.vue`, `ModPhotoModal.spec.js`, plus 2 new Go test files.
+
+**PR**: https://github.com/Freegle/Iznik/pull/286 — updated, pushed (a92dbc0a5), CI running
+
+**Previous work** (all Go tests green from strict-mode fixes): Committed as `683911368`.
+
+### 2026-04-28 - AsyncCallStackDepth fix: merged to master, monitoring PR queue
+
+**Fix confirmed**: `--disable-features=AsyncCallStackDepth` (playwright.config.js). Multiple 38/38 clean runs observed.
+
+**Reverted to native Playwright multi-worker mode** (commit `26b9f1e81`, orb 1.1.224):
+- `run-specs.sh` per-spec isolation was the workaround — no longer needed
+- Orb: PW_WORKERS 4 (cloud), 11 (self-hosted runner)
+- `playwright.post.ts`: always uses `npx playwright test` directly
+- PRs 280, 149, 77 all have master merged in; CI triggered on all three
+
+**If CI passes**: all 3 PRs will be mergeable. Also fixes monocart coverage collection (was broken in parallel mode).
+
+### 2026-04-28 - V8 PromiseHookAfter freeze: root cause confirmed
+
+**Root cause confirmed** (CPU profile captured, 8.5MB, 106,933 samples):
+- 66.8% `(idle)` + 14.4% `(program)` — renderer spinning in V8 C++, invisible to JS profiler
+- V8 maintains a linked list of async contexts (CDP async call stack tracking). Each Promise resolution traverses the whole list via `Runtime_PromiseHookAfter`. After 73+ tests with thousands of API calls (each `useFetchRetry.js:103` `new Promise()` creates 6+ entries), the list is so large that a burst of concurrent store fetches on navigation saturates the renderer thread
+- It is NOT a Vue reactive loop — Vue component update counts (1600-4000 for InfiniteLoading) are normal data loading, not a storm
+
+**Fix**: `--disable-features=AsyncCallStackDepth` (already in `playwright.config.js`). Disables the CDP async context tracking that causes the list to grow.
+
+**Side fix** (commit `39cb20fea`): InfiniteLoading `fallback()` loop now stops at `'complete'` state instead of running indefinitely, reducing unnecessary Promise creation. Timer restarts when `identifier` watch resets the component.
+
+**Instrumentation used** (all removed from working tree after investigation):
+- CDP CPU profiler + heartbeat freeze detector (saved `/tmp/freeze-profile-*.json`)
+- Vue DevTools `component:updated` hook (requires `__VUE_PROD_DEVTOOLS__: true` in vite.define)
+- VUE-PERF console forwarder
+
+**Without the fix** (local run without AsyncCallStackDepth): 128/130 pass, 2 needed retry due to freeze. 4 freeze events captured at tests 73, ~100, ~115, ~125.
+
+### 2026-04-28 - Diagnose renderer freeze on test 3.2
+
+**Goal**: Find root cause of Chromium renderer spinning at 106% CPU on test 3.2 after ~128 prior tests.
+
+**Source map analysis** (decoded `D9YAJGtQ.js` — modtools bundle at `/app/modtools/.nuxt/dist/client/_nuxt/`):
+- `Ww` (col 2438, line 14) = `queueFlush` in `@vue/runtime-core` — schedules `Promise.resolve().then(flushJobs)`
+- `I1` (col 2313, line 14) = `queueJob` in `@vue/runtime-core` — adds a job and calls `queueFlush`
+- These are **Vue's own scheduler internals**, not application-specific code
+- The storm is normal Vue reactivity machinery, not an app bug per se
+
+**Updated theory**: V8's `PromiseHookAfter` callback fires on every promise resolution. A long Playwright run accumulates thousands of promises from Vue's scheduler flushing across 128+ tests in a single Playwright process. Eventually the cumulative V8 overhead tips the renderer into 100% CPU spin. This is a **test-runner process lifetime problem**, not a specific Vue reactive loop in application code.
+
+**Approach**: Run spec files in parallel batches via `run-specs.sh` — N concurrent Playwright processes (11 local, 4 CI), each handling one spec file. Each process gets a fresh Chromium renderer with no accumulated V8 promise hook overhead. The status API full-suite trigger now uses this script automatically.
+
+**Status**: `run-specs.sh` is built into the orb/CI pipeline. The status container at `/app/run-specs.sh` must be recopy-ed after a status container rebuild: `docker cp iznik-nuxt3/run-specs.sh freegle-status:/app/run-specs.sh`.
+
+### 2026-04-27 - Get master CI green + all 9 PR CIs green (SUPERSEDED)
+
+**Outcome**: Many genuine fixes landed (see commits). CI still not fully green due to renderer freeze on test 3.2. Root cause now being investigated — see 2026-04-28 entry above.
+
+**Key commits from this session**:
+- `5ec47b823` — Docker 27 networking fix (confirmed root cause of original failures)
+- `d37b44223` — Chat timestamp SQL bug (empty string TIMESTAMP → MySQL error 1525)
+- `9f74d04e9` + `f882bf2c6` — ComposeGroup savedGroup overwrite bug
+- `376c418c7` — Vitest mock fix for ComposeGroup
+- Various test infrastructure fixes (isVisible timeouts, MutationObserver guard, Go race, etc.)
+
+**Papering-over commits that were later reverted** (commit `21ca3ac1a`):
+- `9aadfa7f5` nonfatal timeout, `1f0ad9b8b` budget increase, `55dd1f33b` watchdog extension
+

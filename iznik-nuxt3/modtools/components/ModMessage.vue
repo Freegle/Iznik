@@ -4,7 +4,7 @@
     <b-card bg-variant="white" no-body>
       <b-card-header class="p-1 p-md-2">
         <div class="d-flex justify-content-between">
-          <div class="flex-grow-1">
+          <div class="flex-grow-1" style="min-width: 0">
             <NoticeMessage
               v-if="editing && !message.lat && !message.lng"
               variant="danger"
@@ -33,7 +33,7 @@
               />
               <div
                 v-if="editmessage.item && editmessage.location"
-                class="d-flex justify-content-start"
+                class="d-flex flex-wrap flex-grow-1"
               >
                 <b-form-select
                   v-model="editmessage.type"
@@ -44,7 +44,7 @@
                 <b-form-input
                   v-model="editmessage.item.name"
                   size="lg"
-                  class="me-1"
+                  class="me-1 flex-grow-1 item-name-input"
                 />
               </div>
               <div v-if="editmessage.item && editmessage.location">
@@ -139,6 +139,16 @@
               Possibly should be on {{ homegroup }}
               <span v-if="!homegroupontn"> but group not on TN </span>
             </div>
+            <div
+              v-if="otherGroups.length > 0"
+              class="small text-muted"
+            >
+              Also on:
+              <span
+                v-for="(g, idx) in otherGroups"
+                :key="g.groupid"
+              >{{ groupStore.get(g.groupid)?.namedisplay || 'Group ' + g.groupid }}<span v-if="idx < otherGroups.length - 1">, </span></span>
+            </div>
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
               :key="'duplicate-' + duplicate.id + '-' + index"
@@ -157,10 +167,11 @@
               />
             </div>
           </div>
-          <div class="d-flex">
+          <div class="d-flex flex-shrink-0">
             <div
               v-if="summary && message && fromUser"
-              class="text-info fw-bold me-2"
+              class="text-info fw-bold me-2 text-truncate d-inline-block"
+              style="max-width: 8rem"
             >
               {{ fromUser.displayname }}
               <span v-if="fromUser.deleted" class="badge bg-danger ms-1">
@@ -191,14 +202,14 @@
                   >
                 </b-button>
                 <SpinButton
-                  v-if="message.groups[0].collection === 'Approved'"
+                  v-if="contextGroup?.collection === 'Approved'"
                   class="mt-2"
                   variant="white"
                   icon-name="reply"
-                  label="Back to Pending"
                   confirm
                   @handle="backToPending"
-                />
+                  ><span class="d-none d-sm-inline">Back to Pending</span></SpinButton
+                >
               </div>
               <div class="ms-2">
                 <b-button
@@ -251,6 +262,7 @@
                   </p>
                   <ModMessageButton
                     :messageid="message.id"
+                    :groupid="groupid"
                     variant="warning"
                     icon="play"
                     release
@@ -426,7 +438,7 @@
                 :message="message"
                 :userid="fromUserId"
                 modinfo
-                :groupid="message.groups[0].groupid"
+                :groupid="groupid"
               />
               <div v-else-if="fromUserId && !fromUser">
                 <Spinner :size="20" />
@@ -524,7 +536,7 @@
             <ModMemberActions
               v-if="showActions && message.groups && message.groups.length"
               :userid="fromUserId"
-              :groupid="message.groups[0].groupid"
+              :groupid="groupid"
               @commentadded="updateComments"
             />
           </b-col>
@@ -534,14 +546,14 @@
           class="mt-1"
         >
           <b-alert
-            v-if="message.groups[0].collection === 'Pending'"
+            v-if="contextGroup?.collection === 'Pending'"
             variant="info"
             show
           >
             <v-icon icon="info-circle" /> Post now in <em>Pending</em>.
           </b-alert>
           <b-alert
-            v-if="message.groups[0].collection === 'Approved'"
+            v-if="contextGroup?.collection === 'Approved'"
             variant="info"
             show
           >
@@ -585,6 +597,7 @@
             !editing
           "
           :messageid="message.id"
+          :groupid="groupid"
           :modconfigid="configid"
           :editreview="editreview"
           :cantpost="membership && membership.ourpostingstatus === 'PROHIBITED'"
@@ -628,6 +641,7 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import Highlighter from 'vue-highlight-words'
 
 import { useAuthStore } from '~/stores/auth'
+import { useGroupStore } from '~/stores/group'
 import { useLocationStore } from '~/stores/location'
 import { useMessageStore } from '~/stores/message'
 import { useUserStore } from '~/stores/user'
@@ -684,11 +698,17 @@ const props = defineProps({
     required: false,
     default: null,
   },
+  contextGroupid: {
+    type: Number,
+    required: false,
+    default: null,
+  },
 })
 
 const emit = defineEmits(['destroy'])
 
 const authStore = useAuthStore()
+const groupStore = useGroupStore()
 const locationStore = useLocationStore()
 const memberStore = useMemberStore()
 const messageStore = useMessageStore()
@@ -759,23 +779,32 @@ const historyGroups = reactive({})
 const editmessage = ref(false)
 
 const groupid = computed(() => {
-  // moved from mixins/keywords
-  let ret = 0
+  // Use contextual groupid prop if provided (multi-group support),
+  // otherwise fall back to first group.
+  if (props.contextGroupid) return props.contextGroupid
 
   if (message.value && message.value.groups && message.value.groups.length) {
-    ret = message.value.groups[0].groupid
+    return message.value.groups[0].groupid
   }
-  return ret
+  return 0
 })
 
 const messageGroup = computed(() => {
-  let ret = null
+  return groupid.value || null
+})
 
-  if (message.value && message.value.groups && message.value.groups.length) {
-    ret = message.value.groups[0].groupid
-  }
+// Get the group info for the contextual group (multi-group support).
+const contextGroup = computed(() => {
+  if (!message.value?.groups?.length) return null
+  const gid = parseInt(groupid.value)
+  return message.value.groups.find((g) => parseInt(g.groupid) === gid) || message.value.groups[0]
+})
 
-  return ret
+// Other groups this message is on (for multi-group indicator).
+const otherGroups = computed(() => {
+  if (!message.value?.groups) return []
+  const gid = parseInt(groupid.value)
+  return message.value.groups.filter((g) => parseInt(g.groupid) !== gid)
 })
 
 const messageHistory = computed(() => {
@@ -1153,7 +1182,11 @@ function hasCollection(coll) {
 }
 
 function postcodeSelect(pc) {
-  message.value.location = pc
+  if (editing.value && editmessage.value) {
+    editmessage.value.location = pc
+  } else {
+    message.value.location = pc
+  }
 }
 
 function startEdit() {
@@ -1387,6 +1420,12 @@ function spamReport() {
 
 .location {
   max-width: 250px;
+}
+
+.item-name-input {
+  /* Cap growth on wide desktop so the field doesn't stretch the whole row.
+     flex-grow-1 keeps it filling available space up to this cap. */
+  max-width: 500px;
 }
 
 .fullsubject {

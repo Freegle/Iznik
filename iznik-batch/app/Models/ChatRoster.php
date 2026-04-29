@@ -57,11 +57,17 @@ class ChatRoster extends Model implements Auditable
     }
 
     /**
-     * Scope to users not blocked.
+     * Scope to users not blocked or closed.
+     * V1 PHP: unseenCountForUser() filters status != 'Closed' AND status != 'Blocked'
+     * before counting unread messages for notification purposes.
+     * NULL status means the user has not changed their chat status — they should be included.
      */
     public function scopeNotBlocked(Builder $query): Builder
     {
-        return $query->where('status', '!=', self::STATUS_BLOCKED);
+        return $query->where(function ($q) {
+            $q->whereNull('status')
+                ->orWhereNotIn('status', [self::STATUS_BLOCKED, self::STATUS_CLOSED]);
+        });
     }
 
     /**

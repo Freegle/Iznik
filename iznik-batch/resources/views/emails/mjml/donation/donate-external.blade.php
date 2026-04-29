@@ -1,13 +1,13 @@
 <mjml>
-  @include('emails.mjml.partials.head', ['preview' => 'External donation received'])
+  @include('emails.mjml.partials.head', ['preview' => 'Donation received'])
 
   <mj-body>
-    @include('emails.mjml.partials.header', ['title' => 'External Donation'])
+    @include('emails.mjml.partials.header', ['title' => 'Donation'])
 
     <mj-section padding="20px 0">
       <mj-column>
         <mj-text font-size="14px" line-height="1.5" padding="10px 25px">
-          <p><strong>{{ $userName }}</strong> (#{{ $userId }}, {{ $userEmail }}) donated &pound;{{ $amount }} via an external donation.</p>
+          <p><strong>{{ $userName }}</strong> (#{{ $userId }}, {{ $userEmail }}) donated &pound;{{ $amount }} via {{ $channel }}.</p>
         </mj-text>
 
         <mj-text font-size="14px" line-height="1.5" padding="10px 25px">

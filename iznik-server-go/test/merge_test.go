@@ -204,3 +204,99 @@ func TestGetMergeV2Path(t *testing.T) {
 	// Returns 400 because id and uid params are required; confirms route is registered.
 	assert.Equal(t, 400, resp.StatusCode)
 }
+
+// GetMerge must return a `logins` array for each user. V1 returns
+// $u->getLogins(FALSE) (array of users_logins rows) — the merge.vue page
+// iterates logins.forEach to label each signin method. Sentry issue
+// 7384446789 shows 4+/hr crashes ("Cannot read properties of undefined")
+// because V2 Go was omitting the field entirely.
+func TestGetMergeReturnsLoginsForBothUsers(t *testing.T) {
+	prefix := uniquePrefix("MergeLogins")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+
+	db := database.DBConn
+
+	// user1 has a Native and a Google login.
+	db.Exec("INSERT INTO users_logins (userid, type, uid, credentials) VALUES (?, 'Native', ?, 'hashed')",
+		user1ID, fmt.Sprintf("native-%s-1", prefix))
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Google', ?)",
+		user1ID, fmt.Sprintf("google-%s-1", prefix))
+
+	// user2 has only a Facebook login.
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Facebook', ?)",
+		user2ID, fmt.Sprintf("fb-%s-2", prefix))
+
+	mergeID, uid := createTestMerge(t, user1ID, user2ID, modID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/merge?id=%d&uid=%s", mergeID, uid), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	mergeData := result["merge"].(map[string]interface{})
+	u1 := mergeData["user1"].(map[string]interface{})
+	u2 := mergeData["user2"].(map[string]interface{})
+
+	// Must always be an array — never missing, never null.
+	assert.Contains(t, u1, "logins")
+	assert.Contains(t, u2, "logins")
+
+	u1Logins, ok := u1["logins"].([]interface{})
+	assert.True(t, ok, "user1.logins must be a JSON array")
+	u2Logins, ok := u2["logins"].([]interface{})
+	assert.True(t, ok, "user2.logins must be a JSON array")
+
+	// Collect the types.
+	u1Types := map[string]bool{}
+	for _, l := range u1Logins {
+		m := l.(map[string]interface{})
+		u1Types[m["type"].(string)] = true
+		// Credentials must NOT be exposed (V1 calls getLogins(FALSE)).
+		_, hasCreds := m["credentials"]
+		assert.False(t, hasCreds, "credentials must be stripped from login rows")
+	}
+	assert.True(t, u1Types["Native"], "user1 logins missing Native")
+	assert.True(t, u1Types["Google"], "user1 logins missing Google")
+
+	u2Types := map[string]bool{}
+	for _, l := range u2Logins {
+		m := l.(map[string]interface{})
+		u2Types[m["type"].(string)] = true
+	}
+	assert.True(t, u2Types["Facebook"], "user2 logins missing Facebook")
+}
+
+// Even a user with zero login rows must get an empty array, never a null
+// or missing field — otherwise forEach() would still crash the merge page.
+func TestGetMergeReturnsEmptyLoginsArrayForUserWithoutLogins(t *testing.T) {
+	prefix := uniquePrefix("MergeNoLogins")
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+
+	db := database.DBConn
+	db.Exec("DELETE FROM users_logins WHERE userid IN (?, ?)", user1ID, user2ID)
+
+	mergeID, uid := createTestMerge(t, user1ID, user2ID, modID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/merge?id=%d&uid=%s", mergeID, uid), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	mergeData := result["merge"].(map[string]interface{})
+	u1 := mergeData["user1"].(map[string]interface{})
+	u2 := mergeData["user2"].(map[string]interface{})
+
+	l1, ok1 := u1["logins"].([]interface{})
+	assert.True(t, ok1, "user1.logins must be [] not null/missing")
+	assert.Equal(t, 0, len(l1))
+
+	l2, ok2 := u2["logins"].([]interface{})
+	assert.True(t, ok2, "user2.logins must be [] not null/missing")
+	assert.Equal(t, 0, len(l2))
+}

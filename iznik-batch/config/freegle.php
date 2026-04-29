@@ -212,6 +212,7 @@ return [
 
     'git_summary' => [
         'gemini_api_key' => env('GOOGLE_GEMINI_API_KEY', ''),
+        'github_token' => env('GIT_SUMMARY_GITHUB_TOKEN', ''),
         'from_address' => env('GIT_SUMMARY_FROM_ADDRESS', 'geeks@ilovefreegle.org'),
         'from_name' => env('GIT_SUMMARY_FROM_NAME', 'Freegle Geeks'),
         'repositories' => [
@@ -300,5 +301,13 @@ return [
         'outgoing_min_per_hour' => env('FREEGLE_EMAIL_HEALTH_OUTGOING_MIN_PER_HOUR', 10),
         'daytime_start' => env('FREEGLE_EMAIL_HEALTH_DAYTIME_START', 7),
         'daytime_end' => env('FREEGLE_EMAIL_HEALTH_DAYTIME_END', 22),
+    ],
+
+    'dedup' => [
+        // Guard for the dedup:tn artisan command. Defaults to false — the
+        // command refuses to run unless this is true, so it's safe to deploy
+        // the code without changing existing Trash Nothing behaviour.
+        // --dry-run still works regardless (it only reads).
+        'tn_enabled' => env('TN_DEDUP_ENABLED', false),
     ],
 ];

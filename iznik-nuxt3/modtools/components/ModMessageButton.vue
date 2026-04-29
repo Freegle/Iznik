@@ -136,6 +136,11 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  groupid: {
+    type: Number,
+    required: false,
+    default: null,
+  },
 })
 
 const messageStore = useMessageStore()
@@ -175,14 +180,15 @@ const showSpamModal = ref(false)
 const stdmsgId = ref(null)
 const stdmsgAction = ref(null)
 
+// Use contextual groupid prop if provided, otherwise fall back to first group.
 const groupid = computed(() => {
-  let ret = null
+  if (props.groupid) return props.groupid
 
   if (message.value && message.value.groups && message.value.groups.length) {
-    ret = message.value.groups[0].groupid
+    return message.value.groups[0].groupid
   }
 
-  return ret
+  return null
 })
 
 const spinclass = computed(() => {
@@ -230,6 +236,7 @@ async function spamConfirmed() {
 async function holdIt() {
   await messageStore.hold({
     id: message.value.id,
+    groupid: groupid.value,
   })
   checkWorkDeferGetMessages()
 }
@@ -237,6 +244,7 @@ async function holdIt() {
 async function releaseIt() {
   await messageStore.release({
     id: message.value.id,
+    groupid: groupid.value,
   })
   checkWorkDeferGetMessages()
 }

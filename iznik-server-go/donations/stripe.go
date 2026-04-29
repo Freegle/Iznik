@@ -184,7 +184,7 @@ func CreateSubscription(c *fiber.Ctx) error {
 
 	// Create a Stripe product for this subscription.
 	prodParams := &stripe.ProductParams{
-		Name: stripe.String(fmt.Sprintf("Freegle Monthly Donation - £%d", req.Amount)),
+		Name: stripe.String(fmt.Sprintf("Freegle Monthly Donation - £%.2f", float64(req.Amount))),
 	}
 	prod, err := product.New(prodParams)
 	if err != nil {

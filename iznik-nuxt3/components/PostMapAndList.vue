@@ -308,7 +308,7 @@ const regions = computed(() => {
   const regions = []
 
   try {
-    const allGroups = groupStore?.list
+    const allGroups = groupStore?.summaryList
 
     for (const ix in allGroups) {
       const group = allGroups[ix]

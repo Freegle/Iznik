@@ -366,6 +366,39 @@ describe('ModLog', () => {
       expect(wrapper.text()).toContain('Modmail sent')
     })
 
+    it('shows ModLogMessage for Message/Replied to identify the pending message', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Replied',
+        msgid: 123,
+        text: 'Reply text',
+      })
+      expect(wrapper.find('.mod-log-message').exists()).toBe(true)
+    })
+
+    it('shows ModLogStdMsg for Message/Replied with standard message but no text', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Replied',
+        msgid: 123,
+        stdmsg: { id: 1, title: 'Welcome' },
+      })
+      expect(wrapper.find('.mod-log-stdmsg').exists()).toBe(true)
+    })
+
+    it('shows ModLogStdMsg for Message/Replied even when log.text is empty', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Replied',
+        msgid: 123,
+        text: '',
+      })
+      expect(wrapper.find('.mod-log-stdmsg').exists()).toBe(true)
+    })
+
     it('shows Edited with text content for Message/Edit', () => {
       const wrapper = createWrapper({
         id: 1,
@@ -626,6 +659,40 @@ describe('ModLog', () => {
       const wrapper = createWrapper({ id: 1, ...logProps })
       const userCols = wrapper.findAll('.mod-log-user')
       expect(userCols.length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('multi-group messages', () => {
+    it('shows Pending when any group has Pending collection', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Received',
+        message: {
+          type: 'Offer',
+          groups: [
+            { id: 1, collection: 'Approved' },
+            { id: 2, collection: 'Pending' },
+          ],
+        },
+      })
+      expect(wrapper.text()).toContain('currently Pending')
+    })
+
+    it('does not show Pending when no group has Pending collection', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Received',
+        message: {
+          type: 'Offer',
+          groups: [
+            { id: 1, collection: 'Approved' },
+            { id: 2, collection: 'Approved' },
+          ],
+        },
+      })
+      expect(wrapper.text()).not.toContain('currently Pending')
     })
   })
 

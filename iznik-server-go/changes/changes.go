@@ -28,6 +28,8 @@ type Rating struct {
 	Timestamp  string  `json:"timestamp"`
 	Visible    int     `json:"visible"`
 	TnRatingID *uint64 `json:"tn_rating_id"`
+	Comment    *string `json:"comment" gorm:"column:text"`
+	Reason     *string `json:"reason" gorm:"column:reason"`
 }
 
 // ChangesData contains the three collections of changes.
@@ -120,7 +122,7 @@ func GetChanges(c *fiber.Ctx) error {
 
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, rater, ratee, rating, timestamp, visible, tn_rating_id FROM ratings WHERE timestamp >= ? AND visible = 1", mysqlTime).Scan(&ratings)
+		db.Raw("SELECT id, rater, ratee, rating, timestamp, visible, tn_rating_id, text, reason FROM ratings WHERE timestamp >= ? AND visible = 1", mysqlTime).Scan(&ratings)
 	}()
 
 	wg.Wait()

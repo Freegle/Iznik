@@ -11,6 +11,9 @@ type Config struct {
 
 func NewPingMiddleware(config Config) fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		if DBConn == nil {
+			return c.Next()
+		}
 		db, _ := DBConn.DB()
 
 		// Ping the connection to make sure it's ok and re-establish if need be.  We've seen ourselves get stuck

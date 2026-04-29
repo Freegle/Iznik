@@ -2,6 +2,7 @@ package utils
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"math"
 	"regexp"
@@ -21,6 +22,14 @@ func (f *FlexUint64) UnmarshalJSON(data []byte) error {
 		*f = 0
 		return nil
 	}
+	if s == "true" {
+		*f = 1
+		return nil
+	}
+	if s == "false" {
+		*f = 0
+		return nil
+	}
 	v, err := strconv.ParseUint(s, 10, 64)
 	if err != nil {
 		return err
@@ -37,6 +46,14 @@ type FlexInt int
 func (f *FlexInt) UnmarshalJSON(data []byte) error {
 	s := strings.Trim(string(data), "\"")
 	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	if s == "true" {
+		*f = 1
+		return nil
+	}
+	if s == "false" {
 		*f = 0
 		return nil
 	}
@@ -93,7 +110,7 @@ const SPAM_COLLECTION_PENDING_REMOVE = "PendingRemove"
 
 const EMAIL_REGEXP = "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\b"
 const PHONE_REGEXP = "[0-9]{4,}"
-const TN_REGEXP = "^([\\s\\S]+?)-g[0-9]+$"
+const TN_REGEXP = "^([\\s\\S]*)-g[0-9]+$"
 
 const OPEN_AGE = 90
 const OPEN_AGE_CHITCHAT = 365
@@ -118,6 +135,8 @@ const SRID = 3857
 const CHAT_TYPE_USER2USER = "User2User"
 const CHAT_TYPE_USER2MOD = "User2Mod"
 const CHAT_TYPE_GROUP = "Group"
+
+const USER_DOMAIN = "users.ilovefreegle.org"
 const CHAT_TYPE_MOD2MOD = "Mod2Mod"
 
 const CHAT_MESSAGE_DEFAULT = "Default"
@@ -180,6 +199,27 @@ func RandomHex(n int) string {
 	b := make([]byte, n)
 	rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// RandomUint64 generates a non-zero random unsigned integer drawn from
+// crypto/rand, constrained to 53 bits so the value round-trips through
+// JSON without losing precision. JavaScript's Number.MAX_SAFE_INTEGER is
+// 2^53-1; a raw uint64 encoded as a JSON number gets rounded on the
+// client, so the persistent token it returns via Authorization2 no
+// longer matches sessions.series in the DB and the lookup silently
+// fails. Used for numeric columns such as sessions.series (bigint
+// unsigned) where passing a hex string caused MySQL to silently coerce
+// to 0 or MAX uint64.
+func RandomUint64() uint64 {
+	var b [8]byte
+	rand.Read(b[:])
+	// Mask to 53 bits: values in [0, 2^53-1] survive a JSON round-trip
+	// through a JavaScript Number without rounding.
+	v := binary.BigEndian.Uint64(b[:]) & ((uint64(1) << 53) - 1)
+	if v == 0 {
+		v = 1
+	}
+	return v
 }
 
 // NilIfEmpty returns nil if the string is empty, for use in SQL NULL inserts.
@@ -280,10 +320,11 @@ var isoCountries = map[string]string{
 
 // Pre-compiled regexps to avoid recompiling on every TidyName call.
 var tnRegexp = regexp.MustCompile(TN_REGEXP)
+var tnOnlyRegexp = regexp.MustCompile(`^-g[0-9]+$`)
 var yahooIDRegexp = regexp.MustCompile("[A-Za-z].*[0-9]|[0-9].*[A-Za-z]")
 
 func OurDomain(email string) int {
-	domains := [...]string{"users.ilovefreegle.org", "groups.ilovefreegle.org", "direct.ilovefreegle.org", "republisher.freegle.in"}
+	domains := [...]string{USER_DOMAIN, "groups.ilovefreegle.org", "direct.ilovefreegle.org", "republisher.freegle.in"}
 
 	for _, e := range domains {
 		if strings.Contains(email, e) {
@@ -327,13 +368,23 @@ func TidyName(name string) string {
 		name = name + "."
 	}
 
+	// We hide the "-gxxx" part of names, which will almost always be for TN members.
+	// Strip before the empty check so a name that is only a TN suffix resolves to "A freegler".
+	name = tnRegexp.ReplaceAllString(name, "$1")
+
 	if len(name) == 0 {
 		// Fallback display name when no name can be derived.
 		name = "A freegler"
 	}
 
 	// We hide the "-gxxx" part of names, which will almost always be for TN members.
+	// tnRegexp requires ≥1 char before the suffix; a name that IS only a TN suffix
+	// (e.g., "-g123456") won't be matched, so clear it explicitly here.
 	name = tnRegexp.ReplaceAllString(name, "$1")
+	if tnOnlyRegexp.MatchString(name) {
+		name = "A freegler"
+	}
+
 
 	return name
 }

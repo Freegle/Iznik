@@ -50,10 +50,11 @@ class addressAPITest extends IznikAPITestCase
 
         $this->addLoginAndLogin($this->user, 'testpw');
 
-        // Select a PAF address that has a valid postcode with coordinates
+        // Select the SA65 9ET seed PAF address (stable fixture with known lat/lng).
         $pafadds = $this->dbhr->preQuery("SELECT pa.id FROM paf_addresses pa
                                           INNER JOIN locations l ON pa.postcodeid = l.id
-                                          WHERE l.lat IS NOT NULL AND l.lng IS NOT NULL
+                                          WHERE l.name = 'SA65 9ET'
+                                            AND l.lat IS NOT NULL AND l.lng IS NOT NULL
                                           LIMIT 1;");
         self::assertEquals(1, count($pafadds));
 

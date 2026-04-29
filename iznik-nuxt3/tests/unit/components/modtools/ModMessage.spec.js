@@ -11,11 +11,16 @@ const {
   mockMiscStore,
   mockModconfigStore,
   mockModGroupStore,
+  mockGroupStore,
   mockUserStore,
   mockMe,
   mockMyModGroups,
 } = vi.hoisted(() => {
   return {
+    mockGroupStore: {
+      get: vi.fn((id) => ({ id, namedisplay: `Group ${id}` })),
+      fetch: vi.fn().mockResolvedValue(),
+    },
     mockAuthStore: {
       groups: [{ groupid: 789, configid: 1 }],
     },
@@ -90,6 +95,10 @@ const {
 // Mock stores
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
+}))
+
+vi.mock('~/stores/group', () => ({
+  useGroupStore: () => mockGroupStore,
 }))
 
 vi.mock('~/stores/location', () => ({
@@ -629,11 +638,37 @@ describe('ModMessage', () => {
   })
 
   describe('postcodeSelect', () => {
-    it('updates message location', () => {
-      const wrapper = mountComponent()
+    it('updates editmessage location when editing', () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          item: { name: 'Test Item' },
+          location: { name: 'SW1A 1AA' },
+        }
+      )
+      wrapper.vm.startEdit()
       const pc = { name: 'SW1A 2AA', lat: 51.6, lng: -0.2 }
       wrapper.vm.postcodeSelect(pc)
-      expect(wrapper.vm.message.location).toEqual(pc)
+      expect(wrapper.vm.editmessage.location).toEqual(pc)
+    })
+
+    it('save sends updated postcode after postcodeSelect during edit', async () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          item: { name: 'Test Item' },
+          location: { name: 'LA23 2JH' },
+        }
+      )
+      wrapper.vm.startEdit()
+      wrapper.vm.postcodeSelect({ name: 'LA3 3QJ', lat: 54.1, lng: -2.9 })
+      await wrapper.vm.save()
+
+      expect(mockMessageStore.patch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          location: 'LA3 3QJ',
+        })
+      )
     })
   })
 
@@ -1127,6 +1162,119 @@ describe('ModMessage', () => {
       )
       await flushPromises()
       expect(wrapper.text()).not.toContain('Possibly should be on')
+    })
+  })
+
+  describe('multi-group support', () => {
+    it('uses contextGroupid prop when provided', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+            { groupid: 999, namedisplay: 'Group B', collection: 'Approved' },
+          ],
+        }
+      )
+      expect(wrapper.vm.groupid).toBe(789)
+    })
+
+    it('falls back to first group when no contextGroupid', () => {
+      const wrapper = mountComponent(
+        {},
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+            { groupid: 999, namedisplay: 'Group B', collection: 'Approved' },
+          ],
+        }
+      )
+      expect(wrapper.vm.groupid).toBe(789)
+    })
+
+    it('computes contextGroup from the correct group', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 999 },
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+            { groupid: 999, namedisplay: 'Group B', collection: 'Approved' },
+          ],
+        }
+      )
+      expect(wrapper.vm.contextGroup.groupid).toBe(999)
+      expect(wrapper.vm.contextGroup.collection).toBe('Approved')
+    })
+
+    it('computes otherGroups excluding the context group', () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+            { groupid: 999, namedisplay: 'Group B', collection: 'Approved' },
+          ],
+        }
+      )
+      expect(wrapper.vm.otherGroups).toHaveLength(1)
+      expect(wrapper.vm.otherGroups[0].groupid).toBe(999)
+    })
+
+    it('shows "Also on" indicator for multi-group messages', async () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+            { groupid: 999, namedisplay: 'Group B', collection: 'Approved' },
+          ],
+        }
+      )
+      await flushPromises()
+      expect(wrapper.text()).toContain('Also on')
+    })
+
+    it('does not show "Also on" for single-group messages', async () => {
+      const wrapper = mountComponent(
+        { contextGroupid: 789 },
+        {
+          groups: [
+            { groupid: 789, namedisplay: 'Group A', collection: 'Pending' },
+          ],
+        }
+      )
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('Also on')
+    })
+  })
+
+  describe('Summary view responsive layout (Discourse 9481)', () => {
+    it('username in summary header has text-truncate and max-width to prevent squeezing edit fields', () => {
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'AVeryLongUsernameThatWouldSqueezeEditFields',
+        memberships: [{ id: 789, groupid: 789 }],
+      })
+      const wrapper = mountComponent({ summary: true })
+      const usernameEl = wrapper.find('.text-truncate.d-inline-block')
+      expect(usernameEl.exists()).toBe(true)
+      expect(usernameEl.text()).toContain('AVeryLongUsernameThatWouldSqueezeEditFields')
+      expect(usernameEl.attributes('style')).toContain('max-width: 8rem')
+    })
+
+    it('Back to Pending button uses slot for label so text can be hidden on xs', async () => {
+      const wrapper = mountComponent(
+        { summary: false, contextGroupid: 789 },
+        {
+          groups: [{ groupid: 789, collection: 'Approved' }],
+        }
+      )
+      await wrapper.vm.$nextTick()
+      const spinButton = wrapper.find('.spin-button')
+      expect(spinButton.exists()).toBe(true)
+      const labelSpan = spinButton.find('span.d-none.d-sm-inline')
+      expect(labelSpan.exists()).toBe(true)
+      expect(labelSpan.text()).toBe('Back to Pending')
     })
   })
 })

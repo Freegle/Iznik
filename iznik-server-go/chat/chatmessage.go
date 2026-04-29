@@ -1093,6 +1093,9 @@ func fetchReviewMessage(db *gorm.DB, msgID uint64) *reviewMessage {
 
 // checkHoldConflict returns true if the message is held by a different moderator.
 func checkHoldConflict(msg *reviewMessage, myid uint64) bool {
+	if msg == nil {
+		return false
+	}
 	return msg.HeldBy != 0 && msg.HeldBy != myid
 }
 

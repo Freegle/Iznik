@@ -294,28 +294,49 @@ if (me.value && !miscStore.modtools) {
     me.value?.trustlevel
   )
 
+  let gateOutcome
   if (!allowed) {
+    gateOutcome = 'not_allowed'
     // Not on a group with this function enabled.
   } else if (!askDue) {
+    gateOutcome = 'ask_too_recent'
     // Challenged recently, so return verified. That's true even for if it's forced - we don't want to bombard
     // people.
     emit('verified')
   } else if (props.force) {
+    gateOutcome = 'forced_will_fetch'
     // Forced. Get task in mounted().
     fetchTask.value = true
   } else if (daysago > 7 || debug) {
     // They're not a new member. We might want to ask them.
     if (me.value?.trustlevel === 'Declined' && !debug) {
+      gateOutcome = 'declined'
       // We're not forced to do this, and they've said they don't want to.
       emit('verified')
     } else if (inviteAccepted.value || debug) {
+      gateOutcome = 'accepted_will_fetch'
       // They're up for this. Get a task in onMounted().
       fetchTask.value = true
     } else {
+      gateOutcome = 'show_invite'
       // We don't know if they want to. Ask.
       showInvite.value = true
     }
+  } else {
+    gateOutcome = 'too_new'
   }
+
+  clientLog.info('Microvolunteering gate evaluated', {
+    event_type: 'microvolunteering',
+    gate_outcome: gateOutcome,
+    allowed,
+    ask_due: askDue,
+    daysago,
+    trustlevel: me.value?.trustlevel || null,
+    invite_accepted: inviteAccepted.value,
+    forced: props.force,
+    num_groups: myGroups.value?.length || 0,
+  })
 }
 
 async function getTask() {

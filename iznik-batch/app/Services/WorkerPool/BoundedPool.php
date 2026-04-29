@@ -38,26 +38,38 @@ class BoundedPool
      */
     public function initialize(): void
     {
-        $current = Redis::llen($this->permitsKey);
-        $needed = $this->maxConcurrency - $current;
+        $this->withRedisOrSkip('initialize', function () {
+            $current = Redis::llen($this->permitsKey);
+            $needed = $this->maxConcurrency - $current;
 
-        if ($needed > 0) {
-            for ($i = 0; $i < $needed; $i++) {
-                Redis::rpush($this->permitsKey, '1');
+            if ($needed > 0) {
+                for ($i = 0; $i < $needed; $i++) {
+                    Redis::rpush($this->permitsKey, '1');
+                }
+                Log::info("BoundedPool[{$this->name}]: Initialized {$needed} permits (total: {$this->maxConcurrency})");
             }
-            Log::info("BoundedPool[{$this->name}]: Initialized {$needed} permits (total: {$this->maxConcurrency})");
-        }
+        });
     }
 
     /**
      * Acquire a permit. Blocks until one is available.
      *
-     * @return bool True if permit acquired, false if timeout exceeded
+     * Returns true on success. If Redis is unreachable, returns true so the
+     * caller proceeds without back pressure rather than failing the request —
+     * losing back pressure is preferable to losing emails.
+     *
+     * @return bool True if permit acquired (or Redis unavailable), false if timeout exceeded
      */
     public function acquire(): bool
     {
-        // BLPOP returns [key, value] on success, null on timeout
-        $result = Redis::blpop($this->permitsKey, $this->timeoutSeconds);
+        $result = $this->withRedisOrSkip('acquire', function () {
+            // BLPOP returns [key, value] on success, null on timeout
+            return Redis::blpop($this->permitsKey, $this->timeoutSeconds);
+        }, sentinel: 'redis-unavailable');
+
+        if ($result === 'redis-unavailable') {
+            return true;
+        }
 
         if ($result === null || $result === []) {
             $this->recordTimeout();
@@ -75,7 +87,9 @@ class BoundedPool
      */
     public function release(): void
     {
-        Redis::rpush($this->permitsKey, '1');
+        $this->withRedisOrSkip('release', function () {
+            Redis::rpush($this->permitsKey, '1');
+        });
     }
 
     /**
@@ -100,27 +114,46 @@ class BoundedPool
 
     /**
      * Get current pool statistics.
+     *
+     * Returns sentinel "unknown" values for fields that depend on Redis when
+     * Redis is unreachable, so monitoring callers can distinguish real zero
+     * from "couldn't reach Redis".
      */
     public function getStats(): array
     {
-        $available = Redis::llen($this->permitsKey);
+        return $this->withRedisOrSkip('getStats', function () {
+            $available = Redis::llen($this->permitsKey);
 
-        return [
+            return [
+                'name' => $this->name,
+                'max_concurrency' => $this->maxConcurrency,
+                'available' => $available,
+                'in_use' => $this->maxConcurrency - $available,
+                'timeouts' => (int) (Redis::hget($this->statsKey, 'timeouts') ?? 0),
+                'total_acquired' => (int) (Redis::hget($this->statsKey, 'acquired') ?? 0),
+            ];
+        }, sentinel: [
             'name' => $this->name,
             'max_concurrency' => $this->maxConcurrency,
-            'available' => $available,
-            'in_use' => $this->maxConcurrency - $available,
-            'timeouts' => (int) (Redis::hget($this->statsKey, 'timeouts') ?? 0),
-            'total_acquired' => (int) (Redis::hget($this->statsKey, 'acquired') ?? 0),
-        ];
+            'available' => null,
+            'in_use' => null,
+            'timeouts' => null,
+            'total_acquired' => null,
+            'redis_unavailable' => true,
+        ]);
     }
 
     /**
      * Check if pool is at capacity (no permits available).
+     *
+     * Returns false if Redis is unreachable, so callers don't reject work
+     * solely because we can't see the permit count.
      */
     public function isAtCapacity(): bool
     {
-        return Redis::llen($this->permitsKey) === 0;
+        return $this->withRedisOrSkip('isAtCapacity', function () {
+            return Redis::llen($this->permitsKey) === 0;
+        }, sentinel: false);
     }
 
     /**
@@ -145,26 +178,36 @@ class BoundedPool
      */
     public function reset(): void
     {
-        Redis::del($this->permitsKey);
-        Redis::del($this->statsKey);
+        $this->withRedisOrSkip('reset', function () {
+            Redis::del($this->permitsKey);
+            Redis::del($this->statsKey);
+        });
         $this->initialize();
     }
 
     private function recordAcquire(): void
     {
-        Redis::hincrby($this->statsKey, 'acquired', 1);
+        $this->withRedisOrSkip('recordAcquire', function () {
+            Redis::hincrby($this->statsKey, 'acquired', 1);
+        });
     }
 
     private function recordTimeout(): void
     {
-        $count = Redis::hincrby($this->statsKey, 'timeouts', 1);
+        $count = $this->withRedisOrSkip('recordTimeout', function () {
+            return Redis::hincrby($this->statsKey, 'timeouts', 1);
+        }, sentinel: null);
 
         // Throttled Sentry alert - only alert every N seconds
         $lastAlertKey = "pool:{$this->name}:last_alert";
-        $lastAlert = Redis::get($lastAlertKey);
+        $lastAlert = $this->withRedisOrSkip('recordTimeout:get', function () use ($lastAlertKey) {
+            return Redis::get($lastAlertKey);
+        }, sentinel: null);
 
         if (! $lastAlert || (time() - (int) $lastAlert) > $this->sentryThrottleSeconds) {
-            Redis::setex($lastAlertKey, $this->sentryThrottleSeconds, time());
+            $this->withRedisOrSkip('recordTimeout:set', function () use ($lastAlertKey) {
+                Redis::setex($lastAlertKey, $this->sentryThrottleSeconds, time());
+            });
 
             Log::error("BoundedPool[{$this->name}] at max capacity", [
                 'pool' => $this->name,
@@ -176,6 +219,68 @@ class BoundedPool
             report(new PoolCapacityException(
                 "Pool '{$this->name}' at maximum capacity ({$this->maxConcurrency})"
             ));
+        }
+    }
+
+    /**
+     * Run a Redis operation with retry, falling back to a sentinel on failure.
+     *
+     * Why: Redis connection blips (DNS, restart, network reconfig) must not
+     * propagate as exceptions through the pool. The pool is back-pressure,
+     * not a correctness invariant — losing it for a few seconds is far
+     * better than failing the work.
+     *
+     * Three attempts with short backoff (50ms, 200ms) catches the common
+     * transient case. Exhausted retries return the sentinel and emit one
+     * throttled Sentry report so we still see the failure.
+     */
+    private function withRedisOrSkip(string $op, callable $fn, mixed $sentinel = null): mixed
+    {
+        $delaysMs = [50, 200];
+        $lastException = null;
+
+        for ($attempt = 0; $attempt <= count($delaysMs); $attempt++) {
+            try {
+                return $fn();
+            } catch (\Throwable $e) {
+                $lastException = $e;
+                if ($attempt < count($delaysMs)) {
+                    usleep($delaysMs[$attempt] * 1000);
+                }
+            }
+        }
+
+        $this->reportRedisOutage($op, $lastException);
+
+        return $sentinel;
+    }
+
+    /**
+     * Throttle Redis-outage Sentry reports per pool, per minute.
+     *
+     * Uses a process-local static rather than the Cache facade because the
+     * Cache store is itself usually Redis — using it here would loop back into
+     * the same outage we're trying to report.
+     */
+    private static array $lastOutageReportAt = [];
+
+    private function reportRedisOutage(string $op, ?\Throwable $e): void
+    {
+        $now = time();
+        $last = self::$lastOutageReportAt[$this->name] ?? 0;
+        if ($now - $last < 60) {
+            return;
+        }
+        self::$lastOutageReportAt[$this->name] = $now;
+
+        Log::warning("BoundedPool[{$this->name}]: Redis unavailable during {$op} — degrading to no-back-pressure mode", [
+            'pool' => $this->name,
+            'op' => $op,
+            'error' => $e?->getMessage(),
+        ]);
+
+        if ($e !== null) {
+            report($e);
         }
     }
 }

@@ -136,12 +136,14 @@ func GetModConfig(c *fiber.Ctx) error {
 	var cfg ModConfig
 	db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE id = ?", id).Scan(&cfg)
 	if cfg.ID == 0 {
-		return fiber.NewError(fiber.StatusNotFound, "Invalid config id")
+		// V1 parity: return 200 with ret:2. The frontend treats
+		// non-200 as a fatal "Settings inaccessible" error (9518.180).
+		return c.JSON(fiber.Map{"ret": 2, "status": "Invalid config id"})
 	}
 
 	// Verify the user can see this config.
 	if !canSee(myid, &cfg) {
-		return fiber.NewError(fiber.StatusForbidden, "Not authorised")
+		return c.JSON(fiber.Map{"ret": 3, "status": "Not authorised"})
 	}
 
 	// Get standard messages.

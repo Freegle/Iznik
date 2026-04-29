@@ -148,6 +148,57 @@ func TestVolunteering_PendingListAdmin(t *testing.T) {
 	assert.Contains(t, ids, pendingID)
 }
 
+// Mirrors V1 User::getWorkCounts: when the caller has PERM_NATIONAL_VOLUNTEERS,
+// pending national volunteering ops (no volunteering_groups row) must appear
+// alongside the per-group pending ops. V1 pushes this count via
+// Volunteering::systemWideCount so mods with this perm see the work.
+func TestVolunteering_PendingListNationalPermission(t *testing.T) {
+	prefix := uniquePrefix("volnat")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+
+	// Create a per-group pending op that the mod would see anyway.
+	creatorID := CreateTestUser(t, prefix+"_creator", "User")
+	CreateTestMembership(t, creatorID, groupID, "Member")
+	db.Exec("INSERT INTO volunteering (userid, title, description, pending, deleted, expired) VALUES (?, 'Group Pending Vol', 'group desc', 1, 0, 0)", creatorID)
+	var groupPendingID uint64
+	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND pending = 1 ORDER BY id DESC LIMIT 1", creatorID).Scan(&groupPendingID)
+	db.Exec("INSERT INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", groupPendingID, groupID)
+
+	// Create a NATIONAL pending op — no volunteering_groups row at all.
+	db.Exec("INSERT INTO volunteering (userid, title, description, pending, deleted, expired) VALUES (?, 'National Pending Vol', 'national desc', 1, 0, 0)", creatorID)
+	var nationalPendingID uint64
+	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND pending = 1 AND title = 'National Pending Vol' ORDER BY id DESC LIMIT 1", creatorID).Scan(&nationalPendingID)
+	assert.Greater(t, nationalPendingID, uint64(0))
+	// No INSERT INTO volunteering_groups — this is a national op.
+
+	// Mod without NationalVolunteers permission: should NOT see the national op.
+	plainModID := CreateTestUser(t, prefix+"_plainmod", "User")
+	CreateTestMembership(t, plainModID, groupID, "Moderator")
+	_, plainModToken := CreateTestSession(t, plainModID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/volunteering?pending=true&jwt="+plainModToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var plainIds []uint64
+	json2.Unmarshal(rsp(resp), &plainIds)
+	assert.Contains(t, plainIds, groupPendingID)
+	assert.NotContains(t, plainIds, nationalPendingID, "plain mod without NationalVolunteers perm must not see national pending op")
+
+	// Mod WITH NationalVolunteers permission: should see both group and national ops.
+	natModID := CreateTestUser(t, prefix+"_natmod", "User")
+	CreateTestMembership(t, natModID, groupID, "Moderator")
+	db.Exec("UPDATE users SET permissions = 'NationalVolunteers' WHERE id = ?", natModID)
+	defer db.Exec("UPDATE users SET permissions = NULL WHERE id = ?", natModID)
+	_, natModToken := CreateTestSession(t, natModID)
+
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/volunteering?pending=true&jwt="+natModToken, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var natIds []uint64
+	json2.Unmarshal(rsp(resp), &natIds)
+	assert.Contains(t, natIds, groupPendingID, "NationalVolunteers mod must still see own-group pending")
+	assert.Contains(t, natIds, nationalPendingID, "NationalVolunteers mod must see national pending op")
+}
+
 func TestVolunteeringCreate(t *testing.T) {
 	prefix := uniquePrefix("volwr_create")
 	userID := CreateTestUser(t, prefix, "User")

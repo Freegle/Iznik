@@ -884,7 +884,7 @@ class MessageTest extends IznikTestCase {
         $m->delete();
     }
 
-    public function testIncludeArea() {
+    public function testSubjectConstruction() {
         $l = new Location($this->dbhr, $this->dbhm);
         $areaid = $l->create(NULL, 'Tuvalu Central', 'Polygon', 'POLYGON((179.21 8.53, 179.21 8.54, 179.22 8.54, 179.22 8.53, 179.21 8.53, 179.21 8.53))');
         $this->assertNotNull($areaid);
@@ -912,14 +912,10 @@ class MessageTest extends IznikTestCase {
 
         $g = Group::get($this->dbhr, $this->dbhm);
         $gid = $g->create('testgroup1', Group::GROUP_REUSE);
-        $g->setSettings([ 'includearea' => FALSE ]);
 
+        # The subject is built as "KEYWORD: item (AreaName VaguePostcode)".
         $m->constructSubject($gid);
-        self::assertEquals(strtolower('OFFER: test item (TV13)'), strtolower($m->getSubject()));
-
-        $g->setSettings([ 'includepc' => FALSE ]);
-        $m->constructSubject($gid);
-        self::assertEquals(strtolower('OFFER: test item (Tuvalu Central)'), strtolower($m->getSubject()));
+        self::assertEquals(strtolower('OFFER: test item (Tuvalu Central TV13)'), strtolower($m->getSubject()));
 
         # Edit the message to make sure the subject stays in that format.
         $this->dbhm->preExec("INSERT INTO messages_groups (msgid, groupid) VALUES (?, ?)", [
@@ -930,7 +926,7 @@ class MessageTest extends IznikTestCase {
         $l = new Location($this->dbhr, $this->dbhm);
         $lid = $l->findByName('TV13 1HH');
         $m->edit(NULL, NULL, Message::TYPE_WANTED, 'test item2', $lid, [], TRUE, NULL);
-        self::assertEquals(strtolower('WANTED: test item2 (Tuvalu Central)'), strtolower($m->getSubject()));
+        self::assertEquals(strtolower('WANTED: test item2 (Tuvalu Central TV13)'), strtolower($m->getSubject()));
 
         # Test subject twice for location caching coverage.
         $locationlist = [];
@@ -1396,6 +1392,13 @@ class MessageTest extends IznikTestCase {
         # Should NOT record a decline for non-AI attachments
         $declined = $this->dbhr->preQuery("SELECT * FROM messages_ai_declined WHERE msgid = ?", [$msgid]);
         $this->assertEquals(0, count($declined), "Should NOT record AI decline for non-AI attachment removal");
+    }
+
+    public function testStripSigsOutlookIOS() {
+        $m = new Message($this->dbhr, $this->dbhm);
+        $text = "I'd like this please.\r\nSent from Outlook for iOS<https://krs.microsoft.com/redirect?id=-crYd9Lj>";
+        $stripped = $m->stripSigs($text);
+        $this->assertEquals("I'd like this please.", $stripped);
     }
 }
 

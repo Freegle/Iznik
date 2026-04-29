@@ -113,6 +113,9 @@ class GiftAidClaimServiceTest extends TestCase
     {
         $user = $this->createTestUser();
 
+        DB::insert("INSERT INTO locations (name, type) VALUES ('M1 1AA', 'Postcode')");
+        $locationId = DB::getPdo()->lastInsertId();
+
         // Gift aid record with no postcode and no saved addresses; postcode in homeaddress text
         DB::insert(
             "INSERT INTO giftaid (userid, period, fullname, homeaddress, reviewed, timestamp)
@@ -128,6 +131,7 @@ class GiftAidClaimServiceTest extends TestCase
 
         // Cleanup
         DB::delete('DELETE FROM giftaid WHERE userid = ?', [$user->id]);
+        DB::delete('DELETE FROM locations WHERE id = ?', [$locationId]);
     }
 
     // -------------------------------------------------------------------------
@@ -319,5 +323,236 @@ class GiftAidClaimServiceTest extends TestCase
         // Cleanup
         DB::delete('DELETE FROM giftaid WHERE userid = ?', [$user->id]);
         DB::delete('DELETE FROM users_donations WHERE userid = ?', [$user->id]);
+    }
+
+    // -------------------------------------------------------------------------
+    // end-date filter
+    // -------------------------------------------------------------------------
+
+    public function test_generate_claim_excludes_donations_after_end_date(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::insert(
+            "INSERT INTO giftaid (userid, period, fullname, homeaddress, postcode, housenameornumber, reviewed, timestamp)
+             VALUES (?, 'Past4YearsAndFuture', 'Eve End', '8 Cutoff Way', 'EC2A 3AA', '8', NOW(), NOW())",
+            [$user->id]
+        );
+
+        // Two donations: one before the cutoff and one after.
+        DB::insert(
+            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
+             VALUES (?, 11.00, 1, NULL, 'Stripe', '2026-03-31 23:30:00', 'eve@example.com')",
+            [$user->id]
+        );
+        DB::insert(
+            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
+             VALUES (?, 22.00, 1, NULL, 'Stripe', '2026-04-01 00:30:00', 'eve@example.com')",
+            [$user->id]
+        );
+
+        $rows = [];
+        $result = $this->service->generateClaim(
+            dryRun: true,
+            rowCallback: function (array $row) use (&$rows) {
+                $rows[] = $row;
+            },
+            outputPath: null,
+            endDate: '2026-03-31'
+        );
+
+        // Header + only the pre-cutoff donation
+        $this->assertCount(2, $rows);
+        $this->assertEquals(1, $result['rows']);
+        $this->assertEquals(11.0, $result['total']);
+        $this->assertEquals('11.00', $rows[1][8]);
+
+        // Cleanup
+        DB::delete('DELETE FROM giftaid WHERE userid = ?', [$user->id]);
+        DB::delete('DELETE FROM users_donations WHERE userid = ?', [$user->id]);
+    }
+
+    public function test_generate_claim_includes_donations_on_end_date_inclusive(): void
+    {
+        $user = $this->createTestUser();
+
+        DB::insert(
+            "INSERT INTO giftaid (userid, period, fullname, homeaddress, postcode, housenameornumber, reviewed, timestamp)
+             VALUES (?, 'Past4YearsAndFuture', 'Ian Inclusive', '9 Edge St', 'BS1 4AA', '9', NOW(), NOW())",
+            [$user->id]
+        );
+
+        // Donation right at the very end of the cutoff day
+        DB::insert(
+            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
+             VALUES (?, 7.00, 1, NULL, 'Stripe', '2026-03-31 23:59:59', 'ian@example.com')",
+            [$user->id]
+        );
+
+        $rows = [];
+        $result = $this->service->generateClaim(
+            dryRun: true,
+            rowCallback: function (array $row) use (&$rows) {
+                $rows[] = $row;
+            },
+            outputPath: null,
+            endDate: '2026-03-31'
+        );
+
+        $this->assertCount(2, $rows);
+        $this->assertEquals(1, $result['rows']);
+
+        // Cleanup
+        DB::delete('DELETE FROM giftaid WHERE userid = ?', [$user->id]);
+        DB::delete('DELETE FROM users_donations WHERE userid = ?', [$user->id]);
+    }
+
+    // -------------------------------------------------------------------------
+    // duplicate donations marked claimed
+    // -------------------------------------------------------------------------
+
+    public function test_generate_claim_marks_skipped_duplicate_as_claimed(): void
+    {
+        // Mirrors V1 donations_giftaid_claim.php: duplicates are skipped from the
+        // CSV but still flagged claimed so they don't resurface on the next run.
+        $user = $this->createTestUser();
+
+        DB::insert(
+            "INSERT INTO giftaid (userid, period, fullname, homeaddress, postcode, housenameornumber, reviewed, timestamp)
+             VALUES (?, 'Past4YearsAndFuture', 'Dee Duplicate', '11 Mirror Rd', 'NW1 6AA', '11', NOW(), NOW())",
+            [$user->id]
+        );
+
+        $today = now()->format('Y-m-d H:i:s');
+        DB::insert(
+            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
+             VALUES (?, 8.00, 1, NULL, 'Stripe', ?, 'dee@example.com')",
+            [$user->id, $today]
+        );
+        DB::insert(
+            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, giftaidclaimed, source, timestamp, Payer)
+             VALUES (?, 8.00, 1, NULL, 'Stripe', ?, 'dee@example.com')",
+            [$user->id, $today]
+        );
+
+        $result = $this->service->generateClaim(dryRun: false);
+
+        // 1 row in CSV, but BOTH donations should be marked claimed.
+        $this->assertEquals(1, $result['rows']);
+
+        $unclaimed = DB::table('users_donations')
+            ->where('userid', $user->id)
+            ->whereNull('giftaidclaimed')
+            ->count();
+        $this->assertEquals(0, $unclaimed, 'Both donations (including the skipped duplicate) must be marked claimed');
+
+        // Cleanup
+        DB::delete('DELETE FROM giftaid WHERE userid = ?', [$user->id]);
+        DB::delete('DELETE FROM users_donations WHERE userid = ?', [$user->id]);
+    }
+
+    // -------------------------------------------------------------------------
+    // correctUserIdInDonations
+    // -------------------------------------------------------------------------
+
+    public function test_correct_user_id_in_donations_links_anonymous_donations_via_payer_email(): void
+    {
+        $user = $this->createTestUser();
+
+        $email = 'orphan-donor-' . $user->id . '@example.com';
+        DB::insert(
+            'INSERT INTO users_emails (userid, email) VALUES (?, ?)',
+            [$user->id, $email]
+        );
+
+        DB::insert(
+            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, source, timestamp, Payer)
+             VALUES (NULL, 12.50, 0, 'Stripe', NOW(), ?)",
+            [$email]
+        );
+
+        $found = $this->service->correctUserIdInDonations();
+
+        $this->assertGreaterThanOrEqual(1, $found);
+        $linked = DB::table('users_donations')
+            ->where('Payer', $email)
+            ->value('userid');
+        $this->assertEquals($user->id, $linked);
+
+        // Cleanup
+        DB::delete('DELETE FROM users_donations WHERE Payer = ?', [$email]);
+        DB::delete('DELETE FROM users_emails WHERE email = ?', [$email]);
+    }
+
+    public function test_correct_user_id_skips_donations_without_matching_email(): void
+    {
+        $user = $this->createTestUser();
+
+        $email = 'no-match-' . $user->id . '@example.com';
+        DB::insert(
+            "INSERT INTO users_donations (userid, GrossAmount, giftaidconsent, source, timestamp, Payer)
+             VALUES (NULL, 5.00, 0, 'Stripe', NOW(), ?)",
+            [$email]
+        );
+
+        $this->service->correctUserIdInDonations();
+
+        $userid = DB::table('users_donations')->where('Payer', $email)->value('userid');
+        $this->assertNull($userid);
+
+        // Cleanup
+        DB::delete('DELETE FROM users_donations WHERE Payer = ?', [$email]);
+    }
+
+    // -------------------------------------------------------------------------
+    // postcode canonical-form lookup
+    // -------------------------------------------------------------------------
+
+    public function test_identify_postcodes_uses_locations_canonical_name_for_regex_hit(): void
+    {
+        $user = $this->createTestUser();
+
+        // Locations table holds the canonical form with a single space
+        DB::insert(
+            "INSERT INTO locations (name, type) VALUES ('M1 1AA', 'Postcode')"
+        );
+        $locationId = DB::getPdo()->lastInsertId();
+
+        // Gift aid record where homeaddress contains the postcode without a space
+        DB::insert(
+            "INSERT INTO giftaid (userid, period, fullname, homeaddress, reviewed, timestamp)
+             VALUES (?, 'Past4YearsAndFuture', 'Pat Postcode', '4 Canon St, Manchester M11AA', NOW(), NOW())",
+            [$user->id]
+        );
+
+        $found = $this->service->identifyPostcodes();
+
+        $this->assertGreaterThanOrEqual(1, $found);
+        $stored = DB::table('giftaid')->where('userid', $user->id)->value('postcode');
+        $this->assertEquals('M1 1AA', $stored, 'Should store canonical form from locations table');
+
+        // Cleanup
+        DB::delete('DELETE FROM giftaid WHERE userid = ?', [$user->id]);
+        DB::delete('DELETE FROM locations WHERE id = ?', [$locationId]);
+    }
+
+    public function test_identify_postcodes_skips_when_no_matching_location(): void
+    {
+        $user = $this->createTestUser();
+
+        // homeaddress contains a syntactically valid postcode that doesn't exist in locations
+        DB::insert(
+            "INSERT INTO giftaid (userid, period, fullname, homeaddress, reviewed, timestamp)
+             VALUES (?, 'Past4YearsAndFuture', 'Nope Nobody', '1 Made Up St ZZ99 9ZZ', NOW(), NOW())",
+            [$user->id]
+        );
+
+        $this->service->identifyPostcodes();
+
+        $stored = DB::table('giftaid')->where('userid', $user->id)->value('postcode');
+        $this->assertNull($stored, 'Postcode not in locations should not be stored');
+
+        // Cleanup
+        DB::delete('DELETE FROM giftaid WHERE userid = ?', [$user->id]);
     }
 }

@@ -6,6 +6,7 @@ import PostMapAndList from '~/components/PostMapAndList.vue'
 // Mock hoisted values for reactive state
 const {
   mockGroupList,
+  mockGroupSummaryList,
   mockIsochroneMessageList,
   mockUser,
   mockMiscGet,
@@ -35,6 +36,7 @@ const {
         showjoin: 5,
       },
     }),
+    mockGroupSummaryList: ref({}),
     mockIsochroneMessageList: ref([
       { id: 100, arrival: '2024-01-20T10:00:00Z', unseen: true, groupid: 1 },
       { id: 101, arrival: '2024-01-19T10:00:00Z', unseen: false, groupid: 1 },
@@ -52,6 +54,9 @@ const {
 const mockGroupStore = {
   get list() {
     return mockGroupList.value
+  },
+  get summaryList() {
+    return mockGroupSummaryList.value
   },
 }
 
@@ -749,26 +754,70 @@ describe('PostMapAndList', () => {
   })
 
   describe('regions computed', () => {
-    it('extracts unique regions from groups', () => {
-      // The regions computed extracts unique region values from all groups
-      const regions = []
-      const allGroups = mockGroupList.value
-      for (const ix in allGroups) {
-        const group = allGroups[ix]
-        if (group.region && !regions.includes(group.region)) {
-          regions.push(group.region)
-        }
+    it('derives region buttons from summaryList (bulk fetch), not list (member groups)', async () => {
+      // Simulate post-login state: `list` holds only member groups (populated
+      // by auth.js fetchBatch for memberships), while `summaryList` holds
+      // all groups from the bulk GET /group endpoint.
+      mockGroupList.value = {
+        1: {
+          id: 1,
+          namedisplay: 'Member Group',
+          region: 'North West',
+          lat: 53.5,
+          lng: -2.5,
+          onmap: true,
+          publish: true,
+          showjoin: 10,
+        },
       }
-      regions.sort()
-      expect(regions).toContain('Test Region')
-      expect(regions).toContain('Other Region')
+      mockGroupSummaryList.value = {
+        1: {
+          id: 1,
+          namedisplay: 'Member Group',
+          nameshort: 'member',
+          region: 'North West',
+          lat: 53.5,
+          lng: -2.5,
+          onmap: true,
+          publish: true,
+        },
+        99: {
+          id: 99,
+          namedisplay: 'Distant Group',
+          nameshort: 'distant',
+          region: 'South East',
+          lat: 51.0,
+          lng: 0.5,
+          onmap: true,
+          publish: true,
+        },
+      }
+
+      const wrapper = createWrapper({ startOnGroups: true })
+      await nextTick()
+
+      const regionLabels = wrapper
+        .findAll('.b-button')
+        .map((b) => b.text().trim())
+      expect(regionLabels).toContain('North West')
+      expect(regionLabels).toContain('South East')
     })
 
-    it('sorts regions alphabetically', () => {
-      const regions = ['Zoo Region', 'Alpha Region', 'Mid Region']
-      regions.sort()
-      expect(regions[0]).toBe('Alpha Region')
-      expect(regions[2]).toBe('Zoo Region')
+    it('sorts regions alphabetically', async () => {
+      mockGroupList.value = {}
+      mockGroupSummaryList.value = {
+        1: { id: 1, region: 'Zoo Region', namedisplay: 'Z' },
+        2: { id: 2, region: 'Alpha Region', namedisplay: 'A' },
+        3: { id: 3, region: 'Mid Region', namedisplay: 'M' },
+      }
+
+      const wrapper = createWrapper({ startOnGroups: true })
+      await nextTick()
+
+      const regionLabels = wrapper
+        .findAll('.b-button')
+        .map((b) => b.text().trim())
+      expect(regionLabels).toEqual(['Alpha Region', 'Mid Region', 'Zoo Region'])
     })
   })
 

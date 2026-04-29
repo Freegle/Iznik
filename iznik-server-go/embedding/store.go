@@ -13,16 +13,17 @@ import (
 // EmbeddingDim is 256-dim Matryoshka truncation of nomic-embed-text-v1.5.
 const EmbeddingDim = 256
 
-// Entry holds one message's embedding and metadata for filtering.
+// Entry holds one message's subject (and optional body) embedding plus metadata.
 type Entry struct {
-	Msgid   uint64
-	Groupid uint64
-	Msgtype string
-	Lat     float64
-	Lng     float64
-	Subject string
-	Arrival time.Time
-	Vec     [EmbeddingDim]float32
+	Msgid      uint64
+	Groupid    uint64
+	Msgtype    string
+	Lat        float64
+	Lng        float64
+	Subject    string
+	Arrival    time.Time
+	SubjectVec [EmbeddingDim]float32
+	BodyVec    *[EmbeddingDim]float32 // nil when no body embedding stored
 }
 
 // Store is the in-memory embedding index.
@@ -58,19 +59,20 @@ func (s *Store) Load() error {
 	}
 
 	type row struct {
-		Msgid     uint64    `gorm:"column:msgid"`
-		Embedding []byte    `gorm:"column:embedding"`
-		Groupid   uint64    `gorm:"column:groupid"`
-		Msgtype   string    `gorm:"column:msgtype"`
-		Lat       float64   `gorm:"column:lat"`
-		Lng       float64   `gorm:"column:lng"`
-		Subject   string    `gorm:"column:subject"`
-		Arrival   time.Time `gorm:"column:arrival"`
+		Msgid            uint64    `gorm:"column:msgid"`
+		SubjectEmbedding []byte    `gorm:"column:subject_embedding"`
+		BodyEmbedding    []byte    `gorm:"column:body_embedding"`
+		Groupid          uint64    `gorm:"column:groupid"`
+		Msgtype          string    `gorm:"column:msgtype"`
+		Lat              float64   `gorm:"column:lat"`
+		Lng              float64   `gorm:"column:lng"`
+		Subject          string    `gorm:"column:subject"`
+		Arrival          time.Time `gorm:"column:arrival"`
 	}
 
 	var rows []row
 	result := db.Raw(`
-		SELECT me.msgid, me.embedding,
+		SELECT me.msgid, me.subject_embedding, me.body_embedding,
 		       ms.groupid, ms.msgtype,
 		       ST_Y(ms.point) as lat, ST_X(ms.point) as lng,
 		       m.subject, ms.arrival
@@ -86,25 +88,10 @@ func (s *Store) Load() error {
 
 	entries := make([]Entry, 0, len(rows))
 	for _, r := range rows {
-		if len(r.Embedding) != EmbeddingDim*4 {
-			continue // wrong size, skip
+		e, err := decodeEntry(r.Msgid, r.Groupid, r.Msgtype, r.Lat, r.Lng, r.Subject, r.Arrival, r.SubjectEmbedding, r.BodyEmbedding)
+		if err != nil {
+			continue // wrong-sized subject blob: skip
 		}
-
-		var e Entry
-		e.Msgid = r.Msgid
-		e.Groupid = r.Groupid
-		e.Msgtype = r.Msgtype
-		e.Lat = r.Lat
-		e.Lng = r.Lng
-		e.Subject = r.Subject
-		e.Arrival = r.Arrival
-
-		// Decode float32 from little-endian binary
-		for i := 0; i < EmbeddingDim; i++ {
-			bits := binary.LittleEndian.Uint32(r.Embedding[i*4 : (i+1)*4])
-			e.Vec[i] = math.Float32frombits(bits)
-		}
-
 		entries = append(entries, e)
 	}
 
@@ -115,19 +102,65 @@ func (s *Store) Load() error {
 	return nil
 }
 
-// VectorSearchResult from vector search.
-type VectorSearchResult struct {
-	Msgid   uint64    `json:"id"`
-	Groupid uint64    `json:"groupid"`
-	Msgtype string    `json:"type"`
-	Lat     float64   `json:"lat"`
-	Lng     float64   `json:"lng"`
-	Score   float32   `json:"score"`
-	Subject string    `json:"-"` // Used for hybrid keyword scoring, not serialized
-	Arrival time.Time `json:"-"`
+// decodeEntry builds an Entry from raw DB columns. Subject embedding is
+// required and must match EmbeddingDim; body embedding is optional and
+// silently skipped if the wrong size.
+func decodeEntry(msgid, groupid uint64, msgtype string, lat, lng float64, subject string, arrival time.Time, subjectBytes, bodyBytes []byte) (Entry, error) {
+	if len(subjectBytes) != EmbeddingDim*4 {
+		return Entry{}, fmt.Errorf("subject embedding wrong size: %d", len(subjectBytes))
+	}
+
+	e := Entry{
+		Msgid:   msgid,
+		Groupid: groupid,
+		Msgtype: msgtype,
+		Lat:     lat,
+		Lng:     lng,
+		Subject: subject,
+		Arrival: arrival,
+	}
+
+	decodeFloats(subjectBytes, e.SubjectVec[:])
+
+	if len(bodyBytes) == EmbeddingDim*4 {
+		var body [EmbeddingDim]float32
+		decodeFloats(bodyBytes, body[:])
+		e.BodyVec = &body
+	}
+
+	return e, nil
 }
 
-// Search performs brute-force cosine similarity (dot product on normalized vectors).
+// decodeFloats decodes little-endian float32s from raw bytes into dst.
+func decodeFloats(raw []byte, dst []float32) {
+	for i := 0; i < len(dst); i++ {
+		bits := binary.LittleEndian.Uint32(raw[i*4 : (i+1)*4])
+		dst[i] = math.Float32frombits(bits)
+	}
+}
+
+// VectorSearchResult from vector search. SubjectCos and BodyCos are the pure
+// per-field cosines; HasBody distinguishes "body exists but cosine is 0" from
+// "no body embedding" (BodyCos is 0 in both cases). The caller decides how to
+// tier/order results — this struct carries the raw signal.
+type VectorSearchResult struct {
+	Msgid      uint64    `json:"id"`
+	Groupid    uint64    `json:"groupid"`
+	Msgtype    string    `json:"type"`
+	Lat        float64   `json:"lat"`
+	Lng        float64   `json:"lng"`
+	SubjectCos float32   `json:"subjectCos"`
+	BodyCos    float32   `json:"bodyCos"`
+	HasBody    bool      `json:"hasBody"`
+	Subject    string    `json:"-"` // Used for hybrid keyword scoring, not serialized
+	Arrival    time.Time `json:"-"`
+}
+
+// Search performs brute-force cosine similarity on every entry and returns the
+// top-K by max(subjectCos, bodyCos). Returning both cosines separately lets the
+// caller order subject-matches ahead of body-matches (what users expect:
+// a literal "table" in the subject should come before a message that only
+// mentions "table" in the body).
 func (s *Store) Search(query []float32, limit int, msgtype string, groupids []uint64,
 	swlat, swlng, nelat, nelng float32) []VectorSearchResult {
 
@@ -142,8 +175,11 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 	hasBoxFilter := nelat != 0 || nelng != 0 || swlat != 0 || swlng != 0
 
 	type scored struct {
-		idx   int
-		score float32
+		idx        int
+		subjectCos float32
+		bodyCos    float32
+		hasBody    bool
+		rankScore  float32 // max(subjectCos, bodyCos) — used only for top-K selection
 	}
 
 	results := make([]scored, 0, len(s.entries))
@@ -168,16 +204,32 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 			}
 		}
 
-		// Dot product (vectors are pre-normalized)
-		var dot float32
+		var subjectCos float32
 		for j := 0; j < EmbeddingDim; j++ {
-			dot += query[j] * e.Vec[j]
+			subjectCos += query[j] * e.SubjectVec[j]
 		}
 
-		results = append(results, scored{idx: i, score: dot})
+		rankScore := subjectCos
+		var bodyCos float32
+		hasBody := e.BodyVec != nil
+		if hasBody {
+			for j := 0; j < EmbeddingDim; j++ {
+				bodyCos += query[j] * e.BodyVec[j]
+			}
+			if bodyCos > rankScore {
+				rankScore = bodyCos
+			}
+		}
+
+		results = append(results, scored{
+			idx: i, subjectCos: subjectCos, bodyCos: bodyCos,
+			hasBody: hasBody, rankScore: rankScore,
+		})
 	}
 
-	// Sort top-K by score descending (selection sort — fine for N < 1000)
+	// Top-K by rankScore descending (selection sort — fine for N < 1000).
+	// Caller re-orders into subject/body tiers; this step only bounds the
+	// working set of candidates that are strong on at least one field.
 	n := len(results)
 	if n > limit {
 		n = limit
@@ -185,7 +237,7 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 	for i := 0; i < n; i++ {
 		maxIdx := i
 		for j := i + 1; j < len(results); j++ {
-			if results[j].score > results[maxIdx].score {
+			if results[j].rankScore > results[maxIdx].rankScore {
 				maxIdx = j
 			}
 		}
@@ -199,14 +251,16 @@ func (s *Store) Search(query []float32, limit int, msgtype string, groupids []ui
 	for i, r := range results {
 		e := &s.entries[r.idx]
 		out[i] = VectorSearchResult{
-			Msgid:   e.Msgid,
-			Groupid: e.Groupid,
-			Msgtype: e.Msgtype,
-			Lat:     e.Lat,
-			Lng:     e.Lng,
-			Score:   r.score,
-			Subject: e.Subject,
-			Arrival: e.Arrival,
+			Msgid:      e.Msgid,
+			Groupid:    e.Groupid,
+			Msgtype:    e.Msgtype,
+			Lat:        e.Lat,
+			Lng:        e.Lng,
+			SubjectCos: r.subjectCos,
+			BodyCos:    r.bodyCos,
+			HasBody:    r.hasBody,
+			Subject:    e.Subject,
+			Arrival:    e.Arrival,
 		}
 	}
 

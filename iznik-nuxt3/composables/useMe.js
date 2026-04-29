@@ -123,6 +123,7 @@ export function useMe() {
           emailfrequency: g.emailfrequency,
           eventsallowed: g.eventsallowed,
           volunteeringallowed: g.volunteeringallowed,
+          microvolunteeringallowed: g.microvolunteeringallowed,
           configid: g.configid,
           // Group-level fields from the cached group store.
           namedisplay: groupData.namedisplay || groupData.nameshort || '',

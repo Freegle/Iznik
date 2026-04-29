@@ -309,3 +309,121 @@ func TestRetryGroup_SubGroup(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 	assert.Equal(t, int32(2), atomic.LoadInt32(&calls))
 }
+
+func TestRetryGroup_Post(t *testing.T) {
+	var calls int32
+	app := fiber.New()
+	rg := NewRetryGroup(app.Group("/api"))
+	rg.Post("/create", func(c *fiber.Ctx) error {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			return errors.New("Deadlock found when trying to get lock")
+		}
+		return c.Status(201).SendString("created")
+	})
+
+	resp, _ := app.Test(httptest.NewRequest("POST", "/api/create", nil), 10000)
+	assert.Equal(t, 201, resp.StatusCode)
+	assert.Equal(t, "created", body(resp))
+	assert.Equal(t, int32(2), atomic.LoadInt32(&calls))
+}
+
+func TestRetryGroup_Put(t *testing.T) {
+	var calls int32
+	app := fiber.New()
+	rg := NewRetryGroup(app.Group("/api"))
+	rg.Put("/thing", func(c *fiber.Ctx) error {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			return errors.New("Lock wait timeout exceeded")
+		}
+		return c.SendString("updated")
+	})
+
+	resp, _ := app.Test(httptest.NewRequest("PUT", "/api/thing", nil), 10000)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "updated", body(resp))
+	assert.Equal(t, int32(2), atomic.LoadInt32(&calls))
+}
+
+func TestRetryGroup_Patch(t *testing.T) {
+	var calls int32
+	app := fiber.New()
+	rg := NewRetryGroup(app.Group("/api"))
+	rg.Patch("/thing", func(c *fiber.Ctx) error {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			return errors.New("Lost connection to MySQL server during query")
+		}
+		return c.SendString("patched")
+	})
+
+	resp, _ := app.Test(httptest.NewRequest("PATCH", "/api/thing", nil), 10000)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "patched", body(resp))
+	assert.Equal(t, int32(2), atomic.LoadInt32(&calls))
+}
+
+func TestRetryGroup_Delete(t *testing.T) {
+	var calls int32
+	app := fiber.New()
+	rg := NewRetryGroup(app.Group("/api"))
+	rg.Delete("/thing", func(c *fiber.Ctx) error {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			return errors.New("WSREP has not yet prepared node for application use")
+		}
+		return c.SendStatus(204)
+	})
+
+	resp, _ := app.Test(httptest.NewRequest("DELETE", "/api/thing", nil), 10000)
+	assert.Equal(t, 204, resp.StatusCode)
+	assert.Equal(t, int32(2), atomic.LoadInt32(&calls))
+}
+
+// wrapAll wraps every handler in a multi-handler chain with its own retry
+// loop. The retry is scoped to the failing handler, not the whole chain:
+// middleware that called c.Next() doesn't re-run when the next handler
+// recovers on retry. This test documents that scoping.
+func TestRetryGroup_MultipleHandlersRetriesAreScoped(t *testing.T) {
+	var middlewareCalls, handlerCalls int32
+	app := fiber.New()
+	rg := NewRetryGroup(app.Group("/api"))
+	middleware := func(c *fiber.Ctx) error {
+		atomic.AddInt32(&middlewareCalls, 1)
+		return c.Next()
+	}
+	finalHandler := func(c *fiber.Ctx) error {
+		n := atomic.AddInt32(&handlerCalls, 1)
+		if n == 1 {
+			return errors.New("Deadlock found")
+		}
+		return c.SendString("ok")
+	}
+	rg.Get("/chain", middleware, finalHandler)
+
+	resp, _ := app.Test(httptest.NewRequest("GET", "/api/chain", nil), 10000)
+	assert.Equal(t, 200, resp.StatusCode)
+	assert.Equal(t, "ok", body(resp))
+	// Middleware runs once, then finalHandler's own retry loop retries the
+	// terminal call until it succeeds.
+	assert.Equal(t, int32(1), atomic.LoadInt32(&middlewareCalls))
+	assert.Equal(t, int32(2), atomic.LoadInt32(&handlerCalls))
+}
+
+// A non-retryable error from a grouped route must return immediately — no
+// retries, original status code preserved. Regression guard: RetryGroup must
+// not silently upgrade 4xx errors to retry behaviour.
+func TestRetryGroup_NonRetryableStopsImmediately(t *testing.T) {
+	var calls int32
+	app := fiber.New()
+	rg := NewRetryGroup(app.Group("/api"))
+	rg.Post("/bad", func(c *fiber.Ctx) error {
+		atomic.AddInt32(&calls, 1)
+		return fiber.NewError(422, "validation failed")
+	})
+
+	resp, _ := app.Test(httptest.NewRequest("POST", "/api/bad", nil))
+	assert.Equal(t, 422, resp.StatusCode)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&calls))
+}

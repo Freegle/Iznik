@@ -155,6 +155,45 @@ class MjmlMailableTest extends TestCase
         $mailable->exposeCompileMjml($invalidMjml);
     }
 
+    public function test_compile_mjml_labels_pre_compile_failures_distinctly(): void
+    {
+        // Background: 2026-04-27 — a Redis-pool init failure during MJML
+        // compiler construction was logged as "MJML compilation failed",
+        // sending the on-call investigation toward MJML when the actual
+        // cause was a Docker DNS issue. Pre-compile failures must be
+        // labelled differently.
+        $mailable = new class extends MjmlMailable
+        {
+            protected function getSubject(): string
+            {
+                return 'Test Subject';
+            }
+
+            public function exposeCompileMjml(string $mjml): string
+            {
+                return $this->compileMjml($mjml);
+            }
+        };
+
+        // Force the compiler service to throw a non-MJML, non-HTTP error
+        // (e.g. what a Redis facade does when its connection is down).
+        $this->app->bind(
+            \App\Services\MjmlCompilerService::class,
+            fn () => new class
+            {
+                public function compile(string $mjml): string
+                {
+                    throw new \RedisException('connection refused');
+                }
+            }
+        );
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('Email build failed before MJML compile');
+
+        $mailable->exposeCompileMjml('<mjml><mj-body><mj-section><mj-column><mj-text>x</mj-text></mj-column></mj-section></mj-body></mjml>');
+    }
+
     public function test_compile_mjml_with_valid_mjml(): void
     {
         $mailable = new class extends MjmlMailable {

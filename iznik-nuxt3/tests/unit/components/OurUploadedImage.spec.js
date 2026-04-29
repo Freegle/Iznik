@@ -2,8 +2,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import OurUploadedImage from '~/components/OurUploadedImage.vue'
 
+// Use vi.hoisted so the same vi.fn() reference is placed in the mock
+// factory AND exposed to the tests below. A plain `vi.fn()` inside the
+// factory produces a NEW function per module evaluation, so an assertion
+// that re-imports `@sentry/browser` (via static or dynamic import) can
+// end up checking a different fn than the one the component actually
+// called — giving a confusing "Number of calls: 0" on a spy that was
+// genuinely invoked.
+const { mockCaptureMessage } = vi.hoisted(() => ({ mockCaptureMessage: vi.fn() }))
+
 vi.mock('@sentry/browser', () => ({
-  captureMessage: vi.fn(),
+  captureMessage: mockCaptureMessage,
 }))
 
 describe('OurUploadedImage', () => {
@@ -198,6 +207,28 @@ describe('OurUploadedImage', () => {
 
       expect(wrapper.emitted('error')).toBeTruthy()
       expect(wrapper.emitted('error')[0][0]).toBe(mockEvent)
+    })
+
+    it('reports to Sentry when target is connected (real load failure)', async () => {
+      const wrapper = createWrapper({ src: 'freegletusd-abc123' })
+      await wrapper.vm.brokenImage({ target: { isConnected: true } })
+      expect(mockCaptureMessage).toHaveBeenCalledWith(
+        'Failed to fetch image freegletusd-abc123'
+      )
+    })
+
+    it('does not report when target is detached from DOM (cancelled request)', async () => {
+      const wrapper = createWrapper({ src: 'freegletusd-abc123' })
+      await wrapper.vm.brokenImage({ target: { isConnected: false } })
+      expect(mockCaptureMessage).not.toHaveBeenCalled()
+    })
+
+    it('does not report when component is unmounting', async () => {
+      const wrapper = createWrapper({ src: 'freegletusd-abc123' })
+      const brokenImage = wrapper.vm.brokenImage
+      wrapper.unmount()
+      brokenImage({ target: { isConnected: true } })
+      expect(mockCaptureMessage).not.toHaveBeenCalled()
     })
   })
 

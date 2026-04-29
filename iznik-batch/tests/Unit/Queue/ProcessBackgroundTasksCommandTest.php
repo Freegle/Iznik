@@ -243,17 +243,78 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
-        // Verify email was sent with correct data.
+        // Verify email was sent with correct data and defaults to external source.
         Mail::assertSent(DonateExternalMail::class, function (DonateExternalMail $mail) {
             return $mail->userName === 'Generous Donor'
                 && $mail->userId === 54321
                 && $mail->userEmail === 'donor@test.com'
-                && $mail->amount === 25.50;
+                && $mail->amount === 25.50
+                && $mail->source === DonateExternalMail::SOURCE_EXTERNAL;
         });
 
         // Verify task was marked as processed.
         $task = DB::table('background_tasks')->first();
         $this->assertNotNull($task->processed_at);
+    }
+
+    public function test_processes_email_donate_paypal_task(): void
+    {
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_donate_external',
+            'data' => json_encode([
+                'user_id' => 111,
+                'user_name' => 'PayPal Donor',
+                'user_email' => 'paypal@test.com',
+                'amount' => 30.00,
+                'source' => 'paypal',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        Mail::assertSent(DonateExternalMail::class, function (DonateExternalMail $mail) {
+            return $mail->source === DonateExternalMail::SOURCE_PAYPAL
+                && $mail->getChannelPhrase() === 'PayPal Donate'
+                && str_contains($mail->envelope()->subject, 'via PayPal Donate');
+        });
+    }
+
+    public function test_processes_email_donate_stripe_task(): void
+    {
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_donate_external',
+            'data' => json_encode([
+                'user_id' => 222,
+                'user_name' => 'Stripe Donor',
+                'user_email' => 'stripe@test.com',
+                'amount' => 40.00,
+                'source' => 'stripe',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        Mail::assertSent(DonateExternalMail::class, function (DonateExternalMail $mail) {
+            return $mail->source === DonateExternalMail::SOURCE_STRIPE
+                && $mail->getChannelPhrase() === 'Stripe'
+                && str_contains($mail->envelope()->subject, 'via Stripe');
+        });
     }
 
     public function test_email_donate_external_fails_with_missing_fields(): void
@@ -1958,6 +2019,49 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         ])->assertSuccessful();
 
         \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_handle_fatal_shutdown_does_nothing_for_null_error(): void
+    {
+        $command = $this->app->make(\App\Console\Commands\Queue\ProcessBackgroundTasksCommand::class);
+
+        \Illuminate\Support\Facades\Log::shouldReceive('critical')->never();
+
+        $command->handleFatalShutdown(null);
+    }
+
+    public function test_handle_fatal_shutdown_does_nothing_for_non_fatal_error(): void
+    {
+        $command = $this->app->make(\App\Console\Commands\Queue\ProcessBackgroundTasksCommand::class);
+
+        \Illuminate\Support\Facades\Log::shouldReceive('critical')->never();
+
+        $command->handleFatalShutdown([
+            'type' => E_WARNING,
+            'message' => 'Some warning',
+            'file' => '/app/foo.php',
+            'line' => 42,
+        ]);
+    }
+
+    public function test_handle_fatal_shutdown_logs_and_skips_sentry_when_not_bound(): void
+    {
+        $command = $this->app->make(\App\Console\Commands\Queue\ProcessBackgroundTasksCommand::class);
+
+        \Illuminate\Support\Facades\Log::shouldReceive('critical')
+            ->once()
+            ->withArgs(function (string $message, array $context) {
+                return str_contains($message, 'Fatal error in queue:background-tasks')
+                    && str_contains($message, 'Allowed memory size')
+                    && str_contains($message, '/app/Service.php:99');
+            });
+
+        $command->handleFatalShutdown([
+            'type' => E_ERROR,
+            'message' => 'Allowed memory size of 134217728 bytes exhausted',
+            'file' => '/app/Service.php',
+            'line' => 99,
+        ]);
     }
 
     /**

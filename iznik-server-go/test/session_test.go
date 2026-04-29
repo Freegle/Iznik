@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/session"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -213,6 +214,46 @@ func TestGetSession(t *testing.T) {
 	assert.NotNil(t, result["persistent"])
 }
 
+func TestGetSessionMicrovolunteeringallowed(t *testing.T) {
+	// /api/session must return microvolunteeringallowed in each group entry so that
+	// MicroVolunteering.vue gate can decide whether to offer challenges.
+	prefix := uniquePrefix("sess_mv")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	db.Exec("UPDATE `groups` SET microvolunteering = 1 WHERE id = ?", groupID)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	groups, ok := result["groups"].([]interface{})
+	assert.True(t, ok, "groups should be an array")
+	assert.GreaterOrEqual(t, len(groups), 1)
+
+	found := false
+	for _, g := range groups {
+		gmap, ok := g.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if gmap["groupid"] == float64(groupID) {
+			val, exists := gmap["microvolunteeringallowed"]
+			assert.True(t, exists, "microvolunteeringallowed must be present in session groups")
+			assert.Equal(t, float64(1), val, "microvolunteeringallowed should be 1 for groups with microvolunteering enabled")
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "test group not found in session groups response")
+}
+
 func TestGetSessionReturnsDonorFields(t *testing.T) {
 	// Session endpoint must return supporter, donated, and donatedtype so the
 	// frontend can suppress ads for recent donors (recentDonor computed prop).
@@ -285,6 +326,45 @@ func TestGetSessionEmailsHaveOurdomainFlag(t *testing.T) {
 	me := result["me"].(map[string]interface{})
 	email, _ := me["email"].(string)
 	assert.NotContains(t, email, "@users.ilovefreegle.org")
+}
+
+func TestGetSessionReturnsMailFlags(t *testing.T) {
+	// /api/session must return relevantallowed and newslettersallowed in me so the
+	// settings UI toggles ("Suggested posts for you", "Newsletters & stories") reflect
+	// the real DB values. If these are absent the toggles render as off regardless of
+	// state, and Relevant::sendMessages keeps mailing users who appear opted out.
+	prefix := uniquePrefix("sess_mail_flags")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	check := func(rel, news int) {
+		t.Helper()
+		db.Exec("UPDATE users SET relevantallowed = ?, newslettersallowed = ? WHERE id = ?", rel, news, userID)
+
+		req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var result map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&result)
+
+		me, ok := result["me"].(map[string]interface{})
+		assert.True(t, ok, "me should be a map")
+
+		gotRel, hasRel := me["relevantallowed"]
+		assert.True(t, hasRel, "me.relevantallowed must be present")
+		assert.Equal(t, float64(rel), gotRel, "me.relevantallowed should match DB")
+
+		gotNews, hasNews := me["newslettersallowed"]
+		assert.True(t, hasNews, "me.newslettersallowed must be present")
+		assert.Equal(t, float64(news), gotNews, "me.newslettersallowed should match DB")
+	}
+
+	check(1, 1)
+	check(0, 0)
+	check(1, 0)
+	check(0, 1)
 }
 
 func TestGetSessionNotLoggedIn(t *testing.T) {
@@ -2545,5 +2625,32 @@ func TestGetSessionInventsNameFromEmail(t *testing.T) {
 		json.NewDecoder(resp.Body).Decode(&resp2)
 		me, _ := resp2["me"].(map[string]interface{})
 		assert.Equal(t, localPart, me["displayname"], "Session should invent display name from email local part")
+	})
+}
+
+func TestFetchEmailHealth(t *testing.T) {
+	// Deterministic coverage for the daytime-gated email health block in
+	// GetSession. Without this test the lines flip in and out of Go
+	// coverage depending on the wall-clock hour CI runs at, which caused
+	// Coveralls-go to fail unrelated PRs (see PR #212 / job 180487491).
+
+	t.Run("outside daytime returns zero without querying", func(t *testing.T) {
+		// Each out-of-window hour must short-circuit to (0, 0).
+		for _, hour := range []int{0, 6, 22, 23} {
+			emailin, emailout := session.FetchEmailHealth(database.DBConn, hour)
+			assert.Equal(t, int64(0), emailin, "hour %d should not flag emailin", hour)
+			assert.Equal(t, int64(0), emailout, "hour %d should not flag emailout", hour)
+		}
+	})
+
+	t.Run("daytime runs both queries and returns 0 or 1", func(t *testing.T) {
+		// At a daytime hour both queries run; the flags are 0 or 1 depending
+		// on real traffic in the test DB. We assert the contract, not the
+		// value, so the test stays deterministic across environments.
+		for _, hour := range []int{7, 12, 21} {
+			emailin, emailout := session.FetchEmailHealth(database.DBConn, hour)
+			assert.Contains(t, []int64{0, 1}, emailin, "hour %d emailin must be 0 or 1", hour)
+			assert.Contains(t, []int64{0, 1}, emailout, "hour %d emailout must be 0 or 1", hour)
+		}
 	})
 }

@@ -32,6 +32,7 @@
 import { ref, useRoute, useRouter, useHead, useRuntimeConfig } from '#imports'
 import AutoComplete from '~/components/AutoComplete.vue'
 import { buildHead } from '~/composables/useBuildHead'
+import { normalizeAuthoritySearch } from '~/composables/useAuthoritySearch'
 
 // Setup stores and route
 const runtimeConfig = useRuntimeConfig()
@@ -54,19 +55,7 @@ useHead(
 
 // Methods
 function process(results) {
-  const authorities =
-    results.authorities.length > 5
-      ? results.authorities.slice(0, 5)
-      : results.authorities
-  const ret = []
-  for (const authority of authorities) {
-    if (authority && authority.name) {
-      ret.push(authority)
-    }
-  }
-
-  results.value = ret
-  return ret
+  return normalizeAuthoritySearch(results, 5)
 }
 
 function select(auth) {

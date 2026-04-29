@@ -516,14 +516,11 @@ function settingsChange(param, groupidArg, val) {
 }
 
 async function changeNotification(e, notifType) {
-  const settingsObj = settings.value
-  const notificationsObj = notifications.value
-  notificationsObj[notifType] = e.value
-  settingsObj.notifications = notificationsObj
+  const notificationsObj = { ...notifications.value, [notifType]: e.value }
 
   await userStore.edit({
     id: user.value.id,
-    settings: settingsObj,
+    settings: { notifications: notificationsObj },
   })
 }
 
@@ -535,11 +532,9 @@ async function changeRelevant(e) {
 }
 
 async function changeNotifChitchat(e) {
-  const settingsObj = user.value.settings
-  settingsObj.notificationmails = e.value
   await userStore.edit({
     id: user.value.id,
-    settings: settingsObj,
+    settings: { notificationmails: e.value },
   })
 }
 
@@ -551,11 +546,9 @@ async function changeNewsletter(e) {
 }
 
 async function changeAutorepost(e) {
-  const settingsObj = user.value.settings || {}
-  settingsObj.autorepostsdisable = !e.value
   await userStore.edit({
     id: member.value?.userid,
-    settings: settingsObj,
+    settings: { autorepostsdisable: !e.value },
   })
 }
 

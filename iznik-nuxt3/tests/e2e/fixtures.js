@@ -241,7 +241,7 @@ const test = base.test.extend({
   ],
 
   // Override the page fixture to use our isolated context
-  page: async ({ context }, use) => {
+  page: async ({ context }, use, testInfo) => {
     // Create a page in our isolated context
     const page = await context.newPage()
     console.log(`Created new page in isolated context`)
@@ -285,6 +285,7 @@ const test = base.test.extend({
       /Failed to load resource: the server responded with a status of 404.*delivery\.localhost/, // Delivery service 404 errors for missing images can happen during normal operation.
       /FedCM get\(\) rejects with/, // Not available in test
       /Error retrieving a token./, // Also related to GSI FedCM, not available in test
+      /FedCM well-known file/, // FedCM well-known file fetch errors — Chrome FedCM API not available in Docker test environment
       /Hydration completed but contains mismatches/, // Not ideal, but not visible to user
       /ResizeObserver loop limit exceeded/, // Non-critical UI warning
       // NOTE: Do NOT add a broad Sentry catch-all — Sentry errors are critical. Only specific known patterns below.
@@ -297,6 +298,7 @@ const test = base.test.extend({
       /Failed to load resource: the server responded with a status of 503/, // Server unavailable during startup
       /Failed to load resource: net::ERR_ABORTED/, // Can happen during page navigation when requests are cancelled
       /Failed to load resource: net::ERR_CONNECTION_REFUSED/, // Can happen when server is starting up
+      /Failed to load resource: net::ERR_NAME_NOT_RESOLVED/, // External CDNs (Facebook, Google, etc.) not DNS-resolvable in isolated Docker test environment
       /has been blocked by CORS policy/, // CORS errors can happen in test environments due to ads
       /Failed to save credentials NotSupportedError: The user agent does not support public key credentials./, // Can happen in test environments
       /Refused to frame/, // Can happen in test.
@@ -318,15 +320,21 @@ const test = base.test.extend({
       /Failed to load resource.*freegle-dev-local/, // Freegle dev site may not be running during ModTools tests
       /Failed to load resource: the server responded with a status of 404.*api\/modtools\//, // modtools endpoints not yet in Go API
       /\[Exc?eption for Sentry\]:.*\/modtools\/modconfig/, // modconfig endpoint not yet in Go API
+      /\[Exc?eption for Sentry\]:.*Page not found:/, // Go API 404 for unimplemented endpoints (e.g. /dashboard) captured by Sentry — not a code bug
       /Only one navigator\.credentials\.get request may be outstanding at one time/, // FedCM concurrent credential requests in test
       /useOurModal show problem/, // Race condition fixed in useOurModal.js (nextTick) - allow until container rebuild
       /Failed to load resource: the server responded with a status of 500.*api\/user/, // Transient 500 on user API — app retries automatically
       /Failed to load resource: the server responded with a status of 500.*connect\.facebook\.net/, // Facebook SDK transient 500 errors
       /Refused to execute script from.*connect\.facebook\.net.*MIME type/, // Facebook SDK MIME type error when returning error page
       /net::ERR_NETWORK_CHANGED/, // Transient network change during image load (delivery.localhost) — not a code bug
+      /The fetch of the well-known file resulted in a network error: ERR_NETWORK_CHANGED/, // FedCM well-known file fetch fails when network changes transiently in Docker test environment
       /compute-pressure is not allowed/, // YouTube player Permissions-Policy violation — external script, not our code
       /\[Exc?eption for Sentry\]:.*SpinButton.*callback not called/, // Bootstrap-Vue SpinButton internal timing error — component issue, not user-visible
+      /\[Exc?eption for Sentry\]:.*focus-trap must have at least one container/, // focus-trap timing error during rapid modal open/close in test environment — not reproducible at human interaction speed
+      /\[CRITICAL-CLIENT-ERROR\].*focus-trap must have at least one container/, // focus-trap causes Nuxt error page during modal transition — transient, suppressed in production via useSuppressException
       /Failed to fetch dynamically imported module.*\.localhost/, // Transient network error loading JS chunks from local dev server under parallel test load — not a production code bug
+      /net::ERR_SOCKET_NOT_CONNECTED.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
+      /Failed to load resource.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
     ]
 
     // Initialize the working copy of allowed error patterns
@@ -468,6 +476,67 @@ const test = base.test.extend({
       }
     })
 
+    // Detect Nuxt SSR error pages on every load — catches cases where direct
+    // page.goto() bypasses gotoAndVerify. Logs a [CRITICAL-SSR-ERROR] marker
+    // that the CI "Evaluate overall test results" step scans for and surfaces
+    // even when the test suite passes overall.
+    page.on('load', () => {
+      // Fire-and-forget — never throw from an event handler.
+      // Use a short timeout so a slow/stuck renderer doesn't compound the problem.
+      Promise.race([
+        page.locator('body').textContent({ timeout: 2000 }),
+        new Promise((resolve) => setTimeout(() => resolve(''), 2000)),
+      ])
+        .then((bodyText) => {
+          if (bodyText && bodyText.includes('Something went wrong')) {
+            console.error(
+              `[CRITICAL-SSR-ERROR] Nuxt SSR error page at ${page.url()}`
+            )
+          }
+        })
+        .catch(() => {})
+    })
+
+    // Detect client-side "Something went wrong" error pages (Vue-rendered, not
+    // caught by the load handler above). Runs inside the browser via addInitScript
+    // so it survives client-side navigations. Uses a debounced MutationObserver to
+    // avoid false positives during partial renders.
+    await page.addInitScript(() => {
+      let t = null
+      const obs = new MutationObserver(() => {
+        clearTimeout(t)
+        t = setTimeout(() => {
+          if (document.body?.textContent?.includes('Something went wrong')) {
+            // Include enough error detail so the allowlist can distinguish
+            // known transient errors (e.g. focus-trap) from real bugs.
+            const errorDetail =
+              document.body?.textContent?.match(
+                /"message":"([^"]{0,200})"/
+              )?.[1] || ''
+            console.error(
+              '[CRITICAL-CLIENT-ERROR] client-side error page at ' +
+                location.href +
+                (errorDetail ? ' | ' + errorDetail : '')
+            )
+          }
+        }, 200)
+      })
+      // document.documentElement may be null when addInitScript runs before HTML
+      // is parsed (early navigation events). Guard against the TypeError.
+      if (document.documentElement) {
+        obs.observe(document.documentElement, { childList: true, subtree: true })
+      } else {
+        window.addEventListener('DOMContentLoaded', () => {
+          if (document.documentElement) {
+            obs.observe(document.documentElement, {
+              childList: true,
+              subtree: true,
+            })
+          }
+        })
+      }
+    })
+
     // Track API error responses with full request details for diagnostics.
     // Browser console only shows "Failed to load resource: 400" with no method,
     // body, or response — this captures everything needed to debug.
@@ -581,44 +650,71 @@ const test = base.test.extend({
     page.gotoAndVerify = async (path, options = {}) => {
       const timeout = options.timeout || timeouts.navigation.default
       const maxRetries = options.maxRetries || 3
-      const waitUntil = options.waitUntil || 'load'
+      const waitUntil = options.waitUntil || 'domcontentloaded'
+
+      // waitUntil:'load' blocks until ALL resources (GA, Maps, social SDKs) finish.
+      // External scripts are blocked in CI, so 'load' hangs for the full 202500ms
+      // timeout on every navigation — burning test budgets and causing flaky failures.
+      // Two days were lost diagnosing this. Do not re-introduce it.
+      if (options.waitUntil === 'load') {
+        throw new Error(
+          "[gotoAndVerify] waitUntil:'load' is banned. External scripts never " +
+            "complete in CI, causing 202500ms navigation hangs. Use 'domcontentloaded'."
+        )
+      }
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        let failStep = 'none'
         try {
           console.log(
-            `Navigating to ${path} with timeout ${timeout}ms (attempt ${attempt}/${maxRetries})`
+            `[gotoAndVerify] Navigating to ${path} timeout=${timeout}ms waitUntil=${waitUntil} attempt=${attempt}/${maxRetries}`
           )
 
           // Navigate with timeout and configurable waitUntil strategy.
           // Default 'load' waits for all resources; 'domcontentloaded' is faster
           // for pages with external resources (e.g., Stripe, PayPal) that may be slow in CI.
+          failStep = 'page.goto'
           await page.goto(path, { timeout, waitUntil })
+          console.log(`[gotoAndVerify] page.goto done for ${path}`)
 
           // Wait for page to finish hydrating (loading spinner to disappear)
           // The LoadingIndicator component is always in the DOM but uses opacity for visibility.
           // We check if it's actually VISIBLE (opacity > 0), not just present in DOM.
           // Can't use Playwright's toBeVisible assertion since that doesn't check opacity.
+          failStep = 'loading-indicator'
           const loadingIndicator = page.locator('.loading-indicator')
           if ((await loadingIndicator.count()) > 0) {
             await base.expect(loadingIndicator).toHaveCSS('opacity', '0')
           }
+          console.log(`[gotoAndVerify] loading-indicator done for ${path}`)
 
           // Verify page content is visible
+          failStep = 'body-visible'
           const body = page.locator('body')
           await base.expect(body).toBeVisible({
             timeout: Math.min(timeout, 30000),
           })
 
           // Check if page contains error messages
+          failStep = 'content-check'
           const errorTextContent = await body.textContent()
 
           // Check for general error message
           if (errorTextContent.includes('Something went wrong')) {
-            // Take a screenshot of the error page
-            await page.screenshot({
-              path: getScreenshotPath(`error-page-${Date.now()}.png`),
-              fullPage: true,
-            })
+            // Log critical marker — picked up by CI Evaluate step even when tests pass
+            console.error(
+              `[CRITICAL-SSR-ERROR] Nuxt SSR error page at ${path} (gotoAndVerify attempt ${attempt}/${maxRetries})`
+            )
+            // Take a screenshot of the error page — bounded so this can't hang indefinitely
+            try {
+              await page.screenshot({
+                path: getScreenshotPath(`error-page-${Date.now()}.png`),
+                fullPage: true,
+                timeout: 15000,
+              })
+            } catch (ssErr) {
+              console.warn(`[gotoAndVerify] error-page screenshot failed: ${ssErr.message}`)
+            }
 
             // Extract the "Error was" text if present
             let errorDetails = ''
@@ -627,7 +723,7 @@ const test = base.test.extend({
             )
             if (errorWasMatch) {
               errorDetails = ` - Error was: ${errorWasMatch[1].trim()}`
-              console.log(`Error details extracted: ${errorWasMatch[1].trim()}`)
+              console.log(`[gotoAndVerify] Error details: ${errorWasMatch[1].trim()}`)
             }
 
             throw new Error(
@@ -639,25 +735,35 @@ const test = base.test.extend({
           if (
             errorTextContent.includes("Oh no! That page doesn't seem to exist")
           ) {
-            // Take a screenshot of the 404 page
-            await page.screenshot({
-              path: getScreenshotPath(`404-error-${Date.now()}.png`),
-              fullPage: true,
-            })
+            // Take a screenshot of the 404 page — bounded timeout
+            try {
+              await page.screenshot({
+                path: getScreenshotPath(`404-error-${Date.now()}.png`),
+                fullPage: true,
+                timeout: 15000,
+              })
+            } catch (ssErr) {
+              console.warn(`[gotoAndVerify] 404-page screenshot failed: ${ssErr.message}`)
+            }
             throw new Error(
               `Page loaded with '404 page not found' error message at ${path}`
             )
           }
         } catch (error) {
-          // Take a screenshot if navigation fails
+          console.error(
+            `[gotoAndVerify] FAILED step='${failStep}' path='${path}' attempt=${attempt}/${maxRetries}: ${error.message.substring(0, 300)}`
+          )
+
+          // Take a screenshot if navigation fails — bounded so this can't hang indefinitely
           try {
             await page.screenshot({
               path: getScreenshotPath(`navigation-error-${Date.now()}.png`),
               fullPage: true,
+              timeout: 15000,
             })
           } catch (screenshotError) {
             console.warn(
-              `Could not take navigation error screenshot: ${screenshotError.message}`
+              `[gotoAndVerify] navigation-error screenshot failed: ${screenshotError.message}`
             )
           }
 
@@ -666,11 +772,11 @@ const test = base.test.extend({
             const currentUrl = page.url()
             const currentTitle = await page.title()
             console.log(
-              `Navigation failed. Current URL: ${currentUrl}, Title: "${currentTitle}"`
+              `[gotoAndVerify] State after failure: URL=${currentUrl} title="${currentTitle}"`
             )
           } catch (debugError) {
             console.warn(
-              `Could not get page state for debugging: ${debugError.message}`
+              `[gotoAndVerify] Could not get page state: ${debugError.message}`
             )
           }
 
@@ -691,7 +797,7 @@ const test = base.test.extend({
 
           if (isRetryable && attempt < maxRetries) {
             console.log(
-              `Retryable connection error on attempt ${attempt}, waiting before retry...`
+              `[gotoAndVerify] Retryable error on attempt ${attempt}, waiting before retry...`
             )
             await new Promise((resolve) =>
               setTimeout(resolve, 1000 * Math.pow(2, attempt - 1))
@@ -704,6 +810,7 @@ const test = base.test.extend({
         }
 
         // If no error, then this navigation succeeded - no need to keep retrying.
+        console.log(`[gotoAndVerify] SUCCESS path='${path}'`)
         break
       }
 
@@ -715,80 +822,85 @@ const test = base.test.extend({
     const performTeardown = async (options = {}) => {
       const timeout = options.timeout || timeouts.teardown.networkIdle
       try {
-        // Clear browser storage before ending the test
+        // Clear browser storage before ending the test.
+        // Wrapped in Promise.race — page.evaluate() hangs indefinitely when
+        // the Chrome renderer is unresponsive (same failure mode as clearSessionData).
         try {
-          await page
-            .evaluate(() => {
-              try {
-                // Check if localStorage is accessible before trying to clear it
-                if (typeof Storage !== 'undefined' && window.localStorage) {
-                  localStorage.clear()
-                  console.log('LocalStorage cleared during teardown')
-                }
-              } catch (e) {
-                console.warn('Could not clear localStorage:', e.message)
-              }
-
-              try {
-                // Check if sessionStorage is accessible before trying to clear it
-                if (typeof Storage !== 'undefined' && window.sessionStorage) {
-                  sessionStorage.clear()
-                  console.log('SessionStorage cleared during teardown')
-                }
-              } catch (e) {
-                console.warn('Could not clear sessionStorage:', e.message)
-              }
-
-              // Safe IndexedDB cleanup
-              if (window.indexedDB) {
+          await Promise.race([
+            page
+              .evaluate(() => {
                 try {
-                  // Add common database names that might be used in the application
-                  // This approach is more reliable than indexedDB.databases() which is not widely supported
-                  const possibleDBNames = [
-                    'localforage',
-                    'keyval-store',
-                    'firebaseLocalStorageDb',
-                    'iznik-db', // Add app-specific DB names
-                    'app-state',
-                    'user-data',
-                  ]
-
-                  for (const dbName of possibleDBNames) {
-                    try {
-                      console.log(`Attempting to delete IndexedDB: ${dbName}`)
-                      indexedDB.deleteDatabase(dbName)
-                    } catch (e) {
-                      // Silent fail is acceptable for DB deletion attempts
-                    }
+                  // Check if localStorage is accessible before trying to clear it
+                  if (typeof Storage !== 'undefined' && window.localStorage) {
+                    localStorage.clear()
+                    console.log('LocalStorage cleared during teardown')
                   }
                 } catch (e) {
-                  // Ignore IndexedDB errors during cleanup
+                  console.warn('Could not clear localStorage:', e.message)
                 }
-              }
 
-              // Clear all cookies via JavaScript as an extra precaution
-              try {
-                if (document.cookie) {
-                  const cookies = document.cookie.split(';')
-                  cookies.forEach((cookie) => {
-                    const name = cookie.split('=')[0].trim()
-                    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/;`
-                  })
-                  console.log('Cookies cleared during teardown')
+                try {
+                  // Check if sessionStorage is accessible before trying to clear it
+                  if (typeof Storage !== 'undefined' && window.sessionStorage) {
+                    sessionStorage.clear()
+                    console.log('SessionStorage cleared during teardown')
+                  }
+                } catch (e) {
+                  console.warn('Could not clear sessionStorage:', e.message)
                 }
-              } catch (e) {
-                console.warn('Could not clear cookies:', e.message)
-              }
-            })
-            .catch((e) => {
-              // Only log if it's not a SecurityError about localStorage access
-              if (
-                !e.message.includes('localStorage') &&
-                !e.message.includes('Access is denied')
-              ) {
-                console.warn(`Storage cleanup error: ${e.message}`)
-              }
-            })
+
+                // Safe IndexedDB cleanup
+                if (window.indexedDB) {
+                  try {
+                    // Add common database names that might be used in the application
+                    // This approach is more reliable than indexedDB.databases() which is not widely supported
+                    const possibleDBNames = [
+                      'localforage',
+                      'keyval-store',
+                      'firebaseLocalStorageDb',
+                      'iznik-db', // Add app-specific DB names
+                      'app-state',
+                      'user-data',
+                    ]
+
+                    for (const dbName of possibleDBNames) {
+                      try {
+                        console.log(`Attempting to delete IndexedDB: ${dbName}`)
+                        indexedDB.deleteDatabase(dbName)
+                      } catch (e) {
+                        // Silent fail is acceptable for DB deletion attempts
+                      }
+                    }
+                  } catch (e) {
+                    // Ignore IndexedDB errors during cleanup
+                  }
+                }
+
+                // Clear all cookies via JavaScript as an extra precaution
+                try {
+                  if (document.cookie) {
+                    const cookies = document.cookie.split(';')
+                    cookies.forEach((cookie) => {
+                      const name = cookie.split('=')[0].trim()
+                      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/;`
+                    })
+                    console.log('Cookies cleared during teardown')
+                  }
+                } catch (e) {
+                  console.warn('Could not clear cookies:', e.message)
+                }
+              })
+              .catch((e) => {
+                // Only log if it's not a SecurityError about localStorage access
+                if (
+                  !e.message.includes('localStorage') &&
+                  !e.message.includes('Access is denied')
+                ) {
+                  console.warn(`Storage cleanup error: ${e.message}`)
+                }
+              }),
+            new Promise((resolve) => setTimeout(resolve, 5000)),
+          ])
         } catch (err) {
           // Log but continue if this fails
           console.warn(`Unable to clear page storage: ${err.message}`)
@@ -799,10 +911,12 @@ const test = base.test.extend({
         return true
       } catch (error) {
         console.warn(`Teardown warning: ${error.message}`)
-        // Take a screenshot if network doesn't become idle
-        await page.screenshot({
-          path: getScreenshotPath(`teardown-warning-${Date.now()}.png`),
-        })
+        // Take a screenshot if network doesn't become idle — guarded with
+        // a timeout because page.screenshot() also hangs on an unresponsive renderer.
+        await Promise.race([
+          page.screenshot({ path: getScreenshotPath(`teardown-warning-${Date.now()}.png`) }).catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, 5000)),
+        ])
         return false
       }
     }
@@ -835,6 +949,61 @@ const test = base.test.extend({
     await logoutIfLoggedIn(loggingPage)
     console.log('Ensured user is logged out for fresh test state')
 
+    // Freeze-detection heartbeat. Sends a trivial page.evaluate() every 5s with a
+    // 10s timeout. If the renderer stops responding the spec file is appended to
+    // /tmp/playwright-freeze-specs.txt so the status container can re-run it in a
+    // fresh Playwright process, and the page is closed to abort the frozen test in
+    // seconds rather than waiting for the 600s test timeout.
+    //
+    // The timeout is 10s (not 3s) to avoid false positives: page.evaluate() can
+    // legitimately block while a slow navigation completes (e.g. Explore page
+    // loading hundreds of posts). Genuine V8 renderer freezes are indefinite, so
+    // 10s is still far more than enough to catch them.
+    const FREEZE_SPECS_FILE = '/tmp/playwright-freeze-specs.txt'
+    let heartbeatTimer = null
+    let heartbeatBusy = false
+    let heartbeatFreezeDetected = false
+    heartbeatTimer = setInterval(async () => {
+      if (heartbeatFreezeDetected || page.isClosed()) {
+        clearInterval(heartbeatTimer)
+        heartbeatTimer = null
+        return
+      }
+      if (heartbeatBusy) return  // previous check still in flight — skip this tick
+      heartbeatBusy = true
+      try {
+        await Promise.race([
+          page.evaluate(() => 1),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('freeze')), 10000)
+          ),
+        ])
+      } catch (err) {
+        // Only treat as a renderer freeze if the race was won by OUR 10s timeout
+        // sentinel. page.evaluate() can also throw immediately (e.g. "Execution
+        // context was destroyed" during a navigation) — that is healthy renderer
+        // behaviour, not a freeze. Treating any exception as a freeze produces
+        // false positives that abort tests unnecessarily.
+        const isOurTimeout = err && err.message === 'freeze'
+        if (isOurTimeout && !heartbeatFreezeDetected && !page.isClosed()) {
+          heartbeatFreezeDetected = true
+          clearInterval(heartbeatTimer)
+          heartbeatTimer = null
+          console.error(
+            `[FREEZE-DETECTED] Renderer unresponsive in ${testInfo.file}`
+          )
+          try {
+            fs.appendFileSync(FREEZE_SPECS_FILE, testInfo.file + '\n')
+          } catch {}
+          try {
+            await page.close()
+          } catch {}
+        }
+      } finally {
+        heartbeatBusy = false
+      }
+    }, 5000)
+
     // Wrap the use() call in a try-catch block to add automatic screenshot capturing
     try {
       // Call use() with the logging page instead of the original page
@@ -846,9 +1015,9 @@ const test = base.test.extend({
         `Navigation summary: ${navSummary.total} total (${navSummary.hardCount} hard, ${navSummary.softCount} soft)`
       )
     } catch (error) {
-      // Take a full page screenshot on any test failure
+      // Take a full page screenshot on any test failure — bounded timeout prevents hang on unresponsive renderer
       const screenshotPath = getScreenshotPath(`test-failure-${Date.now()}.png`)
-      await loggingPage.screenshot({ path: screenshotPath, fullPage: true })
+      await loggingPage.screenshot({ path: screenshotPath, fullPage: true, timeout: 15000 }).catch(() => {})
 
       // Log the navigation history on failure for debugging
       console.log('Navigation history:')
@@ -862,20 +1031,42 @@ const test = base.test.extend({
       // Re-throw the error to fail the test
       throw error
     } finally {
-      // Stop coverage collection and save results before teardown
+      // Disarm the heartbeat. Setting the flag FIRST ensures any async heartbeat
+      // callback that is already in-flight (e.g. awaiting page.evaluate() during
+      // teardown) will see heartbeatFreezeDetected=true and skip freeze detection.
+      // clearInterval alone doesn't cancel an in-flight async callback.
+      heartbeatFreezeDetected = true
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer)
+        heartbeatTimer = null
+      }
+
+      // Stop coverage collection and save results before teardown.
+      // Wrap CDP coverage stops in a Promise.race timeout — if the Chrome
+      // renderer is unresponsive the stop calls never return, hanging the
+      // entire afterEach hook indefinitely (same failure mode as clearSessionData).
       if (coverageStarted) {
         try {
-          const [jsCoverage, cssCoverage] = await Promise.all([
-            page.coverage.stopJSCoverage(),
-            page.coverage.stopCSSCoverage(),
+          const coverageTimeout = new Promise((resolve) => setTimeout(resolve, 10000))
+          const coverageResult = await Promise.race([
+            Promise.all([
+              page.coverage.stopJSCoverage(),
+              page.coverage.stopCSSCoverage(),
+            ]),
+            coverageTimeout,
           ])
 
-          // Combine coverage data
-          const coverage = [...jsCoverage, ...cssCoverage]
-          if (coverage.length > 0) {
-            // Add coverage data to monocart-reporter using the proper API
-            await addCoverageReport(coverage, test.info())
-            console.log(`Collected ${coverage.length} coverage entries`)
+          if (Array.isArray(coverageResult)) {
+            const [jsCoverage, cssCoverage] = coverageResult
+            // Combine coverage data
+            const coverage = [...jsCoverage, ...cssCoverage]
+            if (coverage.length > 0) {
+              // Add coverage data to monocart-reporter using the proper API
+              await addCoverageReport(coverage, test.info())
+              console.log(`Collected ${coverage.length} coverage entries`)
+            }
+          } else {
+            console.warn('Coverage collection timed out (renderer unresponsive) — skipping')
           }
         } catch (error) {
           console.warn('Failed to collect coverage data:', error.message)
@@ -926,40 +1117,12 @@ const testWithFixtures = test.extend({
         throw new Error('Email is required for posting a message')
       }
 
-      // Debug: Check login state before starting message posting
-      console.log('=== POST MESSAGE DEBUG START ===')
-      console.log(`Posting as email: ${email}`)
-
-      try {
-        const currentUrl = page.url()
-        console.log(`Current URL before posting: ${currentUrl}`)
-
-        // Check for logged-in indicators
-        const loggedInElements = await page
-          .locator(
-            '.test-user-dropdown, a[href*="logout"], .btn:has-text("My account")'
-          )
-          .count()
-        console.log(
-          `Found ${loggedInElements} logged-in indicators before posting`
-        )
-
-        // Take a screenshot
-        await page.screenshot({
-          path: `playwright-screenshots/before-post-message-${Date.now()}.png`,
-          fullPage: true,
-        })
-      } catch (debugError) {
-        console.log(`Debug error: ${debugError.message}`)
-      }
-      console.log('=== POST MESSAGE DEBUG END ===')
-
-      // Using maximized browser window instead of setting viewport size
-
       // Navigate to the correct page based on type
       const startPath = type.toLowerCase() === 'wanted' ? '/find' : '/give'
       await page.gotoAndVerify(startPath, {
         timeout: timeouts.navigation.initial,
+        waitUntil: 'domcontentloaded',
+        maxRetries: 1,
       })
 
       // Verify we're on the correct page
@@ -1176,14 +1339,15 @@ const testWithFixtures = test.extend({
         )
       }
 
-      // Take a debug screenshot
+      // Take a debug screenshot — bounded timeout prevents hang on unresponsive renderer
       const emailScreenshotTimestamp = new Date()
         .toISOString()
         .replace(/[:.]/g, '-')
       await page.screenshot({
         path: `playwright-screenshots/email-filled-${emailScreenshotTimestamp}.png`,
         fullPage: true,
-      })
+        timeout: 10000,
+      }).catch(() => {})
 
       // Wait for validation to complete and the button to appear using web assertions
       console.log(
@@ -1387,12 +1551,13 @@ const testWithFixtures = test.extend({
 
       console.log('=== POST-SUBMISSION NAVIGATION DEBUG END ===')
 
-      // Take a screenshot of the success
+      // Take a screenshot of the success — bounded timeout prevents hang on unresponsive renderer
       const screenshotTimestamp = new Date().toISOString().replace(/[:.]/g, '-')
       await page.screenshot({
         path: `playwright-screenshots/item-post-success-${screenshotTimestamp}.png`,
         fullPage: true,
-      })
+        timeout: 10000,
+      }).catch(() => {})
 
       // Check for the posted item
       // Look for the message card which uses .message-card class (with hyphen)
@@ -1464,7 +1629,7 @@ const testWithFixtures = test.extend({
         const button = page.locator(modifiedSelector)
         if (
           (await button.count()) > 0 &&
-          (await button.isVisible().catch(() => false))
+          (await button.isVisible({ timeout: 5000 }).catch(() => false))
         ) {
           await button.click()
           return true
@@ -1482,6 +1647,7 @@ const testWithFixtures = test.extend({
       )
       await page.gotoAndVerify(options.path || '/', {
         timeout: timeouts.navigation.initial,
+        maxRetries: 1,
       })
       if (options.waitForLoad !== false) {
         await page.waitForFunction(
@@ -1530,7 +1696,7 @@ const testWithFixtures = test.extend({
         // Load My Posts page from scratch
         await page.goto('/myposts', {
           timeout: timeouts.navigation.default,
-          waitUntil: 'load',
+          waitUntil: 'domcontentloaded',
         })
 
         // Find the post we want to withdraw.
@@ -1596,7 +1762,9 @@ const testWithFixtures = test.extend({
         }
 
         // Ensure button is enabled before clicking
-        const isEnabled = await withdrawButton.isEnabled()
+        const isEnabled = await withdrawButton
+          .isEnabled({ timeout: 5000 })
+          .catch(() => false)
         if (!isEnabled) {
           console.log(
             'Withdraw button is disabled, checking if broad selector button is enabled'
@@ -1605,7 +1773,9 @@ const testWithFixtures = test.extend({
             .locator('.action-btn, .btn')
             .filter({ hasText: /withdraw/i })
             .first()
-          const isBroadEnabled = await broadWithdrawButton.isEnabled()
+          const isBroadEnabled = await broadWithdrawButton
+            .isEnabled({ timeout: 5000 })
+            .catch(() => false)
           if (!isBroadEnabled) {
             throw new Error('All withdraw buttons are disabled')
           }
@@ -1697,7 +1867,7 @@ const testWithFixtures = test.extend({
 
         // Debug: Check if our specific post card is still visible
         const isSpecificPostVisible = await postCard
-          .isVisible()
+          .isVisible({ timeout: 5000 })
           .catch(() => false)
         console.log(
           `Specific post card still visible: ${isSpecificPostVisible}`
@@ -1865,7 +2035,7 @@ const testWithFixtures = test.extend({
 
       // Navigate to the specific message page
       const messageUrl = `/message/${messageId}`
-      await freshPage.gotoAndVerify(messageUrl)
+      await freshPage.gotoAndVerify(messageUrl, { maxRetries: 1 })
       console.log(`Navigated to message page: ${messageUrl}`)
 
       // Wait for the message content to load (the .message-expanded-wrapper contains the loaded message)

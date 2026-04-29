@@ -336,3 +336,95 @@ describe('message store - searchMT()', () => {
     expect(store.fetchMT).not.toHaveBeenCalled()
   })
 })
+
+describe('getByGroup', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+  })
+
+  it('returns messages matching any group in the groups array', () => {
+    const store = useMessageStore()
+
+    // Manually populate the store's list with test data.
+    store.list = {
+      1: { id: 1, subject: 'Sofa', groups: [{ groupid: 10 }, { groupid: 20 }] },
+      2: { id: 2, subject: 'Chair', groups: [{ groupid: 20 }] },
+      3: { id: 3, subject: 'Table', groups: [{ groupid: 30 }] },
+    }
+
+    // Group 20 should match messages 1 and 2.
+    const result = store.getByGroup(20)
+    expect(result).toHaveLength(2)
+    expect(result.map((m) => m.id).sort()).toEqual([1, 2])
+  })
+
+  it('returns empty array when no messages match the group', () => {
+    const store = useMessageStore()
+    store.list = {
+      1: { id: 1, subject: 'Sofa', groups: [{ groupid: 10 }] },
+    }
+
+    expect(store.getByGroup(99)).toHaveLength(0)
+  })
+
+  it('handles messages with empty groups array', () => {
+    const store = useMessageStore()
+    store.list = {
+      1: { id: 1, subject: 'Sofa', groups: [] },
+    }
+
+    expect(store.getByGroup(10)).toHaveLength(0)
+  })
+})
+
+describe('message store - fetchMessagesMT() pagination context', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    mockMiscStore.modtools = false
+  })
+
+  // The Go server expects `context` as a JSON-encoded string
+  // (it calls json.Unmarshal on the query value). If we pass the object
+  // directly URLSearchParams coerces it to "[object Object]" which fails
+  // to parse, so the server silently falls back to page 1 and the infinite
+  // scroll caps at one page (~100 messages) regardless of how far the user
+  // scrolls.
+  it('serialises the pagination context as a JSON string before sending', async () => {
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+    mockFetchMessages.mockResolvedValue({
+      messages: [1001, 1002],
+      context: { Date: 1700000000, ID: 1001 },
+    })
+
+    const store = useMessageStore()
+    store.fetchMT = vi.fn().mockResolvedValue({ id: 1, subject: 'x' })
+
+    await store.fetchMessagesMT({
+      groupid: 1,
+      collection: 'Approved',
+      context: { Date: 1700001234, ID: 2002 },
+      limit: 30,
+    })
+
+    const sent = mockFetchMessages.mock.calls[0][0]
+    expect(typeof sent.context).toBe('string')
+    expect(JSON.parse(sent.context)).toEqual({ Date: 1700001234, ID: 2002 })
+  })
+
+  it('leaves a null context alone', async () => {
+    useAuthStore.mockReturnValue({ user: { id: 1 } })
+    mockFetchMessages.mockResolvedValue({ messages: [] })
+
+    const store = useMessageStore()
+    store.fetchMT = vi.fn()
+
+    await store.fetchMessagesMT({
+      groupid: 1,
+      collection: 'Approved',
+      context: null,
+    })
+
+    expect(mockFetchMessages.mock.calls[0][0].context).toBeNull()
+  })
+})
