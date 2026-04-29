@@ -75,6 +75,31 @@ describe('ModAddMemberModal', () => {
       expect(addButton).toBeDefined()
     })
 
+    it('Add button is disabled when email is empty', () => {
+      const wrapper = mountComponent()
+      const buttons = wrapper.findAll('button')
+      const addButton = buttons.find((b) => b.text().includes('Add'))
+      expect(addButton?.attributes('disabled')).toBeDefined()
+    })
+
+    it('Add button is disabled when email is invalid', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.email = 'not-an-email'
+      await wrapper.vm.$nextTick()
+      const buttons = wrapper.findAll('button')
+      const addButton = buttons.find((b) => b.text().includes('Add'))
+      expect(addButton?.attributes('disabled')).toBeDefined()
+    })
+
+    it('Add button is enabled when email is valid', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.email = 'valid@example.com'
+      await wrapper.vm.$nextTick()
+      const buttons = wrapper.findAll('button')
+      const addButton = buttons.find((b) => b.text().includes('Add'))
+      expect(addButton?.attributes('disabled')).toBeUndefined()
+    })
+
     it('shows added message after successful add', async () => {
       const wrapper = mountComponent()
 
@@ -145,6 +170,26 @@ describe('ModAddMemberModal', () => {
       await flushPromises()
 
       expect(wrapper.vm.addedId).toBe(123)
+    })
+
+    // Regression: PUT /user previously returned 409 for existing emails even when the caller
+    // was an authenticated moderator. The Go fix makes it return 200 + existing id, so
+    // userStore.add resolves with the existing id and memberStore.add is still called.
+    // See https://discourse.ilovefreegle.org/t/9618/14
+    it('calls memberStore.add when userStore.add returns id for an already-registered email', async () => {
+      mockUserStore.add.mockResolvedValue(456)
+
+      const wrapper = mountComponent({ groupid: 789 })
+
+      wrapper.vm.email = 'existing@example.com'
+      await wrapper.vm.$nextTick()
+
+      await wrapper.vm.add()
+      await flushPromises()
+
+      expect(mockUserStore.add).toHaveBeenCalledWith({ email: 'existing@example.com' })
+      expect(mockMemberStore.add).toHaveBeenCalledWith({ userid: 456, groupid: 789 })
+      expect(wrapper.vm.addedId).toBe(456)
     })
   })
 })

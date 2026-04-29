@@ -153,6 +153,9 @@ const CHAT_MESSAGE_NUDGE = "Nudge"
 const CHAT_MESSAGE_REFER_TO_SUPPORT = "ReferToSupport"
 
 const NEWSFEED_TYPE_ALERT = "Alert"
+const NEWSFEED_TYPE_COMMUNITY_EVENT = "CommunityEvent"
+const NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY = "VolunteerOpportunity"
+const NEWSFEED_EVENTS_PER_FEED = 20
 const NEWSFEED_MODSTATUS_SUPPRESSED = "Suppressed"
 
 const NEARBY = 50
