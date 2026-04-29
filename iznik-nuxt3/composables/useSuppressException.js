@@ -61,6 +61,14 @@ export function suppressException(err) {
     return true
   }
 
+  // focus-trap library throws when a modal briefly has no tabbable elements during a transition
+  // (e.g. while buttons are disabled during an API call). The error is transient — the modal
+  // recovers — but if unsuppressed it reaches Nuxt's error handler and shows an error page.
+  if (err.message?.includes('focus-trap must have at least one container')) {
+    console.log('focus-trap timing error during modal transition - suppress')
+    return true
+  }
+
   // Freestar (third-party ad provider) ftUtils.js throws a range of null-property
   // TypeErrors from cross-origin iframes — getPlacementPosition reads
   // (this.isPlacementXdom?t:t.parent).document with t.parent=null (NUXT3-CES),
