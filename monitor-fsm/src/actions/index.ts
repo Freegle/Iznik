@@ -791,7 +791,7 @@ print(urllib.request.urlopen(req).read().decode())
 
   {
     name: 'check_my_open_pr_ci',
-    description: 'List OPEN PRs authored by @me whose CI is currently red or stale. A PR counts as red if any required check-run concluded "failure" or "cancelled" or "timed_out". A PR whose branch is BEHIND master is auto-updated via the GitHub API and counted as pending (its stale green checks are NOT treated as passing). Pending/queued checks do NOT count as red. Netlify "pages changed" rows that only say "skipping" are ignored. Returns {redPRs, pendingPRs, behindPRs, allGreen}. allGreen is only true when no PR is red AND no PR is behind master.',
+    description: 'List OPEN PRs authored by @me whose CI is red or actively pending. BEHIND branches are noted but NOT auto-updated — a PR with green CI is fine to leave BEHIND until a human is ready to merge (they will click Update Branch then). The FSM must not call update-branch preemptively because doing so invalidates the CI, queues a fresh run on the single runner, and causes thrash when master keeps advancing. A PR counts as red if any required check concluded "failure"/"cancelled"/"timed_out". Pending/queued checks count as pending. Netlify noise is ignored. Returns {redPRs, pendingPRs, behindPRs, allGreen}. allGreen is true when no PR is red and none have actively running/pending CI (BEHIND with green CI does NOT block allGreen).',
     handler: async () => {
       const listRes = await sh('gh', [
         'pr', 'list',
@@ -809,13 +809,16 @@ print(urllib.request.urlopen(req).read().decode())
       const behindPRs: Array<{ number: number; title: string; url: string }> = []
 
       for (const pr of prs) {
-        // A branch that is BEHIND master has stale CI — its green checks ran against
-        // an older base and are meaningless. Auto-update the branch so fresh CI runs,
-        // and count it as pending (not green) until the new run completes.
+        // A BEHIND branch has green CI on its current HEAD — that's good enough.
+        // Do NOT call update-branch here. Doing so invalidates the CI and queues a
+        // new run on the single self-hosted runner, which causes thrash: master
+        // advances → all PRs go BEHIND → all CIs invalidated → repeat indefinitely.
+        // The human will click "Update branch" right before merging; one update-branch
+        // per PR per merge is fine. The branch/up-to-date GitHub Actions check
+        // posts a visual ✗ on GitHub so the stale state is visible without FSM action.
         if (pr.mergeStateStatus === 'BEHIND') {
-          await sh('gh', ['api', '-X', 'PUT', `repos/Freegle/Iznik/pulls/${pr.number}/update-branch`])
           behindPRs.push({ number: pr.number, title: pr.title, url: pr.url })
-          pendingPRs.push({ number: pr.number, title: pr.title, url: pr.url, pendingChecks: [{ context: 'branch-behind-master-updating', state: 'pending', url: pr.url }] })
+          // Don't add to pendingPRs — BEHIND with green CI is not blocking work
           continue
         }
 
@@ -842,8 +845,9 @@ print(urllib.request.urlopen(req).read().decode())
         else if (pending.length > 0) pendingPRs.push({ number: pr.number, title: pr.title, url: pr.url, pendingChecks: pending })
       }
 
-      // allGreen requires no red PRs AND no behind PRs (behind = stale CI, not truly green)
-      return { redPRs, pendingPRs, behindPRs, allGreen: redPRs.length === 0 && behindPRs.length === 0 }
+      // allGreen: no red PRs and no actively pending CI. BEHIND PRs with green CI
+      // do NOT block allGreen — they are waiting for a human to merge, not for the FSM.
+      return { redPRs, pendingPRs, behindPRs, allGreen: redPRs.length === 0 && pendingPRs.length === 0 }
     },
   },
 
@@ -1460,12 +1464,14 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         }
       }
 
+      const pendingCount = Array.isArray(r.pendingPRs) ? r.pendingPRs.length : 0
       let target: string
       if (redCount > 0) target = 'CI_ROUTER'
       else if (dirtyPRs.length > 0) target = 'REBASE_DIRTY_PRS'
+      else if (pendingCount > 0) target = 'WRAP_UP'  // drain mode — CI running, don't create coverage PRs
       else if (prCount > 0) target = 'WRAP_UP'
       else target = 'WRITE_COVERAGE'
-      return { count: prCount, redCount, dirtyPRs, verify, red, _transition: target }
+      return { count: prCount, redCount, pendingCount, dirtyPRs, verify, red, _transition: target }
     },
   },
 
@@ -1555,13 +1561,26 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       if (masterFailing && !masterFixAttempted) {
         return { _transition: 'FIX_MASTER_CI', reason: `master CI failing on run ${master.latestRun?.databaseId ?? '?'}` }
       }
-      // Priority 2+: master green — dispatch ALL work in parallel (red PRs + discourse topics + sentry)
+      // Priority 2: drain mode — if any PR has pending CI (BEHIND or actively running),
+      // do nothing new this iteration. Creating new work while CI is running causes
+      // thrashing: master advances, all branches go BEHIND, CI is invalidated, repeat.
+      // Only fix red PRs or master failures; everything else waits for CI to settle.
+      const pendingPRs: Array<any> = Array.isArray(prCheck.pendingPRs) ? prCheck.pendingPRs : []
+      if (pendingPRs.length > 0 && redPRs.length === 0) {
+        return {
+          _transition: 'WRAP_UP',
+          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI; not dispatching new work until CI settles`,
+          drainMode: true,
+          pendingCount: pendingPRs.length,
+        }
+      }
+      // Priority 3: master green, no pending CI — dispatch ALL work in parallel (red PRs + discourse topics + sentry)
       const activeTopics = (ctx?._action_discover_active_topics?.topics ?? []) as Array<{ id: number; hasNew?: boolean }>
       const topicsWithNew = activeTopics.filter(t => t.hasNew).length
       const phase = ctx?.phase ?? 'analysis'
       return {
         _transition: 'PARALLEL_ANALYZE_AND_FIX',
-        reason: `master green — parallel dispatch: ${redPRs.length} red PRs + ${topicsWithNew} active topics (${phase} phase)`,
+        reason: `master green, no pending CI — parallel dispatch: ${redPRs.length} red PRs + ${topicsWithNew} active topics (${phase} phase)`,
         redPRCount: redPRs.length,
         activeTopicCount: topicsWithNew,
       }
