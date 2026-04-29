@@ -22,7 +22,9 @@ class TNSyncCommand extends Command
     use PreventsOverlapping;
     use LogsBatchJob;
 
-    protected $signature = 'tn:sync';
+    protected $signature = 'tn:sync
+                            {--from= : Override sync start timestamp (ISO-8601)}
+                            {--to= : Override sync end timestamp (ISO-8601)}';
 
     protected $description = 'Sync data from TrashNothing, including user data updates, user ratings, posts/messages, and chat messages.';
 
@@ -56,8 +58,8 @@ class TNSyncCommand extends Command
             return $this->runWithLogging(function () {
                 $this->info('Starting TN sync...');
 
-                $from = $this->getSyncFromDate();
-                $to = gmdate('c');
+                $from = $this->resolveFromDate();
+                $to = $this->resolveToDate();
 
                 Log::info("TN-SYNC-TRACE [START] from={$from} to={$to}");
 
@@ -131,6 +133,28 @@ class TNSyncCommand extends Command
         Log::info("No stored sync date found, using max rating timestamp: {$from}");
 
         return $from;
+    }
+
+    private function resolveFromDate(): string
+    {
+        $override = $this->option('from');
+
+        if (is_string($override) && $override !== '' && strtotime($override) !== false) {
+            return $override;
+        }
+
+        return $this->getSyncFromDate();
+    }
+
+    private function resolveToDate(): string
+    {
+        $override = $this->option('to');
+
+        if (is_string($override) && $override !== '' && strtotime($override) !== false) {
+            return $override;
+        }
+
+        return gmdate('c');
     }
 
     private function storeSyncDate(string $date): void

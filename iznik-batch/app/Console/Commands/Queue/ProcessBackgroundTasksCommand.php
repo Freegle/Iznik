@@ -20,6 +20,7 @@ use App\Services\PostcodeRemapService;
 use App\Services\PushNotificationService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -231,6 +232,7 @@ class ProcessBackgroundTasksCommand extends Command
             'freebie_alerts_remove' => $this->handleFreebieAlertsRemove($data),
             'housekeeper_notify' => $this->handleHousekeeperNotify($data),
             'remap_postcodes' => $this->handleRemapPostcodes($data),
+            'tn_sync_command' => $this->handleTnSyncCommand($data),
             default => throw new \RuntimeException("Unknown task type: {$taskType}"),
         };
     }
@@ -1409,5 +1411,30 @@ class ProcessBackgroundTasksCommand extends Command
             'location_id' => $locationId,
             'updated' => $updated,
         ]);
+    }
+
+    protected function handleTnSyncCommand(array $data): void
+    {
+        $args = [];
+
+        if (!empty($data['from'])) {
+            $args['--from'] = (string) $data['from'];
+        }
+
+        if (!empty($data['to'])) {
+            $args['--to'] = (string) $data['to'];
+        }
+
+        $exitCode = Artisan::call('tn:sync', $args);
+
+        Log::info('Processed tn_sync_command task', [
+            'exit_code' => $exitCode,
+            'from' => $args['--from'] ?? null,
+            'to' => $args['--to'] ?? null,
+        ]);
+
+        if ($exitCode !== 0) {
+            throw new \RuntimeException("tn:sync failed with exit code {$exitCode}");
+        }
     }
 }

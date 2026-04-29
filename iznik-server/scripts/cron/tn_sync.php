@@ -6,6 +6,7 @@ define('BASE_DIR', dirname(__FILE__) . '/../..');
 require_once(BASE_DIR . '/include/config.php');
 require_once(IZNIK_BASE . '/lib/GreatCircle.php');
 require_once(IZNIK_BASE . '/include/db.php');
+require_once(IZNIK_BASE . '/include/LaravelQueue.php');
 global $dbhr, $dbhm;
 
 $lockh = Utils::lockScript(basename(__FILE__));
@@ -34,6 +35,25 @@ if (!$from) {
 $to = Utils::ISODate('@' . time());
 
 error_log("TN-SYNC-TRACE [START] from=$from to=$to");
+
+# Run the Laravel tn:sync command first with the exact same timing window, and wait for completion.
+$queuedTaskId = LaravelQueue::queueTask('tn_sync_command', [
+    'from' => $from,
+    'to' => $to,
+    'queued_by' => 'tn_sync.php'
+]);
+
+if (is_null($queuedTaskId)) {
+    error_log('TN-SYNC-TRACE [QUEUE] failed to queue tn_sync_command task');
+} else {
+    $waitOk = LaravelQueue::waitForTaskProcessed($queuedTaskId, 300, 1000);
+
+    if (!$waitOk) {
+        error_log("TN-SYNC-TRACE [QUEUE] task $queuedTaskId did not complete successfully before timeout");
+    } else {
+        error_log("TN-SYNC-TRACE [QUEUE] task $queuedTaskId completed");
+    }
+}
 
 # Sync the ratings.
 $page = 1;
