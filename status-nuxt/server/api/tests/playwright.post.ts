@@ -183,10 +183,13 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
     const testCmd = `export ENABLE_MONOCART_REPORTER=true && npx playwright test${testArgs}`
 
-    // Clear freeze-specs file before run so we only capture freezes from this run
+    // Clear freeze-specs file and stale test result files before run.
+    // Stale junit.xml / test-status.json from a previous run (possibly weeks old
+    // if the container is reused) would otherwise be collected as CI artifacts
+    // and reported as failures even when the current run passes.
     try {
       execSync(
-        `docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt"`,
+        `docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt /app/test-results/junit.xml /app/test-results/test-status.json"`,
         { encoding: 'utf8', timeout: 5000 }
       )
     } catch {}

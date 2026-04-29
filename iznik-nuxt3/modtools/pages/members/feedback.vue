@@ -10,7 +10,7 @@
               Feedback <span v-if="members.length">({{ members.length }})</span>
             </h4>
           </template>
-          <div class="d-flex justify-content-between">
+          <div class="d-flex justify-content-between flex-wrap gap-2 align-items-center">
             <ModGroupSelect
               v-model="groupid"
               modonly
@@ -23,6 +23,9 @@
               <option value="Unhappy">Unhappy</option>
               <option value="Fine">Fine</option>
             </b-form-select>
+            <b-form-checkbox v-model="showExpired">
+              Show expired
+            </b-form-checkbox>
             <b-button variant="white" @click="markAll">
               Mark all as seen
             </b-button>
@@ -60,7 +63,7 @@
             class="p-0 mt-2"
           >
             <ModMemberHappiness
-              v-if="item.type === 'Member' && filterMatch(item.object)"
+              v-if="item.type === 'Member'"
               :id="item.object.id"
             />
           </div>
@@ -84,7 +87,6 @@
         </b-tab>
       </b-tabs>
       <infinite-loading
-        direction="top"
         :distance="distance"
         :identifier="bump"
         @infinite="loadMore"
@@ -120,7 +122,7 @@ const {
   distance,
   members,
   filter,
-  loadMore,
+  loadMore: baseLoadMore,
 } = setupModMembers(true)
 collection.value = 'Happiness'
 limit.value = 1000 // Get everything (probably) so that the ratings and feedback are interleaved.
@@ -130,6 +132,7 @@ const { fetchMe } = useMe()
 const tabIndex = ref(0)
 const happinessData = ref([])
 const bump = ref(0)
+const showExpired = ref(true)
 const happinessOptions = {
   chartArea: {
     width: '80%',
@@ -153,12 +156,18 @@ const sortedItems = computed(() => {
   const objs = []
 
   members.value.forEach((m) => {
-    objs.push({
-      type: 'Member',
-      object: m,
-      timestamp: m.timestamp,
-      id: 'member-' + m.id,
-    })
+    // Pre-filter: only include items matching the current filter so that
+    // show.value counts visible items rather than all members. This prevents
+    // invisible empty rows from accumulating and causing the scroll to jump
+    // two rows at a time.
+    if (filterMatch(m)) {
+      objs.push({
+        type: 'Member',
+        object: m,
+        timestamp: m.timestamp,
+        id: 'member-' + m.id,
+      })
+    }
   })
 
   objs.sort(function (a, b) {
@@ -171,6 +180,24 @@ const sortedItems = computed(() => {
 const visibleItems = computed(() => {
   return sortedItems.value.slice(0, show.value)
 })
+
+// Custom loadMore: use filtered item count as completion threshold so the
+// infinite loader doesn't cycle through non-matching items between visible ones.
+async function loadMore($state) {
+  if (members.value.length === 0) {
+    // Initial fetch not done yet — delegate to the generic loader which
+    // triggers the API call and sets show.value to 1.
+    await baseLoadMore($state)
+  } else if (show.value < sortedItems.value.length) {
+    show.value++
+    $state.loaded()
+  } else {
+    // All currently-filtered items are visible. Try fetching the next API
+    // page (handles the rare case where there are >1000 happiness items).
+    // baseLoadMore will call $state.complete() if no new members arrive.
+    await baseLoadMore($state)
+  }
+}
 
 // Watchers
 watch(filter, () => {
@@ -187,6 +214,11 @@ watch(groupid, () => {
 
 watch(tabIndex, () => {
   console.log('tabIndex changed', show.value)
+  bump.value++
+})
+
+watch(showExpired, () => {
+  show.value = 0
   bump.value++
 })
 
@@ -211,9 +243,17 @@ async function getHappiness() {
 }
 
 function filterMatch(member) {
+  // Optionally hide posts with non-successful outcomes (expired, withdrawn, etc.)
+  if (!showExpired.value) {
+    const outcome = member.outcome
+    if (outcome && outcome !== 'Taken' && outcome !== 'Received') {
+      return false
+    }
+  }
+
   const val = member.happiness
 
-  if (!filter.value) {
+  if (!filter.value || filter.value === '0') {
     return true
   }
 
