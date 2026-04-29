@@ -1695,6 +1695,32 @@ func TestLimboUserNotAdmin(t *testing.T) {
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
+// TestLimboUserAdminCannotDeleteModerator verifies that even admin/support cannot directly
+// delete a user who holds a moderator or owner role — they must demote first.
+func TestLimboUserAdminCannotDeleteModerator(t *testing.T) {
+	prefix := uniquePrefix("delmod")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	// Make the target user a moderator of some group.
+	groupID := CreateTestGroup(t, prefix+"_group")
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, collection) VALUES (?, ?, 'Moderator', NOW(), 'Approved') ON DUPLICATE KEY UPDATE role = 'Moderator'", modID, groupID)
+
+	payload := map[string]interface{}{"id": modID}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("DELETE", "/api/user?jwt="+adminToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+
+	// Clean up membership.
+	db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID)
+}
+
 // =============================================================================
 // POST /user tests (Unbounce and Merge actions)
 // =============================================================================
