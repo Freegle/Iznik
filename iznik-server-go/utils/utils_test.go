@@ -621,25 +621,25 @@ func TestRandomUint64_DistributionRange(t *testing.T) {
 
 func TestBlur_EdgeLatitude(t *testing.T) {
 	// Test with boundary latitude values
-	lat, lng := Blur(90, 0, 400)
+	lat, _ := Blur(90, 0, 400)
 	assert.Greater(t, lat, 0.0)
 	assert.Less(t, lat, 91.0)
 }
 
 func TestBlur_NegativeLatitude(t *testing.T) {
-	lat, lng := Blur(-45.5, 120.5, 400)
+	lat, _ := Blur(-45.5, 120.5, 400)
 	assert.Less(t, lat, 0.0)
 	assert.InDelta(t, -45.5, lat, 0.1)
 }
 
 func TestBlur_EdgitudeLongitude(t *testing.T) {
-	lat, lng := Blur(0, 180, 400)
+	_, lng := Blur(0, 180, 400)
 	assert.GreaterOrEqual(t, lng, -180.0)
 	assert.LessOrEqual(t, lng, 180.0)
 }
 
 func TestBlur_NegativeLongitude(t *testing.T) {
-	lat, lng := Blur(0, -180, 400)
+	_, lng := Blur(0, -180, 400)
 	assert.GreaterOrEqual(t, lng, -180.0)
 	assert.LessOrEqual(t, lng, 180.0)
 }
