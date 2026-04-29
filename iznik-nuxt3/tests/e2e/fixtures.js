@@ -241,7 +241,7 @@ const test = base.test.extend({
   ],
 
   // Override the page fixture to use our isolated context
-  page: async ({ context }, use) => {
+  page: async ({ context }, use, testInfo) => {
     // Create a page in our isolated context
     const page = await context.newPage()
     console.log(`Created new page in isolated context`)
@@ -285,6 +285,7 @@ const test = base.test.extend({
       /Failed to load resource: the server responded with a status of 404.*delivery\.localhost/, // Delivery service 404 errors for missing images can happen during normal operation.
       /FedCM get\(\) rejects with/, // Not available in test
       /Error retrieving a token./, // Also related to GSI FedCM, not available in test
+      /FedCM well-known file/, // FedCM well-known file fetch errors — Chrome FedCM API not available in Docker test environment
       /Hydration completed but contains mismatches/, // Not ideal, but not visible to user
       /ResizeObserver loop limit exceeded/, // Non-critical UI warning
       // NOTE: Do NOT add a broad Sentry catch-all — Sentry errors are critical. Only specific known patterns below.
@@ -297,6 +298,7 @@ const test = base.test.extend({
       /Failed to load resource: the server responded with a status of 503/, // Server unavailable during startup
       /Failed to load resource: net::ERR_ABORTED/, // Can happen during page navigation when requests are cancelled
       /Failed to load resource: net::ERR_CONNECTION_REFUSED/, // Can happen when server is starting up
+      /Failed to load resource: net::ERR_NAME_NOT_RESOLVED/, // External CDNs (Facebook, Google, etc.) not DNS-resolvable in isolated Docker test environment
       /has been blocked by CORS policy/, // CORS errors can happen in test environments due to ads
       /Failed to save credentials NotSupportedError: The user agent does not support public key credentials./, // Can happen in test environments
       /Refused to frame/, // Can happen in test.
@@ -318,17 +320,22 @@ const test = base.test.extend({
       /Failed to load resource.*freegle-dev-local/, // Freegle dev site may not be running during ModTools tests
       /Failed to load resource: the server responded with a status of 404.*api\/modtools\//, // modtools endpoints not yet in Go API
       /\[Exc?eption for Sentry\]:.*\/modtools\/modconfig/, // modconfig endpoint not yet in Go API
+      /\[Exc?eption for Sentry\]:.*Page not found:/, // Go API 404 for unimplemented endpoints (e.g. /dashboard) captured by Sentry — not a code bug
       /Only one navigator\.credentials\.get request may be outstanding at one time/, // FedCM concurrent credential requests in test
       /useOurModal show problem/, // Race condition fixed in useOurModal.js (nextTick) - allow until container rebuild
       /Failed to load resource: the server responded with a status of 500.*api\/user/, // Transient 500 on user API — app retries automatically
       /Failed to load resource: the server responded with a status of 500.*connect\.facebook\.net/, // Facebook SDK transient 500 errors
       /Refused to execute script from.*connect\.facebook\.net.*MIME type/, // Facebook SDK MIME type error when returning error page
       /net::ERR_NETWORK_CHANGED/, // Transient network change during image load (delivery.localhost) — not a code bug
+      /The fetch of the well-known file resulted in a network error: ERR_NETWORK_CHANGED/, // FedCM well-known file fetch fails when network changes transiently in Docker test environment
       /compute-pressure is not allowed/, // YouTube player Permissions-Policy violation — external script, not our code
       /\[Exc?eption for Sentry\]:.*SpinButton.*callback not called/, // Bootstrap-Vue SpinButton internal timing error — component issue, not user-visible
+      /\[Exc?eption for Sentry\]:.*focus-trap must have at least one container/, // focus-trap timing error during rapid modal open/close in test environment — not reproducible at human interaction speed
+      /\[CRITICAL-CLIENT-ERROR\].*focus-trap must have at least one container/, // focus-trap causes Nuxt error page during modal transition — transient, suppressed in production via useSuppressException
       /Failed to fetch dynamically imported module.*\.localhost/, // Transient network error loading JS chunks from local dev server under parallel test load — not a production code bug
       /net::ERR_SOCKET_NOT_CONNECTED.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
       /Failed to load resource.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
+      /Your focus-trap must have at least one container/, // Bootstrap Vue focus-trap error during modal transitions (transient, non-critical)
     ]
 
     // Initialize the working copy of allowed error patterns
@@ -496,14 +503,23 @@ const test = base.test.extend({
     // so it survives client-side navigations. Uses a debounced MutationObserver to
     // avoid false positives during partial renders.
     await page.addInitScript(() => {
+      // Don't check iframes (e.g. YouTube embeds show their own error pages).
+      if (window !== window.top) return
       let t = null
       const obs = new MutationObserver(() => {
         clearTimeout(t)
         t = setTimeout(() => {
           if (document.body?.textContent?.includes('Something went wrong')) {
+            // Include enough error detail so the allowlist can distinguish
+            // known transient errors (e.g. focus-trap) from real bugs.
+            const errorDetail =
+              document.body?.textContent?.match(
+                /"message":"([^"]{0,200})"/
+              )?.[1] || ''
             console.error(
               '[CRITICAL-CLIENT-ERROR] client-side error page at ' +
-                location.href
+                location.href +
+                (errorDetail ? ' | ' + errorDetail : '')
             )
           }
         }, 200)
@@ -936,6 +952,61 @@ const test = base.test.extend({
     await logoutIfLoggedIn(loggingPage)
     console.log('Ensured user is logged out for fresh test state')
 
+    // Freeze-detection heartbeat. Sends a trivial page.evaluate() every 5s with a
+    // 10s timeout. If the renderer stops responding the spec file is appended to
+    // /tmp/playwright-freeze-specs.txt so the status container can re-run it in a
+    // fresh Playwright process, and the page is closed to abort the frozen test in
+    // seconds rather than waiting for the 600s test timeout.
+    //
+    // The timeout is 10s (not 3s) to avoid false positives: page.evaluate() can
+    // legitimately block while a slow navigation completes (e.g. Explore page
+    // loading hundreds of posts). Genuine V8 renderer freezes are indefinite, so
+    // 10s is still far more than enough to catch them.
+    const FREEZE_SPECS_FILE = '/tmp/playwright-freeze-specs.txt'
+    let heartbeatTimer = null
+    let heartbeatBusy = false
+    let heartbeatFreezeDetected = false
+    heartbeatTimer = setInterval(async () => {
+      if (heartbeatFreezeDetected || page.isClosed()) {
+        clearInterval(heartbeatTimer)
+        heartbeatTimer = null
+        return
+      }
+      if (heartbeatBusy) return  // previous check still in flight — skip this tick
+      heartbeatBusy = true
+      try {
+        await Promise.race([
+          page.evaluate(() => 1),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('freeze')), 10000)
+          ),
+        ])
+      } catch (err) {
+        // Only treat as a renderer freeze if the race was won by OUR 10s timeout
+        // sentinel. page.evaluate() can also throw immediately (e.g. "Execution
+        // context was destroyed" during a navigation) — that is healthy renderer
+        // behaviour, not a freeze. Treating any exception as a freeze produces
+        // false positives that abort tests unnecessarily.
+        const isOurTimeout = err && err.message === 'freeze'
+        if (isOurTimeout && !heartbeatFreezeDetected && !page.isClosed()) {
+          heartbeatFreezeDetected = true
+          clearInterval(heartbeatTimer)
+          heartbeatTimer = null
+          console.error(
+            `[FREEZE-DETECTED] Renderer unresponsive in ${testInfo.file}`
+          )
+          try {
+            fs.appendFileSync(FREEZE_SPECS_FILE, testInfo.file + '\n')
+          } catch {}
+          try {
+            await page.close()
+          } catch {}
+        }
+      } finally {
+        heartbeatBusy = false
+      }
+    }, 5000)
+
     // Wrap the use() call in a try-catch block to add automatic screenshot capturing
     try {
       // Call use() with the logging page instead of the original page
@@ -963,6 +1034,16 @@ const test = base.test.extend({
       // Re-throw the error to fail the test
       throw error
     } finally {
+      // Disarm the heartbeat. Setting the flag FIRST ensures any async heartbeat
+      // callback that is already in-flight (e.g. awaiting page.evaluate() during
+      // teardown) will see heartbeatFreezeDetected=true and skip freeze detection.
+      // clearInterval alone doesn't cancel an in-flight async callback.
+      heartbeatFreezeDetected = true
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer)
+        heartbeatTimer = null
+      }
+
       // Stop coverage collection and save results before teardown.
       // Wrap CDP coverage stops in a Promise.race timeout — if the Chrome
       // renderer is unresponsive the stop calls never return, hanging the

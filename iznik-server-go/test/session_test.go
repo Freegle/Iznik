@@ -328,6 +328,45 @@ func TestGetSessionEmailsHaveOurdomainFlag(t *testing.T) {
 	assert.NotContains(t, email, "@users.ilovefreegle.org")
 }
 
+func TestGetSessionReturnsMailFlags(t *testing.T) {
+	// /api/session must return relevantallowed and newslettersallowed in me so the
+	// settings UI toggles ("Suggested posts for you", "Newsletters & stories") reflect
+	// the real DB values. If these are absent the toggles render as off regardless of
+	// state, and Relevant::sendMessages keeps mailing users who appear opted out.
+	prefix := uniquePrefix("sess_mail_flags")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	check := func(rel, news int) {
+		t.Helper()
+		db.Exec("UPDATE users SET relevantallowed = ?, newslettersallowed = ? WHERE id = ?", rel, news, userID)
+
+		req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var result map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&result)
+
+		me, ok := result["me"].(map[string]interface{})
+		assert.True(t, ok, "me should be a map")
+
+		gotRel, hasRel := me["relevantallowed"]
+		assert.True(t, hasRel, "me.relevantallowed must be present")
+		assert.Equal(t, float64(rel), gotRel, "me.relevantallowed should match DB")
+
+		gotNews, hasNews := me["newslettersallowed"]
+		assert.True(t, hasNews, "me.newslettersallowed must be present")
+		assert.Equal(t, float64(news), gotNews, "me.newslettersallowed should match DB")
+	}
+
+	check(1, 1)
+	check(0, 0)
+	check(1, 0)
+	check(0, 1)
+}
+
 func TestGetSessionNotLoggedIn(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/session", nil)
 	resp, _ := getApp().Test(req)

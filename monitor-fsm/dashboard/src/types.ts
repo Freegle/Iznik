@@ -24,6 +24,7 @@ export interface DraftRow {
   pr_number: number | null
   pr_url: string | null
   pr_state: string | null
+  deploy_state: string | null   // 'deployed' | 'pending_deploy' | null
   queued_at: string
   approved_at: string | null
   posted_at: string | null

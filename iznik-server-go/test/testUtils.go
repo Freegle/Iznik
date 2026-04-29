@@ -600,6 +600,39 @@ func CreateTestNewsfeed(t *testing.T, userID uint64, lat float64, lng float64, m
 	return newsfeedID
 }
 
+// CreateTestNewsfeedWithType creates a newsfeed entry with a specific type and optional age.
+// hoursAgo > 0 back-dates the entry; hoursAgo == 0 uses NOW().
+func CreateTestNewsfeedWithType(t *testing.T, userID uint64, lat float64, lng float64, message string, nfType string, hoursAgo int) uint64 {
+	db := database.DBConn
+
+	ts := "NOW()"
+	if hoursAgo > 0 {
+		ts = fmt.Sprintf("DATE_SUB(NOW(), INTERVAL %d HOUR)", hoursAgo)
+	}
+
+	result := db.Exec(fmt.Sprintf("INSERT INTO newsfeed (userid, message, type, timestamp, deleted, reviewrequired, position, hidden, pinned) "+
+		"VALUES (?, ?, ?, %s, NULL, 0, ST_GeomFromText(?, %d), NULL, 0)", ts, utils.SRID),
+		userID, message, nfType, fmt.Sprintf("POINT(%f %f)", lng, lat))
+
+	if result.Error != nil {
+		t.Fatalf("ERROR: Failed to create newsfeed with type: %v", result.Error)
+	}
+
+	var newsfeedID uint64
+	db.Raw("SELECT id FROM newsfeed WHERE userid = ? AND message = ? ORDER BY id DESC LIMIT 1",
+		userID, message).Scan(&newsfeedID)
+
+	if newsfeedID == 0 {
+		t.Fatalf("ERROR: Newsfeed with type was created but ID not found")
+	}
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM newsfeed WHERE id = ?", newsfeedID)
+	})
+
+	return newsfeedID
+}
+
 // CreateTestItem creates an item in the items table
 func CreateTestItem(t *testing.T, name string) uint64 {
 	db := database.DBConn

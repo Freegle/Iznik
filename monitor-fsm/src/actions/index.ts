@@ -80,6 +80,93 @@ async function sh(cmd: string, args: string[], cwd?: string): Promise<{ stdout: 
   }
 }
 
+const PROD_REPO = 'Freegle/Iznik'
+// Netlify site for the Freegle app (frontend). Site ID and slug both work with the public API.
+const NETLIFY_SITE = 'golden-caramel-d2c3a7.netlify.app'
+
+/**
+ * Compare a commit SHA against a reference SHA using the GitHub compare API.
+ * Returns behind_by: how many commits in baseSha are NOT in headSha.
+ * behind_by == 0 means headSha contains all of baseSha's history → headSha is "at or past" baseSha.
+ */
+async function githubBehindBy(baseSha: string, headSha: string): Promise<number> {
+  const res = await sh('gh', ['api', `repos/${PROD_REPO}/compare/${baseSha}...${headSha}`, '--jq', '.behind_by'])
+  if (res.code !== 0) return -1
+  const n = parseInt(res.stdout.trim(), 10)
+  return isNaN(n) ? -1 : n
+}
+
+async function checkPrDeployed(prNumber: number): Promise<{
+  deployed: boolean
+  frontendDeployed: boolean | null   // null if not a frontend-only PR
+  backendDeployed: boolean
+  mergeCommitSha: string | null
+  productionSha: string | null
+  netlifyCommitSha: string | null
+  reason: string
+}> {
+  // Get PR merge commit SHA and whether it's frontend-only
+  const prRes = await sh('gh', ['api', `repos/${PROD_REPO}/pulls/${prNumber}`, '--jq', '{merge_commit_sha, merged_at}'])
+  if (prRes.code !== 0) {
+    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'Could not fetch PR info' }
+  }
+  let prInfo: { merge_commit_sha: string | null; merged_at: string | null }
+  try { prInfo = JSON.parse(prRes.stdout) } catch {
+    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'Failed to parse PR info' }
+  }
+  const mergeCommitSha = prInfo.merge_commit_sha
+  if (!mergeCommitSha || mergeCommitSha === 'null') {
+    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'PR not merged yet' }
+  }
+
+  // --- Backend check: GitHub production branch ---
+  // The production branch is updated by auto-promote after CI passes on master.
+  // The Go and Laravel servers are rebuilt from this branch.
+  // NOTE: Go API /api/version returns "commit":"unknown" in production (BUILD_INFO not set),
+  // so we can only check if the production branch has been updated, not if the containers were rebuilt.
+  const prodRes = await sh('gh', ['api', `repos/${PROD_REPO}/branches/production`, '--jq', '.commit.sha'])
+  const productionSha = (prodRes.code === 0) ? prodRes.stdout.trim() : null
+  const backendBehindBy = productionSha ? await githubBehindBy(mergeCommitSha, productionSha) : -1
+  const backendDeployed = backendBehindBy === 0
+
+  // --- Frontend check: Netlify published deploy ---
+  // Netlify deploys from the production branch but has its own build queue.
+  // The published_deploy.commit_ref shows what is actually live in the browser.
+  let netlifyCommitSha: string | null = null
+  let frontendDeployed: boolean | null = null
+  try {
+    const netlifyRes = await sh('curl', ['-s', `https://api.netlify.com/api/v1/sites/${NETLIFY_SITE}`])
+    if (netlifyRes.code === 0) {
+      const netlify = JSON.parse(netlifyRes.stdout)
+      netlifyCommitSha = netlify?.published_deploy?.commit_ref ?? null
+      if (netlifyCommitSha) {
+        const netlifyBehindBy = await githubBehindBy(mergeCommitSha, netlifyCommitSha)
+        frontendDeployed = netlifyBehindBy === 0
+      }
+    }
+  } catch { /* Netlify API unavailable — skip frontend check */ }
+
+  // Overall deployed = backend AND frontend (if checked) are both live
+  const deployed = backendDeployed && (frontendDeployed === null || frontendDeployed === true)
+
+  const parts: string[] = []
+  if (backendDeployed) parts.push(`backend: production branch includes merge (${backendBehindBy} behind)`)
+  else parts.push(`backend: production branch missing ${backendBehindBy} commits from PR merge`)
+  if (frontendDeployed === true) parts.push(`Netlify: published deploy includes PR`)
+  else if (frontendDeployed === false) parts.push(`Netlify: published deploy (${netlifyCommitSha?.slice(0,8)}) does not include PR yet`)
+  else parts.push(`Netlify: could not check published deploy`)
+
+  return {
+    deployed,
+    frontendDeployed,
+    backendDeployed,
+    mergeCommitSha,
+    productionSha,
+    netlifyCommitSha,
+    reason: parts.join('; '),
+  }
+}
+
 export const actions: ActionDefinition[] = [
   {
     name: 'load_state',
@@ -250,12 +337,17 @@ print(json.dumps(results))
         try {
           const pr = JSON.parse(res.stdout) as { number: number; state: string; mergedAt: string | null; title: string; headRefName: string }
           const ghState = pr.state === 'MERGED' ? 'MERGED' : pr.state === 'CLOSED' ? 'CLOSED' : 'OPEN'
+          // Don't assume MERGED = deployed. Production branch is only updated after CI passes on master.
+          // Preserve any existing 'deployed' state; set 'pending_deploy' only if transitioning to MERGED
+          // with no existing deploy_state.
+          const existingPr = db.prepare('SELECT deploy_state FROM pr WHERE number = ?').get(pr.number) as { deploy_state: string | null } | undefined
+          const shouldSetPendingDeploy = ghState === 'MERGED' && (!existingPr?.deploy_state || existingPr.deploy_state === 'pending_deploy')
           upsertPr(db, {
             number: pr.number,
             title: pr.title,
             branch: pr.headRefName,
             state: ghState,
-            deployState: ghState === 'MERGED' ? 'live' : undefined,
+            deployState: shouldSetPendingDeploy ? 'pending_deploy' : undefined,
           })
           synced.push({ number: pr.number, state: ghState, mergedAt: pr.mergedAt })
           updated++
@@ -287,6 +379,102 @@ print(json.dumps(results))
       }
 
       return { synced, updated, reopened }
+    },
+  },
+
+  {
+    name: 'check_pr_deployed',
+    description: 'Check whether a merged PR\'s fix is live in production. Checks three signals: (1) GitHub production branch ancestry (backend gate — auto-promoted after CI), (2) Netlify published deploy commit (frontend gate — actual live build), (3) /api/version endpoint for Go and Laravel deployed commit SHAs. Returns {deployed, frontendDeployed, backendDeployed, mergeCommitSha, productionSha, netlifyCommitSha, reason}.',
+    paramsSchema: {
+      type: 'object',
+      properties: { prNumber: { type: 'number' } },
+      required: ['prNumber'],
+    },
+    handler: async (params) => {
+      return checkPrDeployed(params.prNumber as number)
+    },
+  },
+
+  {
+    name: 'queue_deployed_reply_drafts',
+    description: 'Called automatically during LOAD_STATE. For every fix-queued bug whose PR is MERGED, checks the production branch deployment via check_pr_deployed. If deployed and no pending draft exists: auto-queues a reply draft using the PR title as the description. Updates pr.deploy_state to "deployed" or "pending_deploy". Returns {queued: [prNumbers], pendingDeploy: [prNumbers], alreadyDrafted: [prNumbers]}.',
+    handler: async () => {
+      const db = getDb()
+
+      // Bugs with MERGED PRs that are still fix-queued
+      const bugs = db.prepare(`
+        SELECT b.topic, b.post, b.reporter, b.excerpt, b.pr_number,
+               p.title AS pr_title, p.frontend_only, p.preview_url, p.deploy_state
+        FROM discourse_bug b
+        JOIN pr p ON p.number = b.pr_number
+        WHERE b.state = 'fix-queued'
+          AND b.pr_number IS NOT NULL
+          AND p.state = 'MERGED'
+        ORDER BY b.topic, b.post
+      `).all() as Array<{
+        topic: number; post: number; reporter: string | null; excerpt: string | null
+        pr_number: number; pr_title: string
+        frontend_only: number | null; preview_url: string | null; deploy_state: string | null
+      }>
+
+      const queued: number[] = []
+      const pendingDeploy: number[] = []
+      const alreadyDrafted: number[] = []
+
+      for (const bug of bugs) {
+        // Check deployment
+        const deployCheck = await checkPrDeployed(bug.pr_number)
+
+        // Always update deploy_state accurately
+        if (deployCheck.deployed && bug.deploy_state !== 'deployed') {
+          upsertPr(db, { number: bug.pr_number, deployState: 'deployed' })
+          out(`queue_deployed_reply_drafts: PR #${bug.pr_number} is now deployed to production`)
+        } else if (!deployCheck.deployed && bug.deploy_state !== 'pending_deploy') {
+          upsertPr(db, { number: bug.pr_number, deployState: 'pending_deploy' })
+        }
+
+        if (!deployCheck.deployed) {
+          pendingDeploy.push(bug.pr_number)
+          continue
+        }
+
+        // Draft already exists (pending or sent) — don't duplicate
+        const existingDraft = db.prepare(
+          `SELECT id FROM discourse_draft WHERE topic = ? AND post = ? AND posted_at IS NULL AND rejected_at IS NULL`
+        ).get(bug.topic, bug.post)
+        if (existingDraft) {
+          alreadyDrafted.push(bug.pr_number)
+          continue
+        }
+
+        // Build body from PR title (strip conventional commit prefix)
+        const fixDesc = bug.pr_title
+          .replace(/^fix\([^)]+\):\s*/i, '')
+          .replace(/^fix:\s*/i, '')
+          .replace(/^feat\([^)]+\):\s*/i, '')
+          .replace(/^feat:\s*/i, '')
+          .trim()
+        const body = `Fix applied for ${fixDesc}. Please retest.`
+        const quote = bug.excerpt ?? ''
+        const username = bug.reporter ?? 'there'
+
+        queueDiscourseDraft(db, {
+          topic: bug.topic,
+          post: bug.post,
+          username,
+          quote,
+          body,
+          prNumber: bug.pr_number,
+          prUrl: `https://github.com/${PROD_REPO}/pull/${bug.pr_number}`,
+        })
+
+        out(`queue_deployed_reply_drafts: queued draft for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number}) — fix confirmed deployed`)
+        queued.push(bug.pr_number)
+      }
+
+      if (queued.length > 0) await renderAllViews(db)
+
+      return { queued, pendingDeploy, alreadyDrafted }
     },
   },
 
@@ -791,7 +979,7 @@ print(urllib.request.urlopen(req).read().decode())
 
   {
     name: 'check_my_open_pr_ci',
-    description: 'List OPEN PRs authored by @me whose CI is currently red. A PR counts as red if any required check-run concluded "failure" or "cancelled" or "timed_out". Pending/queued checks do NOT count as red (they are in-flight). Netlify "pages changed" rows that only say "skipping" are ignored. Returns {redPRs: [{number, title, url, failedChecks: [{context, state, url}]}], pendingPRs: [{number, title, url, pendingChecks: [...]}], allGreen: bool}. FSM uses this to refuse WRAP_UP while any PR is red — a red PR is NEVER considered flaky, environmental, or unrelated. Fix it or keep trying.',
+    description: 'List OPEN PRs authored by @me whose CI is red or actively pending. BEHIND branches are noted but NOT auto-updated — a PR with green CI is fine to leave BEHIND until a human is ready to merge (they will click Update Branch then). The FSM must not call update-branch preemptively because doing so invalidates the CI, queues a fresh run on the single runner, and causes thrash when master keeps advancing. A PR counts as red if any required check concluded "failure"/"cancelled"/"timed_out". Pending/queued checks count as pending. Netlify noise is ignored. Returns {redPRs, pendingPRs, behindPRs, allGreen}. allGreen is true when no PR is red and none have actively running/pending CI (BEHIND with green CI does NOT block allGreen).',
     handler: async () => {
       const listRes = await sh('gh', [
         'pr', 'list',
@@ -799,15 +987,29 @@ print(urllib.request.urlopen(req).read().decode())
         '--author', '@me',
         '--state', 'open',
         '--limit', '30',
-        '--json', 'number,title,url,headRefOid',
+        '--json', 'number,title,url,headRefOid,mergeStateStatus',
       ])
-      if (listRes.code !== 0) return { redPRs: [], pendingPRs: [], allGreen: true, error: listRes.stderr }
-      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefOid: string }>
+      if (listRes.code !== 0) return { redPRs: [], pendingPRs: [], behindPRs: [], allGreen: true, error: listRes.stderr }
+      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefOid: string; mergeStateStatus: string }>
 
       const redPRs: Array<{ number: number; title: string; url: string; failedChecks: Array<{ context: string; state: string; url: string }> }> = []
       const pendingPRs: Array<{ number: number; title: string; url: string; pendingChecks: Array<{ context: string; state: string; url: string }> }> = []
+      const behindPRs: Array<{ number: number; title: string; url: string }> = []
 
       for (const pr of prs) {
+        // A BEHIND branch has green CI on its current HEAD — that's good enough.
+        // Do NOT call update-branch here. Doing so invalidates the CI and queues a
+        // new run on the single self-hosted runner, which causes thrash: master
+        // advances → all PRs go BEHIND → all CIs invalidated → repeat indefinitely.
+        // The human will click "Update branch" right before merging; one update-branch
+        // per PR per merge is fine. The branch/up-to-date GitHub Actions check
+        // posts a visual ✗ on GitHub so the stale state is visible without FSM action.
+        if (pr.mergeStateStatus === 'BEHIND') {
+          behindPRs.push({ number: pr.number, title: pr.title, url: pr.url })
+          // Don't add to pendingPRs — BEHIND with green CI is not blocking work
+          continue
+        }
+
         const chk = await sh('gh', ['pr', 'checks', String(pr.number), '--repo', 'Freegle/Iznik'])
         // gh pr checks output: tab-separated "name<TAB>status<TAB>elapsed<TAB>url<TAB>description"
         const failed: Array<{ context: string; state: string; url: string }> = []
@@ -831,7 +1033,9 @@ print(urllib.request.urlopen(req).read().decode())
         else if (pending.length > 0) pendingPRs.push({ number: pr.number, title: pr.title, url: pr.url, pendingChecks: pending })
       }
 
-      return { redPRs, pendingPRs, allGreen: redPRs.length === 0 }
+      // allGreen: no red PRs and no actively pending CI. BEHIND PRs with green CI
+      // do NOT block allGreen — they are waiting for a human to merge, not for the FSM.
+      return { redPRs, pendingPRs, behindPRs, allGreen: redPRs.length === 0 && pendingPRs.length === 0 }
     },
   },
 
@@ -967,10 +1171,25 @@ PR DESCRIPTION RULES — the description must always match what's actually in th
   - If any file in the diff is not mentioned in the PR description, update the description with \`gh api repos/Freegle/Iznik/pulls/<n> -X PATCH -f body="..."\` to cover every changed file.
   - This applies whether you opened the PR or pushed to an existing one.
 
+TEST API — always use these exact commands to run and poll for tests:
+  - Go tests:      POST http://localhost:8081/api/tests/go    → poll http://localhost:8081/api/tests/go/status
+  - Vitest:        POST http://localhost:8081/api/tests/vitest → poll http://localhost:8081/api/tests/vitest/status
+  - Playwright:    POST http://localhost:8081/api/tests/playwright → poll http://localhost:8081/api/tests/playwright/status
+  - Laravel/PHP:   POST http://localhost:8081/api/tests/laravel
+  ALWAYS use port 8081 — not 38081 or any other port you discover.
+  Terminal states are "completed" (success) or "error" (failure).  "passed" and "failed" are NOT valid states.
+  Correct polling pattern (Go example):
+    curl -s -X POST http://localhost:8081/api/tests/go
+    until curl -s http://localhost:8081/api/tests/go/status | python3 -c "
+    import sys,json; d=json.load(sys.stdin); s=d.get('status','')
+    print(s); exit(0 if s in ['completed','error'] else 1)
+    " 2>/dev/null; do sleep 5; done
+
 FORBIDDEN:
   - "I've scheduled a wakeup" / "I'll check back" / "I'll come back to this later" — none of that is possible; if you exit without pushing, the work is lost.
   - Starting tests asynchronously and returning before they finish — wait for test output. If tests take too long, still wait; the FSM has a 20-minute timeout and will kill you only if truly stuck.
   - Creating a new PR when asked to fix an existing one (FIX_OPEN_PR_CI). Push a commit to the PR's branch instead.
+  - Using port 38081 or any port other than 8081 for the test/status API.
 
 OUTPUT MARKERS — MANDATORY, MACHINE-PARSED:
 The parent FSM greps your stdout for these exact markers. Your prose does NOT count — "Fix pushed to PR #208" is invisible to the parser. You MUST emit exactly ONE of these on its own line at the very end:
@@ -1433,12 +1652,14 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         }
       }
 
+      const pendingCount = Array.isArray(r.pendingPRs) ? r.pendingPRs.length : 0
       let target: string
       if (redCount > 0) target = 'CI_ROUTER'
       else if (dirtyPRs.length > 0) target = 'REBASE_DIRTY_PRS'
+      else if (pendingCount > 0) target = 'WRAP_UP'  // drain mode — CI running, don't create coverage PRs
       else if (prCount > 0) target = 'WRAP_UP'
       else target = 'WRITE_COVERAGE'
-      return { count: prCount, redCount, dirtyPRs, verify, red, _transition: target }
+      return { count: prCount, redCount, pendingCount, dirtyPRs, verify, red, _transition: target }
     },
   },
 
@@ -1528,13 +1749,26 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       if (masterFailing && !masterFixAttempted) {
         return { _transition: 'FIX_MASTER_CI', reason: `master CI failing on run ${master.latestRun?.databaseId ?? '?'}` }
       }
-      // Priority 2+: master green — dispatch ALL work in parallel (red PRs + discourse topics + sentry)
+      // Priority 2: drain mode — if any PR has pending CI (BEHIND or actively running),
+      // do nothing new this iteration. Creating new work while CI is running causes
+      // thrashing: master advances, all branches go BEHIND, CI is invalidated, repeat.
+      // Only fix red PRs or master failures; everything else waits for CI to settle.
+      const pendingPRs: Array<any> = Array.isArray(prCheck.pendingPRs) ? prCheck.pendingPRs : []
+      if (pendingPRs.length > 0 && redPRs.length === 0) {
+        return {
+          _transition: 'WRAP_UP',
+          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI; not dispatching new work until CI settles`,
+          drainMode: true,
+          pendingCount: pendingPRs.length,
+        }
+      }
+      // Priority 3: master green, no pending CI — dispatch ALL work in parallel (red PRs + discourse topics + sentry)
       const activeTopics = (ctx?._action_discover_active_topics?.topics ?? []) as Array<{ id: number; hasNew?: boolean }>
       const topicsWithNew = activeTopics.filter(t => t.hasNew).length
       const phase = ctx?.phase ?? 'analysis'
       return {
         _transition: 'PARALLEL_ANALYZE_AND_FIX',
-        reason: `master green — parallel dispatch: ${redPRs.length} red PRs + ${topicsWithNew} active topics (${phase} phase)`,
+        reason: `master green, no pending CI — parallel dispatch: ${redPRs.length} red PRs + ${topicsWithNew} active topics (${phase} phase)`,
         redPRCount: redPRs.length,
         activeTopicCount: topicsWithNew,
       }
