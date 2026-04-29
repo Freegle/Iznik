@@ -94,6 +94,21 @@ test.describe('ModTools Chat List', () => {
         if (!e.message.includes('ERR_ABORTED')) throw e
       })
 
+    // Wait for the URL to settle on /chats
+    await page
+      .waitForURL(`${MODTOOLS_URL}/chats**`, {
+        timeout: timeouts.navigation.slowPage,
+      })
+      .catch(() => {})
+
+    // Wait for the loading spinner to disappear — this confirms that the onMounted
+    // API call to /chat/rooms has completed (either successfully or with an error
+    // that was handled). Checking for errors before this point is a race condition.
+    await page
+      .locator('span.pulsate')
+      .waitFor({ state: 'hidden', timeout: timeouts.ui.appearance })
+      .catch(() => {})
+
     await dismissAllModals(page)
 
     // Wait for chat list items to appear
