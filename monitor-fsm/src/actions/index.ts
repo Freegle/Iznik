@@ -80,6 +80,61 @@ async function sh(cmd: string, args: string[], cwd?: string): Promise<{ stdout: 
   }
 }
 
+const PROD_REPO = 'Freegle/Iznik'
+
+async function checkPrDeployed(prNumber: number): Promise<{
+  deployed: boolean
+  mergeCommitSha: string | null
+  productionSha: string | null
+  behindBy: number
+  status: string
+  reason: string
+}> {
+  // Get PR merge commit SHA
+  const prRes = await sh('gh', ['api', `repos/${PROD_REPO}/pulls/${prNumber}`, '--jq', '.merge_commit_sha'])
+  const mergeCommitSha = prRes.stdout.trim()
+  if (!mergeCommitSha || mergeCommitSha === 'null' || prRes.code !== 0) {
+    return { deployed: false, mergeCommitSha: null, productionSha: null, behindBy: -1, status: 'not_merged', reason: 'PR not merged yet or merge SHA unavailable' }
+  }
+
+  // Get production branch HEAD SHA
+  const prodRes = await sh('gh', ['api', `repos/${PROD_REPO}/branches/production`, '--jq', '.commit.sha'])
+  if (prodRes.code !== 0 || !prodRes.stdout.trim()) {
+    return { deployed: false, mergeCommitSha, productionSha: null, behindBy: -1, status: 'error', reason: 'Could not fetch production branch' }
+  }
+  const productionSha = prodRes.stdout.trim()
+
+  // Compare mergeCommitSha...productionSha
+  // behind_by = commits in mergeCommitSha's history NOT in productionSha's history
+  // behind_by == 0 → production contains all of the merge commit's ancestors → deployed
+  const compareRes = await sh('gh', ['api',
+    `repos/${PROD_REPO}/compare/${mergeCommitSha}...${productionSha}`,
+    '--jq', '{status: .status, behind_by: .behind_by, ahead_by: .ahead_by}',
+  ])
+  if (compareRes.code !== 0) {
+    return { deployed: false, mergeCommitSha, productionSha, behindBy: -1, status: 'error', reason: `Compare API failed: ${compareRes.stderr.slice(0, 80)}` }
+  }
+
+  let compare: { status: string; behind_by: number; ahead_by: number }
+  try {
+    compare = JSON.parse(compareRes.stdout)
+  } catch {
+    return { deployed: false, mergeCommitSha, productionSha, behindBy: -1, status: 'error', reason: 'Failed to parse compare response' }
+  }
+
+  const deployed = compare.behind_by === 0
+  return {
+    deployed,
+    mergeCommitSha,
+    productionSha,
+    behindBy: compare.behind_by,
+    status: compare.status,
+    reason: deployed
+      ? `Production includes PR #${prNumber} merge commit (prod is ${compare.ahead_by} commits ahead)`
+      : `Production is missing ${compare.behind_by} commits from PR #${prNumber} merge — not yet deployed`,
+  }
+}
+
 export const actions: ActionDefinition[] = [
   {
     name: 'load_state',
@@ -250,12 +305,17 @@ print(json.dumps(results))
         try {
           const pr = JSON.parse(res.stdout) as { number: number; state: string; mergedAt: string | null; title: string; headRefName: string }
           const ghState = pr.state === 'MERGED' ? 'MERGED' : pr.state === 'CLOSED' ? 'CLOSED' : 'OPEN'
+          // Don't assume MERGED = deployed. Production branch is only updated after CI passes on master.
+          // Preserve any existing 'deployed' state; set 'pending_deploy' only if transitioning to MERGED
+          // with no existing deploy_state.
+          const existingPr = db.prepare('SELECT deploy_state FROM pr WHERE number = ?').get(pr.number) as { deploy_state: string | null } | undefined
+          const shouldSetPendingDeploy = ghState === 'MERGED' && (!existingPr?.deploy_state || existingPr.deploy_state === 'pending_deploy')
           upsertPr(db, {
             number: pr.number,
             title: pr.title,
             branch: pr.headRefName,
             state: ghState,
-            deployState: ghState === 'MERGED' ? 'live' : undefined,
+            deployState: shouldSetPendingDeploy ? 'pending_deploy' : undefined,
           })
           synced.push({ number: pr.number, state: ghState, mergedAt: pr.mergedAt })
           updated++
@@ -287,6 +347,102 @@ print(json.dumps(results))
       }
 
       return { synced, updated, reopened }
+    },
+  },
+
+  {
+    name: 'check_pr_deployed',
+    description: 'Check whether a merged PR\'s fix is live on the production branch of Freegle/Iznik. Compares the PR\'s merge commit against the production branch HEAD using the GitHub compare API — deployed iff behind_by == 0 (production contains the merge commit in its ancestry). Use this before queuing a Discourse reply draft. Params: {prNumber}. Returns {deployed, mergeCommitSha, productionSha, behindBy, status, reason}.',
+    paramsSchema: {
+      type: 'object',
+      properties: { prNumber: { type: 'number' } },
+      required: ['prNumber'],
+    },
+    handler: async (params) => {
+      return checkPrDeployed(params.prNumber as number)
+    },
+  },
+
+  {
+    name: 'queue_deployed_reply_drafts',
+    description: 'Called automatically during LOAD_STATE. For every fix-queued bug whose PR is MERGED, checks the production branch deployment via check_pr_deployed. If deployed and no pending draft exists: auto-queues a reply draft using the PR title as the description. Updates pr.deploy_state to "deployed" or "pending_deploy". Returns {queued: [prNumbers], pendingDeploy: [prNumbers], alreadyDrafted: [prNumbers]}.',
+    handler: async () => {
+      const db = getDb()
+
+      // Bugs with MERGED PRs that are still fix-queued
+      const bugs = db.prepare(`
+        SELECT b.topic, b.post, b.reporter, b.excerpt, b.pr_number,
+               p.title AS pr_title, p.frontend_only, p.preview_url, p.deploy_state
+        FROM discourse_bug b
+        JOIN pr p ON p.number = b.pr_number
+        WHERE b.state = 'fix-queued'
+          AND b.pr_number IS NOT NULL
+          AND p.state = 'MERGED'
+        ORDER BY b.topic, b.post
+      `).all() as Array<{
+        topic: number; post: number; reporter: string | null; excerpt: string | null
+        pr_number: number; pr_title: string
+        frontend_only: number | null; preview_url: string | null; deploy_state: string | null
+      }>
+
+      const queued: number[] = []
+      const pendingDeploy: number[] = []
+      const alreadyDrafted: number[] = []
+
+      for (const bug of bugs) {
+        // Check deployment
+        const deployCheck = await checkPrDeployed(bug.pr_number)
+
+        // Always update deploy_state accurately
+        if (deployCheck.deployed && bug.deploy_state !== 'deployed') {
+          upsertPr(db, { number: bug.pr_number, deployState: 'deployed' })
+          out(`queue_deployed_reply_drafts: PR #${bug.pr_number} is now deployed to production`)
+        } else if (!deployCheck.deployed && bug.deploy_state !== 'pending_deploy') {
+          upsertPr(db, { number: bug.pr_number, deployState: 'pending_deploy' })
+        }
+
+        if (!deployCheck.deployed) {
+          pendingDeploy.push(bug.pr_number)
+          continue
+        }
+
+        // Draft already exists (pending or sent) — don't duplicate
+        const existingDraft = db.prepare(
+          `SELECT id FROM discourse_draft WHERE topic = ? AND post = ? AND posted_at IS NULL AND rejected_at IS NULL`
+        ).get(bug.topic, bug.post)
+        if (existingDraft) {
+          alreadyDrafted.push(bug.pr_number)
+          continue
+        }
+
+        // Build body from PR title (strip conventional commit prefix)
+        const fixDesc = bug.pr_title
+          .replace(/^fix\([^)]+\):\s*/i, '')
+          .replace(/^fix:\s*/i, '')
+          .replace(/^feat\([^)]+\):\s*/i, '')
+          .replace(/^feat:\s*/i, '')
+          .trim()
+        const body = `Fix applied for ${fixDesc}. Please retest.`
+        const quote = bug.excerpt ?? ''
+        const username = bug.reporter ?? 'there'
+
+        queueDiscourseDraft(db, {
+          topic: bug.topic,
+          post: bug.post,
+          username,
+          quote,
+          body,
+          prNumber: bug.pr_number,
+          prUrl: `https://github.com/${PROD_REPO}/pull/${bug.pr_number}`,
+        })
+
+        out(`queue_deployed_reply_drafts: queued draft for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number}) — fix confirmed deployed`)
+        queued.push(bug.pr_number)
+      }
+
+      if (queued.length > 0) await renderAllViews(db)
+
+      return { queued, pendingDeploy, alreadyDrafted }
     },
   },
 

@@ -34,7 +34,7 @@
               by {{ draft.username }}
             </div>
           </div>
-          <div v-if="draft.pr_number" class="small">
+          <div v-if="draft.pr_number" class="small d-flex align-items-center gap-2">
             <a
               :href="draft.pr_url"
               target="_blank"
@@ -43,6 +43,21 @@
             >
               PR #{{ draft.pr_number }}
             </a>
+            <span
+              v-if="draft.deploy_state === 'deployed'"
+              class="badge bg-success"
+              title="Fix confirmed live on production branch"
+            >✓ Live</span>
+            <span
+              v-else-if="draft.deploy_state === 'pending_deploy'"
+              class="badge bg-warning text-dark"
+              title="Fix merged but not yet deployed to production branch"
+            >⏳ Deploying</span>
+            <span
+              v-else-if="draft.pr_number"
+              class="badge bg-secondary"
+              title="Deployment status unknown — PR may not be merged yet"
+            >? Deploy status</span>
           </div>
         </div>
 
@@ -82,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { DraftRow } from '../types'
 import { rejectDraft, sendDraft } from '../composables/useApi'
 
@@ -102,14 +117,14 @@ const pendingDrafts = computed(() => {
   return props.drafts.filter(d => !d.approved_at && !d.posted_at && !d.rejected_at)
 })
 
-// Initialize editing body with current draft body
-const initializeEditingBody = () => {
-  const body: Record<number, string> = {}
-  for (const draft of pendingDrafts.value) {
-    body[draft.id] = draft.body
+// Populate editingBody when drafts load (async) — only fill ids not already edited by user
+watch(pendingDrafts, (drafts) => {
+  for (const draft of drafts) {
+    if (!(draft.id in editingBody.value)) {
+      editingBody.value[draft.id] = draft.body
+    }
   }
-  editingBody.value = body
-}
+}, { immediate: true })
 
 const handleSend = async (draft: DraftRow) => {
   sending.value[draft.id] = true
@@ -158,10 +173,6 @@ function refresh() {
   emit('refresh')
 }
 
-// Watch props to initialize/update editing body
-if (pendingDrafts.value.length > 0) {
-  initializeEditingBody()
-}
 </script>
 
 <style scoped>
