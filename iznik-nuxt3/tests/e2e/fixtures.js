@@ -319,6 +319,7 @@ const test = base.test.extend({
       /Failed to load resource.*freegle-dev-local/, // Freegle dev site may not be running during ModTools tests
       /Failed to load resource: the server responded with a status of 404.*api\/modtools\//, // modtools endpoints not yet in Go API
       /\[Exc?eption for Sentry\]:.*\/modtools\/modconfig/, // modconfig endpoint not yet in Go API
+      /\[Exc?eption for Sentry\]:.*Page not found:/, // Go API 404 for unimplemented endpoints (e.g. /dashboard) captured by Sentry — not a code bug
       /Only one navigator\.credentials\.get request may be outstanding at one time/, // FedCM concurrent credential requests in test
       /useOurModal show problem/, // Race condition fixed in useOurModal.js (nextTick) - allow until container rebuild
       /Failed to load resource: the server responded with a status of 500.*api\/user/, // Transient 500 on user API — app retries automatically
