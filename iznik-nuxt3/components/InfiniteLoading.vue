@@ -98,6 +98,10 @@ async function emitInfinite() {
 function fallback() {
   timer = null
 
+  if (state.value === 'complete') {
+    return
+  }
+
   if (visible.value && state.value === 'loaded') {
     // We have loaded and not completed, and yet it's still visible.  We need to do some more.
     emitInfinite()
@@ -132,6 +136,10 @@ watch(
     // We've been asked to kick the component to reset it.
     bump.value++
     emitInfinite()
+    // Restart the fallback loop if it stopped because state was 'complete'.
+    if (!timer) {
+      timer = setTimeout(fallback, 100)
+    }
   }
 )
 

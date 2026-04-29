@@ -11,6 +11,7 @@ export default defineNuxtConfig({
   // target: 'static',
   ssr: false,
   extends: ['../'],
+  sourcemap: { client: true },
   compatibilityDate: '2024-11-26',
 
   // Override parent's cdnURL to use same-origin proxy approach.
