@@ -95,6 +95,39 @@ func TestFlexInt_NegativeStringJSON(t *testing.T) {
 	assert.Equal(t, FlexInt(-123), s.V)
 }
 
+// Vue's OurToggle emits a boolean on @change; the settings UI then PATCHes
+// fields like relevantallowed/newslettersallowed as JSON booleans. PHP V1
+// coerced these naturally; V2 must accept them too or the toggle 400s.
+func TestFlexInt_BooleanTrueJSON(t *testing.T) {
+	type S struct{ V FlexInt }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":true}`), &s))
+	assert.Equal(t, FlexInt(1), s.V)
+}
+
+func TestFlexInt_BooleanFalseJSON(t *testing.T) {
+	type S struct{ V FlexInt }
+	var s S
+	s.V = 1
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":false}`), &s))
+	assert.Equal(t, FlexInt(0), s.V)
+}
+
+func TestFlexUint64_BooleanTrueJSON(t *testing.T) {
+	type S struct{ V FlexUint64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":true}`), &s))
+	assert.Equal(t, FlexUint64(1), s.V)
+}
+
+func TestFlexUint64_BooleanFalseJSON(t *testing.T) {
+	type S struct{ V FlexUint64 }
+	var s S
+	s.V = 1
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":false}`), &s))
+	assert.Equal(t, FlexUint64(0), s.V)
+}
+
 // ---------------------------------------------------------------------------
 // FlexFloat64
 // ---------------------------------------------------------------------------

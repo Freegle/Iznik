@@ -22,6 +22,14 @@ func (f *FlexUint64) UnmarshalJSON(data []byte) error {
 		*f = 0
 		return nil
 	}
+	if s == "true" {
+		*f = 1
+		return nil
+	}
+	if s == "false" {
+		*f = 0
+		return nil
+	}
 	v, err := strconv.ParseUint(s, 10, 64)
 	if err != nil {
 		return err
@@ -38,6 +46,14 @@ type FlexInt int
 func (f *FlexInt) UnmarshalJSON(data []byte) error {
 	s := strings.Trim(string(data), "\"")
 	if s == "" || s == "null" {
+		*f = 0
+		return nil
+	}
+	if s == "true" {
+		*f = 1
+		return nil
+	}
+	if s == "false" {
 		*f = 0
 		return nil
 	}

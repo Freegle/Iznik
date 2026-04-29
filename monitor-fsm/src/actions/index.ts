@@ -967,10 +967,25 @@ PR DESCRIPTION RULES — the description must always match what's actually in th
   - If any file in the diff is not mentioned in the PR description, update the description with \`gh api repos/Freegle/Iznik/pulls/<n> -X PATCH -f body="..."\` to cover every changed file.
   - This applies whether you opened the PR or pushed to an existing one.
 
+TEST API — always use these exact commands to run and poll for tests:
+  - Go tests:      POST http://localhost:8081/api/tests/go    → poll http://localhost:8081/api/tests/go/status
+  - Vitest:        POST http://localhost:8081/api/tests/vitest → poll http://localhost:8081/api/tests/vitest/status
+  - Playwright:    POST http://localhost:8081/api/tests/playwright → poll http://localhost:8081/api/tests/playwright/status
+  - Laravel/PHP:   POST http://localhost:8081/api/tests/laravel
+  ALWAYS use port 8081 — not 38081 or any other port you discover.
+  Terminal states are "completed" (success) or "error" (failure).  "passed" and "failed" are NOT valid states.
+  Correct polling pattern (Go example):
+    curl -s -X POST http://localhost:8081/api/tests/go
+    until curl -s http://localhost:8081/api/tests/go/status | python3 -c "
+    import sys,json; d=json.load(sys.stdin); s=d.get('status','')
+    print(s); exit(0 if s in ['completed','error'] else 1)
+    " 2>/dev/null; do sleep 5; done
+
 FORBIDDEN:
   - "I've scheduled a wakeup" / "I'll check back" / "I'll come back to this later" — none of that is possible; if you exit without pushing, the work is lost.
   - Starting tests asynchronously and returning before they finish — wait for test output. If tests take too long, still wait; the FSM has a 20-minute timeout and will kill you only if truly stuck.
   - Creating a new PR when asked to fix an existing one (FIX_OPEN_PR_CI). Push a commit to the PR's branch instead.
+  - Using port 38081 or any port other than 8081 for the test/status API.
 
 OUTPUT MARKERS — MANDATORY, MACHINE-PARSED:
 The parent FSM greps your stdout for these exact markers. Your prose does NOT count — "Fix pushed to PR #208" is invisible to the parser. You MUST emit exactly ONE of these on its own line at the very end:

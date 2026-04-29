@@ -16,7 +16,7 @@ import {
 import { onTraceChange, getTraceId, getSessionId } from '~/composables/useTrace'
 import { useClientLog } from '~/composables/useClientLog'
 
-export default defineNuxtPlugin(async (nuxtApp) => {
+export default defineNuxtPlugin((nuxtApp) => {
   const config = useRuntimeConfig()
   const { vueApp } = nuxtApp
   const router = useRouter()
@@ -27,23 +27,24 @@ export default defineNuxtPlugin(async (nuxtApp) => {
   // Set auth store for user_id tracking in logs.
   clientLog.setAuthStore(useAuthStore())
 
-  // Start client logging immediately - runs independently of Sentry.
-  // Include Capacitor device info if running in the app.
-  try {
-    const { useMobileStore } = await import('~/stores/mobile')
-    const mobileStore = useMobileStore()
-    if (mobileStore.isApp && mobileStore.deviceinfo) {
-      clientLog.sessionStart(
-        { app_version: mobileStore.mobileVersion },
-        mobileStore.deviceinfo
-      )
-    } else {
-      clientLog.sessionStart()
+  // Start client logging immediately, with synchronous fallback.
+  // Augment with mobile device info asynchronously so plugin init does not
+  // block first paint waiting on the dynamic import.
+  clientLog.sessionStart()
+  ;(async () => {
+    try {
+      const { useMobileStore } = await import('~/stores/mobile')
+      const mobileStore = useMobileStore()
+      if (mobileStore.isApp && mobileStore.deviceinfo) {
+        clientLog.sessionStart(
+          { app_version: mobileStore.mobileVersion },
+          mobileStore.deviceinfo
+        )
+      }
+    } catch {
+      // Not in app context or store not available.
     }
-  } catch {
-    // Not in app context or store not available.
-    clientLog.sessionStart()
-  }
+  })()
 
   // Log page views on route changes.
   // This creates "user" parent nodes for subsequent API calls.
