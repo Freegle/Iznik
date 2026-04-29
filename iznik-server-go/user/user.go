@@ -1851,6 +1851,14 @@ func PutUser(c *fiber.Ctx) error {
 		}
 	}
 
+	// Authenticated callers (e.g. moderators adding a member via ModTools) only need the new user's
+	// ID — creating a full session/JWT for the new user would cause BaseAPI.js to replace the mod's
+	// auth tokens with the new user's, corrupting the mod's session and causing 403 errors on the
+	// next mod-only API call (shows "Oh dear!" error page). Mirrors the existing-user path above.
+	if WhoAmI(c) > 0 {
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newUserID})
+	}
+
 	// Create a session. Series is a random numeric value (bigint unsigned);
 	// token is a random hex string. Previously passed userID for series,
 	// which collided across every session for the same user.

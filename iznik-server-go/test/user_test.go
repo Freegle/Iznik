@@ -959,6 +959,51 @@ func TestPutUserDuplicateEmailAuthenticated(t *testing.T) {
 	assert.Equal(t, float64(existingID), result["id"])
 }
 
+// TestPutUserNewEmailAuthenticatedMod verifies that when an authenticated moderator calls PUT /user
+// with a brand-new email (one not yet in the system), the response does NOT include jwt/persistent
+// tokens for the newly-created user.
+//
+// Background: PutUser's normal signup path creates a session+JWT for the new user and returns them.
+// When called by an already-authenticated mod (adding someone else's account), BaseAPI.js sees the
+// new JWT and replaces the mod's session with the new user's — corrupting the mod's auth and causing
+// subsequent mod-only API calls to fail with 403, showing the "Oh dear! Something went wrong" page.
+//
+// Regression test for https://discourse.ilovefreegle.org/t/9628.
+func TestPutUserNewEmailAuthenticatedMod(t *testing.T) {
+	prefix := uniquePrefix("putnewauth")
+	email := fmt.Sprintf("%s@test.com", prefix)
+
+	// Create an authenticated moderator.
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, modToken := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{
+		"email": email,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PUT", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request, 5000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+	assert.NotZero(t, result["id"], "new user ID should be returned")
+
+	// CRITICAL: no jwt/persistent tokens — returning them would swap the mod's session
+	// with the new user's session, corrupting the mod's auth state.
+	assert.Nil(t, result["jwt"], "jwt must not be returned when caller is already authenticated")
+	assert.Nil(t, result["persistent"], "persistent must not be returned when caller is already authenticated")
+
+	// Verify the new user was actually created in the DB.
+	db := database.DBConn
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE email = ?", email).Scan(&count)
+	assert.Equal(t, int64(1), count, "new user email should exist in DB")
+}
+
 // TestPutUserDuplicateEmailCorrectPassword verifies that an unauthenticated caller
 // who provides the correct password for an existing account gets logged in (200 + JWT)
 // rather than a 409 conflict.  This is the "sign-up with existing email → login" path.
