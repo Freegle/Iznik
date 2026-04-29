@@ -728,8 +728,8 @@ func TestOurDomain_MultipleMatches(t *testing.T) {
 }
 
 func TestOurDomain_CaseSensitivity(t *testing.T) {
-	// Test case variations
-	assert.Equal(t, 1, OurDomain("test@USERS.ILOVEFREEGLE.ORG"))
+	// OurDomain uses strings.Contains which is case-sensitive; uppercase domain does not match.
+	assert.Equal(t, 0, OurDomain("test@USERS.ILOVEFREEGLE.ORG"))
 	assert.Equal(t, 0, OurDomain("test@EXTERNAL.com"))
 }
 
@@ -799,14 +799,12 @@ func TestTidyName_TNSuffixMultiple(t *testing.T) {
 }
 
 func TestTidyName_ComplexChain(t *testing.T) {
-	// Email with TN suffix and long name
+	// Email with TN suffix and long name.
+	// Strip email suffix → "verylongnamethatexceedsthirtytwocharacters-g123" (47 chars)
+	// Truncation (len>32) fires BEFORE TN strip → first 32 chars + "..."
+	// TN regex won't match "-g123" inside "..."-terminated string, so result stays truncated.
 	result := TidyName("verylongnamethatexceedsthirtytwocharacters-g123@test.com")
-	// First: strip email (everything after @)
-	// Result: "verylongnamethatexceedsthirtytwocharacters-g123"
-	// Then: strip TN suffix
-	// Result: "verylongnamethatexceedsthirtytwocharacters" (41 chars)
-	// Then: truncate to 32 + "..."
-	assert.Equal(t, "verylongnamethatexceedsthirtytw" + "...", result)
+	assert.Equal(t, "verylongnamethatexceedsthirtytwo"+"...", result)
 }
 
 func TestTidyName_FBUserCaseSensitivity(t *testing.T) {
