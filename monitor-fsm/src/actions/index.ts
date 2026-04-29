@@ -791,7 +791,7 @@ print(urllib.request.urlopen(req).read().decode())
 
   {
     name: 'check_my_open_pr_ci',
-    description: 'List OPEN PRs authored by @me whose CI is currently red. A PR counts as red if any required check-run concluded "failure" or "cancelled" or "timed_out". Pending/queued checks do NOT count as red (they are in-flight). Netlify "pages changed" rows that only say "skipping" are ignored. Returns {redPRs: [{number, title, url, failedChecks: [{context, state, url}]}], pendingPRs: [{number, title, url, pendingChecks: [...]}], allGreen: bool}. FSM uses this to refuse WRAP_UP while any PR is red — a red PR is NEVER considered flaky, environmental, or unrelated. Fix it or keep trying.',
+    description: 'List OPEN PRs authored by @me whose CI is red or actively pending. BEHIND branches are noted but NOT auto-updated — a PR with green CI is fine to leave BEHIND until a human is ready to merge (they will click Update Branch then). The FSM must not call update-branch preemptively because doing so invalidates the CI, queues a fresh run on the single runner, and causes thrash when master keeps advancing. A PR counts as red if any required check concluded "failure"/"cancelled"/"timed_out". Pending/queued checks count as pending. Netlify noise is ignored. Returns {redPRs, pendingPRs, behindPRs, allGreen}. allGreen is true when no PR is red and none have actively running/pending CI (BEHIND with green CI does NOT block allGreen).',
     handler: async () => {
       const listRes = await sh('gh', [
         'pr', 'list',
@@ -799,15 +799,29 @@ print(urllib.request.urlopen(req).read().decode())
         '--author', '@me',
         '--state', 'open',
         '--limit', '30',
-        '--json', 'number,title,url,headRefOid',
+        '--json', 'number,title,url,headRefOid,mergeStateStatus',
       ])
-      if (listRes.code !== 0) return { redPRs: [], pendingPRs: [], allGreen: true, error: listRes.stderr }
-      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefOid: string }>
+      if (listRes.code !== 0) return { redPRs: [], pendingPRs: [], behindPRs: [], allGreen: true, error: listRes.stderr }
+      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefOid: string; mergeStateStatus: string }>
 
       const redPRs: Array<{ number: number; title: string; url: string; failedChecks: Array<{ context: string; state: string; url: string }> }> = []
       const pendingPRs: Array<{ number: number; title: string; url: string; pendingChecks: Array<{ context: string; state: string; url: string }> }> = []
+      const behindPRs: Array<{ number: number; title: string; url: string }> = []
 
       for (const pr of prs) {
+        // A BEHIND branch has green CI on its current HEAD — that's good enough.
+        // Do NOT call update-branch here. Doing so invalidates the CI and queues a
+        // new run on the single self-hosted runner, which causes thrash: master
+        // advances → all PRs go BEHIND → all CIs invalidated → repeat indefinitely.
+        // The human will click "Update branch" right before merging; one update-branch
+        // per PR per merge is fine. The branch/up-to-date GitHub Actions check
+        // posts a visual ✗ on GitHub so the stale state is visible without FSM action.
+        if (pr.mergeStateStatus === 'BEHIND') {
+          behindPRs.push({ number: pr.number, title: pr.title, url: pr.url })
+          // Don't add to pendingPRs — BEHIND with green CI is not blocking work
+          continue
+        }
+
         const chk = await sh('gh', ['pr', 'checks', String(pr.number), '--repo', 'Freegle/Iznik'])
         // gh pr checks output: tab-separated "name<TAB>status<TAB>elapsed<TAB>url<TAB>description"
         const failed: Array<{ context: string; state: string; url: string }> = []
@@ -831,7 +845,9 @@ print(urllib.request.urlopen(req).read().decode())
         else if (pending.length > 0) pendingPRs.push({ number: pr.number, title: pr.title, url: pr.url, pendingChecks: pending })
       }
 
-      return { redPRs, pendingPRs, allGreen: redPRs.length === 0 }
+      // allGreen: no red PRs and no actively pending CI. BEHIND PRs with green CI
+      // do NOT block allGreen — they are waiting for a human to merge, not for the FSM.
+      return { redPRs, pendingPRs, behindPRs, allGreen: redPRs.length === 0 && pendingPRs.length === 0 }
     },
   },
 
@@ -967,10 +983,25 @@ PR DESCRIPTION RULES — the description must always match what's actually in th
   - If any file in the diff is not mentioned in the PR description, update the description with \`gh api repos/Freegle/Iznik/pulls/<n> -X PATCH -f body="..."\` to cover every changed file.
   - This applies whether you opened the PR or pushed to an existing one.
 
+TEST API — always use these exact commands to run and poll for tests:
+  - Go tests:      POST http://localhost:8081/api/tests/go    → poll http://localhost:8081/api/tests/go/status
+  - Vitest:        POST http://localhost:8081/api/tests/vitest → poll http://localhost:8081/api/tests/vitest/status
+  - Playwright:    POST http://localhost:8081/api/tests/playwright → poll http://localhost:8081/api/tests/playwright/status
+  - Laravel/PHP:   POST http://localhost:8081/api/tests/laravel
+  ALWAYS use port 8081 — not 38081 or any other port you discover.
+  Terminal states are "completed" (success) or "error" (failure).  "passed" and "failed" are NOT valid states.
+  Correct polling pattern (Go example):
+    curl -s -X POST http://localhost:8081/api/tests/go
+    until curl -s http://localhost:8081/api/tests/go/status | python3 -c "
+    import sys,json; d=json.load(sys.stdin); s=d.get('status','')
+    print(s); exit(0 if s in ['completed','error'] else 1)
+    " 2>/dev/null; do sleep 5; done
+
 FORBIDDEN:
   - "I've scheduled a wakeup" / "I'll check back" / "I'll come back to this later" — none of that is possible; if you exit without pushing, the work is lost.
   - Starting tests asynchronously and returning before they finish — wait for test output. If tests take too long, still wait; the FSM has a 20-minute timeout and will kill you only if truly stuck.
   - Creating a new PR when asked to fix an existing one (FIX_OPEN_PR_CI). Push a commit to the PR's branch instead.
+  - Using port 38081 or any port other than 8081 for the test/status API.
 
 OUTPUT MARKERS — MANDATORY, MACHINE-PARSED:
 The parent FSM greps your stdout for these exact markers. Your prose does NOT count — "Fix pushed to PR #208" is invisible to the parser. You MUST emit exactly ONE of these on its own line at the very end:
@@ -1433,12 +1464,14 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         }
       }
 
+      const pendingCount = Array.isArray(r.pendingPRs) ? r.pendingPRs.length : 0
       let target: string
       if (redCount > 0) target = 'CI_ROUTER'
       else if (dirtyPRs.length > 0) target = 'REBASE_DIRTY_PRS'
+      else if (pendingCount > 0) target = 'WRAP_UP'  // drain mode — CI running, don't create coverage PRs
       else if (prCount > 0) target = 'WRAP_UP'
       else target = 'WRITE_COVERAGE'
-      return { count: prCount, redCount, dirtyPRs, verify, red, _transition: target }
+      return { count: prCount, redCount, pendingCount, dirtyPRs, verify, red, _transition: target }
     },
   },
 
@@ -1528,13 +1561,26 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       if (masterFailing && !masterFixAttempted) {
         return { _transition: 'FIX_MASTER_CI', reason: `master CI failing on run ${master.latestRun?.databaseId ?? '?'}` }
       }
-      // Priority 2+: master green — dispatch ALL work in parallel (red PRs + discourse topics + sentry)
+      // Priority 2: drain mode — if any PR has pending CI (BEHIND or actively running),
+      // do nothing new this iteration. Creating new work while CI is running causes
+      // thrashing: master advances, all branches go BEHIND, CI is invalidated, repeat.
+      // Only fix red PRs or master failures; everything else waits for CI to settle.
+      const pendingPRs: Array<any> = Array.isArray(prCheck.pendingPRs) ? prCheck.pendingPRs : []
+      if (pendingPRs.length > 0 && redPRs.length === 0) {
+        return {
+          _transition: 'WRAP_UP',
+          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI; not dispatching new work until CI settles`,
+          drainMode: true,
+          pendingCount: pendingPRs.length,
+        }
+      }
+      // Priority 3: master green, no pending CI — dispatch ALL work in parallel (red PRs + discourse topics + sentry)
       const activeTopics = (ctx?._action_discover_active_topics?.topics ?? []) as Array<{ id: number; hasNew?: boolean }>
       const topicsWithNew = activeTopics.filter(t => t.hasNew).length
       const phase = ctx?.phase ?? 'analysis'
       return {
         _transition: 'PARALLEL_ANALYZE_AND_FIX',
-        reason: `master green — parallel dispatch: ${redPRs.length} red PRs + ${topicsWithNew} active topics (${phase} phase)`,
+        reason: `master green, no pending CI — parallel dispatch: ${redPRs.length} red PRs + ${topicsWithNew} active topics (${phase} phase)`,
         redPRCount: redPRs.length,
         activeTopicCount: topicsWithNew,
       }

@@ -502,6 +502,8 @@ const test = base.test.extend({
     // so it survives client-side navigations. Uses a debounced MutationObserver to
     // avoid false positives during partial renders.
     await page.addInitScript(() => {
+      // Don't check iframes (e.g. YouTube embeds show their own error pages).
+      if (window !== window.top) return
       let t = null
       const obs = new MutationObserver(() => {
         clearTimeout(t)
