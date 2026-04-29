@@ -186,13 +186,11 @@ class TNSyncCommand extends Command
                 }
 
                 if (!($rating['ratee_fd_user_id'] ?? null)) {
-                    Log::info("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee= rating={$rating['rating']} action=skip-no-user-id");
                     continue;
                 }
 
                 $user = User::find($rating['ratee_fd_user_id']);
                 if (!$user) {
-                    Log::info("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating={$rating['rating']} action=skip-user-not-found");
                     continue;
                 }
 
@@ -213,7 +211,6 @@ class TNSyncCommand extends Command
                             'tn_rating_id' => $rating['rating_id'],
                             'user_id' => $rating['ratee_fd_user_id'],
                         ]);
-                        Log::info("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating={$rating['rating']} action=upsert");
                     } else {
                         Log::info("TN-SYNC-TRACE [WRITE] table=ratings op=delete where=ratee={$rating['ratee_fd_user_id']},tn_rating_id={$rating['rating_id']}");
                         $existing = Rating::where('ratee', $rating['ratee_fd_user_id'])
@@ -226,7 +223,6 @@ class TNSyncCommand extends Command
                                 'user_id' => $rating['ratee_fd_user_id'],
                             ]);
                         }
-                        Log::info("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating= action=delete");
                     }
                 } catch (\Exception $e) {
                     Log::info("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating={$rating['rating']} action=error");
@@ -376,12 +372,6 @@ class TNSyncCommand extends Command
                         }
                     }
 
-                    if ($user->isDirty('fullname')) {
-                        Log::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$user->id} set=fullname={$user->fullname}");
-                    }
-                    if ($user->isDirty('lastlocation')) {
-                        Log::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$user->id} set=lastlocation={$user->lastlocation}");
-                    }
                     // $user->save();  // TRACE: commented out for port testing
                     $this->loki->logEvent('tn-sync', 'user-update', [
                         'user_id' => $change['fd_user_id'],

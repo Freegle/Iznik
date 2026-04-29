@@ -75,14 +75,12 @@ do {
                             $rating['rating'],
                             $rating['date']
                         ]);
-                        error_log("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating={$rating['rating']} action=upsert");
                     } else {
                         error_log("TN-SYNC-TRACE [WRITE] table=ratings op=delete where=ratee={$rating['ratee_fd_user_id']},tn_rating_id={$rating['rating_id']}");
                         $dbhm->preExec("DELETE FROM ratings WHERE ratee = ? AND tn_rating_id = ?;", [
                             $rating['ratee_fd_user_id'],
                             $rating['rating_id']
                         ]);
-                        error_log("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating= action=delete");
                     }
                 } catch (\Exception $e) {
                     error_log("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating={$rating['rating']} action=error");
@@ -157,7 +155,6 @@ do {
                         if (Utils::pres('username', $change) && $oldname != $change['username']) {
                             error_log("Name change for {$change['fd_user_id']} $oldname => {$change['username']}");
                             error_log("TN-SYNC-TRACE [NAME-CHANGE] fd_user_id={$change['fd_user_id']} old=$oldname new={$change['username']}");
-                            error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$change['fd_user_id']} set=fullname={$change['username']}");
                             $u->setPrivate('fullname', $change['username']);
 
                             $emails = $u->getEmails();
@@ -187,7 +184,6 @@ do {
                                     if ($loc['id'] !== $u->getPrivate('locationid')) {
                                         error_log("FD #{$change['fd_user_id']} TN lat/lng $lat,$lng has changed {$u->getPrivate('locationid')} => {$loc['id']} {$loc['name']}");
                                         error_log("TN-SYNC-TRACE [LOCATION] fd_user_id={$change['fd_user_id']} lat=$lat lng=$lng old_loc={$u->getPrivate('locationid')} new_loc={$loc['id']}");
-                                        error_log("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$change['fd_user_id']} set=lastlocation={$loc['id']}");
                                         $u->setPrivate('lastlocation', $loc['id']);
                                     }
                                 }

@@ -1000,9 +1000,6 @@ class User extends Model implements Auditable
                     }
 
                     // $id1Memb->save(); // TRACE: commented out for port testing
-
-                    // Remove the now-redundant id2 membership.
-                    // $id2Memb->delete(); // TRACE: commented out for port testing
                 }
             }
 
@@ -1058,18 +1055,34 @@ class User extends Model implements Auditable
                 }
             }
 
-            // --- Merge foreign keys (less critical — use IGNORE equivalent) ---
-            // For tables with unique constraints, per-row conflicts trigger a delete of the
-            // offending id2 row (matches net effect of the original UPDATE IGNORE + cascade).
-            EloquentUtils::reparentRowIgnore(LocationExcluded::class, 'userid', $id2, $id1);
+            // Merge other foreign keys where success is less important.  For some of these there might already
+            // be entries, so we do an IGNORE.
+            EloquentUtils::reparentRow(LocationExcluded::class, 'userid', $id2, $id1);
             EloquentUtils::reparentRowIgnore(ChatRoster::class, 'userid', $id2, $id1);
             EloquentUtils::reparentRowIgnore(UserSession::class, 'userid', $id2, $id1);
             EloquentUtils::reparentRowIgnore(SpamUser::class, 'userid', $id2, $id1);
             EloquentUtils::reparentRowIgnore(SpamUser::class, 'byuserid', $id2, $id1);
             EloquentUtils::reparentRowIgnore(UserAddress::class, 'userid', $id2, $id1);
+            EloquentUtils::reparentRow(UserComment::class, 'userid', $id2, $id1);
+            EloquentUtils::reparentRow(UserComment::class, 'byuserid', $id2, $id1);
             EloquentUtils::reparentRowIgnore(UserDonation::class, 'userid', $id2, $id1);
             EloquentUtils::reparentRowIgnore(UserImage::class, 'userid', $id2, $id1);
             EloquentUtils::reparentRowIgnore(UserInvitation::class, 'userid', $id2, $id1);
+            EloquentUtils::reparentRow(UserLogin::class, 'userid', $id2, $id1);
+            // Update Native login uid to match new userid.
+            Logger::info("TN-SYNC-TRACE [WRITE] table=users_logins op=update where=userid={$id1},type=" . self::LOGIN_NATIVE . " set=uid={$id1}");
+            UserLogin::where('userid', $id1)
+                ->where('type', self::LOGIN_NATIVE)
+                ->where('uid', '!=', (string) $id1)
+                ->get()
+                ->each(function ($nativeLogin) use ($id1) {
+                    try {
+                        $nativeLogin->uid = (string) $id1;
+                        // $nativeLogin->save(); // TRACE: commented out for port testing
+                    } catch (QueryException $e) {
+                        Logger::warning("Native login uid update conflict for {$nativeLogin->getKey()}: " . $e->getMessage());
+                    }
+                });
             EloquentUtils::reparentRowIgnore(UserNearby::class, 'userid', $id2, $id1);
             EloquentUtils::reparentRowIgnore(Notification::class, 'fromuser', $id2, $id1);
             EloquentUtils::reparentRowIgnore(Notification::class, 'touser', $id2, $id1);
@@ -1097,26 +1110,6 @@ class User extends Model implements Auditable
             EloquentUtils::reparentRowIgnore(Tryst::class, 'user2', $id2, $id1);
             EloquentUtils::reparentRowIgnore(IsochroneUser::class, 'userid', $id2, $id1);
             EloquentUtils::reparentRowIgnore(Microaction::class, 'userid', $id2, $id1);
-
-            // Non-IGNORE updates (no unique constraint conflicts expected).
-            EloquentUtils::reparentRow(UserComment::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRow(UserComment::class, 'byuserid', $id2, $id1);
-            EloquentUtils::reparentRow(UserLogin::class, 'userid', $id2, $id1);
-
-            // Update Native login uid to match new userid.
-            Logger::info("TN-SYNC-TRACE [WRITE] table=users_logins op=update where=userid={$id1},type=" . self::LOGIN_NATIVE . " set=uid={$id1}");
-            UserLogin::where('userid', $id1)
-                ->where('type', self::LOGIN_NATIVE)
-                ->where('uid', '!=', (string) $id1)
-                ->get()
-                ->each(function ($nativeLogin) use ($id1) {
-                    try {
-                        $nativeLogin->uid = (string) $id1;
-                        // $nativeLogin->save(); // TRACE: commented out for port testing
-                    } catch (QueryException $e) {
-                        Logger::warning("Native login uid update conflict for {$nativeLogin->getKey()}: " . $e->getMessage());
-                    }
-                });
 
             // --- Handle bans ---
             EloquentUtils::reparentRowIgnore(UserBanned::class, 'userid', $id2, $id1);
