@@ -791,7 +791,7 @@ print(urllib.request.urlopen(req).read().decode())
 
   {
     name: 'check_my_open_pr_ci',
-    description: 'List OPEN PRs authored by @me whose CI is currently red. A PR counts as red if any required check-run concluded "failure" or "cancelled" or "timed_out". Pending/queued checks do NOT count as red (they are in-flight). Netlify "pages changed" rows that only say "skipping" are ignored. Returns {redPRs: [{number, title, url, failedChecks: [{context, state, url}]}], pendingPRs: [{number, title, url, pendingChecks: [...]}], allGreen: bool}. FSM uses this to refuse WRAP_UP while any PR is red — a red PR is NEVER considered flaky, environmental, or unrelated. Fix it or keep trying.',
+    description: 'List OPEN PRs authored by @me whose CI is currently red or stale. A PR counts as red if any required check-run concluded "failure" or "cancelled" or "timed_out". A PR whose branch is BEHIND master is auto-updated via the GitHub API and counted as pending (its stale green checks are NOT treated as passing). Pending/queued checks do NOT count as red. Netlify "pages changed" rows that only say "skipping" are ignored. Returns {redPRs, pendingPRs, behindPRs, allGreen}. allGreen is only true when no PR is red AND no PR is behind master.',
     handler: async () => {
       const listRes = await sh('gh', [
         'pr', 'list',
@@ -799,15 +799,26 @@ print(urllib.request.urlopen(req).read().decode())
         '--author', '@me',
         '--state', 'open',
         '--limit', '30',
-        '--json', 'number,title,url,headRefOid',
+        '--json', 'number,title,url,headRefOid,mergeStateStatus',
       ])
-      if (listRes.code !== 0) return { redPRs: [], pendingPRs: [], allGreen: true, error: listRes.stderr }
-      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefOid: string }>
+      if (listRes.code !== 0) return { redPRs: [], pendingPRs: [], behindPRs: [], allGreen: true, error: listRes.stderr }
+      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefOid: string; mergeStateStatus: string }>
 
       const redPRs: Array<{ number: number; title: string; url: string; failedChecks: Array<{ context: string; state: string; url: string }> }> = []
       const pendingPRs: Array<{ number: number; title: string; url: string; pendingChecks: Array<{ context: string; state: string; url: string }> }> = []
+      const behindPRs: Array<{ number: number; title: string; url: string }> = []
 
       for (const pr of prs) {
+        // A branch that is BEHIND master has stale CI — its green checks ran against
+        // an older base and are meaningless. Auto-update the branch so fresh CI runs,
+        // and count it as pending (not green) until the new run completes.
+        if (pr.mergeStateStatus === 'BEHIND') {
+          await sh('gh', ['api', '-X', 'PUT', `repos/Freegle/Iznik/pulls/${pr.number}/update-branch`])
+          behindPRs.push({ number: pr.number, title: pr.title, url: pr.url })
+          pendingPRs.push({ number: pr.number, title: pr.title, url: pr.url, pendingChecks: [{ context: 'branch-behind-master-updating', state: 'pending', url: pr.url }] })
+          continue
+        }
+
         const chk = await sh('gh', ['pr', 'checks', String(pr.number), '--repo', 'Freegle/Iznik'])
         // gh pr checks output: tab-separated "name<TAB>status<TAB>elapsed<TAB>url<TAB>description"
         const failed: Array<{ context: string; state: string; url: string }> = []
@@ -831,7 +842,8 @@ print(urllib.request.urlopen(req).read().decode())
         else if (pending.length > 0) pendingPRs.push({ number: pr.number, title: pr.title, url: pr.url, pendingChecks: pending })
       }
 
-      return { redPRs, pendingPRs, allGreen: redPRs.length === 0 }
+      // allGreen requires no red PRs AND no behind PRs (behind = stale CI, not truly green)
+      return { redPRs, pendingPRs, behindPRs, allGreen: redPRs.length === 0 && behindPRs.length === 0 }
     },
   },
 
