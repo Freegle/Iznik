@@ -181,13 +181,14 @@ func GetLogs(c *fiber.Ctx) error {
 	}
 
 	// Build the query. Always join messages to reconstruct historical subject via messages_edits.
-	// COALESCE: if the subject was edited after this log event, return the subject as it was
-	// before that edit (oldsubject); otherwise return the current messages.subject.
-	query := "SELECT logs.*, COALESCE(" +
+	// Use COALESCE with IFNULL to handle NULL subjects properly: if the subject was edited after
+	// this log event, return the subject as it was before that edit (oldsubject); otherwise return
+	// the current messages.subject. Use IFNULL as fallback for very old pre-migration rows.
+	query := "SELECT logs.*, IFNULL(COALESCE(" +
 		"(SELECT me.oldsubject FROM messages_edits me " +
-		"WHERE me.msgid = logs.msgid AND me.timestamp > logs.timestamp " +
+		"WHERE logs.msgid IS NOT NULL AND me.msgid = logs.msgid AND me.timestamp > logs.timestamp " +
 		"AND me.oldsubject IS NOT NULL ORDER BY me.timestamp ASC LIMIT 1), " +
-		"messages.subject) AS msgsubject " +
+		"messages.subject), '') AS msgsubject " +
 		"FROM logs LEFT JOIN messages ON messages.id = logs.msgid "
 
 	if search != "" {
