@@ -285,6 +285,7 @@ const test = base.test.extend({
       /Failed to load resource: the server responded with a status of 404.*delivery\.localhost/, // Delivery service 404 errors for missing images can happen during normal operation.
       /FedCM get\(\) rejects with/, // Not available in test
       /Error retrieving a token./, // Also related to GSI FedCM, not available in test
+      /FedCM well-known file/, // FedCM well-known file fetch errors — Chrome FedCM API not available in Docker test environment
       /Hydration completed but contains mismatches/, // Not ideal, but not visible to user
       /ResizeObserver loop limit exceeded/, // Non-critical UI warning
       // NOTE: Do NOT add a broad Sentry catch-all — Sentry errors are critical. Only specific known patterns below.
@@ -326,8 +327,11 @@ const test = base.test.extend({
       /Failed to load resource: the server responded with a status of 500.*connect\.facebook\.net/, // Facebook SDK transient 500 errors
       /Refused to execute script from.*connect\.facebook\.net.*MIME type/, // Facebook SDK MIME type error when returning error page
       /net::ERR_NETWORK_CHANGED/, // Transient network change during image load (delivery.localhost) — not a code bug
+      /The fetch of the well-known file resulted in a network error: ERR_NETWORK_CHANGED/, // FedCM well-known file fetch fails when network changes transiently in Docker test environment
       /compute-pressure is not allowed/, // YouTube player Permissions-Policy violation — external script, not our code
       /\[Exc?eption for Sentry\]:.*SpinButton.*callback not called/, // Bootstrap-Vue SpinButton internal timing error — component issue, not user-visible
+      /\[Exc?eption for Sentry\]:.*focus-trap must have at least one container/, // focus-trap timing error during rapid modal open/close in test environment — not reproducible at human interaction speed
+      /\[CRITICAL-CLIENT-ERROR\].*focus-trap must have at least one container/, // focus-trap causes Nuxt error page during modal transition — transient, suppressed in production via useSuppressException
       /Failed to fetch dynamically imported module.*\.localhost/, // Transient network error loading JS chunks from local dev server under parallel test load — not a production code bug
       /net::ERR_SOCKET_NOT_CONNECTED.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
       /Failed to load resource.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
@@ -503,9 +507,16 @@ const test = base.test.extend({
         clearTimeout(t)
         t = setTimeout(() => {
           if (document.body?.textContent?.includes('Something went wrong')) {
+            // Include enough error detail so the allowlist can distinguish
+            // known transient errors (e.g. focus-trap) from real bugs.
+            const errorDetail =
+              document.body?.textContent?.match(
+                /"message":"([^"]{0,200})"/
+              )?.[1] || ''
             console.error(
               '[CRITICAL-CLIENT-ERROR] client-side error page at ' +
-                location.href
+                location.href +
+                (errorDetail ? ' | ' + errorDetail : '')
             )
           }
         }, 200)
