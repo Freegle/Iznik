@@ -31,6 +31,8 @@ class DigestReplyNotice extends MjmlMailable
 
         $this->userSite = config('freegle.sites.user');
 
+        $this->to($this->recipientEmail, $this->recipientName);
+
         $this->initTracking(
             'DigestReplyNotice',
             $this->recipientEmail,
@@ -57,7 +59,6 @@ class DigestReplyNotice extends MjmlMailable
             'browseUrl' => $browseUrl,
             'userSite' => $this->userSite,
         ], $this->getTrackingData()), 'emails.text.digest.reply-notice')
-            ->to($this->recipientEmail)
             ->applyLogging('DigestReplyNotice');
     }
 
