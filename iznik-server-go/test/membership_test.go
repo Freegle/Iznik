@@ -1698,13 +1698,15 @@ func TestGetMembershipsSearch(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
-	assert.GreaterOrEqual(t, len(members), 1)
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+	assert.GreaterOrEqual(t, len(membersRaw), 1)
 
 	// The target should be in the results.
 	found := false
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == targetID {
 			found = true
@@ -2695,12 +2697,14 @@ func TestMemberSearchWithoutGroup(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
-	assert.GreaterOrEqual(t, len(members), 1, "Should find at least one member")
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+	assert.GreaterOrEqual(t, len(membersRaw), 1, "Should find at least one member")
 
 	found := false
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == targetID {
 			found = true
@@ -2732,11 +2736,13 @@ func TestGetMembershipsReturnsEngagement(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
 
 	found := false
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == memberID {
 			found = true
