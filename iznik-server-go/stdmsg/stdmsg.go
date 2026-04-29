@@ -135,7 +135,7 @@ func PostStdMsg(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Database error"})
 	}
-	sqlResult, err := sqlDB.Exec("INSERT INTO mod_stdmsgs (configid, title) VALUES (?, ?)", req.Configid, req.Title)
+	sqlResult, err := sqlDB.Exec("INSERT INTO mod_stdmsgs (configid, title, subjpref, subjsuff, body) VALUES (?, ?, '', '', '')", req.Configid, req.Title)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Create failed"})
 	}

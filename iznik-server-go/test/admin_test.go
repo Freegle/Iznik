@@ -363,10 +363,17 @@ func TestPostAdminCreateWithSendAfter(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/modtools/admin?jwt="+modToken, bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, _ := getApp().Test(req)
+	respBody := rsp(resp)
+	if resp.StatusCode != 200 {
+		t.Logf("Admin POST returned %d: %s", resp.StatusCode, string(respBody))
+	}
 	assert.Equal(t, 200, resp.StatusCode)
+	if resp.StatusCode != 200 {
+		t.FailNow()
+	}
 
 	var result map[string]interface{}
-	json2.Unmarshal(rsp(resp), &result)
+	json2.Unmarshal(respBody, &result)
 	id := uint64(result["id"].(float64))
 	assert.Greater(t, id, uint64(0), "Should return a new admin ID")
 

@@ -290,7 +290,16 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT id, msgid, archived, externaluid, externalmods FROM messages_attachments WHERE msgid = ? ORDER BY `primary` DESC, id ASC", id).Scan(&messageAttachments)
+				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
+			// that is no longer active, return an empty externaluid so the frontend shows
+			// a placeholder instead of the rejected illustration.
+			db.Raw(`SELECT ma.id, ma.msgid, ma.archived,
+				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
+				ma.externalmods
+				FROM messages_attachments ma
+				LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating')
+				WHERE ma.msgid = ?
+				ORDER BY ma.`+"`primary`"+` DESC, ma.id ASC`, id).Scan(&messageAttachments)
 			}()
 
 			var messageReply []MessageReply
@@ -2309,6 +2318,7 @@ func PatchMessage(c *fiber.Ctx) error {
 		Locationid   *uint64  `json:"locationid"`
 		Groupid      *uint64  `json:"groupid"`
 		Attachments  []uint64 `json:"attachments"`
+		BadAIImages  []uint64 `json:"badAIImages"`
 		Deadline     *string  `json:"deadline"`
 	}
 
@@ -2511,7 +2521,7 @@ func PatchMessage(c *fiber.Ctx) error {
 	// req.Attachments is nil when the field is absent from JSON (don't touch).
 	// req.Attachments is [] (empty, non-nil) when all attachments are removed (#338).
 	if req.Attachments != nil {
-		recordAIDeletions(db, myid, req.ID, req.Attachments)
+		recordAIDeletions(db, myid, req.ID, req.Attachments, req.BadAIImages)
 
 		if len(req.Attachments) > 0 {
 			for i, attid := range req.Attachments {
@@ -2898,8 +2908,8 @@ func PutMessage(c *fiber.Ctx) error {
 	if req.Groupid > 0 {
 		messageid = fmt.Sprintf("%s-%d", messageid, req.Groupid)
 	}
-	result := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
-		myid, req.Type, req.Subject, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
+	result := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
+		myid, req.Type, req.Subject, req.Textbody, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
 
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
@@ -3532,10 +3542,12 @@ func stringPtrEqual(a, b *string) bool {
 
 // recordAIDeletions checks which attachments on msgID will be removed by the new keepList,
 // and for each AI-generated attachment being removed, records a Reject microaction.
-func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint64) {
+// Attachments whose IDs appear in badAttachmentIDs are force-rejected immediately,
+// bypassing quorum — used when a moderator marks the image as bad for any post.
+func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint64, badAttachmentIDs []uint64) {
 	type aiCandidate struct {
-		ID          uint64
-		Externaluid string
+		ID           uint64
+		Externaluid  string
 		Externalmods json.RawMessage
 	}
 
@@ -3553,9 +3565,22 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 		var aiImageID uint64
 		db.Raw("SELECT id FROM ai_images WHERE externaluid = ? LIMIT 1", att.Externaluid).Scan(&aiImageID)
 		if aiImageID > 0 {
-			microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
+			if containsUint64(badAttachmentIDs, att.ID) {
+				microvolunteering.ForceRejectAIImage(db, userID, aiImageID)
+			} else {
+				microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
+			}
 		}
 	}
+}
+
+func containsUint64(slice []uint64, val uint64) bool {
+	for _, v := range slice {
+		if v == val {
+			return true
+		}
+	}
+	return false
 }
 
 // isAIAttachment returns true if the externalmods JSON contains {"ai": true}.

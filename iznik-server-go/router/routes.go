@@ -25,6 +25,7 @@ import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
 	"github.com/freegle/iznik-server-go/admin"
+	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/authority"
@@ -199,6 +200,12 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/modtools/admin", admin.PostAdmin)
 		rg.Patch("/modtools/admin", admin.PatchAdmin)
 		rg.Delete("/modtools/admin", admin.DeleteAdmin)
+
+		// AI Image regeneration (support/admin only)
+		rg.Get("/admin/ai-images/review", aiimage.ListReview)
+		rg.Get("/admin/ai-images/count", aiimage.Count)
+		rg.Post("/admin/ai-images/:id/regenerate", aiimage.Regenerate)
+		rg.Post("/admin/ai-images/:id/accept", aiimage.Accept)
 
 		// Authority Search
 		// @Router /authority [get]

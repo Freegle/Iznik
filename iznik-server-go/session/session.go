@@ -572,7 +572,8 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", myid)
 
 	// GDPR erasure: blank personal data from all messages posted by this user (V1 parity).
-	db.Exec("UPDATE messages SET fromip = NULL, message = NULL, envelopefrom = NULL, fromname = NULL, fromaddr = NULL, messageid = NULL, textbody = NULL, htmlbody = NULL, deleted = NOW() WHERE fromuser = ?", myid)
+	// message is NOT NULL with no default, so use '' not NULL; all other blanked columns are nullable.
+	db.Exec("UPDATE messages SET fromip = NULL, message = '', envelopefrom = NULL, fromname = NULL, fromaddr = NULL, messageid = NULL, textbody = NULL, htmlbody = NULL, deleted = NOW() WHERE fromuser = ?", myid)
 	db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid IN (SELECT id FROM messages WHERE fromuser = ?)", myid)
 
 	// Destroy session so the user is logged out.

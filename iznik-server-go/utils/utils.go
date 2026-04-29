@@ -389,5 +389,9 @@ func TidyName(name string) string {
 	}
 
 
+	if len(name) == 0 {
+		name = "A freegler"
+	}
+
 	return name
 }

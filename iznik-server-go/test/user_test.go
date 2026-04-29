@@ -459,7 +459,7 @@ func TestPostUserRateDown(t *testing.T) {
 
 	// Rate user down with reason and text.
 	rating := "Down"
-	reason := "Didn't show up"
+	reason := "NoShow"
 	text := "Was a no-show"
 	payload := map[string]interface{}{
 		"action": "Rate",
@@ -521,7 +521,7 @@ func TestPostUserRatingReviewed(t *testing.T) {
 	_, token := CreateTestSession(t, raterID)
 
 	// Insert a rating with reviewrequired.
-	db.Exec("INSERT INTO ratings (rater, ratee, rating, reason, text, timestamp, reviewrequired) VALUES (?, ?, 'Down', 'Test', 'Test', NOW(), 1)",
+	db.Exec("INSERT INTO ratings (rater, ratee, rating, reason, text, timestamp, reviewrequired) VALUES (?, ?, 'Down', 'Other', 'Test', NOW(), 1)",
 		raterID, rateeID)
 	var ratingID uint64
 	db.Raw("SELECT id FROM ratings WHERE rater = ? AND ratee = ? ORDER BY id DESC LIMIT 1", raterID, rateeID).Scan(&ratingID)

@@ -13,7 +13,7 @@ import (
 
 func createTestStdMsg(t *testing.T, configID uint64, title string) uint64 {
 	db := database.DBConn
-	result := db.Exec("INSERT INTO mod_stdmsgs (configid, title) VALUES (?, ?)", configID, title)
+	result := db.Exec("INSERT INTO mod_stdmsgs (configid, title, subjpref, subjsuff, body) VALUES (?, ?, '', '', '')", configID, title)
 	assert.NoError(t, result.Error)
 
 	var id uint64

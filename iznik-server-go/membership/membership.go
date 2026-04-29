@@ -240,8 +240,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewIgnore":
-		// Marks this group membership as reviewed and clears the review flag.
-		// Per-group: mods on adjacent communities make independent decisions.
+		// Per-group: mods on adjacent communities make independent decisions (Discourse 9618 #8).
 		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL "+
 			"WHERE userid = ? AND groupid = ?",
 			req.Userid, req.Groupid)
