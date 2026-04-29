@@ -503,8 +503,14 @@ const test = base.test.extend({
     // so it survives client-side navigations. Uses a debounced MutationObserver to
     // avoid false positives during partial renders.
     await page.addInitScript(() => {
-      // Don't check iframes (e.g. YouTube embeds show their own error pages).
-      if (window !== window.top) return
+      // addInitScript runs in all frames including cross-origin iframes (e.g. YouTube
+      // embeds). Bail out in subframes so we only report errors from the Nuxt app.
+      try {
+        /* c8 ignore next */ if (window !== window.top) return
+      } catch {
+        // Accessing window.top can throw in cross-origin contexts
+        return
+      }
       let t = null
       const obs = new MutationObserver(() => {
         clearTimeout(t)
