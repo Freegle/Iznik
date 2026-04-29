@@ -13,6 +13,10 @@ export default class ChatAPI extends BaseAPI {
     return count
   }
 
+  allSeen() {
+    return this.$postv2('/chatrooms', { action: 'AllSeen' })
+  }
+
   async fetchReviewChatsMT(params) {
     return await this.$getv2(`/chatmessages`, params)
   }
