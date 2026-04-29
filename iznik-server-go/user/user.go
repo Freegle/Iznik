@@ -1747,6 +1747,13 @@ func PutUser(c *fiber.Ctx) error {
 	db.Raw("SELECT userid FROM users_emails WHERE email = ? LIMIT 1", email).Scan(&existingUID)
 
 	if existingUID > 0 {
+		// Authenticated callers (e.g. moderators using Add Member in ModTools) get the existing
+		// user's ID back — idempotent, mirrors PHP v1 behaviour for mods.
+		myid := WhoAmI(c)
+		if myid > 0 {
+			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": existingUID})
+		}
+
 		// If they provided a correct password, treat signup as login — avoids
 		// forcing users to switch to the login screen and re-enter credentials.
 		if req.Password != "" && auth.VerifyPassword(existingUID, req.Password) {
