@@ -959,6 +959,48 @@ func TestPutUserDuplicateEmailAuthenticated(t *testing.T) {
 	assert.Equal(t, float64(existingID), result["id"])
 }
 
+// TestPutUserDuplicateEmailCorrectPassword verifies that an unauthenticated caller
+// who provides the correct password for an existing account gets logged in (200 + JWT)
+// rather than a 409 conflict.  This is the "sign-up with existing email → login" path.
+func TestPutUserDuplicateEmailCorrectPassword(t *testing.T) {
+	prefix := uniquePrefix("putduppw")
+	password := "testpassword123"
+	email := fmt.Sprintf("%s@test.com", prefix)
+
+	// First call: create the user.
+	payload := map[string]interface{}{
+		"email":     email,
+		"firstname": "Dup",
+		"lastname":  "PwTest",
+		"password":  password,
+	}
+	s, _ := json.Marshal(payload)
+	req1 := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(s))
+	req1.Header.Set("Content-Type", "application/json")
+	resp1, err := getApp().Test(req1, 5000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp1.StatusCode)
+
+	var result1 map[string]interface{}
+	json.NewDecoder(resp1.Body).Decode(&result1)
+	existingID := uint64(result1["id"].(float64))
+	assert.NotZero(t, existingID)
+
+	// Second call with the same email and correct password: should log in, not conflict.
+	s2, _ := json.Marshal(payload)
+	req2 := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(s2))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := getApp().Test(req2, 5000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp2.StatusCode)
+
+	var result2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&result2)
+	assert.Equal(t, float64(0), result2["ret"])
+	assert.Equal(t, float64(existingID), result2["id"])
+	assert.NotEmpty(t, result2["jwt"])
+}
+
 func TestPutUserWithGroup(t *testing.T) {
 	prefix := uniquePrefix("putwgroup")
 	groupID := CreateTestGroup(t, prefix)
