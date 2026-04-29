@@ -181,7 +181,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', 'Could not pre-count tests, will determine from output\n')
     }
 
-    const testCmd = `npx playwright test${testArgs}`
+    const testCmd = `export ENABLE_MONOCART_REPORTER=true && npx playwright test${testArgs}`
 
     // Clear freeze-specs file before run so we only capture freezes from this run
     try {
@@ -259,7 +259,9 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           execSync(`docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt"`, { encoding: 'utf8', timeout: 5000 })
         } catch {}
 
-        const retryCode = await spawnPlaywrightProcess(`npx playwright test ${retryFiles}`, pfx)
+        // Run retry without monocart so the main-run coverage (full suite) is not
+        // overwritten by partial coverage from just the re-run frozen specs.
+        const retryCode = await spawnPlaywrightProcess(`export ENABLE_MONOCART_REPORTER=false && npx playwright test ${retryFiles}`, pfx)
 
         // Restore full-suite coverage — the retry covered fewer tests than the main run.
         try {

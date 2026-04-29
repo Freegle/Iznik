@@ -231,10 +231,18 @@ const needsReview = computed(() => {
 
   if (!membership.value) return false
 
+  // reviewrequestedat must be set for review to be needed.
+  // Without this guard:
+  //  - undefined reviewrequestedat (user-store fallback) made !reviewedat short-circuit
+  //    to true, incorrectly showing buttons for memberships not in the review queue.
+  //  - null reviewrequestedat made new Date(null).getTime() === 0, which is less than
+  //    any real reviewedat timestamp, returning false and hiding buttons (Discourse 9618).
+  const rra = membership.value.reviewrequestedat
+  if (!rra) return false
+
   return (
     !membership.value.reviewedat ||
-    new Date(membership.value.reviewrequestedat).getTime() >=
-      new Date(membership.value.reviewedat).getTime()
+    new Date(rra).getTime() >= new Date(membership.value.reviewedat).getTime()
   )
 })
 
