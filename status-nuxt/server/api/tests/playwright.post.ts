@@ -247,7 +247,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
         // Run retry without monocart so the main-run coverage (full suite) is not
         // overwritten by partial coverage from just the re-run frozen specs.
-        const retryCode = await spawnPlaywrightProcess(`ENABLE_MONOCART_REPORTER=false npx playwright test ${retryFiles}`, pfx)
+        const retryCode = await spawnPlaywrightProcess(`export ENABLE_MONOCART_REPORTER=false && npx playwright test ${retryFiles}`, pfx)
 
         if (retryCode === 0) {
           // All frozen specs passed in the fresh process — overall run is a success.
