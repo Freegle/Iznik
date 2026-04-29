@@ -18,6 +18,7 @@ const mockChatStore = {
   searchSince: null,
   listChatsMT: vi.fn().mockResolvedValue([]),
   markRead: vi.fn().mockResolvedValue({}),
+  markAllReadMT: vi.fn().mockResolvedValue({}),
   clear: vi.fn(),
 }
 
@@ -208,7 +209,7 @@ describe('chats/[[id]].vue page', () => {
       mockChatStore.list = [{ id: 1, unseen: 5 }]
       const wrapper = mountComponent()
       await wrapper.vm.markAllRead()
-      expect(mockChatStore.markRead).toHaveBeenCalledWith(1)
+      expect(mockChatStore.markAllReadMT).toHaveBeenCalled()
       expect(mockChatStore.clear).toHaveBeenCalled()
     })
 
