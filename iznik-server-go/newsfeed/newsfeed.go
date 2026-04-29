@@ -292,6 +292,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 	// - the current user to check mod status
 	// - the feed
 	var nelat, nelng, swlat, swlng float64
+	var userLat, userLng float64
 
 	var wg sync.WaitGroup
 
@@ -302,18 +303,23 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 		if !gotDistance {
 			// We need to calculate a reasonable feed distance to show.
 			var reasonable float64
-			reasonable, _, nelat, nelng, swlat, swlng = GetNearbyDistance(myid)
+			var latlng utils.LatLng
+			reasonable, latlng, nelat, nelng, swlat, swlng = GetNearbyDistance(myid)
 
 			if reasonable > 0 {
 				gotLatLng = true
+				userLat = float64(latlng.Lat)
+				userLng = float64(latlng.Lng)
 			}
 		} else if distance > 0 {
 			// We've been given a distance.
 			latlng := user.GetLatLng(myid)
 
 			if latlng.Lat != 0 && latlng.Lng != 0 {
+				userLat = float64(latlng.Lat)
+				userLng = float64(latlng.Lng)
 				// Get a bounding box for the distance.
-				p := geo.NewPoint(float64(latlng.Lat), float64(latlng.Lng))
+				p := geo.NewPoint(userLat, userLng)
 				ne := p.PointAtDistanceAndBearing(float64(distance/1000), 45)
 				nelat = ne.Lat()
 				nelng = ne.Lng()
@@ -391,7 +397,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 					"AND users.deleted IS NULL "+
 					"AND spam_users.id IS NULL "+
 					"AND newsfeed.type IN (?, ?) "+
-					"ORDER BY timestamp DESC "+
+					"ORDER BY ST_Distance(position, ST_SRID(POINT(?, ?), ?)) ASC, timestamp DESC "+
 					"LIMIT %d "+
 					") UNION ("+
 					"SELECT newsfeed.id, newsfeed.userid, (CASE WHEN users.newsfeedmodstatus = ? THEN NOW() ELSE newsfeed.hidden END) AS hidden, hiddenby, pinned, newsfeed.timestamp, "+
@@ -425,7 +431,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 			utils.SRID,
 			start,
 			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
-			// UNION 2: event/volunteering posts in geographic area (flood-capped)
+			// UNION 2: event/volunteering posts in geographic area (flood-capped, proximity-sorted)
 			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
 			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
 			myid,
@@ -437,6 +443,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 			utils.SRID,
 			start,
 			utils.NEWSFEED_TYPE_COMMUNITY_EVENT, utils.NEWSFEED_TYPE_VOLUNTEER_OPPORTUNITY,
+			userLng, userLat, utils.SRID,
 			// UNION 3: pinned alerts (any location)
 			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
 			utils.SPAM_COLLECTION_PENDING_ADD, utils.SPAM_COLLECTION_SPAMMER,
