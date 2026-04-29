@@ -68,6 +68,71 @@ describe('member store', () => {
     })
   })
 
+  describe('fetchMembers - pagination context', () => {
+    it('stores the integer context returned by the API', async () => {
+      mockFetchMembers.mockResolvedValue({
+        members: Array.from({ length: 20 }, (_, i) => ({
+          id: i + 1,
+          userid: i + 1,
+          groupid: 1,
+          collection: 'Approved',
+        })),
+        context: 456,
+        ratings: [],
+        filtercount: null,
+      })
+
+      const store = useMemberStore()
+      store.config = {}
+      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+
+      expect(store.context).toBe(456)
+    })
+
+    it('passes integer context to the API on the second page request', async () => {
+      mockFetchMembers.mockResolvedValue({
+        members: Array.from({ length: 20 }, (_, i) => ({
+          id: i + 1,
+          userid: i + 1,
+          groupid: 1,
+          collection: 'Approved',
+        })),
+        context: 456,
+        ratings: [],
+        filtercount: null,
+      })
+
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+      await store.fetchMembers({
+        collection: 'Approved',
+        groupid: 1,
+        limit: 20,
+        context: store.context,
+      })
+
+      const secondCallParams = mockFetchMembers.mock.calls[1][0]
+      expect(secondCallParams.context).toBe(456)
+    })
+
+    it('stores null context when API returns null (no more pages)', async () => {
+      mockFetchMembers.mockResolvedValue({
+        members: [{ id: 1, userid: 1, groupid: 1, collection: 'Approved' }],
+        context: null,
+        ratings: [],
+        filtercount: null,
+      })
+
+      const store = useMemberStore()
+      store.config = {}
+      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+
+      expect(store.context).toBeNull()
+    })
+  })
+
   describe('fetchMembers - Related collection', () => {
     it('stores pairs and creates synthetic member entries', async () => {
       mockFetchMembers.mockResolvedValue({
