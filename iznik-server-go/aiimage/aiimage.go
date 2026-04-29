@@ -1,15 +1,8 @@
 package aiimage
 
 import (
-	"bytes"
 	"fmt"
-	"image"
-	"image/color"
-	"image/jpeg"
-	_ "image/png"
-	"io"
 	"math/rand"
-	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -65,139 +58,6 @@ func buildPollinationsURL(name string) string {
 	return imageURL
 }
 
-// fetchAndUploadToTUS downloads an image from sourceURL, applies the Freegle duotone
-// filter, and uploads it to the internal TUS server. Returns the new externaluid.
-func fetchAndUploadToTUS(sourceURL string) (string, error) {
-	// Download image from Pollinations.ai.
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Get(sourceURL)
-	if err != nil {
-		return "", fmt.Errorf("failed to download image: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 429 {
-		return "", fmt.Errorf("rate_limited")
-	}
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("pollinations returned HTTP %d", resp.StatusCode)
-	}
-
-	imgData, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read image body: %w", err)
-	}
-
-	// Apply duotone filter.
-	filteredData, err := applyDuotoneGreen(imgData)
-	if err != nil {
-		// If duotone fails, upload the raw image rather than blocking the flow.
-		filteredData = imgData
-	}
-
-	// Upload to TUS.
-	return uploadToTUS(filteredData)
-}
-
-// freegleDarkGreen is the Freegle brand dark green used as the duotone shadow colour.
-var freegleDarkGreen = color.RGBA{R: 0x00, G: 0x70, B: 0x4A, A: 0xFF}
-
-// applyDuotoneGreen converts image data to JPEG with a green/white duotone effect.
-func applyDuotoneGreen(imgData []byte) ([]byte, error) {
-	src, _, err := image.Decode(bytes.NewReader(imgData))
-	if err != nil {
-		return nil, err
-	}
-
-	bounds := src.Bounds()
-	dst := image.NewRGBA(bounds)
-	dark := freegleDarkGreen
-	light := color.RGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0xFF}
-
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			r32, g32, b32, a32 := src.At(x, y).RGBA()
-			// ITU-R BT.709 luma (values are 0-65535 from RGBA()).
-			luma := (19595*r32 + 38470*g32 + 7471*b32) >> 16
-			t := float64(luma) / 65535.0
-			nr := uint8(float64(dark.R)*(1-t) + float64(light.R)*t)
-			ng := uint8(float64(dark.G)*(1-t) + float64(light.G)*t)
-			nb := uint8(float64(dark.B)*(1-t) + float64(light.B)*t)
-			dst.SetRGBA(x, y, color.RGBA{R: nr, G: ng, B: nb, A: uint8(a32 >> 8)})
-		}
-	}
-
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 90}); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-// uploadToTUS uploads image bytes to the internal TUS server and returns the externaluid.
-func uploadToTUS(data []byte) (string, error) {
-	tusURL := os.Getenv("TUS_UPLOADER")
-	if tusURL == "" {
-		tusURL = "http://tusd:8080/tus"
-	}
-	// Ensure the URL ends with /files/ (TUS creation endpoint).
-	if !strings.HasSuffix(tusURL, "/") {
-		tusURL += "/"
-	}
-
-	size := len(data)
-
-	// Step 1: POST to create the upload.
-	createReq, err := http.NewRequest("POST", tusURL, nil)
-	if err != nil {
-		return "", err
-	}
-	createReq.Header.Set("Tus-Resumable", "1.0.0")
-	createReq.Header.Set("Upload-Length", strconv.Itoa(size))
-	createReq.Header.Set("Upload-Metadata", "filename cmVnZW5lcmF0ZWQuanBn,filetype aW1hZ2UvanBlZw==")
-	// Base64 of "regenerated.jpg" and "image/jpeg" respectively.
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	createResp, err := client.Do(createReq)
-	if err != nil {
-		return "", fmt.Errorf("TUS create failed: %w", err)
-	}
-	defer createResp.Body.Close()
-
-	if createResp.StatusCode != 201 {
-		return "", fmt.Errorf("TUS create returned HTTP %d", createResp.StatusCode)
-	}
-
-	uploadURL := createResp.Header.Get("Location")
-	if uploadURL == "" {
-		return "", fmt.Errorf("TUS create returned no Location header")
-	}
-
-	// Step 2: PATCH to upload the data.
-	patchReq, err := http.NewRequest("PATCH", uploadURL, bytes.NewReader(data))
-	if err != nil {
-		return "", err
-	}
-	patchReq.Header.Set("Tus-Resumable", "1.0.0")
-	patchReq.Header.Set("Content-Type", "application/offset+octet-stream")
-	patchReq.Header.Set("Upload-Offset", "0")
-	patchReq.ContentLength = int64(size)
-
-	patchResp, err := client.Do(patchReq)
-	if err != nil {
-		return "", fmt.Errorf("TUS patch failed: %w", err)
-	}
-	defer patchResp.Body.Close()
-
-	if patchResp.StatusCode != 204 {
-		return "", fmt.Errorf("TUS patch returned HTTP %d", patchResp.StatusCode)
-	}
-
-	// Extract the UUID from the upload URL (last path segment).
-	parts := strings.Split(strings.TrimSuffix(uploadURL, "/"), "/")
-	uuid := parts[len(parts)-1]
-	return "freegletusd-" + uuid, nil
-}
 
 // getDeliveryURL constructs the image delivery URL for a given externaluid.
 func getDeliveryURL(externaluid string) string {
