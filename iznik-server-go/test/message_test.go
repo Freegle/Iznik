@@ -7277,3 +7277,64 @@ func TestPostMessageDeleteCrossGroupAttack403(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&count)
 	assert.Equal(t, int64(1), count, "Group B row must still exist")
 }
+
+// =============================================================================
+// GET /message/:id — postings visibility (V1 returns postings to all callers)
+// =============================================================================
+
+func TestMessagePostingsVisibleToRegularUser(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("msgpostings")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, viewerToken := CreateTestSession(t, viewerID)
+
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 55.9533, -3.1883)
+
+	// Ensure a messages_postings row exists (CreateTestMessage may not insert one).
+	var postingCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_postings WHERE msgid = ?", msgID).Scan(&postingCount)
+	if postingCount == 0 {
+		var gname string
+		db.Raw("SELECT COALESCE(namefull, nameshort) FROM `groups` WHERE id = ?", groupID).Scan(&gname)
+		db.Exec("INSERT INTO messages_postings (msgid, groupid, date) VALUES (?, ?, NOW())", msgID, groupID)
+	}
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/message/%d?jwt=%s", msgID, viewerToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json.NewDecoder(resp.Body).Decode(&msg)
+	assert.NotEmpty(t, msg.Postings, "postings should be visible to regular authenticated users (V1 parity)")
+}
+
+func TestMessagePostingsVisibleUnauthenticated(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("msgpostingsanon")
+
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, posterID, groupID, "Member")
+
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 55.9533, -3.1883)
+
+	var postingCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_postings WHERE msgid = ?", msgID).Scan(&postingCount)
+	if postingCount == 0 {
+		db.Exec("INSERT INTO messages_postings (msgid, groupid, date) VALUES (?, ?, NOW())", msgID, groupID)
+	}
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/message/%d", msgID), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json.NewDecoder(resp.Body).Decode(&msg)
+	assert.NotEmpty(t, msg.Postings, "postings should be visible to unauthenticated callers (V1 parity)")
+}
