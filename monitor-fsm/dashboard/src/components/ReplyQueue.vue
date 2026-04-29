@@ -44,20 +44,15 @@
               PR #{{ draft.pr_number }}
             </a>
             <span
-              v-if="draft.deploy_state === 'deployed'"
+              v-if="draft.deploy_state === 'deployed' || draft.deploy_state === 'live'"
               class="badge bg-success"
               title="Fix confirmed live on production branch"
             >✓ Live</span>
             <span
               v-else-if="draft.deploy_state === 'pending_deploy'"
               class="badge bg-warning text-dark"
-              title="Fix merged but not yet deployed to production branch"
+              title="Fix merged but not yet promoted to the production branch"
             >⏳ Deploying</span>
-            <span
-              v-else-if="draft.pr_number"
-              class="badge bg-secondary"
-              title="Deployment status unknown — PR may not be merged yet"
-            >? Deploy status</span>
           </div>
         </div>
 
