@@ -216,12 +216,13 @@ describe('Feedback Page', () => {
     })
 
     it('sortedItems creates member objects with type and timestamp', () => {
-      mockFilter.value = ''
       mockMembers.value = [
         { id: 1, timestamp: '2024-01-15T10:00:00Z', happiness: 'Happy' },
         { id: 2, timestamp: '2024-01-16T10:00:00Z', happiness: 'Happy' },
       ]
       const wrapper = mountComponent()
+      // onMounted sets filter to 'Comments'; override to test with no filter
+      mockFilter.value = ''
       const sorted = wrapper.vm.sortedItems
 
       expect(sorted).toHaveLength(2)
@@ -231,13 +232,14 @@ describe('Feedback Page', () => {
     })
 
     it('sortedItems sorts by timestamp descending', () => {
-      mockFilter.value = ''
       mockMembers.value = [
         { id: 1, timestamp: '2024-01-10T10:00:00Z', happiness: 'Happy' },
         { id: 2, timestamp: '2024-01-20T10:00:00Z', happiness: 'Happy' },
         { id: 3, timestamp: '2024-01-15T10:00:00Z', happiness: 'Happy' },
       ]
       const wrapper = mountComponent()
+      // onMounted sets filter to 'Comments'; override to test with no filter
+      mockFilter.value = ''
       const sorted = wrapper.vm.sortedItems
 
       expect(sorted[0].object.id).toBe(2) // Jan 20
@@ -246,7 +248,6 @@ describe('Feedback Page', () => {
     })
 
     it('visibleItems limits to show value', () => {
-      mockFilter.value = ''
       mockMembers.value = [
         { id: 1, timestamp: '2024-01-15T10:00:00Z', happiness: 'Happy' },
         { id: 2, timestamp: '2024-01-16T10:00:00Z', happiness: 'Happy' },
@@ -254,6 +255,8 @@ describe('Feedback Page', () => {
       ]
       mockShow.value = 2
       const wrapper = mountComponent()
+      // onMounted sets filter to 'Comments'; override to test with no filter
+      mockFilter.value = ''
       const visible = wrapper.vm.visibleItems
 
       expect(visible).toHaveLength(2)
@@ -293,7 +296,6 @@ describe('Feedback Page', () => {
 
     it('sortedItems excludes all non-matching items from visibleItems', () => {
       // Each show++ should reveal exactly one visible item, not empty rows.
-      mockFilter.value = 'Happy'
       mockMembers.value = [
         { id: 1, timestamp: '2024-01-10T10:00:00Z', happiness: 'Happy' },
         { id: 2, timestamp: '2024-01-11T10:00:00Z', happiness: 'Unhappy' },
@@ -302,6 +304,8 @@ describe('Feedback Page', () => {
       ]
       mockShow.value = 1
       const wrapper = mountComponent()
+      // onMounted sets filter to 'Comments'; override to test Happy filter
+      mockFilter.value = 'Happy'
 
       // visibleItems should have exactly 1 item (show=1, sortedItems has 2 Happy items)
       expect(wrapper.vm.visibleItems).toHaveLength(1)
@@ -417,7 +421,6 @@ describe('Feedback Page', () => {
     })
 
     it('sortedItems excludes expired posts when showExpired=false', async () => {
-      mockFilter.value = ''
       mockMembers.value = [
         {
           id: 1,
@@ -439,6 +442,8 @@ describe('Feedback Page', () => {
         },
       ]
       const wrapper = mountComponent()
+      // onMounted sets filter to 'Comments'; override to test with no filter
+      mockFilter.value = ''
       wrapper.vm.showExpired = false
       await flushPromises()
 
@@ -488,7 +493,6 @@ describe('Feedback Page', () => {
     })
 
     it('loadMore calls baseLoadMore (not infinite-loops) when all filtered items shown', async () => {
-      mockFilter.value = 'Comments'
       mockMembers.value = [
         {
           id: 1,
@@ -504,9 +508,13 @@ describe('Feedback Page', () => {
           happiness: 'Happy',
         },
       ]
+      const wrapper = mountComponent()
+      // onMounted sets filter to 'Comments' — that's what we want; ensure it's set
+      // and flush any pending watchers from other components before setting show.
+      await flushPromises()
+      mockFilter.value = 'Comments'
       // show=1 means the 1 comment item is already displayed (sortedItems.length=1)
       mockShow.value = 1
-      const wrapper = mountComponent()
 
       // sortedItems should have 1 item; show(1) >= sortedItems.length(1)
       expect(wrapper.vm.sortedItems).toHaveLength(1)
@@ -519,7 +527,6 @@ describe('Feedback Page', () => {
     })
 
     it('does not include filtered-out items in visibleItems', () => {
-      mockFilter.value = 'Happy'
       mockMembers.value = [
         { id: 1, timestamp: '2024-01-10T10:00:00Z', happiness: 'Happy' },
         { id: 2, timestamp: '2024-01-11T10:00:00Z', happiness: 'Unhappy' },
@@ -527,6 +534,8 @@ describe('Feedback Page', () => {
       ]
       mockShow.value = 10 // show more than available
       const wrapper = mountComponent()
+      // onMounted sets filter to 'Comments'; override to test Happy filter
+      mockFilter.value = 'Happy'
 
       // visibleItems should only contain Happy items (2 out of 3)
       expect(wrapper.vm.visibleItems).toHaveLength(2)
