@@ -219,6 +219,41 @@ describe('ComposeGroup', () => {
     })
   })
 
+  describe('repost group preservation', () => {
+    it('restores pre-set group after fetchUser if it was overridden but is in myGroups', async () => {
+      // Simulate repost flow: group 55 is pre-set but not in groupsnear (only group 1 is)
+      mockComposeStore.group = 55
+      mockAuthStore.groups = [
+        { groupid: 55, namedisplay: 'Repost Group', nameshort: 'repost' },
+      ]
+      // fetchUser resets group to groupsnear[0] (simulates b-form-select override)
+      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
+        mockComposeStore.group = 1
+      })
+
+      createWrapper()
+      await flushPromises()
+
+      // The final guard should restore 55 because user is a member
+      expect(mockComposeStore.group).toBe(55)
+    })
+
+    it('does not restore savedGroup if it is not valid (not in groupsnear or myGroups)', async () => {
+      // Group 99 is pre-set but user is no longer a member and it is not nearby
+      mockComposeStore.group = 99
+      mockAuthStore.groups = []
+      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
+        mockComposeStore.group = 1
+      })
+
+      createWrapper()
+      await flushPromises()
+
+      // Group 99 is invalid, so the override (1) should stand
+      expect(mockComposeStore.group).toBe(1)
+    })
+  })
+
   describe('error handling', () => {
     it('handles postcode fetch error gracefully', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
