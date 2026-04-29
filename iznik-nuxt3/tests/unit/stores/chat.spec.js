@@ -183,6 +183,42 @@ describe('chat store', () => {
     })
   })
 
+  describe('markAllRead', () => {
+    it('calls allSeen API', async () => {
+      const store = useChatStore()
+      store.config = {}
+      store.listByChatId[1] = { id: 1, unseen: 3, status: 'Online' }
+
+      await store.markAllRead()
+
+      expect(mockAllSeen).toHaveBeenCalledOnce()
+    })
+
+    it('resets unseen to 0 for all chats in listByChatId', async () => {
+      const store = useChatStore()
+      store.config = {}
+      store.listByChatId[1] = { id: 1, unseen: 3, status: 'Online' }
+      store.listByChatId[2] = { id: 2, unseen: 5, status: 'Online' }
+      store.listByChatId[3] = { id: 3, unseen: 2, status: 'Closed' }
+
+      await store.markAllRead()
+
+      expect(store.listByChatId[1].unseen).toBe(0)
+      expect(store.listByChatId[2].unseen).toBe(0)
+      expect(store.listByChatId[3].unseen).toBe(0)
+    })
+
+    it('does not call per-chat markRead', async () => {
+      const store = useChatStore()
+      store.config = {}
+      store.listByChatId[1] = { id: 1, unseen: 3, status: 'Online' }
+
+      await store.markAllRead()
+
+      expect(mockMarkRead).not.toHaveBeenCalled()
+    })
+  })
+
   describe('send', () => {
     it('updates snippet in listByChatId immediately after sending', async () => {
       const store = useChatStore()
