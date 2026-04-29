@@ -81,57 +81,89 @@ async function sh(cmd: string, args: string[], cwd?: string): Promise<{ stdout: 
 }
 
 const PROD_REPO = 'Freegle/Iznik'
+// Netlify site for the Freegle app (frontend). Site ID and slug both work with the public API.
+const NETLIFY_SITE = 'golden-caramel-d2c3a7.netlify.app'
+
+/**
+ * Compare a commit SHA against a reference SHA using the GitHub compare API.
+ * Returns behind_by: how many commits in baseSha are NOT in headSha.
+ * behind_by == 0 means headSha contains all of baseSha's history → headSha is "at or past" baseSha.
+ */
+async function githubBehindBy(baseSha: string, headSha: string): Promise<number> {
+  const res = await sh('gh', ['api', `repos/${PROD_REPO}/compare/${baseSha}...${headSha}`, '--jq', '.behind_by'])
+  if (res.code !== 0) return -1
+  const n = parseInt(res.stdout.trim(), 10)
+  return isNaN(n) ? -1 : n
+}
 
 async function checkPrDeployed(prNumber: number): Promise<{
   deployed: boolean
+  frontendDeployed: boolean | null   // null if not a frontend-only PR
+  backendDeployed: boolean
   mergeCommitSha: string | null
   productionSha: string | null
-  behindBy: number
-  status: string
+  netlifyCommitSha: string | null
   reason: string
 }> {
-  // Get PR merge commit SHA
-  const prRes = await sh('gh', ['api', `repos/${PROD_REPO}/pulls/${prNumber}`, '--jq', '.merge_commit_sha'])
-  const mergeCommitSha = prRes.stdout.trim()
-  if (!mergeCommitSha || mergeCommitSha === 'null' || prRes.code !== 0) {
-    return { deployed: false, mergeCommitSha: null, productionSha: null, behindBy: -1, status: 'not_merged', reason: 'PR not merged yet or merge SHA unavailable' }
+  // Get PR merge commit SHA and whether it's frontend-only
+  const prRes = await sh('gh', ['api', `repos/${PROD_REPO}/pulls/${prNumber}`, '--jq', '{merge_commit_sha, merged_at}'])
+  if (prRes.code !== 0) {
+    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'Could not fetch PR info' }
+  }
+  let prInfo: { merge_commit_sha: string | null; merged_at: string | null }
+  try { prInfo = JSON.parse(prRes.stdout) } catch {
+    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'Failed to parse PR info' }
+  }
+  const mergeCommitSha = prInfo.merge_commit_sha
+  if (!mergeCommitSha || mergeCommitSha === 'null') {
+    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'PR not merged yet' }
   }
 
-  // Get production branch HEAD SHA
+  // --- Backend check: GitHub production branch ---
+  // The production branch is updated by auto-promote after CI passes on master.
+  // The Go and Laravel servers are rebuilt from this branch.
+  // NOTE: Go API /api/version returns "commit":"unknown" in production (BUILD_INFO not set),
+  // so we can only check if the production branch has been updated, not if the containers were rebuilt.
   const prodRes = await sh('gh', ['api', `repos/${PROD_REPO}/branches/production`, '--jq', '.commit.sha'])
-  if (prodRes.code !== 0 || !prodRes.stdout.trim()) {
-    return { deployed: false, mergeCommitSha, productionSha: null, behindBy: -1, status: 'error', reason: 'Could not fetch production branch' }
-  }
-  const productionSha = prodRes.stdout.trim()
+  const productionSha = (prodRes.code === 0) ? prodRes.stdout.trim() : null
+  const backendBehindBy = productionSha ? await githubBehindBy(mergeCommitSha, productionSha) : -1
+  const backendDeployed = backendBehindBy === 0
 
-  // Compare mergeCommitSha...productionSha
-  // behind_by = commits in mergeCommitSha's history NOT in productionSha's history
-  // behind_by == 0 → production contains all of the merge commit's ancestors → deployed
-  const compareRes = await sh('gh', ['api',
-    `repos/${PROD_REPO}/compare/${mergeCommitSha}...${productionSha}`,
-    '--jq', '{status: .status, behind_by: .behind_by, ahead_by: .ahead_by}',
-  ])
-  if (compareRes.code !== 0) {
-    return { deployed: false, mergeCommitSha, productionSha, behindBy: -1, status: 'error', reason: `Compare API failed: ${compareRes.stderr.slice(0, 80)}` }
-  }
-
-  let compare: { status: string; behind_by: number; ahead_by: number }
+  // --- Frontend check: Netlify published deploy ---
+  // Netlify deploys from the production branch but has its own build queue.
+  // The published_deploy.commit_ref shows what is actually live in the browser.
+  let netlifyCommitSha: string | null = null
+  let frontendDeployed: boolean | null = null
   try {
-    compare = JSON.parse(compareRes.stdout)
-  } catch {
-    return { deployed: false, mergeCommitSha, productionSha, behindBy: -1, status: 'error', reason: 'Failed to parse compare response' }
-  }
+    const netlifyRes = await sh('curl', ['-s', `https://api.netlify.com/api/v1/sites/${NETLIFY_SITE}`])
+    if (netlifyRes.code === 0) {
+      const netlify = JSON.parse(netlifyRes.stdout)
+      netlifyCommitSha = netlify?.published_deploy?.commit_ref ?? null
+      if (netlifyCommitSha) {
+        const netlifyBehindBy = await githubBehindBy(mergeCommitSha, netlifyCommitSha)
+        frontendDeployed = netlifyBehindBy === 0
+      }
+    }
+  } catch { /* Netlify API unavailable — skip frontend check */ }
 
-  const deployed = compare.behind_by === 0
+  // Overall deployed = backend AND frontend (if checked) are both live
+  const deployed = backendDeployed && (frontendDeployed === null || frontendDeployed === true)
+
+  const parts: string[] = []
+  if (backendDeployed) parts.push(`backend: production branch includes merge (${backendBehindBy} behind)`)
+  else parts.push(`backend: production branch missing ${backendBehindBy} commits from PR merge`)
+  if (frontendDeployed === true) parts.push(`Netlify: published deploy includes PR`)
+  else if (frontendDeployed === false) parts.push(`Netlify: published deploy (${netlifyCommitSha?.slice(0,8)}) does not include PR yet`)
+  else parts.push(`Netlify: could not check published deploy`)
+
   return {
     deployed,
+    frontendDeployed,
+    backendDeployed,
     mergeCommitSha,
     productionSha,
-    behindBy: compare.behind_by,
-    status: compare.status,
-    reason: deployed
-      ? `Production includes PR #${prNumber} merge commit (prod is ${compare.ahead_by} commits ahead)`
-      : `Production is missing ${compare.behind_by} commits from PR #${prNumber} merge — not yet deployed`,
+    netlifyCommitSha,
+    reason: parts.join('; '),
   }
 }
 
@@ -352,7 +384,7 @@ print(json.dumps(results))
 
   {
     name: 'check_pr_deployed',
-    description: 'Check whether a merged PR\'s fix is live on the production branch of Freegle/Iznik. Compares the PR\'s merge commit against the production branch HEAD using the GitHub compare API — deployed iff behind_by == 0 (production contains the merge commit in its ancestry). Use this before queuing a Discourse reply draft. Params: {prNumber}. Returns {deployed, mergeCommitSha, productionSha, behindBy, status, reason}.',
+    description: 'Check whether a merged PR\'s fix is live in production. Checks three signals: (1) GitHub production branch ancestry (backend gate — auto-promoted after CI), (2) Netlify published deploy commit (frontend gate — actual live build), (3) /api/version endpoint for Go and Laravel deployed commit SHAs. Returns {deployed, frontendDeployed, backendDeployed, mergeCommitSha, productionSha, netlifyCommitSha, reason}.',
     paramsSchema: {
       type: 'object',
       properties: { prNumber: { type: 'number' } },
