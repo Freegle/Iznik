@@ -504,7 +504,12 @@ const test = base.test.extend({
     await page.addInitScript(() => {
       // addInitScript runs in all frames including cross-origin iframes (e.g. YouTube
       // embeds). Bail out in subframes so we only report errors from the Nuxt app.
-      /* c8 ignore next */ if (window !== window.top) return
+      try {
+        /* c8 ignore next */ if (window !== window.top) return
+      } catch {
+        // Accessing window.top can throw in cross-origin contexts
+        return
+      }
       let t = null
       const obs = new MutationObserver(() => {
         clearTimeout(t)
