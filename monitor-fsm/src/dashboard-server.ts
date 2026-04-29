@@ -227,7 +227,12 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
 
   // GET /api/drafts
   if (req.method === 'GET' && path === '/api/drafts') {
-    const rows = db.prepare('SELECT * FROM discourse_draft ORDER BY queued_at').all()
+    const rows = db.prepare(`
+      SELECT d.*, p.deploy_state
+      FROM discourse_draft d
+      LEFT JOIN pr p ON p.number = d.pr_number
+      ORDER BY d.queued_at
+    `).all()
     json(res, 200, rows)
     return
   }
