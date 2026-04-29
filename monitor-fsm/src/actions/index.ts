@@ -80,6 +80,93 @@ async function sh(cmd: string, args: string[], cwd?: string): Promise<{ stdout: 
   }
 }
 
+const PROD_REPO = 'Freegle/Iznik'
+// Netlify site for the Freegle app (frontend). Site ID and slug both work with the public API.
+const NETLIFY_SITE = 'golden-caramel-d2c3a7.netlify.app'
+
+/**
+ * Compare a commit SHA against a reference SHA using the GitHub compare API.
+ * Returns behind_by: how many commits in baseSha are NOT in headSha.
+ * behind_by == 0 means headSha contains all of baseSha's history → headSha is "at or past" baseSha.
+ */
+async function githubBehindBy(baseSha: string, headSha: string): Promise<number> {
+  const res = await sh('gh', ['api', `repos/${PROD_REPO}/compare/${baseSha}...${headSha}`, '--jq', '.behind_by'])
+  if (res.code !== 0) return -1
+  const n = parseInt(res.stdout.trim(), 10)
+  return isNaN(n) ? -1 : n
+}
+
+async function checkPrDeployed(prNumber: number): Promise<{
+  deployed: boolean
+  frontendDeployed: boolean | null   // null if not a frontend-only PR
+  backendDeployed: boolean
+  mergeCommitSha: string | null
+  productionSha: string | null
+  netlifyCommitSha: string | null
+  reason: string
+}> {
+  // Get PR merge commit SHA and whether it's frontend-only
+  const prRes = await sh('gh', ['api', `repos/${PROD_REPO}/pulls/${prNumber}`, '--jq', '{merge_commit_sha, merged_at}'])
+  if (prRes.code !== 0) {
+    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'Could not fetch PR info' }
+  }
+  let prInfo: { merge_commit_sha: string | null; merged_at: string | null }
+  try { prInfo = JSON.parse(prRes.stdout) } catch {
+    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'Failed to parse PR info' }
+  }
+  const mergeCommitSha = prInfo.merge_commit_sha
+  if (!mergeCommitSha || mergeCommitSha === 'null') {
+    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'PR not merged yet' }
+  }
+
+  // --- Backend check: GitHub production branch ---
+  // The production branch is updated by auto-promote after CI passes on master.
+  // The Go and Laravel servers are rebuilt from this branch.
+  // NOTE: Go API /api/version returns "commit":"unknown" in production (BUILD_INFO not set),
+  // so we can only check if the production branch has been updated, not if the containers were rebuilt.
+  const prodRes = await sh('gh', ['api', `repos/${PROD_REPO}/branches/production`, '--jq', '.commit.sha'])
+  const productionSha = (prodRes.code === 0) ? prodRes.stdout.trim() : null
+  const backendBehindBy = productionSha ? await githubBehindBy(mergeCommitSha, productionSha) : -1
+  const backendDeployed = backendBehindBy === 0
+
+  // --- Frontend check: Netlify published deploy ---
+  // Netlify deploys from the production branch but has its own build queue.
+  // The published_deploy.commit_ref shows what is actually live in the browser.
+  let netlifyCommitSha: string | null = null
+  let frontendDeployed: boolean | null = null
+  try {
+    const netlifyRes = await sh('curl', ['-s', `https://api.netlify.com/api/v1/sites/${NETLIFY_SITE}`])
+    if (netlifyRes.code === 0) {
+      const netlify = JSON.parse(netlifyRes.stdout)
+      netlifyCommitSha = netlify?.published_deploy?.commit_ref ?? null
+      if (netlifyCommitSha) {
+        const netlifyBehindBy = await githubBehindBy(mergeCommitSha, netlifyCommitSha)
+        frontendDeployed = netlifyBehindBy === 0
+      }
+    }
+  } catch { /* Netlify API unavailable — skip frontend check */ }
+
+  // Overall deployed = backend AND frontend (if checked) are both live
+  const deployed = backendDeployed && (frontendDeployed === null || frontendDeployed === true)
+
+  const parts: string[] = []
+  if (backendDeployed) parts.push(`backend: production branch includes merge (${backendBehindBy} behind)`)
+  else parts.push(`backend: production branch missing ${backendBehindBy} commits from PR merge`)
+  if (frontendDeployed === true) parts.push(`Netlify: published deploy includes PR`)
+  else if (frontendDeployed === false) parts.push(`Netlify: published deploy (${netlifyCommitSha?.slice(0,8)}) does not include PR yet`)
+  else parts.push(`Netlify: could not check published deploy`)
+
+  return {
+    deployed,
+    frontendDeployed,
+    backendDeployed,
+    mergeCommitSha,
+    productionSha,
+    netlifyCommitSha,
+    reason: parts.join('; '),
+  }
+}
+
 export const actions: ActionDefinition[] = [
   {
     name: 'load_state',
@@ -250,12 +337,17 @@ print(json.dumps(results))
         try {
           const pr = JSON.parse(res.stdout) as { number: number; state: string; mergedAt: string | null; title: string; headRefName: string }
           const ghState = pr.state === 'MERGED' ? 'MERGED' : pr.state === 'CLOSED' ? 'CLOSED' : 'OPEN'
+          // Don't assume MERGED = deployed. Production branch is only updated after CI passes on master.
+          // Preserve any existing 'deployed' state; set 'pending_deploy' only if transitioning to MERGED
+          // with no existing deploy_state.
+          const existingPr = db.prepare('SELECT deploy_state FROM pr WHERE number = ?').get(pr.number) as { deploy_state: string | null } | undefined
+          const shouldSetPendingDeploy = ghState === 'MERGED' && (!existingPr?.deploy_state || existingPr.deploy_state === 'pending_deploy')
           upsertPr(db, {
             number: pr.number,
             title: pr.title,
             branch: pr.headRefName,
             state: ghState,
-            deployState: ghState === 'MERGED' ? 'live' : undefined,
+            deployState: shouldSetPendingDeploy ? 'pending_deploy' : undefined,
           })
           synced.push({ number: pr.number, state: ghState, mergedAt: pr.mergedAt })
           updated++
@@ -287,6 +379,102 @@ print(json.dumps(results))
       }
 
       return { synced, updated, reopened }
+    },
+  },
+
+  {
+    name: 'check_pr_deployed',
+    description: 'Check whether a merged PR\'s fix is live in production. Checks three signals: (1) GitHub production branch ancestry (backend gate — auto-promoted after CI), (2) Netlify published deploy commit (frontend gate — actual live build), (3) /api/version endpoint for Go and Laravel deployed commit SHAs. Returns {deployed, frontendDeployed, backendDeployed, mergeCommitSha, productionSha, netlifyCommitSha, reason}.',
+    paramsSchema: {
+      type: 'object',
+      properties: { prNumber: { type: 'number' } },
+      required: ['prNumber'],
+    },
+    handler: async (params) => {
+      return checkPrDeployed(params.prNumber as number)
+    },
+  },
+
+  {
+    name: 'queue_deployed_reply_drafts',
+    description: 'Called automatically during LOAD_STATE. For every fix-queued bug whose PR is MERGED, checks the production branch deployment via check_pr_deployed. If deployed and no pending draft exists: auto-queues a reply draft using the PR title as the description. Updates pr.deploy_state to "deployed" or "pending_deploy". Returns {queued: [prNumbers], pendingDeploy: [prNumbers], alreadyDrafted: [prNumbers]}.',
+    handler: async () => {
+      const db = getDb()
+
+      // Bugs with MERGED PRs that are still fix-queued
+      const bugs = db.prepare(`
+        SELECT b.topic, b.post, b.reporter, b.excerpt, b.pr_number,
+               p.title AS pr_title, p.frontend_only, p.preview_url, p.deploy_state
+        FROM discourse_bug b
+        JOIN pr p ON p.number = b.pr_number
+        WHERE b.state = 'fix-queued'
+          AND b.pr_number IS NOT NULL
+          AND p.state = 'MERGED'
+        ORDER BY b.topic, b.post
+      `).all() as Array<{
+        topic: number; post: number; reporter: string | null; excerpt: string | null
+        pr_number: number; pr_title: string
+        frontend_only: number | null; preview_url: string | null; deploy_state: string | null
+      }>
+
+      const queued: number[] = []
+      const pendingDeploy: number[] = []
+      const alreadyDrafted: number[] = []
+
+      for (const bug of bugs) {
+        // Check deployment
+        const deployCheck = await checkPrDeployed(bug.pr_number)
+
+        // Always update deploy_state accurately
+        if (deployCheck.deployed && bug.deploy_state !== 'deployed') {
+          upsertPr(db, { number: bug.pr_number, deployState: 'deployed' })
+          out(`queue_deployed_reply_drafts: PR #${bug.pr_number} is now deployed to production`)
+        } else if (!deployCheck.deployed && bug.deploy_state !== 'pending_deploy') {
+          upsertPr(db, { number: bug.pr_number, deployState: 'pending_deploy' })
+        }
+
+        if (!deployCheck.deployed) {
+          pendingDeploy.push(bug.pr_number)
+          continue
+        }
+
+        // Draft already exists (pending or sent) — don't duplicate
+        const existingDraft = db.prepare(
+          `SELECT id FROM discourse_draft WHERE topic = ? AND post = ? AND posted_at IS NULL AND rejected_at IS NULL`
+        ).get(bug.topic, bug.post)
+        if (existingDraft) {
+          alreadyDrafted.push(bug.pr_number)
+          continue
+        }
+
+        // Build body from PR title (strip conventional commit prefix)
+        const fixDesc = bug.pr_title
+          .replace(/^fix\([^)]+\):\s*/i, '')
+          .replace(/^fix:\s*/i, '')
+          .replace(/^feat\([^)]+\):\s*/i, '')
+          .replace(/^feat:\s*/i, '')
+          .trim()
+        const body = `Fix applied for ${fixDesc}. Please retest.`
+        const quote = bug.excerpt ?? ''
+        const username = bug.reporter ?? 'there'
+
+        queueDiscourseDraft(db, {
+          topic: bug.topic,
+          post: bug.post,
+          username,
+          quote,
+          body,
+          prNumber: bug.pr_number,
+          prUrl: `https://github.com/${PROD_REPO}/pull/${bug.pr_number}`,
+        })
+
+        out(`queue_deployed_reply_drafts: queued draft for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number}) — fix confirmed deployed`)
+        queued.push(bug.pr_number)
+      }
+
+      if (queued.length > 0) await renderAllViews(db)
+
+      return { queued, pendingDeploy, alreadyDrafted }
     },
   },
 
