@@ -196,6 +196,18 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
     const initialCode = await spawnPlaywrightProcess(testCmd, pfx)
 
+    // Preserve main-run coverage before any freeze retry can overwrite it.
+    // The retry only runs a subset of specs, so its coverage file has lower
+    // totals than the full run — restoring the main copy keeps Coveralls accurate.
+    const mainCoveragePath = '/app/monocart-report/coverage/lcov.info'
+    const backupCoveragePath = '/app/monocart-report/coverage/lcov.info.main'
+    try {
+      execSync(
+        `docker exec ${pfx}-playwright sh -c "test -f ${mainCoveragePath} && cp ${mainCoveragePath} ${backupCoveragePath} || true"`,
+        { encoding: 'utf8', timeout: 5000 }
+      )
+    } catch {}
+
     // Check whether any specs were recorded as frozen and re-run them in a
     // fresh Playwright process (fresh V8 state, no accumulated async contexts).
     // Up to 2 retry rounds: the first retry can itself encounter a freeze, so a
@@ -246,6 +258,14 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         } catch {}
 
         const retryCode = await spawnPlaywrightProcess(`npx playwright test ${retryFiles}`, pfx)
+
+        // Restore full-suite coverage — the retry covered fewer tests than the main run.
+        try {
+          execSync(
+            `docker exec ${pfx}-playwright sh -c "test -f ${backupCoveragePath} && cp ${backupCoveragePath} ${mainCoveragePath} || true"`,
+            { encoding: 'utf8', timeout: 5000 }
+          )
+        } catch {}
 
         if (retryCode === 0) {
           // All frozen specs passed in the fresh process — overall run is a success.

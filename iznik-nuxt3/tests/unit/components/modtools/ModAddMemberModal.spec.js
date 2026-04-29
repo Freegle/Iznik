@@ -75,6 +75,31 @@ describe('ModAddMemberModal', () => {
       expect(addButton).toBeDefined()
     })
 
+    it('Add button is disabled when email is empty', () => {
+      const wrapper = mountComponent()
+      const buttons = wrapper.findAll('button')
+      const addButton = buttons.find((b) => b.text().includes('Add'))
+      expect(addButton?.attributes('disabled')).toBeDefined()
+    })
+
+    it('Add button is disabled when email is invalid', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.email = 'not-an-email'
+      await wrapper.vm.$nextTick()
+      const buttons = wrapper.findAll('button')
+      const addButton = buttons.find((b) => b.text().includes('Add'))
+      expect(addButton?.attributes('disabled')).toBeDefined()
+    })
+
+    it('Add button is enabled when email is valid', async () => {
+      const wrapper = mountComponent()
+      wrapper.vm.email = 'valid@example.com'
+      await wrapper.vm.$nextTick()
+      const buttons = wrapper.findAll('button')
+      const addButton = buttons.find((b) => b.text().includes('Add'))
+      expect(addButton?.attributes('disabled')).toBeUndefined()
+    })
+
     it('shows added message after successful add', async () => {
       const wrapper = mountComponent()
 
