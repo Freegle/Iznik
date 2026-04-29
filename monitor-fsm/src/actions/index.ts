@@ -1677,6 +1677,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
       const lines: string[] = []
       lines.push('# Freegle Monitor — iteration summary', '')
+      lines.push('**Full bug list (live):** https://discourse.ilovefreegle.org/t/bug-reports-live-summary/9599', '')
       lines.push(`- Iteration start: ${iterationStartTs}`)
       lines.push(`- Phase: ${phase}`)
       lines.push('')

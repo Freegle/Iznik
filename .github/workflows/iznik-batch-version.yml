@@ -38,12 +38,9 @@ jobs:
           NEW_VERSION=$((CURRENT_VERSION + 1))
 
           # Write version file
-          cat > iznik-batch/version.txt << EOF
-          ${NEW_VERSION}
-          commit: ${COMMIT_SHORT}
-          sha: ${COMMIT_SHA}
-          timestamp: ${TIMESTAMP}
-          EOF
+          printf '%s\ncommit: %s\nsha: %s\ntimestamp: %s\n' \
+            "${NEW_VERSION}" "${COMMIT_SHORT}" "${COMMIT_SHA}" "${TIMESTAMP}" \
+            > iznik-batch/version.txt
 
           echo "Updated version to ${NEW_VERSION} (commit ${COMMIT_SHORT})"
 
@@ -58,5 +55,6 @@ jobs:
           else
             git add iznik-batch/version.txt
             git commit -m "Update version file [skip ci]"
+            git pull --rebase origin master
             git push
           fi
