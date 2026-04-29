@@ -69,10 +69,15 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
     LIMIT 20
   `).all() as Array<{ topic: number; post: number; reporter: string | null; excerpt: string | null; pr_number: number | null; fixed_at: string; deployed_at: string | null; feature_area: string | null }>
 
+  // Fetch deploy_state for each bug that has a PR, keyed by pr_number.
+  const deployStates = new Map<number, string | null>()
+  const prRows = db.prepare(`SELECT number, deploy_state FROM pr`).all() as Array<{ number: number; deploy_state: string | null }>
+  for (const row of prRows) deployStates.set(row.number, row.deploy_state)
+
   const lines: string[] = []
   lines.push('> :robot: **Produced by AI.** This post is rewritten automatically every time our bug monitor runs — no human types it.', '')
   lines.push('This is a live list of known bugs and issues on Freegle. It covers problems reported here and errors detected automatically in the site.', '')
-  lines.push(`*Last updated ${new Date().toISOString().replace('T', ' ').slice(0, 16)} UTC*`, '')
+  lines.push(`*Vix last ran: ${new Date().toISOString().replace('T', ' ').slice(0, 16)} UTC*`, '')
 
   const escapeCell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ')
   const prLink = (n: number | null) =>
@@ -95,13 +100,20 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
 
     for (const [area, bugs] of groups) {
       lines.push(`### ${area}`, '')
-      lines.push('| Reporter | Issue | PR |')
-      lines.push('|---|---|---|')
+      lines.push('| Reporter | Issue | PR | Live? |')
+      lines.push('|---|---|---|---|')
       for (const b of bugs) {
         const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
         const excerpt = escapeCell((b.excerpt ?? '').slice(0, 160))
         const pr = prLink(b.pr_number)
-        lines.push(`| [@${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${pr} |`)
+        let liveStatus = ''
+        if (b.pr_number) {
+          const ds = deployStates.get(b.pr_number)
+          if (ds === 'deployed' || ds === 'live') liveStatus = ':white_check_mark: Live'
+          else if (ds === 'pending_deploy') liveStatus = ':hourglass: Deploying'
+          else liveStatus = ':hammer_and_wrench: In progress'
+        }
+        lines.push(`| [@${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${pr} | ${liveStatus} |`)
       }
       lines.push('')
     }
