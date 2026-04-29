@@ -1226,27 +1226,16 @@ describe('MessageExpanded', () => {
       delete globalThis.__testUseRouter
     })
 
-    it('expandReply defaults to mobile flow when breakpoint unknown', async () => {
-      const mockPush = vi.fn()
-      globalThis.__testUseRouter = () => ({
-        push: mockPush,
-        replace: vi.fn(),
-        currentRoute: { value: { path: '/' } },
-      })
-
-      // Simulate SSR / first paint where breakpoint hasn't resolved yet.
+    it('expandReply defaults to inline reply when breakpoint unknown', async () => {
+      // When breakpoint is null/empty (not yet set by BreakpointFettler), we
+      // default to inline reply to avoid spurious navigation on desktop fast loads.
       mockBreakpoint.value = ''
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(MessageExpanded)
       comp.vm.expandReply()
-      expect(comp.vm.replyExpanded).toBe(false)
-      expect(mockPush).toHaveBeenCalledWith({
-        path: '/chats/reply',
-        query: { replyto: mockMessage.value.id },
-      })
+      expect(comp.vm.replyExpanded).toBe(true)
 
       mockBreakpoint.value = 'md' // restore default
-      delete globalThis.__testUseRouter
     })
 
     it('sent sets replied to true and replyExpanded to false', async () => {

@@ -442,10 +442,30 @@ async function clickSendAndWait(page, { expectWelcomeModal = false } = {}) {
   }
 }
 
+/**
+ * Helper: Wait for BreakpointFettler to set a specific breakpoint in the Pinia
+ * misc store. Call this after setViewportSize on mobile/tablet tests before
+ * clicking Reply, so expandReply() sees the correct breakpoint rather than null.
+ */
+async function waitForBreakpoint(page, expectedBreakpoint) {
+  await page.waitForFunction(
+    (bp) => {
+      const nuxt = document.querySelector('#__nuxt')
+      if (!nuxt?.__vue_app__) return false
+      const pinia = nuxt.__vue_app__.config?.globalProperties?.$pinia
+      if (!pinia?.state?.value?.misc) return false
+      return pinia.state.value.misc.breakpoint === bp
+    },
+    expectedBreakpoint,
+    { timeout: 10000 }
+  )
+}
+
 module.exports = {
   waitForAuthInLocalStorage,
   waitForAuthHydration,
   waitForNuxtHydration,
+  waitForBreakpoint,
   dismissLoginModalIfPresent,
   navigateToMessageViaBrowse,
   navigateToMessageViaExplore,

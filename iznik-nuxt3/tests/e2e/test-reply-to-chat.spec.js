@@ -14,6 +14,7 @@ const {
   waitForAuthInLocalStorage,
   waitForAuthHydration,
   waitForNuxtHydration,
+  waitForBreakpoint,
 } = require('./utils/reply-helpers')
 
 // Mobile viewport dimensions (below lg breakpoint = 992px)
@@ -51,6 +52,7 @@ test.describe('Reply-to-Chat - Mobile', () => {
     await page.setViewportSize(MOBILE_VIEWPORT)
     await waitForAuthHydration(page)
     await waitForNuxtHydration(page)
+    await waitForBreakpoint(page, 'xs')
 
     // Click Reply button
     const replyButton = page.locator('.reply-button:has-text("Reply")').first()
@@ -135,6 +137,7 @@ test.describe('Reply-to-Chat - Mobile', () => {
     await page.setViewportSize(MOBILE_VIEWPORT)
     await waitForAuthHydration(page)
     await waitForNuxtHydration(page)
+    await waitForBreakpoint(page, 'xs')
 
     const replyButton = page.locator('.reply-button:has-text("Reply")').first()
     await replyButton.waitFor({ state: 'visible', timeout: 30000 })
@@ -190,6 +193,7 @@ test.describe('Reply-to-Chat - Tablet', () => {
     await page.setViewportSize(TABLET_VIEWPORT)
     await waitForAuthHydration(page)
     await waitForNuxtHydration(page)
+    await waitForBreakpoint(page, 'md')
 
     const replyButton = page.locator('.reply-button:has-text("Reply")').first()
     await replyButton.waitFor({ state: 'visible', timeout: 30000 })
@@ -288,6 +292,7 @@ test.describe('Reply-to-Chat - WANTED message', () => {
     await page.setViewportSize(MOBILE_VIEWPORT)
     await waitForAuthHydration(page)
     await waitForNuxtHydration(page)
+    await waitForBreakpoint(page, 'xs')
 
     const replyButton = page.locator('.reply-button:has-text("Reply")').first()
     await replyButton.waitFor({ state: 'visible', timeout: 30000 })
