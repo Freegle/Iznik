@@ -181,7 +181,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', 'Could not pre-count tests, will determine from output\n')
     }
 
-    const testCmd = `npx playwright test${testArgs}`
+    const testCmd = `ENABLE_MONOCART_REPORTER=true npx playwright test${testArgs}`
 
     // Clear freeze-specs file before run so we only capture freezes from this run
     try {
