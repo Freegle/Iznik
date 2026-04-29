@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/log"
 	user2 "github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
@@ -1625,15 +1624,8 @@ func TestLimboUserAdmin(t *testing.T) {
 	targetID := CreateTestUser(t, prefix+"_target", "User")
 	_, adminToken := CreateTestSession(t, adminID)
 
-	// Give the target a membership so we can verify it gets removed.
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, targetID, groupID, "Member")
-
-	// Verify membership exists before delete.
-	var memBefore int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
-		targetID, groupID).Scan(&memBefore)
-	assert.Equal(t, int64(1), memBefore, "Membership should exist before delete")
+	// Clear any pre-existing background tasks for this user so the count is clean.
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", targetID)
 
 	payload := map[string]interface{}{
 		"id": targetID,
@@ -1649,22 +1641,41 @@ func TestLimboUserAdmin(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(0), result["ret"])
 
-	// Verify target user is marked as deleted.
+	// Admin purge should queue a user_forget background task, not just set deleted.
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", targetID).Scan(&taskCount)
+	assert.Equal(t, int64(1), taskCount, "Admin purge should queue a user_forget background task")
+
+	// The user's deleted column should NOT be touched — forgetUser() in Laravel handles all cleanup.
 	var deleted *string
 	db.Raw("SELECT deleted FROM users WHERE id = ?", targetID).Scan(&deleted)
-	assert.NotNil(t, deleted)
+	assert.Nil(t, deleted, "Admin purge should not set deleted; Laravel forgetUser() does all cleanup")
+}
 
-	// Verify approved memberships were removed.
-	var memAfter int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
-		targetID, groupID).Scan(&memAfter)
-	assert.Equal(t, int64(0), memAfter, "Approved memberships should be removed on delete")
+// TestLimboUserSelfDelete verifies that a user deleting themselves goes into limbo (soft-delete)
+// and does NOT queue a user_forget task — they get a 14-day grace period to recover.
+func TestLimboUserSelfDelete(t *testing.T) {
+	prefix := uniquePrefix("selfdel")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
 
-	// Verify log entry was created.
-	var logCount int64
-	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND user = ? AND byuser = ?",
-		log.LOG_TYPE_USER, log.LOG_SUBTYPE_DELETED, targetID, adminID).Scan(&logCount)
-	assert.Equal(t, int64(1), logCount, "Delete should create a User/Deleted log entry")
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", userID)
+
+	// Self-delete: no id in payload, defaults to self.
+	request := httptest.NewRequest("DELETE", "/api/user?jwt="+token, nil)
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// Self-delete must set deleted (limbo), not queue a forget task.
+	var deleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&deleted)
+	assert.NotNil(t, deleted, "Self-delete should put user in limbo (deleted set)")
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", userID).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "Self-delete must not queue a forget task — user has 14-day grace period")
 }
 
 func TestLimboUserNotAdmin(t *testing.T) {
