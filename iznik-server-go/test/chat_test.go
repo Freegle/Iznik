@@ -4213,3 +4213,76 @@ func TestGetChats_EdgeCases(t *testing.T) {
 	db.Exec("DELETE FROM chat_rooms WHERE id = ?", chatID)
 	db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", user2ID)
 }
+
+// TestAllSeenOnlyAffectsCallerRoster is an adversarial test that verifies AllSeen
+// only modifies the CALLER's own roster entries — never the other party's.
+// This covers the risk of accidentally clearing another user's unseen counter.
+func TestAllSeenOnlyAffectsCallerRoster(t *testing.T) {
+	prefix := uniquePrefix("allseen_iso")
+	db := database.DBConn
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	_, tokenU1 := CreateTestSession(t, user1ID)
+
+	chatID := CreateTestChatRoom(t, user1ID, &user2ID, nil, "User2User")
+	msg1ID := CreateTestChatMessage(t, chatID, user1ID, "msg from user1")
+	_ = msg1ID
+	msg2ID := CreateTestChatMessage(t, chatID, user1ID, "msg2 from user1")
+
+	// Give user2 a known, non-zero lastmsgseen so we can detect any unwanted change.
+	const user2KnownSeen = uint64(1)
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', ?, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = ?",
+		chatID, user2ID, user2KnownSeen, user2KnownSeen)
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', 0, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = 0",
+		chatID, user1ID)
+
+	// user1 calls AllSeen.
+	payload := map[string]interface{}{"action": "AllSeen"}
+	body, _ := json2.Marshal(payload)
+	req := httptest.NewRequest("POST", "/api/chatrooms?jwt="+tokenU1, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// user1's lastmsgseen must advance to the latest message.
+	var u1Seen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", chatID, user1ID).Scan(&u1Seen)
+	assert.Equal(t, msg2ID, u1Seen, "user1's lastmsgseen should advance to latest message")
+
+	// user2's lastmsgseen must be EXACTLY what it was before — AllSeen must not touch it.
+	var u2Seen uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", chatID, user2ID).Scan(&u2Seen)
+	assert.Equal(t, user2KnownSeen, u2Seen, "AllSeen must not modify the other party's lastmsgseen")
+}
+
+// TestAllSeenIsolatedAcrossUsers verifies that user B calling AllSeen has zero
+// effect on user A's roster entries in shared chats.
+func TestAllSeenIsolatedAcrossUsers(t *testing.T) {
+	prefix := uniquePrefix("allseen_xuser")
+	db := database.DBConn
+	userAID := CreateTestUser(t, prefix+"_a", "User")
+	userBID := CreateTestUser(t, prefix+"_b", "User")
+	_, tokenB := CreateTestSession(t, userBID)
+
+	chatID := CreateTestChatRoom(t, userAID, &userBID, nil, "User2User")
+	CreateTestChatMessage(t, chatID, userBID, "hello")
+	CreateTestChatMessage(t, chatID, userBID, "world")
+
+	// Give userA a specific, non-trivial lastmsgseen.
+	const userAKnownSeen = uint64(999)
+	db.Exec("INSERT INTO chat_roster (chatid, userid, status, lastmsgseen, date) VALUES (?, ?, 'Online', ?, NOW()) ON DUPLICATE KEY UPDATE lastmsgseen = ?",
+		chatID, userAID, userAKnownSeen, userAKnownSeen)
+
+	// userB calls AllSeen.
+	payload := map[string]interface{}{"action": "AllSeen"}
+	body, _ := json2.Marshal(payload)
+	req := httptest.NewRequest("POST", "/api/chatrooms?jwt="+tokenB, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// userA's lastmsgseen must remain exactly userAKnownSeen regardless.
+	var aSeenAfter uint64
+	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", chatID, userAID).Scan(&aSeenAfter)
+	assert.Equal(t, userAKnownSeen, aSeenAfter, "AllSeen for userB must not modify userA's lastmsgseen")
+}

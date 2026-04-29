@@ -85,6 +85,19 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Active plan**: none currently active.
 
+### 2026-04-29 - Deploy version detection via git checkout (commit e529596c8)
+
+**Goal**: Monitor-FSM needs to verify fixes are actually deployed before auto-queueing Discourse reply drafts — not just merged to the production branch.
+
+**Implementation**: Two-layer approach:
+1. **Go API** (`status/status.go`): Added `readGitHead()` — reads `.git/HEAD` directly (handles both detached HEAD and symbolic refs). `init()` now falls back to this when BUILD_INFO is "unknown" (git-checkout deployments don't set BUILD_INFO). `/api/version` now returns `laravel_commit` from the DB config table.
+2. **Laravel batch** (`Deploy/RefreshCommand.php`): Added `readGitHead()` method and DB upsert in `updateDeployedVersion()`. On each deploy:refresh run, the current HEAD SHA is written to `config` table as `deploy.laravel_commit`.
+3. **Monitor-FSM** (`actions/index.ts`): `checkPrDeployed()` uses GitHub compare API (`behind_by == 0`) for production branch ancestry (backend), and Netlify public API (`published_deploy.commit_ref`) for actual live frontend build. `queue_deployed_reply_drafts` is a LOAD_STATE action that auto-queues Discourse drafts only when both signals confirm deployment.
+
+**Tests**: All 1687 Laravel tests pass, all 2196 Go tests pass. New tests: `test_deploy_refresh_records_laravel_commit_to_db`, `test_read_git_head_*`, `TestGetVersion` (added `laravel_commit` assertion).
+
+**Status**: Committed. Next: push to CI.
+
 ### 2026-04-28 - Freeze-detection heartbeat + fresh-process retry (commit 82c491e02)
 
 **Problem**: Chrome flags push the V8 async-context freeze threshold from ~73 to ~130+ tests but can't eliminate accumulation entirely. With `retries: 1`, frozen tests were silently retried in the same environment — useless and masks real bugs.
