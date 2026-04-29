@@ -1,0 +1,71 @@
+name: PR Branch Freshness
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [synchronize, opened, reopened]
+
+permissions:
+  statuses: write
+  pull-requests: read
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all branches
+        run: git fetch --all --quiet
+
+      - name: Post branch freshness status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          post_status() {
+            local sha="$1" state="$2" desc="$3"
+            gh api "repos/$REPO/statuses/$sha" \
+              -f "state=$state" \
+              -f "context=branch/up-to-date" \
+              -f "description=$desc" \
+              --silent
+          }
+
+          up_to_date() {
+            # True if origin/master is an ancestor of this commit (branch includes master's HEAD)
+            git merge-base --is-ancestor origin/master "$1" 2>/dev/null
+          }
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "Master pushed — posting freshness status to all open PRs"
+            gh pr list --repo "$REPO" --state open --json number,headRefOid --limit 50 \
+              --jq '.[] | "\(.number) \(.headRefOid)"' | \
+            while read -r number sha; do
+              # Ensure the commit is available locally
+              git cat-file -e "${sha}^{commit}" 2>/dev/null \
+                || git fetch origin "$sha" --depth=1 --quiet 2>/dev/null \
+                || true
+              if up_to_date "$sha"; then
+                post_status "$sha" "success" "Branch is up to date with master"
+                echo "PR #$number: success"
+              else
+                post_status "$sha" "failure" "Branch is behind master — update required"
+                echo "PR #$number: failure (behind master)"
+              fi
+            done
+
+          else
+            echo "PR push — checking freshness for this PR"
+            SHA="${{ github.event.pull_request.head.sha }}"
+            if up_to_date "$SHA"; then
+              post_status "$SHA" "success" "Branch is up to date with master"
+              echo "success"
+            else
+              post_status "$SHA" "failure" "Branch is behind master — update required"
+              echo "failure (behind master)"
+            fi
+          fi
