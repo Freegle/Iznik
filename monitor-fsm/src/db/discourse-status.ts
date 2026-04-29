@@ -77,7 +77,7 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
   const lines: string[] = []
   lines.push('> :robot: **Produced by AI.** This post is rewritten automatically every time our bug monitor runs — no human types it.', '')
   lines.push('This is a live list of known bugs and issues on Freegle. It covers problems reported here and errors detected automatically in the site.', '')
-  lines.push(`*Vix last ran: ${new Date().toISOString().replace('T', ' ').slice(0, 16)} UTC*`, '')
+  lines.push(`*Last updated: ${new Date().toISOString().replace('T', ' ').slice(0, 16)} UTC*`, '')
 
   const escapeCell = (s: string) => s.replace(/\|/g, '\\|').replace(/\n/g, ' ')
   const prLink = (n: number | null) =>
