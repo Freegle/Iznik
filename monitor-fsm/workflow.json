@@ -12,7 +12,8 @@
       "readActions": [
         "load_state",
         "sync_pr_states",
-        "check_bug_feedback"
+        "check_bug_feedback",
+        "queue_deployed_reply_drafts"
       ],
       "writeActions": []
     },
@@ -89,14 +90,13 @@
     },
 
     "VERIFY_DISCOURSE_BATCH": {
-      "description": "Process results from DISPATCH_ALL_BUGS: for each agent result call adversarial_review_pr, post_discourse_reply_draft, record bugsFixed. Serial review of what was fixed in parallel.",
+      "description": "Process results from DISPATCH_ALL_BUGS: for each agent result call adversarial_review_pr, record bugsFixed. Discourse reply drafts are NOT queued here — they are queued automatically by queue_deployed_reply_drafts during LOAD_STATE once the production branch confirms the fix is deployed.",
       "nodeType": "agent",
-      "prompt": "context.bugBatchResults.results[] contains one entry per dispatched bug. context.pendingBugBatch[] has the bug metadata in the same order. Process each result:\n\nFor each result[i]:\n  - bug = context.pendingBugBatch[i]\n  - D = result[i]\n\n  SUCCESS: D.exitCode === 0 AND D.prNumber is a number AND D.timedOut !== true:\n    (A) Call create_pr with { prNumber: D.prNumber, topic: bug.topic, post: bug.post, reporter: bug.user ?? bug.reporter, excerpt: bug.excerpt ?? bug.summary }. Passing topic+post is MANDATORY so the bug is immediately marked fix-queued in the DB — omitting them causes the next iteration to re-dispatch the same bug.\n    (B) Call adversarial_review_pr with { prNumber: D.prNumber, repo: 'Freegle/Iznik' }.\n    (C) If review passed: call post_discourse_reply_draft (same rules as VERIFY_DISCOURSE_BUG_FIX: quote 15-25 words verbatim, one-sentence plain-English body, no jargon). Append { ...bug, prNumber: D.prNumber, frontendOnly: create_pr result.frontendOnly, outcome: 'fixed' } to contextUpdates.bugsFixed.\n    (D) If review failed (blockers): do NOT post a draft. Append { ...bug, outcome: 'deferred', reason: 'adversarial review blocked: ' + review.summary.slice(0,80) } to contextUpdates.bugsFixed.\n\n  FAILURE: D.exitCode !== 0 OR D.prNumber missing OR D.timedOut === true:\n    Do NOT call create_pr or post_discourse_reply_draft.\n    Append { ...bug, outcome: 'deferred', reason: D.timedOut ? 'delegate timed out — re-run next iteration' : (D.failedReason ?? 'delegate failed') } to contextUpdates.bugsFixed.\n\nAfter processing ALL results, set contextUpdates.currentBug = null. Propose transition to WORK_ROUTER.",
+      "prompt": "context.bugBatchResults.results[] contains one entry per dispatched bug. context.pendingBugBatch[] has the bug metadata in the same order. Process each result:\n\nFor each result[i]:\n  - bug = context.pendingBugBatch[i]\n  - D = result[i]\n\n  SUCCESS: D.exitCode === 0 AND D.prNumber is a number AND D.timedOut !== true:\n    (A) Call create_pr with { prNumber: D.prNumber, topic: bug.topic, post: bug.post, reporter: bug.user ?? bug.reporter, excerpt: bug.excerpt ?? bug.summary }. Passing topic+post is MANDATORY so the bug is immediately marked fix-queued in the DB — omitting them causes the next iteration to re-dispatch the same bug.\n    (B) Call adversarial_review_pr with { prNumber: D.prNumber, repo: 'Freegle/Iznik' }.\n    (C) If review passed: do NOT call post_discourse_reply_draft here. The reply draft is automatically queued by queue_deployed_reply_drafts during LOAD_STATE once the fix is confirmed deployed to the production branch. Append { ...bug, prNumber: D.prNumber, frontendOnly: create_pr result.frontendOnly, outcome: 'fixed' } to contextUpdates.bugsFixed.\n    (D) If review failed (blockers): Append { ...bug, outcome: 'deferred', reason: 'adversarial review blocked: ' + review.summary.slice(0,80) } to contextUpdates.bugsFixed.\n\n  FAILURE: D.exitCode !== 0 OR D.prNumber missing OR D.timedOut === true:\n    Do NOT call create_pr.\n    Append { ...bug, outcome: 'deferred', reason: D.timedOut ? 'delegate timed out — re-run next iteration' : (D.failedReason ?? 'delegate failed') } to contextUpdates.bugsFixed.\n\nAfter processing ALL results, set contextUpdates.currentBug = null. Propose transition to WORK_ROUTER.",
       "readActions": [],
       "writeActions": [
         "create_pr",
-        "adversarial_review_pr",
-        "post_discourse_reply_draft"
+        "adversarial_review_pr"
       ]
     },
 
@@ -177,6 +177,13 @@
       "to": "CI_ROUTER",
       "trigger": "llm_decision",
       "label": "ci checked"
+    },
+    {
+      "id": "t_ci_router_to_drain",
+      "from": "CI_ROUTER",
+      "to": "WRAP_UP",
+      "trigger": "tool_transition",
+      "label": "drain mode — CI pending on open PRs"
     },
     {
       "id": "t_ci_router_to_master_fix",

@@ -339,6 +339,53 @@ describe('ModLogMessage', () => {
       })
       expect(wrapper.vm.messagesubject).toBe('(Message now deleted)')
     })
+
+    it('prefers log.msgsubject over message.subject when both present', () => {
+      // API returns historical subject; message store has current (post-edit) subject.
+      // The component must show the historical one to avoid retroactive rename bug.
+      const wrapper = createWrapper({
+        log: {
+          id: 1,
+          msgid: 904,
+          msgsubject: 'Wanted: Escooter',
+          message: { subject: 'Wanted: Cycle' },
+        },
+      })
+      expect(wrapper.vm.messagesubject).toBe('Wanted: Escooter')
+    })
+
+    it('uses log.msgsubject when message is null (deleted post still shows historical subject)', () => {
+      const wrapper = createWrapper({
+        log: {
+          id: 1,
+          msgid: 905,
+          msgsubject: 'Wanted: Escooter',
+          message: null,
+        },
+      })
+      expect(wrapper.vm.messagesubject).toBe('Wanted: Escooter')
+    })
+  })
+
+  describe('msgsubject historical subject display', () => {
+    it('shows link section when log has msgsubject but message is null', () => {
+      // When message is deleted but API returned historical msgsubject, show the link
+      // (not the "no info available" fallback).
+      const wrapper = createWrapper({
+        log: { id: 1, msgid: 2200, msgsubject: 'Wanted: Old Subject', message: null },
+      })
+      expect(wrapper.find('a').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('(no info available)')
+      expect(wrapper.find('em').text()).toBe('Wanted: Old Subject')
+    })
+
+    it('shows "no info available" when neither message nor msgsubject is present', () => {
+      const wrapper = createWrapper({
+        log: { id: 1, msgid: 2300, message: null },
+      })
+      expect(wrapper.find('a').exists()).toBe(false)
+      expect(wrapper.text()).toContain('(no info available)')
+    })
   })
 
   describe('props', () => {

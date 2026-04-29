@@ -977,8 +977,8 @@ func TestForgetBlanksMessagePersonalData(t *testing.T) {
 	// Insert a message with personal data fields set.
 	db := database.DBConn
 	result := db.Exec(
-		"INSERT INTO messages (fromuser, subject, type, arrival, envelopefrom, fromip, fromname, fromaddr, textbody) "+
-			"VALUES (?, 'Test GDPR message', 'Offer', NOW(), 'envelope@example.com', '1.2.3.4', 'Test Sender', 'addr@example.com', 'Some message body')",
+		"INSERT INTO messages (fromuser, subject, type, arrival, envelopefrom, fromip, fromname, fromaddr, textbody, message) "+
+			"VALUES (?, 'Test GDPR message', 'Offer', NOW(), 'envelope@example.com', '1.2.3.4', 'Test Sender', 'addr@example.com', 'Some message body', 'Some message body')",
 		userID,
 	)
 	var msgID uint64
@@ -1412,8 +1412,8 @@ func TestWorkCountPendingMessages(t *testing.T) {
 	// Create a message directly in Pending collection.
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, 'OFFER: Pending item', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, 'OFFER: Pending item', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
@@ -1444,8 +1444,8 @@ func TestWorkCountSpamMessages(t *testing.T) {
 
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, 'OFFER: Spam item', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, 'OFFER: Spam item', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
@@ -1477,8 +1477,8 @@ func TestWorkCountPendingExcludesDeletedMessages(t *testing.T) {
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 
 	// Create a message that is marked deleted but still has a Pending entry.
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, arrival, deleted) "+
-		"VALUES (?, 'OFFER: Deleted pending', 'Test body', 'Offer', NOW(), NOW())", memberID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival, deleted) "+
+		"VALUES (?, 'OFFER: Deleted pending', 'Test body', 'Test body', 'Offer', NOW(), NOW())", memberID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
@@ -1527,8 +1527,8 @@ func TestWorkCountSpamExcludesDeletedMessages(t *testing.T) {
 	spamBefore := workBefore["spam"].(float64)
 
 	// Insert a deleted message in the Spam collection.
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, arrival, deleted) "+
-		"VALUES (?, 'OFFER: Deleted spam', 'Test body', 'Offer', NOW(), NOW())", memberID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival, deleted) "+
+		"VALUES (?, 'OFFER: Deleted spam', 'Test body', 'Test body', 'Offer', NOW(), NOW())", memberID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
@@ -1699,8 +1699,8 @@ func TestWorkCountPendingEvents(t *testing.T) {
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 	// Create a pending community event.
-	db.Exec("INSERT INTO communityevents (userid, title, description, pending, deleted) "+
-		"VALUES (?, 'Pending Event', 'Description', 1, 0)", memberID)
+	db.Exec("INSERT INTO communityevents (userid, title, description, location, pending, deleted) "+
+		"VALUES (?, 'Pending Event', 'Description', '', 1, 0)", memberID)
 	var eventID uint64
 	db.Raw("SELECT id FROM communityevents WHERE userid = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&eventID)
 	db.Exec("INSERT INTO communityevents_groups (eventid, groupid) VALUES (?, ?)", eventID, groupID)
@@ -1730,8 +1730,8 @@ func TestWorkCountPendingVolunteering(t *testing.T) {
 	_, token := CreateTestSession(t, modID)
 
 	memberID := CreateTestUser(t, prefix+"_member", "User")
-	db.Exec("INSERT INTO volunteering (userid, title, description, pending, deleted, expired) "+
-		"VALUES (?, 'Pending Vol', 'Description', 1, 0, 0)", memberID)
+	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) "+
+		"VALUES (?, 'Pending Vol', 'Description', '', 1, 0, 0)", memberID)
 	var volID uint64
 	db.Raw("SELECT id FROM volunteering WHERE userid = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&volID)
 	db.Exec("INSERT INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", volID, groupID)
@@ -1805,8 +1805,8 @@ func TestWorkCountInactiveModPendingGoesToOther(t *testing.T) {
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, 'OFFER: Inactive pending', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, 'OFFER: Inactive pending', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
@@ -1838,8 +1838,8 @@ func TestWorkCountActiveModPendingGoesToPrimary(t *testing.T) {
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, 'OFFER: Active pending', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, 'OFFER: Active pending', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
@@ -1869,8 +1869,8 @@ func TestWorkCountInactiveModSpamNotCounted(t *testing.T) {
 	memberID := CreateTestUser(t, prefix+"_member", "User")
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, 'OFFER: Inactive spam', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, 'OFFER: Inactive spam', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
@@ -2187,7 +2187,7 @@ func TestWorkCountEditReviewCountsDistinctMessages(t *testing.T) {
 	// Create a message.
 	userID := CreateTestUser(t, prefix+"_u", "User")
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, type, subject) VALUES (?, 'Offer', 'Test edit message')", userID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test edit message', 'Test body', 'Test body')", userID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Approved', 0)", msgID, groupID)
 

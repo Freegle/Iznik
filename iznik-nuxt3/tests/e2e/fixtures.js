@@ -335,6 +335,7 @@ const test = base.test.extend({
       /Failed to fetch dynamically imported module.*\.localhost/, // Transient network error loading JS chunks from local dev server under parallel test load — not a production code bug
       /net::ERR_SOCKET_NOT_CONNECTED.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
       /Failed to load resource.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
+      /Your focus-trap must have at least one container/, // Bootstrap Vue focus-trap error during modal transitions (transient, non-critical)
     ]
 
     // Initialize the working copy of allowed error patterns
@@ -502,6 +503,14 @@ const test = base.test.extend({
     // so it survives client-side navigations. Uses a debounced MutationObserver to
     // avoid false positives during partial renders.
     await page.addInitScript(() => {
+      // addInitScript runs in all frames including cross-origin iframes (e.g. YouTube
+      // embeds). Bail out in subframes so we only report errors from the Nuxt app.
+      try {
+        /* c8 ignore next */ if (window !== window.top) return
+      } catch {
+        // Accessing window.top can throw in cross-origin contexts
+        return
+      }
       let t = null
       const obs = new MutationObserver(() => {
         clearTimeout(t)

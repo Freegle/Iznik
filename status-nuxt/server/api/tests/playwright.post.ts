@@ -181,12 +181,15 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', 'Could not pre-count tests, will determine from output\n')
     }
 
-    const testCmd = `npx playwright test${testArgs}`
+    const testCmd = `export ENABLE_MONOCART_REPORTER=true && npx playwright test${testArgs}`
 
-    // Clear freeze-specs file before run so we only capture freezes from this run
+    // Clear freeze-specs file and stale test result files before run.
+    // Stale junit.xml / test-status.json from a previous run (possibly weeks old
+    // if the container is reused) would otherwise be collected as CI artifacts
+    // and reported as failures even when the current run passes.
     try {
       execSync(
-        `docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt"`,
+        `docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt /app/test-results/junit.xml /app/test-results/test-status.json"`,
         { encoding: 'utf8', timeout: 5000 }
       )
     } catch {}
@@ -195,6 +198,18 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     appendTestLogs('playwright', `Running: ${testCmd}\n`)
 
     const initialCode = await spawnPlaywrightProcess(testCmd, pfx)
+
+    // Preserve main-run coverage before any freeze retry can overwrite it.
+    // The retry only runs a subset of specs, so its coverage file has lower
+    // totals than the full run — restoring the main copy keeps Coveralls accurate.
+    const mainCoveragePath = '/app/monocart-report/coverage/lcov.info'
+    const backupCoveragePath = '/app/monocart-report/coverage/lcov.info.main'
+    try {
+      execSync(
+        `docker exec ${pfx}-playwright sh -c "test -f ${mainCoveragePath} && cp ${mainCoveragePath} ${backupCoveragePath} || true"`,
+        { encoding: 'utf8', timeout: 5000 }
+      )
+    } catch {}
 
     // Check whether any specs were recorded as frozen and re-run them in a
     // fresh Playwright process (fresh V8 state, no accumulated async contexts).
@@ -237,7 +252,9 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           break
         }
 
-        const retryFiles = [...frozenBasenames].join(' ')
+        // Use full paths for Playwright to find the specs. freezeSpecs already contains
+        // full paths like /app/tests/e2e/foo.spec.js; strip /app prefix for Docker context
+        const retryFiles = freezeSpecs.map((f) => f.replace(/^\/app\//, '')).join(' ')
         appendTestLogs('playwright', `\n[FREEZE-RETRY round ${freezeRound + 1}] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process: ${retryFiles}\n`)
 
         // Clear freeze file before retry so the next round picks up only NEW freezes.
@@ -245,7 +262,17 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           execSync(`docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt"`, { encoding: 'utf8', timeout: 5000 })
         } catch {}
 
-        const retryCode = await spawnPlaywrightProcess(`npx playwright test ${retryFiles}`, pfx)
+        // Run retry without monocart so the main-run coverage (full suite) is not
+        // overwritten by partial coverage from just the re-run frozen specs.
+        const retryCode = await spawnPlaywrightProcess(`export ENABLE_MONOCART_REPORTER=false && npx playwright test ${retryFiles}`, pfx)
+
+        // Restore full-suite coverage — the retry covered fewer tests than the main run.
+        try {
+          execSync(
+            `docker exec ${pfx}-playwright sh -c "test -f ${backupCoveragePath} && cp ${backupCoveragePath} ${mainCoveragePath} || true"`,
+            { encoding: 'utf8', timeout: 5000 }
+          )
+        } catch {}
 
         if (retryCode === 0) {
           // All frozen specs passed in the fresh process — overall run is a success.

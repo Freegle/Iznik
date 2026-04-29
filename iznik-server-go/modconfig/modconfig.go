@@ -347,11 +347,13 @@ func PostModConfig(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Database error")
 		}
-		sqlResult, err := sqlDB.Exec("INSERT INTO mod_configs (ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
-			"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen) "+
-			"SELECT ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
-			"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen "+
-			"FROM mod_configs WHERE id = ?", req.ID)
+		sqlResult, err := sqlDB.Exec("INSERT INTO mod_configs (name, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
+			"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, "+
+			"fromname, subjreg, messageorder) "+
+			"SELECT ?, ccrejectto, ccrejectaddr, ccfollowupto, ccfollowupaddr, "+
+			"ccrejmembto, ccrejmembaddr, ccfollmembto, ccfollmembaddr, network, coloursubj, subjlen, "+
+			"fromname, subjreg, messageorder "+
+			"FROM mod_configs WHERE id = ?", req.Name, req.ID)
 		if err != nil {
 			stdlog.Printf("Failed to copy mod config %d: %v", req.ID, err)
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to copy config")
@@ -365,7 +367,7 @@ func PostModConfig(c *fiber.Ctx) error {
 		if newID == 0 {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new config ID")
 		}
-		db.Exec("UPDATE mod_configs SET name = ?, createdby = ? WHERE id = ?", req.Name, myid, newID)
+		db.Exec("UPDATE mod_configs SET createdby = ? WHERE id = ?", myid, newID)
 
 		// Copy stdmsgs.
 		var srcMsgs []StdMsg
@@ -390,14 +392,27 @@ func PostModConfig(c *fiber.Ctx) error {
 	}
 
 	// Simple create.
-	result := db.Exec("INSERT INTO mod_configs (name, createdby) VALUES (?, ?)", req.Name, myid)
-	if result.Error != nil {
-		stdlog.Printf("Failed to create mod config: %v", result.Error)
+	// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
+	// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
+	// parallel load (GORM's connection pool may assign a different connection).
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Database error")
+	}
+	sqlResult, err := sqlDB.Exec("INSERT INTO mod_configs (name, createdby, ccrejectaddr, ccfollowupaddr, ccrejmembaddr, ccfollmembaddr, network) VALUES (?, ?, '', '', '', '', '')", req.Name, myid)
+	if err != nil {
+		stdlog.Printf("Failed to create mod config: %v", err)
 		return fiber.NewError(fiber.StatusInternalServerError, "Create failed")
 	}
 
 	var newID uint64
-	db.Raw("SELECT id FROM mod_configs WHERE name = ? AND createdby = ? ORDER BY id DESC LIMIT 1", req.Name, myid).Scan(&newID)
+	lastID, err := sqlResult.LastInsertId()
+	if err == nil && lastID > 0 {
+		newID = uint64(lastID)
+	}
+	if newID == 0 {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to get new config ID")
+	}
 
 	// Log the creation.
 	db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)", log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_CREATED, myid, newID)

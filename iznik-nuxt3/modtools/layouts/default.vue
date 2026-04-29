@@ -216,6 +216,14 @@
         />
         <ModMenuItemLeft
           v-if="supportOrAdmin"
+          link="/images"
+          name="Images"
+          :directcount="aiImagesCount"
+          count-variant="info"
+          @mobilehidemenu="mobilehidemenu"
+        />
+        <ModMenuItemLeft
+          v-if="supportOrAdmin"
           link="/support"
           name="Support"
           @mobilehidemenu="mobilehidemenu"
@@ -279,6 +287,7 @@ import { useModGroupStore } from '@/stores/modgroup'
 import { useModConfigStore } from '@/stores/modconfig'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
+import { useAIImages } from '~/modtools/composables/useAIImages'
 
 import { buildHead } from '~/composables/useMTBuildHead'
 
@@ -310,6 +319,8 @@ const {
   checkWork,
 } = useModMe()
 
+const { count: aiImagesCount, fetchCount: fetchAIImagesCount } = useAIImages()
+
 if (process.client) {
   // Ensure we don't wrongly think we have some outstanding requests if the server happened to start some.
   miscStore.apiCount = 0
@@ -329,6 +340,9 @@ if (jwt || persistent) {
 
   if (user) {
     ready.value = true
+    if (supportOrAdmin.value) {
+      fetchAIImagesCount()
+    }
   }
 }
 if (!ready.value) {

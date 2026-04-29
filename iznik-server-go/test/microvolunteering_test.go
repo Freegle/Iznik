@@ -38,7 +38,7 @@ func TestGetMicrovolunteering_NoChallenge(t *testing.T) {
 	db.Exec("DELETE FROM memberships WHERE userid = ?", userID)
 
 	// Block invite challenge by adding a recent invite microaction
-	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp) VALUES (?, ?, 4, 'Test block', NOW())", microvolunteering.ChallengeInvite, userID)
+	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp, score_negative) VALUES (?, ?, 4, 'Test block', NOW(), 0)", microvolunteering.ChallengeInvite, userID)
 	defer db.Exec("DELETE FROM microactions WHERE userid = ? AND actiontype = ?", userID, microvolunteering.ChallengeInvite)
 
 	// Make authenticated request
@@ -139,7 +139,7 @@ func TestGetMicrovolunteering_CheckMessagePending(t *testing.T) {
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
 	// Block invite challenge by adding a recent invite microaction
-	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp) VALUES (?, ?, 4, 'Test block', NOW())", microvolunteering.ChallengeInvite, userID)
+	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp, score_negative) VALUES (?, ?, 4, 'Test block', NOW(), 0)", microvolunteering.ChallengeInvite, userID)
 	defer db.Exec("DELETE FROM microactions WHERE userid = ? AND actiontype = ?", userID, microvolunteering.ChallengeInvite)
 
 	// Create another user to be the message sender
@@ -161,7 +161,7 @@ func TestGetMicrovolunteering_CheckMessagePending(t *testing.T) {
 
 	// Create a pending message from sender
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, subject, type, arrival) VALUES (?, 'Test Offer', 'Offer', NOW())", senderID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) VALUES (?, 'Test Offer', 'Test body', 'Test body', 'Offer', NOW())", senderID)
 	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgID)
 	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 
@@ -196,7 +196,7 @@ func TestGetMicrovolunteering_CheckMessageApproved(t *testing.T) {
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
 	// Block invite challenge by adding a recent invite microaction
-	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp) VALUES (?, ?, 4, 'Test block', NOW())", microvolunteering.ChallengeInvite, userID)
+	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp, score_negative) VALUES (?, ?, 4, 'Test block', NOW(), 0)", microvolunteering.ChallengeInvite, userID)
 	defer db.Exec("DELETE FROM microactions WHERE userid = ? AND actiontype = ?", userID, microvolunteering.ChallengeInvite)
 
 	// Create another user to be the message sender
@@ -218,7 +218,7 @@ func TestGetMicrovolunteering_CheckMessageApproved(t *testing.T) {
 
 	// Create an approved message from sender
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, subject, type, arrival, lat, lng) VALUES (?, 'Test Offer', 'Offer', NOW(), 0, 0)", senderID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival, lat, lng) VALUES (?, 'Test Offer', 'Test body', 'Test body', 'Offer', NOW(), 0, 0)", senderID)
 	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgID)
 	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 
@@ -258,7 +258,7 @@ func TestGetMicrovolunteering_PhotoRotateChallenge(t *testing.T) {
 	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
 
 	// Block invite challenge by adding a recent invite microaction
-	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp) VALUES (?, ?, 4, 'Test block', NOW())", microvolunteering.ChallengeInvite, userID)
+	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp, score_negative) VALUES (?, ?, 4, 'Test block', NOW(), 0)", microvolunteering.ChallengeInvite, userID)
 	defer db.Exec("DELETE FROM microactions WHERE userid = ? AND actiontype = ?", userID, microvolunteering.ChallengeInvite)
 
 	// Create another user to be the message sender
@@ -280,7 +280,7 @@ func TestGetMicrovolunteering_PhotoRotateChallenge(t *testing.T) {
 
 	// Create a message with attachments
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, subject, type, arrival) VALUES (?, 'Test Offer with Photos', 'Offer', NOW())", senderID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) VALUES (?, 'Test Offer with Photos', 'Test body', 'Test body', 'Offer', NOW())", senderID)
 	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgID)
 	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 
@@ -481,7 +481,7 @@ func TestModFeedbackAsMod(t *testing.T) {
 
 	// Create a microaction to provide feedback on.
 	regularID := CreateTestUser(t, prefix+"_user", "User")
-	db.Exec("INSERT INTO microactions (userid, actiontype, result, timestamp) VALUES (?, 'CheckMessage', 'Approve', NOW())", regularID)
+	db.Exec("INSERT INTO microactions (userid, actiontype, result, timestamp, score_negative) VALUES (?, 'CheckMessage', 'Approve', NOW(), 0)", regularID)
 	var actionID uint64
 	db.Raw("SELECT id FROM microactions WHERE userid = ? ORDER BY id DESC LIMIT 1", regularID).Scan(&actionID)
 	assert.NotZero(t, actionID)
@@ -597,7 +597,7 @@ func TestListMicroActions(t *testing.T) {
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a microaction by the member.
-	db.Exec("INSERT INTO microactions (actiontype, userid, result, timestamp) VALUES ('CheckMessage', ?, 'Approve', NOW())", memberID)
+	db.Exec("INSERT INTO microactions (actiontype, userid, result, timestamp, score_negative) VALUES ('CheckMessage', ?, 'Approve', NOW(), 0)", memberID)
 	var actionID uint64
 	db.Raw("SELECT id FROM microactions WHERE userid = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&actionID)
 
