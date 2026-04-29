@@ -914,12 +914,18 @@ func TestLocationTaskRemapIntegrationWithPostgresSync(t *testing.T) {
 	locID := int(result["id"].(float64))
 	assert.Greater(t, locID, 0)
 
-	// Wait for async task queueing goroutine
-	time.Sleep(100 * time.Millisecond)
+	// Poll for the async task (up to 2s) rather than a fixed sleep
+	var taskData string
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		db.Raw("SELECT data FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ? LIMIT 1", locID).Scan(&taskData)
+		if taskData != "" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
 	// Verify that the task queued has the polygon for PostgreSQL sync
-	var taskData string
-	db.Raw("SELECT data FROM background_tasks WHERE task_type = 'remap_postcodes' AND JSON_EXTRACT(data, '$.location_id') = ? LIMIT 1", locID).Scan(&taskData)
 	assert.NotEmpty(t, taskData, "Task should be queued with polygon for PostgreSQL sync")
 	if taskData == "" {
 		return

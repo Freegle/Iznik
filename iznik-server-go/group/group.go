@@ -700,8 +700,15 @@ func PatchGroup(c *fiber.Ctx) error {
 		db.Exec("UPDATE `groups` SET region = ? WHERE id = ?", *req.Region, req.ID)
 	}
 	if req.AffiliationConfirmed != nil {
+		affConfirmed := *req.AffiliationConfirmed
+		for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
+			if t, err := time.Parse(layout, affConfirmed); err == nil {
+				affConfirmed = t.UTC().Format("2006-01-02 15:04:05")
+				break
+			}
+		}
 		db.Exec("UPDATE `groups` SET affiliationconfirmed = ?, affiliationconfirmedby = ? WHERE id = ?",
-			*req.AffiliationConfirmed, myid, req.ID)
+			affConfirmed, myid, req.ID)
 	}
 	if req.Onhere != nil {
 		db.Exec("UPDATE `groups` SET onhere = ? WHERE id = ?", *req.Onhere, req.ID)

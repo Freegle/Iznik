@@ -222,7 +222,7 @@ func TestExpiredPromisedMessageExcludedFromActive(t *testing.T) {
 	prefix := uniquePrefix("exprms")
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	promiserID := CreateTestUser(t, prefix, "Promiser")
+	promiserID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
@@ -256,7 +256,7 @@ func TestExpiredMessageWithRecentChatKeptActive(t *testing.T) {
 	prefix := uniquePrefix("exprchat")
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
-	otherID := CreateTestUser(t, prefix, "Other")
+	otherID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
@@ -652,7 +652,7 @@ func createPendingMessage(t *testing.T, userID uint64, groupID uint64, prefix st
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Offer', ?, NOW(), NOW())",
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Test body', 'Offer', ?, NOW(), NOW())",
 		userID, prefix+" pending offer", locationID)
 
 	var msgID uint64
@@ -1030,7 +1030,7 @@ func TestPostMessageRejectAfterMemberWithdrawsPending(t *testing.T) {
 	// Create a pending WANTED message
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Wanted', ?, NOW(), NOW())",
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Test body', 'Wanted', ?, NOW(), NOW())",
 		posterID, prefix+" pending wanted", locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
@@ -1453,7 +1453,7 @@ func TestPostMessageJoinAndPost(t *testing.T) {
 
 	// Step 1: Create a draft message and store it in messages_drafts.
 	// JoinAndPost submits an existing draft (matching the client PUT→POST flow).
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', 'Offer: Test chair', 'A nice chair for free', NOW(), NOW(), 'Platform')",
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Test chair', 'A nice chair for free', 'A nice chair for free', NOW(), NOW(), 'Platform')",
 		userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
@@ -1510,7 +1510,7 @@ func TestJoinAndPostSavesDeadline(t *testing.T) {
 	_, token := CreateTestSession(t, userID)
 
 	// Create a draft message.
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', 'Offer: Deadline test', 'Item with deadline', NOW(), NOW(), 'Platform')",
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Deadline test', 'Item with deadline', 'Item with deadline', NOW(), NOW(), 'Platform')",
 		userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
@@ -1554,7 +1554,7 @@ func TestJoinAndPostNewUserPassword(t *testing.T) {
 	db.Exec("DELETE FROM users_logins WHERE userid = ? AND type = 'Native'", userID)
 
 	// Create a draft message.
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', 'Offer: Test table', 'A free table', NOW(), NOW(), 'Platform')", userID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Test table', 'A free table', 'A free table', NOW(), NOW(), 'Platform')", userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 	require.NotZero(t, msgID)
@@ -1612,7 +1612,7 @@ func TestJoinAndPostModeratedUserGoesToPending(t *testing.T) {
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'MODERATED' WHERE userid = ? AND groupid = ?", userID, groupID)
 
 	// Create a draft message.
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', 'Offer: Moderated chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Moderated chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 	require.NotZero(t, msgID)
@@ -1652,7 +1652,7 @@ func TestJoinAndPostBannedUserReturns403(t *testing.T) {
 	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Banned')", userID, groupID)
 
 	// Create a draft message.
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', 'Offer: Banned chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Banned chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 	require.NotZero(t, msgID)
@@ -1684,7 +1684,7 @@ func TestJoinAndPostProhibitedUserReturns403(t *testing.T) {
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'PROHIBITED' WHERE userid = ? AND groupid = ?", userID, groupID)
 
 	// Create a draft message.
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', 'Offer: Prohibited chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Prohibited chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 	require.NotZero(t, msgID)
@@ -1719,7 +1719,7 @@ func TestJoinAndPostGroupDefaultModerated(t *testing.T) {
 	// User is NOT a member yet (JoinAndPost will create the membership).
 
 	// Create a draft message.
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', 'Offer: GroupMod chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: GroupMod chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 	require.NotZero(t, msgID)
@@ -1760,7 +1760,7 @@ func TestJoinAndPostForcePendingOverridesApproved(t *testing.T) {
 	CreateTestMembership(t, userID, groupID, "Member")
 
 	// Create a draft message.
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', 'Offer: Forced pending sofa', 'A sofa', NOW(), NOW(), 'Platform')", userID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Forced pending sofa', 'A sofa', 'A sofa', NOW(), NOW(), 'Platform')", userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 	require.NotZero(t, msgID)
@@ -1803,7 +1803,7 @@ func TestJoinAndPostForcePendingFalseDoesNotOverride(t *testing.T) {
 	db.Exec("UPDATE memberships SET ourPostingStatus = 'MODERATED' WHERE userid = ? AND groupid = ?", userID, groupID)
 
 	// Create a draft message.
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', 'Offer: Still pending desk', 'A desk', NOW(), NOW(), 'Platform')", userID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Still pending desk', 'A desk', 'A desk', NOW(), NOW(), 'Platform')", userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 	require.NotZero(t, msgID)
@@ -3451,8 +3451,8 @@ func TestPostMessageOutcomeReceivedMarksSpatialSuccessful(t *testing.T) {
 	// Create a Wanted message (need to insert directly since CreateTestMessage creates Offer).
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Wanted', ?, NOW())",
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Wanted', ?, NOW())",
 		userID, prefix+" wanted item", locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
@@ -3662,7 +3662,7 @@ func TestApproveMessageQueuesFreebieAlertsAdd(t *testing.T) {
 	prefix := uniquePrefix("msgw_fa_add")
 	db := database.DBConn
 
-	modID := CreateTestUser(t, prefix+"_mod", "Mod")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	_, modToken := CreateTestSession(t, modID)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	groupID := CreateTestGroup(t, prefix)
@@ -4114,7 +4114,7 @@ func TestListMessagesPending(t *testing.T) {
 	// Create a pending message.
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Offer', ?, NOW(), NOW())",
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Test body', 'Offer', ?, NOW(), NOW())",
 		posterID, prefix+" pending item", locationID)
 
 	var msgID uint64
@@ -4161,7 +4161,7 @@ func TestListMessagesMT_DeletedMessageNotReturned(t *testing.T) {
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create a message that is marked deleted but still has a Pending entry in messages_groups.
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, arrival, date, deleted) VALUES (?, ?, 'Test body', 'Offer', NOW(), NOW(), NOW())",
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, arrival, date, deleted) VALUES (?, ?, 'Test body', 'Test body', 'Offer', NOW(), NOW(), NOW())",
 		posterID, prefix+" deleted pending item")
 	var deletedMsgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
@@ -4499,7 +4499,7 @@ func TestListMessagesAdminCanSeePending(t *testing.T) {
 	// Create pending message.
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Offer', ?, NOW(), NOW())",
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Test body', 'Offer', ?, NOW(), NOW())",
 		posterID, prefix+" admin pending", locationID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
@@ -4728,7 +4728,7 @@ func TestPatchMessageReconstructsSubjectFromItemLocation(t *testing.T) {
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: Old item (Old Location)", 52.5, -1.8)
 
 	// Create an area location.
-	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Other', 52.5, -1.8)", prefix+"_Village")
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 52.5, -1.8)", prefix+"_Village")
 	var areaID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_Village").Scan(&areaID)
 	require.NotZero(t, areaID)
@@ -4790,7 +4790,7 @@ func TestPatchMessageItemCaseCorrection(t *testing.T) {
 	_, modToken := CreateTestSession(t, modID)
 
 	// Create an area and postcode location.
-	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Other', 52.5, -1.8)", prefix+"_Town")
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 52.5, -1.8)", prefix+"_Town")
 	var areaID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_Town").Scan(&areaID)
 	require.NotZero(t, areaID)
@@ -4851,7 +4851,7 @@ func TestPatchMessageTypeChangeCreatesEditRecord(t *testing.T) {
 	msgID := createPendingMessage(t, ownerID, groupID, prefix)
 
 	// Create area + postcode locations and item for subject reconstruction.
-	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Other', 52.5, -1.8)", prefix+"_Area")
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 52.5, -1.8)", prefix+"_Area")
 	var areaID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_Area").Scan(&areaID)
 	db.Exec("INSERT INTO locations (name, type, lat, lng, areaid) VALUES (?, 'Postcode', 52.5, -1.8, ?)", prefix+"_B25 8FF", areaID)
@@ -5310,7 +5310,7 @@ func TestJoinAndPostSetsFromaddr(t *testing.T) {
 		userID, userEmail)
 
 	// Create a draft message.
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', ?, 'Free chair', NOW(), NOW(), 'Platform')",
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', ?, 'Free chair', 'Free chair', NOW(), NOW(), 'Platform')",
 		userID, prefix+" chair")
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
@@ -5358,7 +5358,7 @@ func TestJoinAndPostInventsEmailWhenMissing(t *testing.T) {
 	db.Exec("DELETE FROM users_emails WHERE userid = ? AND email LIKE '%@users.ilovefreegle.org'", userID)
 
 	// Create a draft message.
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', ?, 'Free table', NOW(), NOW(), 'Platform')",
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', ?, 'Free table', 'Free table', NOW(), NOW(), 'Platform')",
 		userID, prefix+" table")
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
@@ -5410,8 +5410,8 @@ func TestGetMessageItemLocationForMod(t *testing.T) {
 	defer db.Exec("DELETE FROM locations WHERE id = ?", locationID)
 
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, source, locationid, sourceheader) VALUES (?, ?, ?, ?, 'Platform', ?, 'Platform')",
-		userID, "OFFER: Test Item ("+prefix+")", "Test body", "Offer", locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, source, locationid, sourceheader) VALUES (?, ?, ?, ?, ?, 'Platform', ?, 'Platform')",
+		userID, "OFFER: Test Item ("+prefix+")", "Test body", "Test body", "Offer", locationID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
 
@@ -5420,9 +5420,10 @@ func TestGetMessageItemLocationForMod(t *testing.T) {
 	defer db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
 
 	// Create an item for the message
+	itemName := "Test Item " + prefix
 	var itemID uint64
-	db.Exec("INSERT INTO items (name) VALUES (?)", "Test Item")
-	db.Raw("SELECT id FROM items WHERE name = 'Test Item' ORDER BY id DESC LIMIT 1").Scan(&itemID)
+	db.Exec("INSERT INTO items (name) VALUES (?)", itemName)
+	db.Raw("SELECT id FROM items WHERE name = ? ORDER BY id DESC LIMIT 1", itemName).Scan(&itemID)
 	db.Exec("INSERT INTO messages_items (msgid, itemid) VALUES (?, ?)", msgID, itemID)
 	defer db.Exec("DELETE FROM messages_items WHERE msgid = ?", msgID)
 	defer db.Exec("DELETE FROM items WHERE id = ?", itemID)
@@ -5439,7 +5440,7 @@ func TestGetMessageItemLocationForMod(t *testing.T) {
 	assert.NotNil(t, result["item"], "Item should be returned for mod viewing message")
 	if result["item"] != nil {
 		itemData := result["item"].(map[string]interface{})
-		assert.Equal(t, "Test Item", itemData["name"])
+		assert.Equal(t, itemName, itemData["name"])
 	}
 
 	// Location should be present for mod (precise postcode visible to mods)
@@ -5694,7 +5695,7 @@ func TestMessagePostWritesHistory(t *testing.T) {
 	_, token := CreateTestSession(t, userID)
 
 	// Create a draft message.
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Offer', 'Offer: History test chair', 'A free chair', NOW(), NOW(), 'Platform')", userID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: History test chair', 'A free chair', 'A free chair', NOW(), NOW(), 'Platform')", userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 	require.NotZero(t, msgID, "Failed to create draft message")
@@ -5741,7 +5742,7 @@ func TestJoinAndPostLogsReceived(t *testing.T) {
 
 	// Create draft with a messageid so we can assert text==messageid.
 	wantMessageID := fmt.Sprintf("<%s@test.freegle.local>", prefix)
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source, messageid) VALUES (?, 'Offer', 'Offer: Test sofa', 'Free sofa', NOW(), NOW(), 'Platform', ?)",
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, messageid) VALUES (?, 'Offer', 'Offer: Test sofa', 'Free sofa', 'Free sofa', NOW(), NOW(), 'Platform', ?)",
 		userID, wantMessageID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
@@ -5785,7 +5786,7 @@ func TestMessageEditRecordsAllColumns(t *testing.T) {
 	_, ownerToken := CreateTestSession(t, ownerID)
 
 	// Create a message with an item and a known locationid.
-	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Other', 52.5, -1.8)", prefix+"_Area")
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 52.5, -1.8)", prefix+"_Area")
 	var areaID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_Area").Scan(&areaID)
 	db.Exec("INSERT INTO locations (name, type, lat, lng, areaid) VALUES (?, 'Postcode', 52.5, -1.8, ?)", prefix+"_B25 8FF", areaID)
@@ -5808,7 +5809,7 @@ func TestMessageEditRecordsAllColumns(t *testing.T) {
 	require.NotZero(t, newItemID)
 
 	// Create a new location to edit to.
-	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Other', 53.0, -2.0)", prefix+"_NewArea")
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Point', 53.0, -2.0)", prefix+"_NewArea")
 	var newAreaID uint64
 	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", prefix+"_NewArea").Scan(&newAreaID)
 	db.Exec("INSERT INTO locations (name, type, lat, lng, areaid) VALUES (?, 'Postcode', 53.0, -2.0, ?)", prefix+"_M1 1AA", newAreaID)

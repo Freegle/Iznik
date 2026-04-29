@@ -20,43 +20,31 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Update version file
-        run: |
-          # Get current timestamp and commit info
-          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
-          COMMIT_SHA="${{ github.sha }}"
-          COMMIT_SHORT=$(echo "$COMMIT_SHA" | cut -c1-7)
-
-          # Read current version number or start at 1
-          if [ -f iznik-batch/version.txt ]; then
-            CURRENT_VERSION=$(head -n1 iznik-batch/version.txt | grep -oP '^\d+' || echo "0")
-          else
-            CURRENT_VERSION=0
-          fi
-
-          # Increment version
-          NEW_VERSION=$((CURRENT_VERSION + 1))
-
-          # Write version file
-          cat > iznik-batch/version.txt << EOF
-          ${NEW_VERSION}
-          commit: ${COMMIT_SHORT}
-          sha: ${COMMIT_SHA}
-          timestamp: ${TIMESTAMP}
-          EOF
-
-          echo "Updated version to ${NEW_VERSION} (commit ${COMMIT_SHORT})"
-
       - name: Commit version file
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Only commit if there are changes
-          if git diff --quiet iznik-batch/version.txt 2>/dev/null; then
-            echo "No changes to iznik-batch/version.txt"
+          COMMIT_SHA="${{ github.sha }}"
+          COMMIT_SHORT=$(echo "$COMMIT_SHA" | cut -c1-7)
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
+
+          # Pull latest so we read the most recent version number
+          git pull --rebase origin master
+
+          # Read current version from latest master
+          if [ -f iznik-batch/version.txt ]; then
+            CURRENT_VERSION=$(head -n1 iznik-batch/version.txt | grep -oP '^\d+' || echo "0")
           else
-            git add iznik-batch/version.txt
-            git commit -m "Update version file [skip ci]"
-            git push
+            CURRENT_VERSION=0
           fi
+          NEW_VERSION=$((CURRENT_VERSION + 1))
+
+          printf '%s\ncommit: %s\nsha: %s\ntimestamp: %s\n' \
+            "${NEW_VERSION}" "${COMMIT_SHORT}" "${COMMIT_SHA}" "${TIMESTAMP}" \
+            > iznik-batch/version.txt
+
+          git add iznik-batch/version.txt
+          git commit -m "Update version file [skip ci]" || { echo "Nothing to commit"; exit 0; }
+          # Push; if another concurrent run already pushed a newer version, that's fine
+          git push || echo "Push skipped — concurrent update already applied"
