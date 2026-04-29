@@ -325,3 +325,47 @@ func TestAIImageRegen_Accept_UpdatesExternaluidAndResetStatus(t *testing.T) {
 	db.Raw("SELECT externaluid FROM messages_attachments WHERE id = ?", attachID).Scan(&updatedUID)
 	assert.Equal(t, newUID, updatedUID, "Attachment externaluid should be updated to new UID")
 }
+
+// ---------------------------------------------------------------------------
+// Test 5: GET /api/admin/ai-images/count
+// ---------------------------------------------------------------------------
+
+func TestAIImageCount_RequiresAuth(t *testing.T) {
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/admin/ai-images/count", nil))
+	assert.Equal(t, 401, resp.StatusCode)
+}
+
+func TestAIImageCount_RequiresAdminOrSupport(t *testing.T) {
+	prefix := uniquePrefix("aicount_auth")
+	uid := CreateTestUser(t, prefix, "User")
+	_, tok := CreateTestSession(t, uid)
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/admin/ai-images/count?jwt="+tok, nil))
+	assert.Equal(t, 403, resp.StatusCode)
+}
+
+func TestAIImageCount_ReturnsCount(t *testing.T) {
+	prefix := uniquePrefix("aicount_val")
+	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	_, tok := CreateTestSession(t, supportID)
+
+	// Get baseline count before creating test images.
+	resp0, _ := getApp().Test(httptest.NewRequest("GET", "/api/admin/ai-images/count?jwt="+tok, nil))
+	assert.Equal(t, 200, resp0.StatusCode)
+	var baseline map[string]interface{}
+	json2.Unmarshal(rsp(resp0), &baseline)
+	baseCount := int64(baseline["count"].(float64))
+
+	// Create one rejected and one regenerating image — both should be counted.
+	createTestAIImageWithStatus(t, "count-rej-"+prefix, "freegletusd-count-rej-"+prefix, "rejected")
+	createTestAIImageWithStatus(t, "count-regen-"+prefix, "freegletusd-count-regen-"+prefix, "regenerating")
+	// Active image should NOT be counted.
+	createTestAIImageWithStatus(t, "count-active-"+prefix, "freegletusd-count-active-"+prefix, "active")
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/admin/ai-images/count?jwt="+tok, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	count := int64(result["count"].(float64))
+	assert.Equal(t, baseCount+2, count, "Count should include rejected and regenerating images, not active")
+}
