@@ -240,10 +240,14 @@ func CreateWorryWord(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Keyword is required")
 	}
 
+	wordType := req.Type
+	if wordType == "" {
+		wordType = "Review"
+	}
 	word := WorryWord{
 		Keyword:   strings.TrimSpace(req.Keyword),
 		Substance: req.Substance,
-		Type:      req.Type,
+		Type:      wordType,
 	}
 
 	db := database.DBConn

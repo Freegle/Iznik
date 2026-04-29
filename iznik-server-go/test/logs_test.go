@@ -341,7 +341,7 @@ func TestGetLogsModmailTextIsEmailSubject(t *testing.T) {
 	db := database.DBConn
 
 	// Create a test message (simulating a post like "add a photo")
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Wanted', 'add a photo', 'Please add a photo', NOW(), NOW(), 'Platform')",
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Wanted', 'add a photo', 'Please add a photo', 'Please add a photo', NOW(), NOW(), 'Platform')",
 		userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
@@ -373,7 +373,62 @@ func TestGetLogsModmailTextIsEmailSubject(t *testing.T) {
 	// log.text must contain the stdmsg-constructed email subject, not just "Re: [post subject]"
 	assert.Equal(t, emailSubject, logEntry["text"], "log.text should contain the stdmsg-constructed email subject")
 
-	// msgsubject must NOT be present — the post title is not exposed separately
-	_, hasMsgSubject := logEntry["msgsubject"]
-	assert.False(t, hasMsgSubject, "msgsubject field must not be in the response")
+	// msgsubject contains the message subject at log time (no edits → falls back to current messages.subject)
+	assert.Equal(t, "add a photo", logEntry["msgsubject"], "msgsubject should be the message subject at log time")
+}
+
+func TestGetLogsMsgsubjectHistoricalIsPreserved(t *testing.T) {
+	// Verify that when a message subject is edited AFTER a log event,
+	// the log returns the subject as it was AT THE TIME of the event,
+	// not the current (post-edit) subject. Uses messages_edits to reconstruct history.
+	prefix := uniquePrefix("LogsHistSubj")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, modID)
+
+	db := database.DBConn
+
+	// Create message with original subject "Wanted: Escooter"
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source) VALUES (?, 'Wanted', 'Wanted: Escooter', 'body', NOW(), NOW(), 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+
+	// Insert a Received log at a fixed past time
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, msgid, timestamp, text) VALUES (?, ?, ?, ?, ?, '2020-01-01 12:00:00', 'test')",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, groupID, userID, msgID)
+
+	// Subject was then changed: Escooter → Cycle. messages_edits records the old value.
+	db.Exec("INSERT INTO messages_edits (msgid, timestamp, oldsubject, newsubject) VALUES (?, '2020-01-01 12:00:01', 'Wanted: Escooter', 'Wanted: Cycle')", msgID)
+
+	// Now the current subject in messages table is "Wanted: Cycle"
+	db.Exec("UPDATE messages SET subject = 'Wanted: Cycle' WHERE id = ?", msgID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/logs?groupid=%d&jwt=%s", groupID, token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	logs, ok := result["logs"].([]interface{})
+	assert.True(t, ok, "logs should be an array")
+	assert.Greater(t, len(logs), 0, "should have at least one log")
+
+	var logEntry map[string]interface{}
+	for _, l := range logs {
+		e := l.(map[string]interface{})
+		if e["type"] == "Message" && e["subtype"] == "Received" {
+			logEntry = e
+			break
+		}
+	}
+	assert.NotNil(t, logEntry, "should find a Received log entry")
+
+	// Must return the subject as it was BEFORE the edit, not the current "Wanted: Cycle"
+	assert.Equal(t, "Wanted: Escooter", logEntry["msgsubject"],
+		"msgsubject should be the historical subject at log time, not the current 'Wanted: Cycle'")
 }

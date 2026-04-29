@@ -180,12 +180,19 @@ func GetLogs(c *fiber.Ctx) error {
 		args = append(args, userid, userid)
 	}
 
-	// Build the query.
-	query := "SELECT logs.* FROM logs "
+	// Build the query. Always join messages to reconstruct historical subject via messages_edits.
+	// Use COALESCE with IFNULL to handle NULL subjects properly: if the subject was edited after
+	// this log event, return the subject as it was before that edit (oldsubject); otherwise return
+	// the current messages.subject. Use IFNULL as fallback for very old pre-migration rows.
+	query := "SELECT logs.*, IFNULL(COALESCE(" +
+		"(SELECT me.oldsubject FROM messages_edits me " +
+		"WHERE logs.msgid IS NOT NULL AND me.msgid = logs.msgid AND me.timestamp > logs.timestamp " +
+		"AND me.oldsubject IS NOT NULL ORDER BY me.timestamp ASC LIMIT 1), " +
+		"messages.subject), '') AS msgsubject " +
+		"FROM logs LEFT JOIN messages ON messages.id = logs.msgid "
 
 	if search != "" {
-		query += "LEFT JOIN users ON users.id = logs.user " +
-			"LEFT JOIN messages ON messages.id = logs.msgid "
+		query += "LEFT JOIN users ON users.id = logs.user "
 
 		searchLike := "%" + search + "%"
 		where = append(where, "(users.firstname LIKE ? OR users.lastname LIKE ? OR users.fullname LIKE ? "+
@@ -198,17 +205,18 @@ func GetLogs(c *fiber.Ctx) error {
 	args = append(args, limit)
 
 	type LogRow struct {
-		ID        uint64  `json:"id"`
-		Timestamp string  `json:"timestamp"`
-		Type      string  `json:"type"`
-		Subtype   *string `json:"subtype"`
-		Groupid   *uint64 `json:"groupid"`
-		User      *uint64 `json:"user"`
-		Byuser    *uint64 `json:"byuser"`
-		Msgid     *uint64 `json:"msgid"`
-		Configid  *uint64 `json:"configid"`
-		Stdmsgid  *uint64 `json:"stdmsgid"`
-		Text      *string `json:"text"`
+		ID         uint64  `json:"id"`
+		Timestamp  string  `json:"timestamp"`
+		Type       string  `json:"type"`
+		Subtype    *string `json:"subtype"`
+		Groupid    *uint64 `json:"groupid"`
+		User       *uint64 `json:"user"`
+		Byuser     *uint64 `json:"byuser"`
+		Msgid      *uint64 `json:"msgid"`
+		Configid   *uint64 `json:"configid"`
+		Stdmsgid   *uint64 `json:"stdmsgid"`
+		Text       *string `json:"text"`
+		Msgsubject *string `json:"msgsubject"`
 	}
 
 	var rows []LogRow
@@ -245,6 +253,10 @@ func GetLogs(c *fiber.Ctx) error {
 
 		if r.Configid != nil && *r.Configid > 0 {
 			entry["configid"] = *r.Configid
+		}
+
+		if r.Msgsubject != nil && *r.Msgsubject != "" {
+			entry["msgsubject"] = *r.Msgsubject
 		}
 
 		// Outcome subtype has long text like "Taken: thanks everyone".

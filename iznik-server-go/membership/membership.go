@@ -240,8 +240,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewIgnore":
-		// Marks this group membership as reviewed and clears the review flag.
-		// Per-group: mods on adjacent communities make independent decisions.
+		// Per-group: mods on adjacent communities make independent decisions (Discourse 9618 #8).
 		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL "+
 			"WHERE userid = ? AND groupid = ?",
 			req.Userid, req.Groupid)
@@ -341,6 +340,7 @@ func GetMemberships(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
 	}
 	filter := c.QueryInt("filter", 0)
+	contextID := uint64(c.QueryInt("context", 0))
 
 	db := database.DBConn
 
@@ -446,11 +446,21 @@ func GetMemberships(c *fiber.Ctx) error {
 				groupArg, collection, searchPattern, searchPattern, limit).Scan(&members)
 		}
 	} else {
+		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).
+		// ORDER BY m.id DESC for deterministic per-page slicing consistent with the cursor.
+		contextWhere := ""
+		queryArgs := []interface{}{groupid, collection}
+		if contextID > 0 {
+			contextWhere = " AND m.id < ?"
+			queryArgs = append(queryArgs, contextID)
+		}
+		queryArgs = append(queryArgs, limit)
+
 		result := db.Raw("SELECT "+selectCols+" "+
 			fromClause+filterJoin+" "+
-			"WHERE m.groupid = ? AND m.collection = ?"+filterWhere+
-			" ORDER BY m.added DESC LIMIT ?",
-			groupid, collection, limit).Scan(&members)
+			"WHERE m.groupid = ? AND m.collection = ?"+filterWhere+contextWhere+
+			" ORDER BY m.id DESC LIMIT ?",
+			queryArgs...).Scan(&members)
 		if result.Error != nil {
 			stdlog.Printf("Failed to query memberships group %d collection %s: %v", groupid, collection, result.Error)
 		}
@@ -461,6 +471,12 @@ func GetMemberships(c *fiber.Ctx) error {
 	}
 
 	enrichMembers(members)
+
+	// Return pagination context = last member's ID when a full page was returned (cursor for next page).
+	var nextContext interface{}
+	if len(members) == limit {
+		nextContext = members[len(members)-1].ID
+	}
 
 	// When a filter is active, include the total matching count so the UI can display it.
 	if filter > 0 && groupid > 0 {
@@ -474,10 +490,14 @@ func GetMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"members":     members,
 			"filtercount": filterCount,
+			"context":     nextContext,
 		})
 	}
 
-	return c.JSON(members)
+	return c.JSON(fiber.Map{
+		"members": members,
+		"context": nextContext,
+	})
 }
 
 // enrichMembers computes displayname from name fields, resolves posting status, and parses settings JSON.

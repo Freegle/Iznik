@@ -598,12 +598,7 @@ function loadMore($state) {
 }
 
 async function markAllRead() {
-  for (const chat of filteredChats.value) {
-    if (chat.unseen) {
-      await chatStore.markRead(chat.id)
-    }
-  }
-
+  await chatStore.markAllRead()
   chatStore.fetchChats()
 }
 

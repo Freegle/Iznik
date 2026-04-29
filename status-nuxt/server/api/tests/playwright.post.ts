@@ -1,4 +1,5 @@
 import { spawn, execSync } from 'child_process'
+import path from 'path'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
 
 export default defineEventHandler(async (event) => {
@@ -129,6 +130,19 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', `Warning: Failed to restart container: ${restartError.message}\n`)
     }
 
+    // Sync playwright.config.js from the mounted volume — it's baked in at
+    // image build time and not covered by the entrypoint's /host-tests sync,
+    // so local changes (e.g. retries, flags) would otherwise be silently ignored.
+    try {
+      execSync(
+        `docker exec ${pfx}-playwright cp /host-playwright-config/playwright.config.js /app/playwright.config.js`,
+        { encoding: 'utf8', timeout: 5000 }
+      )
+      appendTestLogs('playwright', 'playwright.config.js synced from host\n')
+    } catch (syncError: any) {
+      appendTestLogs('playwright', `Warning: Failed to sync playwright.config.js: ${syncError.message}\n`)
+    }
+
     // Wait for Playwright container to be ready
     await new Promise(resolve => setTimeout(resolve, 3000))
 
@@ -167,48 +181,133 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', 'Could not pre-count tests, will determine from output\n')
     }
 
-    const testCmd = `npx playwright test${testArgs}`
+    const testCmd = `export ENABLE_MONOCART_REPORTER=true && npx playwright test${testArgs}`
+
+    // Clear freeze-specs file and stale test result files before run.
+    // Stale junit.xml / test-status.json from a previous run (possibly weeks old
+    // if the container is reused) would otherwise be collected as CI artifacts
+    // and reported as failures even when the current run passes.
+    try {
+      execSync(
+        `docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt /app/test-results/junit.xml /app/test-results/test-status.json"`,
+        { encoding: 'utf8', timeout: 5000 }
+      )
+    } catch {}
 
     setTestState('playwright', { message: 'Running Playwright tests...' })
     appendTestLogs('playwright', `Running: ${testCmd}\n`)
 
-    // Run tests - NODE_PATH needed so require('@playwright/test') finds global install
-    const testProcess = spawn('sh', ['-c', `
-      docker exec ${pfx}-playwright sh -c "cd /app && export NODE_PATH=/usr/lib/node_modules && ${testCmd} 2>&1"
-    `], { stdio: 'pipe' })
+    const initialCode = await spawnPlaywrightProcess(testCmd, pfx)
 
-    testProcess.stdout.on('data', (data) => {
-      const text = data.toString()
-      appendTestLogs('playwright', text)
-      parsePlaywrightOutput(text)
+    // Preserve main-run coverage before any freeze retry can overwrite it.
+    // The retry only runs a subset of specs, so its coverage file has lower
+    // totals than the full run — restoring the main copy keeps Coveralls accurate.
+    const mainCoveragePath = '/app/monocart-report/coverage/lcov.info'
+    const backupCoveragePath = '/app/monocart-report/coverage/lcov.info.main'
+    try {
+      execSync(
+        `docker exec ${pfx}-playwright sh -c "test -f ${mainCoveragePath} && cp ${mainCoveragePath} ${backupCoveragePath} || true"`,
+        { encoding: 'utf8', timeout: 5000 }
+      )
+    } catch {}
+
+    // Check whether any specs were recorded as frozen and re-run them in a
+    // fresh Playwright process (fresh V8 state, no accumulated async contexts).
+    // Up to 2 retry rounds: the first retry can itself encounter a freeze, so a
+    // second round handles that without giving up on a run that is otherwise clean.
+    let finalCode = initialCode
+
+    // Capture main-run progress before any retry overwrites the counters.
+    const stateAfterMain = getTestState('playwright')
+    const mainRunPassed = stateAfterMain.progress.passed
+    const mainRunFailed = stateAfterMain.progress.failed
+    const mainRunTotal  = stateAfterMain.progress.total
+
+    for (let freezeRound = 0; freezeRound < 2; freezeRound++) {
+      try {
+        const freezeOutput = execSync(
+          `docker exec ${pfx}-playwright sh -c "cat /tmp/playwright-freeze-specs.txt 2>/dev/null || true"`,
+          { encoding: 'utf8', timeout: 5000 }
+        ).trim()
+        const freezeSpecs = [...new Set(
+          freezeOutput.split('\n').filter((s) => s.trim())
+        )]
+
+        if (freezeSpecs.length === 0) break  // no frozen specs — done
+
+        // Determine which spec files have failures in the cumulative logs so far.
+        // If any failing spec is NOT in the frozen list it is a genuine failure
+        // that the retry cannot fix — leave finalCode non-zero and bail out.
+        const currentLogs = getTestState('playwright').logs || ''
+        const failedSpecBasenames = new Set<string>()
+        const failedLines = currentLogs.match(/[✘✗×]\s+\d+\s+\[chromium\][^\n]*/g) || []
+        for (const line of failedLines) {
+          const m = line.match(/›\s+(tests\/e2e\/[^:\s]+\.spec\.js)/)
+          if (m) failedSpecBasenames.add(path.basename(m[1]))
+        }
+        const frozenBasenames = new Set(freezeSpecs.map((f) => path.basename(f)))
+        const unaccountedFailures = [...failedSpecBasenames].filter((f) => !frozenBasenames.has(f))
+        if (unaccountedFailures.length > 0) {
+          appendTestLogs('playwright', `[FREEZE-RETRY round ${freezeRound + 1}] Non-frozen failures present (${unaccountedFailures.join(', ')}) — not retrying\n`)
+          break
+        }
+
+        // Use full paths for Playwright to find the specs. freezeSpecs already contains
+        // full paths like /app/tests/e2e/foo.spec.js; strip /app prefix for Docker context
+        const retryFiles = freezeSpecs.map((f) => f.replace(/^\/app\//, '')).join(' ')
+        appendTestLogs('playwright', `\n[FREEZE-RETRY round ${freezeRound + 1}] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process: ${retryFiles}\n`)
+
+        // Clear freeze file before retry so the next round picks up only NEW freezes.
+        try {
+          execSync(`docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt"`, { encoding: 'utf8', timeout: 5000 })
+        } catch {}
+
+        // Run retry without monocart so the main-run coverage (full suite) is not
+        // overwritten by partial coverage from just the re-run frozen specs.
+        const retryCode = await spawnPlaywrightProcess(`export ENABLE_MONOCART_REPORTER=false && npx playwright test ${retryFiles}`, pfx)
+
+        // Restore full-suite coverage — the retry covered fewer tests than the main run.
+        try {
+          execSync(
+            `docker exec ${pfx}-playwright sh -c "test -f ${backupCoveragePath} && cp ${backupCoveragePath} ${mainCoveragePath} || true"`,
+            { encoding: 'utf8', timeout: 5000 }
+          )
+        } catch {}
+
+        if (retryCode === 0) {
+          // All frozen specs passed in the fresh process — overall run is a success.
+          finalCode = 0
+          const totalTests = mainRunTotal || (mainRunPassed + mainRunFailed)
+          setTestState('playwright', {
+            progress: {
+              ...stateAfterMain.progress,
+              passed: totalTests,
+              failed: 0,
+              completed: totalTests,
+            },
+          })
+          appendTestLogs('playwright', `[FREEZE-RETRY round ${freezeRound + 1}] All frozen failures resolved — marking run as passed (${totalTests}✓)\n`)
+          break
+        }
+        // retryCode !== 0: retry itself had issues (possibly more freezes) — loop again
+        finalCode = retryCode
+      } catch (freezeErr: any) {
+        appendTestLogs('playwright', `[FREEZE-RETRY round ${freezeRound + 1}] Could not check freeze file: ${freezeErr.message}\n`)
+        break
+      }
+    }
+
+    const state = getTestState('playwright')
+    const p = state.progress
+    setTestState('playwright', {
+      status: finalCode === 0 ? 'completed' : 'failed',
+      success: finalCode === 0,
+      endTime: Date.now(),
+      message: finalCode === 0
+        ? `All tests passed (${p.passed}✓)`
+        : `Tests failed (${p.passed}✓ ${p.failed}✗)`,
     })
-
-    testProcess.stderr.on('data', (data) => {
-      appendTestLogs('playwright', data.toString())
-    })
-
-    testProcess.on('close', (code) => {
-      const state = getTestState('playwright')
-      const p = state.progress
-
-      setTestState('playwright', {
-        status: code === 0 ? 'completed' : 'failed',
-        success: code === 0,
-        endTime: Date.now(),
-        message: code === 0
-          ? `All tests passed (${p.passed}✓)`
-          : `Tests failed (${p.passed}✓ ${p.failed}✗)`,
-      })
-      console.log(`Playwright tests completed with code ${code}`)
-    })
-
-    testProcess.on('error', (error) => {
-      setTestState('playwright', {
-        status: 'failed',
-        message: `Error: ${error.message}`,
-        endTime: Date.now(),
-      })
-    })
+    console.log(`Playwright tests completed with code ${finalCode}`)
   } catch (error: any) {
     setTestState('playwright', {
       status: 'failed',
@@ -217,6 +316,33 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     })
     throw error
   }
+}
+
+function spawnPlaywrightProcess(cmd: string, pfx: string): Promise<number> {
+  return new Promise((resolve) => {
+    const proc = spawn('sh', ['-c', `
+      docker exec ${pfx}-playwright sh -c "cd /app && export NODE_PATH=/usr/lib/node_modules && ${cmd} 2>&1"
+    `], { stdio: 'pipe' })
+
+    proc.stdout.on('data', (data) => {
+      const text = data.toString()
+      appendTestLogs('playwright', text)
+      parsePlaywrightOutput(text)
+    })
+
+    proc.stderr.on('data', (data) => {
+      appendTestLogs('playwright', data.toString())
+    })
+
+    proc.on('close', (code) => {
+      resolve(code ?? 1)
+    })
+
+    proc.on('error', (error) => {
+      appendTestLogs('playwright', `Spawn error: ${error.message}\n`)
+      resolve(1)
+    })
+  })
 }
 
 function parsePlaywrightOutput(text: string) {

@@ -1,6 +1,6 @@
 <template>
   <span v-if="log && log.msgid">
-    <span v-if="message">
+    <span v-if="message || log.msgsubject">
       <a
         :href="'https://www.ilovefreegle.org/message/' + log.msgid"
         target="_blank"
@@ -63,12 +63,14 @@ const message = computed(() => {
 })
 
 const messagesubject = computed(() => {
-  if (message.value) {
-    return message.value.subject
-      ? message.value.subject
-      : '(Blank subject line)'
-  } else {
-    return '(Message now deleted)'
+  // Prefer historical subject from API (msgsubject preserves the subject as it was at
+  // log time, not the current post-edit value — fixes retrospective rename bug).
+  if (log.value?.msgsubject) {
+    return log.value.msgsubject
   }
+  if (message.value?.subject) {
+    return message.value.subject
+  }
+  return message.value ? '(Blank subject line)' : '(Message now deleted)'
 })
 </script>

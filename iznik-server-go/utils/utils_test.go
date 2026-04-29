@@ -3,6 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -93,6 +94,39 @@ func TestFlexInt_NegativeStringJSON(t *testing.T) {
 	var s S
 	assert.NoError(t, json.Unmarshal([]byte(`{"V":"-123"}`), &s))
 	assert.Equal(t, FlexInt(-123), s.V)
+}
+
+// Vue's OurToggle emits a boolean on @change; the settings UI then PATCHes
+// fields like relevantallowed/newslettersallowed as JSON booleans. PHP V1
+// coerced these naturally; V2 must accept them too or the toggle 400s.
+func TestFlexInt_BooleanTrueJSON(t *testing.T) {
+	type S struct{ V FlexInt }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":true}`), &s))
+	assert.Equal(t, FlexInt(1), s.V)
+}
+
+func TestFlexInt_BooleanFalseJSON(t *testing.T) {
+	type S struct{ V FlexInt }
+	var s S
+	s.V = 1
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":false}`), &s))
+	assert.Equal(t, FlexInt(0), s.V)
+}
+
+func TestFlexUint64_BooleanTrueJSON(t *testing.T) {
+	type S struct{ V FlexUint64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":true}`), &s))
+	assert.Equal(t, FlexUint64(1), s.V)
+}
+
+func TestFlexUint64_BooleanFalseJSON(t *testing.T) {
+	type S struct{ V FlexUint64 }
+	var s S
+	s.V = 1
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":false}`), &s))
+	assert.Equal(t, FlexUint64(0), s.V)
 }
 
 // ---------------------------------------------------------------------------
@@ -419,4 +453,367 @@ func TestTidyName_FBUserAtEnd(t *testing.T) {
 func TestTidyName_FBUserAtStart(t *testing.T) {
 	// "FBUser" at start still triggers empty -> "A freegler".
 	assert.Equal(t, "A freegler", TidyName("FBUser"))
+}
+
+// ---------------------------------------------------------------------------
+// Additional Comprehensive Tests: FlexUint64
+// ---------------------------------------------------------------------------
+
+func TestFlexUint64_LargeNumber(t *testing.T) {
+	type S struct{ V FlexUint64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":18446744073709551615}`), &s))
+	assert.Equal(t, FlexUint64(18446744073709551615), s.V)
+}
+
+func TestFlexUint64_StringMaxUint64(t *testing.T) {
+	type S struct{ V FlexUint64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":"18446744073709551615"}`), &s))
+	assert.Equal(t, FlexUint64(18446744073709551615), s.V)
+}
+
+func TestFlexUint64_LeadingZeros(t *testing.T) {
+	type S struct{ V FlexUint64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":"00042"}`), &s))
+	assert.Equal(t, FlexUint64(42), s.V)
+}
+
+func TestFlexUint64_NegativeStringError(t *testing.T) {
+	type S struct{ V FlexUint64 }
+	var s S
+	assert.Error(t, json.Unmarshal([]byte(`{"V":"-123"}`), &s))
+}
+
+func TestFlexUint64_TrueBoolean(t *testing.T) {
+	type S struct{ V FlexUint64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":true}`), &s))
+	assert.Equal(t, FlexUint64(1), s.V)
+}
+
+// ---------------------------------------------------------------------------
+// Additional Comprehensive Tests: FlexInt
+// ---------------------------------------------------------------------------
+
+func TestFlexInt_MaxInt(t *testing.T) {
+	type S struct{ V FlexInt }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":2147483647}`), &s))
+	assert.Equal(t, FlexInt(2147483647), s.V)
+}
+
+func TestFlexInt_MinInt(t *testing.T) {
+	type S struct{ V FlexInt }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":-2147483648}`), &s))
+	assert.Equal(t, FlexInt(-2147483648), s.V)
+}
+
+func TestFlexInt_ZeroString(t *testing.T) {
+	type S struct{ V FlexInt }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":"0"}`), &s))
+	assert.Equal(t, FlexInt(0), s.V)
+}
+
+func TestFlexInt_PositiveString(t *testing.T) {
+	type S struct{ V FlexInt }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":"999"}`), &s))
+	assert.Equal(t, FlexInt(999), s.V)
+}
+
+func TestFlexInt_LeadingZeroString(t *testing.T) {
+	type S struct{ V FlexInt }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":"0007"}`), &s))
+	assert.Equal(t, FlexInt(7), s.V)
+}
+
+// ---------------------------------------------------------------------------
+// Additional Comprehensive Tests: FlexFloat64
+// ---------------------------------------------------------------------------
+
+func TestFlexFloat64_Zero(t *testing.T) {
+	type S struct{ V FlexFloat64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":0}`), &s))
+	assert.Equal(t, FlexFloat64(0), s.V)
+}
+
+func TestFlexFloat64_NegativeNumber(t *testing.T) {
+	type S struct{ V FlexFloat64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":-3.14159}`), &s))
+	assert.InDelta(t, -3.14159, float64(s.V), 1e-9)
+}
+
+func TestFlexFloat64_VerySmallNumber(t *testing.T) {
+	type S struct{ V FlexFloat64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":0.0000001}`), &s))
+	assert.InDelta(t, 0.0000001, float64(s.V), 1e-9)
+}
+
+func TestFlexFloat64_VeryLargeNumber(t *testing.T) {
+	type S struct{ V FlexFloat64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":123456789.123}`), &s))
+	assert.InDelta(t, 123456789.123, float64(s.V), 0.001)
+}
+
+func TestFlexFloat64_ScientificNotation(t *testing.T) {
+	type S struct{ V FlexFloat64 }
+	var s S
+	assert.NoError(t, json.Unmarshal([]byte(`{"V":"1.23e-4"}`), &s))
+	assert.InDelta(t, 0.000123, float64(s.V), 1e-9)
+}
+
+// ---------------------------------------------------------------------------
+// Additional Comprehensive Tests: RandomHex
+// ---------------------------------------------------------------------------
+
+func TestRandomHex_ZeroBytesValid(t *testing.T) {
+	result := RandomHex(0)
+	assert.Equal(t, "", result)
+}
+
+func TestRandomHex_LargeSize(t *testing.T) {
+	result := RandomHex(1024)
+	assert.Equal(t, 2048, len(result))
+	for _, ch := range result {
+		assert.Contains(t, "0123456789abcdef", string(ch))
+	}
+}
+
+func TestRandomHex_Consistency(t *testing.T) {
+	// Multiple calls with same size should produce different results
+	results := make(map[string]bool)
+	for i := 0; i < 10; i++ {
+		hex := RandomHex(16)
+		assert.False(t, results[hex], "Duplicate RandomHex result")
+		results[hex] = true
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Additional Comprehensive Tests: RandomUint64
+// ---------------------------------------------------------------------------
+
+func TestRandomUint64_DistributionRange(t *testing.T) {
+	// Collect statistics on value distribution
+	maxSafe := uint64(1 << 53)
+	count := 0
+	for i := 0; i < 1000; i++ {
+		v := RandomUint64()
+		assert.Less(t, v, maxSafe)
+		assert.Greater(t, v, uint64(0))
+		count++
+	}
+	assert.Equal(t, 1000, count)
+}
+
+// ---------------------------------------------------------------------------
+// Additional Comprehensive Tests: Blur
+// ---------------------------------------------------------------------------
+
+func TestBlur_EdgeLatitude(t *testing.T) {
+	// Test with boundary latitude values
+	lat, _ := Blur(90, 0, 400)
+	assert.Greater(t, lat, 0.0)
+	assert.Less(t, lat, 91.0)
+}
+
+func TestBlur_NegativeLatitude(t *testing.T) {
+	lat, _ := Blur(-45.5, 120.5, 400)
+	assert.Less(t, lat, 0.0)
+	assert.InDelta(t, -45.5, lat, 0.1)
+}
+
+func TestBlur_EdgitudeLongitude(t *testing.T) {
+	_, lng := Blur(0, 180, 400)
+	assert.GreaterOrEqual(t, lng, -180.0)
+	assert.LessOrEqual(t, lng, 180.0)
+}
+
+func TestBlur_NegativeLongitude(t *testing.T) {
+	_, lng := Blur(0, -180, 400)
+	assert.GreaterOrEqual(t, lng, -180.0)
+	assert.LessOrEqual(t, lng, 180.0)
+}
+
+func TestBlur_LargeDistance(t *testing.T) {
+	lat, lng := Blur(51.5, -0.1, 50000)
+	// Blurring by 50km should still produce valid coordinates
+	assert.GreaterOrEqual(t, lat, -90.0)
+	assert.LessOrEqual(t, lat, 90.0)
+	assert.GreaterOrEqual(t, lng, -180.0)
+	assert.LessOrEqual(t, lng, 180.0)
+}
+
+// ---------------------------------------------------------------------------
+// Additional Comprehensive Tests: Haversine
+// ---------------------------------------------------------------------------
+
+func TestHaversine_LargeDistance(t *testing.T) {
+	// London (51.5, -0.1) to Sydney (-33.87, 151.21) is ~10,500 miles
+	d := Haversine(51.5, -0.1, -33.87, 151.21)
+	assert.Greater(t, d, 10000.0)
+	assert.Less(t, d, 11000.0)
+}
+
+func TestHaversine_Antipodal(t *testing.T) {
+	// Haversine from North to South pole should be ~12,430 miles
+	d := Haversine(90, 0, -90, 0)
+	assert.Greater(t, d, 12000.0)
+	assert.Less(t, d, 13000.0)
+}
+
+func TestHaversine_Symmetric(t *testing.T) {
+	// Distance from A to B should equal distance from B to A
+	d1 := Haversine(51.5, -0.1, 53.48, -2.24)
+	d2 := Haversine(53.48, -2.24, 51.5, -0.1)
+	assert.InDelta(t, d1, d2, 1e-6)
+}
+
+func TestHaversine_SmallDistance(t *testing.T) {
+	// Two nearby points should have small distance
+	d := Haversine(51.5, -0.1, 51.5001, -0.1001)
+	assert.Greater(t, d, 0.0)
+	assert.Less(t, d, 0.1)
+}
+
+// ---------------------------------------------------------------------------
+// Additional Comprehensive Tests: CountryName
+// ---------------------------------------------------------------------------
+
+func TestCountryName_MixedCase(t *testing.T) {
+	name, ok := CountryName("gB")
+	assert.True(t, ok)
+	assert.Equal(t, "United Kingdom", name)
+}
+
+func TestCountryName_VariousCodes(t *testing.T) {
+	testCases := []struct {
+		code     string
+		expected string
+		found    bool
+	}{
+		{"US", "United States", true},
+		{"FR", "France", true},
+		{"DE", "Germany", true},
+		{"JP", "Japan", true},
+		{"ZZ", "", false},
+		{"", "", false},
+	}
+
+	for _, tc := range testCases {
+		name, ok := CountryName(tc.code)
+		assert.Equal(t, tc.found, ok, "for code %s", tc.code)
+		if tc.found {
+			assert.Equal(t, tc.expected, name)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Additional Comprehensive Tests: OurDomain
+// ---------------------------------------------------------------------------
+
+func TestOurDomain_MultipleMatches(t *testing.T) {
+	// Should return 1 even if multiple patterns would match
+	assert.Equal(t, 1, OurDomain("test@users.ilovefreegle.org"))
+}
+
+func TestOurDomain_CaseSensitivity(t *testing.T) {
+	// OurDomain uses strings.Contains which is case-sensitive; uppercase domain does not match.
+	assert.Equal(t, 0, OurDomain("test@USERS.ILOVEFREEGLE.ORG"))
+	assert.Equal(t, 0, OurDomain("test@EXTERNAL.com"))
+}
+
+func TestOurDomain_PartialMatch(t *testing.T) {
+	// Should match substrings
+	assert.Equal(t, 1, OurDomain("prefix_users.ilovefreegle.org_suffix"))
+}
+
+func TestOurDomain_EmptyEmail(t *testing.T) {
+	assert.Equal(t, 0, OurDomain(""))
+}
+
+// ---------------------------------------------------------------------------
+// Additional Comprehensive Tests: TidyName
+// ---------------------------------------------------------------------------
+
+func TestTidyName_MultipleSpaces(t *testing.T) {
+	assert.Equal(t, "John", TidyName("   John   "))
+}
+
+func TestTidyName_TabsAndNewlines(t *testing.T) {
+	assert.Equal(t, "Jane", TidyName("\t\nJane\n\t"))
+}
+
+func TestTidyName_OnlyWhitespace(t *testing.T) {
+	assert.Equal(t, "A freegler", TidyName("   "))
+}
+
+func TestTidyName_EmailDomainOnly(t *testing.T) {
+	assert.Equal(t, "A freegler", TidyName("@example.com"))
+}
+
+func TestTidyName_MultipleAtSigns(t *testing.T) {
+	// Should stop at first @ sign
+	assert.Equal(t, "user", TidyName("user@first.com@second.com"))
+}
+
+func TestTidyName_SpecialCharacters(t *testing.T) {
+	assert.Equal(t, "John-Smith", TidyName("John-Smith"))
+}
+
+func TestTidyName_UnicodeCharacters(t *testing.T) {
+	result := TidyName("Jörn")
+	assert.NotEmpty(t, result)
+}
+
+func TestTidyName_VeryLongNameTruncatedCorrectly(t *testing.T) {
+	// 100-character name should be truncated to 32 + "..."
+	longName := strings.Repeat("a", 100)
+	result := TidyName(longName)
+	assert.Equal(t, strings.Repeat("a", 32)+"...", result)
+}
+
+func TestTidyName_NegativeNumbers(t *testing.T) {
+	// Negative number as name should get full stop
+	assert.Equal(t, "-123.", TidyName("-123"))
+}
+
+func TestTidyName_AllNumbers(t *testing.T) {
+	assert.Equal(t, "0.", TidyName("0"))
+	assert.Equal(t, "12345.", TidyName("12345"))
+}
+
+func TestTidyName_TNSuffixMultiple(t *testing.T) {
+	// Multiple TN suffixes should all be stripped
+	assert.Equal(t, "Name", TidyName("Name-g123-g456"))
+}
+
+func TestTidyName_ComplexChain(t *testing.T) {
+	// Email with TN suffix and long name.
+	// Strip email suffix → "verylongnamethatexceedsthirtytwocharacters-g123" (47 chars)
+	// Truncation (len>32) fires BEFORE TN strip → first 32 chars + "..."
+	// TN regex won't match "-g123" inside "..."-terminated string, so result stays truncated.
+	result := TidyName("verylongnamethatexceedsthirtytwocharacters-g123@test.com")
+	assert.Equal(t, "verylongnamethatexceedsthirtytwo"+"...", result)
+}
+
+func TestTidyName_FBUserCaseSensitivity(t *testing.T) {
+	// The code does `strings.Contains` which is case-sensitive
+	assert.NotEqual(t, "A freegler", TidyName("fbuser"))
+	assert.NotEqual(t, "A freegler", TidyName("FBUSER"))
+}
+
+func TestTidyName_NumericAfterTrim(t *testing.T) {
+	// Name that becomes numeric after trimming spaces
+	assert.Equal(t, "123.", TidyName("  123  "))
 }

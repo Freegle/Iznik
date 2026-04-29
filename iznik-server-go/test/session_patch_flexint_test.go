@@ -112,6 +112,49 @@ func TestPatchSessionRelevantallowedStringZero(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// relevantallowed — FlexInt (boolean — Vue OurToggle emits true/false)
+// ---------------------------------------------------------------------------
+
+// EmailSettingsSection.vue's "Suggested posts for you" toggle uses OurToggle,
+// which emits a JS boolean on @change. saveAndGet then PATCHes
+// {relevantallowed: true|false}. PHP V1 coerced naturally; V2 must too.
+func TestPatchSessionRelevantallowedBoolTrue(t *testing.T) {
+	prefix := uniquePrefix("sess_relbtrue")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("UPDATE users SET relevantallowed = 0 WHERE id = ?", userID)
+
+	result := patchSession(t, token, map[string]interface{}{
+		"relevantallowed": true,
+	})
+	assert.Equal(t, float64(0), result["ret"])
+
+	var val int
+	db.Raw("SELECT relevantallowed FROM users WHERE id = ?", userID).Scan(&val)
+	assert.Equal(t, 1, val, "JSON boolean true must be accepted as FlexInt 1")
+}
+
+func TestPatchSessionRelevantallowedBoolFalse(t *testing.T) {
+	prefix := uniquePrefix("sess_relbfalse")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("UPDATE users SET relevantallowed = 1 WHERE id = ?", userID)
+
+	result := patchSession(t, token, map[string]interface{}{
+		"relevantallowed": false,
+	})
+	assert.Equal(t, float64(0), result["ret"])
+
+	var val int
+	db.Raw("SELECT relevantallowed FROM users WHERE id = ?", userID).Scan(&val)
+	assert.Equal(t, 0, val, "JSON boolean false must be accepted as FlexInt 0")
+}
+
+// ---------------------------------------------------------------------------
 // newslettersallowed — FlexInt (number)
 // ---------------------------------------------------------------------------
 

@@ -85,22 +85,79 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Active plan**: none currently active.
 
+### 2026-04-29 - Deploy version detection via git checkout (commit e529596c8)
+
+**Goal**: Monitor-FSM needs to verify fixes are actually deployed before auto-queueing Discourse reply drafts — not just merged to the production branch.
+
+**Implementation**: Two-layer approach:
+1. **Go API** (`status/status.go`): Added `readGitHead()` — reads `.git/HEAD` directly (handles both detached HEAD and symbolic refs). `init()` now falls back to this when BUILD_INFO is "unknown" (git-checkout deployments don't set BUILD_INFO). `/api/version` now returns `laravel_commit` from the DB config table.
+2. **Laravel batch** (`Deploy/RefreshCommand.php`): Added `readGitHead()` method and DB upsert in `updateDeployedVersion()`. On each deploy:refresh run, the current HEAD SHA is written to `config` table as `deploy.laravel_commit`.
+3. **Monitor-FSM** (`actions/index.ts`): `checkPrDeployed()` uses GitHub compare API (`behind_by == 0`) for production branch ancestry (backend), and Netlify public API (`published_deploy.commit_ref`) for actual live frontend build. `queue_deployed_reply_drafts` is a LOAD_STATE action that auto-queues Discourse drafts only when both signals confirm deployment.
+
+**Tests**: All 1687 Laravel tests pass, all 2196 Go tests pass. New tests: `test_deploy_refresh_records_laravel_commit_to_db`, `test_read_git_head_*`, `TestGetVersion` (added `laravel_commit` assertion).
+
+**Status**: Committed. Next: push to CI.
+
+### 2026-04-28 - Freeze-detection heartbeat + fresh-process retry (commit 82c491e02)
+
+**Problem**: Chrome flags push the V8 async-context freeze threshold from ~73 to ~130+ tests but can't eliminate accumulation entirely. With `retries: 1`, frozen tests were silently retried in the same environment — useless and masks real bugs.
+
+**Solution**: `retries: 0` + 5s/3s heartbeat in `fixtures.js` + fresh-process retry in `playwright.post.ts`:
+- Heartbeat: `setInterval` doing `page.evaluate(() => 1)` with 3s timeout. On freeze: closes page (fast abort) + appends spec file to `/tmp/playwright-freeze-specs.txt`
+- `playwright.post.ts` reads that file after run completion and re-spawns only frozen specs via a second `npx playwright test <specs>` call in a fully fresh Playwright/V8 process
+- Non-freeze failures are NOT retried — test quality improvement
+- `playwright.config.js` is now synced from host-mounted volume on every pre-run container restart (was baked in at build time only)
+
+**Status**: CONFIRMED 130/130 clean, freeze file empty after run. Three follow-up fixes applied:
+- `c590b4913` — heartbeat only triggers on our 3s sentinel, not navigation errors ("context destroyed")
+- `cb56ceffe` — set `heartbeatFreezeDetected = true` in finally BEFORE clearInterval to disarm in-flight callbacks
+- Status container rebuilt to pick up compiled `playwright.post.ts` changes
+
+### 2026-04-28 - feature/ai-image-regen: moderator force-reject + challenge filter (commit c656e0740)
+
+**Status**: Feature complete, all Go tests pass (2155✓). Vitest tests updated but can't run (no frontend container in worktree — will run on CI).
+
+**New feature**: When a moderator removes an AI image in ModTools, a popup asks:
+- "Not relevant to this post" → normal deletion vote (RecordAIAttachmentDeletion)
+- "Bad AI for any post of this item" → ForceRejectAIImage (bypasses quorum, immediate rejection)
+
+**Bug fixed**: `getAIImageReviewChallenge` was serving rejected images as challenges — added `AND ai.status = 'active'` filter.
+
+**Files changed**: `microvolunteering.go`, `message.go`, `ModPhoto.vue`, `ModPhotoModal.vue`, `ModPhotoModal.spec.js`, plus 2 new Go test files.
+
+**PR**: https://github.com/Freegle/Iznik/pull/286 — updated, pushed (a92dbc0a5), CI running
+
+**Previous work** (all Go tests green from strict-mode fixes): Committed as `683911368`.
+
 ### 2026-04-28 - AsyncCallStackDepth fix: merged to master, monitoring PR queue
 
-**Fix**: `--disable-features=AsyncCallStackDepth` in `playwright.config.js` Chromium launch args. Merged via `fix/modmail-log-test-9518` → master.
+**Fix confirmed**: `--disable-features=AsyncCallStackDepth` (playwright.config.js). Multiple 38/38 clean runs observed.
 
-**Confirmed runs so far**: master 38/38 ✅, PR 77 (or PR 149) 38/38 ✅ (queue order: 77 → 149 → master → 280)
+**Reverted to native Playwright multi-worker mode** (commit `26b9f1e81`, orb 1.1.224):
+- `run-specs.sh` per-spec isolation was the workaround — no longer needed
+- Orb: PW_WORKERS 4 (cloud), 11 (self-hosted runner)
+- `playwright.post.ts`: always uses `npx playwright test` directly
+- PRs 280, 149, 77 all have master merged in; CI triggered on all three
 
-**PR queue status** (as of ~14:30):
-- PRs 278, 279, 281, 282, 284 — merged
-- PR 280 — previous failure was V8 freeze BEFORE fix; CI now queued with fix
-- PR 149 — CI queued on runner
-- PR 77 — CI likely just passed (queue ran: 38/38)
-- 2 more jobs running in queue
+**If CI passes**: all 3 PRs will be mergeable. Also fixes monocart coverage collection (was broken in parallel mode).
 
-**If AsyncCallStackDepth fix sticks** (need several more clean CI runs): revisit dropping `run-specs.sh` and returning to native Playwright multi-worker mode — would also fix monocart coverage in parallel mode (see memory).
+### 2026-04-28 - V8 PromiseHookAfter freeze: root cause confirmed
 
-**Safety net** (still in place): `run-specs.sh` with 900s SPEC_TIMEOUT + spec-level retry, orb 1.1.223 with `${VAR:-0}` guards.
+**Root cause confirmed** (CPU profile captured, 8.5MB, 106,933 samples):
+- 66.8% `(idle)` + 14.4% `(program)` — renderer spinning in V8 C++, invisible to JS profiler
+- V8 maintains a linked list of async contexts (CDP async call stack tracking). Each Promise resolution traverses the whole list via `Runtime_PromiseHookAfter`. After 73+ tests with thousands of API calls (each `useFetchRetry.js:103` `new Promise()` creates 6+ entries), the list is so large that a burst of concurrent store fetches on navigation saturates the renderer thread
+- It is NOT a Vue reactive loop — Vue component update counts (1600-4000 for InfiniteLoading) are normal data loading, not a storm
+
+**Fix**: `--disable-features=AsyncCallStackDepth` (already in `playwright.config.js`). Disables the CDP async context tracking that causes the list to grow.
+
+**Side fix** (commit `39cb20fea`): InfiniteLoading `fallback()` loop now stops at `'complete'` state instead of running indefinitely, reducing unnecessary Promise creation. Timer restarts when `identifier` watch resets the component.
+
+**Instrumentation used** (all removed from working tree after investigation):
+- CDP CPU profiler + heartbeat freeze detector (saved `/tmp/freeze-profile-*.json`)
+- Vue DevTools `component:updated` hook (requires `__VUE_PROD_DEVTOOLS__: true` in vite.define)
+- VUE-PERF console forwarder
+
+**Without the fix** (local run without AsyncCallStackDepth): 128/130 pass, 2 needed retry due to freeze. 4 freeze events captured at tests 73, ~100, ~115, ~125.
 
 ### 2026-04-28 - Diagnose renderer freeze on test 3.2
 

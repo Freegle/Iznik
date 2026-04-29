@@ -257,7 +257,7 @@ class NetlifyCertService
     /**
      * Build the notification email body.
      */
-    protected function buildNotificationBody(bool $success, string $message, ?array $verification = null): string
+    public function buildNotificationBody(bool $success, string $message, ?array $verification = null): string
     {
         $timestamp = now()->toDateTimeString();
 

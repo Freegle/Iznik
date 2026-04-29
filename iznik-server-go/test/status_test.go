@@ -47,6 +47,7 @@ func TestGetVersion(t *testing.T) {
 	json2.Unmarshal(rsp(resp), &result)
 	assert.Contains(t, result, "build")
 	assert.Contains(t, result, "commit")
+	assert.Contains(t, result, "laravel_commit")
 }
 
 func TestGetStatusV2Path(t *testing.T) {

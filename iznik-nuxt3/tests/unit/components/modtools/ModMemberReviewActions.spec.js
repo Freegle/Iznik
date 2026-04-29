@@ -59,7 +59,9 @@ describe('ModMemberReviewActions', () => {
     namedisplay: 'Test Group',
     added: dayjs().subtract(10, 'day').toISOString(),
     reviewreason: null,
-    reviewrequestedat: null,
+    // reviewrequestedat must be set for needsReview to be true (Discourse #9618 fix).
+    // Use a value 1 day ago so buttons render in all default-scenario tests.
+    reviewrequestedat: dayjs().subtract(1, 'day').toISOString(),
     reviewedat: null,
     heldby: null,
   })
@@ -281,8 +283,11 @@ describe('ModMemberReviewActions', () => {
   })
 
   describe('needsReview computed', () => {
-    it('returns true when reviewedat is null', () => {
-      const wrapper = mountComponent({ reviewedat: null })
+    it('returns true when reviewrequestedat is set and reviewedat is null', () => {
+      const wrapper = mountComponent({
+        reviewrequestedat: dayjs().subtract(1, 'day').toISOString(),
+        reviewedat: null,
+      })
       expect(wrapper.vm.needsReview).toBe(true)
     })
 
@@ -305,6 +310,40 @@ describe('ModMemberReviewActions', () => {
     it('returns false when manually reviewed', () => {
       const wrapper = mountComponent()
       wrapper.vm.reviewed = true
+      expect(wrapper.vm.needsReview).toBe(false)
+    })
+
+    it('returns false when reviewrequestedat is null even if reviewedat is null', () => {
+      // Discourse #9618: without reviewrequestedat, new Date(null).getTime() === 0
+      // which is less than any real reviewedat timestamp, causing needsReview to
+      // return false and hiding action buttons for members in the review queue.
+      const wrapper = mountComponent({
+        reviewrequestedat: null,
+        reviewedat: null,
+      })
+      expect(wrapper.vm.needsReview).toBe(false)
+    })
+
+    it('hides all action buttons when reviewrequestedat is null (Discourse #9618)', () => {
+      // A member whose reviewrequestedat is not set is not in the review queue.
+      // Before the fix, new Date(null).getTime() === 0 could accidentally equal or
+      // exceed reviewedat, showing buttons for non-queued memberships.
+      const wrapper = mountComponent({
+        reviewrequestedat: null,
+        reviewedat: null,
+      })
+      expect(wrapper.find('.spin-button').exists()).toBe(false)
+    })
+
+    it('returns false when reviewrequestedat is null but reviewedat is set', () => {
+      // This is the exact scenario from Discourse #9618: if the API somehow returns
+      // reviewrequestedat=null with reviewedat set, new Date(null).getTime()===0
+      // which is less than the reviewedat timestamp, so the old code returned false.
+      // The new code short-circuits on !rra before the date comparison.
+      const wrapper = mountComponent({
+        reviewrequestedat: null,
+        reviewedat: dayjs().subtract(1, 'day').toISOString(),
+      })
       expect(wrapper.vm.needsReview).toBe(false)
     })
   })
