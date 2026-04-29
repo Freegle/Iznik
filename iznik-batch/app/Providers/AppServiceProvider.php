@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Console\FlockEventMutex;
+use App\Database\DeadlockRetryConnection;
 use App\Listeners\CronJobStatusListener;
 use App\Listeners\SpamCheckListener;
 use App\Services\LokiService;
@@ -23,6 +24,12 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        // Use DeadlockRetryConnection for MySQL — automatically retries
+        // deadlocked statements at autocommit level with exponential backoff.
+        \Illuminate\Database\Connection::resolverFor('mysql', function ($connection, $database, $prefix, $config) {
+            return new DeadlockRetryConnection($connection, $database, $prefix, $config);
+        });
+
         // Register LokiService as a singleton.
         $this->app->singleton(LokiService::class, function ($app) {
             return new LokiService();

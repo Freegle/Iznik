@@ -293,9 +293,19 @@ function focus() {
   form.value.validate()
 }
 
+// Await pending validation. Resolves once the async rule (including the
+// Google DNS domain check) has finished and `update:valid` has been emitted.
+// Callers can use this to avoid a race where a form is submitted before
+// the validator's asynchronous fetch has resolved.
+async function validate() {
+  const result = await form.value.validate()
+  return !!result?.valid
+}
+
 // Expose methods to parent components
 defineExpose({
   focus,
+  validate,
 })
 </script>
 <style scoped>

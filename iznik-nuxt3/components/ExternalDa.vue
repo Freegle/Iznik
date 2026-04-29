@@ -373,8 +373,13 @@ function rippleRendered(rendered) {
   }
 }
 
+// When the ad (or its fallback — Jobs list, donate banner) is rendered we
+// must allow pointer events so the link/ad is clickable. When the slot is
+// still an empty placeholder (adShown=false) we set `none` so clicks pass
+// through to any content behind. The previous mapping was inverted, which
+// blocked clicks on Jobs links and footer ads once an ad resolved.
 const passClicks = computed(() => {
-  return !adShown.value
+  return adShown.value ? 'auto' : 'none'
 })
 
 onBeforeUnmount(() => {

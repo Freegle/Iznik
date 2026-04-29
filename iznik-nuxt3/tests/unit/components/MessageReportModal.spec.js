@@ -25,12 +25,20 @@ const mockChatStore = {
   send: vi.fn().mockResolvedValue({}),
 }
 
+const mockAuthStore = {
+  groups: [{ groupid: 100 }, { groupid: 200 }],
+}
+
 vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
 
 vi.mock('~/stores/chat', () => ({
   useChatStore: () => mockChatStore,
+}))
+
+vi.mock('~/stores/auth', () => ({
+  useAuthStore: () => mockAuthStore,
 }))
 
 vi.mock('~/composables/useOurModal', () => ({
@@ -224,6 +232,47 @@ describe('MessageReportModal', () => {
       })
       const wrapper = createWrapper()
       expect(wrapper.text()).toContain('WANTED')
+    })
+  })
+
+  describe('multi-group report targeting', () => {
+    it('reports to a shared group when message is on multiple groups', () => {
+      // Message on groups 100 and 300. User is on groups 100 and 200.
+      // Should target group 100 (the shared one).
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        groups: [
+          { groupid: 300, arrival: '2024-01-01T00:00:00Z' },
+          { groupid: 100, arrival: '2024-01-02T00:00:00Z' },
+        ],
+      })
+      const wrapper = createWrapper()
+      expect(wrapper.vm.reportGroupId).toBe(100)
+    })
+
+    it('falls back to first group when user shares no groups', () => {
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        groups: [
+          { groupid: 500, arrival: '2024-01-01T00:00:00Z' },
+          { groupid: 600, arrival: '2024-01-02T00:00:00Z' },
+        ],
+      })
+      const wrapper = createWrapper()
+      expect(wrapper.vm.reportGroupId).toBe(500)
+    })
+
+    it('prefers the most recently arrived shared group', () => {
+      // Message on groups 100 and 200. User is on both. 200 has later arrival.
+      mockMessageStore.byId.mockReturnValue({
+        ...mockMessage,
+        groups: [
+          { groupid: 100, arrival: '2024-01-01T00:00:00Z' },
+          { groupid: 200, arrival: '2024-01-02T00:00:00Z' },
+        ],
+      })
+      const wrapper = createWrapper()
+      expect(wrapper.vm.reportGroupId).toBe(200)
     })
   })
 

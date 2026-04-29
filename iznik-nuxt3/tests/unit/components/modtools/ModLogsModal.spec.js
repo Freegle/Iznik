@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { reactive } from 'vue'
 import ModLogsModal from '~/modtools/components/ModLogsModal.vue'
 
 // Mock stores
@@ -7,11 +8,12 @@ const mockUserStore = {
   byId: vi.fn(),
 }
 
-const mockLogsStore = {
+// reactive() so that the logs computed in ModLogsModal re-evaluates when list is mutated during tests
+const mockLogsStore = reactive({
   list: [],
   fetch: vi.fn(),
   clear: vi.fn(),
-}
+})
 
 const mockMemberStore = {
   getByUserId: vi.fn(),
@@ -49,12 +51,14 @@ describe('ModLogsModal', () => {
   const sampleLogs = [
     {
       id: 1,
+      userid: 123,
       type: 'Message',
       subtype: 'Approved',
       timestamp: '2024-01-15T10:00:00Z',
     },
     {
       id: 2,
+      userid: 123,
       type: 'User',
       subtype: 'Login',
       timestamp: '2024-01-15T11:00:00Z',
@@ -317,6 +321,7 @@ describe('ModLogsModal', () => {
         // Simulate adding new logs to the shared array
         mockLogsStore.list.push({
           id: 1,
+          userid: 123,
           type: 'Test',
           subtype: 'Test',
           timestamp: '2024-01-15T10:00:00Z',

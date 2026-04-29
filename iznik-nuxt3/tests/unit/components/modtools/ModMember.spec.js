@@ -701,10 +701,17 @@ describe('ModMember', () => {
       })
     })
 
-    it('changeNotification updates settings', async () => {
+    it('changeNotification sends only notifications field', async () => {
       const wrapper = mountComponent()
       await wrapper.vm.changeNotification({ value: false }, 'email')
-      expect(mockUserStore.edit).toHaveBeenCalled()
+      expect(mockUserStore.edit).toHaveBeenCalledWith({
+        id: 123,
+        settings: { notifications: expect.objectContaining({ email: false }) },
+      })
+      // Must NOT send mod-specific fields like modnotifs/backupmodnotifs.
+      const sentSettings = mockUserStore.edit.mock.calls[0][0].settings
+      expect(sentSettings).not.toHaveProperty('modnotifs')
+      expect(sentSettings).not.toHaveProperty('backupmodnotifs')
     })
 
     it('changeRelevant updates relevantallowed', async () => {
@@ -716,10 +723,13 @@ describe('ModMember', () => {
       })
     })
 
-    it('changeNotifChitchat updates settings', async () => {
+    it('changeNotifChitchat sends only notificationmails field', async () => {
       const wrapper = mountComponent()
       await wrapper.vm.changeNotifChitchat({ value: true })
-      expect(mockUserStore.edit).toHaveBeenCalled()
+      expect(mockUserStore.edit).toHaveBeenCalledWith({
+        id: 123,
+        settings: { notificationmails: true },
+      })
     })
 
     it('changeNewsletter updates newslettersallowed', async () => {
@@ -731,10 +741,13 @@ describe('ModMember', () => {
       })
     })
 
-    it('changeAutorepost updates settings', async () => {
+    it('changeAutorepost sends only autorepostsdisable field', async () => {
       const wrapper = mountComponent()
       await wrapper.vm.changeAutorepost({ value: false })
-      expect(mockUserStore.edit).toHaveBeenCalled()
+      expect(mockUserStore.edit).toHaveBeenCalledWith({
+        id: 456,
+        settings: { autorepostsdisable: true },
+      })
     })
 
     it('confirmUnban shows unban modal', () => {

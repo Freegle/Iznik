@@ -278,7 +278,7 @@ const largeGroupMarkers = computed(() => {
 })
 
 const allGroups = computed(() => {
-  return groupStore?.list
+  return groupStore?.summaryList
 })
 
 const groupsInBounds = computed(() => {

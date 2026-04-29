@@ -45,7 +45,7 @@ type User struct {
 	Donated         *time.Time  `json:"donated" gorm:"-"`
 	DonatedType     *string     `json:"donatedtype" gorm:"-"`
 	Comments        []Comment   `json:"comments,omitempty" gorm:"-"`
-	Spammer         bool        `json:"spammer" gorm:"-"`
+	Spammer         interface{} `json:"spammer" gorm:"-"`
 	Showmod         bool        `json:"showmod" gorm:"-"`
 	Lat             float32     `json:"lat" gorm:"-"` // Exact for logged in user, approx for others.
 	Lng             float32     `json:"lng" gorm:"-"`
@@ -480,13 +480,22 @@ func applySettingsDefaults(user *User) {
 		settings["engagement"] = true
 		changed = true
 	}
-	if _, ok := settings["modnotifs"]; !ok {
-		settings["modnotifs"] = 4
-		changed = true
-	}
-	if _, ok := settings["backupmodnotifs"]; !ok {
-		settings["backupmodnotifs"] = 12
-		changed = true
+
+	// Mod-specific defaults only for users with a moderator+ systemrole.
+	// Injecting these for regular users caused settings contamination when
+	// the frontend echoed the full settings blob back via PATCH.
+	isMod := user.Systemrole == utils.SYSTEMROLE_MODERATOR ||
+		user.Systemrole == utils.SYSTEMROLE_SUPPORT ||
+		user.Systemrole == utils.SYSTEMROLE_ADMIN
+	if isMod {
+		if _, ok := settings["modnotifs"]; !ok {
+			settings["modnotifs"] = 4
+			changed = true
+		}
+		if _, ok := settings["backupmodnotifs"]; !ok {
+			settings["backupmodnotifs"] = 12
+			changed = true
+		}
 	}
 
 	if changed {
@@ -505,6 +514,22 @@ func GetUserById(id uint64, myid uint64) User {
 	var profileRecord UserProfileRecord
 	var expectedReplies []uint64
 
+	isMod := len(GetActiveModGroupIDs(myid)) > 0
+	// V1 getPublicSpammer checks systemrole directly for mod-visibility of spam details,
+	// not group-mod status — keep this separate from isMod used for settings inclusion.
+	isSystemMod := auth.IsSystemMod(myid)
+
+	type spamRow struct {
+		ID         uint64    `gorm:"column:id"`
+		Userid     uint64    `gorm:"column:userid"`
+		Byuserid   *uint64   `gorm:"column:byuserid"`
+		Collection string    `gorm:"column:collection"`
+		Reason     *string   `gorm:"column:reason"`
+		Added      time.Time `gorm:"column:added"`
+	}
+	var spam spamRow
+	var spamFound bool
+
 	var wg sync.WaitGroup
 
 	wg.Add(1)
@@ -514,7 +539,6 @@ func GetUserById(id uint64, myid uint64) User {
 		// Settings are needed for modtools toggles (notificationmails etc.).
 		// Return for self, or for mods viewing other users.
 		var settingsq = ""
-		isMod := len(GetActiveModGroupIDs(myid)) > 0
 
 		if id == myid || isMod {
 			settingsq = "settings, "
@@ -522,10 +546,9 @@ func GetUserById(id uint64, myid uint64) User {
 
 		err := db.Raw("SELECT users.id, firstname, lastname, fullname, lastaccess, users.added, systemrole, relevantallowed, newslettersallowed, marketingconsent, trustlevel, bouncing, deleted, forgotten, source, engagement, "+
 			"chatmodstatus, newsfeedmodstatus, tnuserid, "+settingsq+
-			"(CASE WHEN spam_users.id IS NOT NULL AND spam_users.collection = ? THEN 1 ELSE 0 END) AS spammer, "+
 			"CASE WHEN systemrole IN (?, ?, ?) AND JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END AS showmod "+
-			"FROM users LEFT JOIN spam_users ON spam_users.userid = users.id "+
-			"WHERE users.id = ? ", utils.SPAM_COLLECTION_SPAMMER, utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN, id).First(&user).Error
+			"FROM users "+
+			"WHERE users.id = ? ", utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN, id).First(&user).Error
 
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			if user.Deleted == nil || isMod {
@@ -555,6 +578,18 @@ func GetUserById(id uint64, myid uint64) User {
 				if user.Displayname == "A freegler" {
 					user.Displayname = InventName(db, id)
 				}
+
+				// Rewrite misleading/fraudulent names for non-mods on display
+				// (Discourse #9587). Stored fullname is untouched.
+				isGroupMod := false
+				var modCount int
+				db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?)",
+					id, utils.ROLE_OWNER, utils.ROLE_MODERATOR).Scan(&modCount)
+				if modCount > 0 {
+					isGroupMod = true
+				}
+				isExempt := IsExemptBySystemroleAndMod(user.Systemrole, isGroupMod)
+				user.Displayname = SanitizeDisplayName(user.Displayname, isExempt)
 			} else {
 				// Censor name for deleted user when viewed by non-mod.
 				user.Displayname = "Deleted User #" + strconv.FormatUint(id, 10)
@@ -627,6 +662,17 @@ func GetUserById(id uint64, myid uint64) User {
 		expectedReplies = GetExpectedReplies(id)
 	}()
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		var rows []spamRow
+		db.Raw("SELECT id, userid, byuserid, collection, reason, added FROM spam_users WHERE userid = ? ORDER BY id ASC LIMIT 1", id).Scan(&rows)
+		if len(rows) > 0 {
+			spam = rows[0]
+			spamFound = true
+		}
+	}()
+
 	wg.Wait()
 
 	if user.Deleted == nil && profileRecord.Useprofile {
@@ -643,6 +689,29 @@ func GetUserById(id uint64, myid uint64) User {
 	}
 
 	user.Supporter = supporter.Supporter
+
+	// V1 parity (User::getPublicSpammer): mods see rich spam_users object so ModSpammer.vue
+	// can show "Unconfirmed Spammer" etc. Non-mods see bool TRUE only for confirmed Spammer
+	// collection — PendingAdd must not leak to regular users.
+	if spamFound {
+		if isSystemMod {
+			obj := map[string]interface{}{
+				"id":         spam.ID,
+				"userid":     spam.Userid,
+				"byuserid":   spam.Byuserid,
+				"collection": spam.Collection,
+				"reason":     spam.Reason,
+				"added":      spam.Added,
+			}
+			user.Spammer = obj
+		} else if spam.Collection == utils.SPAM_COLLECTION_SPAMMER {
+			user.Spammer = true
+		} else {
+			user.Spammer = false
+		}
+	} else {
+		user.Spammer = false
+	}
 
 	// Apply V1-parity defaults for settings fields that may be absent from the JSON.
 	applySettingsDefaults(&user)
@@ -1632,17 +1701,18 @@ type UserPutRequest struct {
 
 // UserPatchRequest is the body for PATCH /user (profile update).
 type UserPatchRequest struct {
-	ID                  uint64           `json:"id"`
-	Displayname         *string          `json:"displayname,omitempty"`
-	Settings            *json.RawMessage `json:"settings,omitempty"`
-	Onholidaytill       *string          `json:"onholidaytill,omitempty"`
-	Relevantallowed     *utils.FlexInt   `json:"relevantallowed,omitempty"`
-	Newslettersallowed  *utils.FlexInt   `json:"newslettersallowed,omitempty"`
-	Aboutme             *string          `json:"aboutme,omitempty"`
-	Newsfeedmodstatus   *string          `json:"newsfeedmodstatus,omitempty"`
-	Email               *string          `json:"email,omitempty"`
-	Source              *string          `json:"source,omitempty"`
-	Password            *string          `json:"password,omitempty"`
+	ID                 uint64           `json:"id"`
+	Displayname        *string          `json:"displayname,omitempty"`
+	Settings           *json.RawMessage `json:"settings,omitempty"`
+	Onholidaytill      *string          `json:"onholidaytill,omitempty"`
+	Relevantallowed    *utils.FlexInt   `json:"relevantallowed,omitempty"`
+	Newslettersallowed *utils.FlexInt   `json:"newslettersallowed,omitempty"`
+	Aboutme            *string          `json:"aboutme,omitempty"`
+	Newsfeedmodstatus  *string          `json:"newsfeedmodstatus,omitempty"`
+	Email              *string          `json:"email,omitempty"`
+	Source             *string          `json:"source,omitempty"`
+	Password           *string          `json:"password,omitempty"`
+	Trustlevel         *string          `json:"trustlevel,omitempty"`
 }
 
 // UserDeleteRequest is the body for DELETE /user.
@@ -1774,10 +1844,13 @@ func PutUser(c *fiber.Ctx) error {
 		}
 	}
 
-	// Create a session. Series is a numeric value; token is a random string.
+	// Create a session. Series is a random numeric value (bigint unsigned);
+	// token is a random hex string. Previously passed userID for series,
+	// which collided across every session for the same user.
+	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
 	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-		newUserID, newUserID, token)
+		newUserID, series, token)
 
 	var sessionID uint64
 	db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", newUserID).Scan(&sessionID)
@@ -1800,7 +1873,7 @@ func PutUser(c *fiber.Ctx) error {
 		"id":     newUserID,
 		"persistent": fiber.Map{
 			"id":     sessionID,
-			"series": newUserID,
+			"series": series,
 			"token":  token,
 			"userid": newUserID,
 		},
@@ -1948,7 +2021,9 @@ func PatchUser(c *fiber.Ctx) error {
 			var setClauses []string
 			var setArgs []interface{}
 			settingsJSON = ProcessSettingsUpdate(settingsJSON, targetID, &setClauses, &setArgs)
-			setClauses = append(setClauses, "settings = ?")
+			// Merge incoming settings into existing rather than replacing,
+			// so partial updates don't wipe unrelated fields.
+			setClauses = append(setClauses, "settings = JSON_MERGE_PATCH(COALESCE(settings, '{}'), CAST(? AS JSON))")
 			setArgs = append(setArgs, string(settingsJSON))
 			setArgs = append(setArgs, targetID)
 			db.Exec("UPDATE users SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", setArgs...)
@@ -2013,6 +2088,50 @@ func PatchUser(c *fiber.Ctx) error {
 		db.Exec("INSERT INTO users_logins (userid, type, uid, credentials, salt) VALUES (?, ?, ?, ?, ?) "+
 			"ON DUPLICATE KEY UPDATE credentials = ?, salt = ?",
 			targetID, utils.LOGIN_TYPE_NATIVE, uid, hashed, salt, hashed, salt)
+	}
+
+	// Trustlevel mirrors V1 iznik-server/http/api/user.php:199-226.
+	// A moderator (systemrole Moderator/Support/Admin) can set any trust level
+	// on any user. A regular user can only self-set Basic or Declined, or
+	// clear it by sending an empty string. Attempts that don't match either
+	// rule must be rejected — silent-drop was the NUXT3 bug that lost
+	// microvolunteering "Decline" clicks.
+	if req.Trustlevel != nil {
+		trustTarget := req.ID
+		if trustTarget == 0 {
+			trustTarget = myid
+		}
+
+		// A moderator acting on self or someone else — full permission.
+		isMod := auth.IsAdminOrSupport(myid)
+		if !isMod {
+			var systemrole string
+			db.Raw("SELECT systemrole FROM users WHERE id = ?", myid).Scan(&systemrole)
+			if systemrole == utils.SYSTEMROLE_MODERATOR {
+				isMod = true
+			}
+		}
+
+		if isMod {
+			if *req.Trustlevel == "" {
+				db.Exec("UPDATE users SET trustlevel = NULL WHERE id = ?", trustTarget)
+			} else {
+				db.Exec("UPDATE users SET trustlevel = ? WHERE id = ?", *req.Trustlevel, trustTarget)
+			}
+		} else {
+			// Non-moderator: self only, Basic/Declined/empty only.
+			if trustTarget != myid {
+				return fiber.NewError(fiber.StatusForbidden, "Not authorized to set another user's trust level")
+			}
+			tl := *req.Trustlevel
+			if tl == "" {
+				db.Exec("UPDATE users SET trustlevel = NULL WHERE id = ?", myid)
+			} else if tl == "Basic" || tl == "Declined" {
+				db.Exec("UPDATE users SET trustlevel = ? WHERE id = ?", tl, myid)
+			} else {
+				return fiber.NewError(fiber.StatusForbidden, "Only moderators can set elevated trust levels")
+			}
+		}
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -2409,6 +2528,14 @@ func handleMerge(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 		{"UPDATE IGNORE trysts SET user2 = ? WHERE user2 = ?", []interface{}{req.ID2, req.ID1}},
 		{"UPDATE IGNORE isochrones_users SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
 		{"UPDATE IGNORE microactions SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
+		// volunteering has no FK on userid (communityevents does — ON DELETE SET NULL).
+		// Without this rewrite, merging id1 leaves their volunteering opportunities pointing
+		// at a userid that vanishes when id1 is deleted at the end of the merge.
+		{"UPDATE volunteering SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
+		{"UPDATE volunteering SET deletedby = ? WHERE deletedby = ?", []interface{}{req.ID2, req.ID1}},
+		{"UPDATE volunteering SET heldby = ? WHERE heldby = ?", []interface{}{req.ID2, req.ID1}},
+		{"UPDATE communityevents SET userid = ? WHERE userid = ?", []interface{}{req.ID2, req.ID1}},
+		{"UPDATE communityevents SET heldby = ? WHERE heldby = ?", []interface{}{req.ID2, req.ID1}},
 	}
 	for _, u := range simpleUpdates {
 		tx.Exec(u.sql, u.args...)

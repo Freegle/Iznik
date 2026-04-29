@@ -21,6 +21,7 @@ import (
 	"github.com/freegle/iznik-server-go/location"
 	flog "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -409,9 +410,9 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 							message.Location = loc
 						}
 					} else if message.Lat != 0 && message.Lng != 0 {
-						loc := &location.Location{}
-						loc.GroupsNear = location.ClosestGroups(float64(message.Lat), float64(message.Lng), location.NEARBY, 10)
-						message.Location = loc
+						l := location.ClosestPostcode(float32(message.Lat), float32(message.Lng))
+						l.GroupsNear = location.ClosestGroups(float64(message.Lat), float64(message.Lng), location.NEARBY, 10)
+						message.Location = &l
 					}
 				}
 
@@ -478,77 +479,90 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 					message.Refchatids = refchatids
 				}
 
-				// Fetch item and location for any viewer with locationid.
-				// Item is always public. Location (precise postcode) is only
-				// for mods and the message owner.
+				// Fetch item, location, and repost info in parallel.
+				// Item is always public and lives in messages_items, so it
+				// must be fetched regardless of locationid — a rejected
+				// message can have a valid item but no locationid.
+				// Location is for mods and the message owner only: prefer
+				// the precise postcode from locationid, else fall back to
+				// lat/lng (mirrors the mod path above).
+				// Repost eligibility needs the message's group settings,
+				// not location.
+				var wgExtra sync.WaitGroup
+
+				var loc *location.Location
+				var i *item.Item
+				var repostAt *time.Time
+				var canRepost bool
+
+				wgExtra.Add(1)
+				go func() {
+					defer wgExtra.Done()
+					i = item.FetchForMessage(message.ID)
+				}()
+
 				if message.Locationid > 0 {
-					var wgExtra sync.WaitGroup
-
-					var loc *location.Location
-					var i *item.Item
-					var repostAt *time.Time
-					var canRepost bool
-
 					wgExtra.Add(1)
 					go func() {
 						defer wgExtra.Done()
 						loc = location.FetchSingle(message.Locationid)
 					}()
-
+				} else if message.Lat != 0 && message.Lng != 0 {
 					wgExtra.Add(1)
 					go func() {
 						defer wgExtra.Done()
-						i = item.FetchForMessage(message.ID)
+						l := location.ClosestPostcode(float32(message.Lat), float32(message.Lng))
+						l.GroupsNear = location.ClosestGroups(float64(message.Lat), float64(message.Lng), location.NEARBY, 10)
+						loc = &l
 					}()
+				}
 
-					wgExtra.Add(1)
-					go func() {
-						defer wgExtra.Done()
-						var repostStr []string
-						db.Raw("SELECT CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts FROM `groups` INNER JOIN messages_groups ON messages_groups.groupid = groups.id WHERE msgid = ?", message.ID).Pluck("reposts", &repostStr)
+				wgExtra.Add(1)
+				go func() {
+					defer wgExtra.Done()
+					var repostStr []string
+					db.Raw("SELECT CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts FROM `groups` INNER JOIN messages_groups ON messages_groups.groupid = groups.id WHERE msgid = ?", message.ID).Pluck("reposts", &repostStr)
 
-						var reposts []group.RepostSettings
+					var reposts []group.RepostSettings
 
-						for _, r := range repostStr {
-							var rs group.RepostSettings
-							json.Unmarshal([]byte(r), &rs)
-							reposts = append(reposts, rs)
+					for _, r := range repostStr {
+						var rs group.RepostSettings
+						json.Unmarshal([]byte(r), &rs)
+						reposts = append(reposts, rs)
+					}
+
+					for _, r := range reposts {
+						var interval int
+
+						if message.Type == utils.OFFER {
+							interval = r.Offer
+						} else {
+							interval = r.Wanted
 						}
 
-						for _, r := range reposts {
-							var interval int
+						if interval < 365 {
+							if len(message.MessageGroups) > 0 {
+								ra := message.MessageGroups[0].Arrival.AddDate(0, 0, interval)
+								repostAt = &ra
 
-							if message.Type == utils.OFFER {
-								interval = r.Offer
-							} else {
-								interval = r.Wanted
-							}
-
-							if interval < 365 {
-								if len(message.MessageGroups) > 0 {
-									ra := message.MessageGroups[0].Arrival.AddDate(0, 0, interval)
-									repostAt = &ra
-
-									if repostAt.Before(time.Now()) {
-										canRepost = true
-									}
+								if repostAt.Before(time.Now()) {
+									canRepost = true
 								}
 							}
 						}
-					}()
-
-					wgExtra.Wait()
-
-					// Item is always public.
-					message.Item = i
-					message.Repostat = repostAt
-					message.Canrepost = canRepost
-
-					// Precise location only for mods and message owner.
-					// Other viewers get blurred lat/lng (handled elsewhere).
-					if message.Fromuser == myid || isModForMessage(db, myid, message.ID) {
-						message.Location = loc
 					}
+				}()
+
+				wgExtra.Wait()
+
+				message.Item = i
+				message.Repostat = repostAt
+				message.Canrepost = canRepost
+
+				// Precise location only for mods and message owner.
+				// Other viewers get blurred lat/lng (handled elsewhere).
+				if message.Fromuser == myid || isModForMessage(db, myid, message.ID) {
+					message.Location = loc
 				}
 
 				mu.Lock()
@@ -1066,18 +1080,31 @@ func Search(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "No search term")
 		}
 
-		// Try vector search if requested and embeddings are loaded
+		// When searchmode=vector is explicitly requested and vector succeeds,
+		// respect the result (even if empty) instead of falling back to keyword.
+		// Silently switching match models makes repeat queries return different
+		// result sets — the non-determinism Dee reported (Discourse 9594).
 		if searchmode == "vector" && embedding.Global.Count() > 0 {
-			vectorResults, err := VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
+			vectorResults, stats, err := VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
 				float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+			fallbackTaken := err != nil
+
+			logVectorSearch(term, groupids, msgtype, myid, searchmode, len(vectorResults), fallbackTaken, stats)
+
 			if err != nil {
 				fmt.Printf("Vector search failed, falling back to keyword: %v\n", err)
 			} else {
-				res = vectorResults
+				filtered := []SearchResult{}
+				for _, r := range vectorResults {
+					if r.Msgid != 0 {
+						filtered = append(filtered, r)
+					}
+				}
+				wg.Wait()
+				return c.JSON(filtered)
 			}
 		}
 
-		// Fall back to keyword search if vector returned nothing
 		if len(res) == 0 {
 			words := GetWords(term)
 
@@ -1234,12 +1261,31 @@ func GetRecentActivity(c *fiber.Ctx) error {
 
 // logModAction inserts a mod log entry for message actions (approve, reject, reply, etc).
 func logModAction(db *gorm.DB, logType string, subtype string, groupid uint64, userid uint64, byuser uint64, msgid uint64, stdmsgid uint64, text string) {
+	// `user` is a reserved word in MySQL — backtick to match V1's Log::log().
 	if stdmsgid > 0 {
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser, msgid, stdmsgid, text) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?)",
+		db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, `user`, byuser, msgid, stdmsgid, text) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?)",
 			logType, subtype, groupid, userid, byuser, msgid, stdmsgid, text)
 	} else {
-		db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser, msgid, text) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?)",
+		db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, `user`, byuser, msgid, text) VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?)",
 			logType, subtype, groupid, userid, byuser, msgid, text)
+	}
+}
+
+// logMessageReceived writes the V1-parity Message/Received log entry:
+// byuser is NULL (a Received log is a system event, not a mod action) and
+// text is the RFC822 Message-Id header (V1 Message::submit() records
+// $this->messageid). Only logs when the INSERT actually modifies a row
+// (which also means we don't emit duplicate Received logs if the caller
+// re-runs — the unique-by-msgid check is deferred to the caller context).
+func logMessageReceived(db *gorm.DB, groupid uint64, fromuser uint64, msgid uint64) {
+	var messageid string
+	db.Raw("SELECT COALESCE(messageid, '') FROM messages WHERE id = ?", msgid).Scan(&messageid)
+	result := db.Exec(
+		"INSERT INTO logs (timestamp, type, subtype, groupid, `user`, byuser, msgid, text) VALUES (NOW(), ?, ?, ?, ?, NULL, ?, ?)",
+		flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_RECEIVED, groupid, fromuser, msgid, messageid,
+	)
+	if result.Error != nil {
+		log.Printf("Failed to log Message/Received for msg %d group %d: %v", msgid, groupid, result.Error)
 	}
 }
 
@@ -1251,6 +1297,8 @@ func getPrimaryGroupForMessage(db *gorm.DB, msgid uint64) uint64 {
 }
 
 // getAllGroupsForMessage returns all groupids for a message.
+// Returns groups regardless of deleted state, so mods can still moderate and reject
+// messages even after the poster has deleted them.
 func getAllGroupsForMessage(db *gorm.DB, msgid uint64) []uint64 {
 	var groupids []uint64
 	db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ?", msgid).Scan(&groupids)
@@ -1274,22 +1322,6 @@ func constructLocationString(db *gorm.DB, msgid uint64) string {
 		return ""
 	}
 
-	// Look up group settings for includearea/includepc (default both true).
-	groupid := getPrimaryGroupForMessage(db, msgid)
-	includeArea := true
-	includePC := true
-	if groupid > 0 {
-		var iaVal, ipVal *int
-		db.Raw("SELECT CAST(JSON_EXTRACT(settings, '$.includearea') AS UNSIGNED) FROM `groups` WHERE id = ?", groupid).Scan(&iaVal)
-		db.Raw("SELECT CAST(JSON_EXTRACT(settings, '$.includepc') AS UNSIGNED) FROM `groups` WHERE id = ?", groupid).Scan(&ipVal)
-		if iaVal != nil {
-			includeArea = *iaVal != 0
-		}
-		if ipVal != nil {
-			includePC = *ipVal != 0
-		}
-	}
-
 	if loc.Type == "Postcode" && loc.Areaid > 0 {
 		// Get the area name.
 		var areaName string
@@ -1301,13 +1333,7 @@ func constructLocationString(db *gorm.DB, msgid uint64) string {
 			vaguePC = vaguePC[:idx]
 		}
 
-		if includeArea && includePC {
-			return areaName + " " + vaguePC
-		} else if includePC {
-			return vaguePC
-		} else {
-			return areaName
-		}
+		return areaName + " " + vaguePC
 	}
 
 	// Not a postcode with area — use the location name as-is,
@@ -1338,7 +1364,8 @@ func getGroupKeyword(db *gorm.DB, groupid uint64, msgType string) string {
 }
 
 // isModForMessage checks if the user is a system admin/support or a moderator/owner
-// of any group the message is on.
+// of any group the message is on. Returns true even if messages_groups rows are soft-deleted,
+// so mods can reject or delete messages even after the poster has deleted them.
 func isModForMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	// Check system admin/support.
 	if auth.IsAdminOrSupport(myid) {
@@ -1346,6 +1373,7 @@ func isModForMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 	}
 
 	// Check if mod of any group the message is on.
+	// Don't filter on mg.deleted = 0 so mods can still moderate after poster deletes.
 	var count int64
 	result := db.Raw(`SELECT COUNT(*) FROM messages_groups mg
 		JOIN memberships m ON m.groupid = mg.groupid
@@ -1355,6 +1383,50 @@ func isModForMessage(db *gorm.DB, myid uint64, msgid uint64) bool {
 		return false
 	}
 	return count > 0
+}
+
+// resolveAuthorizedGroups returns the list of groupids the caller is authorised
+// to act on for this message, given the requested groupid (0 = no specific group).
+//
+// Rules:
+//   - reqGroupid > 0: caller must be a mod of that specific group and the
+//     message must be on it. Returns [reqGroupid].
+//   - reqGroupid == 0 & admin/support: returns all groups on the message.
+//   - reqGroupid == 0 & regular mod: returns only the message's groups that the
+//     caller moderates. A mod of A will NOT act on B when a message is on [A,B].
+//   - Returns 403 if the caller has no authority.
+func resolveAuthorizedGroups(myid uint64, reqGroupid uint64, groupids []uint64) ([]uint64, error) {
+	if reqGroupid > 0 {
+		if !auth.IsModOfGroup(myid, reqGroupid) {
+			return nil, fiber.NewError(fiber.StatusForbidden, "Not a moderator for this group")
+		}
+		onGroup := false
+		for _, gid := range groupids {
+			if gid == reqGroupid {
+				onGroup = true
+				break
+			}
+		}
+		if !onGroup {
+			return nil, fiber.NewError(fiber.StatusNotFound, "Message not on that group")
+		}
+		return []uint64{reqGroupid}, nil
+	}
+
+	if auth.IsAdminOrSupport(myid) {
+		return groupids, nil
+	}
+
+	var authorized []uint64
+	for _, gid := range groupids {
+		if auth.IsModOfGroup(myid, gid) {
+			authorized = append(authorized, gid)
+		}
+	}
+	if len(authorized) == 0 {
+		return nil, fiber.NewError(fiber.StatusForbidden, "Not a moderator for any group on this message")
+	}
+	return authorized, nil
 }
 
 // MessageModContext holds common context needed by mod action handlers.
@@ -1382,15 +1454,18 @@ func getMessageModContext(db *gorm.DB, myid uint64, msgid uint64) *MessageModCon
 	return ctx
 }
 
-// logAndNotifyMods logs a mod action and queues push notifications to moderators of all groups the message is on.
+// logAndNotifyMods logs a mod action and queues push notifications to moderators of the
+// acted-on group only. Notifying mods of other groups the message happens to be on would
+// leak cross-post membership and spam mods whose group wasn't affected.
 func logAndNotifyMods(db *gorm.DB, subtype string, ctx *MessageModContext, myid uint64, msgid uint64, stdmsgid uint64, text string) {
 	logModAction(db, flog.LOG_TYPE_MESSAGE, subtype, ctx.Groupid, ctx.Fromuser, myid, msgid, stdmsgid, text)
-	for _, gid := range ctx.Groupids {
-		if err := queue.QueueTask(queue.TaskPushNotifyGroupMods, map[string]interface{}{
-			"group_id": gid,
-		}); err != nil {
-			log.Printf("Failed to queue push notification for group %d: %v", gid, err)
-		}
+	if ctx.Groupid == 0 {
+		return
+	}
+	if err := queue.QueueTask(queue.TaskPushNotifyGroupMods, map[string]interface{}{
+		"group_id": ctx.Groupid,
+	}); err != nil {
+		log.Printf("Failed to queue push notification for group %d: %v", ctx.Groupid, err)
 	}
 }
 
@@ -1403,32 +1478,41 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
 	}
 
-	// Use request groupid if provided, otherwise fall back to context.
-	if req.Groupid != nil && *req.Groupid > 0 {
-		ctx.Groupid = *req.Groupid
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
 	}
-	groupid := ctx.Groupid
+	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	if err != nil {
+		return err
+	}
+	// Set ctx.Groupid to the primary acted-on group (for logging).
+	ctx.Groupid = authorizedGroups[0]
 
 	// Move to Approved with arrival=NOW() so immediate-email recipients get it.
 	// Guard against double-approve by requiring collection != Approved.
-	if req.Groupid != nil && *req.Groupid > 0 {
-		if result := db.Exec("UPDATE messages_groups SET collection = ?, approvedby = ?, approvedat = NOW(), arrival = NOW() WHERE msgid = ? AND groupid = ? AND collection != ?",
-			utils.COLLECTION_APPROVED, myid, req.ID, groupid, utils.COLLECTION_APPROVED); result.Error != nil {
-			log.Printf("Failed to approve message %d group %d: %v", req.ID, groupid, result.Error)
-		}
-	} else {
-		if result := db.Exec("UPDATE messages_groups SET collection = ?, approvedby = ?, approvedat = NOW(), arrival = NOW() WHERE msgid = ? AND collection != ?",
-			utils.COLLECTION_APPROVED, myid, req.ID, utils.COLLECTION_APPROVED); result.Error != nil {
-			log.Printf("Failed to approve message %d: %v", req.ID, result.Error)
-		}
+	// Restrict to groups the caller is authorised for.
+	if result := db.Exec("UPDATE messages_groups SET collection = ?, approvedby = ?, approvedat = NOW(), arrival = NOW() WHERE msgid = ? AND groupid IN ? AND collection != ?",
+		utils.COLLECTION_APPROVED, myid, req.ID, authorizedGroups, utils.COLLECTION_APPROVED); result.Error != nil {
+		log.Printf("Failed to approve message %d: %v", req.ID, result.Error)
 	}
 
-	// Release any hold.
-	db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
+	// Release hold on the same authorised groups.
+	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
-	// Mark as ham if it was flagged as spam.
+	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
+	var stillHeldCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+	if stillHeldCount == 0 {
+		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
+	}
+
+	// Mark as ham if it was flagged as spam on any authorised group (fall back to messages table).
 	var spamtype *string
-	db.Raw("SELECT spamtype FROM messages WHERE id = ?", req.ID).Scan(&spamtype)
+	db.Raw("SELECT spamtype FROM messages_groups WHERE msgid = ? AND groupid IN ? AND spamtype IS NOT NULL LIMIT 1", req.ID, authorizedGroups).Scan(&spamtype)
+	if spamtype == nil {
+		db.Raw("SELECT spamtype FROM messages WHERE id = ?", req.ID).Scan(&spamtype)
+	}
 	if spamtype != nil && *spamtype != "" {
 		db.Exec("REPLACE INTO messages_spamham (msgid, spamham) VALUES (?, 'Ham')", req.ID)
 	}
@@ -1448,8 +1532,11 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 
 	// Queue email to poster (includes stdmsg content for the batch processor).
 	// The batch processor will also create the mod log entry and notify group moderators.
-	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-		"email_message_approved", req.ID, groupid, myid, subject, body, stdmsgid, "Approve")
+	// One task per authorised group so per-group logging and notifications are correct.
+	for _, gid := range authorizedGroups {
+		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
+			"email_message_approved", req.ID, gid, myid, subject, body, stdmsgid, "Approve")
+	}
 
 	// Notify freebiealerts.app about newly approved Offer posts.
 	var approvedMsgType string
@@ -1487,40 +1574,50 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		stdmsgid = *req.Stdmsgid
 	}
 
-	// Use request groupid if provided, otherwise fall back to context.
-	if req.Groupid != nil && *req.Groupid > 0 {
-		ctx.Groupid = *req.Groupid
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
 	}
-	groupid := ctx.Groupid
+	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	if err != nil {
+		return err
+	}
+	ctx.Groupid = authorizedGroups[0]
 
 	// With a subject (stdmsg), move to Rejected collection (user can edit and resubmit).
 	// Without a subject (plain delete), mark as deleted.
 	if subject != "" {
-		if groupid > 0 {
-			if result := db.Exec("UPDATE messages_groups SET collection = ?, rejectedat = NOW() WHERE msgid = ? AND groupid = ? AND collection = ?", utils.COLLECTION_REJECTED, req.ID, groupid, utils.COLLECTION_PENDING); result.Error != nil {
-				log.Printf("Failed to reject message %d group %d: %v", req.ID, groupid, result.Error)
-			}
-		} else {
-			if result := db.Exec("UPDATE messages_groups SET collection = ?, rejectedat = NOW() WHERE msgid = ? AND collection = ?", utils.COLLECTION_REJECTED, req.ID, utils.COLLECTION_PENDING); result.Error != nil {
-				log.Printf("Failed to reject message %d: %v", req.ID, result.Error)
-			}
+		if result := db.Exec("UPDATE messages_groups SET collection = ?, rejectedat = NOW() WHERE msgid = ? AND groupid IN ? AND collection = ?",
+			utils.COLLECTION_REJECTED, req.ID, authorizedGroups, utils.COLLECTION_PENDING); result.Error != nil {
+			log.Printf("Failed to reject message %d: %v", req.ID, result.Error)
 		}
 	} else {
-		if groupid > 0 {
-			if result := db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND groupid = ? AND collection = ?", req.ID, groupid, utils.COLLECTION_PENDING); result.Error != nil {
-				log.Printf("Failed to delete pending message %d group %d: %v", req.ID, groupid, result.Error)
+		if result := db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND groupid IN ? AND collection = ?",
+			req.ID, authorizedGroups, utils.COLLECTION_PENDING); result.Error != nil {
+			log.Printf("Failed to delete pending message %d: %v", req.ID, result.Error)
+		}
+
+		// Cascade soft-delete: if no non-deleted groups remain, mark messages.deleted
+		// so list queries filtering `messages.deleted IS NULL` don't see an orphan row.
+		var remainingGroups int64
+		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+		if remainingGroups == 0 {
+			if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
+				log.Printf("Failed to soft-delete rejected message %d: %v", req.ID, result.Error)
 			}
-		} else {
-			if result := db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING); result.Error != nil {
-				log.Printf("Failed to delete pending message %d: %v", req.ID, result.Error)
+			if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
+				"msgid": req.ID,
+			}); err != nil {
+				log.Printf("Failed to queue freebie alerts remove for message %d: %v", req.ID, err)
 			}
 		}
 	}
 
-	// Queue rejection email.
-	// The batch processor will also create the mod log entry and notify group moderators.
-	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-		"email_message_rejected", req.ID, groupid, myid, subject, body, stdmsgid, "Reject")
+	// Queue rejection email per authorised group (batch processor creates one log+push per group).
+	for _, gid := range authorizedGroups {
+		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
+			"email_message_rejected", req.ID, gid, myid, subject, body, stdmsgid, "Reject")
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1535,17 +1632,35 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
 	}
 
-	// Use request groupid if provided, otherwise fall back to context.
-	if req.Groupid != nil && *req.Groupid > 0 {
-		ctx.Groupid = *req.Groupid
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
 	}
-	groupid := ctx.Groupid
+	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	if err != nil {
+		return err
+	}
+	ctx.Groupid = authorizedGroups[0]
 
-	if result := db.Exec("DELETE FROM messages_groups WHERE msgid = ?", req.ID); result.Error != nil {
-		log.Printf("Failed to delete messages_groups for message %d: %v", req.ID, result.Error)
+	// Per-group delete: remove only the authorized groups' rows.
+	if result := db.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups); result.Error != nil {
+		log.Printf("Failed to delete messages_groups for message %d groups %v: %v", req.ID, authorizedGroups, result.Error)
 	}
-	if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
-		log.Printf("Failed to soft-delete message %d: %v", req.ID, result.Error)
+
+	// If no non-deleted groups remain, soft-delete the message itself.
+	var remainingGroups int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+	if remainingGroups == 0 {
+		if result := db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID); result.Error != nil {
+			log.Printf("Failed to soft-delete message %d: %v", req.ID, result.Error)
+		}
+
+		// Remove from freebiealerts.app — post is no longer available on any group.
+		if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
+			"msgid": req.ID,
+		}); err != nil {
+			log.Printf("Failed to queue freebie alerts remove for message %d: %v", req.ID, err)
+		}
 	}
 
 	subject := ""
@@ -1561,17 +1676,11 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		stdmsgid = *req.Stdmsgid
 	}
 
-	// Queue email+log+push via background task.
+	// Queue email+log+push via background task for each authorized group.
 	// The batch processor will create the mod log entry and notify group moderators.
-	// Always queue (even when no stdmsg) so the batch processor can create the log.
-	db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
-		"email_message_rejected", req.ID, groupid, myid, subject, body, stdmsgid, "Delete Approved Message")
-
-	// Remove from freebiealerts.app — post is no longer available.
-	if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
-		"msgid": req.ID,
-	}); err != nil {
-		log.Printf("Failed to queue freebie alerts remove for message %d: %v", req.ID, err)
+	for _, gid := range authorizedGroups {
+		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
+			"email_message_rejected", req.ID, gid, myid, subject, body, stdmsgid, "Delete Approved Message")
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1581,22 +1690,38 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 func handleSpam(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
 
-	if !isModForMessage(db, myid, req.ID) {
+	ctx := getMessageModContext(db, myid, req.ID)
+	if ctx == nil {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
+	}
+
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
+	}
+	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	if err != nil {
+		return err
 	}
 
 	// Record for spam training.
 	db.Exec("REPLACE INTO messages_spamham (msgid, spamham) VALUES (?, ?)", req.ID, utils.COLLECTION_SPAM)
 
-	// Delete the message (spam action always deletes).
-	db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ?", req.ID)
-	db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", req.ID)
+	// Per-group spam: soft-delete only the authorized groups' rows.
+	db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
 
-	// Remove from freebiealerts.app — post is no longer available.
-	if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
-		"msgid": req.ID,
-	}); err != nil {
-		log.Printf("Failed to queue freebie alerts remove for message %d: %v", req.ID, err)
+	// If no non-deleted groups remain, soft-delete the message itself.
+	var remainingGroups int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND deleted = 0", req.ID).Scan(&remainingGroups)
+	if remainingGroups == 0 {
+		db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", req.ID)
+
+		// Remove from freebiealerts.app — post is no longer available on any group.
+		if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
+			"msgid": req.ID,
+		}); err != nil {
+			log.Printf("Failed to queue freebie alerts remove for message %d: %v", req.ID, err)
+		}
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1611,9 +1736,26 @@ func handleHold(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
 	}
 
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
+	}
+	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	if err != nil {
+		return err
+	}
+
+	// Per-group hold: set heldby on the authorized groups' rows.
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
+
+	// Also update messages.heldby for backwards compatibility during migration.
 	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
 
-	logAndNotifyMods(db, flog.LOG_SUBTYPE_HOLD, ctx, myid, req.ID, 0, "")
+	// Log to each group we acted on.
+	for _, gid := range authorizedGroups {
+		ctx.Groupid = gid
+		logAndNotifyMods(db, flog.LOG_SUBTYPE_HOLD, ctx, myid, req.ID, 0, "")
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1627,20 +1769,30 @@ func handleBackToPending(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
 	}
 
-	// Hold the message for re-review (hold before moving to Pending).
-	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
-
-	// Move from Approved back to Pending. If groupid is specified, only for that group (cross-post support).
-	if req.Groupid != nil && *req.Groupid > 0 {
-		db.Exec("UPDATE messages_groups SET collection = ?, approvedby = NULL, approvedat = NULL WHERE msgid = ? AND groupid = ? AND collection = ?",
-			utils.COLLECTION_PENDING, req.ID, *req.Groupid, utils.COLLECTION_APPROVED)
-	} else {
-		db.Exec("UPDATE messages_groups SET collection = ?, approvedby = NULL, approvedat = NULL WHERE msgid = ? AND collection = ?",
-			utils.COLLECTION_PENDING, req.ID, utils.COLLECTION_APPROVED)
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
+	}
+	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	if err != nil {
+		return err
 	}
 
-	// Log and notify moderators.
-	logAndNotifyMods(db, flog.LOG_SUBTYPE_HOLD, ctx, myid, req.ID, 0, "Back to pending")
+	// Per-group hold for re-review.
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid IN ?", myid, req.ID, authorizedGroups)
+
+	// Also update messages.heldby for backwards compatibility.
+	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", myid, req.ID)
+
+	// Move from Approved back to Pending for authorized groups.
+	db.Exec("UPDATE messages_groups SET collection = ?, approvedby = NULL, approvedat = NULL WHERE msgid = ? AND groupid IN ? AND collection = ?",
+		utils.COLLECTION_PENDING, req.ID, authorizedGroups, utils.COLLECTION_APPROVED)
+
+	// Log to each group we acted on.
+	for _, gid := range authorizedGroups {
+		ctx.Groupid = gid
+		logAndNotifyMods(db, flog.LOG_SUBTYPE_HOLD, ctx, myid, req.ID, 0, "Back to pending")
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -1654,9 +1806,30 @@ func handleRelease(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
 	}
 
-	db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
+	reqGid := uint64(0)
+	if req.Groupid != nil {
+		reqGid = *req.Groupid
+	}
+	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	if err != nil {
+		return err
+	}
 
-	logAndNotifyMods(db, flog.LOG_SUBTYPE_RELEASE, ctx, myid, req.ID, 0, "")
+	// Per-group release.
+	db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
+
+	// Check if still held on any group — if not, clear messages.heldby for backwards compat.
+	var stillHeldCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+	if stillHeldCount == 0 {
+		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
+	}
+
+	// Log to each group we acted on.
+	for _, gid := range authorizedGroups {
+		ctx.Groupid = gid
+		logAndNotifyMods(db, flog.LOG_SUBTYPE_RELEASE, ctx, myid, req.ID, 0, "")
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2014,6 +2187,10 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 
 	db.Exec("DELETE FROM messages_drafts WHERE msgid = ?", req.ID)
 
+	// V1 parity: Message::submit() logs Message/Received with byuser=NULL
+	// and text=messageid (RFC822 Message-Id header).
+	logMessageReceived(db, groupid, myid, req.ID)
+
 	// Add to spatial index now that the message is in a group
 	// (only runs after messages_groups insert).
 	var msgLat, msgLng float64
@@ -2334,6 +2511,8 @@ func PatchMessage(c *fiber.Ctx) error {
 	// req.Attachments is nil when the field is absent from JSON (don't touch).
 	// req.Attachments is [] (empty, non-nil) when all attachments are removed (#338).
 	if req.Attachments != nil {
+		recordAIDeletions(db, myid, req.ID, req.Attachments)
+
 		if len(req.Attachments) > 0 {
 			for i, attid := range req.Attachments {
 				primary := i == 0
@@ -2577,10 +2756,13 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon) VALUES (?, ?, 1, NOW(), ?)",
 		newUserID, email, canon)
 
-	// Create session.
+	// Create session. series must be a random numeric value (bigint
+	// unsigned); using userID collided across every session for the same
+	// user and defeated UNIQUE KEY (id, series, token).
+	series := utils.RandomUint64()
 	token := utils.RandomHex(16)
 	db.Exec("INSERT INTO sessions (userid, series, token, lastactive) VALUES (?, ?, ?, NOW())",
-		newUserID, newUserID, token)
+		newUserID, series, token)
 
 	// Use token to find our specific session (avoids race with concurrent requests).
 	var sessionID uint64
@@ -2599,7 +2781,7 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 
 	persistent := fiber.Map{
 		"id":     sessionID,
-		"series": newUserID,
+		"series": series,
 		"token":  token,
 		"userid": newUserID,
 	}
@@ -2710,8 +2892,14 @@ func PutMessage(c *fiber.Ctx) error {
 
 	// Create message.
 	fromip := c.IP()
-	result := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source, availableinitially, availablenow, locationid, fromip) VALUES (?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?)",
-		myid, req.Type, req.Subject, req.Textbody, availInit, availNow, req.Locationid, fromip)
+	// V1 parity (Message.php:2708/2717): invent a unique messageid because
+	// downstream dedupe/cross-reference joins assume it's populated.
+	messageid := fmt.Sprintf("%.6f@%s", float64(time.Now().UnixNano())/1e9, utils.USER_DOMAIN)
+	if req.Groupid > 0 {
+		messageid = fmt.Sprintf("%s-%d", messageid, req.Groupid)
+	}
+	result := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
+		myid, req.Type, req.Subject, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
 
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
@@ -2751,6 +2939,9 @@ func PutMessage(c *fiber.Ctx) error {
 
 		db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, ?, NOW())",
 			newMsgID, req.Groupid, collection)
+
+		// V1 parity: log Message/Received when a post is submitted directly (non-draft).
+		logMessageReceived(db, req.Groupid, myid, newMsgID)
 	}
 
 	// Link attachments.
@@ -3023,13 +3214,27 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Received outcome only valid for Wanted messages")
 	}
 
-	// For Withdrawn: if the message is still pending on any group, delete it entirely
-	// instead of recording an outcome.
+	// For Withdrawn: if the message is still pending on any group, soft-delete it
+	// instead of recording an outcome.  We use UPDATE ... SET deleted = NOW() (matching
+	// the rest of the codebase) rather than a hard DELETE so that moderators who loaded
+	// the pending queue before the withdrawal can still reject / delete the message
+	// without getting a spurious 403 from getMessageModContext failing to scan a
+	// now-absent messages row.
 	if req.Outcome == utils.OUTCOME_WITHDRAWN {
 		var pendingCount int64
 		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).Scan(&pendingCount)
 		if pendingCount > 0 {
-			db.Exec("DELETE FROM messages WHERE id = ?", req.ID)
+			// V1 parity (Message::delete()): soft-delete messages_groups first, then the
+			// message itself.  Without this, the orphaned Pending row (deleted=0) gets
+			// picked up by AutoApproveService 48 hours later and auto-approved as if the
+			// member never withdrew it — making the message reappear in ModTools.
+			db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING)
+			db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID)
+			if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
+				"msgid": req.ID,
+			}); err != nil {
+				log.Printf("Failed to queue freebie alerts remove for withdrawn pending message %d: %v", req.ID, err)
+			}
 			return c.JSON(fiber.Map{"ret": 0, "status": "Success", "deleted": true})
 		}
 	}
@@ -3323,4 +3528,53 @@ func stringPtrEqual(a, b *string) bool {
 		return false
 	}
 	return *a == *b
+}
+
+// recordAIDeletions checks which attachments on msgID will be removed by the new keepList,
+// and for each AI-generated attachment being removed, records a Reject microaction.
+func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint64) {
+	type aiCandidate struct {
+		ID          uint64
+		Externaluid string
+		Externalmods json.RawMessage
+	}
+
+	var candidates []aiCandidate
+	if len(keepList) > 0 {
+		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ? AND id NOT IN (?)", msgID, keepList).Scan(&candidates)
+	} else {
+		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ?", msgID).Scan(&candidates)
+	}
+
+	for _, att := range candidates {
+		if att.Externaluid == "" || !isAIAttachment(att.Externalmods) {
+			continue
+		}
+		var aiImageID uint64
+		db.Raw("SELECT id FROM ai_images WHERE externaluid = ? LIMIT 1", att.Externaluid).Scan(&aiImageID)
+		if aiImageID > 0 {
+			microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
+		}
+	}
+}
+
+// isAIAttachment returns true if the externalmods JSON contains {"ai": true}.
+func isAIAttachment(mods json.RawMessage) bool {
+	if len(mods) == 0 {
+		return false
+	}
+	var m struct {
+		AI interface{} `json:"ai"`
+	}
+	if err := json.Unmarshal(mods, &m); err != nil {
+		return false
+	}
+	switch v := m.AI.(type) {
+	case bool:
+		return v
+	case float64:
+		return v != 0
+	default:
+		return false
+	}
 }

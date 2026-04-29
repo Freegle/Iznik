@@ -21,6 +21,7 @@ type MessageGroupInfo struct {
 	Groupid    uint64    `json:"groupid"`
 	Collection string    `json:"collection"`
 	Arrival    time.Time `json:"arrival"`
+	Heldby     *uint64   `json:"heldby,omitempty"`
 }
 
 type PaginationContext struct {
@@ -127,7 +128,7 @@ func ListMessages(c *fiber.Ctx) error {
 		// If the search term is numeric, also match on message ID.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchID > 0 {
-			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
+			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
 				"INNER JOIN messages m ON m.id = mg.msgid "+
 				"WHERE mg.groupid IN (?) "+
 				"AND mg.collection = ? "+
@@ -139,7 +140,7 @@ func ListMessages(c *fiber.Ctx) error {
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
-			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
+			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
 				"INNER JOIN messages m ON m.id = mg.msgid "+
 				"WHERE mg.groupid IN (?) "+
 				"AND mg.collection = ? "+
@@ -153,7 +154,7 @@ func ListMessages(c *fiber.Ctx) error {
 		// If search is a numeric user ID, do a fast direct lookup first.
 		searchUID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchUID > 0 {
-			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
+			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
 				"INNER JOIN messages m ON m.id = mg.msgid "+
 				"WHERE mg.groupid IN (?) "+
 				"AND mg.collection = ? "+
@@ -164,7 +165,7 @@ func ListMessages(c *fiber.Ctx) error {
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
-			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
+			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
 				"INNER JOIN messages m ON m.id = mg.msgid "+
 				"INNER JOIN users u ON u.id = m.fromuser "+
 				"LEFT JOIN users_emails ue ON ue.userid = u.id "+
@@ -177,7 +178,7 @@ func ListMessages(c *fiber.Ctx) error {
 		}
 	} else {
 		// Standard listing with optional pagination and fromuser filter.
-		sql := "SELECT mg.msgid FROM messages_groups mg " +
+		sql := "SELECT DISTINCT mg.msgid FROM messages_groups mg " +
 			"INNER JOIN messages m ON m.id = mg.msgid " +
 			"WHERE mg.groupid IN (?) " +
 			"AND mg.collection = ? " +
@@ -245,7 +246,7 @@ func ListMessages(c *fiber.Ctx) error {
 
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT groupid, collection, arrival FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&groups)
+				db.Raw("SELECT groupid, collection, arrival, heldby FROM messages_groups WHERE msgid = ? AND deleted = 0", msgID).Scan(&groups)
 			}()
 
 			go func() {
@@ -324,6 +325,50 @@ func ListMessages(c *fiber.Ctx) error {
 		Messages: filtered,
 		Context:  respCtx,
 	})
+}
+
+// buildMTUnionAllMsgIDQuery assembles a UNION ALL query over groupIDs and
+// returns the full SQL + args ready for db.Raw().  Using `WHERE mg.groupid IN
+// (list)` forces MySQL into a temporary-table + filesort (the composite
+// messages_groups(groupid, collection, deleted, arrival) index is ordered
+// per-groupid, not globally), so a moderator of several large groups hits
+// ~30s query times.  UNION ALL per groupid lets each branch use the index
+// with a backward scan and LIMIT early-termination; the outer sort only
+// sees N * numGroups rows.
+//
+// branchSQL must:
+//   - Contain exactly one `%GID%` placeholder, substituted per branch
+//   - Project `mg.msgid, mg.arrival` (plus anything else needed by its own
+//     ORDER BY) so the outer ORDER BY / LIMIT can work on `arrival`
+//   - End with `ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?`; the trailing
+//     `?` is bound per branch to `limit`
+//
+// branchArgs are the `?` args for one branch in declaration order, excluding
+// the trailing LIMIT; they are replicated per branch.
+func buildMTUnionAllMsgIDQuery(branchSQL string, branchArgs []interface{}, groupIDs []uint64, limit int) (string, []interface{}) {
+	var sb strings.Builder
+	// The outer GROUP BY deduplicates messages that appear in multiple queried
+	// groups (e.g. a cross-posted Pending message).  MAX(arrival) picks the
+	// most-recent arrival across all branches for ordering.
+	sb.WriteString("SELECT msgid FROM (SELECT msgid, MAX(arrival) AS arrival FROM (")
+
+	args := make([]interface{}, 0, (len(branchArgs)+1)*len(groupIDs)+1)
+	for i, gid := range groupIDs {
+		if i > 0 {
+			sb.WriteString(" UNION ALL ")
+		}
+		branch := strings.Replace(branchSQL, "%GID%", strconv.FormatUint(gid, 10), 1)
+		sb.WriteString("(")
+		sb.WriteString(branch)
+		sb.WriteString(")")
+		args = append(args, branchArgs...)
+		args = append(args, limit)
+	}
+
+	sb.WriteString(") raw GROUP BY msgid) t ORDER BY arrival DESC, msgid DESC LIMIT ?")
+	args = append(args, limit)
+
+	return sb.String(), args
 }
 
 // ListMessagesMT handles GET /modtools/messages — returns message IDs only
@@ -407,71 +452,79 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		// If the search term is numeric, also match on message ID.
 		searchID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchID > 0 {
-			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"INNER JOIN users u ON u.id = m.fromuser "+
-				"WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 "+
-				"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL AND m.id = ? "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchID, limit).Pluck("msgid", &msgIDs)
+			branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
+				"INNER JOIN messages m ON m.id = mg.msgid " +
+				"INNER JOIN users u ON u.id = m.fromuser " +
+				"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
+				"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL AND m.id = ? " +
+				"ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchID}, groupIDs, limit)
+			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
 		}
 		if len(msgIDs) == 0 {
 			searchTerm := "%" + search + "%"
-			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"INNER JOIN users u ON u.id = m.fromuser "+
-				"WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 "+
-				"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL AND m.subject LIKE ? "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchTerm, limit).Pluck("msgid", &msgIDs)
+			branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
+				"INNER JOIN messages m ON m.id = mg.msgid " +
+				"INNER JOIN users u ON u.id = m.fromuser " +
+				"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
+				"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL AND m.subject LIKE ? " +
+				"ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm}, groupIDs, limit)
+			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
 		}
 	} else if subaction == "searchmemb" && search != "" {
 		// If search is a numeric user ID, do a fast direct lookup first.
 		searchUID, numErr := strconv.ParseUint(search, 10, 64)
 		if numErr == nil && searchUID > 0 {
-			db.Raw("SELECT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"INNER JOIN users u ON u.id = m.fromuser "+
-				"WHERE mg.groupid IN (?) "+
-				"AND mg.collection = ? "+
-				"AND mg.deleted = 0 "+
-				"AND m.deleted IS NULL AND u.deleted IS NULL "+
-				"AND m.fromuser = ? "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchUID, limit).Pluck("msgid", &msgIDs)
+			branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
+				"INNER JOIN messages m ON m.id = mg.msgid " +
+				"INNER JOIN users u ON u.id = m.fromuser " +
+				"WHERE mg.groupid = %GID% " +
+				"AND mg.collection = ? " +
+				"AND mg.deleted = 0 " +
+				"AND m.deleted IS NULL AND u.deleted IS NULL " +
+				"AND m.fromuser = ? " +
+				"ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchUID}, groupIDs, limit)
+			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
 		}
 		if len(msgIDs) == 0 {
-			// Fall back to name/email LIKE search.
+			// Fall back to name/email LIKE search.  The LEFT JOIN to
+			// users_emails can produce duplicate msgids for users with
+			// multiple emails; SELECT DISTINCT inside each UNION branch
+			// collapses them before the outer LIMIT is applied.
 			searchTerm := "%" + search + "%"
-			db.Raw("SELECT DISTINCT mg.msgid FROM messages_groups mg "+
-				"INNER JOIN messages m ON m.id = mg.msgid "+
-				"INNER JOIN users u ON u.id = m.fromuser "+
-				"LEFT JOIN users_emails ue ON ue.userid = u.id "+
-				"WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 "+
-				"AND m.deleted IS NULL AND u.deleted IS NULL "+
-				"AND (u.fullname LIKE ? OR ue.email LIKE ?) "+
-				"ORDER BY mg.arrival DESC LIMIT ?",
-				groupIDs, collection, searchTerm, searchTerm, limit).Pluck("msgid", &msgIDs)
+			branchSQL := "SELECT DISTINCT mg.msgid, mg.arrival FROM messages_groups mg " +
+				"INNER JOIN messages m ON m.id = mg.msgid " +
+				"INNER JOIN users u ON u.id = m.fromuser " +
+				"LEFT JOIN users_emails ue ON ue.userid = u.id " +
+				"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
+				"AND m.deleted IS NULL AND u.deleted IS NULL " +
+				"AND (u.fullname LIKE ? OR ue.email LIKE ?) " +
+				"ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm, searchTerm}, groupIDs, limit)
+			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
 		}
 	} else {
-		sql := "SELECT mg.msgid FROM messages_groups mg " +
+		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
 			"INNER JOIN messages m ON m.id = mg.msgid " +
 			"INNER JOIN users u ON u.id = m.fromuser " +
-			"WHERE mg.groupid IN (?) AND mg.collection = ? AND mg.deleted = 0 " +
+			"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
 			"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL "
-		args := []interface{}{groupIDs, collection}
+		branchArgs := []interface{}{collection}
 
 		if fromuser > 0 {
-			sql += "AND m.fromuser = ? "
-			args = append(args, fromuser)
+			branchSQL += "AND m.fromuser = ? "
+			branchArgs = append(branchArgs, fromuser)
 		}
 		if ctx != nil && ctx.Date > 0 {
 			ctxTime := time.Unix(ctx.Date, 0).UTC().Format("2006-01-02 15:04:05")
-			sql += "AND (mg.arrival < ? OR (mg.arrival = ? AND mg.msgid < ?)) "
-			args = append(args, ctxTime, ctxTime, ctx.ID)
+			branchSQL += "AND (mg.arrival < ? OR (mg.arrival = ? AND mg.msgid < ?)) "
+			branchArgs = append(branchArgs, ctxTime, ctxTime, ctx.ID)
 		}
-		sql += "ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
-		args = append(args, limit)
+		branchSQL += "ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+
+		sql, args := buildMTUnionAllMsgIDQuery(branchSQL, branchArgs, groupIDs, limit)
 		db.Raw(sql, args...).Pluck("msgid", &msgIDs)
 	}
 

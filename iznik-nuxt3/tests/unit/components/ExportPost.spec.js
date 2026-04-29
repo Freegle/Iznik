@@ -82,16 +82,17 @@ describe('ExportPost', () => {
       expect(wrapper.find('div').exists()).toBe(true)
     })
 
-    it('shows only first group when multiple groups exist', () => {
+    it('shows all groups when multiple groups exist', () => {
       const multiGroupPost = {
         ...defaultPost,
         groups: [
-          { namedisplay: 'First Group' },
-          { namedisplay: 'Second Group' },
+          { groupid: 1, namedisplay: 'First Group' },
+          { groupid: 2, namedisplay: 'Second Group' },
         ],
       }
       const wrapper = mountExportPost({ post: multiGroupPost })
       expect(wrapper.text()).toContain('First Group')
+      expect(wrapper.text()).toContain('Second Group')
     })
   })
 })

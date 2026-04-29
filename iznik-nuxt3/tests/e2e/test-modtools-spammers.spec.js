@@ -61,6 +61,9 @@ test.describe('ModTools Spammer List', () => {
     // Reset all test spammers to PendingAdd with no hold so subsequent tests
     // in this serial suite start from a known clean state.  Previous runs may
     // have held or confirmed these entries, so we always reset before proceeding.
+    // NOTE: testEnv is cached per session in the status API, so testEnv.spammers
+    // may contain stale IDs from a previous run where the Reject test deleted them.
+    // After the PATCH, we verify PendingAdd entries exist and self-heal if needed.
     const jwt = await page.evaluate(() => {
       const auth = JSON.parse(localStorage.getItem('auth') || '{}')
       return auth?.auth?.jwt
@@ -73,6 +76,53 @@ test.describe('ModTools Spammer List', () => {
             headers: { Authorization: jwt },
           })
           .catch(() => {})
+      }
+    }
+
+    // Verify at least one PendingAdd entry exists. If the cached IDs were stale
+    // (deleted by a previous run's Reject test), reset or create an entry.
+    // POST is blocked by V1 parity if the user already has a spam_users row in
+    // another collection (e.g. 'Spammer' from a previous Confirm run), so we
+    // first check for any existing entry and PATCH it to PendingAdd instead.
+    if (jwt) {
+      const checkResp = await page.request
+        .get(`${API_V2}/modtools/spammers?collection=PendingAdd`, {
+          headers: { Authorization: jwt },
+        })
+        .catch(() => null)
+      const checkData = checkResp ? await checkResp.json().catch(() => ({})) : {}
+      const pendingCount = checkData?.spammers?.length ?? 0
+      if (pendingCount === 0) {
+        console.log('[Test] No PendingAdd spammers found, checking for existing entries to reset')
+        // Query all spam entries for the test user (any collection).
+        const userResp = await page.request
+          .get(`${API_V2}/modtools/spammers?userid=${testEnv.user.id}`, {
+            headers: { Authorization: jwt },
+          })
+          .catch(() => null)
+        const userData = userResp ? await userResp.json().catch(() => ({})) : {}
+        const existingEntry = userData?.spammers?.[0]
+        if (existingEntry?.id) {
+          console.log('[Test] Resetting existing entry', existingEntry.id, 'to PendingAdd')
+          await page.request
+            .patch(`${API_V2}/modtools/spammers`, {
+              data: { id: existingEntry.id, collection: 'PendingAdd', heldby: null },
+              headers: { Authorization: jwt },
+            })
+            .catch(() => {})
+        } else {
+          console.log('[Test] No existing entry found, creating fresh PendingAdd entry')
+          await page.request
+            .post(`${API_V2}/modtools/spammers`, {
+              data: {
+                userid: testEnv.user.id,
+                collection: 'PendingAdd',
+                reason: 'Playwright test spammer (recreated)',
+              },
+              headers: { Authorization: jwt },
+            })
+            .catch(() => {})
+        }
       }
     }
 
@@ -125,7 +175,7 @@ test.describe('ModTools Spammer List', () => {
     // If all visible cards are held, release one first to create a Hold-able card.
     // Previous test runs may have held many entries leaving no Hold buttons visible.
     const holdBtn = page.locator('.member-card button:has-text("Hold")').first()
-    const holdVisible = await holdBtn.isVisible().catch(() => false)
+    const holdVisible = await holdBtn.isVisible({ timeout: 5000 }).catch(() => false)
 
     if (!holdVisible) {
       const releaseBtn = page
@@ -165,26 +215,46 @@ test.describe('ModTools Spammer List', () => {
     page,
     testEnv,
   }) => {
-    // This test verifies that after the previous test held an entry, the spammer
-    // store correctly propagates heldby into the member object so the template
+    // This test verifies that after an entry is held, the spammer store
+    // correctly propagates heldby into the member object so the template
     // hides the Hold/Confirm/Reject buttons (v-if="!member.heldby").
     //
     // Bug: addAll() was not including item.heldby in the member object,
     // so member.heldby was always undefined and the Hold button always showed.
     //
-    // NOTE: This test does NOT hold any entries itself — it verifies the state
-    // left by the previous test. This leaves one entry unheld for the Confirm test.
+    // Per test setup rule: this test sets up its own held entry if needed.
+    // If no entries are already held, we hold one explicitly so we can verify
+    // the heldby state is reflected. This leaves at least one unheld entry
+    // for the Confirm test.
 
     await loginViaModTools(page, testEnv.mod.email)
     await goToSpammersPage(page)
 
-    const totalCards = await page.locator('.member-card').count()
-    const holdBtns = await page
+    let totalCards = await page.locator('.member-card').count()
+    let holdBtns = await page
       .locator('.member-card button:has-text("Hold")')
       .count()
 
-    // After the previous test held at least one entry, there should be
-    // fewer Hold buttons than member cards.
+    // If all entries are unheld (holdBtns == totalCards), hold one to establish
+    // the test condition. Otherwise, we verify the state left by a previous test.
+    if (holdBtns === totalCards) {
+      const holdBtn = page.locator('.member-card button:has-text("Hold")').first()
+      await expect(holdBtn).toBeVisible({ timeout: timeouts.ui.appearance })
+      await holdBtn.click()
+
+      // Wait for the entry to become held (Release button appears, replacing Hold).
+      await expect(
+        page.locator('.member-card button:has-text("Release")').first()
+      ).toBeVisible({ timeout: timeouts.ui.appearance })
+
+      totalCards = await page.locator('.member-card').count()
+      holdBtns = await page
+        .locator('.member-card button:has-text("Hold")')
+        .count()
+    }
+
+    // After holding at least one entry, there should be fewer Hold buttons
+    // than member cards (some entries have heldby set, hiding their buttons).
     expect(holdBtns).toBeLessThan(totalCards)
   })
 
@@ -240,7 +310,7 @@ test.describe('ModTools Spammer List', () => {
     const confirmBtn = page
       .locator('.member-card button:has-text("Confirm add to spammer list")')
       .first()
-    const confirmVisible = await confirmBtn.isVisible().catch(() => false)
+    const confirmVisible = await confirmBtn.isVisible({ timeout: 5000 }).catch(() => false)
 
     if (!confirmVisible) {
       const releaseBtn = page
@@ -282,6 +352,9 @@ test.describe('ModTools Spammer List', () => {
     await loginViaModTools(page, testEnv.mod.email)
 
     // Reset test spammers to PendingAdd with no hold so Reject button is visible.
+    // testEnv.spammers may be stale (entries deleted by a previous Reject run), and
+    // a previous Confirm run may have moved the test user's entry to 'Spammer' collection.
+    // Use the same self-healing pattern as the first test to ensure PendingAdd entries exist.
     const jwt = await page.evaluate(() => {
       const auth = JSON.parse(localStorage.getItem('auth') || '{}')
       return auth?.auth?.jwt
@@ -294,6 +367,44 @@ test.describe('ModTools Spammer List', () => {
             headers: { Authorization: jwt },
           })
           .catch(() => {})
+      }
+    }
+    // Self-heal: if no PendingAdd entries exist after the reset, find any existing
+    // entry for the test user and PATCH it to PendingAdd, or POST a fresh one.
+    if (jwt) {
+      const checkResp = await page.request
+        .get(`${API_V2}/modtools/spammers?collection=PendingAdd`, {
+          headers: { Authorization: jwt },
+        })
+        .catch(() => null)
+      const checkData = checkResp ? await checkResp.json().catch(() => ({})) : {}
+      if ((checkData?.spammers?.length ?? 0) === 0) {
+        const userResp = await page.request
+          .get(`${API_V2}/modtools/spammers?userid=${testEnv.user.id}`, {
+            headers: { Authorization: jwt },
+          })
+          .catch(() => null)
+        const userData = userResp ? await userResp.json().catch(() => ({})) : {}
+        const existingEntry = userData?.spammers?.[0]
+        if (existingEntry?.id) {
+          await page.request
+            .patch(`${API_V2}/modtools/spammers`, {
+              data: { id: existingEntry.id, collection: 'PendingAdd', heldby: null },
+              headers: { Authorization: jwt },
+            })
+            .catch(() => {})
+        } else {
+          await page.request
+            .post(`${API_V2}/modtools/spammers`, {
+              data: {
+                userid: testEnv.user.id,
+                collection: 'PendingAdd',
+                reason: 'Playwright test spammer (recreated)',
+              },
+              headers: { Authorization: jwt },
+            })
+            .catch(() => {})
+        }
       }
     }
 
@@ -324,7 +435,7 @@ test.describe('ModTools Spammer List', () => {
     const rejectBtn = page
       .locator('.member-card button:has-text("Reject add to spammer list")')
       .first()
-    const rejectVisible = await rejectBtn.isVisible().catch(() => false)
+    const rejectVisible = await rejectBtn.isVisible({ timeout: 5000 }).catch(() => false)
 
     if (!rejectVisible) {
       const releaseBtn = page

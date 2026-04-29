@@ -277,5 +277,12 @@ describe('EmailValidator', () => {
       const wrapper = createWrapper()
       expect(typeof wrapper.vm.focus).toBe('function')
     })
+
+    it('exposes async validate method that resolves to a boolean', async () => {
+      const wrapper = createWrapper()
+      expect(typeof wrapper.vm.validate).toBe('function')
+      const result = await wrapper.vm.validate()
+      expect(typeof result).toBe('boolean')
+    })
   })
 })

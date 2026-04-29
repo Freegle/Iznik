@@ -401,6 +401,30 @@ func (l *LokiClient) log(labels map[string]string, logLine string) {
 	}
 }
 
+// LogCustom emits a structured diagnostic log under a caller-chosen source label.
+// Use sparingly — intended for targeted instrumentation (e.g. vector search stats)
+// that doesn't fit the generic API request/response shape.
+func (l *LokiClient) LogCustom(source string, extraLabels map[string]string, data map[string]interface{}) {
+	if !l.enabled {
+		return
+	}
+
+	labels := map[string]string{
+		"app":    "freegle",
+		"source": source,
+	}
+	for k, v := range extraLabels {
+		labels[k] = v
+	}
+
+	if _, ok := data["timestamp"]; !ok {
+		data["timestamp"] = time.Now().Format(time.RFC3339Nano)
+	}
+
+	logLine, _ := json.Marshal(data)
+	l.log(labels, string(logLine))
+}
+
 // LogChatReply logs a chat reply event with source tracking for dashboard analytics.
 // Sources: "amp" (AMP email form), "email" (email reply), "website" (web interface)
 func (l *LokiClient) LogChatReply(source string, chatID, userID uint64, messageID *uint64, emailTrackingID *uint64) {

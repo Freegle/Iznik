@@ -218,9 +218,48 @@ func TestPayPalIPN_RecurringVsOneOff(t *testing.T) {
 		userID).Scan(&taskCount)
 	assert.Equal(t, int64(1), taskCount, "Thank-you should be queued for first recurring donation")
 
+	// Source field must be 'paypal' so the email is worded correctly.
+	var source string
+	db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(data, '$.source')) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL",
+		userID).Scan(&source)
+	assert.Equal(t, "paypal", source, "PayPal IPN must tag thank-you task with source=paypal")
+
 	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", txnID)
 	db.Exec("DELETE FROM background_tasks WHERE task_type = 'email_donate_external' AND data LIKE ?",
 		fmt.Sprintf("%%\"user_id\":%d%%", userID))
+}
+
+func TestPayPalIPN_OneOffBelowThresholdNoThankYou(t *testing.T) {
+	prefix := uniquePrefix("paypalsmall")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_donor", "User")
+	email := prefix + "_donor@test.com"
+	txnID := "PAY_" + prefix
+
+	// One-off £10 donation — below £20 threshold, must NOT queue thank-you.
+	body := makePayPalForm(map[string]string{
+		"mc_gross":     "10.00",
+		"payer_email":  email,
+		"first_name":   "Small",
+		"last_name":    "Donor",
+		"txn_id":       txnID,
+		"txn_type":     "web_accept",
+		"payment_date": "2026-01-15 10:30:00",
+	})
+
+	req := httptest.NewRequest("POST", "/donateipn", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'email_donate_external' AND JSON_EXTRACT(data, '$.user_id') = ? AND processed_at IS NULL",
+		userID).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "One-off donation below £20 must not queue thank-you")
+
+	db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", txnID)
 }
 
 func TestPayPalIPN_NoMcGross(t *testing.T) {

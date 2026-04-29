@@ -21,7 +21,47 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
+	"gorm.io/gorm"
 )
+
+// FetchEmailHealth returns the incoming and outgoing email alert flags
+// used by the moderator/admin work badge. Only flagged during daytime
+// hours (07:00-22:00 UTC) — outside that window both values are zero.
+// Extracted so it can be unit-tested with an explicit hour, making Go
+// coverage for this block deterministic regardless of CI wall-clock time.
+func FetchEmailHealth(db *gorm.DB, hour int) (emailin, emailout int64) {
+	if hour < 7 || hour >= 22 {
+		return 0, 0
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		// Incoming: alert if zero platform=0 chat messages in last 2 hours.
+		var inCount int64
+		db.Raw(`SELECT COUNT(*) FROM chat_messages
+			WHERE platform = 0 AND date >= DATE_SUB(NOW(), INTERVAL 2 HOUR)`).Scan(&inCount)
+		if inCount == 0 {
+			emailin = 1
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		// Outgoing: alert if fewer than 10 emails sent in last hour.
+		var outCount int64
+		db.Raw(`SELECT COUNT(*) FROM email_tracking
+			WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)`).Scan(&outCount)
+		if outCount < 10 {
+			emailout = 1
+		}
+	}()
+
+	wg.Wait()
+	return emailin, emailout
+}
 
 // fetchDiscourseStats fetches notification and topic counts from the Discourse API.
 // Returns nil if Discourse is not configured or the API call fails.
@@ -646,10 +686,12 @@ func GetSession(c *fiber.Ctx) error {
 		Source        *string         `json:"source"`
 		Deleted       *time.Time      `json:"deleted"`
 		Forgotten     *time.Time      `json:"forgotten"`
-		Trustlevel       *string         `json:"trustlevel"`
-		Permissions      *string         `json:"permissions"`
-		Marketingconsent bool            `json:"marketingconsent"`
-		Bouncing         int             `json:"bouncing"`
+		Trustlevel         *string         `json:"trustlevel"`
+		Permissions        *string         `json:"permissions"`
+		Marketingconsent   bool            `json:"marketingconsent"`
+		Bouncing           int             `json:"bouncing"`
+		Relevantallowed    int             `json:"relevantallowed"`
+		Newslettersallowed int             `json:"newslettersallowed"`
 	}
 
 	type EmailRow struct {
@@ -661,15 +703,16 @@ func GetSession(c *fiber.Ctx) error {
 	}
 
 	type MembershipRow struct {
-		Groupid             uint64  `json:"groupid"`
-		Role                string  `json:"role"`
-		Emailfrequency      int     `json:"emailfrequency"`
-		Eventsallowed       int     `json:"eventsallowed"`
-		Volunteeringallowed int     `json:"volunteeringallowed"`
-		Configid            *uint64 `json:"configid"`
-		Active              int     `json:"active"`  // 1=active mod, 0=backup mod
-		Type                string  `json:"-"`        // Used server-side for moderator detection, not returned to client
-		Settings            *string `json:"-"`        // Per-group membership settings JSON, used to determine active/inactive
+		Groupid                  uint64  `json:"groupid"`
+		Role                     string  `json:"role"`
+		Emailfrequency           int     `json:"emailfrequency"`
+		Eventsallowed            int     `json:"eventsallowed"`
+		Volunteeringallowed      int     `json:"volunteeringallowed"`
+		Microvolunteeringallowed int     `json:"microvolunteeringallowed"`
+		Configid                 *uint64 `json:"configid"`
+		Active                   int     `json:"active"`  // 1=active mod, 0=backup mod
+		Type                     string  `json:"-"`        // Used server-side for moderator detection, not returned to client
+		Settings                 *string `json:"-"`        // Per-group membership settings JSON, used to determine active/inactive
 	}
 
 	type LocationRow struct {
@@ -707,7 +750,7 @@ func GetSession(c *fiber.Ctx) error {
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, fullname, firstname, lastname, systemrole, settings, lastaccess, added, lastlocation, onholidaytill, source, deleted, forgotten, trustlevel, permissions, marketingconsent, bouncing FROM users WHERE id = ?", myid).Scan(&userRow)
+		db.Raw("SELECT id, fullname, firstname, lastname, systemrole, settings, lastaccess, added, lastlocation, onholidaytill, source, deleted, forgotten, trustlevel, permissions, marketingconsent, bouncing, relevantallowed, newslettersallowed FROM users WHERE id = ?", myid).Scan(&userRow)
 	}()
 	go func() {
 		defer wg.Done()
@@ -715,7 +758,7 @@ func GetSession(c *fiber.Ctx) error {
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, g.type, m.settings "+
+		db.Raw("SELECT m.groupid, m.role, m.emailfrequency, m.eventsallowed, m.volunteeringallowed, m.configid, g.type, m.settings, g.microvolunteering AS microvolunteeringallowed "+
 			"FROM memberships m JOIN `groups` g ON g.id = m.groupid "+
 			"WHERE m.userid = ? AND m.collection = ? ORDER BY LOWER(CASE WHEN g.namefull IS NOT NULL THEN g.namefull ELSE g.nameshort END)", myid, utils.COLLECTION_APPROVED).Scan(&memberships)
 	}()
@@ -1167,33 +1210,11 @@ func GetSession(c *fiber.Ctx) error {
 			}()
 
 			// --- Email health: incoming and outgoing alerts (admin/support) ---
-			// Only flag during daytime hours (07:00-22:00 UTC).
-			nowHour := time.Now().Hour()
-			if nowHour >= 7 && nowHour < 22 {
-				wg2.Add(1)
-				go func() {
-					defer wg2.Done()
-					// Incoming: alert if zero platform=0 chat messages in last 2 hours.
-					var inCount int64
-					db.Raw(`SELECT COUNT(*) FROM chat_messages
-						WHERE platform = 0 AND date >= DATE_SUB(NOW(), INTERVAL 2 HOUR)`).Scan(&inCount)
-					if inCount == 0 {
-						emailin = 1
-					}
-				}()
-
-				wg2.Add(1)
-				go func() {
-					defer wg2.Done()
-					// Outgoing: alert if fewer than 10 emails sent in last hour.
-					var outCount int64
-					db.Raw(`SELECT COUNT(*) FROM email_tracking
-						WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)`).Scan(&outCount)
-					if outCount < 10 {
-						emailout = 1
-					}
-				}()
-			}
+			wg2.Add(1)
+			go func() {
+				defer wg2.Done()
+				emailin, emailout = FetchEmailHealth(db, time.Now().Hour())
+			}()
 		}
 
 		wg2.Wait()
@@ -1308,25 +1329,27 @@ func GetSession(c *fiber.Ctx) error {
 
 	// Build the me object.
 	me := fiber.Map{
-		"id":               userRow.ID,
-		"displayname":      displayname,
-		"fullname":         userRow.Fullname,
-		"firstname":        userRow.Firstname,
-		"lastname":         userRow.Lastname,
-		"systemrole":       userRow.Systemrole,
-		"settings":         userRow.Settings,
-		"lastaccess":       userRow.Lastaccess,
-		"added":            userRow.Added,
-		"source":           userRow.Source,
-		"deleted":          userRow.Deleted,
-		"forgotten":        userRow.Forgotten,
-		"trustlevel":       userRow.Trustlevel,
-		"marketingconsent": userRow.Marketingconsent,
-		"bouncing":         userRow.Bouncing,
-		"aboutme":          aboutme,
-		"supporter":        supporterInfo.Supporter,
-		"donated":          supporterInfo.Donated,
-		"donatedtype":      supporterInfo.DonatedType,
+		"id":                 userRow.ID,
+		"displayname":        displayname,
+		"fullname":           userRow.Fullname,
+		"firstname":          userRow.Firstname,
+		"lastname":           userRow.Lastname,
+		"systemrole":         userRow.Systemrole,
+		"settings":           userRow.Settings,
+		"lastaccess":         userRow.Lastaccess,
+		"added":              userRow.Added,
+		"source":             userRow.Source,
+		"deleted":            userRow.Deleted,
+		"forgotten":          userRow.Forgotten,
+		"trustlevel":         userRow.Trustlevel,
+		"marketingconsent":   userRow.Marketingconsent,
+		"bouncing":           userRow.Bouncing,
+		"relevantallowed":    userRow.Relevantallowed,
+		"newslettersallowed": userRow.Newslettersallowed,
+		"aboutme":            aboutme,
+		"supporter":          supporterInfo.Supporter,
+		"donated":            supporterInfo.Donated,
+		"donatedtype":        supporterInfo.DonatedType,
 	}
 
 	if userRow.Onholidaytill != nil {

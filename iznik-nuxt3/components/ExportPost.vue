@@ -6,8 +6,10 @@
         {{ dateonly(post.arrival) }}
       </b-col>
       <b-col cols="2">
-        <span v-if="post.groups && post.groups[0]">
-          {{ post.groups[0].namedisplay }}
+        <span v-if="post.groups && post.groups.length">
+          <span v-for="(g, idx) in post.groups" :key="g.groupid">
+            {{ g.namedisplay }}<span v-if="idx < post.groups.length - 1">, </span>
+          </span>
         </span>
       </b-col>
       <b-col cols="4">

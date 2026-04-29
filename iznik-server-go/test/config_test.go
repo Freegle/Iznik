@@ -294,6 +294,28 @@ func TestWorryWords_DeleteNotFound(t *testing.T) {
 	assert.Equal(t, 404, resp.StatusCode)
 }
 
+func TestWorryWords_DeleteInvalidID(t *testing.T) {
+	prefix := uniquePrefix("worrydelinv")
+	supportUserID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, supportUserID)
+
+	// Non-numeric ID should fail strconv.ParseUint and return 400
+	resp, _ := getApp().Test(httptest.NewRequest("DELETE", "/api/config/admin/worry_words/not-a-number?jwt="+token, nil))
+	assert.Equal(t, 400, resp.StatusCode)
+}
+
+func TestWorryWords_CreateInvalidJSON(t *testing.T) {
+	prefix := uniquePrefix("worryinvjson")
+	supportUserID := CreateTestUser(t, prefix, "Support")
+	_, token := CreateTestSession(t, supportUserID)
+
+	// Malformed JSON body should fail BodyParser and return 400
+	req := httptest.NewRequest("POST", "/api/config/admin/worry_words?jwt="+token, bytes.NewReader([]byte("{not valid json")))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 400, resp.StatusCode)
+}
+
 // Integration tests
 
 func TestSpamKeywords_Integration(t *testing.T) {

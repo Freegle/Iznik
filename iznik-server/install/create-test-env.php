@@ -347,19 +347,31 @@ error_log("Cleaned up stale chats for test users");
 $r = new ChatRoom($dbhr, $dbhm);
 $cm = new ChatMessage($dbhr, $dbhm);
 
-# Retry wrapper: parallel test setups can deadlock on chat_rooms INSERT.
-# v1 API handles this at the HTTP level (API.php retry loop); here we do it inline.
-function retryOnDeadlock(callable $fn, int $maxAttempts = 5) {
+# Retry wrapper: parallel test setups contend on chat_rooms at several levels:
+#  - InnoDB deadlocks during concurrent INSERTs into chat_rooms.
+#  - FK constraint violations on chat_messages.chatid: another prefix's cleanup
+#    DELETE on chat_rooms (earlier in the script) can cascade away a row that
+#    was just created by createConversation, before $cm->create INSERTs a row
+#    that references it. (Chat rooms can legitimately be shared across users
+#    when createConversation returns an existing room matching the pair.)
+# v1 API handles similar transient errors at the HTTP level (API.php retry loop);
+# here we do it inline. On retry the caller should re-run BOTH createConversation
+# and $cm->create so a fresh chat_rooms row is in place.
+function retryOnTransientDbError(callable $fn, int $maxAttempts = 5) {
     global $dbhm;
     for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
         try {
             return $fn();
         } catch (DBException $e) {
-            if ($attempt < $maxAttempts && stripos($e->getMessage(), 'deadlock') !== FALSE) {
-                error_log("Deadlock on attempt $attempt, retrying after backoff");
-                # The deadlock leaves an active transaction open (e.g. from
-                # ChatRoom::createConversation). Roll it back before retrying,
-                # otherwise the next beginTransaction() call will fatal.
+            $msg = $e->getMessage();
+            $isTransient = stripos($msg, 'deadlock') !== FALSE
+                || stripos($msg, 'foreign key constraint') !== FALSE
+                || stripos($msg, 'lock wait timeout') !== FALSE;
+            if ($attempt < $maxAttempts && $isTransient) {
+                error_log("Transient DB error on attempt $attempt, retrying after backoff: $msg");
+                # Any open transaction (e.g. from ChatRoom::createConversation)
+                # must be rolled back before the next beginTransaction(), or it
+                # will fatal.
                 try { $dbhm->rollBack(); } catch (\Exception $ignore) {}
                 usleep(rand(50000, 200000)); // 50-200ms random backoff
             } else {
@@ -369,14 +381,19 @@ function retryOnDeadlock(callable $fn, int $maxAttempts = 5) {
     }
 }
 
-# User2User chat.
-list ($u2uRid, $banned) = retryOnDeadlock(fn() => $r->createConversation($userUid, $modUid));
-$cm->create($u2uRid, $userUid, "PW test message from user to mod in $prefix");
+# User2User chat. Retry the create+message as a unit so a re-run recreates
+# the chat_rooms row if a parallel cleanup removed it between the two statements.
+retryOnTransientDbError(function () use ($r, $cm, $userUid, $modUid, $prefix, &$u2uRid) {
+    list ($u2uRid, $banned) = $r->createConversation($userUid, $modUid);
+    $cm->create($u2uRid, $userUid, "PW test message from user to mod in $prefix");
+});
 error_log("User2User chat (ID: $u2uRid)");
 
 # User2Mod chat.
-$u2mRid = retryOnDeadlock(fn() => $r->createUser2Mod($userUid, $gid));
-$cm->create($u2mRid, $userUid, "PW test message from user to group in $prefix");
+retryOnTransientDbError(function () use ($r, $cm, $userUid, $gid, $prefix, &$u2mRid) {
+    $u2mRid = $r->createUser2Mod($userUid, $gid);
+    $cm->create($u2mRid, $userUid, "PW test message from user to group in $prefix");
+});
 error_log("User2Mod chat (ID: $u2mRid)");
 
 # Spammer test env: grant mod SpamAdmin permission and create PendingAdd spam entries.

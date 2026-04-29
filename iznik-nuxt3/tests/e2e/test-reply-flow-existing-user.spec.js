@@ -27,12 +27,14 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     testEmail,
     getTestEmail,
     withdrawPost,
-  }) => {
+  }, testInfo) => {
+    // Multi-step flow: signup + 2x logout + postMessage can each take 135-202s under
+    // parallel CI load. Default 600s budget is insufficient.
+    testInfo.setTimeout(900000)
     // First create a user by signing up (this will be the "existing" user who will reply)
     const existingEmail = getTestEmail('existing')
     await signUpViaHomepage(page, existingEmail)
 
-    // Log out so we can post as a different user (the poster)
     await logoutIfLoggedIn(page)
 
     // Post a message as the poster (testEmail)
@@ -46,11 +48,10 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     })
     expect(result.id).toBeTruthy()
 
-    // Log out from poster to simulate session expiry for the existing user
     await logoutIfLoggedIn(page)
 
     // Navigate to message page
-    await page.gotoAndVerify(`/message/${result.id}`)
+    await page.gotoAndVerify(`/message/${result.id}`, { maxRetries: 1 })
     await clickReplyButton(page)
 
     // Fill in reply with existing user's email - should trigger login flow
@@ -131,7 +132,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
       const sendButtonAgain = page
         .locator('.btn:has-text("Send your reply")')
         .filter({ visible: true })
-      if (await sendButtonAgain.isVisible()) {
+      if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
         await sendButtonAgain.click()
         await page.waitForURL(/\/chats\//, {
           timeout: timeouts.navigation.default,
@@ -158,12 +159,15 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     getTestEmail,
     withdrawPost,
     testEnv,
-  }) => {
+  }, testInfo) => {
+    // Multi-step flow: signup + 2x logout + postMessage + browse-navigate + login + reply.
+    // Under parallel CI load each navigation can take 135-202s; 600s default budget is
+    // insufficient. Observed timeout in job 5849 (test ran for 20m).
+    testInfo.setTimeout(1200000)
     // First create a user by signing up (this will be the "existing" user who will reply)
     const existingEmail = getTestEmail('existing-browse')
     await signUpViaHomepage(page, existingEmail)
 
-    // Log out so we can post as a different user (the poster)
     await logoutIfLoggedIn(page)
 
     // Post a message as the poster (testEmail)
@@ -177,7 +181,6 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     })
     expect(result.id).toBeTruthy()
 
-    // Log out from poster
     await logoutIfLoggedIn(page)
 
     // Navigate via browse page (use specific group since /browse might be empty)
@@ -266,7 +269,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
       const sendButtonAgain = page
         .locator('.btn:has-text("Send your reply")')
         .filter({ visible: true })
-      if (await sendButtonAgain.isVisible()) {
+      if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
         await sendButtonAgain.click()
         await page.waitForURL(/\/chats\//, {
           timeout: timeouts.navigation.default,
@@ -290,12 +293,15 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     getTestEmail,
     withdrawPost,
     testEnv,
-  }) => {
+  }, testInfo) => {
+    // Multi-step flow: signup + 2x logout + postMessage + explore-navigate + login + reply.
+    // Under parallel CI load each navigation can take 135-202s; 600s default budget is
+    // insufficient. Observed timeout in job 5849 (test ran for 20m).
+    testInfo.setTimeout(1200000)
     // First create a user by signing up (this will be the "existing" user who will reply)
     const existingEmail = getTestEmail('existing-explore')
     await signUpViaHomepage(page, existingEmail)
 
-    // Log out so we can post as a different user (the poster)
     await logoutIfLoggedIn(page)
 
     // Post a message as the poster (testEmail)
@@ -309,7 +315,6 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
     })
     expect(result.id).toBeTruthy()
 
-    // Log out from poster
     await logoutIfLoggedIn(page)
 
     // Navigate via explore page and find our specific message
@@ -393,7 +398,7 @@ test.describe('Reply Flow - Existing User Forced Login', () => {
       const sendButtonAgain = page
         .locator('.btn:has-text("Send your reply")')
         .filter({ visible: true })
-      if (await sendButtonAgain.isVisible()) {
+      if (await sendButtonAgain.isVisible({ timeout: 5000 }).catch(() => false)) {
         await sendButtonAgain.click()
         await page.waitForURL(/\/chats\//, {
           timeout: timeouts.navigation.default,

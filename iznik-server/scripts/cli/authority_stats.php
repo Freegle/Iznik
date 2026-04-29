@@ -262,6 +262,7 @@ if (count($opts) < 1) {
         $sheet->setCellValue("B$shortlinkrow", $months[0]['formatted']);
         $sheet->setCellValue("C$shortlinkrow", $months[1]['formatted']);
         $sheet->setCellValue("D$shortlinkrow", $months[2]['formatted']);
+        $sheet->setCellValue("E$shortlinkrow", "Total");
 
         $shortlinkrow++;
 
@@ -277,7 +278,80 @@ if (count($opts) < 1) {
         }
 
         $sheet->removeRow($shortlinkrow);
-        $sheet->setCellValue("A" . ($shortlinkrow + 1), "All data correct at " . date('d/m/Y'));
+
+        # Find and update the "All data correct" row, "User stories" row, and shortlinks URL.
+        $allDataRow = NULL;
+        $storiesRow = NULL;
+        $shortlinksUrlRow = NULL;
+        $shortlinksTextRow = NULL;
+
+        for ($r = $shortlinkrow; $r <= $shortlinkrow + 10; $r++) {
+            $val = $sheet->getCell("A$r")->getValue();
+            if ($val !== NULL && strpos($val, 'All data correct') !== FALSE) {
+                $allDataRow = $r;
+            }
+            if ($val !== NULL && strpos($val, 'User stories') !== FALSE) {
+                $storiesRow = $r;
+            }
+            if ($val !== NULL && strpos($val, 'The full data associated with any shortlinks') !== FALSE) {
+                $shortlinksTextRow = $r;
+            }
+            if ($val !== NULL && strpos($val, 'ilovefreegle.org/shortlinks') !== FALSE) {
+                $shortlinksUrlRow = $r;
+            }
+        }
+
+        # Replace the generic shortlinks URL with individual per-community shortlink URLs.
+        if ($shortlinksTextRow) {
+            $sheet->setCellValue("A$shortlinksTextRow", "The full data associated with any shortlinks can be viewed by clicking the links below:");
+        }
+
+        if ($shortlinksUrlRow && count($links) > 0) {
+            $urlRow = $shortlinksUrlRow;
+
+            foreach ($links as $link) {
+                $url = "https://www.ilovefreegle.org/shortlinks/" . $link['id'];
+                $sheet->setCellValue("A$urlRow", $link['name']);
+                $sheet->setCellValue("B$urlRow", $url);
+                $sheet->getCell("B$urlRow")->getHyperlink()->setUrl($url);
+                $urlRow++;
+                $sheet->insertNewRowBefore($urlRow, 1);
+            }
+
+            $sheet->removeRow($urlRow);
+
+            # Adjust row references for the rows we added (count - 1 net new rows).
+            $rowsAdded = count($links) - 1;
+
+            if ($allDataRow) {
+                $allDataRow += $rowsAdded;
+            }
+            if ($storiesRow) {
+                $storiesRow += $rowsAdded;
+            }
+        }
+
+        if ($allDataRow) {
+            $sheet->setCellValue("A$allDataRow", "All data correct at " . date('d/m/Y'));
+        }
+
+        # Populate user stories for this authority.
+        if ($storiesRow) {
+            $s = new Story($dbhr, $dbhm);
+            $stories = $s->getStories(NULL, $a->getId(), TRUE, 10);
+            $storyrow = $storiesRow + 1;
+
+            foreach ($stories as $story) {
+                $sheet->setCellValue("A$storyrow", $story['headline']);
+                $sheet->setCellValue("B$storyrow", $story['story']);
+                $storyrow++;
+                $sheet->insertNewRowBefore($storyrow, 1);
+            }
+
+            if (count($stories) > 0) {
+                $sheet->removeRow($storyrow);
+            }
+        }
 
         # Get the postcode info.
         $sheet = $spreadsheet->getSheetByName('Postcode breakdown');

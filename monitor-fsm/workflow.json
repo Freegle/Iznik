@@ -1,0 +1,319 @@
+{
+  "id": "freegle-monitor-v2",
+  "name": "Freegle Monitor",
+  "version": "2",
+  "description": "FSM-enforced freegle-monitor iteration. Fully parallel architecture: CHECK_CI gathers master CI status, red PRs, and active Discourse topics in one tool node, then CI_ROUTER dispatches to either FIX_MASTER_CI (master red) or PARALLEL_ANALYZE_AND_FIX (master green). PARALLEL_ANALYZE_AND_FIX launches all PR fixes, all Discourse topic analyses, and Sentry analysis simultaneously in isolated worktrees. COLLATE_RESULTS merges classifications and Sentry data, then routes to WORK_ROUTER for bug/Sentry/coverage dispatch. Reaching END requires passing COVERAGE_GATE (at least one PR since iterationStartTs).",
+  "initialState": "LOAD_STATE",
+  "guardrails": "You are running inside an FSM. You MUST return JSON matching the LLMDecision schema exactly. The response MUST be a single JSON object with these keys: reasoning (string), contextUpdates (OBJECT, not a string — use {} for no updates, NEVER write \"contextUpdates\": \"{...}\"), actions (ARRAY, not a string — use [] for no actions), proposedTransition (string or null). Do NOT wrap the whole response in markdown code fences. Do NOT JSON-stringify nested fields. You may only call actions listed for the current state, and may only propose transitions listed as 'Valid Next States'. You cannot bypass the PR gate: reaching END requires a PR (bug-fix or coverage) to have been created this iteration, verified by verify_pr_created. Do not lie about actions you have not taken. HARD INVARIANT — NEVER DISMISS A RED CHECK: A failing CI run, failing test, or red status check on ANY PR @me authored is ALWAYS a real bug that must be investigated to root cause and fixed. It does NOT matter whether the failure looks related to the change or not. You MUST NOT describe a failure as 'flaky', 'environmental', 'transient', 'pre-existing', 'unrelated', 'infrastructure timing', 'polluted test data', or any equivalent. You MUST NOT 'rerun and hope'. You MUST NOT mark such a failure as 'deferred'. Deferred is reserved EXCLUSIVELY for Discourse bugs and Sentry issues that need external information (reporter clarification, hardware the host cannot access, a user judgment call). CI failures never qualify — they are always within reach and must be driven to green.",
+  "states": {
+    "LOAD_STATE": {
+      "description": "Load state.json, record iterationStartTs. Start node — ai-flower requires exactly one 'start' nodeType, so we keep this as 'start' but the driver treats start nodes with readActions the same as tool nodes (deterministic, no LLM turn).",
+      "nodeType": "start",
+      "readActions": [
+        "load_state",
+        "sync_pr_states",
+        "check_bug_feedback"
+      ],
+      "writeActions": []
+    },
+    "CHECK_CI": {
+      "description": "Pre-parallel discovery: check master CI, red PRs, and which Discourse topics have new posts. All three run in this single tool node before the parallel dispatch. Results feed CI_ROUTER.",
+      "nodeType": "tool",
+      "readActions": [
+        "check_master_ci",
+        "check_my_open_pr_ci",
+        "discover_active_topics"
+      ],
+      "writeActions": []
+    },
+    "CI_ROUTER": {
+      "description": "Dispatch based on master CI status. Tool node — ci_router_decide returns _transition deterministically. Priority: (1) master red → FIX_MASTER_CI; (2) master green → PARALLEL_ANALYZE_AND_FIX (red PRs are fixed in parallel alongside Discourse/Sentry analysis).",
+      "nodeType": "tool",
+      "readActions": [
+        "ci_router_decide"
+      ],
+      "writeActions": []
+    },
+    "FIX_MASTER_CI": {
+      "description": "Fix a failing master CI run. Direct-push to master permitted (CI-failure exception). Exactly one job: diagnose, fix, push, mark done. Returns to CHECK_CI to re-verify before Phase A can exit.",
+      "nodeType": "agent",
+      "prompt": "Master CI is failing on runId context._action_check_master_ci.latestRun.databaseId. (1) Call fetch_ci_failure_logs with that runId to get the failure. (2) Call delegate_to_coder with a task describing the failure and asking it to diagnose, fix, and push directly to master. Include the log tail and the sha. The subagent MUST identify a concrete root cause — never accept 'flake', 'transient', 'environmental', or 'unrelated' as a fix. (3) When delegate_to_coder returns, call create_pr if a PR was opened OR set contextUpdates.masterFixAttempted = true if pushed direct to master. Propose transition to CHECK_CI so Phase A re-reads CI status before deciding whether to advance.",
+      "readActions": [
+        "fetch_ci_failure_logs",
+        "search_code"
+      ],
+      "writeActions": [
+        "delegate_to_coder",
+        "create_pr"
+      ]
+    },
+    "PARALLEL_ANALYZE_AND_FIX": {
+      "description": "The core parallel dispatch. Launches one Claude agent per active Discourse topic (triage), one per red PR (fix CI), and one Sentry analysis — all simultaneously in isolated git worktrees. Replaces the sequential Phase A→Phase B pipeline.",
+      "nodeType": "agent",
+      "prompt": "You are about to launch the full parallel work batch for this iteration. All tasks run simultaneously.\n\nINPUTS:\n- context._action_check_master_ci — master CI status (should be green here)\n- context._action_check_my_open_pr_ci.redPRs — PRs with failing checks\n- context._action_discover_active_topics.topics — discourse topics; filter to those with hasNew: true\n\nBUILD YOUR TASKS ARRAY:\n\n(A) One task per red PR (id: 'pr-<n>'):\n  Task: 'Fix CI failure on PR #<n>. (a) Run `gh pr checkout <n> -R Freegle/Iznik`. (b) Read the failing check URLs from the provided failedChecks[]. For CircleCI use the v1.1 API with CIRCLECI_TOKEN from ~/.circleci/cli.yml per .circleci/README.md. (c) Identify a CONCRETE root cause — never accept flaky/transient/unrelated. (d) Fix in code. (e) Push a new commit to the PR branch. Emit COMMIT_PUSHED=<sha> when done.'\n\n(B) One task per active Discourse topic (id: 'topic-<id>') for each topic with hasNew === true:\n  Task: 'Analyse Discourse topic <id> for new bug reports. This is an analysis-only task — no code changes.\n\n  STEP 1. Get API key:\n    python3 -c \"import json; print(json.load(open(\\'/home/edward/profile.json\\'))[\\'auth_pairs\\'][0][\\'user_api_key\\'])\"\n\n  STEP 2. Get cursor from DB:\n    sqlite3 /home/edward/FreegleDockerWSL/monitor-fsm/monitor.db \"SELECT COALESCE((SELECT last_post_number FROM topic_cursor WHERE topic_id=<id>),0)\"\n\n  STEP 3. Fetch topic metadata (first page + stream array):\n    curl -s -H \"User-Api-Key: <key>\" -H \"Api-Username: Edward_Hibbert\" https://discourse.ilovefreegle.org/t/<id>.json\n    From the JSON, read:\n      - highest_post_number (or posts_count if absent) — the true highest post number\n      - post_stream.stream — array of ALL post IDs in order (stream[0]=ID of post#1, stream[1]=ID of post#2, etc.)\n    If highest_post_number <= cursor: update cursor to highest_post_number, emit CLASSIFICATIONS=[] then ANALYSIS_COMPLETE=no new posts, and stop.\n\n  STEP 4. Fetch new post content via the posts endpoint (NOT by re-fetching the topic):\n    IMPORTANT: deleted posts shrink stream.length below highest_post_number, so you CANNOT use cursor as a direct stream index.\n    Correct calculation:\n      stream_len = len(post_stream.stream)\n      deleted_count = highest_post_number - stream_len   # may be 0\n      start_index = stream_len - (highest_post_number - cursor)   # position of first new post in stream\n      start_index = max(0, start_index)\n      New post IDs = post_stream.stream[start_index : start_index + 100]\n    If New post IDs is empty, there are no new posts — emit CLASSIFICATIONS=[] then ANALYSIS_COMPLETE=no new posts, and stop.\n    Fetch in batches of 50:\n      curl -s -H \"User-Api-Key: <key>\" -H \"Api-Username: Edward_Hibbert\" \"https://discourse.ilovefreegle.org/t/<id>/posts.json?post_ids[]=<id1>&post_ids[]=<id2>...\"\n    Each response has post_stream.posts[] with post_number, username, cooked (HTML body).\n    Use python3 to strip HTML tags from cooked for readable text: import re; re.sub(\\'<[^>]+>\\', \\' \\', cooked)\n\n  STEP 5. Recent commits: git -C /home/edward/FreegleDockerWSL log --oneline --since=\\'3 days ago\\'\n\n  STEP 6. Classify each fetched post: type (bug/retest/confirmed/already_fixed/question/off_topic/mine), featureArea (short specific label like \\'iOS chitchat post loading\\'), summary (one sentence), originalPostText (first 1200 chars of stripped text), user (username). mine = Edward_Hibbert posts only.\n\n  STEP 7. Update cursor to the highest post_number seen across all fetched posts:\n    sqlite3 /home/edward/FreegleDockerWSL/monitor-fsm/monitor.db \"INSERT INTO topic_cursor (topic_id, last_post_number, title, updated_at) VALUES (<id>, <maxPostNumber>, \\'<title>\\', datetime(\\'now\\')) ON CONFLICT(topic_id) DO UPDATE SET last_post_number=excluded.last_post_number, title=COALESCE(excluded.title,title), updated_at=excluded.updated_at\"\n\n  STEP 8. Output CLASSIFICATIONS=[{json array}] — single line, valid JSON. Empty array is valid.\n  Then output ANALYSIS_COMPLETE=<n> posts classified in topic <id>.\n  Do NOT emit DELEGATE_FAILED — finding no bugs is a valid successful outcome.'\n\n(C) One Sentry task (id: 'sentry'):\n  Task: 'List unresolved Sentry issues. This is an analysis-only task — no code changes.\n  1. SENTRY_AUTH_TOKEN: grep SENTRY_AUTH_TOKEN /home/edward/FreegleDockerWSL/.env | cut -d= -f2\n  2. For each project (nuxt3, go): curl -s -H \"Authorization: Bearer <token>\" \"https://sentry.io/api/0/projects/freegle/<project>/issues/?query=is:unresolved&sort=date&limit=10\"\n  3. Output exactly: SENTRY_ISSUES=[{\"project\":\"nuxt3\",\"id\":\"...\",\"title\":\"...\",\"count\":N,\"permalink\":\"...\"},...] — single line, valid JSON. Empty array is valid.\n  4. Then output ANALYSIS_COMPLETE=sentry scan done.\n  Do NOT emit DELEGATE_FAILED — finding no issues is a valid successful outcome.'\n\nCALL delegate_parallel_tasks with the complete tasks array. Do NOT omit any active topics — the whole point is that they run simultaneously with the PR fixes.\n\nAfter delegate_parallel_tasks returns, propose transition to COLLATE_RESULTS.",
+      "readActions": [],
+      "writeActions": [
+        "delegate_parallel_tasks"
+      ]
+    },
+
+    "COLLATE_RESULTS": {
+      "description": "Merge results from the parallel dispatch into FSM context: parse CLASSIFICATIONS from topic delegates, SENTRY_ISSUES from the sentry delegate, and record PR fix outcomes. Then route to WORK_ROUTER.",
+      "nodeType": "agent",
+      "prompt": "Process context._action_delegate_parallel_tasks.results[].\n\nFor each result:\n  - id starts with 'topic-': extract the numeric topic id from the id (e.g. 'topic-9518' → 9518). Search stdoutTail for CLASSIFICATIONS=[...]. Parse the JSON array. For each entry in the array: (a) set entry.topic = <extracted topic id>, (b) if entry has post_number but no post, set entry.post = entry.post_number. Then merge the annotated entries into contextUpdates.classifications (append, not replace).\n  - id starts with 'pr-': the result is a PR CI fix attempt. Append { prNumber: <n>, exitCode, pushed, timedOut } to contextUpdates.openPRFixAttempts.\n  - id === 'sentry': search stdoutTail for SENTRY_ISSUES=[...]. Parse the JSON array. Set contextUpdates.sentryIssues = parsed array.\n\nAfter processing all results:\n  - contextUpdates.classifications should be the merged flat array with topic+post on every entry.\n  - contextUpdates.sentryIssues should be set (may be empty).\n  - If any classifications were parsed: call persist_classifications to persist them to the DB.\n  - Log a brief summary: how many classifications, how many bugs/retests, how many sentry issues, how many PR fixes succeeded.\n\nPropose transition to WORK_ROUTER.",
+      "readActions": [],
+      "writeActions": [
+        "persist_classifications"
+      ]
+    },
+
+    "WORK_ROUTER": {
+      "description": "Phase B dispatch. Tool node — work_router_decide branches deterministically on context.classifications + context.bugsFixed + context.sentryIssues. Priority: (1) unfixed 'bug'/'retest' → DISPATCH_ALL_BUGS; (2) actionable Sentry issues → FIX_SENTRY_ISSUE; (3) else → COVERAGE_GATE.",
+      "nodeType": "tool",
+      "readActions": [
+        "persist_classifications",
+        "work_router_decide"
+      ],
+      "writeActions": []
+    },
+    "DISPATCH_ALL_BUGS": {
+      "description": "Parallel coder dispatch: launches one Claude agent per pending bug, all running simultaneously in separate git worktrees. Replaces the serial PICK→DELEGATE loop. Returns to VERIFY_DISCOURSE_BATCH once all agents finish.",
+      "nodeType": "agent",
+      "prompt": "Collect ALL bugs that still need fixing from TWO sources:\n1. context.classifications — entries with type=='bug' or type=='retest' not already in contextUpdates.bugsFixed (check by topic+post).\n2. context._action_work_router_decide.dbOpenBugs — bugs from the DB that were not discovered this iteration (manually added, previously missed). Treat each as type=='bug'.\nMerge both lists, deduplicating by topic+post. Also apply the deferred-skip rule: if the most recent post on the same topic is a 'mine' classification that asks a question AND the classification has no reviewerRejected flag, skip it (append { topic, post, user, outcome:'deferred', reason:'awaiting reporter clarification' } to contextUpdates.bugsFixed).\n\nFor each remaining actionable bug, build a task string using the SAME template as DELEGATE_DISCOURSE_BUG_FIX's prompt (REPORTED SYMPTOM, SYMPTOM CROSS-CHECK, EVIDENCE REQUIREMENT, TASK, BRANCH/PR SELECTION sections). Use id: \"bug-<topic>-<post>\" for each task.\n\nCall delegate_parallel_tasks with all tasks in a single call. Store contextUpdates.pendingBugBatch = [{ topic, post, user, summary, screenshotUrl, originalPostText, reviewerReason, rejectedPrNumber }] (one entry per dispatched bug in the same order as tasks[]).\n\nAfter delegate_parallel_tasks returns, set contextUpdates.bugBatchResults = the action result. Propose transition to VERIFY_DISCOURSE_BATCH.",
+      "readActions": [
+        "search_code"
+      ],
+      "writeActions": [
+        "delegate_parallel_tasks"
+      ]
+    },
+
+    "VERIFY_DISCOURSE_BATCH": {
+      "description": "Process results from DISPATCH_ALL_BUGS: for each agent result call adversarial_review_pr, post_discourse_reply_draft, record bugsFixed. Serial review of what was fixed in parallel.",
+      "nodeType": "agent",
+      "prompt": "context.bugBatchResults.results[] contains one entry per dispatched bug. context.pendingBugBatch[] has the bug metadata in the same order. Process each result:\n\nFor each result[i]:\n  - bug = context.pendingBugBatch[i]\n  - D = result[i]\n\n  SUCCESS: D.exitCode === 0 AND D.prNumber is a number AND D.timedOut !== true:\n    (A) Call create_pr with { prNumber: D.prNumber, topic: bug.topic, post: bug.post, reporter: bug.user ?? bug.reporter, excerpt: bug.excerpt ?? bug.summary }. Passing topic+post is MANDATORY so the bug is immediately marked fix-queued in the DB — omitting them causes the next iteration to re-dispatch the same bug.\n    (B) Call adversarial_review_pr with { prNumber: D.prNumber, repo: 'Freegle/Iznik' }.\n    (C) If review passed: call post_discourse_reply_draft (same rules as VERIFY_DISCOURSE_BUG_FIX: quote 15-25 words verbatim, one-sentence plain-English body, no jargon). Append { ...bug, prNumber: D.prNumber, frontendOnly: create_pr result.frontendOnly, outcome: 'fixed' } to contextUpdates.bugsFixed.\n    (D) If review failed (blockers): do NOT post a draft. Append { ...bug, outcome: 'deferred', reason: 'adversarial review blocked: ' + review.summary.slice(0,80) } to contextUpdates.bugsFixed.\n\n  FAILURE: D.exitCode !== 0 OR D.prNumber missing OR D.timedOut === true:\n    Do NOT call create_pr or post_discourse_reply_draft.\n    Append { ...bug, outcome: 'deferred', reason: D.timedOut ? 'delegate timed out — re-run next iteration' : (D.failedReason ?? 'delegate failed') } to contextUpdates.bugsFixed.\n\nAfter processing ALL results, set contextUpdates.currentBug = null. Propose transition to WORK_ROUTER.",
+      "readActions": [],
+      "writeActions": [
+        "create_pr",
+        "adversarial_review_pr",
+        "post_discourse_reply_draft"
+      ]
+    },
+
+    "FIX_SENTRY_ISSUE": {
+      "description": "Fix one Sentry issue. Feature branch + PR.",
+      "nodeType": "agent",
+      "prompt": "Pick one actionable Sentry issue from context.sentryIssues. (1) Call read_sentry_issues for the detail. (2) Call search_code to locate the code. (3) Call delegate_to_coder with a task to diagnose, fix, push branch, open PR. (4) Call create_pr to verify. (5) Set contextUpdates.sentryFixAttempted = true. Propose transition to WORK_ROUTER.",
+      "readActions": [
+        "read_sentry_issues",
+        "search_code"
+      ],
+      "writeActions": [
+        "delegate_to_coder",
+        "create_pr"
+      ]
+    },
+    "REBASE_DIRTY_PRS": {
+      "description": "Rebase all @me open PRs with mergeStateStatus=DIRTY onto master. One delegate per dirty PR in parallel. Returns to COVERAGE_GATE so CI can re-verify after the force-push.",
+      "nodeType": "agent",
+      "prompt": "context._action_coverage_gate_decide.dirtyPRs[] lists PRs that need a rebase. For each, build a task: 'Rebase PR #<n> (branch <branch>) onto master. Steps: (1) git -C /home/edward/FreegleDockerWSL checkout <branch> && git fetch origin master && git rebase origin/master. If rebase succeeds: git push --force-with-lease origin HEAD. If conflicts arise: git rebase --abort, then diagnose and resolve manually before pushing. Emit COMMIT_PUSHED=<sha> when done.' Use id: 'rebase-<n>' for each. Call delegate_parallel_tasks with all rebase tasks. After it returns, propose transition to COVERAGE_GATE.",
+      "readActions": [],
+      "writeActions": ["delegate_parallel_tasks"]
+    },
+
+    "COVERAGE_GATE": {
+      "description": "Structural gate: has this iteration produced a PR yet, and does any @me open PR currently have red CI or need rebase? Tool node — deterministic branching, no LLM turn. The single readAction coverage_gate_decide returns _transition: CI_ROUTER | REBASE_DIRTY_PRS | WRAP_UP | WRITE_COVERAGE.",
+      "nodeType": "tool",
+      "readActions": [
+        "coverage_gate_decide"
+      ],
+      "writeActions": []
+    },
+    "WRITE_COVERAGE": {
+      "description": "Mandatory coverage PR. Single purpose: produce one coverage PR.",
+      "nodeType": "agent",
+      "prompt": "No bug-fix PR was created this iteration. You MUST pick the next coverage target by strict rotation: Go → Vitest → Laravel → Go → …\n\nSTEP 1. Check what was last covered:\n  sqlite3 /home/edward/FreegleDockerWSL/monitor-fsm/monitor.db \"SELECT value FROM kv WHERE key='last_coverage_target'\"\n  Rotation order: Go → Vitest → Laravel → Go. If last was 'Go', pick 'Vitest'. If last was 'Vitest', pick 'Laravel'. If last was 'Laravel' or blank, pick 'Go'.\n\nSTEP 2. Record the choice BEFORE delegating:\n  sqlite3 /home/edward/FreegleDockerWSL/monitor-fsm/monitor.db \"INSERT INTO kv(key,value) VALUES('last_coverage_target','<chosen>') ON CONFLICT(key) DO UPDATE SET value=excluded.value\"\n\nSTEP 3. Call delegate_to_coder with a task to write TDD tests for the chosen suite, commit, push a feature branch, and open a PR. Suite-specific guidance:\n  - Go: pure unit tests in iznik-server-go/, no Docker/DB required, run `go test ./...` to verify.\n  - Vitest: component or composable tests in iznik-nuxt3/, run `npm run test` in iznik-nuxt3/ to verify.\n  - Laravel: feature or unit tests in iznik-batch/, run `php artisan test` inside the batch container to verify.\n\nSTEP 4. When delegate returns with a prNumber: (1) Call adversarial_review_pr. (2) If passed, call create_pr and propose transition to COVERAGE_GATE. (3) If failed with blockers, set contextUpdates.coveragePRReviewFailed = { prNumber, issues } and propose transition to COVERAGE_GATE anyway.",
+      "readActions": [
+        "search_code"
+      ],
+      "writeActions": [
+        "delegate_to_coder",
+        "adversarial_review_pr",
+        "create_pr"
+      ]
+    },
+    "WRAP_UP": {
+      "description": "Write the iteration summary to /tmp/freegle-monitor/summary.md. Tool node — summary is composed from context + DB, no LLM turn.",
+      "nodeType": "tool",
+      "readActions": [
+        "compose_and_write_summary"
+      ],
+      "writeActions": []
+    },
+    "SCHEDULE_NEXT": {
+      "description": "Schedule next wakeup. Tool node — delay chosen by rule (≤270s if watching PR CI, else 1500s idle).",
+      "nodeType": "tool",
+      "readActions": [
+        "schedule_next_auto"
+      ],
+      "writeActions": []
+    },
+    "END": {
+      "description": "Iteration complete.",
+      "nodeType": "end"
+    }
+  },
+  "transitions": [
+    {
+      "id": "t_load_to_ci",
+      "from": "LOAD_STATE",
+      "to": "CHECK_CI",
+      "trigger": "llm_decision",
+      "label": "state loaded"
+    },
+    {
+      "id": "t_ci_to_ci_router",
+      "from": "CHECK_CI",
+      "to": "CI_ROUTER",
+      "trigger": "llm_decision",
+      "label": "ci checked"
+    },
+    {
+      "id": "t_ci_router_to_master_fix",
+      "from": "CI_ROUTER",
+      "to": "FIX_MASTER_CI",
+      "trigger": "llm_decision",
+      "label": "master red"
+    },
+    {
+      "id": "t_ci_router_to_parallel",
+      "from": "CI_ROUTER",
+      "to": "PARALLEL_ANALYZE_AND_FIX",
+      "trigger": "llm_decision",
+      "label": "master green — dispatch PRs + topics + sentry in parallel"
+    },
+    {
+      "id": "t_parallel_to_collate",
+      "from": "PARALLEL_ANALYZE_AND_FIX",
+      "to": "COLLATE_RESULTS",
+      "trigger": "llm_decision",
+      "label": "all parallel agents finished"
+    },
+    {
+      "id": "t_collate_to_work_router",
+      "from": "COLLATE_RESULTS",
+      "to": "WORK_ROUTER",
+      "trigger": "llm_decision",
+      "label": "results collated"
+    },
+    {
+      "id": "t_master_fix_to_ci",
+      "from": "FIX_MASTER_CI",
+      "to": "CHECK_CI",
+      "trigger": "llm_decision",
+      "label": "master fix attempted, re-verify"
+    },
+    {
+      "id": "t_work_router_to_dispatch_bugs",
+      "from": "WORK_ROUTER",
+      "to": "DISPATCH_ALL_BUGS",
+      "trigger": "llm_decision",
+      "label": "bugs pending — parallel dispatch"
+    },
+    {
+      "id": "t_dispatch_bugs_to_verify_batch",
+      "from": "DISPATCH_ALL_BUGS",
+      "to": "VERIFY_DISCOURSE_BATCH",
+      "trigger": "llm_decision",
+      "label": "all agents finished"
+    },
+    {
+      "id": "t_verify_batch_to_work_router",
+      "from": "VERIFY_DISCOURSE_BATCH",
+      "to": "WORK_ROUTER",
+      "trigger": "llm_decision",
+      "label": "batch processed"
+    },
+    {
+      "id": "t_work_router_to_sentry_fix",
+      "from": "WORK_ROUTER",
+      "to": "FIX_SENTRY_ISSUE",
+      "trigger": "llm_decision",
+      "label": "sentry pending"
+    },
+    {
+      "id": "t_work_router_to_gate",
+      "from": "WORK_ROUTER",
+      "to": "COVERAGE_GATE",
+      "trigger": "llm_decision",
+      "label": "queue empty"
+    },
+    {
+      "id": "t_sentry_fix_to_work_router",
+      "from": "FIX_SENTRY_ISSUE",
+      "to": "WORK_ROUTER",
+      "trigger": "llm_decision",
+      "label": "sentry fix done"
+    },
+    {
+      "id": "t_gate_to_rebase",
+      "from": "COVERAGE_GATE",
+      "to": "REBASE_DIRTY_PRS",
+      "trigger": "llm_decision",
+      "condition": "dirtyPRs non-empty AND redPRs empty",
+      "label": "dirty PRs need rebase — fix before coverage"
+    },
+    {
+      "id": "t_rebase_to_gate",
+      "from": "REBASE_DIRTY_PRS",
+      "to": "COVERAGE_GATE",
+      "trigger": "llm_decision",
+      "label": "rebase attempts done — re-check gate"
+    },
+    {
+      "id": "t_gate_to_wrap",
+      "from": "COVERAGE_GATE",
+      "to": "WRAP_UP",
+      "trigger": "llm_decision",
+      "condition": "verify_pr_created count > 0 AND redPRs empty",
+      "label": "gate passed"
+    },
+    {
+      "id": "t_gate_to_cov",
+      "from": "COVERAGE_GATE",
+      "to": "WRITE_COVERAGE",
+      "trigger": "llm_decision",
+      "condition": "verify_pr_created count == 0",
+      "label": "gate failed"
+    },
+    {
+      "id": "t_gate_to_ci_router",
+      "from": "COVERAGE_GATE",
+      "to": "CI_ROUTER",
+      "trigger": "llm_decision",
+      "condition": "redPRs non-empty",
+      "label": "open PR red — must fix first (fall back to phase A)"
+    },
+    {
+      "id": "t_cov_to_gate",
+      "from": "WRITE_COVERAGE",
+      "to": "COVERAGE_GATE",
+      "trigger": "llm_decision",
+      "label": "coverage PR pushed"
+    },
+    {
+      "id": "t_wrap_to_sched",
+      "from": "WRAP_UP",
+      "to": "SCHEDULE_NEXT",
+      "trigger": "llm_decision",
+      "label": "wrap-up done"
+    },
+    {
+      "id": "t_sched_to_end",
+      "from": "SCHEDULE_NEXT",
+      "to": "END",
+      "trigger": "llm_decision",
+      "label": "wakeup scheduled"
+    }
+  ]
+}

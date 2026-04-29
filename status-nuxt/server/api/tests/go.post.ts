@@ -39,8 +39,8 @@ export default defineEventHandler(async (event) => {
 
   // Build test command
   const testCmd = withCoverage
-    ? `export CGO_ENABLED=1 && export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go mod tidy && go test -v -race -timeout 30m -coverprofile=coverage.out ./test/... -coverpkg ./...`
-    : `export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go test -count=1 ./test/... -v`
+    ? `export CGO_ENABLED=1 && export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go mod tidy && go test -v -race -timeout 30m -coverprofile=coverage.out ./... -coverpkg ./...`
+    : `export MYSQL_HOST=${perconaIp} && export MYSQL_DBNAME=iznik_go_test && go test -count=1 ./... -v`
 
   // Run tests asynchronously
   const testProcess = spawn('sh', ['-c', `

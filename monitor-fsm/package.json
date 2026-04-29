@@ -1,0 +1,29 @@
+{
+  "name": "monitor-fsm",
+  "version": "0.1.0",
+  "description": "FSM-driven freegle-monitor — ai-flower engine enforces workflow invariants that the LLM cannot bypass",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --enable-source-maps dist/driver.js",
+    "run-once": "tsc && node --enable-source-maps dist/driver.js",
+    "smoke": "tsc && node --enable-source-maps dist/smoke.js",
+    "test:db": "tsc && node --enable-source-maps dist/db/test.js",
+    "dashboard": "tsc && node --enable-source-maps dist/dashboard-server.js"
+  },
+  "dependencies": {
+    "ai-flower": "github:Freegle/ai-flower",
+    "better-sqlite3": "^11.10.0",
+    "uuid": "^10.0.0"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -70,6 +71,12 @@ const (
 	DissentingQuorum     = 3
 	AIImageReviewQuorum  = 5
 )
+
+// CoinFlip picks between AI image review and approved message review when both
+// are available. Overridable from tests so both branches can be exercised
+// deterministically; otherwise `rand.Intn(2)` leaves the fallback paths
+// covered only probabilistically, which flips Coveralls' per-job status check.
+var CoinFlip = func() int { return rand.Intn(2) }
 
 // GetChallenge returns a micro-volunteering challenge for the logged-in user
 // @Summary Get micro-volunteering challenge
@@ -175,7 +182,7 @@ func GetChallenge(c *fiber.Ctx) error {
 	wantAIImage := contains(challengeTypes, ChallengeAIImageReview)
 
 	if wantCheckMessage && wantAIImage {
-		if rand.Intn(2) == 0 {
+		if CoinFlip() == 0 {
 			if challenge := getAIImageReviewChallenge(db, userID); challenge != nil {
 				return c.JSON(challenge)
 			}
@@ -501,17 +508,12 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 		return nil
 	}
 
-	imagesHost := os.Getenv("IMAGES_HOST")
-	if imagesHost == "" {
-		imagesHost = "https://images.ilovefreegle.org"
-	}
-
 	return &Challenge{
 		Type: ChallengeAIImageReview,
 		AIImage: &AIImageChallenge{
 			ID:         img.ID,
 			Name:       img.Name,
-			URL:        imagesHost + "/" + img.Externaluid,
+			URL:        misc.GetImageDeliveryUrl(img.Externaluid, ""),
 			UsageCount: img.UsageCount,
 		},
 	}
@@ -732,7 +734,7 @@ func ModFeedback(c *fiber.Ctx) error {
 // This is the Go equivalent of V1's Message::sendForReview().
 func sendForReview(db *gorm.DB, msgid uint64, reason string) {
 	db.Exec("UPDATE messages SET spamreason = ? WHERE id = ?", reason, msgid)
-	db.Exec("UPDATE messages_groups SET collection = ? WHERE msgid = ?", utils.COLLECTION_PENDING, msgid)
+	db.Exec("UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ?", utils.COLLECTION_PENDING, reason, msgid)
 }
 
 // listMicroActions returns microvolunteering activity for moderator review.
@@ -812,4 +814,14 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		"microvolunteerings": items,
 		"context":            newCtx,
 	})
+}
+
+// RecordAIAttachmentDeletion records a Reject microaction for an AI image when a human
+// (poster or moderator) deletes an AI-generated attachment from a message. This signals
+// that the AI illustration was inappropriate for the item.
+func RecordAIAttachmentDeletion(db *gorm.DB, userID uint64, aiImageID uint64) {
+	db.Exec(`INSERT INTO microactions (actiontype, userid, aiimageid, result, version)
+		VALUES (?, ?, ?, 'Reject', ?)
+		ON DUPLICATE KEY UPDATE result = 'Reject', version = ?`,
+		ChallengeAIImageReview, userID, aiImageID, Version, Version)
 }

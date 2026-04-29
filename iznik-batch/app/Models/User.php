@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\NameSanitiser;
 use App\Support\EloquentUtils;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -292,6 +293,8 @@ class User extends Model
     /**
      * Get full name or display name.
      * Strips the "-gXXX" suffix from TrashNothing user names.
+     * Rewrites misleading brand/authority names for non-mods on display
+     * (Discourse #9587) — storage is untouched.
      */
     public function getDisplayNameAttribute(): string
     {
@@ -307,8 +310,21 @@ class User extends Model
             return 'Freegle User';
         }
 
-        // Strip the "-gXXX" suffix from TrashNothing user names.
-        return self::removeTNGroup($name);
+        $name = self::removeTNGroup($name);
+
+        return NameSanitiser::sanitize($name, $this->isNameExempt());
+    }
+
+    /**
+     * A user is exempt from the display-name sanitiser when they are a
+     * platform mod/support/admin or Owner/Moderator on any group.
+     */
+    public function isNameExempt(): bool
+    {
+        if (in_array($this->systemrole, ['Moderator', 'Support', 'Admin'], TRUE)) {
+            return TRUE;
+        }
+        return $this->isModerator();
     }
 
     /**
@@ -365,6 +381,15 @@ class User extends Model
     {
         $email = $this->email_preferred;
         return $email && str_ends_with($email, '@user.trashnothing.com');
+    }
+
+    /**
+     * Check if this user is a LoveJunk proxy account.
+     * LJ users have the ljuserid column set.
+     */
+    public function isLJ(): bool
+    {
+        return ! empty($this->attributes['ljuserid']);
     }
 
     /**
@@ -555,6 +580,14 @@ class User extends Model
      */
     public function notifsOn(string $type, ?int $groupId = NULL): bool
     {
+        // emailmine is never honoured for TN or LJ proxy users. Their "real"
+        // inbox is the partner's proxy address, so a self-copy is delivered
+        // back to themselves and looks like someone else is sending their
+        // own words at them.
+        if ($type === self::NOTIFS_EMAIL_MINE && ($this->isTN() || $this->isLJ())) {
+            return FALSE;
+        }
+
         // Default values for notification types.
         $defaults = [
             'email' => TRUE,

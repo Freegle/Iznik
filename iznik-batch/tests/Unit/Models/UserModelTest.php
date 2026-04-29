@@ -252,6 +252,82 @@ class UserModelTest extends TestCase
         $this->assertFalse($user->isTN());
     }
 
+    public function test_is_lj_returns_true_when_ljuserid_set(): void
+    {
+        $user = User::create([
+            'fullname' => 'LJ User',
+            'added' => now(),
+            'ljuserid' => 12345,
+        ]);
+
+        $this->assertTrue($user->fresh()->isLJ());
+    }
+
+    public function test_is_lj_returns_false_when_ljuserid_null(): void
+    {
+        $user = $this->createTestUser();
+
+        $this->assertFalse($user->isLJ());
+    }
+
+    public function test_notifs_on_emailmine_always_false_for_tn_user(): void
+    {
+        // TN user with emailmine explicitly enabled in settings — the guard
+        // must still return false because a self-copy is delivered back to
+        // themselves via the TN proxy address.
+        $user = User::create([
+            'fullname' => 'TN User',
+            'added' => now(),
+            'settings' => [
+                'notifications' => ['emailmine' => true],
+            ],
+        ]);
+        UserEmail::create([
+            'userid' => $user->id,
+            'email' => 'user_'.uniqid('', true).'@user.trashnothing.com',
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        $this->assertFalse($user->fresh()->notifsOn(User::NOTIFS_EMAIL_MINE));
+    }
+
+    public function test_notifs_on_emailmine_always_false_for_lj_user(): void
+    {
+        // LJ user with emailmine explicitly enabled — same rationale as TN.
+        $user = User::create([
+            'fullname' => 'LJ User',
+            'added' => now(),
+            'ljuserid' => 67890,
+            'settings' => [
+                'notifications' => ['emailmine' => true],
+            ],
+        ]);
+
+        $this->assertFalse($user->fresh()->notifsOn(User::NOTIFS_EMAIL_MINE));
+    }
+
+    public function test_notifs_on_email_still_honoured_for_tn_user(): void
+    {
+        // The TN/LJ guard only covers emailmine — ordinary email notifications
+        // must still respect the stored setting.
+        $user = User::create([
+            'fullname' => 'TN User',
+            'added' => now(),
+            'settings' => [
+                'notifications' => ['email' => false, 'emailmine' => true],
+            ],
+        ]);
+        UserEmail::create([
+            'userid' => $user->id,
+            'email' => 'user_'.uniqid('', true).'@user.trashnothing.com',
+            'preferred' => 1,
+            'added' => now(),
+        ]);
+
+        $this->assertFalse($user->fresh()->notifsOn(User::NOTIFS_EMAIL));
+    }
+
     public function test_notifs_on_returns_default_true_for_email(): void
     {
         $user = User::create([

@@ -305,6 +305,12 @@ class ChatNotificationService
                     // Load the user relationship.
                     $roster->load('user');
 
+                    // Skip mods who have closed or blocked this chat — V1 PHP also
+                    // skips these via the status filter in unseenCountForUser().
+                    if (in_array($roster->status, [ChatRoster::STATUS_CLOSED, ChatRoster::STATUS_BLOCKED])) {
+                        continue;
+                    }
+
                     // Check if we need to notify this moderator.
                     if ($forceAll || is_null($roster->lastmsgemailed) || $roster->lastmsgemailed < $message->id) {
                         $roster->isModerator = true;

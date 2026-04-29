@@ -363,6 +363,57 @@ func TestRejectedMessageInActiveQuery(t *testing.T) {
 	assert.True(t, found, "Rejected message should appear in active query for own user")
 }
 
+// A rejected message may end up in the DB with locationid=0 (e.g. if the
+// MailRouter never resolved a location before the message was rejected).
+// The owner still needs to see both `item` and `location` on GET /message/:id
+// so the frontend can render the "Edit & Resend" button (v-if="location && item").
+// Regression: prior to the fix in message.go, item and location were both
+// gated on `locationid > 0`, so a rejected message with locationid=0 came
+// back with item=null AND location=null, hiding Edit & Resend entirely.
+func TestRejectedMessageWithoutLocationidReturnsItemAndLocation(t *testing.T) {
+	prefix := uniquePrefix("rjctnoloc")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+
+	// Create a message with a real locationid, then clear it to simulate the
+	// failure mode where the fixture / MailRouter leaves locationid=0.
+	// Lat/lng remain set (as they normally would be for a routed message).
+	// Use FOREIGN_KEY_CHECKS=0 because messages.locationid has a FK to
+	// locations.id; we're simulating the DB state directly.
+	msgID := CreateTestMessage(t, userID, groupID, "OFFER: Rejected NoLoc Chair", 55.9533, -3.1883)
+	// CreateTestMessage doesn't populate messages.lat/lng, only the spatial
+	// index — set them explicitly so Go falls into the lat/lng-fallback path.
+	db.Exec("SET FOREIGN_KEY_CHECKS = 0")
+	db.Exec("UPDATE messages SET locationid = 0, lat = ?, lng = ? WHERE id = ?", 55.9533, -3.1883, msgID)
+	db.Exec("SET FOREIGN_KEY_CHECKS = 1")
+	db.Exec("UPDATE messages_groups SET collection = 'Rejected' WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
+
+	// Give the message an item (lives in messages_items, independent of location).
+	itemID := CreateTestItem(t, prefix+" Chair")
+	CreateTestMessageItem(t, msgID, itemID)
+
+	// Owner fetches the message detail.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/message/"+fmt.Sprint(msgID)+"?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.Equal(t, msgID, msg.ID)
+	assert.NotNil(t, msg.Item, "Owner must get item on rejected message without locationid (Edit & Resend requires it)")
+	assert.NotNil(t, msg.Location, "Owner must get a location (from lat/lng fallback) on rejected message without locationid (Edit & Resend requires it)")
+	// Repost flow needs msg.location.name — MyMessage.repost() calls
+	// locationStore.typeahead(msg.location.name). If Name is empty the
+	// compose store's postcode is never set and the /give/whereami
+	// group dropdown fails to render.
+	assert.NotEmpty(t, msg.Location.Name, "Location must carry a Name so the repost flow can set composeStore.postcode via typeahead")
+}
+
 func TestCount(t *testing.T) {
 	// Create a full test user for count endpoint
 	prefix := uniquePrefix("count")
@@ -923,6 +974,109 @@ func TestPostMessageReject(t *testing.T) {
 	assert.Equal(t, int64(1), taskCount)
 
 	// Push notifications are now queued by the batch processor, not synchronously by the Go API.
+}
+
+func TestPostMessageRejectAfterMemberDeletes(t *testing.T) {
+	prefix := uniquePrefix("msgmod_rej_del")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a pending message
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	// Simulate member deleting their own message (via DELETE /message/:id)
+	// This sets messages.deleted = NOW() but does NOT change messages_groups
+	db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", msgID)
+
+	// Now mod should still be able to reject the message, even though the poster deleted it
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"subject": "Rejection reason",
+		"body":    "Please fix your post",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err, "Request should not error")
+	assert.Equal(t, 200, resp.StatusCode, "Mod should be able to reject message even after member deletes it (messages.deleted IS NOT NULL)")
+
+	// Verify the message was moved to Rejected collection
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	assert.Equal(t, "Rejected", collection, "Message should be in Rejected collection after mod rejects")
+}
+
+func TestPostMessageRejectAfterMemberWithdrawsPending(t *testing.T) {
+	prefix := uniquePrefix("msgmod_rej_wdraw")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, posterToken := CreateTestSession(t, posterID)
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a pending WANTED message
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival, date) VALUES (?, ?, 'Test body', 'Wanted', ?, NOW(), NOW())",
+		posterID, prefix+" pending wanted", locationID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, prefix+" pending wanted").Scan(&msgID)
+	if msgID == 0 {
+		t.Fatal("Failed to create pending message")
+	}
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)",
+		msgID, groupID)
+
+	// Member withdraws their pending message via the API
+	withdrawBody := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Withdrawn",
+	}
+	withdrawBytes, _ := json.Marshal(withdrawBody)
+	withdrawURL := fmt.Sprintf("/api/message?jwt=%s", posterToken)
+	wreq := httptest.NewRequest("POST", withdrawURL, bytes.NewBuffer(withdrawBytes))
+	wreq.Header.Set("Content-Type", "application/json")
+	wresp, err := getApp().Test(wreq)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, wresp.StatusCode, "Member should be able to withdraw their pending message")
+
+	// Verify the message was marked as deleted (soft delete), not hard deleted
+	var msgDeleted *string
+	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&msgDeleted)
+	assert.NotNil(t, msgDeleted, "Message should be soft-deleted (deleted IS NOT NULL), not hard-deleted")
+
+	// Mod should still be able to reject the message even though the member withdrew it.
+	// Before fix: handleOutcome hard-deleted messages row, leaving orphaned messages_groups →
+	// isModForMessage returned true (orphaned row) but getMessageModContext scan failed → 403.
+	// After fix: soft delete → getMessageModContext scans successfully → 200.
+	rejectBody := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"subject": "Duplicate post",
+		"body":    "Please do not post duplicates",
+	}
+	rejectBytes, _ := json.Marshal(rejectBody)
+	rejectURL := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	rreq := httptest.NewRequest("POST", rejectURL, bytes.NewBuffer(rejectBytes))
+	rreq.Header.Set("Content-Type", "application/json")
+	rresp, err := getApp().Test(rreq)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, rresp.StatusCode, "Mod should be able to reject message after member withdraws it (no 403)")
 }
 
 // --- Test: Delete (mod action) ---
@@ -2151,6 +2305,49 @@ func TestPutMessageRecordsFromIP(t *testing.T) {
 	assert.NotNil(t, fromip, "fromip should be recorded")
 }
 
+// TestPutMessageGeneratesSyntheticMessageID verifies that PUT /message
+// populates messages.messageid with a synthetic value in the form
+// "<microtime>@users.ilovefreegle.org-<groupid>" (V1 parity — see
+// iznik-server/include/message/Message.php lines 2708 and 2717).
+// Before this fix, Go left messageid NULL, breaking dedupe and
+// cross-reference lookups that rely on the column being populated.
+func TestPutMessageGeneratesSyntheticMessageID(t *testing.T) {
+	prefix := uniquePrefix("msgput_msgid")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	body := map[string]interface{}{
+		"groupid":    groupID,
+		"type":       "Offer",
+		"subject":    prefix + " MessageID Test",
+		"textbody":   "Testing synthetic messageid",
+		"item":       "Test Item",
+		"collection": "Pending",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	newID := uint64(result["id"].(float64))
+	require.NotZero(t, newID)
+
+	var messageid *string
+	db.Raw("SELECT messageid FROM messages WHERE id = ?", newID).Scan(&messageid)
+	require.NotNil(t, messageid, "messageid must not be NULL — V1 parity")
+	assert.NotEmpty(t, *messageid, "messageid must be a non-empty synthetic value")
+	assert.Contains(t, *messageid, "@"+utils.USER_DOMAIN, "messageid must use users.ilovefreegle.org domain")
+	assert.Contains(t, *messageid, fmt.Sprintf("-%d", groupID), "messageid must have -{groupid} suffix")
+}
+
 // TestPutMessageAvailableNowSetsInitially verifies: sending only
 // availablenow sets both availableinitially and availablenow to that value.
 func TestPutMessageAvailableNowSetsInitially(t *testing.T) {
@@ -3318,7 +3515,10 @@ func TestPostMessageOutcomeWithdrawnDoesNotMarkSpatialSuccessful(t *testing.T) {
 }
 
 func TestPostMessageWithdrawnPending(t *testing.T) {
-	// H4: Withdrawn on a pending message should delete it entirely.
+	// Withdrawn on a pending message should soft-delete it (V1 parity: Message::delete() uses
+	// UPDATE messages SET deleted = NOW(), not a hard DELETE).  Soft delete allows a moderator
+	// who already loaded the pending queue to still reject the message (see
+	// TestPostMessageRejectAfterMemberWithdrawsPending).
 	prefix := uniquePrefix("msgw_wdr_pnd")
 	db := database.DBConn
 
@@ -3345,12 +3545,19 @@ func TestPostMessageWithdrawnPending(t *testing.T) {
 
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
-	assert.Equal(t, true, result["deleted"], "Pending message should be deleted, not marked")
+	assert.Equal(t, true, result["deleted"], "Pending message should be flagged as deleted in the response")
 
-	// Verify message was deleted.
-	var msgCount int64
-	db.Raw("SELECT COUNT(*) FROM messages WHERE id = ?", msgID).Scan(&msgCount)
-	assert.Equal(t, int64(0), msgCount, "Message should be deleted from messages table")
+	// Verify soft delete: messages row still present but with deleted timestamp.
+	var msgDeleted *string
+	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&msgDeleted)
+	assert.NotNil(t, msgDeleted, "Message should be soft-deleted (deleted IS NOT NULL), not hard-deleted")
+
+	// V1 parity: messages_groups.deleted must also be set to 1 so the orphaned
+	// Pending row doesn't get picked up by AutoApproveService 48 hours later and
+	// auto-approved as if the member never withdrew it.
+	var mgDeleted int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&mgDeleted)
+	assert.Equal(t, 1, mgDeleted, "messages_groups.deleted must be 1 after withdrawing a pending message (V1 parity)")
 }
 
 func TestPostMessageWithdrawnApproved(t *testing.T) {
@@ -5522,6 +5729,49 @@ func TestMessagePostWritesHistory(t *testing.T) {
 	assert.NotNil(t, histFromip, "JoinAndPost should record fromip in messages_history")
 }
 
+// TestJoinAndPostLogsReceived verifies that JoinAndPost writes a Received log entry
+// with V1 parity: byuser is NULL and text is the RFC822 Message-Id header.
+func TestJoinAndPostLogsReceived(t *testing.T) {
+	prefix := uniquePrefix("jap_rcvd")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Create draft with a messageid so we can assert text==messageid.
+	wantMessageID := fmt.Sprintf("<%s@test.freegle.local>", prefix)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source, messageid) VALUES (?, 'Offer', 'Offer: Test sofa', 'Free sofa', NOW(), NOW(), 'Platform', ?)",
+		userID, wantMessageID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)", msgID, groupID, userID)
+
+	// Submit via JoinAndPost.
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":     msgID,
+		"action": "JoinAndPost",
+	})
+	req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Verify a Received log entry was written with V1-parity fields.
+	type logRow struct {
+		Byuser *uint64
+		Text   string
+	}
+	var rows []logRow
+	db.Raw("SELECT byuser, text FROM logs WHERE type = ? AND subtype = ? AND `user` = ? AND msgid = ? AND groupid = ?",
+		log.LOG_TYPE_MESSAGE, log.LOG_SUBTYPE_RECEIVED, userID, msgID, groupID).Scan(&rows)
+	require.Equal(t, 1, len(rows), "JoinAndPost should create exactly one Message/Received log")
+	assert.Nil(t, rows[0].Byuser, "Received log should have byuser=NULL (V1 parity)")
+	assert.Equal(t, wantMessageID, rows[0].Text, "Received log text should be the RFC822 Message-Id (V1 parity)")
+}
+
 // TestMessageEditRecordsAllColumns verifies that the PATCH /message edit path records
 // olditems, newitems, oldimages, newimages, oldlocation, newlocation in messages_edits.
 // V1 parity: Message::save() inserts all 15 columns into messages_edits.
@@ -6069,4 +6319,960 @@ func TestPatchMessagePartnerNotOwner(t *testing.T) {
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode)
+}
+
+// --- Per-Group Moderation Tests ---
+
+func TestPostMessageHoldPerGroup(t *testing.T) {
+	prefix := uniquePrefix("hold_pg")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a message and add it to both groups.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	// Hold on group A only.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Hold",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url2 := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req2 := httptest.NewRequest("POST", url2, bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err2 := getApp().Test(req2)
+	assert.NoError(t, err2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// Verify heldby set on group A's messages_groups row.
+	var heldbyA *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldbyA)
+	assert.NotNil(t, heldbyA)
+	assert.Equal(t, modID, *heldbyA)
+
+	// Verify heldby NOT set on group B's messages_groups row.
+	var heldbyB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldbyB)
+	assert.Nil(t, heldbyB)
+}
+
+func TestPostMessageReleasePerGroup(t *testing.T) {
+	prefix := uniquePrefix("rel_pg")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create message on both groups, held on both.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ?", modID, msgID)
+	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
+
+	// Release on group A only.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Release",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url2 := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req2 := httptest.NewRequest("POST", url2, bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err2 := getApp().Test(req2)
+	assert.NoError(t, err2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// Group A should be released.
+	var heldbyA *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldbyA)
+	assert.Nil(t, heldbyA)
+
+	// Group B should still be held.
+	var heldbyB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldbyB)
+	assert.NotNil(t, heldbyB)
+	assert.Equal(t, modID, *heldbyB)
+
+	// messages.heldby should still be set (still held on group B).
+	var msgHeldby *uint64
+	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
+	assert.NotNil(t, msgHeldby)
+}
+
+func TestPostMessageReleasePerGroupClearsMessageWhenLastGroup(t *testing.T) {
+	prefix := uniquePrefix("rel_pg_last")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ?", modID, msgID)
+	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
+
+	// Release on the only group.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Release",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url2 := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req2 := httptest.NewRequest("POST", url2, bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err2 := getApp().Test(req2)
+	assert.NoError(t, err2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// messages.heldby should be cleared (no groups still held).
+	var msgHeldby *uint64
+	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
+	assert.Nil(t, msgHeldby)
+}
+
+func TestPostMessageDeletePerGroup(t *testing.T) {
+	prefix := uniquePrefix("del_pg")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	// Delete from group A only.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Delete",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url2 := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req2 := httptest.NewRequest("POST", url2, bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err2 := getApp().Test(req2)
+	assert.NoError(t, err2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// Group A's row should be deleted.
+	var countA int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&countA)
+	assert.Equal(t, int64(0), countA)
+
+	// Group B's row should still exist.
+	var countB int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&countB)
+	assert.Equal(t, int64(1), countB)
+
+	// Message should NOT be soft-deleted (still on group B).
+	var isDeleted int
+	db.Raw("SELECT CASE WHEN deleted IS NOT NULL AND deleted > '2000-01-01' THEN 1 ELSE 0 END FROM messages WHERE id = ?", msgID).Scan(&isDeleted)
+	assert.Equal(t, 0, isDeleted, "Message should not be soft-deleted when still on another group")
+}
+
+func TestPostMessageDeletePerGroupLastGroupSoftDeletes(t *testing.T) {
+	prefix := uniquePrefix("del_pg_last")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+
+	// Delete from the only group.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Delete",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url2 := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req2 := httptest.NewRequest("POST", url2, bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err2 := getApp().Test(req2)
+	assert.NoError(t, err2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// Message should be soft-deleted (was the last group).
+	var isDeleted int
+	db.Raw("SELECT CASE WHEN deleted IS NOT NULL AND deleted > '2000-01-01' THEN 1 ELSE 0 END FROM messages WHERE id = ?", msgID).Scan(&isDeleted)
+	assert.Equal(t, 1, isDeleted, "Message should be soft-deleted when removed from last group")
+}
+
+func TestPostMessageSpamPerGroup(t *testing.T) {
+	prefix := uniquePrefix("spam_pg")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	// Spam on group A only.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Spam",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url2 := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req2 := httptest.NewRequest("POST", url2, bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err2 := getApp().Test(req2)
+	assert.NoError(t, err2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// Group A's row should be soft-deleted.
+	var deletedA int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&deletedA)
+	assert.Equal(t, 1, deletedA)
+
+	// Group B's row should NOT be deleted.
+	var deletedB int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&deletedB)
+	assert.Equal(t, 0, deletedB)
+
+	// Message should NOT be globally soft-deleted (still on group B).
+	var isDeleted int
+	db.Raw("SELECT CASE WHEN deleted IS NOT NULL AND deleted > '2000-01-01' THEN 1 ELSE 0 END FROM messages WHERE id = ?", msgID).Scan(&isDeleted)
+	assert.Equal(t, 0, isDeleted, "Message should not be soft-deleted when still on another group")
+}
+
+func TestPostMessageBackToPendingPerGroup(t *testing.T) {
+	prefix := uniquePrefix("btp_pg")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create message approved on both groups.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("UPDATE messages_groups SET collection = 'Approved' WHERE msgid = ? AND groupid = ?", msgID, groupA)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	// BackToPending on group A only.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "BackToPending",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url2 := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req2 := httptest.NewRequest("POST", url2, bytes.NewBuffer(bodyBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err2 := getApp().Test(req2)
+	assert.NoError(t, err2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// Group A should be Pending and held.
+	var collectionA string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&collectionA)
+	assert.Equal(t, "Pending", collectionA)
+
+	var heldbyA *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldbyA)
+	assert.NotNil(t, heldbyA)
+	assert.Equal(t, modID, *heldbyA)
+
+	// Group B should still be Approved and not held.
+	var collectionB string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&collectionB)
+	assert.Equal(t, "Approved", collectionB)
+
+	var heldbyB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldbyB)
+	assert.Nil(t, heldbyB)
+}
+
+func TestPostMessageHoldPerGroupLogsCorrectGroup(t *testing.T) {
+	prefix := uniquePrefix("hold_log")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a message on both groups (groupA is primary since it's first).
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	// Hold on group B (NOT the primary group).
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Hold",
+		"groupid": groupB,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The log entry should record groupB, not groupA (the primary group).
+	var logGroupid uint64
+	db.Raw("SELECT groupid FROM logs WHERE msgid = ? AND type = 'Message' AND subtype = 'Hold' AND byuser = ? ORDER BY id DESC LIMIT 1",
+		msgID, modID).Scan(&logGroupid)
+	assert.Equal(t, groupB, logGroupid, "Log should record the target group, not the primary group")
+}
+
+func TestPostMessageApproveAllGroupsReleasesAllHolds(t *testing.T) {
+	prefix := uniquePrefix("apr_all_hld")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create message on both groups, held on both.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ?", modID, msgID)
+	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
+
+	// Approve WITHOUT specifying a groupid (global approve).
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Approve",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Both groups should have heldby cleared.
+	var heldbyA *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&heldbyA)
+	assert.Nil(t, heldbyA, "Group A hold should be released on global approve")
+
+	var heldbyB *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldbyB)
+	assert.Nil(t, heldbyB, "Group B hold should be released on global approve")
+
+	// messages.heldby should also be cleared.
+	var msgHeldby *uint64
+	db.Raw("SELECT heldby FROM messages WHERE id = ?", msgID).Scan(&msgHeldby)
+	assert.Nil(t, msgHeldby, "messages.heldby should be cleared")
+}
+
+func TestPostMessageDeleteAfterSpamExcludesSoftDeleted(t *testing.T) {
+	prefix := uniquePrefix("del_after_spam")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	// Spam on group B (soft-deletes its row).
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Spam",
+		"groupid": groupB,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Verify group B is soft-deleted.
+	var deletedB int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&deletedB)
+	assert.Equal(t, 1, deletedB)
+
+	// Message should NOT be globally deleted yet (group A still active).
+	var isDeleted1 int
+	db.Raw("SELECT CASE WHEN deleted IS NOT NULL AND deleted > '2000-01-01' THEN 1 ELSE 0 END FROM messages WHERE id = ?", msgID).Scan(&isDeleted1)
+	assert.Equal(t, 0, isDeleted1)
+
+	// Now delete from group A (hard-deletes its row).
+	body2 := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Delete",
+		"groupid": groupA,
+	}
+	bodyBytes2, _ := json.Marshal(body2)
+	req2 := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes2))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err2 := getApp().Test(req2)
+	assert.NoError(t, err2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// Group A row should be gone.
+	var countA int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&countA)
+	assert.Equal(t, int64(0), countA)
+
+	// Message SHOULD be globally soft-deleted now — group B is only soft-deleted (deleted=1),
+	// so no non-deleted groups remain.
+	var isDeleted2 int
+	db.Raw("SELECT CASE WHEN deleted IS NOT NULL AND deleted > '2000-01-01' THEN 1 ELSE 0 END FROM messages WHERE id = ?", msgID).Scan(&isDeleted2)
+	assert.Equal(t, 1, isDeleted2, "Message should be soft-deleted when only soft-deleted groups remain")
+}
+
+func TestListMessagesMultiGroupNoDuplicates(t *testing.T) {
+	prefix := uniquePrefix("list_dedup")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a message on both groups as Pending.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	// List Pending messages across all groups (no groupid filter).
+	url := fmt.Sprintf("/api/messages?collection=Pending&jwt=%s", modToken)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	msgs := result["messages"].([]interface{})
+
+	// Count how many times our msgID appears — should be exactly 1.
+	count := 0
+	for _, m := range msgs {
+		mm := m.(map[string]interface{})
+		if uint64(mm["id"].(float64)) == msgID {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "Multi-group message should appear exactly once in list")
+}
+
+func TestPostMessageSpamLastGroupSoftDeletesMessage(t *testing.T) {
+	prefix := uniquePrefix("spam_pg_last")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+
+	// Spam on the only group.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Spam",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Group A's row should be soft-deleted.
+	var deletedA int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&deletedA)
+	assert.Equal(t, 1, deletedA)
+
+	// Message should be globally soft-deleted (was the last group).
+	var isDeleted int
+	db.Raw("SELECT CASE WHEN deleted IS NOT NULL AND deleted > '2000-01-01' THEN 1 ELSE 0 END FROM messages WHERE id = ?", msgID).Scan(&isDeleted)
+	assert.Equal(t, 1, isDeleted, "Message should be soft-deleted when spammed from last group")
+}
+
+func TestPostMessageApprovePerGroupSpamtype(t *testing.T) {
+	prefix := uniquePrefix("appr_pg_spam")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a message on both groups flagged as spam via per-group spamtype.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+	db.Exec("UPDATE messages_groups SET spamtype = 'Whitelisted' WHERE msgid = ? AND groupid = ?", msgID, groupA)
+
+	// Approve on group A — should check per-group spamtype and record ham.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Approve",
+		"groupid": groupA,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Should have created a messages_spamham record for Ham.
+	var spamham string
+	db.Raw("SELECT spamham FROM messages_spamham WHERE msgid = ?", msgID).Scan(&spamham)
+	assert.Equal(t, "Ham", spamham, "Approving a per-group spam-flagged message should record Ham")
+}
+
+func TestListMessagesMTMultiGroupNoDuplicates(t *testing.T) {
+	prefix := uniquePrefix("listmt_dedup")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a message on both groups as Pending.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	// List Pending messages via ModTools endpoint (no groupid filter).
+	url := fmt.Sprintf("/api/modtools/messages?collection=Pending&jwt=%s", modToken)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	msgs := result["messages"].([]interface{})
+
+	// Count how many times our msgID appears — should be exactly 1.
+	// /api/modtools/messages returns message IDs only (float64 via JSON), not full objects.
+	count := 0
+	for _, id := range msgs {
+		if uint64(id.(float64)) == msgID {
+			count++
+		}
+	}
+	assert.Equal(t, 1, count, "Multi-group message should appear exactly once in MT list")
+}
+
+// TestListMessagesMT_MultiGroupGlobalArrivalOrder verifies that when a mod
+// covers multiple groups and queries with groupid=0, results come back in
+// global arrival DESC order (not grouped by groupid), and that the
+// pagination context correctly returns the next page.  Regression test for
+// the UNION ALL rewrite that replaced `WHERE mg.groupid IN (list)`.
+func TestListMessagesMT_MultiGroupGlobalArrivalOrder(t *testing.T) {
+	prefix := uniquePrefix("listmt_globalorder")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Interleave arrival ages across the two groups so any per-group
+	// ordering in results is obvious.  ages are days ago (older = larger).
+	ages := []int{10, 8, 6, 4, 2}
+	groups := []uint64{groupA, groupB, groupA, groupB, groupA}
+	msgIDs := make([]uint64, len(ages))
+	for i := range msgIDs {
+		msgIDs[i] = CreateTestMessageWithArrival(t, posterID, groups[i],
+			fmt.Sprintf("%s item %d", prefix, i), 52.0, -1.0, ages[i])
+	}
+	defer func() {
+		for _, id := range msgIDs {
+			db.Exec("DELETE FROM messages_groups WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", id)
+			db.Exec("DELETE FROM messages WHERE id = ?", id)
+		}
+	}()
+
+	// Expected order newest -> oldest (ages ascending => reverse of creation).
+	expectedDesc := []uint64{msgIDs[4], msgIDs[3], msgIDs[2], msgIDs[1], msgIDs[0]}
+
+	// Page 1: limit 3 newest, spanning both groups.  fromuser filter keeps
+	// the assertion independent of unrelated messages in the shared DB.
+	page1URL := fmt.Sprintf("/api/modtools/messages?collection=Approved&fromuser=%d&limit=3&jwt=%s",
+		posterID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", page1URL, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body1 map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body1)
+	page1 := body1["messages"].([]interface{})
+	require.Equal(t, 3, len(page1), "First page should have 3 messages")
+
+	got1 := make([]uint64, len(page1))
+	for i, id := range page1 {
+		got1[i] = uint64(id.(float64))
+	}
+	assert.Equal(t, expectedDesc[:3], got1,
+		"First page must be in global arrival DESC order, not grouped by groupid")
+
+	// Page 2 via pagination context.
+	ctxObj, _ := body1["context"].(map[string]interface{})
+	require.NotNil(t, ctxObj, "Pagination context should be present when page is full")
+	ctxBytes, _ := json.Marshal(ctxObj)
+	page2URL := fmt.Sprintf("/api/modtools/messages?collection=Approved&fromuser=%d&limit=3&context=%s&jwt=%s",
+		posterID, url.QueryEscape(string(ctxBytes)), modToken)
+	resp2, err := getApp().Test(httptest.NewRequest("GET", page2URL, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var body2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&body2)
+	page2 := body2["messages"].([]interface{})
+	require.Equal(t, 2, len(page2), "Second page should have the remaining 2 messages")
+
+	got2 := make([]uint64, len(page2))
+	for i, id := range page2 {
+		got2[i] = uint64(id.(float64))
+	}
+	assert.Equal(t, expectedDesc[3:], got2,
+		"Second page must continue the global arrival DESC ordering")
+}
+
+func TestListMessagesGroupsIncludesHeldby(t *testing.T) {
+	prefix := uniquePrefix("list_heldby")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid = ?", modID, msgID, groupA)
+
+	// List messages and check that groups include heldby.
+	url := fmt.Sprintf("/api/messages?collection=Pending&groupid=%d&jwt=%s", groupA, modToken)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	msgs := result["messages"].([]interface{})
+
+	found := false
+	for _, m := range msgs {
+		mm := m.(map[string]interface{})
+		if uint64(mm["id"].(float64)) == msgID {
+			found = true
+			groups := mm["groups"].([]interface{})
+			assert.Greater(t, len(groups), 0)
+			g := groups[0].(map[string]interface{})
+			assert.NotNil(t, g["heldby"], "groups entry should include heldby")
+			assert.Equal(t, float64(modID), g["heldby"])
+		}
+	}
+	assert.True(t, found, "Message should appear in list")
+}
+
+// Cross-group authorization tests: a mod of group A must not be able to
+// perform moderation actions on a message that's only on group B, even
+// though the message is visible to them (because they mod one of its groups).
+
+func TestPostMessageApproveCrossGroupAttack403(t *testing.T) {
+	prefix := uniquePrefix("attack_approve")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modAID := CreateTestUser(t, prefix+"_moda", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modAID, groupA, "Moderator")
+	// modAID is NOT a mod of groupB.
+	_, modAToken := CreateTestSession(t, modAID)
+
+	// Message on both groups.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	// Mod A attempts to approve on group B — must be rejected.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Approve",
+		"groupid": groupB,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modAToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode, "Mod of group A must not approve on group B")
+
+	// Group B row should still be Pending.
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&collection)
+	assert.Equal(t, "Pending", collection, "Group B should remain Pending")
+}
+
+func TestPostMessageGlobalApproveNarrowsToAuthorizedGroups(t *testing.T) {
+	// A mod of only group A performing a global approve must approve only on group A,
+	// leaving group B's row untouched.
+	prefix := uniquePrefix("narrow_approve")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modAID := CreateTestUser(t, prefix+"_moda", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modAID, groupA, "Moderator")
+	_, modAToken := CreateTestSession(t, modAID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	// Global approve (no groupid).
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Approve",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modAToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var collA, collB string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&collA)
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&collB)
+	assert.Equal(t, "Approved", collA, "Group A should be approved")
+	assert.Equal(t, "Pending", collB, "Group B must stay Pending — mod A isn't authorized")
+}
+
+func TestPostMessageRejectCrossGroupAttack403(t *testing.T) {
+	prefix := uniquePrefix("attack_reject")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modAID := CreateTestUser(t, prefix+"_moda", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modAID, groupA, "Moderator")
+	_, modAToken := CreateTestSession(t, modAID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"groupid": groupB,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modAToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode, "Mod of group A must not reject on group B")
+}
+
+func TestPostMessageHoldCrossGroupAttack403(t *testing.T) {
+	prefix := uniquePrefix("attack_hold")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modAID := CreateTestUser(t, prefix+"_moda", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modAID, groupA, "Moderator")
+	_, modAToken := CreateTestSession(t, modAID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Hold",
+		"groupid": groupB,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modAToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode, "Mod of group A must not hold on group B")
+
+	var heldby *uint64
+	db.Raw("SELECT heldby FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&heldby)
+	assert.Nil(t, heldby, "Group B heldby must remain NULL")
+}
+
+func TestPostMessageSpamCrossGroupAttack403(t *testing.T) {
+	prefix := uniquePrefix("attack_spam")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modAID := CreateTestUser(t, prefix+"_moda", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modAID, groupA, "Moderator")
+	_, modAToken := CreateTestSession(t, modAID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Spam",
+		"groupid": groupB,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modAToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode, "Mod of group A must not mark spam on group B")
+
+	var deleted int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&deleted)
+	assert.Equal(t, 0, deleted, "Group B row must not be soft-deleted by unauthorized spam")
+}
+
+func TestPostMessageDeleteCrossGroupAttack403(t *testing.T) {
+	prefix := uniquePrefix("attack_del")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modAID := CreateTestUser(t, prefix+"_moda", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	CreateTestMembership(t, modAID, groupA, "Moderator")
+	_, modAToken := CreateTestSession(t, modAID)
+
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Delete",
+		"groupid": groupB,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modAToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 403, resp.StatusCode, "Mod of group A must not delete on group B")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&count)
+	assert.Equal(t, int64(1), count, "Group B row must still exist")
 }

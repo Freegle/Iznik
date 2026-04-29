@@ -330,16 +330,20 @@ describe('ExternalDa', () => {
   })
 
   describe('passClicks computed', () => {
-    it('returns false when adShown is true', () => {
+    // passClicks feeds straight into `pointer-events` via v-bind in <style>,
+    // so it must resolve to a real CSS keyword. When an ad or fallback is
+    // rendered we need `auto` so the link is clickable — the previous
+    // mapping was inverted and broke Jobs/footer ad clicks (#9481 post 492/493).
+    it("returns 'auto' when adShown is true so the ad is clickable", () => {
       const wrapper = createWrapper()
       wrapper.vm.adShown = true
-      expect(wrapper.vm.passClicks).toBe(false)
+      expect(wrapper.vm.passClicks).toBe('auto')
     })
 
-    it('returns true when adShown is false', () => {
+    it("returns 'none' when adShown is false so clicks pass through the empty placeholder", () => {
       const wrapper = createWrapper()
       wrapper.vm.adShown = false
-      expect(wrapper.vm.passClicks).toBe(true)
+      expect(wrapper.vm.passClicks).toBe('none')
     })
   })
 
