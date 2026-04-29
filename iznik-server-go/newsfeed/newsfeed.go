@@ -492,7 +492,7 @@ func getFeed(myid uint64, gotDistance bool, distance uint64) []NewsfeedSummary {
 					"AND spam_users.id IS NULL "+
 					"AND newsfeed.type IN (?, ?) "+
 					"ORDER BY newsfeed.timestamp DESC LIMIT %d "+
-					") ORDER BY pinned DESC, timestamp DESC LIMIT 100;",
+					") ORDER BY pinned DESC, newsfeed.timestamp DESC LIMIT 100;",
 				utils.NEWSFEED_EVENTS_PER_FEED),
 			// UNION 1: regular posts
 			utils.NEWSFEED_MODSTATUS_SUPPRESSED,
