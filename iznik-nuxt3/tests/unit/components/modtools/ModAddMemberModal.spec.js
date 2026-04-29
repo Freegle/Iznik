@@ -192,4 +192,41 @@ describe('ModAddMemberModal', () => {
       expect(wrapper.vm.addedId).toBe(456)
     })
   })
+
+  // Regression: add() had no error handling so any API failure propagated to Nuxt's
+  // global error handler and showed the generic "oh dear something went wrong" page.
+  // See https://discourse.ilovefreegle.org/t/9628/1
+  describe('error handling', () => {
+    it('shows an error message and does not throw when userStore.add() rejects', async () => {
+      mockUserStore.add.mockRejectedValue(new Error('Network error'))
+
+      const wrapper = mountComponent()
+
+      wrapper.vm.email = 'fail@example.com'
+      await wrapper.vm.$nextTick()
+
+      // Must not throw — before the fix this propagated to Nuxt's global error handler
+      await expect(wrapper.vm.add()).resolves.toBeUndefined()
+      await flushPromises()
+
+      expect(wrapper.vm.addedId).toBeNull()
+      expect(wrapper.text()).toMatch(/error|wrong|fail/i)
+    })
+
+    it('shows an error message and does not throw when memberStore.add() rejects', async () => {
+      mockUserStore.add.mockResolvedValue(123)
+      mockMemberStore.add.mockRejectedValue(new Error('Forbidden'))
+
+      const wrapper = mountComponent({ groupid: 456 })
+
+      wrapper.vm.email = 'test@example.com'
+      await wrapper.vm.$nextTick()
+
+      // Must not throw — before the fix this propagated to Nuxt's global error handler
+      await expect(wrapper.vm.add()).resolves.toBeUndefined()
+      await flushPromises()
+
+      expect(wrapper.text()).toMatch(/error|wrong|fail/i)
+    })
+  })
 })

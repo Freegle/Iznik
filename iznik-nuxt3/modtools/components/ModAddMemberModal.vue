@@ -15,6 +15,9 @@
           }}.
         </div>
         <div v-else>
+          <NoticeMessage v-if="addError" variant="danger" class="mb-2">
+            Something went wrong adding this member. Please try again.
+          </NoticeMessage>
           <NoticeMessage variant="info">
             This will add someone as a member of your community. Please be
             responsible in how you use this feature.
@@ -65,21 +68,28 @@ const { modal, show, hide } = useOurModal()
 
 const email = ref(null)
 const addedId = ref(null)
+const addError = ref(false)
 
 const validEmail = computed(() => {
   return email.value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)
 })
 
 async function add() {
-  addedId.value = await userStore.add({
-    email: email.value,
-  })
-
-  if (addedId.value) {
-    await memberStore.add({
-      userid: addedId.value,
-      groupid: props.groupid,
+  addError.value = false
+  try {
+    addedId.value = await userStore.add({
+      email: email.value,
     })
+
+    if (addedId.value) {
+      await memberStore.add({
+        userid: addedId.value,
+        groupid: props.groupid,
+      })
+    }
+  } catch (e) {
+    addedId.value = null
+    addError.value = true
   }
 }
 
