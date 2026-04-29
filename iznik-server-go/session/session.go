@@ -686,10 +686,12 @@ func GetSession(c *fiber.Ctx) error {
 		Source        *string         `json:"source"`
 		Deleted       *time.Time      `json:"deleted"`
 		Forgotten     *time.Time      `json:"forgotten"`
-		Trustlevel       *string         `json:"trustlevel"`
-		Permissions      *string         `json:"permissions"`
-		Marketingconsent bool            `json:"marketingconsent"`
-		Bouncing         int             `json:"bouncing"`
+		Trustlevel         *string         `json:"trustlevel"`
+		Permissions        *string         `json:"permissions"`
+		Marketingconsent   bool            `json:"marketingconsent"`
+		Bouncing           int             `json:"bouncing"`
+		Relevantallowed    int             `json:"relevantallowed"`
+		Newslettersallowed int             `json:"newslettersallowed"`
 	}
 
 	type EmailRow struct {
@@ -748,7 +750,7 @@ func GetSession(c *fiber.Ctx) error {
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, fullname, firstname, lastname, systemrole, settings, lastaccess, added, lastlocation, onholidaytill, source, deleted, forgotten, trustlevel, permissions, marketingconsent, bouncing FROM users WHERE id = ?", myid).Scan(&userRow)
+		db.Raw("SELECT id, fullname, firstname, lastname, systemrole, settings, lastaccess, added, lastlocation, onholidaytill, source, deleted, forgotten, trustlevel, permissions, marketingconsent, bouncing, relevantallowed, newslettersallowed FROM users WHERE id = ?", myid).Scan(&userRow)
 	}()
 	go func() {
 		defer wg.Done()
@@ -1327,25 +1329,27 @@ func GetSession(c *fiber.Ctx) error {
 
 	// Build the me object.
 	me := fiber.Map{
-		"id":               userRow.ID,
-		"displayname":      displayname,
-		"fullname":         userRow.Fullname,
-		"firstname":        userRow.Firstname,
-		"lastname":         userRow.Lastname,
-		"systemrole":       userRow.Systemrole,
-		"settings":         userRow.Settings,
-		"lastaccess":       userRow.Lastaccess,
-		"added":            userRow.Added,
-		"source":           userRow.Source,
-		"deleted":          userRow.Deleted,
-		"forgotten":        userRow.Forgotten,
-		"trustlevel":       userRow.Trustlevel,
-		"marketingconsent": userRow.Marketingconsent,
-		"bouncing":         userRow.Bouncing,
-		"aboutme":          aboutme,
-		"supporter":        supporterInfo.Supporter,
-		"donated":          supporterInfo.Donated,
-		"donatedtype":      supporterInfo.DonatedType,
+		"id":                 userRow.ID,
+		"displayname":        displayname,
+		"fullname":           userRow.Fullname,
+		"firstname":          userRow.Firstname,
+		"lastname":           userRow.Lastname,
+		"systemrole":         userRow.Systemrole,
+		"settings":           userRow.Settings,
+		"lastaccess":         userRow.Lastaccess,
+		"added":              userRow.Added,
+		"source":             userRow.Source,
+		"deleted":            userRow.Deleted,
+		"forgotten":          userRow.Forgotten,
+		"trustlevel":         userRow.Trustlevel,
+		"marketingconsent":   userRow.Marketingconsent,
+		"bouncing":           userRow.Bouncing,
+		"relevantallowed":    userRow.Relevantallowed,
+		"newslettersallowed": userRow.Newslettersallowed,
+		"aboutme":            aboutme,
+		"supporter":          supporterInfo.Supporter,
+		"donated":            supporterInfo.Donated,
+		"donatedtype":        supporterInfo.DonatedType,
 	}
 
 	if userRow.Onholidaytill != nil {
