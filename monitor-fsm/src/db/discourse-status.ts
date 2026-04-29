@@ -122,14 +122,21 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
   // ---- Recently fixed ----
   if (recentFixed.length > 0) {
     lines.push('## Fixed in the last 7 days', '')
-    lines.push('| Area | Reporter | Issue | PR |')
-    lines.push('|---|---|---|---|')
+    lines.push('| Area | Reporter | Issue | PR | Live? |')
+    lines.push('|---|---|---|---|---|')
     for (const b of recentFixed) {
       const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
       const excerpt = escapeCell((b.excerpt ?? '').slice(0, 160))
       const area = b.feature_area ?? '—'
       const pr = prLink(b.pr_number)
-      lines.push(`| ${area} | [@${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${pr} |`)
+      let liveStatus = ''
+      if (b.pr_number) {
+        const ds = deployStates.get(b.pr_number)
+        if (ds === 'deployed' || ds === 'live') liveStatus = ':white_check_mark: Live'
+        else if (ds === 'pending_deploy') liveStatus = ':hourglass: Deploying'
+        else liveStatus = ':hourglass: Deploying'
+      }
+      lines.push(`| ${area} | [@${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${pr} | ${liveStatus} |`)
     }
     lines.push('')
   }
