@@ -249,7 +249,9 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           break
         }
 
-        const retryFiles = [...frozenBasenames].join(' ')
+        // Use full paths for Playwright to find the specs. freezeSpecs already contains
+        // full paths like /app/tests/e2e/foo.spec.js; strip /app prefix for Docker context
+        const retryFiles = freezeSpecs.map((f) => f.replace(/^\/app\//, '')).join(' ')
         appendTestLogs('playwright', `\n[FREEZE-RETRY round ${freezeRound + 1}] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process: ${retryFiles}\n`)
 
         // Clear freeze file before retry so the next round picks up only NEW freezes.
