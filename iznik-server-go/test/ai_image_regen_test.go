@@ -1,16 +1,53 @@
 package test
 
 import (
+	"bytes"
 	json2 "encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/microvolunteering"
 	"github.com/stretchr/testify/assert"
 )
+
+// mockImageGenerator returns a minimal valid PNG for testing without calling Cloudflare AI.
+func mockImageGenerator(name string) ([]byte, error) {
+	img := image.NewRGBA(image.Rect(0, 0, 10, 10))
+	for y := 0; y < 10; y++ {
+		for x := 0; x < 10; x++ {
+			img.Set(x, y, color.RGBA{R: 13, G: 51, B: 17, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	png.Encode(&buf, img)
+	return buf.Bytes(), nil
+}
+
+// mockImageUploader returns a fake externaluid without hitting TUS.
+func mockImageUploader(data []byte, mime string) (string, error) {
+	return "freegletusd-test-cloudflare-preview", nil
+}
+
+// withMockImageGeneration overrides the package-level image generator and uploader for
+// the duration of a test, restoring them afterwards.
+func withMockImageGeneration(t *testing.T) {
+	t.Helper()
+	origGenerator := aiimage.ImageGenerator
+	origUploader := aiimage.ImageUploader
+	aiimage.ImageGenerator = mockImageGenerator
+	aiimage.ImageUploader = mockImageUploader
+	t.Cleanup(func() {
+		aiimage.ImageGenerator = origGenerator
+		aiimage.ImageUploader = origUploader
+	})
+}
 
 // ---------------------------------------------------------------------------
 // Helpers shared by tests in this file
@@ -218,6 +255,7 @@ func TestAIImageRegen_Regenerate_RequiresAdminOrSupport(t *testing.T) {
 }
 
 func TestAIImageRegen_Regenerate_SavesNotes(t *testing.T) {
+	withMockImageGeneration(t)
 	db := database.DBConn
 	prefix := uniquePrefix("airegen_regnotes")
 	supportID := CreateTestUser(t, prefix+"_sup", "Support")
@@ -228,7 +266,7 @@ func TestAIImageRegen_Regenerate_SavesNotes(t *testing.T) {
 	body := `{"notes":"The image shows a person, not the item"}`
 	req := httptest.NewRequest("POST", fmt.Sprintf("/api/admin/ai-images/%d/regenerate?jwt="+tok, imgID), strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	resp, _ := getApp().Test(req)
+	resp, _ := getApp().Test(req, 30000)
 	assert.Equal(t, 200, resp.StatusCode)
 
 	// Notes should be saved.
@@ -236,12 +274,19 @@ func TestAIImageRegen_Regenerate_SavesNotes(t *testing.T) {
 	db.Raw("SELECT COALESCE(regeneration_notes, '') FROM ai_images WHERE id = ?", imgID).Scan(&notes)
 	assert.Equal(t, "The image shows a person, not the item", notes)
 
-	// Response should include a preview URL.
+	// Response should include a delivery preview URL (not a Pollinations URL).
 	var result map[string]interface{}
 	json2.Unmarshal(rsp(resp), &result)
 	assert.NotEmpty(t, result["preview_url"], "preview_url should be returned")
 	previewURL := result["preview_url"].(string)
-	assert.Contains(t, previewURL, "pollinations.ai", "preview_url should point to Pollinations.ai")
+	assert.NotContains(t, previewURL, "pollinations.ai", "preview_url must not point to Pollinations.ai")
+	// getDeliveryURL strips the "freegletusd-" prefix, so the delivery URL contains only the file ID portion.
+	assert.Contains(t, previewURL, "test-cloudflare-preview", "preview_url should be a delivery URL for the uploaded image")
+
+	// pending_externaluid should be stored in DB.
+	var pendingUID string
+	db.Raw("SELECT COALESCE(pending_externaluid, '') FROM ai_images WHERE id = ?", imgID).Scan(&pendingUID)
+	assert.Equal(t, "freegletusd-test-cloudflare-preview", pendingUID, "pending_externaluid should be stored after regeneration")
 }
 
 // ---------------------------------------------------------------------------
@@ -324,6 +369,47 @@ func TestAIImageRegen_Accept_UpdatesExternaluidAndResetStatus(t *testing.T) {
 	var updatedUID string
 	db.Raw("SELECT externaluid FROM messages_attachments WHERE id = ?", attachID).Scan(&updatedUID)
 	assert.Equal(t, newUID, updatedUID, "Attachment externaluid should be updated to new UID")
+}
+
+// TestAIImageRegen_RegenerateAndAccept_FullFlow verifies the complete workflow:
+// regenerate stores a pending_externaluid, then accept promotes it.
+func TestAIImageRegen_RegenerateAndAccept_FullFlow(t *testing.T) {
+	withMockImageGeneration(t)
+	db := database.DBConn
+	prefix := uniquePrefix("airegen_fullflow")
+	supportID := CreateTestUser(t, prefix+"_sup", "Support")
+	_, tok := CreateTestSession(t, supportID)
+
+	oldUID := "freegletusd-old-flow-" + prefix
+	imgID := createTestAIImageWithStatus(t, "flow-img-"+prefix, oldUID, "rejected")
+
+	// Step 1: Regenerate — should generate via Cloudflare AI and store pending_externaluid.
+	req1 := httptest.NewRequest("POST", fmt.Sprintf("/api/admin/ai-images/%d/regenerate?jwt="+tok, imgID), nil)
+	resp1, _ := getApp().Test(req1, 30000)
+	assert.Equal(t, 200, resp1.StatusCode)
+
+	var regen map[string]interface{}
+	json2.Unmarshal(rsp(resp1), &regen)
+	assert.NotEmpty(t, regen["preview_url"], "preview_url must be set after regenerate")
+	assert.NotContains(t, regen["preview_url"].(string), "pollinations", "must not use Pollinations")
+
+	// pending_externaluid should be stored.
+	var pendingUID string
+	db.Raw("SELECT COALESCE(pending_externaluid, '') FROM ai_images WHERE id = ?", imgID).Scan(&pendingUID)
+	assert.Equal(t, "freegletusd-test-cloudflare-preview", pendingUID)
+
+	// Step 2: Accept — promotes pending to active.
+	req2 := httptest.NewRequest("POST", fmt.Sprintf("/api/admin/ai-images/%d/accept?jwt="+tok, imgID), nil)
+	resp2, _ := getApp().Test(req2)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var finalUID string
+	db.Raw("SELECT externaluid FROM ai_images WHERE id = ?", imgID).Scan(&finalUID)
+	assert.Equal(t, "freegletusd-test-cloudflare-preview", finalUID, "externaluid should be the Cloudflare-uploaded image")
+
+	var finalStatus string
+	db.Raw("SELECT status FROM ai_images WHERE id = ?", imgID).Scan(&finalStatus)
+	assert.Equal(t, "active", finalStatus)
 }
 
 // ---------------------------------------------------------------------------

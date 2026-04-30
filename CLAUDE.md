@@ -85,6 +85,22 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Active plan**: none currently active.
 
+### 2026-04-29 - Cloudflare AI Workers + PR sweep (ongoing)
+
+**Goal**: Fix all failing PRs and replace Pollinations with Cloudflare Workers AI (Flux Schnell).
+
+**PR #303**: feat(ai-images) — Cloudflare Workers AI replaces Pollinations in Go V2 API regeneration path.
+- `generateImageWithCloudflare`: calls CF AI API, decodes base64 PNG
+- `applyDuotoneGreen`: dark-green #0D3311 → white duotone (matches PHP Image.php)
+- `uploadToTUS`: 2-step TUS upload, returns `freegletusd-` externaluid
+- Injectable `ImageGenerator`/`ImageUploader` vars for tests
+- Modtools/images: side-by-side 160×120 layout, `pending_image_url` shown on load
+- Added `aiimage/aiimage_unit_test.go` with white-box tests using `httptest.NewServer` for all three functions — fixes -0.4% Go coverage gap. All tests pass (6af4502a6). CI running.
+
+**PR sweep (as of 2026-04-30)**: PRs #77, #149, #300, #301, #302 all MERGEABLE.
+
+**Note**: Pollinations also used in V1 PHP `iznik-server` cron scripts (jobs_illustrations.php, messages_illustrations.php). Laravel batch has no Pollinations code — that replacement is separate future work.
+
 ### 2026-04-29 - Deploy version detection via git checkout (commit e529596c8)
 
 **Goal**: Monitor-FSM needs to verify fixes are actually deployed before auto-queueing Discourse reply drafts — not just merged to the production branch.
