@@ -105,26 +105,24 @@
             <!-- Action buttons -->
             <div class="d-flex gap-2 align-items-center flex-wrap">
               <b-button
-                data-testid="regenerate-btn"
+                v-if="previewFor(img)"
+                data-testid="accept-btn"
                 variant="primary"
-                size="sm"
+                :disabled="accepting[img.id]"
+                @click="handleAccept(img)"
+              >
+                <b-spinner v-if="accepting[img.id]" small class="me-1" />
+                Accept New Image
+              </b-button>
+
+              <b-button
+                data-testid="regenerate-btn"
+                variant="white"
                 :disabled="regenerating[img.id]"
                 @click="handleRegenerate(img)"
               >
                 <b-spinner v-if="regenerating[img.id]" small class="me-1" />
                 {{ previewFor(img) ? 'Try Again' : 'Regenerate' }}
-              </b-button>
-
-              <b-button
-                v-if="previewFor(img)"
-                data-testid="accept-btn"
-                variant="success"
-                size="sm"
-                :disabled="accepting[img.id]"
-                @click="handleAccept(img)"
-              >
-                <b-spinner v-if="accepting[img.id]" small class="me-1" />
-                Accept
               </b-button>
 
               <span v-if="errors[img.id]" class="text-danger small">
