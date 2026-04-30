@@ -373,21 +373,21 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 
 			wg.Wait()
 
-			// Fetch postings after wg.Wait so we can use messageGroups for the mod check.
+			// isGroupMod is used for edit access and location disclosure.
 			isGroupMod := isMod
 			if !isGroupMod {
 				idNum, _ := strconv.ParseUint(id, 10, 64)
 				isGroupMod = isModForMessage(db, myid, idNum)
 			}
 
+			// Postings (history of which groups this message was on) are public information,
+			// returned to all callers — matching V1 behaviour.
 			var messagePostings []MessagePosting
-			if isGroupMod {
-				db.Raw("SELECT mp.msgid, mp.groupid, mp.date, mp.repost, mp.autorepost, "+
-					"COALESCE(g.namefull, g.nameshort) AS namedisplay "+
-					"FROM messages_postings mp "+
-					"INNER JOIN `groups` g ON mp.groupid = g.id "+
-					"WHERE mp.msgid = ? ORDER BY mp.date ASC", id).Scan(&messagePostings)
-			}
+			db.Raw("SELECT mp.msgid, mp.groupid, mp.date, mp.repost, mp.autorepost, "+
+				"COALESCE(g.namefull, g.nameshort) AS namedisplay "+
+				"FROM messages_postings mp "+
+				"INNER JOIN `groups` g ON mp.groupid = g.id "+
+				"WHERE mp.msgid = ? ORDER BY mp.date ASC", id).Scan(&messagePostings)
 
 			message.MessageGroups = messageGroups
 			message.Expiresat = computeExpiresat(db, message.Type, messageGroups)
@@ -398,7 +398,7 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 			if isMod && len(messageEdits) > 0 {
 				message.Edits = messageEdits
 			}
-			if isGroupMod && len(messagePostings) > 0 {
+			if len(messagePostings) > 0 {
 				message.Postings = messagePostings
 			}
 

@@ -1125,12 +1125,12 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 		}()
 	}
 
-	// Emails: only if caller is mod of user.
+	// Emails: visible to the user themselves, mods of the user, or admin/support.
 	if myid > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if IsModOfUser(myid, id) || id == myid {
+			if IsModOfUser(myid, id) || id == myid || auth.IsAdminOrSupport(myid) {
 				emails = getEmails(id)
 			}
 		}()
@@ -1300,10 +1300,14 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 
 	if len(emails) > 0 {
 		u.Emails = emails
+		// Prefer a non-internal email; fall back to an internal one if no external address exists.
 		for _, email := range emails {
 			if u.Email == "" && utils.OurDomain(email.Email) == 0 {
 				u.Email = email.Email
 			}
+		}
+		if u.Email == "" {
+			u.Email = emails[0].Email
 		}
 	}
 

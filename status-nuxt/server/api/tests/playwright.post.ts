@@ -255,7 +255,9 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         // Use full paths for Playwright to find the specs. freezeSpecs already contains
         // full paths like /app/tests/e2e/foo.spec.js; strip /app prefix for Docker context
         const retryFiles = freezeSpecs.map((f) => f.replace(/^\/app\//, '')).join(' ')
-        appendTestLogs('playwright', `\n[FREEZE-RETRY round ${freezeRound + 1}] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process: ${retryFiles}\n`)
+        const retryMsg = `[Freeze-retry ${freezeRound + 1}/2] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process`
+        appendTestLogs('playwright', `\n${retryMsg}: ${retryFiles}\n`)
+        setTestState('playwright', { message: retryMsg })
 
         // Clear freeze file before retry so the next round picks up only NEW freezes.
         try {
@@ -365,10 +367,13 @@ function parsePlaywrightOutput(text: string) {
   if (listPassedMatch) state.progress.passed = parseInt(listPassedMatch[1])
   if (listFailedMatch) state.progress.failed = parseInt(listFailedMatch[1])
 
-  // Look for test start markers and extract total count
+  // Look for test start markers and extract total count.
+  // Preserve any "[Freeze-retry N/2]" prefix already set so the status bar
+  // stays informative during the retry process.
   const testMatch = text.match(/Running (\d+) tests? using \d+ workers?/)
   if (testMatch) {
-    state.message = testMatch[0]
+    const retryPrefix = state.message?.match(/^\[Freeze-retry \d+\/\d+\][^|]*/)?.[0]
+    state.message = retryPrefix ? `${retryPrefix.trim()} | ${testMatch[0]}` : testMatch[0]
     state.progress.total = parseInt(testMatch[1])
   }
 
