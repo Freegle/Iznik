@@ -223,6 +223,12 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     const mainRunFailed = stateAfterMain.progress.failed
     const mainRunTotal  = stateAfterMain.progress.total
 
+    // Accumulate all spec basenames that have ever been identified as frozen across
+    // all retry rounds.  A spec that froze in round 0 but passed in round 1 should
+    // not be flagged as an "unaccounted failure" in round 2 just because its failure
+    // line still appears in the cumulative log from the initial run.
+    const allEverFrozenBasenames = new Set<string>()
+
     for (let freezeRound = 0; freezeRound < 2; freezeRound++) {
       try {
         const freezeOutput = execSync(
@@ -235,9 +241,14 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
         if (freezeSpecs.length === 0) break  // no frozen specs — done
 
+        // Add newly-frozen specs to the cumulative frozen set.
+        for (const f of freezeSpecs) {
+          allEverFrozenBasenames.add(path.basename(f))
+        }
+
         // Determine which spec files have failures in the cumulative logs so far.
-        // If any failing spec is NOT in the frozen list it is a genuine failure
-        // that the retry cannot fix — leave finalCode non-zero and bail out.
+        // If any failing spec is NOT in ANY round's frozen list it is a genuine
+        // failure that the retry cannot fix — leave finalCode non-zero and bail out.
         const currentLogs = getTestState('playwright').logs || ''
         const failedSpecBasenames = new Set<string>()
         const failedLines = currentLogs.match(/[✘✗×]\s+\d+\s+\[chromium\][^\n]*/g) || []
@@ -245,8 +256,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           const m = line.match(/›\s+(tests\/e2e\/[^:\s]+\.spec\.js)/)
           if (m) failedSpecBasenames.add(path.basename(m[1]))
         }
-        const frozenBasenames = new Set(freezeSpecs.map((f) => path.basename(f)))
-        const unaccountedFailures = [...failedSpecBasenames].filter((f) => !frozenBasenames.has(f))
+        const unaccountedFailures = [...failedSpecBasenames].filter((f) => !allEverFrozenBasenames.has(f))
         if (unaccountedFailures.length > 0) {
           appendTestLogs('playwright', `[FREEZE-RETRY round ${freezeRound + 1}] Non-frozen failures present (${unaccountedFailures.join(', ')}) — not retrying\n`)
           break
