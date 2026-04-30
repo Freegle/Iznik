@@ -17,6 +17,7 @@ use App\Models\User;
 use App\Services\EmailSpoolerService;
 use App\Services\HousekeeperService;
 use App\Services\PostcodeRemapService;
+use App\Services\UserManagementService;
 use App\Services\PushNotificationService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
@@ -231,6 +232,7 @@ class ProcessBackgroundTasksCommand extends Command
             'freebie_alerts_remove' => $this->handleFreebieAlertsRemove($data),
             'housekeeper_notify' => $this->handleHousekeeperNotify($data),
             'remap_postcodes' => $this->handleRemapPostcodes($data),
+            'user_forget' => $this->handleUserForget($data),
             default => throw new \RuntimeException("Unknown task type: {$taskType}"),
         };
     }
@@ -1408,6 +1410,24 @@ class ProcessBackgroundTasksCommand extends Command
         Log::info('Remapped postcodes', [
             'location_id' => $locationId,
             'updated' => $updated,
+        ]);
+    }
+
+    protected function handleUserForget(array $data): void
+    {
+        $userId = isset($data['user_id']) ? (int) $data['user_id'] : NULL;
+        $reason = $data['reason'] ?? 'Support purge';
+
+        if (! $userId) {
+            throw new \RuntimeException('user_forget requires user_id');
+        }
+
+        $service = app(UserManagementService::class);
+        $service->forgetUser($userId, $reason);
+
+        Log::info('User forgotten via background task', [
+            'user_id' => $userId,
+            'reason'  => $reason,
         ]);
     }
 }
