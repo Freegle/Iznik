@@ -16,6 +16,7 @@ const {
   waitForNuxtHydration,
   waitForBreakpoint,
 } = require('./utils/reply-helpers')
+const { timeouts } = require('./config')
 
 // Mobile viewport dimensions (below lg breakpoint = 992px)
 const MOBILE_VIEWPORT = { width: 375, height: 812 }
@@ -315,6 +316,80 @@ test.describe('Reply-to-Chat - WANTED message', () => {
     await page.setViewportSize({ width: 1280, height: 720 })
     const loggedIn5 = await loginViaHomepage(page, posterEmail)
     if (loggedIn5) {
+      await withdrawPost({ item: result.item })
+    }
+  })
+})
+
+test.describe('Reply-to-Chat - Empty State', () => {
+  test('shows empty state when no replyto param', async ({ page }) => {
+    await logoutIfLoggedIn(page)
+    await page.gotoAndVerify('/chats/reply')
+    await waitForNuxtHydration(page)
+
+    const emptyState = page.locator('.empty-state')
+    await expect(emptyState).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+    await expect(page.locator('text=No message to reply to')).toBeVisible()
+    await expect(page.locator('a[href="/browse"]')).toBeVisible()
+    console.log('[Test] Empty state shown for /chats/reply without replyto param')
+  })
+
+  test('shows empty state when replyto=0', async ({ page }) => {
+    await logoutIfLoggedIn(page)
+    await page.gotoAndVerify('/chats/reply?replyto=0')
+    await waitForNuxtHydration(page)
+
+    const emptyState = page.locator('.empty-state')
+    await expect(emptyState).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+    console.log('[Test] Empty state shown for replyto=0')
+  })
+})
+
+test.describe('Reply-to-Chat - Logged Out', () => {
+  test('shows email field on chat reply page when not logged in', async ({
+    page,
+    postMessage,
+    getTestEmail,
+    withdrawPost,
+  }) => {
+    const posterEmail = getTestEmail('poster-r2c-loggedout')
+    const uniqueItem = `test-r2c-loggedout-${Date.now()}`
+    const result = await postMessage({
+      type: 'OFFER',
+      item: uniqueItem,
+      description: 'Test item for logged-out reply-to-chat',
+      email: posterEmail,
+    })
+    expect(result.id).toBeTruthy()
+    console.log(`[Test] Posted message ${result.id}`)
+
+    // Ensure logged out, then navigate directly to /chats/reply?replyto=N
+    await logoutIfLoggedIn(page)
+    await page.setViewportSize(MOBILE_VIEWPORT)
+    await page.gotoAndVerify(`/chats/reply?replyto=${result.id}`)
+    await waitForNuxtHydration(page)
+
+    // Email validator should be visible for logged-out users
+    const emailField = page.locator('.test-email-reply-validator, input[type="email"]')
+    await expect(emailField.first()).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+    console.log('[Test] Email field visible for logged-out user on chat reply page')
+
+    // Reply textarea should also be visible
+    const replyTextarea = page.locator('textarea[name="reply"]')
+    await expect(replyTextarea).toBeVisible({
+      timeout: timeouts.ui.appearance,
+    })
+
+    // Cleanup
+    await page.setViewportSize({ width: 1280, height: 720 })
+    const loggedIn6 = await loginViaHomepage(page, posterEmail)
+    if (loggedIn6) {
       await withdrawPost({ item: result.item })
     }
   })
