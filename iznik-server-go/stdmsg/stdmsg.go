@@ -268,13 +268,26 @@ func PatchStdMsg(c *fiber.Ctx) error {
 // @Param id query integer true "StdMsg ID"
 // @Security BearerAuth
 // @Router /api/stdmsg [delete]
+type DeleteStdMsgRequest struct {
+	ID uint64 `json:"id"`
+}
+
 func DeleteStdMsg(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 	if myid == 0 {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
 	}
 
-	id, _ := strconv.ParseUint(c.Query("id", "0"), 10, 64)
+	// The frontend sends DELETE params as a JSON body (via $delv2 in BaseAPI).
+	// Fall back to query string for backwards compatibility.
+	var req DeleteStdMsgRequest
+	if strings.Contains(c.Get("Content-Type"), "application/json") {
+		c.BodyParser(&req)
+	}
+	id := req.ID
+	if id == 0 {
+		id, _ = strconv.ParseUint(c.Query("id", "0"), 10, 64)
+	}
 	if id == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}

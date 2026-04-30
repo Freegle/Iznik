@@ -3194,3 +3194,41 @@ func TestPutMembershipsModAddsMember(t *testing.T) {
 		memberID, groupID).Scan(&count)
 	assert.Equal(t, int64(1), count)
 }
+
+// TestPatchMembershipsConfigidPersists verifies that sending configid inside
+// the settings JSON also updates the dedicated memberships.configid column,
+// which is what the session endpoint reads back.
+func TestPatchMembershipsConfigidPersists(t *testing.T) {
+	prefix := uniquePrefix("mem_cfgid")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, token := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Owner")
+
+	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
+
+	body := map[string]interface{}{
+		"userid":  modID,
+		"groupid": groupID,
+		"settings": map[string]interface{}{
+			"active":   1,
+			"configid": cfgID,
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/memberships?jwt=%s", token)
+	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The configid column must be updated, not just the settings JSON.
+	var actualConfigID *uint64
+	db.Raw("SELECT configid FROM memberships WHERE userid = ? AND groupid = ?",
+		modID, groupID).Scan(&actualConfigID)
+	assert.NotNil(t, actualConfigID, "configid column should not be NULL")
+	assert.Equal(t, cfgID, *actualConfigID, "configid column should match the value from settings")
+}
