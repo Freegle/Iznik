@@ -54,15 +54,210 @@ var ImageGenerator = generateImageWithCloudflare
 // Replaced in tests to avoid real HTTP calls.
 var ImageUploader = uploadToTUS
 
-// buildImagePrompt constructs the AI image generation prompt for a given item name.
-// Uses a white background so the duotone (dark green → white) creates a natural gradient.
-// Asking for a dark background with Flux Schnell produces near-black pixels that duotone
-// maps back to dark green — no mid-tone gradient results.
+// canonicalJobs maps canonical job titles to the iconic object used in their illustration.
+// Mirrors Pollinations::CANONICAL_JOBS in the PHP codebase — the cron script stores images
+// under the job title (ai_images.name = canonical_title), so we look up the object here
+// to avoid generating images of people.
+var canonicalJobs = map[string]string{
+	"Accountant":                      "calculator",
+	"Account Manager":                 "briefcase",
+	"Activities Coordinator":          "clipboard",
+	"Administrator":                   "filing cabinet",
+	"Architect":                       "blueprint",
+	"Area Manager":                    "map with pins",
+	"Assistant Manager":               "name badge",
+	"Bartender":                       "cocktail shaker",
+	"Bid Manager":                     "sealed envelope",
+	"Bookkeeper":                      "ledger book",
+	"Branch Manager":                  "desk nameplate",
+	"Bricklayer":                      "brick trowel",
+	"Building Inspector":              "spirit level",
+	"Building Surveyor":               "theodolite",
+	"Bus Driver":                      "steering wheel",
+	"Business Analyst":                "flowchart diagram",
+	"Business Development Manager":    "handshake icon",
+	"Buyer":                           "purchase order",
+	"CAD Technician":                  "technical drawing",
+	"Care Assistant":                  "stethoscope",
+	"Care Coordinator":                "care plan folder",
+	"Care Worker":                     "medical gloves",
+	"Carpenter":                       "wood plane",
+	"Cashier":                         "cash register",
+	"Catering Assistant":              "serving tray",
+	"Chef":                            "chef hat",
+	"Cleaner":                         "mop and bucket",
+	"Clinical Assessor":               "medical clipboard",
+	"CNC Machinist":                   "CNC milling machine",
+	"Communications Engineer":         "satellite dish",
+	"Compliance Officer":              "checklist on clipboard",
+	"Construction Manager":            "hard hat",
+	"Contracts Manager":               "signed contract",
+	"Cook":                            "saucepan",
+	"Counsellor":                      "comfortable armchair",
+	"Credit Controller":               "invoice stamp",
+	"Customer Service Advisor":        "headset",
+	"Data Analyst":                    "bar chart",
+	"Data Architect":                  "database server",
+	"Data Engineer":                   "data pipeline diagram",
+	"Delivery Driver":                 "delivery van",
+	"Dental Nurse":                    "dental mirror",
+	"Deputy Manager":                  "deputy badge",
+	"Design Engineer":                 "engineering compass",
+	"Design Manager":                  "design palette",
+	"Digital Marketing Executive":     "computer screen with analytics",
+	"Document Controller":             "document folder",
+	"Door Canvasser":                  "clipboard with petition",
+	"Ecologist":                       "binoculars",
+	"Electrical Engineer":             "circuit board",
+	"Electrician":                     "wire strippers",
+	"Embedded Software Engineer":      "microchip",
+	"Engineering Apprentice":          "spanner set",
+	"Estimator":                       "measuring tape and calculator",
+	"Factory Operative":               "conveyor belt",
+	"Female Support Worker":           "support badge",
+	"Field Sales Representative":      "sales sample case",
+	"Field Service Engineer":          "tool bag",
+	"Finance Assistant":               "spreadsheet printout",
+	"Finance Business Partner":        "financial report",
+	"Finance Manager":                 "balance sheet",
+	"Financial Controller":            "accounting ledger",
+	"Forklift Driver":                 "forklift",
+	"Fundraiser":                      "collection tin",
+	"Gas Engineer":                    "gas boiler",
+	"General Manager":                 "office desk",
+	"Groundworker":                    "shovel",
+	"Head of Finance":                 "financial dashboard",
+	"Head of Marketing":               "megaphone",
+	"Healthcare Assistant":            "blood pressure monitor",
+	"HGV Class 1 Driver":              "articulated lorry",
+	"HGV Class 2 Driver":              "rigid lorry",
+	"HGV Technician":                  "truck engine",
+	"Home Manager":                    "care home building",
+	"Housekeeper":                     "vacuum cleaner",
+	"HR Advisor":                      "employee handbook",
+	"HR Business Partner":             "HR policy document",
+	"Installer":                       "power drill",
+	"IT Support":                      "computer keyboard",
+	"IT Apprentice":                   "laptop computer",
+	"Kitchen Assistant":               "kitchen knife set",
+	"Kitchen Designer":                "kitchen floor plan",
+	"Labourer":                        "wheelbarrow",
+	"Lecturer":                        "lectern",
+	"Legal Secretary":                 "legal documents",
+	"Lifeguard":                       "lifeguard float",
+	"Machine Learning Engineer":       "neural network diagram",
+	"Machine Operator":                "industrial machine",
+	"Maintenance Electrician":         "multimeter",
+	"Maintenance Engineer":            "wrench and gears",
+	"Maintenance Manager":             "maintenance toolkit",
+	"Maintenance Technician":          "toolbox",
+	"Management Accountant":           "financial spreadsheet",
+	"Manufacturing Engineer":          "factory robot arm",
+	"Marketing Manager":               "marketing campaign board",
+	"Maths Teacher":                   "protractor and compass",
+	"Mechanical Design Engineer":      "mechanical gear drawing",
+	"Mechanical Engineer":             "mechanical gears",
+	"Mechanical Fitter":               "pipe wrench",
+	"Mechanic":                        "car jack",
+	"Mobile Tyre Fitter":              "tyre and wheel",
+	"Mortgage Advisor":                "house keys",
+	"Multi Trade Operative":           "multi-tool",
+	"Nursery Manager":                 "toy building blocks",
+	"Nursery Practitioner":            "childrens storybook",
+	"Nurse":                           "nurses cap",
+	"Operations Manager":              "operations dashboard",
+	"Painter":                         "paint roller",
+	"Parts Advisor":                   "car parts catalogue",
+	"Passenger Assistant":             "bus ticket machine",
+	"Payroll Administrator":           "payslip",
+	"Payroll Specialist":              "payroll software screen",
+	"Personal Advisor":                "advisory notepad",
+	"Planning Officer":                "town plan",
+	"Plasterer":                       "plastering trowel",
+	"Plumber":                         "pipe wrench and pipes",
+	"Primary Teacher":                 "school bell",
+	"Production Manager":              "production line",
+	"Production Operative":            "assembly line component",
+	"Production Supervisor":           "quality control gauge",
+	"Project Engineer":                "project gantt chart",
+	"Project Manager":                 "project plan board",
+	"Property Manager":                "set of property keys",
+	"Quality Engineer":                "caliper gauge",
+	"Quality Inspector":               "magnifying glass",
+	"Quality Manager":                 "quality certificate",
+	"Quantity Surveyor":               "measuring tape and blueprints",
+	"Reach Truck Driver":              "reach truck",
+	"Receptionist":                    "reception desk bell",
+	"Recruitment Consultant":          "CV document",
+	"Refrigeration Engineer":          "refrigeration unit",
+	"Regional Sales Manager":          "sales territory map",
+	"Registered Manager":              "care home registration certificate",
+	"Research Associate":              "microscope",
+	"Residential Support Worker":      "house key with lanyard",
+	"Restaurant Team Member":          "restaurant order pad",
+	"Roofer":                          "roofing hammer",
+	"Rough Sleeping Outreach Worker":  "sleeping bag",
+	"Sales Administrator":             "sales order form",
+	"Sales Advisor":                   "price tag",
+	"Sales Consultant":                "sales presentation",
+	"Sales Engineer":                  "technical sales brochure",
+	"Sales Executive":                 "business card",
+	"Sales Manager":                   "sales trophy",
+	"Sales Representative":            "product sample kit",
+	"Scaffolder":                      "scaffolding poles",
+	"School Crossing Patrol":          "lollipop stop sign",
+	"Science Teacher":                 "laboratory flask",
+	"Security Officer":                "security badge",
+	"SEN Teacher":                     "special education resource kit",
+	"Senior Care Assistant":           "medication trolley",
+	"Service Advisor":                 "service desk terminal",
+	"Service Engineer":                "service toolbox",
+	"Service Manager":                 "service level agreement",
+	"Shift Engineer":                  "shift rota board",
+	"Shift Leader":                    "team leader whistle",
+	"Site Manager":                    "site plan",
+	"Social Worker":                   "case file folder",
+	"Software Engineer":               "computer code on screen",
+	"Solution Architect":              "architecture diagram",
+	"Store Manager":                   "retail shop front",
+	"Structural Engineer":             "structural beam drawing",
+	"Supervisor":                      "supervisor clipboard",
+	"Supply Teacher":                  "classroom whiteboard",
+	"Support Worker":                  "support lanyard badge",
+	"Teaching Assistant":              "school exercise book",
+	"Team Leader":                     "team whiteboard",
+	"Technical Author":                "technical manual",
+	"Tiler":                           "tile cutter",
+	"Transport Manager":               "fleet management board",
+	"Transport Planner":               "route map",
+	"Van Driver":                      "white van",
+	"Vehicle Technician":              "car diagnostic tool",
+	"Warehouse Operative":             "pallet of boxes",
+	"Welder":                          "welding mask",
+	"Window Installer":                "window frame",
+	"Workshop Controller":             "workshop job board",
+	"Workshop Technician":             "workshop bench",
+}
+
+// subjectForName resolves the prompt subject for a given ai_images.name.
+// For canonical job titles, returns the iconic object (e.g. "Accountant" → "calculator").
+// For item names, returns the name unchanged.
+func subjectForName(name string) string {
+	if obj, ok := canonicalJobs[name]; ok {
+		return obj
+	}
+	return name
+}
+
+// buildImagePrompt constructs the AI image generation prompt.
+// Matches the Pollinations prompt template used for both items and jobs.
+// For job titles, subjectForName() maps them to their canonical object first.
 func buildImagePrompt(name string) string {
-	return "Product illustration: single isolated " + name + " centered on plain white background. " +
-		"Style: pencil sketch with moderate shading, cute and quirky, UK audience. " +
-		"The object sits alone on a simple surface. " +
-		"Simple illustration style, clean lines, single object only, greyscale tones."
+	subject := subjectForName(name)
+	return "Product illustration: single isolated " + subject + " centered on plain dark green background. " +
+		"Style: friendly cartoon white line drawing, moderate shading, cute and quirky, UK audience. " +
+		"The object sits alone on a simple surface or floats in space. " +
+		"Simple illustration style, clean lines, single object only."
 }
 
 // CloudflareAPIBase is the base URL for the Cloudflare API. Overridable in tests.
@@ -83,8 +278,8 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"prompt":    prompt,
 		"num_steps": 8,
-		"width":     1024,
-		"height":    768,
+		"width":     640,
+		"height":    480,
 	})
 
 	apiURL := fmt.Sprintf(
@@ -432,8 +627,16 @@ func Regenerate(c *fiber.Ctx) error {
 	// Mark as regenerating while we generate.
 	db.Exec("UPDATE ai_images SET status = 'regenerating' WHERE id = ?", id)
 
+	// If the moderator supplied an item description override, use it as the prompt
+	// subject instead of the stored name. This lets them steer toward a better image
+	// (e.g. "large brown sofa" instead of the generic "sofa").
+	subject := name
+	if req.Notes != "" {
+		subject = req.Notes
+	}
+
 	// Generate image via Cloudflare Workers AI.
-	imageData, err := ImageGenerator(name)
+	imageData, err := ImageGenerator(subject)
 	if err != nil {
 		db.Exec("UPDATE ai_images SET status = 'rejected' WHERE id = ?", id)
 		return fiber.NewError(fiber.StatusServiceUnavailable, "Image generation failed: "+err.Error())

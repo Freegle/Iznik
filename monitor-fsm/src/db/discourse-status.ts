@@ -134,7 +134,7 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
         const ds = deployStates.get(b.pr_number)
         if (ds === 'deployed' || ds === 'live') liveStatus = ':white_check_mark: Live'
         else if (ds === 'pending_deploy') liveStatus = ':hourglass: Deploying'
-        else liveStatus = ':hourglass: Deploying'
+        else liveStatus = ':hammer_and_wrench: Pending'
       }
       lines.push(`| ${area} | [@${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${pr} | ${liveStatus} |`)
     }

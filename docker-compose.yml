@@ -768,8 +768,8 @@ services:
       - MYSQL_PORT=${LIVE_DB_PORT:-1234}
       - MYSQL_USER=${LIVE_DB_USER:-root}
       - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
-      - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
-      - TUS_UPLOADER=http://tusd:8080/tus
+      - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
+      - TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
@@ -782,6 +782,8 @@ services:
       - MAPBOX_KEY=${MAPBOX_KEY:-}
       - DONATION_TARGET=${DONATION_TARGET:-}
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
+      - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      - CLOUDFLARE_AI_TOKEN=${CLOUDFLARE_AI_TOKEN:-}
     volumes:
       - apiv2_logs:/var/log/freegle
     healthcheck:
