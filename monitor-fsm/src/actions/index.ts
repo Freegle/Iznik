@@ -454,7 +454,8 @@ print(json.dumps(results))
           .replace(/^feat\([^)]+\):\s*/i, '')
           .replace(/^feat:\s*/i, '')
           .trim()
-        const body = `Fix applied for ${fixDesc}. Please retest.`
+        const prUrl = `https://github.com/${PROD_REPO}/pull/${bug.pr_number}`
+        const body = `Fix applied for ${fixDesc} (${prUrl}). Please retest.`
         const quote = bug.excerpt ?? ''
         const username = bug.reporter ?? 'there'
 
@@ -465,7 +466,7 @@ print(json.dumps(results))
           quote,
           body,
           prNumber: bug.pr_number,
-          prUrl: `https://github.com/${PROD_REPO}/pull/${bug.pr_number}`,
+          prUrl,
         })
 
         out(`queue_deployed_reply_drafts: queued draft for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number}) — fix confirmed deployed`)
@@ -884,7 +885,7 @@ print(json.dumps(out))
 
   {
     name: 'post_discourse_reply_draft',
-    description: 'Queue a Discourse reply draft by APPENDING it to /tmp/freegle-monitor/retest-drafts.md. NEVER posts to Discourse — drafts require explicit human approval per iteration. Strict template (enforced here): body must be a single sentence; the file entry always renders the full [quote] block, the @username tag, the body, and a testable URL if provided. Params: {topic, post, username, quote, body, previewUrl?, prNumber?, prUrl?}. Use previewUrl ONLY for frontend-only fixes; backend/mixed fixes must include NO previewUrl because the user cannot retest until a deploy. The body should be exactly "Fix applied for <specific issue>. Please retest." or (with preview) "Possible fix — please test: <url>".',
+    description: 'Queue a Discourse reply draft by APPENDING it to /tmp/freegle-monitor/retest-drafts.md. NEVER posts to Discourse — drafts require explicit human approval per iteration. Strict template (enforced here): body must be a single sentence; the file entry always renders the full [quote] block, the @username tag, the body, and a testable URL if provided. Params: {topic, post, username, quote, body, previewUrl?, prNumber?, prUrl?}. Use previewUrl ONLY for frontend-only fixes; backend/mixed fixes must include NO previewUrl because the user cannot retest until a deploy. The body should be exactly "Fix applied for <specific issue> (<prUrl>). Please retest." or (with preview) "Possible fix — please test: <url>". Always include the prUrl in the body so the reporter can see which PR fixed their issue.',
     paramsSchema: {
       type: 'object',
       properties: {
@@ -892,7 +893,7 @@ print(json.dumps(out))
         post: { type: 'number' },
         username: { type: 'string' },
         quote: { type: 'string', description: '15-25 word excerpt from the original post — the disambiguator so the reporter knows which of their bugs this reply addresses.' },
-        body: { type: 'string', description: 'One sentence. No PR numbers, commit hashes, V1/V2, Go/Nuxt, or other internals.' },
+        body: { type: 'string', description: 'One sentence. Include the PR URL in parentheses after the fix description. No commit hashes, V1/V2, Go/Nuxt, or other internals.' },
         previewUrl: { type: 'string', description: 'Netlify deploy-preview URL. Include ONLY for frontend-only (iznik-nuxt3/**) fixes.' },
         prNumber: { type: 'number' },
         prUrl: { type: 'string' },

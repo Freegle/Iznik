@@ -184,7 +184,7 @@ describe('AIImageReview card interactions', () => {
   })
 
   it('calls regenerate when Regenerate button is clicked', async () => {
-    mockRegenerate.mockResolvedValue({ preview_url: 'https://image.pollinations.ai/prompt/test' })
+    mockRegenerate.mockResolvedValue({ preview_url: 'https://delivery.ilovefreegle.org?url=test' })
     const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
     await flushPromises()
 
@@ -196,7 +196,7 @@ describe('AIImageReview card interactions', () => {
   })
 
   it('shows preview image after regeneration', async () => {
-    const previewURL = 'https://image.pollinations.ai/prompt/bicycle'
+    const previewURL = 'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
     mockRegenerate.mockResolvedValue({ preview_url: previewURL })
     const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
     await flushPromises()
@@ -205,14 +205,43 @@ describe('AIImageReview card interactions', () => {
     await regenBtn.trigger('click')
     await flushPromises()
 
-    // Preview image should now appear.
+    // Preview image should now appear with the delivery URL.
     const imgs = wrapper.findAll('img')
     const found = imgs.some((img) => img.attributes('src') === previewURL)
     expect(found).toBe(true)
   })
 
+  it('shows pending_image_url from API on initial load without regenerating', async () => {
+    // Simulate an image that already has a pending preview from a prior regeneration.
+    mockImages.value = [
+      {
+        id: 42,
+        name: 'Bicycle',
+        externaluid: 'freegletusd-bike',
+        image_url: 'https://example.com/bike.jpg',
+        status: 'regenerating',
+        regeneration_notes: null,
+        pending_externaluid: 'freegletusd-new-preview',
+        pending_image_url: 'https://delivery.ilovefreegle.org?url=freegletusd-new-preview',
+        votes: [],
+        reject_count: 5,
+        approve_count: 0,
+      },
+    ]
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+
+    // The pending_image_url should be shown without clicking Regenerate.
+    const imgs = wrapper.findAll('img')
+    const found = imgs.some((img) => img.attributes('src')?.includes('freegletusd-new-preview'))
+    expect(found).toBe(true)
+
+    // Accept button should be visible since there's already a preview.
+    expect(wrapper.find('[data-testid="accept-btn"]').exists()).toBe(true)
+  })
+
   it('calls accept when Accept button is clicked after regeneration', async () => {
-    const previewURL = 'https://image.pollinations.ai/prompt/bicycle'
+    const previewURL = 'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
     mockRegenerate.mockResolvedValue({ preview_url: previewURL })
     mockAccept.mockResolvedValue({ ret: 0 })
 
@@ -233,7 +262,7 @@ describe('AIImageReview card interactions', () => {
   })
 
   it('removes image from list after accept', async () => {
-    const previewURL = 'https://image.pollinations.ai/prompt/bicycle'
+    const previewURL = 'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123'
     mockRegenerate.mockResolvedValue({ preview_url: previewURL })
     mockAccept.mockResolvedValue({ ret: 0 })
 

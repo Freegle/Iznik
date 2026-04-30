@@ -12,6 +12,7 @@ export interface BugRow {
   last_seen_at: string
   fixed_at: string | null
   pr_rejections: number
+  deploy_state: string | null  // 'deployed' | 'pending_deploy' | null
 }
 
 export interface DraftRow {
