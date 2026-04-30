@@ -62,6 +62,9 @@ func buildImagePrompt(name string) string {
 		"Simple illustration style, clean lines, single object only."
 }
 
+// CloudflareAPIBase is the base URL for the Cloudflare API. Overridable in tests.
+var CloudflareAPIBase = "https://api.cloudflare.com"
+
 // generateImageWithCloudflare calls the Cloudflare Workers AI API (Flux Schnell) to generate
 // an image for the given item name and returns the raw PNG bytes.
 func generateImageWithCloudflare(name string) ([]byte, error) {
@@ -80,7 +83,8 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 	})
 
 	apiURL := fmt.Sprintf(
-		"https://api.cloudflare.com/client/v4/accounts/%s/ai/run/@cf/black-forest-labs/flux-1-schnell",
+		"%s/client/v4/accounts/%s/ai/run/@cf/black-forest-labs/flux-1-schnell",
+		CloudflareAPIBase,
 		accountID,
 	)
 
