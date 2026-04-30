@@ -1671,6 +1671,11 @@ func TestWorkCountRelatedMembers(t *testing.T) {
 	CreateTestMembership(t, user1ID, groupID, "Member")
 	CreateTestMembership(t, user2ID, groupID, "Member")
 
+	// Both users must have login history to be counted (matches list filter).
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user1ID, prefix+"_u1_login")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user2ID, prefix+"_u2_login")
+	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u1_login", prefix+"_u2_login")
+
 	// Ensure user1 < user2 for the canonical ordering.
 	u1, u2 := user1ID, user2ID
 	if u1 > u2 {
@@ -1682,7 +1687,57 @@ func TestWorkCountRelatedMembers(t *testing.T) {
 
 	work := getSessionWork(t, token)
 	related := work["relatedmembers"].(float64)
-	assert.GreaterOrEqual(t, related, float64(1), "Should count un-notified related members in group")
+	assert.GreaterOrEqual(t, related, float64(1), "Should count un-notified related members when both have login history")
+}
+
+// TestWorkCountRelatedMembersNoLogins verifies the counter excludes pairs where
+// either user has no login history — the list already filters these out, so a
+// stuck "1" badge (Discourse topic 9631) should not be shown to moderators.
+func TestWorkCountRelatedMembersNoLogins(t *testing.T) {
+	prefix := uniquePrefix("wc_rel_nologin")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+	// No users_logins rows — neither user can log in.
+
+	u1, u2 := user1ID, user2ID
+	if u1 > u2 {
+		u1, u2 = u2, u1
+	}
+
+	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", u1, u2)
+	defer db.Exec("DELETE FROM users_related WHERE user1 = ? AND user2 = ?", u1, u2)
+
+	beforeWork := getSessionWork(t, token)
+	beforeRelated := beforeWork["relatedmembers"].(float64)
+
+	// Add a second pair with logins to establish baseline.
+	user3ID := CreateTestUser(t, prefix+"_u3", "User")
+	user4ID := CreateTestUser(t, prefix+"_u4", "User")
+	CreateTestMembership(t, user3ID, groupID, "Member")
+	CreateTestMembership(t, user4ID, groupID, "Member")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user3ID, prefix+"_u3_login")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user4ID, prefix+"_u4_login")
+	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u3_login", prefix+"_u4_login")
+	u3, u4 := user3ID, user4ID
+	if u3 > u4 {
+		u3, u4 = u4, u3
+	}
+	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", u3, u4)
+	defer db.Exec("DELETE FROM users_related WHERE user1 = ? AND user2 = ?", u3, u4)
+
+	afterWork := getSessionWork(t, token)
+	afterRelated := afterWork["relatedmembers"].(float64)
+
+	// The no-login pair must not inflate the count — only the pair with logins adds 1.
+	assert.Equal(t, beforeRelated+1, afterRelated, "Pair without login history must not be counted in relatedmembers badge")
 }
 
 // ---------------------------------------------------------------------------
