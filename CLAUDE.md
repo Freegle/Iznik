@@ -98,8 +98,8 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 4. **Line 4748**: Enhanced logging to show which repost number
 
 **Test Coverage**: Added testAutoRepostExcessiveFrequency() in MessageTest.php with three assertions:
-- Message with 4 prior reposts at day 20 should NOT repost (next window at day 18)
-- Message with 4 prior reposts at day 18 should repost (5th repost)
+- Message with 4 prior reposts at day 20 should NOT repost (past maxage window of 18 days)
+- Message with 4 prior reposts at day 16 should repost (5th repost within maxage window)
 - Message with max reposts should not repost
 
 **Tests**: Running via status API

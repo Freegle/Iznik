@@ -795,16 +795,17 @@ class MessageTest extends IznikTestCase {
         list ($count, $warncount) = $m->autoRepostGroup(Group::GROUP_FREEGLE, '2016-01-01', $this->gid);
         $this->assertEquals(0, $count, "Message with 4 prior reposts at 20 days should not repost (next window at day 18)");
 
-        # Now test: message at day 18 should repost (5th repost)
-        $mysqltime = date("Y-m-d H:i:s", strtotime('18 days 1 hour ago'));
+        # Now test: message at day 16 should repost (5th repost)
+        # Must be within maxage window (18 days), so use 16 days to be safe
+        $mysqltime = date("Y-m-d H:i:s", strtotime('16 days ago'));
         $this->dbhm->preExec(
             "UPDATE messages_groups SET arrival = ? WHERE msgid = ?;",
             [ $mysqltime, $msgid ]
         );
 
-        $this->log("Expect repost for message with 4 reposts at 18 days");
+        $this->log("Expect repost for message with 4 reposts at 16 days");
         list ($count, $warncount) = $m->autoRepostGroup(Group::GROUP_FREEGLE, '2016-01-01', $this->gid);
-        $this->assertEquals(1, $count, "Message with 4 prior reposts at 18 days should repost (5th repost)");
+        $this->assertEquals(1, $count, "Message with 4 prior reposts at 16 days should repost (5th repost)");
 
         # Now message has 5 reposts (max), should not repost again
         $m = new Message($this->dbhr, $this->dbhm, $msgid);
