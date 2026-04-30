@@ -180,24 +180,33 @@ class TNSyncCommand extends Command
         $page = 1;
         $count = 0;
         $maxDate = NULL;
+        $fixturesDir = base_path('../iznik-server/test/integration/tn_sync/fixtures');
 
         do {
-            $response = Http::get("{$this->apiBaseUrl}/ratings", [
-                'key' => $this->apiKey,
-                'page' => $page,
-                'per_page' => self::PAGE_SIZE,
-                'date_min' => $from,
-                'date_max' => $to,
-            ]);
-
-            if (!$response->successful()) {
-                Log::error("TN sync: ratings API failed on page {$page}", [
-                    'status' => $response->status(),
-                ]);
-                break;
+            // $response = Http::get("{$this->apiBaseUrl}/ratings", [
+            //     'key' => $this->apiKey,
+            //     'page' => $page,
+            //     'per_page' => self::PAGE_SIZE,
+            //     'date_min' => $from,
+            //     'date_max' => $to,
+            // ]);
+            //
+            // if (!$response->successful()) {
+            //     Log::error("TN sync: ratings API failed on page {$page}", [
+            //         'status' => $response->status(),
+            //     ]);
+            //     break;
+            // }
+            //
+            // $ratings = $response->json('ratings', []);
+            $ratingsFile = $fixturesDir . "/ratings_page_{$page}.json";
+            if (file_exists($ratingsFile)) {
+                $ratingsPayload = json_decode(file_get_contents($ratingsFile), true);
+                $ratings = is_array($ratingsPayload) ? ($ratingsPayload['ratings'] ?? []) : [];
+            } else {
+                Log::info("TN-SYNC-TRACE [RATINGS-PAGE] missing fixture file={$ratingsFile}");
+                $ratings = [];
             }
-
-            $ratings = $response->json('ratings', []);
             $page++;
 
             Log::info("TN-SYNC-TRACE [RATINGS-PAGE] page=" . ($page - 1) . " count=" . count($ratings));
@@ -272,24 +281,33 @@ class TNSyncCommand extends Command
         $page = 1;
         $count = 0;
         $maxDate = null;
+        $fixturesDir = base_path('../iznik-server/test/integration/tn_sync/fixtures');
 
         do {
-            $response = Http::get("{$this->apiBaseUrl}/user-changes", [
-                'key' => $this->apiKey,
-                'page' => $page,
-                'per_page' => self::PAGE_SIZE,
-                'date_min' => $from,
-                'date_max' => $to,
-            ]);
-
-            if (!$response->successful()) {
-                Log::error("TN sync: user-changes API failed on page {$page}", [
-                    'status' => $response->status(),
-                ]);
-                break;
+            // $response = Http::get("{$this->apiBaseUrl}/user-changes", [
+            //     'key' => $this->apiKey,
+            //     'page' => $page,
+            //     'per_page' => self::PAGE_SIZE,
+            //     'date_min' => $from,
+            //     'date_max' => $to,
+            // ]);
+            //
+            // if (!$response->successful()) {
+            //     Log::error("TN sync: user-changes API failed on page {$page}", [
+            //         'status' => $response->status(),
+            //     ]);
+            //     break;
+            // }
+            //
+            // $changes = $response->json('changes', []);
+            $changesFile = $fixturesDir . "/user_changes_page_{$page}.json";
+            if (file_exists($changesFile)) {
+                $changesPayload = json_decode(file_get_contents($changesFile), true);
+                $changes = is_array($changesPayload) ? ($changesPayload['changes'] ?? []) : [];
+            } else {
+                Log::info("TN-SYNC-TRACE [CHANGES-PAGE] missing fixture file={$changesFile}");
+                $changes = [];
             }
-
-            $changes = $response->json('changes', []);
             $page++;
 
             Log::info("TN-SYNC-TRACE [CHANGES-PAGE] page=" . ($page - 1) . " count=" . count($changes));
