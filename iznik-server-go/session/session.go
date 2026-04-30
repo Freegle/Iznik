@@ -1167,12 +1167,16 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? "+
 					"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? "+
 					"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? "+
+					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 "+
+					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0 "+
 					"UNION "+
 					"SELECT ur.user1 FROM users_related ur "+
 					"INNER JOIN memberships m ON m.userid = ur.user2 "+
 					"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? "+
 					"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? "+
 					"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? "+
+					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 "+
+					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0 "+
 					") t", utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs, utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs).Scan(&relatedmembers)
 			}
 		}()

@@ -3232,3 +3232,54 @@ func TestPatchMembershipsConfigidPersists(t *testing.T) {
 	assert.NotNil(t, actualConfigID, "configid column should not be NULL")
 	assert.Equal(t, cfgID, *actualConfigID, "configid column should match the value from settings")
 }
+
+func TestPatchMembershipsConfigChange(t *testing.T) {
+	prefix := uniquePrefix("mem_configchange")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, modToken := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Owner")
+
+	// Create two configs
+	cfgID1 := createTestModConfig(t, prefix+"_cfg1", modID)
+	cfgID2 := createTestModConfig(t, prefix+"_cfg2", modID)
+
+	// Update membership to use first config
+	body := map[string]interface{}{
+		"groupid":  groupID,
+		"configid": cfgID1,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/memberships?jwt=%s", modToken)
+	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Verify first config is set
+	var configID1 uint64
+	db.Raw("SELECT configid FROM memberships WHERE userid = ? AND groupid = ?",
+		modID, groupID).Scan(&configID1)
+	assert.Equal(t, cfgID1, configID1)
+
+	// Change to second config
+	body = map[string]interface{}{
+		"groupid":  groupID,
+		"configid": cfgID2,
+	}
+	bodyBytes, _ = json.Marshal(body)
+	req = httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Verify second config is now set (persistence check)
+	var configID2 uint64
+	db.Raw("SELECT configid FROM memberships WHERE userid = ? AND groupid = ?",
+		modID, groupID).Scan(&configID2)
+	assert.Equal(t, cfgID2, configID2)
+}

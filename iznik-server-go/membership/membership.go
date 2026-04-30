@@ -1311,6 +1311,7 @@ type PatchMembershipsRequest struct {
 	Groupid             uint64           `json:"groupid"`
 	Role                *string          `json:"role"`
 	Settings            *json.RawMessage `json:"settings"`
+	Configid            *uint64          `json:"configid"`
 	Emailfrequency      *utils.FlexInt   `json:"emailfrequency"`
 	Eventsallowed       *utils.FlexInt   `json:"eventsallowed"`
 	Volunteeringallowed *utils.FlexInt   `json:"volunteeringallowed"`
@@ -1406,6 +1407,24 @@ func PatchMemberships(c *fiber.Ctx) error {
 				}
 			}
 		}
+	}
+
+	if req.Configid != nil {
+		// Update the mod config used for this membership.
+		// Must be mod/owner of the group to change the config.
+		if !isModOfGroup(myid, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Only moderators can change the config")
+		}
+		// Verify the config exists.
+		var configID uint64
+		db.Raw("SELECT id FROM mod_configs WHERE id = ?", *req.Configid).Scan(&configID)
+		if configID == 0 {
+			return fiber.NewError(fiber.StatusNotFound, "Config not found")
+		}
+		db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?",
+			*req.Configid, userid, req.Groupid)
+		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_CONFIG_CHANGE, req.Groupid, userid, myid,
+			fmt.Sprintf("configid=%d", *req.Configid))
 	}
 
 	if req.OurPostingStatus != nil {
