@@ -4681,9 +4681,9 @@ WHERE messages_groups.arrival > ? AND messages_groups.groupid = ? AND messages_g
 
                                 # Reposts might be turned off, either in the group or the user.
                                 if ($interval > 0 && $reposts['max'] > 0 && !$u->getSetting('autorepostsdisable', FALSE)) {
-                                    if ($message['hoursago'] <= $interval * 24 &&
-                                        $message['hoursago'] > ($interval - 1) * 24 &&
-                                        (is_null($lastwarnago) || $lastwarnago > 24)
+                                    if ($message['hoursago'] <= ($message['autoreposts'] + 1) * $interval * 24 &&
+                                        $message['hoursago'] > $message['autoreposts'] * $interval * 24 &&
+                                        (is_null($lastwarnago) || $lastwarnago > 24 * 60 * 60)
                                     ) {
                                         # We will be reposting within 24 hours, and we've either not sent a warning, or the last one was
                                         # an old one (probably from the previous repost).
@@ -4743,9 +4743,9 @@ WHERE messages_groups.arrival > ? AND messages_groups.groupid = ? AND messages_g
                                                 }
                                             }
                                         }
-                                    } else if ($message['hoursago'] > $interval * 24) {
+                                    } else if ($message['hoursago'] > ($message['autoreposts'] + 1) * $interval * 24) {
                                         # We can autorepost this one.
-                                        error_log($g->getPrivate('nameshort') . " #{$message['msgid']} " . $m->getFromaddr() . " " . $m->getSubject() . " repost due");
+                                        error_log($g->getPrivate('nameshort') . " #{$message['msgid']} " . $m->getFromaddr() . " " . $m->getSubject() . " repost #" . ($message['autoreposts'] + 1) . " due");
                                         $m->autoRepost($message['autoreposts'] + 1, $reposts['max']);
 
                                         $count++;

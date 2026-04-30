@@ -85,6 +85,25 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Active plan**: none currently active.
 
+### 2026-04-30 - Auto-Repost Excessive Frequency Bug Fix (Discourse 9481)
+
+**Goal**: Fix excessive auto-reposts in single batch (Issue: user received nearly 50 reposts, with items 3 weeks old)
+
+**Root Cause**: autoRepostGroup() method in Message.php lines 4684-4746 did not account for which repost cycle a message is in. It only checked if message was > interval days old, not if it was in the correct interval window for its repost count.
+
+**Changes Made**:
+1. **Line 4684-4686**: Fixed warning window to account for autoreposts count: `($message['autoreposts'] + 1) * $interval * 24` instead of `$interval * 24`
+2. **Line 4746**: Fixed repost trigger to account for autoreposts count: `($message['autoreposts'] + 1) * $interval * 24` instead of `$interval * 24`
+3. **Line 4686**: Fixed time unit inconsistency: `24 * 60 * 60` seconds instead of `24` (was comparing seconds to seconds)
+4. **Line 4748**: Enhanced logging to show which repost number
+
+**Test Coverage**: Added testAutoRepostExcessiveFrequency() in MessageTest.php with three assertions:
+- Message with 4 prior reposts at day 20 should NOT repost (next window at day 18)
+- Message with 4 prior reposts at day 18 should repost (5th repost)
+- Message with max reposts should not repost
+
+**Tests**: Running via status API
+
 ### 2026-04-29 - Cloudflare AI Workers + PR sweep (ongoing)
 
 **Goal**: Fix all failing PRs and replace Pollinations with Cloudflare Workers AI (Flux Schnell).

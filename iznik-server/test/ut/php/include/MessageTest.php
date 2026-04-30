@@ -742,6 +742,83 @@ class MessageTest extends IznikTestCase {
         $this->assertEquals(0, $warncount);
     }
 
+    public function testAutoRepostExcessiveFrequency() {
+        # Test for issue: excessive auto-reposts in single batch
+        # When a message has been reposted multiple times, it should only repost at
+        # the correct interval boundary for its repost count, not continuously.
+        # For example, with 3-day interval and 5 max reposts:
+        # - Repost 1 at day 3
+        # - Repost 2 at day 6
+        # - Repost 3 at day 9
+        # - Repost 4 at day 12
+        # - Repost 5 at day 15
+        # A message at day 20 that has already been reposted 4 times should NOT repost again
+        # because the next repost window (day 15-18) has already passed.
+
+        $m = new Message($this->dbhr, $this->dbhm);
+
+        $email = 'ut-' . rand() . '@' . USER_DOMAIN;
+        $this->user->addEmail($email);
+
+        $msg = $this->unique(file_get_contents(IZNIK_BASE . '/test/ut/php/msgs/attachment'));
+        $msg = str_replace('test@test.com', $email, $msg);
+        $msg = str_replace('Test att', 'OFFER: Test repost frequency (Tuvalu High Street)', $msg);
+        $msg = str_ireplace('freegleplayground', 'testgroup', $msg);
+
+        $r = new MailRouter($this->dbhr, $this->dbhm);
+        list ($msgid, $failok) = $r->received(Message::EMAIL, $email, 'to@test.com', $msg);
+        $this->log("Message $msgid for frequency test");
+        $m = new Message($this->dbhr, $this->dbhm, $msgid);
+        $m->setPrivate('source', Message::PLATFORM);
+        $rc = $r->route();
+        $this->assertEquals(MailRouter::APPROVED, $rc);
+
+        # Default interval for offers is 3 days, max is 5 reposts
+        # So max age = 3 * (5+1) = 18 days
+        # Repost 1 should happen at 3 days
+        # Repost 2 should happen at 6 days
+        # Repost 3 should happen at 9 days
+        # Repost 4 should happen at 12 days
+        # Repost 5 should happen at 15 days
+
+        # Message has already been reposted 4 times, arrival is 20 days ago
+        # This is past the last repost window (day 12-15) but within maxage (18 days)
+        # It should NOT repost because the next scheduled repost (day 18) hasn't arrived yet
+        $mysqltime = date("Y-m-d H:i:s", strtotime('20 days ago'));
+        $this->dbhm->preExec(
+            "UPDATE messages_groups SET arrival = ?, autoreposts = 4, lastautopostwarning = ? WHERE msgid = ?;",
+            [ $mysqltime, $mysqltime, $msgid ]
+        );
+
+        # Run autorepost - should get 0 reposts
+        $this->log("Expect NO repost for message with 4 reposts at 20 days");
+        list ($count, $warncount) = $m->autoRepostGroup(Group::GROUP_FREEGLE, '2016-01-01', $this->gid);
+        $this->assertEquals(0, $count, "Message with 4 prior reposts at 20 days should not repost (next window at day 18)");
+
+        # Now test: message at day 18 should repost (5th repost)
+        $mysqltime = date("Y-m-d H:i:s", strtotime('18 days 1 hour ago'));
+        $this->dbhm->preExec(
+            "UPDATE messages_groups SET arrival = ? WHERE msgid = ?;",
+            [ $mysqltime, $msgid ]
+        );
+
+        $this->log("Expect repost for message with 4 reposts at 18 days");
+        list ($count, $warncount) = $m->autoRepostGroup(Group::GROUP_FREEGLE, '2016-01-01', $this->gid);
+        $this->assertEquals(1, $count, "Message with 4 prior reposts at 18 days should repost (5th repost)");
+
+        # Now message has 5 reposts (max), should not repost again
+        $m = new Message($this->dbhr, $this->dbhm, $msgid);
+        $mysqltime = date("Y-m-d H:i:s", strtotime('25 days ago'));
+        $this->dbhm->preExec(
+            "UPDATE messages_groups SET arrival = ? WHERE msgid = ?;",
+            [ $mysqltime, $msgid ]
+        );
+
+        $this->log("Expect NO repost when max reposts (5) reached");
+        list ($count, $warncount) = $m->autoRepostGroup(Group::GROUP_FREEGLE, '2016-01-01', $this->gid);
+        $this->assertEquals(0, $count, "Message with 5 reposts should not repost (max reached)");
+    }
+
     public function chaseUpProvider() {
         return [
             [ FALSE ],
