@@ -85,6 +85,21 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Active plan**: none currently active.
 
+### 2026-04-30 - stdmsg delete 404 + config not sticking (PR #307)
+
+**Goal**: Fix two bugs from Discourse topic 9518 post 217 (Jos).
+
+**Bug (a) — DELETE /modtools/stdmsg returns 404**:
+Root cause: `BaseAPI.$delv2` sends DELETE params as a JSON body (not query string). `DeleteStdMsg` Go handler called only `c.Query("id")` → got 0 → returned 404.
+Fix: Added JSON body parsing with query-string fallback in `DeleteStdMsg` (same pattern as `PatchStdMsg`).
+Test: `TestDeleteStdMsgViaBody` — sends DELETE with Content-Type JSON + id in body.
+
+**Bug (b) — Standard Message Config selection not sticking**:
+Root cause: `memberships.configid` is a dedicated column read by the session endpoint. `PatchMemberships` saved configid inside the `settings` JSON blob only, never updating the column. Fixed by extracting configid from settings JSON and issuing `UPDATE memberships SET configid = ?`.
+Test: `TestPatchMembershipsConfigidPersists` — verifies column is updated.
+
+**Status**: Committed 714b4eccf. All 2278 Go tests pass. CI running on PR #307.
+
 ### 2026-04-29 - Cloudflare AI Workers + PR sweep (ongoing)
 
 **Goal**: Fix all failing PRs and replace Pollinations with Cloudflare Workers AI (Flux Schnell).
