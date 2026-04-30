@@ -136,6 +136,21 @@ func TestDeleteStdMsgViaBody(t *testing.T) {
 	assert.Equal(t, int64(0), count)
 }
 
+func TestDeleteStdMsgInvalidBody(t *testing.T) {
+	prefix := uniquePrefix("StdMsgDelBadJSON")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/stdmsg?jwt=%s", token), strings.NewReader("{invalid json"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 400, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(3), result["ret"])
+}
+
 func TestPostStdMsgMissingTitle(t *testing.T) {
 	prefix := uniquePrefix("StdMsgNoTitle")
 	groupID := CreateTestGroup(t, prefix)

@@ -3233,6 +3233,74 @@ func TestPatchMembershipsConfigidPersists(t *testing.T) {
 	assert.Equal(t, cfgID, *actualConfigID, "configid column should match the value from settings")
 }
 
+// TestPatchMembershipsConfigidZeroInSettings verifies that sending configid: 0
+// in the settings JSON clears the dedicated configid column (else branch).
+func TestPatchMembershipsConfigidZeroInSettings(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mem_cfgid_zero")
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, token := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Owner")
+
+	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
+	db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?", cfgID, modID, groupID)
+
+	body := map[string]interface{}{
+		"userid":  modID,
+		"groupid": groupID,
+		"settings": map[string]interface{}{
+			"active":   1,
+			"configid": 0,
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/memberships?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var actualConfigID *uint64
+	db.Raw("SELECT configid FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID).Scan(&actualConfigID)
+	assert.Nil(t, actualConfigID, "configid column should be NULL when settings contains configid: 0")
+}
+
+// TestPatchMembershipsConfigidNullInSettings verifies that sending configid: null
+// in the settings JSON clears the dedicated configid column (nil case).
+func TestPatchMembershipsConfigidNullInSettings(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mem_cfgid_null")
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, token := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Owner")
+
+	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
+	db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?", cfgID, modID, groupID)
+
+	body := map[string]interface{}{
+		"userid":  modID,
+		"groupid": groupID,
+		"settings": map[string]interface{}{
+			"active":   1,
+			"configid": nil,
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/memberships?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var actualConfigID *uint64
+	db.Raw("SELECT configid FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID).Scan(&actualConfigID)
+	assert.Nil(t, actualConfigID, "configid column should be NULL when settings contains configid: null")
+}
+
 func TestPatchMembershipsConfigChange(t *testing.T) {
 	prefix := uniquePrefix("mem_configchange")
 	db := database.DBConn
