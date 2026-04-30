@@ -3,6 +3,7 @@ package donations
 import (
 	"os"
 	"testing"
+	"time"
 )
 
 func TestGetDonationTarget(t *testing.T) {
@@ -90,6 +91,63 @@ func TestGetStripeKey(t *testing.T) {
 	}
 	if got := getStripeKey(true); got != "" {
 		t.Errorf("unset test: want empty, got %q", got)
+	}
+}
+
+func TestIsExcludedPayer(t *testing.T) {
+	orig := os.Getenv("DONATIONS_EXCLUDE")
+	t.Cleanup(func() { os.Setenv("DONATIONS_EXCLUDE", orig) })
+
+	os.Setenv("DONATIONS_EXCLUDE", "excluded@example.com,fund@paypal.com")
+
+	if !IsExcludedPayer("excluded@example.com") {
+		t.Error("exact match: expected true for excluded@example.com")
+	}
+	if !IsExcludedPayer("EXCLUDED@EXAMPLE.COM") {
+		t.Error("case insensitive: expected true for EXCLUDED@EXAMPLE.COM")
+	}
+	if IsExcludedPayer("normal@example.com") {
+		t.Error("non-excluded: expected false for normal@example.com")
+	}
+	if IsExcludedPayer("") {
+		t.Error("empty: expected false for empty string")
+	}
+}
+
+func TestParsePayPalDate(t *testing.T) {
+	cases := []struct {
+		input   string
+		wantErr bool
+		wantYear int
+	}{
+		{"12:34:56 Jan 02, 2026 PST", false, 2026},
+		{"12:34:56 Jan 02, 2026", false, 2026},
+		{"2026-01-02 15:04:05", false, 2026},
+		{"2026-01-02T15:04:05Z", false, 2026},
+		{"not-a-date", true, 0},
+		{"", true, 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := parsePayPalDate(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("parsePayPalDate(%q): expected error, got nil", tc.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("parsePayPalDate(%q): unexpected error: %v", tc.input, err)
+				return
+			}
+			if got == (time.Time{}) {
+				t.Errorf("parsePayPalDate(%q): expected non-zero time", tc.input)
+			}
+			if got.Year() != tc.wantYear {
+				t.Errorf("parsePayPalDate(%q): year = %d, want %d", tc.input, got.Year(), tc.wantYear)
+			}
+		})
 	}
 }
 
