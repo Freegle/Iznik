@@ -1125,12 +1125,12 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 		}()
 	}
 
-	// Emails: only if caller is mod of user.
+	// Emails: visible to the user themselves, mods of the user, or admin/support.
 	if myid > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if IsModOfUser(myid, id) || id == myid {
+			if IsModOfUser(myid, id) || id == myid || auth.IsAdminOrSupport(myid) {
 				emails = getEmails(id)
 			}
 		}()
@@ -1300,10 +1300,14 @@ func enrichUserForModtools(u *User, id uint64, myid uint64, modtools bool) {
 
 	if len(emails) > 0 {
 		u.Emails = emails
+		// Prefer a non-internal email; fall back to an internal one if no external address exists.
 		for _, email := range emails {
 			if u.Email == "" && utils.OurDomain(email.Email) == 0 {
 				u.Email = email.Email
 			}
+		}
+		if u.Email == "" {
+			u.Email = emails[0].Email
 		}
 	}
 
@@ -2179,7 +2183,9 @@ func LimboUser(c *fiber.Ctx) error {
 	}
 
 	if targetID != myid {
-		// Deleting another user requires admin/support.
+		// Admin/support purging another user: queue an immediate GDPR forget.
+		// Laravel's forgetUser() wipes all personal data and sets forgotten = NOW().
+		// This matches V1 PHP behaviour where support DELETE was a hard purge, not a soft limbo.
 		if !auth.IsAdminOrSupport(myid) {
 			return fiber.NewError(fiber.StatusForbidden, "Only admin/support can delete other users")
 		}
@@ -2191,27 +2197,39 @@ func LimboUser(c *fiber.Ctx) error {
 		if targetModRole != "" {
 			return fiber.NewError(fiber.StatusForbidden, "Cannot delete a moderator/owner — they must demote first")
 		}
-	} else {
-		// Self-delete checks: moderators must demote first, spammers cannot self-delete.
-		var modRole string
-		db.Raw("SELECT role FROM memberships WHERE userid = ? AND role IN (?, ?) LIMIT 1", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modRole)
 
-		if modRole != "" {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"ret":    2,
-				"status": "Please demote yourself to a member first",
-			})
+		if err := queue.QueueTask(queue.TaskUserForget, map[string]interface{}{
+			"user_id": targetID,
+			"reason":  "Support purge",
+			"by_user": myid,
+		}); err != nil {
+			log.Printf("LimboUser: failed to queue user_forget for user %d: %v", targetID, err)
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to queue purge")
 		}
 
-		var spammerCount int64
-		db.Raw("SELECT COUNT(*) FROM spam_users WHERE userid = ? AND collection IN (?, ?)", myid, utils.SPAM_COLLECTION_SPAMMER, utils.SPAM_COLLECTION_PENDING_ADD).Scan(&spammerCount)
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	}
 
-		if spammerCount > 0 {
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-				"ret":    3,
-				"status": "We can't do this.",
-			})
-		}
+	// Self-delete: put the user into limbo so they can recover within ~14 days.
+	// A background job (users:cleanup) will call forgetUser() after the grace period.
+	var modRole string
+	db.Raw("SELECT role FROM memberships WHERE userid = ? AND role IN (?, ?) LIMIT 1", myid, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&modRole)
+
+	if modRole != "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"ret":    2,
+			"status": "Please demote yourself to a member first",
+		})
+	}
+
+	var spammerCount int64
+	db.Raw("SELECT COUNT(*) FROM spam_users WHERE userid = ? AND collection IN (?, ?)", myid, utils.SPAM_COLLECTION_SPAMMER, utils.SPAM_COLLECTION_PENDING_ADD).Scan(&spammerCount)
+
+	if spammerCount > 0 {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"ret":    3,
+			"status": "We can't do this.",
+		})
 	}
 
 	// Remove memberships so the user no longer appears in group member lists.
