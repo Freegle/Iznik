@@ -10,6 +10,8 @@
       </button>
     </div>
 
+    <p class="text-muted small mb-2">Replies for bugs confirmed live. Send to post to Discourse.</p>
+
     <div v-if="loading" class="spinner-border spinner-border-sm" role="status">
       <span class="visually-hidden">Loading...</span>
     </div>
