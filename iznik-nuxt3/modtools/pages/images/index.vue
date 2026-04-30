@@ -20,50 +20,48 @@
         class="mb-3 border rounded p-3"
       >
         <div class="row g-3 align-items-start">
-          <!-- Image comparison column -->
-          <div class="col-auto">
-            <div class="d-flex gap-2">
-              <!-- Current image -->
-              <div class="text-center">
-                <div class="text-muted small mb-1">Current</div>
-                <b-img
-                  v-if="img.image_url"
-                  :src="img.image_url"
-                  width="160"
-                  height="120"
-                  style="object-fit: cover; border: 2px solid #dc3545"
-                  :alt="img.name"
-                />
-                <div
-                  v-else
-                  class="bg-light border d-flex align-items-center justify-content-center"
-                  style="width: 160px; height: 120px"
-                >
-                  <span class="text-muted small">No image</span>
-                </div>
+          <!-- Image column: current image, then preview below -->
+          <div class="col-auto" style="width: 172px">
+            <!-- Current image -->
+            <div class="text-center mb-2">
+              <div class="text-muted small mb-1">Current image</div>
+              <b-img
+                v-if="img.image_url"
+                :src="img.image_url"
+                width="160"
+                height="120"
+                style="object-fit: cover; border: 2px solid #dc3545"
+                :alt="img.name"
+              />
+              <div
+                v-else
+                class="bg-light border d-flex align-items-center justify-content-center"
+                style="width: 160px; height: 120px"
+              >
+                <span class="text-muted small">No image</span>
               </div>
+            </div>
 
-              <!-- Preview image (from API or after regeneration) -->
-              <div v-if="previewFor(img)" class="text-center">
-                <div class="text-muted small mb-1">Preview</div>
-                <b-img
-                  :src="previewFor(img)"
-                  width="160"
-                  height="120"
-                  style="object-fit: cover; border: 2px solid #28a745"
-                  :alt="'Preview for ' + img.name"
-                />
-              </div>
+            <!-- Preview image below current (shown after regeneration) -->
+            <div v-if="previewFor(img)" class="text-center">
+              <div class="text-muted small mb-1">Preview (new)</div>
+              <b-img
+                :src="previewFor(img)"
+                width="160"
+                height="120"
+                style="object-fit: cover; border: 2px solid #28a745"
+                :alt="'Preview for ' + img.name"
+              />
+            </div>
 
-              <!-- Spinner while generating -->
-              <div v-else-if="regenerating[img.id]" class="text-center">
-                <div class="text-muted small mb-1">Generating…</div>
-                <div
-                  class="bg-light border d-flex align-items-center justify-content-center"
-                  style="width: 160px; height: 120px"
-                >
-                  <b-spinner />
-                </div>
+            <!-- Spinner while generating -->
+            <div v-else-if="regenerating[img.id]" class="text-center">
+              <div class="text-muted small mb-1">Generating…</div>
+              <div
+                class="bg-light border d-flex align-items-center justify-content-center"
+                style="width: 160px; height: 120px"
+              >
+                <b-spinner />
               </div>
             </div>
           </div>
