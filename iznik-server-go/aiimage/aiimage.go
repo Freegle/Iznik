@@ -55,11 +55,14 @@ var ImageGenerator = generateImageWithCloudflare
 var ImageUploader = uploadToTUS
 
 // buildImagePrompt constructs the AI image generation prompt for a given item name.
+// Uses a white background so the duotone (dark green → white) creates a natural gradient.
+// Asking for a dark background with Flux Schnell produces near-black pixels that duotone
+// maps back to dark green — no mid-tone gradient results.
 func buildImagePrompt(name string) string {
-	return "Product illustration: single isolated " + name + " centered on plain dark green background. " +
-		"Style: friendly cartoon white line drawing, moderate shading, cute and quirky, UK audience. " +
-		"The object sits alone on a simple surface or floats in space. " +
-		"Simple illustration style, clean lines, single object only."
+	return "Product illustration: single isolated " + name + " centered on plain white background. " +
+		"Style: pencil sketch with moderate shading, cute and quirky, UK audience. " +
+		"The object sits alone on a simple surface. " +
+		"Simple illustration style, clean lines, single object only, greyscale tones."
 }
 
 // CloudflareAPIBase is the base URL for the Cloudflare API. Overridable in tests.
@@ -80,6 +83,8 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 	reqBody, _ := json.Marshal(map[string]interface{}{
 		"prompt":    prompt,
 		"num_steps": 8,
+		"width":     1024,
+		"height":    768,
 	})
 
 	apiURL := fmt.Sprintf(
