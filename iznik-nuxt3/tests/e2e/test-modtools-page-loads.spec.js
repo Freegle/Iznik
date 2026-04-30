@@ -152,9 +152,7 @@ test.describe('ModTools Page Loads', () => {
 
     // Wait for the loading spinner to disappear (fetchReview completes).
     const spinner = page.locator('.spinner-border').first()
-    // Check if spinner exists and is visible - don't fail if it's not there
-    const spinnerVisible = await spinner.isVisible({ timeout: timeouts.ui.appearance }).catch(() => false)
-    if (spinnerVisible) {
+    if (await spinner.isVisible({ timeout: timeouts.ui.appearance }).catch(() => false)) {
       await expect(spinner).not.toBeVisible({ timeout: timeouts.navigation.default })
     }
 
