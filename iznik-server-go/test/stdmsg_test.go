@@ -140,6 +140,10 @@ func TestDeleteStdMsgUnauthorized(t *testing.T) {
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
 	msgID := createTestStdMsg(t, cfgID, prefix+"_msg")
 
+	// Protect the config so only the creator can modify it
+	db := database.DBConn
+	db.Exec("UPDATE mod_configs SET protected = 1 WHERE id = ?", cfgID)
+
 	// Try to delete with different moderator (should fail)
 	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/stdmsg?id=%d&jwt=%s", msgID, otherToken), nil)
 	resp, _ := getApp().Test(req)
