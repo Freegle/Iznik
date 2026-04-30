@@ -9,6 +9,7 @@
 import { computed, nextTick, onMounted } from 'vue'
 import { useComposeStore } from '~/stores/compose'
 import { useAuthStore } from '~/stores/auth'
+import { useGroupStore } from '~/stores/group'
 import api from '~/api'
 import { useRuntimeConfig } from '#app'
 
@@ -22,6 +23,7 @@ defineProps({
 
 const composeStore = useComposeStore()
 const authStore = useAuthStore()
+const groupStore = useGroupStore()
 const runtimeConfig = useRuntimeConfig()
 
 const postcode = computed(() => {
@@ -77,6 +79,19 @@ const groupOptions = computed(() => {
 
       ids[group.groupid] = true
     }
+  }
+
+  // Ensure the pre-selected group (e.g. from a repost flow) is always present,
+  // even before fetchUser() has populated myGroups. Without this, b-form-select
+  // resets its displayed value to the first available option because the current
+  // v-model value has no matching <option> element.
+  const currentGroup = composeStore.group
+  if (currentGroup && !ids[currentGroup]) {
+    const cached = groupStore.get(currentGroup)
+    ret.unshift({
+      value: currentGroup,
+      text: cached?.namedisplay || cached?.nameshort || String(currentGroup),
+    })
   }
 
   return ret

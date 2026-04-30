@@ -1538,8 +1538,17 @@ services:
         condition: service_healthy
         required: false
     restart: unless-stopped
+    environment:
+      # Endpoint the freegle-mail-handler script POSTs incoming mail to.
+      # Uses the docker-compose service alias rather than container_name so
+      # COMPOSE_PROJECT_NAME changes can't break the bridge.
+      BATCH_URL: http://batch-prod:8080/api/mail/incoming
     healthcheck:
-      test: ["CMD-SHELL", "postfix status || exit 1"]
+      # Postfix must be running AND the batch bridge must be reachable —
+      # a silently broken bridge would otherwise defer mail for hours.
+      test:
+        - CMD-SHELL
+        - postfix status && curl -fsS --max-time 5 -o /dev/null http://batch-prod:8080/up
       interval: 30s
       timeout: 10s
       retries: 3
