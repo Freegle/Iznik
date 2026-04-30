@@ -3810,3 +3810,59 @@ func TestPatchUserTrustlevelModOnOther(t *testing.T) {
 	require.NotNil(t, after)
 	assert.Equal(t, "Advanced", *after, "moderator should be able to set elevated trustlevel")
 }
+
+// =============================================================================
+// GET /user/:id — email visibility for admin/support (bug: support can't see emails)
+// =============================================================================
+
+func TestGetUserEmailsVisibleToSupport(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("suppemail")
+
+	// Target user with a plain external email.
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetEmail := prefix + "_target@example.com"
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", targetID)
+	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", targetID, targetEmail)
+
+	// Support user — should be able to see target's emails via modtools.
+	supportID := CreateTestUser(t, prefix+"_support", "User")
+	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	_, supportToken := CreateTestSession(t, supportID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, supportToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	json2.NewDecoder(resp.Body).Decode(&u)
+	assert.NotEmpty(t, u.Emails, "support should see target user's emails via modtools")
+}
+
+func TestGetUserEmailFieldPopulatedForFDEmail(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("fdemail")
+
+	// Target user with ONLY an FD (users.ilovefreegle.org) email — no external address.
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	fdEmail := prefix + "_fd@users.ilovefreegle.org"
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", targetID)
+	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", targetID, fdEmail)
+
+	// Support user viewing the target.
+	supportID := CreateTestUser(t, prefix+"_support", "User")
+	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	_, supportToken := CreateTestSession(t, supportID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, supportToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	json2.NewDecoder(resp.Body).Decode(&u)
+	assert.NotEmpty(t, u.Emails, "support should see FD email in emails list")
+	assert.NotEmpty(t, u.Email, "email field should be populated even when only FD email exists")
+	assert.Equal(t, fdEmail, u.Email, "email field should contain the FD email as fallback")
+}
