@@ -128,4 +128,39 @@ test.describe('ModTools Page Loads', () => {
     await assertNoErrors(page)
     expect(errors).toHaveLength(0)
   })
+
+  test('AI Images page loads and shows image review or empty state without errors', async ({
+    page,
+    testEnv,
+  }) => {
+    await loginViaModTools(page, testEnv.mod.email)
+
+    const errors = []
+    page.on('pageerror', (error) => {
+      errors.push(error.message)
+    })
+
+    await page.goto(`${MODTOOLS_URL}/images`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    await page.waitForLoadState('domcontentloaded', {
+      timeout: timeouts.navigation.default,
+    })
+
+    await dismissAllModals(page)
+
+    // Wait for the loading spinner to disappear (fetchReview completes).
+    const spinner = page.locator('.spinner-border').first()
+    if (await spinner.isVisible({ timeout: timeouts.ui.appearance }).catch(() => false)) {
+      await expect(spinner).not.toBeVisible({ timeout: timeouts.navigation.default })
+    }
+
+    // The page heading should always be visible after load.
+    const imageList = page.locator('h1:has-text("AI Images")')
+    await expect(imageList).toBeVisible({ timeout: timeouts.ui.appearance })
+
+    await assertNoErrors(page)
+    expect(errors).toHaveLength(0)
+  })
 })
