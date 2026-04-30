@@ -28,7 +28,7 @@
               <b-img
                 v-if="img.image_url"
                 :src="img.image_url"
-                style="width: 160px; height: 160px; object-fit: contain; border: 2px solid #dc3545"
+                style="width: 160px; height: 160px; object-fit: cover; border: 1px solid #dee2e6"
                 :alt="img.name"
               />
               <div
@@ -45,7 +45,7 @@
               <div class="text-muted small mb-1">Preview (new)</div>
               <b-img
                 :src="previewFor(img)"
-                style="width: 160px; height: 160px; object-fit: contain; border: 2px solid #28a745"
+                style="width: 160px; height: 160px; object-fit: cover; border: 1px solid #dee2e6"
                 :alt="'Preview for ' + img.name"
               />
             </div>
