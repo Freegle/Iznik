@@ -282,7 +282,9 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 	// Fall back to query string for backwards compatibility.
 	var req DeleteStdMsgRequest
 	if strings.Contains(c.Get("Content-Type"), "application/json") {
-		c.BodyParser(&req)
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"ret": 3, "status": "Invalid JSON in request body"})
+		}
 	}
 	id := req.ID
 	if id == 0 {
