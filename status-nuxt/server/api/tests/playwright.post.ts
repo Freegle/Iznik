@@ -290,8 +290,11 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           )
           appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete\n`)
         } catch (dbResetError: any) {
-          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Warning: database reset failed: ${(dbResetError as Error).message}\n`)
-          // Non-fatal: proceed with retry even if reset fails
+          // Database reset failure means the retry would run against dirty data — any
+          // result would be unreliable. Fail the run so the root cause can be investigated.
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Database reset FAILED: ${(dbResetError as Error).message}\n`)
+          finalCode = 1
+          break
         }
 
         // Clear freeze file before retry so the next round picks up only NEW freezes.
