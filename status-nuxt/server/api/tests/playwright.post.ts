@@ -269,6 +269,31 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         appendTestLogs('playwright', `\n${retryMsg}: ${retryFiles}\n`)
         setTestState('playwright', { message: retryMsg })
 
+        // Reset the test database before retry. Tests that ran in the main suite
+        // have already modified the iznik database (created posts, replies, users).
+        // Re-running those spec files against a dirty database causes failures unrelated
+        // to the actual code under test. Drop + recreate + migrate + testenv restores
+        // the same clean state that the main run started from.
+        appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Resetting test database to clean state...\n`)
+        try {
+          execSync(
+            `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
+            { encoding: 'utf8', timeout: 30000 }
+          )
+          execSync(
+            `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
+            { encoding: 'utf8', timeout: 120000 }
+          )
+          execSync(
+            `docker exec ${pfx}-apiv1 sh -c "rm -f /tmp/iznik.dbstatus.*.down && cd /var/www/iznik && php install/testenv.php"`,
+            { encoding: 'utf8', timeout: 60000 }
+          )
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete\n`)
+        } catch (dbResetError: any) {
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Warning: database reset failed: ${(dbResetError as Error).message}\n`)
+          // Non-fatal: proceed with retry even if reset fails
+        }
+
         // Clear freeze file before retry so the next round picks up only NEW freezes.
         try {
           execSync(`docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt"`, { encoding: 'utf8', timeout: 5000 })
