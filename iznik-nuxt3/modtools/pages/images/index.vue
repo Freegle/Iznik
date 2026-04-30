@@ -28,6 +28,7 @@
               <b-img
                 v-if="img.image_url"
                 :src="img.image_url"
+                class="ai-image-duotone"
                 style="width: 160px; height: 160px; object-fit: cover; border: 2px solid #dc3545"
                 :alt="img.name"
               />
@@ -45,6 +46,7 @@
               <div class="text-muted small mb-1">Preview (new)</div>
               <b-img
                 :src="previewFor(img)"
+                class="ai-image-duotone"
                 style="width: 160px; height: 160px; object-fit: cover; border: 2px solid #28a745"
                 :alt="'Preview for ' + img.name"
               />
@@ -90,10 +92,10 @@
               </ul>
             </div>
 
-            <!-- Notes textarea -->
+            <!-- Item description override -->
             <b-form-textarea
               v-model="notes[img.id]"
-              placeholder="What's wrong? (e.g. shows a person, wrong item, inappropriate)"
+              placeholder="Give a better image description (e.g. 'large brown sofa', 'child's bicycle with stabilisers')"
               rows="2"
               class="mb-2"
             />
