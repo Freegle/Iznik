@@ -2569,7 +2569,7 @@ jobs:
               echo "📊 Uploaded $COV_UPLOADS reports. Sending webhook (carryforward=go,laravel,vitest,playwright)..."
               curl -sf -X POST "https://coveralls.io/webhook?repo_token=${COVERALLS_REPO_TOKEN}" \
                 -H "Content-Type: application/json" \
-                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\",\"carryforward\":\"go,laravel,vitest,playwright\"}}" \
+                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\",\"carryforward\":[\"go\",\"laravel\",\"vitest\",\"playwright\"]}}" \
                 && echo "✅ Webhook sent" || echo "⚠️ Webhook failed"
             else echo "⚠️ No coverage uploaded"; fi
 
