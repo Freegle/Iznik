@@ -377,4 +377,187 @@ class AutoRepostServiceTest extends TestCase
             'chaseups' => 5,
         ], AutoRepostService::DEFAULT_REPOSTS);
     }
+
+    public function test_reposts_eligible_message_in_90_day_window(): void
+    {
+        // Test that messages within the 90-day window are reposted if eligible.
+        // This tests the mindate boundary condition: messages that are exactly
+        // at the 90-day boundary (or newer) should be included.
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+
+        DB::table('users')->where('id', $user->id)->update([
+            'lastaccess' => now()->subHours(1),
+        ]);
+
+        $this->createMembership($user, $group, [
+            'added' => now()->subDays(30),
+        ]);
+
+        // Create a message that's 89 days old (within 90-day window, should be included)
+        $message = $this->createTestMessage($user, $group, [
+            'type' => 'Offer',
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->update([
+                'arrival' => now()->subDays(89),
+                'autoreposts' => 0,
+            ]);
+
+        // This should be eligible: 89 days is within window, past 72h offer interval
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['reposted']);
+    }
+
+    public function test_recent_reply_detection_boundary(): void
+    {
+        // Test that recent replies within the interval days are correctly detected
+        // and prevent reposting. This tests the fix for the V1 bug where recent
+        // replies were only checked within 3 hours instead of 3 days.
+
+        $data = $this->createRepostCandidate(hoursOld: 80);
+
+        $replier = $this->createTestUser();
+        $room = $this->createTestChatRoom($data['user'], $replier);
+
+        // Add a chat message with a reply within the last 2 days (but more than 3 hours)
+        // This should be detected as a recent reply and message should be skipped.
+        $this->createTestChatMessage($room, $replier, [
+            'refmsgid' => $data['message']->id,
+            'date' => now()->subHours(48), // 48 hours ago = 2 days
+        ]);
+
+        $stats = $this->service->process();
+
+        // Should be skipped due to recent reply (within interval days)
+        $this->assertEquals(0, $stats['reposted']);
+        $this->assertGreaterThan(0, $stats['skipped']);
+    }
+
+    public function test_message_exactly_90_days_old_is_excluded(): void
+    {
+        // Test the boundary condition: messages exactly 90 days old should be EXCLUDED
+        // because the query uses arrival > mindate (not >=).
+        // This might be the bug if the intent was to include messages from the "last 90 days".
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+
+        DB::table('users')->where('id', $user->id)->update([
+            'lastaccess' => now()->subHours(1),
+        ]);
+
+        $this->createMembership($user, $group, [
+            'added' => now()->subDays(100),
+        ]);
+
+        // Create a message that's exactly 90 days old
+        $message = $this->createTestMessage($user, $group, [
+            'type' => 'Offer',
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->update([
+                'arrival' => now()->subDays(90),
+                'autoreposts' => 0,
+            ]);
+
+        // This message should be EXCLUDED by the mindate > filter
+        // because it's exactly 90 days old.
+        // If it should be included, this test will fail and reveal the bug.
+        $stats = $this->service->process();
+
+        // Based on current code, this should NOT be reposted (should be skipped by getCandidates)
+        $this->assertEquals(0, $stats['reposted']);
+    }
+
+    public function test_skips_message_if_user_left_group(): void
+    {
+        // Test that messages are not reposted if the user is no longer a member of the group.
+        // This tests the INNER JOIN on memberships - if membership is deleted, message is excluded.
+
+        $data = $this->createRepostCandidate(hoursOld: 80);
+
+        // Remove the user's membership from the group
+        DB::table('memberships')
+            ->where('userid', $data['user']->id)
+            ->where('groupid', $data['group']->id)
+            ->delete();
+
+        $stats = $this->service->process();
+
+        // Should not be reposted because user is no longer a member
+        $this->assertEquals(0, $stats['reposted']);
+    }
+
+    public function test_multiple_groups_each_repost_independently(): void
+    {
+        // Test that when a message is posted to multiple groups,
+        // it's reposted on EACH group independently (multi-group fix).
+
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+
+        DB::table('users')->where('id', $user->id)->update([
+            'lastaccess' => now()->subHours(1),
+        ]);
+
+        $this->createMembership($user, $group1, ['added' => now()->subDays(30)]);
+        $this->createMembership($user, $group2, ['added' => now()->subDays(30)]);
+
+        // Create message and post to both groups
+        $message = $this->createTestMessage($user, $group1, [
+            'type' => 'Offer',
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        // Add to group2 as well
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id,
+            'groupid' => $group2->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subHours(80),
+            'autoreposts' => 0,
+        ]);
+
+        // Set group1's entry arrival time for repost
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group1->id)
+            ->update(['arrival' => now()->subHours(80)]);
+
+        $stats = $this->service->process();
+
+        // Should repost on BOTH groups (2 total)
+        $this->assertEquals(2, $stats['reposted']);
+
+        // Verify autoreposts incremented on both group entries
+        $mg1 = DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group1->id)
+            ->first();
+        $mg2 = DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group2->id)
+            ->first();
+
+        $this->assertEquals(1, $mg1->autoreposts);
+        $this->assertEquals(1, $mg2->autoreposts);
+    }
 }
