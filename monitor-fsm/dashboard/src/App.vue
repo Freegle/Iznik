@@ -48,10 +48,11 @@
         <div class="card">
           <table class="table table-sm mb-0" style="table-layout: fixed; width: 100%;">
             <colgroup>
-              <col style="width: 14%;">
-              <col style="width: 11%;">
+              <col style="width: 13%;">
+              <col style="width: 10%;">
               <col>
               <col style="width: 6%;">
+              <col style="width: 9%;">
               <col style="width: 7%;">
             </colgroup>
             <thead class="table-light">
@@ -60,6 +61,7 @@
                 <th>Reporter</th>
                 <th>Summary</th>
                 <th>PR</th>
+                <th>Deploy</th>
                 <th>Fixed</th>
               </tr>
             </thead>
@@ -76,6 +78,12 @@
                 </td>
                 <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                   <a v-if="bug.pr_number" :href="`https://github.com/Freegle/Iznik/pull/${bug.pr_number}`" target="_blank" rel="noopener" class="text-decoration-none">#{{ bug.pr_number }}</a>
+                  <span v-else class="text-muted">—</span>
+                </td>
+                <td style="white-space: nowrap;">
+                  <span v-if="bug.deploy_state === 'deployed'" class="badge bg-success">Live</span>
+                  <span v-else-if="bug.deploy_state === 'pending_deploy'" class="badge bg-warning text-dark">Deploying</span>
+                  <span v-else-if="bug.pr_number" class="badge bg-secondary">Pending</span>
                   <span v-else class="text-muted">—</span>
                 </td>
                 <td class="text-muted small" style="white-space: nowrap;">{{ formatFixedAge(bug.fixed_at) }}</td>

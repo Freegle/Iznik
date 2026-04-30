@@ -1,10 +1,18 @@
 package aiimage
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"math/rand"
-	"net/url"
+	"image"
+	"image/color"
+	"image/jpeg"
+	_ "image/png" // register PNG decoder
+	"io"
+	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -31,33 +39,217 @@ type AIImageReview struct {
 
 // AIImageVote is a single volunteer vote for an AI image review.
 type AIImageVote struct {
-	UserID        uint64    `json:"userid"`
-	Displayname   string    `json:"displayname"`
-	Result        string    `json:"result"`
-	ContainsPeople *int     `json:"containspeople"`
-	Timestamp     time.Time `json:"timestamp"`
+	UserID         uint64    `json:"userid"`
+	Displayname    string    `json:"displayname"`
+	Result         string    `json:"result"`
+	ContainsPeople *int      `json:"containspeople"`
+	Timestamp      time.Time `json:"timestamp"`
 }
 
-// buildPollinationsURL constructs the Pollinations.ai image generation URL for an AI image name.
-// Uses a random seed so repeated calls return different images.
-func buildPollinationsURL(name string) string {
-	prompt := "Product illustration: single isolated " + name + " centered on plain dark green background. " +
-		"Style: friendly cartoon white line drawing, moderate shading, cute and quirky, UK audience. " +
-		"The object sits alone on a simple surface or floats in space. " +
-		"Simple illustration style, clean lines, single object only."
+// ImageGenerator generates an AI image for the given item name and returns JPEG bytes.
+// Replaced in tests to avoid real HTTP calls.
+var ImageGenerator = generateImageWithCloudflare
 
-	seed := rand.New(rand.NewSource(time.Now().UnixNano())).Intn(999999) + 2
+// ImageUploader uploads image bytes to TUS and returns the externaluid.
+// Replaced in tests to avoid real HTTP calls.
+var ImageUploader = uploadToTUS
 
-	imageURL := "https://image.pollinations.ai/prompt/" + url.QueryEscape(prompt) +
-		fmt.Sprintf("?width=640&height=480&nologo=true&seed=%d", seed)
+// buildImagePrompt constructs the AI image generation prompt for a given item name.
+// Uses a white background so the duotone (dark green → white) creates a natural gradient.
+// Asking for a dark background with Flux Schnell produces near-black pixels that duotone
+// maps back to dark green — no mid-tone gradient results.
+func buildImagePrompt(name string) string {
+	return "Product illustration: single isolated " + name + " centered on plain white background. " +
+		"Style: pencil sketch with moderate shading, cute and quirky, UK audience. " +
+		"The object sits alone on a simple surface. " +
+		"Simple illustration style, clean lines, single object only, greyscale tones."
+}
 
-	if key := os.Getenv("POLLINATIONS_API_KEY"); key != "" {
-		imageURL += "&key=" + url.QueryEscape(key)
+// CloudflareAPIBase is the base URL for the Cloudflare API. Overridable in tests.
+var CloudflareAPIBase = "https://api.cloudflare.com"
+
+// generateImageWithCloudflare calls the Cloudflare Workers AI API (Flux Schnell) to generate
+// an image for the given item name and returns the raw PNG bytes.
+func generateImageWithCloudflare(name string) ([]byte, error) {
+	accountID := os.Getenv("CLOUDFLARE_ACCOUNT_ID")
+	aiToken := os.Getenv("CLOUDFLARE_AI_TOKEN")
+
+	if accountID == "" || aiToken == "" {
+		return nil, fmt.Errorf("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_AI_TOKEN must be set")
 	}
 
-	return imageURL
+	prompt := buildImagePrompt(name)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"prompt":    prompt,
+		"num_steps": 8,
+		"width":     1024,
+		"height":    768,
+	})
+
+	apiURL := fmt.Sprintf(
+		"%s/client/v4/accounts/%s/ai/run/@cf/black-forest-labs/flux-1-schnell",
+		CloudflareAPIBase,
+		accountID,
+	)
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Cloudflare AI request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+aiToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Cloudflare AI request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Cloudflare AI response: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Cloudflare AI returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Cloudflare Workers AI returns a JSON envelope with a base64-encoded image.
+	var envelope struct {
+		Result struct {
+			Image string `json:"image"`
+		} `json:"result"`
+		Success bool     `json:"success"`
+		Errors  []string `json:"errors"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		// If not JSON, assume raw binary image data.
+		return body, nil
+	}
+
+	if !envelope.Success || envelope.Result.Image == "" {
+		return nil, fmt.Errorf("Cloudflare AI returned no image: %v", envelope.Errors)
+	}
+
+	imageBytes, err := base64.StdEncoding.DecodeString(envelope.Result.Image)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 image from Cloudflare AI: %w", err)
+	}
+
+	return imageBytes, nil
 }
 
+// applyDuotoneGreen decodes the image data (any format), applies the Freegle duotone
+// effect (dark green #0D3311 to white), and returns JPEG-encoded bytes at quality 90.
+func applyDuotoneGreen(data []byte) ([]byte, error) {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image for duotone: %w", err)
+	}
+
+	bounds := img.Bounds()
+	dst := image.NewRGBA(bounds)
+
+	// Freegle brand duotone: dark green (#0D3311) → white (#FFFFFF)
+	const darkR, darkG, darkB = 13, 51, 17
+
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			r, g, b, a := img.At(x, y).RGBA()
+			// Convert to 8-bit.
+			r8, g8, b8 := uint8(r>>8), uint8(g>>8), uint8(b>>8)
+			// Luminance (grayscale).
+			gray := 0.299*float64(r8) + 0.587*float64(g8) + 0.114*float64(b8)
+			t := gray / 255.0
+			nr := uint8(float64(darkR) + t*float64(255-darkR))
+			ng := uint8(float64(darkG) + t*float64(255-darkG))
+			nb := uint8(float64(darkB) + t*float64(255-darkB))
+			dst.Set(x, y, color.RGBA{R: nr, G: ng, B: nb, A: uint8(a >> 8)})
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 90}); err != nil {
+		return nil, fmt.Errorf("failed to JPEG-encode duotone image: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+// uploadToTUS uploads image bytes to the TUS server and returns the externaluid.
+// The externaluid format is "freegletusd-{fileID}", matching the PHP Tus::upload() convention.
+func uploadToTUS(data []byte, mime string) (string, error) {
+	tusURL := os.Getenv("TUS_UPLOADER")
+	if tusURL == "" {
+		tusURL = "https://uploads.ilovefreegle.org:8080"
+	}
+	// Ensure trailing slash.
+	if !strings.HasSuffix(tusURL, "/") {
+		tusURL += "/"
+	}
+
+	fileLen := len(data)
+
+	// Metadata values (base64 encoded per TUS spec).
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	metadata := fmt.Sprintf("relativePath %s,name %s,type %s,filetype %s,filename %s",
+		"bnVsbA==", // base64("null")
+		b64(mime),
+		b64("image/jpeg"),
+		b64("image/jpeg"),
+		b64("image.jpg"),
+	)
+
+	// Step 1: Create the upload.
+	createReq, err := http.NewRequest("POST", tusURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to build TUS create request: %w", err)
+	}
+	createReq.Header.Set("Tus-Resumable", "1.0.0")
+	createReq.Header.Set("Content-Type", "application/offset+octet-stream")
+	createReq.Header.Set("Upload-Length", strconv.Itoa(fileLen))
+	createReq.Header.Set("Upload-Metadata", metadata)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	createResp, err := client.Do(createReq)
+	if err != nil {
+		return "", fmt.Errorf("TUS create request failed: %w", err)
+	}
+	createResp.Body.Close()
+
+	if createResp.StatusCode != 201 {
+		return "", fmt.Errorf("TUS create returned status %d", createResp.StatusCode)
+	}
+
+	location := createResp.Header.Get("Location")
+	if location == "" {
+		return "", fmt.Errorf("TUS create returned no Location header")
+	}
+
+	// Step 2: Upload the data.
+	patchReq, err := http.NewRequest("PATCH", location, bytes.NewReader(data))
+	if err != nil {
+		return "", fmt.Errorf("failed to build TUS PATCH request: %w", err)
+	}
+	patchReq.Header.Set("Content-Type", "application/offset+octet-stream")
+	patchReq.Header.Set("Tus-Resumable", "1.0.0")
+	patchReq.Header.Set("Upload-Offset", "0")
+
+	patchResp, err := client.Do(patchReq)
+	if err != nil {
+		return "", fmt.Errorf("TUS PATCH request failed: %w", err)
+	}
+	patchResp.Body.Close()
+
+	if patchResp.StatusCode != 200 && patchResp.StatusCode != 204 {
+		return "", fmt.Errorf("TUS PATCH returned status %d", patchResp.StatusCode)
+	}
+
+	// Derive externaluid: "freegletusd-{fileID}"
+	fileID := path.Base(location)
+	return "freegletusd-" + fileID, nil
+}
 
 // getDeliveryURL constructs the image delivery URL for a given externaluid.
 func getDeliveryURL(externaluid string) string {
@@ -190,12 +382,14 @@ func ListReview(c *fiber.Ctx) error {
 	return c.JSON(result)
 }
 
+// RegenerateRequest is the request body for the Regenerate endpoint.
 type RegenerateRequest struct {
 	Notes string `json:"notes"`
 }
 
 // Regenerate handles POST /api/admin/ai-images/:id/regenerate.
-// Saves the admin's notes and returns a Pollinations.ai preview URL for the new image.
+// Generates a new image using Cloudflare Workers AI (Flux Schnell), applies the Freegle
+// duotone effect, uploads it to TUS, and returns the delivery URL as a preview.
 //
 // @Summary Generate a preview for a rejected AI image
 // @Tags ai-images
@@ -235,23 +429,48 @@ func Regenerate(c *fiber.Ctx) error {
 		db.Exec("UPDATE ai_images SET regeneration_notes = ? WHERE id = ?", req.Notes, id)
 	}
 
-	// Return a Pollinations.ai URL for preview (no upload yet — the admin inspects it first).
-	previewURL := buildPollinationsURL(name)
+	// Mark as regenerating while we generate.
+	db.Exec("UPDATE ai_images SET status = 'regenerating' WHERE id = ?", id)
+
+	// Generate image via Cloudflare Workers AI.
+	imageData, err := ImageGenerator(name)
+	if err != nil {
+		db.Exec("UPDATE ai_images SET status = 'rejected' WHERE id = ?", id)
+		return fiber.NewError(fiber.StatusServiceUnavailable, "Image generation failed: "+err.Error())
+	}
+
+	// Apply Freegle duotone (dark green to white).
+	jpegData, err := applyDuotoneGreen(imageData)
+	if err != nil {
+		db.Exec("UPDATE ai_images SET status = 'rejected' WHERE id = ?", id)
+		return fiber.NewError(fiber.StatusInternalServerError, "Image processing failed: "+err.Error())
+	}
+
+	// Upload to TUS to get a real externaluid.
+	externaluid, err := ImageUploader(jpegData, "image/jpeg")
+	if err != nil {
+		db.Exec("UPDATE ai_images SET status = 'rejected' WHERE id = ?", id)
+		return fiber.NewError(fiber.StatusInternalServerError, "Image upload failed: "+err.Error())
+	}
+
+	// Store the pending externaluid — not applied until admin clicks Accept.
+	db.Exec("UPDATE ai_images SET pending_externaluid = ?, status = 'regenerating' WHERE id = ?", externaluid, id)
 
 	return c.JSON(fiber.Map{
 		"ret":         0,
-		"preview_url": previewURL,
+		"preview_url": getDeliveryURL(externaluid),
 	})
 }
 
+// AcceptRequest is the request body for the Accept endpoint.
 type AcceptRequest struct {
 	PendingExternaluid string `json:"pending_externaluid"`
 }
 
 // Accept handles POST /api/admin/ai-images/:id/accept.
-// Accepts the new image: uploads it to TUS if given a Pollinations URL or uses the
-// pending_externaluid already stored, updates ai_images, resets votes, and applies
-// the new externaluid to all messages_attachments that reference the old one.
+// Accepts the pending_externaluid already stored from a prior Regenerate call,
+// updates ai_images, resets votes, and applies the new externaluid to all
+// messages_attachments that reference the old one.
 //
 // @Summary Accept a regenerated AI image
 // @Tags ai-images
@@ -297,7 +516,7 @@ func Accept(c *fiber.Ctx) error {
 		newUID = *row.PendingExternaluid
 	}
 	if newUID == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "pending_externaluid is required")
+		return fiber.NewError(fiber.StatusBadRequest, "No pending image to accept — regenerate first")
 	}
 
 	// Apply the new image: update ai_images, clear pending state, reset to active.
