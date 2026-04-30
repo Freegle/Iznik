@@ -288,7 +288,28 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
             `docker exec ${pfx}-apiv1 sh -c "rm -f /tmp/iznik.dbstatus.*.down && cd /var/www/iznik && php install/testenv.php"`,
             { encoding: 'utf8', timeout: 60000 }
           )
-          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete\n`)
+          // The Go V2 API maintains a MySQL connection pool. Dropping and recreating
+          // the database invalidates those connections. Restart the container so it
+          // starts fresh — otherwise the location typeahead (used by postcode validation
+          // in the /give flow) returns empty results and Playwright tests time out.
+          execSync(`docker restart ${pfx}-apiv2`, { encoding: 'utf8', timeout: 30000 })
+          // Wait up to 60s for the Go API to be healthy before running tests.
+          const apiv2Start = Date.now()
+          let apiv2Ready = false
+          while (Date.now() - apiv2Start < 60000) {
+            try {
+              const health = execSync(
+                `docker inspect --format '{{.State.Health.Status}}' ${pfx}-apiv2`,
+                { encoding: 'utf8', timeout: 5000 }
+              ).trim()
+              if (health === 'healthy') { apiv2Ready = true; break }
+            } catch {}
+            await new Promise((r) => setTimeout(r, 2000))
+          }
+          if (!apiv2Ready) {
+            throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
+          }
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete (apiv2 healthy)\n`)
         } catch (dbResetError: any) {
           // Database reset failure means the retry would run against dirty data — any
           // result would be unreliable. Fail the run so the root cause can be investigated.
