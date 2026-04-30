@@ -28,15 +28,13 @@
               <b-img
                 v-if="img.image_url"
                 :src="img.image_url"
-                width="160"
-                height="120"
-                style="object-fit: cover; border: 2px solid #dc3545"
+                style="width: 160px; height: 160px; object-fit: contain; border: 2px solid #dc3545"
                 :alt="img.name"
               />
               <div
                 v-else
                 class="bg-light border d-flex align-items-center justify-content-center"
-                style="width: 160px; height: 120px"
+                style="width: 160px; height: 160px"
               >
                 <span class="text-muted small">No image</span>
               </div>
@@ -47,9 +45,7 @@
               <div class="text-muted small mb-1">Preview (new)</div>
               <b-img
                 :src="previewFor(img)"
-                width="160"
-                height="120"
-                style="object-fit: cover; border: 2px solid #28a745"
+                style="width: 160px; height: 160px; object-fit: contain; border: 2px solid #28a745"
                 :alt="'Preview for ' + img.name"
               />
             </div>
@@ -59,7 +55,7 @@
               <div class="text-muted small mb-1">Generating…</div>
               <div
                 class="bg-light border d-flex align-items-center justify-content-center"
-                style="width: 160px; height: 120px"
+                style="width: 160px; height: 160px"
               >
                 <b-spinner />
               </div>
