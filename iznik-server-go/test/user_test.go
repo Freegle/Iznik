@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/log"
 	user2 "github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
@@ -1625,15 +1624,8 @@ func TestLimboUserAdmin(t *testing.T) {
 	targetID := CreateTestUser(t, prefix+"_target", "User")
 	_, adminToken := CreateTestSession(t, adminID)
 
-	// Give the target a membership so we can verify it gets removed.
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, targetID, groupID, "Member")
-
-	// Verify membership exists before delete.
-	var memBefore int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
-		targetID, groupID).Scan(&memBefore)
-	assert.Equal(t, int64(1), memBefore, "Membership should exist before delete")
+	// Clear any pre-existing background tasks for this user so the count is clean.
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", targetID)
 
 	payload := map[string]interface{}{
 		"id": targetID,
@@ -1649,22 +1641,41 @@ func TestLimboUserAdmin(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(0), result["ret"])
 
-	// Verify target user is marked as deleted.
+	// Admin purge should queue a user_forget background task, not just set deleted.
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", targetID).Scan(&taskCount)
+	assert.Equal(t, int64(1), taskCount, "Admin purge should queue a user_forget background task")
+
+	// The user's deleted column should NOT be touched — forgetUser() in Laravel handles all cleanup.
 	var deleted *string
 	db.Raw("SELECT deleted FROM users WHERE id = ?", targetID).Scan(&deleted)
-	assert.NotNil(t, deleted)
+	assert.Nil(t, deleted, "Admin purge should not set deleted; Laravel forgetUser() does all cleanup")
+}
 
-	// Verify approved memberships were removed.
-	var memAfter int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
-		targetID, groupID).Scan(&memAfter)
-	assert.Equal(t, int64(0), memAfter, "Approved memberships should be removed on delete")
+// TestLimboUserSelfDelete verifies that a user deleting themselves goes into limbo (soft-delete)
+// and does NOT queue a user_forget task — they get a 14-day grace period to recover.
+func TestLimboUserSelfDelete(t *testing.T) {
+	prefix := uniquePrefix("selfdel")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
 
-	// Verify log entry was created.
-	var logCount int64
-	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND user = ? AND byuser = ?",
-		log.LOG_TYPE_USER, log.LOG_SUBTYPE_DELETED, targetID, adminID).Scan(&logCount)
-	assert.Equal(t, int64(1), logCount, "Delete should create a User/Deleted log entry")
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", userID)
+
+	// Self-delete: no id in payload, defaults to self.
+	request := httptest.NewRequest("DELETE", "/api/user?jwt="+token, nil)
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// Self-delete must set deleted (limbo), not queue a forget task.
+	var deleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&deleted)
+	assert.NotNil(t, deleted, "Self-delete should put user in limbo (deleted set)")
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", userID).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "Self-delete must not queue a forget task — user has 14-day grace period")
 }
 
 func TestLimboUserNotAdmin(t *testing.T) {
@@ -1682,6 +1693,32 @@ func TestLimboUserNotAdmin(t *testing.T) {
 	resp, err := getApp().Test(request)
 	assert.NoError(t, err)
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+// TestLimboUserAdminCannotDeleteModerator verifies that even admin/support cannot directly
+// delete a user who holds a moderator or owner role — they must demote first.
+func TestLimboUserAdminCannotDeleteModerator(t *testing.T) {
+	prefix := uniquePrefix("delmod")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	// Make the target user a moderator of some group.
+	groupID := CreateTestGroup(t, prefix+"_group")
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, collection) VALUES (?, ?, 'Moderator', NOW(), 'Approved') ON DUPLICATE KEY UPDATE role = 'Moderator'", modID, groupID)
+
+	payload := map[string]interface{}{"id": modID}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("DELETE", "/api/user?jwt="+adminToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+
+	// Clean up membership.
+	db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID)
 }
 
 // =============================================================================
@@ -3809,4 +3846,60 @@ func TestPatchUserTrustlevelModOnOther(t *testing.T) {
 	db.Raw("SELECT trustlevel FROM users WHERE id = ?", targetID).Scan(&after)
 	require.NotNil(t, after)
 	assert.Equal(t, "Advanced", *after, "moderator should be able to set elevated trustlevel")
+}
+
+// =============================================================================
+// GET /user/:id — email visibility for admin/support (bug: support can't see emails)
+// =============================================================================
+
+func TestGetUserEmailsVisibleToSupport(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("suppemail")
+
+	// Target user with a plain external email.
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetEmail := prefix + "_target@example.com"
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", targetID)
+	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", targetID, targetEmail)
+
+	// Support user — should be able to see target's emails via modtools.
+	supportID := CreateTestUser(t, prefix+"_support", "User")
+	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	_, supportToken := CreateTestSession(t, supportID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, supportToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	json2.NewDecoder(resp.Body).Decode(&u)
+	assert.NotEmpty(t, u.Emails, "support should see target user's emails via modtools")
+}
+
+func TestGetUserEmailFieldPopulatedForFDEmail(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("fdemail")
+
+	// Target user with ONLY an FD (users.ilovefreegle.org) email — no external address.
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	fdEmail := prefix + "_fd@users.ilovefreegle.org"
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", targetID)
+	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", targetID, fdEmail)
+
+	// Support user viewing the target.
+	supportID := CreateTestUser(t, prefix+"_support", "User")
+	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	_, supportToken := CreateTestSession(t, supportID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, supportToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	json2.NewDecoder(resp.Body).Decode(&u)
+	assert.NotEmpty(t, u.Emails, "support should see FD email in emails list")
+	assert.NotEmpty(t, u.Email, "email field should be populated even when only FD email exists")
+	assert.Equal(t, fdEmail, u.Email, "email field should contain the FD email as fallback")
 }

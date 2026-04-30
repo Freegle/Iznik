@@ -41,6 +41,10 @@ const (
 
 	// TaskRemapPostcodes triggers postcode-to-area remapping after a location geometry change.
 	TaskRemapPostcodes = "remap_postcodes"
+
+	// TaskUserForget immediately wipes a user's personal data (GDPR erasure).
+	// Queued by admin/support DELETE /user; processed by iznik-batch UserManagementService::forgetUser().
+	TaskUserForget = "user_forget"
 )
 
 // QueueTask inserts a task into the background_tasks table for async processing by iznik-batch.
