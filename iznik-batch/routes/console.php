@@ -347,12 +347,6 @@ Schedule::command('ai:usage-counts:update')
     ->sendOutputTo(cronLog('ai:usage-counts:update'))
     ->runInBackground();
 
-// Daily digest of AI image review verdicts to geeks.
-Schedule::command('mail:ai-image-review:digest --spool')
-    ->dailyAt('12:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('mail:ai-image-review:digest'))
-    ->runInBackground();
 
 // =============================================================================
 // VECTOR SEARCH EMBEDDINGS

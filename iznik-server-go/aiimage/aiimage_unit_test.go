@@ -226,3 +226,32 @@ func TestUploadToTUS_NoLocationHeader(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "Location")
 }
+
+// ---------------------------------------------------------------------------
+// subjectForName / buildImagePrompt
+// ---------------------------------------------------------------------------
+
+func TestSubjectForName_CanonicalJob(t *testing.T) {
+	// Canonical job title resolves to its iconic object.
+	assert.Equal(t, "calculator", subjectForName("Accountant"))
+}
+
+func TestSubjectForName_NonJob(t *testing.T) {
+	// Non-job names pass through unchanged — used for both items and description overrides.
+	assert.Equal(t, "large brown sofa", subjectForName("large brown sofa"))
+	assert.Equal(t, "bicycle", subjectForName("bicycle"))
+}
+
+func TestBuildImagePrompt_UsesOverrideSubject(t *testing.T) {
+	// When a moderator supplies a description override ("large brown sofa"),
+	// it is passed as name directly and should appear in the prompt.
+	prompt := buildImagePrompt("large brown sofa")
+	assert.Contains(t, prompt, "large brown sofa")
+	assert.NotContains(t, prompt, "Accountant")
+}
+
+func TestBuildImagePrompt_CanonicalJobResolvesToObject(t *testing.T) {
+	prompt := buildImagePrompt("Accountant")
+	assert.Contains(t, prompt, "calculator")
+	assert.NotContains(t, prompt, "Accountant")
+}
