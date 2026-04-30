@@ -134,7 +134,6 @@ func TestDeleteStdMsgUnauthorized(t *testing.T) {
 	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
 	otherModID := CreateTestUser(t, prefix+"_other", "Moderator")
 	CreateTestMembership(t, modID, groupID, "Owner")
-	_, token := CreateTestSession(t, modID)
 	_, otherToken := CreateTestSession(t, otherModID)
 
 	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
