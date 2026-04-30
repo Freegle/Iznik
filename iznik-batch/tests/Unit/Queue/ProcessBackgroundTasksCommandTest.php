@@ -2064,6 +2064,46 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         ]);
     }
 
+    public function test_user_forget_task_forgets_user(): void
+    {
+        $user = $this->createTestUser();
+
+        $taskId = DB::table('background_tasks')->insertGetId([
+            'task_type'  => 'user_forget',
+            'data'       => json_encode(['user_id' => $user->id, 'reason' => 'Support purge']),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1]);
+
+        // Task should be marked processed.
+        $task = DB::table('background_tasks')->find($taskId);
+        $this->assertNotNull($task->processed_at, 'Task should be marked as processed');
+        $this->assertNull($task->failed_at, 'Task should not be marked as failed');
+
+        // User personal data should be wiped.
+        $updated = DB::table('users')->where('id', $user->id)->first();
+        $this->assertNull($updated->firstname);
+        $this->assertEquals("Deleted User #{$user->id}", $updated->fullname);
+        $this->assertNotNull($updated->forgotten);
+    }
+
+    public function test_user_forget_task_records_error_without_user_id(): void
+    {
+        $taskId = DB::table('background_tasks')->insertGetId([
+            'task_type'  => 'user_forget',
+            'data'       => json_encode(['reason' => 'Support purge']),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1]);
+
+        $task = DB::table('background_tasks')->find($taskId);
+        $this->assertNull($task->processed_at, 'Task with missing user_id should not be processed successfully');
+        $this->assertNotNull($task->error_message, 'Task with missing user_id should record an error message');
+        $this->assertStringContainsString('user_id', $task->error_message);
+    }
+
     /**
      * Custom assertion for string containment (PHPUnit 10+ compatible).
      */
