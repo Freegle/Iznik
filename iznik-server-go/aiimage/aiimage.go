@@ -84,7 +84,7 @@ func generateImageWithCloudflare(name string) ([]byte, error) {
 		"prompt":    prompt,
 		"num_steps": 8,
 		"width":     1024,
-		"height":    768,
+		"height":    1024,
 	})
 
 	apiURL := fmt.Sprintf(
