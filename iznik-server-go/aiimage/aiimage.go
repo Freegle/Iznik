@@ -55,14 +55,14 @@ var ImageGenerator = generateImageWithCloudflare
 var ImageUploader = uploadToTUS
 
 // buildImagePrompt constructs the AI image generation prompt for a given item name.
-// Uses a white background so the duotone (dark green → white) creates a natural gradient.
-// Asking for a dark background with Flux Schnell produces near-black pixels that duotone
-// maps back to dark green — no mid-tone gradient results.
+// Dark background + white line drawing is essential for the Freegle duotone effect:
+// duotone maps dark→#0D3311 and white→white, so a dark background becomes Freegle green
+// and white lines remain white — matching the PHP Pollinations prompt exactly.
 func buildImagePrompt(name string) string {
-	return "Product illustration: single isolated " + name + " centered on plain white background. " +
-		"Style: pencil sketch with moderate shading, cute and quirky, UK audience. " +
-		"The object sits alone on a simple surface. " +
-		"Simple illustration style, clean lines, single object only, greyscale tones."
+	return "Product illustration: single isolated " + name + " centered on plain dark green background. " +
+		"Style: friendly cartoon white line drawing, moderate shading, cute and quirky, UK audience. " +
+		"The object sits alone on a simple surface or floats in space. " +
+		"Simple illustration style, clean lines, single object only."
 }
 
 // CloudflareAPIBase is the base URL for the Cloudflare API. Overridable in tests.
