@@ -1,0 +1,83 @@
+{
+  "changes": [
+    {
+      "tn_user_id": 810001,
+      "fd_user_id": 510001,
+      "username": "test_alex",
+      "date": "2026-04-30T10:12:01",
+      "about_me": null,
+      "reply_time": 1200,
+      "location": {
+        "latitude": 51.5074,
+        "longitude": -0.1278
+      },
+      "ip_hash": "4d7f2a3e95d9f2b4f5f5e24d70d3b6d599a1e201"
+    },
+    {
+      "tn_user_id": 810002,
+      "fd_user_id": 510002,
+      "username": "test_blair_renamed",
+      "date": "2026-04-30T10:10:44",
+      "about_me": "Clearing space at home.",
+      "reply_time": 845,
+      "location": {
+        "latitude": 53.4808,
+        "longitude": -2.2426
+      },
+      "ip_hash": "9f2f6bfc47ac3ba9f15fdb08b76b13a3e6b1a4f0"
+    },
+    {
+      "tn_user_id": 810003,
+      "fd_user_id": 510003,
+      "username": "test_casey",
+      "date": "2026-04-30T10:08:17",
+      "about_me": null,
+      "reply_time": null,
+      "location": {
+        "latitude": 52.4862,
+        "longitude": -1.8904
+      },
+      "ip_hash": "1f8e24c8a6671a4bf16a018c2e0ec74f3b1843b2"
+    },
+    {
+      "tn_user_id": 810004,
+      "fd_user_id": 510004,
+      "username": "test_removed",
+      "date": "2026-04-30T10:05:30",
+      "about_me": null,
+      "reply_time": 300,
+      "location": {
+        "latitude": 51.4545,
+        "longitude": -2.5879
+      },
+      "account_removed": true,
+      "ip_hash": "b340e13a225a0f739228f53e20ca5dc8e955f327"
+    },
+    {
+      "tn_user_id": 810005,
+      "fd_user_id": 599999,
+      "username": "test_missing_user",
+      "date": "2026-04-30T10:03:50",
+      "about_me": "This should be ignored when user is not found.",
+      "reply_time": 150,
+      "location": {
+        "latitude": 55.9533,
+        "longitude": -3.1883
+      },
+      "ip_hash": "ea56e6022dcb2ee9ea80f3a89db2ea1da70a4b97"
+    },
+    {
+      "tn_user_id": 810006,
+      "fd_user_id": null,
+      "username": "test_no_fd_user",
+      "date": "2026-04-30T10:01:22",
+      "about_me": null,
+      "reply_time": 640,
+      "location": {
+        "latitude": 51.4816,
+        "longitude": -3.1791
+      },
+      "ip_hash": "e6a0c89f7729fd9b6f3b4953e8bf7bb2458b0842"
+    }
+  ]
+}
