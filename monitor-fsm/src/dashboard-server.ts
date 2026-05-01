@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import https from 'node:https'
-import { getDb } from './db/index.js'
+import { getDb, kvGet } from './db/index.js'
 import { putStatusPost } from './db/discourse-status.js'
 import type { Database as DB } from 'better-sqlite3'
 
@@ -250,6 +250,16 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
   if (req.method === 'GET' && path === '/api/prs') {
     const rows = db.prepare('SELECT * FROM pr ORDER BY number DESC').all()
     json(res, 200, rows)
+    return
+  }
+
+  // GET /api/prs/exhausted  — PRs that hit the 3-attempt budget and need human review
+  if (req.method === 'GET' && path === '/api/prs/exhausted') {
+    const kvRows = db.prepare(`SELECT key, value FROM kv WHERE key LIKE 'pr_fix_attempts_%'`).all() as Array<{ key: string; value: string }>
+    const exhausted = kvRows
+      .map(r => ({ number: parseInt(r.key.replace('pr_fix_attempts_', ''), 10), attempts: parseInt(r.value, 10) }))
+      .filter(r => r.attempts >= 3)
+    json(res, 200, { exhausted })
     return
   }
 
