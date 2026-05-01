@@ -381,8 +381,9 @@ class AutoRepostServiceTest extends TestCase
     public function test_reposts_eligible_message_in_90_day_window(): void
     {
         // Test that messages within the 90-day window are reposted if eligible.
-        // This tests the mindate boundary condition: messages that are exactly
-        // at the 90-day boundary (or newer) should be included.
+        // This tests the mindate boundary condition: messages that are within
+        // the 90-day lookup window and have not exceeded maxAge should be included.
+        // For offers with interval=3 and max=5, maxAge = 3 * (5+1) = 18 days.
 
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -396,7 +397,7 @@ class AutoRepostServiceTest extends TestCase
             'added' => now()->subDays(30),
         ]);
 
-        // Create a message that's 89 days old (within 90-day window, should be included)
+        // Create a message that's 10 days old (within 90-day window AND within 18-day maxAge)
         $message = $this->createTestMessage($user, $group, [
             'type' => 'Offer',
             'fromaddr' => 'test-' . $user->id . '@' . $domain,
@@ -407,11 +408,11 @@ class AutoRepostServiceTest extends TestCase
             ->where('msgid', $message->id)
             ->where('groupid', $group->id)
             ->update([
-                'arrival' => now()->subDays(89),
+                'arrival' => now()->subDays(10),
                 'autoreposts' => 0,
             ]);
 
-        // This should be eligible: 89 days is within window, past 72h offer interval
+        // This should be eligible: 10 days is within both 90-day lookup AND 18-day maxAge, past 72h offer interval
         $stats = $this->service->process();
 
         $this->assertEquals(1, $stats['reposted']);
