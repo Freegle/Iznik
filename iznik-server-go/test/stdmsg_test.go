@@ -173,3 +173,30 @@ func TestGetStdMsgV2Path(t *testing.T) {
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 404, resp.StatusCode)
 }
+
+func TestDeleteStdMsgWithJSONBody(t *testing.T) {
+	prefix := uniquePrefix("StdMsgDelJSON")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	_, token := CreateTestSession(t, modID)
+
+	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
+	msgID := createTestStdMsg(t, cfgID, prefix+"_msg")
+
+	// Test DELETE with id in JSON body (the way frontend API sends it)
+	body := fmt.Sprintf(`{"id":%d}`, msgID)
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/stdmsg?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	db := database.DBConn
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM mod_stdmsgs WHERE id = ?", msgID).Scan(&count)
+	assert.Equal(t, int64(0), count)
+}

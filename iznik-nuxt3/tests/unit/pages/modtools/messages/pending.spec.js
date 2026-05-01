@@ -146,10 +146,6 @@ describe('PendingPage', () => {
           ScrollToTop: {
             template: '<div class="scroll-to-top" />',
           },
-          ModCakeModal: {
-            template: '<div class="mod-cake-modal" />',
-            emits: ['hidden'],
-          },
           ModAimsModal: {
             template: '<div class="mod-aims-modal" />',
             emits: ['hidden'],
@@ -329,33 +325,4 @@ describe('PendingPage', () => {
     })
   })
 
-  describe('modal visibility', () => {
-    it('shows cake modal when not previously asked', async () => {
-      mockMiscStore.get.mockImplementation((key) => {
-        if (key === 'cakeasked') return null
-        return null
-      })
-      const wrapper = mountComponent()
-      await flushPromises()
-      // Access the ref value (showCakeModal is now a ref in script setup)
-      const showCake = wrapper.vm.showCakeModal
-      expect(
-        showCake === true || showCake?.value === true || showCake
-      ).toBeTruthy()
-    })
-
-    it('does not show cake modal when previously asked', async () => {
-      mockMiscStore.get.mockImplementation((key) => {
-        if (key === 'cakeasked') return true
-        return null
-      })
-      const wrapper = mountComponent()
-      await flushPromises()
-      // Access the ref value
-      const showCake = wrapper.vm.showCakeModal
-      expect(
-        showCake === false || showCake?.value === false || !showCake
-      ).toBeTruthy()
-    })
-  })
 })

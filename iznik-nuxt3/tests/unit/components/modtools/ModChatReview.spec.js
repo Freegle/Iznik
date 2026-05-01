@@ -80,6 +80,7 @@ describe('ModChatReview', () => {
             props: ['icon', 'scale'],
           },
           ModChatReviewUser: {
+            name: 'ModChatReviewUser',
             template: '<div class="chat-review-user" />',
             props: ['userid', 'tag', 'groupid'],
             emits: ['reload'],
@@ -556,24 +557,33 @@ describe('ModChatReview', () => {
       expect(wrapper.vm.chatPov).toBeNull()
     })
 
-    it('uses touserid (recipient) as pov for User2Mod chat when touserid is valid', () => {
-      // Bug: chatPov was returning null (chat.user2=0→null) even when touserid was a real recipient
-      // Fix: always prefer touserid so the sender appears on the left
+    it('prefers touserid (recipient) as pov even when chat is loaded', () => {
+      // Symptom 2 fix: chatPov used to return chat.user2 when the chat was loaded,
+      // ignoring touserid. This placed the sender on the right as "self" in View Chat.
+      // Fix: always prefer touserid so the sender appears on the LEFT (correct reviewer POV).
       globalThis.__mockChatStore.byChatId = vi.fn(() => ({
         user1: 100,
         user2: 0,
         chattype: 'User2Mod',
       }))
       const wrapper = mountComponent({ touserid: 999 })
-      expect(wrapper.find('.chat-view-button').exists()).toBe(true)
+      const viewButton = wrapper.find('.chat-view-button')
+      // touserid present → use it (not chat.user2=0→null)
+      expect(viewButton.exists()).toBe(true)
       expect(wrapper.vm.chatPov).toBe(999)
     })
 
-    it('uses touserid (recipient) as pov even when chat is loaded, so sender stays on left', () => {
-      // Bug: when sender=user2 (789), chatPov=chat.user2=789 puts the sender on the right
-      // Fix: always prefer touserid (the recipient) so the sender appears on the left
-      const wrapper = mountComponent({ touserid: 200 })
-      expect(wrapper.vm.chatPov).toBe(200)
+    it('uses touserid (recipient) as pov for User2User so sender appears on left in View Chat', () => {
+      // Symptom 2 (Carol1 #219): chatPov=chat.user2 (sender) put the suspicious sender
+      // on the right as "self". Fix: chatPov=touserid (recipient) puts sender on the left.
+      globalThis.__mockChatStore.byChatId = vi.fn(() => ({
+        user1: 100,
+        user2: 200,
+        chattype: 'User2User',
+      }))
+      const wrapper = mountComponent({ touserid: 100 })
+      // pov = recipient (100), so sender (200) appears on the left in View Chat
+      expect(wrapper.vm.chatPov).toBe(100)
     })
 
     it('falls back to message.touserid when chat not found', () => {
@@ -589,35 +599,98 @@ describe('ModChatReview', () => {
     })
   })
 
-  describe('groupid fallback to groupidfrom', () => {
-    it('passes groupidfrom to ModChatReviewUser when groupid is 0', () => {
-      const wrapper = mountComponent({
-        groupid: 0,
-        group: null,
-        groupidfrom: 555,
-        groupfrom: { id: 555, namedisplay: 'Sender Group' },
-      })
-      const reviewUsers = wrapper.findAllComponents({
-        name: 'ModChatReviewUser',
-      })
-      reviewUsers.forEach((u) => {
-        expect(u.props('groupid')).toBe(555)
-      })
-    })
-
-    it('prefers groupid over groupidfrom when both are set', () => {
+  describe('groupid priority: From uses groupidfrom (sender), To uses groupid (recipient)', () => {
+    it('From: panel gets groupidfrom and To: panel gets groupid when both are set', () => {
+      // Bug A: From: was incorrectly prioritising groupid (recipient group) over groupidfrom (sender group).
       const wrapper = mountComponent({
         groupid: 789,
         group: { id: 789, namedisplay: 'Recipient Group' },
         groupidfrom: 555,
         groupfrom: { id: 555, namedisplay: 'Sender Group' },
+        touserid: 200,
+        touser: { id: 200, displayname: 'To User', spammer: false },
       })
-      const reviewUsers = wrapper.findAllComponents({
-        name: 'ModChatReviewUser',
+      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      // First = From:, gets sender's group (groupidfrom)
+      expect(reviewUsers[0].props('groupid')).toBe(555)
+      // Second = To:, gets recipient's group (groupid)
+      expect(reviewUsers[1].props('groupid')).toBe(789)
+    })
+
+    it('both panels fall back to groupidfrom when groupid is 0', () => {
+      const wrapper = mountComponent({
+        groupid: 0,
+        group: null,
+        groupidfrom: 555,
+        groupfrom: { id: 555, namedisplay: 'Sender Group' },
+        touserid: 200,
+        touser: { id: 200, displayname: 'To User', spammer: false },
       })
+      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
       reviewUsers.forEach((u) => {
-        expect(u.props('groupid')).toBe(789)
+        expect(u.props('groupid')).toBe(555)
       })
+    })
+  })
+
+  describe('User2Mod: To: position shows chatroom name', () => {
+    beforeEach(() => {
+      // Override byChatId to return a User2Mod chatroom with a name
+      globalThis.__mockChatStore.byChatId = vi.fn(() => ({
+        user1: 100,
+        user2: 0,
+        chattype: 'User2Mod',
+        name: 'TestGroup',
+        groupid: 555,
+      }))
+    })
+
+    it('shows chatroom name in To: position when touserid is 0 (User2Mod)', () => {
+      // Bug B: To: ModChatReviewUser was hidden entirely for User2Mod (touserid=0).
+      const wrapper = mountComponent({
+        touserid: 0,
+        touser: null,
+      })
+      // No ModChatReviewUser for To: (userid=0 is not a real user)
+      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      expect(reviewUsers.length).toBe(1) // only From:
+      // But the chatroom name should appear as the To: label
+      expect(wrapper.find('[data-testid="user2mod-to"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('To:')
+      expect(wrapper.text()).toContain('TestGroup Volunteers')
+    })
+
+    it('does not show chatroom name when touserid is set (User2User chat)', () => {
+      globalThis.__mockChatStore.byChatId = vi.fn(() => ({
+        user1: 100,
+        user2: 200,
+        chattype: 'User2User',
+        name: 'SomeChat',
+        groupid: 0,
+      }))
+      const wrapper = mountComponent({
+        touserid: 200,
+        touser: { id: 200, displayname: 'To User', spammer: false },
+      })
+      expect(wrapper.find('[data-testid="user2mod-to"]').exists()).toBe(false)
+      const reviewUsers = wrapper.findAllComponents({ name: 'ModChatReviewUser' })
+      expect(reviewUsers.length).toBe(2) // From: and To:
+    })
+
+    it('chatroomName computed returns null for User2User chattype', () => {
+      globalThis.__mockChatStore.byChatId = vi.fn(() => ({
+        user1: 100,
+        user2: 200,
+        chattype: 'User2User',
+        name: 'SomeChat',
+      }))
+      const wrapper = mountComponent({ touserid: 0, touser: null })
+      expect(wrapper.vm.chatroomName).toBeNull()
+    })
+
+    it('chatroomName computed returns name for User2Mod chattype', () => {
+      const wrapper = mountComponent({ touserid: 0, touser: null })
+      expect(wrapper.vm.chatroomName).toBe('TestGroup')
     })
   })
 

@@ -2,9 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
-
-// definePageMeta is a Nuxt compiler macro not available in Vitest
-globalThis.definePageMeta = vi.fn()
+import ImagesPage from '~/modtools/pages/images/index.vue'
 
 // Mock useMe composable
 vi.mock('~/composables/useMe', () => ({
@@ -18,11 +16,12 @@ const mockFetchReview = vi.fn()
 const mockRegenerate = vi.fn()
 const mockAccept = vi.fn()
 const mockImages = ref([])
+const mockLoading = ref(false)
 
 vi.mock('~/modtools/composables/useAIImages', () => ({
   useAIImages: () => ({
     images: mockImages,
-    loading: ref(false),
+    loading: mockLoading,
     fetchReview: mockFetchReview,
     regenerate: mockRegenerate,
     accept: mockAccept,
@@ -54,17 +53,13 @@ const stubComponents = {
   'b-alert': { template: '<div class="alert"><slot /></div>' },
 }
 
-let ImagesPage
-
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockImages.value = []
+  mockLoading.value = false
   mockFetchReview.mockReset()
   mockRegenerate.mockReset()
   mockAccept.mockReset()
-  // Dynamic import so mocks are applied first.
-  const mod = await import('~/modtools/pages/images/index.vue')
-  ImagesPage = mod.default
 })
 
 describe('Images page', () => {
@@ -277,5 +272,139 @@ describe('AIImageReview card interactions', () => {
 
     // Image should be removed from the list after accept.
     expect(wrapper.text()).not.toContain('Bicycle')
+  })
+})
+
+describe('AIImageReview loading and edge cases', () => {
+  it('shows loading spinner when loading is true', async () => {
+    mockLoading.value = true
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+    expect(wrapper.find('.spinner').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('No images')
+  })
+
+  it('shows "No image" placeholder when image_url is absent', async () => {
+    mockImages.value = [
+      {
+        id: 1,
+        name: 'Orphaned AI image',
+        externaluid: 'freegletusd-no-image',
+        image_url: null,
+        status: 'rejected',
+        regeneration_notes: null,
+        pending_externaluid: null,
+        pending_image_url: null,
+        votes: [],
+        reject_count: 1,
+        approve_count: 0,
+      },
+    ]
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('No image')
+  })
+
+  it('shows "contains people" badge for vote with containspeople flag', async () => {
+    mockImages.value = [
+      {
+        id: 1,
+        name: 'Portrait',
+        externaluid: 'freegletusd-portrait',
+        image_url: 'https://example.com/portrait.jpg',
+        status: 'rejected',
+        regeneration_notes: null,
+        pending_externaluid: null,
+        pending_image_url: null,
+        votes: [
+          { userid: 10, displayname: 'Alice Smith', result: 'Reject', containspeople: 1 },
+        ],
+        reject_count: 1,
+        approve_count: 0,
+      },
+    ]
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('contains people')
+  })
+})
+
+describe('AIImageReview error handling', () => {
+  beforeEach(() => {
+    mockImages.value = [
+      {
+        id: 42,
+        name: 'Bicycle',
+        externaluid: 'freegletusd-bike',
+        image_url: 'https://example.com/bike.jpg',
+        status: 'rejected',
+        regeneration_notes: null,
+        pending_externaluid: null,
+        pending_image_url: null,
+        votes: [],
+        reject_count: 1,
+        approve_count: 0,
+      },
+    ]
+  })
+
+  it('shows error when regenerate returns no preview_url', async () => {
+    mockRegenerate.mockResolvedValue({})
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="regenerate-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Generation returned no image')
+  })
+
+  it('shows error when regenerate throws', async () => {
+    mockRegenerate.mockRejectedValue(new Error('Network error'))
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="regenerate-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Generation failed')
+  })
+
+  it('shows error when accept throws', async () => {
+    const previewURL = 'https://delivery.ilovefreegle.org?url=abc'
+    mockRegenerate.mockResolvedValue({ preview_url: previewURL })
+    mockAccept.mockRejectedValue(new Error('Accept error'))
+
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="regenerate-btn"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-testid="accept-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Failed to accept')
+  })
+
+  it('shows spinner in image area while regeneration is in progress', async () => {
+    let resolveRegen
+    mockRegenerate.mockImplementation(
+      () => new Promise((resolve) => { resolveRegen = resolve })
+    )
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+
+    // await trigger() dispatches event and waits for Vue's next tick, but NOT for
+    // the regeneration promise to resolve — so regenerating[id] stays true
+    await wrapper.find('[data-testid="regenerate-btn"]').trigger('click')
+
+    // previewFor(img) is null and regenerating[img.id] is true → spinner in image area
+    expect(wrapper.find('.spinner').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Generating')
+
+    // Clean up: resolve the promise
+    resolveRegen({})
+    await flushPromises()
   })
 })

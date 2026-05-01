@@ -20,7 +20,7 @@
 </template>
 <script setup>
 import { ref, computed, onBeforeUnmount } from 'vue'
-import * as Sentry from '@sentry/browser'
+import { captureMessage as sentryCaptureMessage } from '@sentry/browser'
 
 const props = defineProps({
   src: {
@@ -109,7 +109,7 @@ const imageClasses = computed(() => {
 })
 
 if (process.client && props.src?.includes('gimg_0.jpg')) {
-  Sentry.captureMessage('Broken image: ' + props.src)
+  sentryCaptureMessage('Broken image: ' + props.src)
 }
 
 const emit = defineEmits(['error'])
@@ -175,6 +175,6 @@ function brokenImage(e) {
   emit('error', e)
   show.value = false
 
-  Sentry.captureMessage('Failed to fetch image ' + props.src)
+  sentryCaptureMessage('Failed to fetch image ' + props.src)
 }
 </script>

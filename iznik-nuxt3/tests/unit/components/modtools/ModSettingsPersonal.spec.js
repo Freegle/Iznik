@@ -111,9 +111,6 @@ describe('ModSettingsPersonal', () => {
               return { show: false }
             },
           },
-          ModCake: {
-            template: '<div class="mod-cake">Cake component</div>',
-          },
         },
       },
     })
@@ -176,11 +173,6 @@ describe('ModSettingsPersonal', () => {
     it('renders enter send vs newline toggle', () => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('Enter send vs newline')
-    })
-
-    it('renders ModCake component', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.find('.mod-cake').exists()).toBe(true)
     })
 
     it('renders unsubscribe section', () => {

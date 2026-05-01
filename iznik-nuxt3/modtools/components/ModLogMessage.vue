@@ -1,22 +1,16 @@
 <template>
   <span v-if="log && log.msgid">
-    <span v-if="message || log.msgsubject">
-      <a
-        :href="'https://www.ilovefreegle.org/message/' + log.msgid"
-        target="_blank"
-      >
-        <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{ log.msgid }}
-        <em>{{ messagesubject }}</em>
-      </a>
-      <span v-if="!notext && log.text && log.text.length > 0">
-        with <em>{{ log.text }} </em></span
-      >
-      <ModLogStdMsg v-if="!nostdmsg" :logid="logid" /> <ModLogGroup :logid="logid" :tag="tag" />
-    </span>
-    <span v-else>
+    <a
+      :href="'https://www.ilovefreegle.org/message/' + log.msgid"
+      target="_blank"
+    >
       <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{ log.msgid }}
-      (no info available)
-    </span>
+      <em>{{ messagesubject }}</em>
+    </a>
+    <span v-if="!notext && log.text && log.text.length > 0">
+      with <em>{{ log.text }} </em></span
+    >
+    <ModLogStdMsg v-if="!nostdmsg" :logid="logid" /> <ModLogGroup :logid="logid" :tag="tag" />
   </span>
 </template>
 <script setup>

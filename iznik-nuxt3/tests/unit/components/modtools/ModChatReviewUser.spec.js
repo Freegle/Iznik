@@ -70,6 +70,31 @@ describe('ModChatReviewUser', () => {
   })
 
   describe('rendering', () => {
+    it('renders the box when userid is provided but user data not yet in store', () => {
+      // Symptom 1 (Carol1 #219): box was gated by v-if="user" — hidden entirely until
+      // the user API fetch completed, causing member info to be missing on initial render.
+      // Fix: v-if="userid" renders the box immediately, showing '#<id>' as fallback.
+      mockUserStore.byId.mockReturnValue(null) // user not yet fetched
+      const wrapper = mount(ModChatReviewUser, {
+        props: { userid: 123, groupid: 456 },
+        global: {
+          stubs: {
+            'b-button': { template: '<button><slot /></button>' },
+            'v-icon': { template: '<span />', props: ['icon', 'scale'] },
+            ExternalLink: { template: '<a><slot /></a>', props: ['href'] },
+            ModClipboard: { template: '<span />', props: ['value'] },
+            ModComment: { template: '<div />', props: ['commentid', 'userid'] },
+            ModCommentAddModal: {
+              template: '<div class="add-modal" />',
+              props: ['userid', 'groupid'],
+            },
+          },
+        },
+      })
+      expect(wrapper.find('.bg-white.rounded').exists()).toBe(true)
+      expect(wrapper.text()).toContain('#123')
+    })
+
     it('renders user id', () => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('123')
