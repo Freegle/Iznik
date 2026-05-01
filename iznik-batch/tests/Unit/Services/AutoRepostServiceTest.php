@@ -598,6 +598,44 @@ class AutoRepostServiceTest extends TestCase
         ]);
     }
 
+    /**
+     * Regression: Discourse #9481 post 502 — Derek reported items 119974515 and 116335125
+     * were not auto-reposted despite being "bumped 4 days ago" (i.e. 96h old, past the
+     * 3-day offer interval).  Root cause: the early return in process() when 'AutoRepost'
+     * is absent from FREEGLE_MAIL_ENABLED_TYPES stopped all reposts, not just emails.
+     *
+     * A message at 96 h (day 4) with a 3-day offer interval satisfies hoursago > interval * 24
+     * and must be caught up as soon as the system runs again, regardless of email state.
+     *
+     * Without fix: process() returns early → 0 reposts (message stays stuck indefinitely).
+     * With fix:    process() runs, hits the repost branch, increments autoreposts → 1 repost.
+     */
+    public function test_missed_repost_window_caught_up_when_email_disabled(): void
+    {
+        // Simulate the condition that caused Derek's items to be missed:
+        // 'AutoRepost' removed from FREEGLE_MAIL_ENABLED_TYPES (e.g. to suppress warning emails).
+        config(['freegle.mail.enabled_types' => '']);
+
+        // 96 h = 4 days: past the 3-day offer interval and past the 24 h warning window.
+        // This matches "should have been bumped 4 days ago" from Discourse #9481 post 502.
+        $data = $this->createRepostCandidate(hoursOld: 96);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(
+            1,
+            $stats['reposted'],
+            'Item that missed its repost window while email was disabled must be caught up on next run'
+        );
+
+        // DB must reflect the repost.
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->first();
+        $this->assertEquals(1, $mg->autoreposts, 'autoreposts counter must be incremented after catch-up');
+    }
+
     public function test_warning_email_skipped_when_email_type_disabled(): void
     {
         // When 'AutoRepost' is removed from FREEGLE_MAIL_ENABLED_TYPES, warning emails
