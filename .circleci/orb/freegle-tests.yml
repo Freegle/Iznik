@@ -1859,9 +1859,9 @@ jobs:
             fi
 
             if [ -n "$CHANGED_FILES" ]; then
-              NON_SKIPPABLE_FILES=$(echo "$CHANGED_FILES" | grep -v -E '^(plans/|yesterday/)' || true)
+              NON_SKIPPABLE_FILES=$(echo "$CHANGED_FILES" | grep -v -E '^(plans/|yesterday/|monitor-fsm/)' || true)
               if [ -z "$NON_SKIPPABLE_FILES" ]; then
-                echo "Only plans/ or yesterday/ files were changed. Skipping build."
+                echo "Only plans/, yesterday/, or monitor-fsm/ files were changed. Skipping build."
                 circleci-agent step halt
               fi
             fi
@@ -2578,12 +2578,20 @@ jobs:
           name: Check patch coverage
           when: always
           command: |
-            # Skip on master — no diff to check, and Coveralls trend uploads above are sufficient.
+            # Skip on master/production — no PR diff to check against, and Coveralls trend uploads are sufficient.
             [ "${CIRCLE_BRANCH:-}" = "master" ] && echo "ℹ️ Skipping patch coverage on master" && exit 0
+            [ "${CIRCLE_BRANCH:-}" = "production" ] && echo "ℹ️ Skipping patch coverage on production" && exit 0
             [ "${SKIP_COVERAGE:-}" = "true" ] && echo "ℹ️ Skipping patch coverage (no token)" && exit 0
 
             echo "=== Patch Coverage Check ==="
-            pip3 install --quiet diff-cover lcov-cobertura 2>/dev/null || pip install --quiet diff-cover lcov-cobertura 2>/dev/null
+            if ! command -v pip3 >/dev/null 2>&1 && ! command -v pip >/dev/null 2>&1; then
+              echo "pip3 not found — installing python3-pip"
+              sudo apt-get install -y --no-install-recommends python3-pip
+            fi
+            pip3 install --quiet --break-system-packages diff-cover lcov-cobertura 2>/dev/null || \
+              pip install --quiet --break-system-packages diff-cover lcov-cobertura 2>/dev/null || \
+              pip3 install --quiet diff-cover lcov-cobertura 2>/dev/null || \
+              pip install --quiet diff-cover lcov-cobertura
 
             # Convert each available lcov file to Cobertura XML.
             # Paths in lcov files are already repo-root-relative (iznik-server-go/, iznik-nuxt3/, etc.)

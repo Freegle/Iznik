@@ -13,6 +13,21 @@
       </div>
     </div>
 
+    <!-- CircleCI runner status -->
+    <div v-if="runnerStatus" class="mb-2 small">
+      <template v-if="runnerStatus.running && runnerStatus.url">
+        <span class="text-muted">Runner: </span>
+        <a :href="runnerStatus.url" target="_blank" rel="noopener" class="text-decoration-none fw-semibold text-primary">
+          {{ runnerStatus.branch }}
+        </a>
+        <span class="text-muted"> — {{ runnerStatus.workflowName }}</span>
+        <span v-if="runnerStatus.queueDepth > 0" class="text-muted"> (+{{ runnerStatus.queueDepth }} queued)</span>
+      </template>
+      <template v-else>
+        <span class="text-muted">Runner: </span><span class="text-success">idle</span>
+      </template>
+    </div>
+
     <!-- Warning banner for PRs that hit the 3-attempt budget -->
     <div v-if="exhaustedPRNumbers.length > 0" class="alert alert-warning py-2 mb-2 small">
       <strong>⚠ Human review needed:</strong>
@@ -41,7 +56,7 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="pr in prs" :key="pr.number" :class="{ 'table-warning': exhaustedPRNumbers.includes(pr.number) }">
+        <tr v-for="pr in prs" :key="pr.number" :class="{ 'table-warning': exhaustedPRNumbers.includes(pr.number), 'table-info': pr.number === focusPRNumber && !exhaustedPRNumbers.includes(pr.number) }">
           <td class="fw-bold">
             <a :href="pr.url" target="_blank" rel="noopener" class="text-decoration-none">
               #{{ pr.number }}
@@ -58,7 +73,12 @@
           </td>
           <td>
             <div class="d-flex flex-column gap-1">
-              <span :class="['badge', combinedStatusClass(pr)]">
+              <a v-if="pr.ciUrl" :href="pr.ciUrl" target="_blank" rel="noopener" class="text-decoration-none">
+                <span :class="['badge', combinedStatusClass(pr)]">
+                  {{ combinedStatusLabel(pr) }}
+                </span>
+              </a>
+              <span v-else :class="['badge', combinedStatusClass(pr)]">
                 {{ combinedStatusLabel(pr) }}
               </span>
               <div v-if="pr.ciStatus === 'red' && pr.failedChecks.length > 0" class="small text-danger lh-sm">
@@ -79,13 +99,15 @@
 
 <script setup lang="ts">
 import { defineProps } from 'vue'
-import type { PrLive } from '../types'
+import type { PrLive, CIRunnerStatus } from '../types'
 
 defineProps<{
   prs: PrLive[]
   loading: boolean
   lastRefreshed: string | null
   exhaustedPRNumbers: number[]
+  focusPRNumber: number | null
+  runnerStatus: CIRunnerStatus | null
 }>()
 
 const emit = defineEmits<{
@@ -93,35 +115,44 @@ const emit = defineEmits<{
 }>()
 
 // Single combined status: what matters right now?
-// Running → nothing else matters yet
-// Failed → CI fix needed
-// Needs rebase → CI passed but conflict (FSM handles)
-// Ready → good to merge
-type CombinedStatus = 'running' | 'failed' | 'needs-rebase' | 'needs-review' | 'ready'
+type CombinedStatus = 'running' | 'queued' | 'failed' | 'needs-rebase' | 'needs-review' | 'needs-update' | 'ready'
+
+function isRunnerActive(pr: PrLive): boolean {
+  return pr.ciRunning || (runnerStatus?.running === true && runnerStatus.branch === pr.branch)
+}
 
 function combinedStatus(pr: PrLive): CombinedStatus {
-  if (pr.mergeStateStatus === 'UNSTABLE' || pr.ciStatus === 'pending' || pr.ciStatus === 'unknown') return 'running'
+  // CI status takes priority — a branch can be BEHIND *and* have pending/failing CI
   if (pr.ciStatus === 'red') return 'failed'
+  if (pr.mergeStateStatus === 'UNSTABLE' || pr.ciStatus === 'pending' || pr.ciStatus === 'unknown') {
+    return isRunnerActive(pr) ? 'running' : 'queued'
+  }
+  // CI is green — now check merge readiness
+  if (pr.mergeStateStatus === 'BEHIND') return 'needs-update'
   if (pr.mergeStateStatus === 'DIRTY') return 'needs-rebase'
   if (pr.mergeStateStatus === 'BLOCKED') return 'needs-review'
   if (pr.mergeStateStatus === 'CLEAN' || pr.mergeStateStatus === 'HAS_HOOKS') return 'ready'
-  return 'running'
+  return 'queued'
 }
 
 function combinedStatusClass(pr: PrLive): string {
   const s = combinedStatus(pr)
-  if (s === 'running') return 'bg-secondary'
+  if (s === 'running') return 'bg-primary'
+  if (s === 'queued') return 'bg-secondary'
   if (s === 'failed') return 'bg-danger'
   if (s === 'ready') return 'bg-success'
+  if (s === 'needs-update') return 'bg-secondary-subtle text-secondary-emphasis border border-secondary'
   return 'bg-warning text-dark' // needs-rebase / needs-review
 }
 
 function combinedStatusLabel(pr: PrLive): string {
   switch (combinedStatus(pr)) {
     case 'running': return 'CI running'
+    case 'queued': return 'CI queued'
     case 'failed': return 'CI failed'
     case 'needs-rebase': return 'Needs rebase'
     case 'needs-review': return 'Needs review'
+    case 'needs-update': return 'Needs update'
     case 'ready': return 'Ready'
   }
 }

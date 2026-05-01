@@ -397,19 +397,23 @@ print(json.dumps(results))
 
   {
     name: 'queue_deployed_reply_drafts',
-    description: 'Called automatically during LOAD_STATE. For every fix-queued bug whose PR is MERGED, checks the production branch deployment via check_pr_deployed. If deployed and no pending draft exists: auto-queues a reply draft using the PR title as the description. Updates pr.deploy_state to "deployed" or "pending_deploy". Returns {queued: [prNumbers], pendingDeploy: [prNumbers], alreadyDrafted: [prNumbers]}.',
+    description: 'Called automatically during LOAD_STATE. For every bug in fix-queued or fixed state whose PR is MERGED and deploy_state is pending_deploy, checks the production branch deployment via check_pr_deployed. If deployed and no pending draft exists: auto-queues a reply draft using the PR title as the description. Updates pr.deploy_state to "deployed" or "pending_deploy". Returns {queued: [prNumbers], pendingDeploy: [prNumbers], alreadyDrafted: [prNumbers]}.',
     handler: async () => {
       const db = getDb()
 
-      // Bugs with MERGED PRs that are still fix-queued
+      // Bugs with MERGED PRs still awaiting confirmed deployment.
+      // Include fix-queued (PR merged, bug not yet advanced) AND fixed (bug
+      // advanced before production branch was updated — deploy_state stays
+      // pending_deploy until we confirm the commit is live).
       const bugs = db.prepare(`
         SELECT b.topic, b.post, b.reporter, b.excerpt, b.pr_number,
                p.title AS pr_title, p.frontend_only, p.preview_url, p.deploy_state
         FROM discourse_bug b
         JOIN pr p ON p.number = b.pr_number
-        WHERE b.state = 'fix-queued'
+        WHERE b.state IN ('fix-queued', 'fixed')
           AND b.pr_number IS NOT NULL
           AND p.state = 'MERGED'
+          AND (p.deploy_state IS NULL OR p.deploy_state = 'pending_deploy')
         ORDER BY b.topic, b.post
       `).all() as Array<{
         topic: number; post: number; reporter: string | null; excerpt: string | null
@@ -1007,8 +1011,9 @@ print(urllib.request.urlopen(req).read().decode())
         // posts a visual ✗ on GitHub so the stale state is visible without FSM action.
         if (pr.mergeStateStatus === 'BEHIND') {
           behindPRs.push({ number: pr.number, title: pr.title, url: pr.url })
-          // Don't add to pendingPRs — BEHIND with green CI is not blocking work
-          continue
+          // Note: still fall through to CI check below. A branch can be BEHIND *and*
+          // have genuinely failing CI (separate from the branch/up-to-date noise). We
+          // don't auto-update the branch, but we do need to detect and fix real failures.
         }
 
         const chk = await sh('gh', ['pr', 'checks', String(pr.number), '--repo', 'Freegle/Iznik'])
@@ -1022,8 +1027,12 @@ print(urllib.request.urlopen(req).read().decode())
           const name = cols[0] ?? ''
           const state = (cols[1] ?? '').toLowerCase()
           const url = cols[3] ?? ''
-          // Ignore Netlify "pages-changed" noise — it reports "skipping" when unchanged.
+          // Ignore known noise checks:
+          // - Netlify "pages-changed" etc. report "skipping" when nothing changed
+          // - "branch/up-to-date" is a GitHub housekeeping StatusContext that shows
+          //   FAILURE whenever a branch is behind master — it is not a real CI failure
           if (/pages.?changed|header rules|redirect rules/i.test(name) && /skipping/i.test(state)) continue
+          if (/branch.?up.?to.?date/i.test(name)) continue
           if (/^(fail|failure|cancelled|canceled|timed.?out|error)$/.test(state)) {
             failed.push({ context: name, state, url })
           } else if (/^(pending|queued|in.?progress|running)$/.test(state)) {
@@ -1780,43 +1789,59 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         }
       }
 
-      const pickable = redPRs.find(p => !attemptedNums.has(p.number) && !exhaustedPRs.has(p.number))
       // Priority 1: master red
       if (masterFailing && !masterFixAttempted) {
         return { _transition: 'FIX_MASTER_CI', reason: `master CI failing on run ${master.latestRun?.databaseId ?? '?'}` }
       }
-      // Priority 2: drain mode — if any PR has pending CI (BEHIND or actively running),
-      // do nothing new this iteration. Creating new work while CI is running causes
-      // thrashing: master advances, all branches go BEHIND, CI is invalidated, repeat.
-      // Only fix red PRs or master failures; everything else waits for CI to settle.
+      // Priority 2: drain mode — if ANY PR has pending CI, don't push new commits.
+      // With a single self-hosted runner, pushing to multiple PRs simultaneously
+      // just grows the CI queue. The last PR waits hours. Keep the queue depth ≤ 1:
+      // only push a fix when the CI queue is empty (all PRs are either green or red,
+      // none pending). Once the pending run finishes (pass → merge, fail → fix), we
+      // push the next fix for the focus PR.
       const pendingPRs: Array<any> = Array.isArray(prCheck.pendingPRs) ? prCheck.pendingPRs : []
-      if (pendingPRs.length > 0 && redPRs.length === 0) {
+      if (pendingPRs.length > 0) {
         return {
           _transition: 'WRAP_UP',
-          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI; not dispatching new work until CI settles`,
+          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI; holding at ≤1 queue depth until CI settles`,
           drainMode: true,
           pendingCount: pendingPRs.length,
         }
       }
-      // Priority 3: master green, no pending CI — dispatch ALL work in parallel (red PRs + discourse topics + sentry)
+      // Priority 3: master green, CI queue empty — fix ONE focus PR, then do discourse/sentry
+      // in parallel. Fixing all red PRs simultaneously floods the single runner queue;
+      // focusing on one PR drives it to green (ready for human to merge) before touching the next.
       const activeTopics = (ctx?._action_discover_active_topics?.topics ?? []) as Array<{ id: number; hasNew?: boolean }>
       const topicsWithNew = activeTopics.filter(t => t.hasNew).length
       const phase = ctx?.phase ?? 'analysis'
 
-      // Increment persistent fix-attempt counter for each non-exhausted red PR we are
-      // about to dispatch. The counter resets when the PR goes green (check_my_open_pr_ci).
-      const pickableRedPRs = redPRs.filter(p => !exhaustedPRs.has(p.number))
-      for (const pr of pickableRedPRs) {
-        const key = `pr_fix_attempts_${pr.number}`
+      // Pick the ONE focus PR: prefer the current focus if it is still red & not exhausted;
+      // otherwise advance to the next pickable red PR. This drives one PR to completion
+      // before touching the next, rather than making marginal progress on all of them.
+      const pickableRedPRs = redPRs.filter(p => !exhaustedPRs.has(p.number) && !attemptedNums.has(p.number))
+      const storedFocus = kvGet(db, 'focus_pr_number')
+      const storedFocusNum = storedFocus ? parseInt(storedFocus, 10) : null
+      const keepFocus = storedFocusNum !== null && pickableRedPRs.some(p => p.number === storedFocusNum)
+      const focusPR = keepFocus
+        ? pickableRedPRs.find(p => p.number === storedFocusNum)!
+        : pickableRedPRs[0]
+
+      if (focusPR && focusPR.number !== storedFocusNum) {
+        kvSet(db, 'focus_pr_number', String(focusPR.number))
+        out(`ci_router_decide: new focus PR → #${focusPR.number}`)
+      }
+
+      if (focusPR) {
+        const key = `pr_fix_attempts_${focusPR.number}`
         const prev = parseInt(kvGet(db, key) ?? '0', 10)
         kvSet(db, key, String(prev + 1))
-        out(`ci_router_decide: PR #${pr.number} fix attempt ${prev + 1}/${MAX_FIX_ATTEMPTS}`)
+        out(`ci_router_decide: PR #${focusPR.number} fix attempt ${prev + 1}/${MAX_FIX_ATTEMPTS} (focus PR)`)
       }
 
       return {
         _transition: 'PARALLEL_ANALYZE_AND_FIX',
-        reason: `master green, no pending CI — parallel dispatch: ${pickableRedPRs.length} red PRs (${exhaustedPRs.size} exhausted) + ${topicsWithNew} active topics (${phase} phase)`,
-        redPRCount: pickableRedPRs.length,
+        reason: `master green, CI queue empty — focus PR: ${focusPR ? `#${focusPR.number}` : 'none'} (${pickableRedPRs.length} red, ${exhaustedPRs.size} exhausted) + ${topicsWithNew} active topics (${phase} phase)`,
+        focusPRNumber: focusPR?.number ?? null,
         exhaustedPRNumbers: [...exhaustedPRs],
         exhaustedPRCount: exhaustedPRs.size,
         activeTopicCount: topicsWithNew,
@@ -1845,6 +1870,29 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         // Don't downgrade a bug already in fix-queued or fixed state
         const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
         if (existing && ['fix-queued', 'fixed', 'confirmed', 'investigating'].includes(existing.state)) { skipped++; continue }
+        // Dedup: if another post in the same Discourse topic already has an active PR,
+        // link this post to that PR instead of creating a fresh open bug. Prevents the
+        // FSM opening a second PR when a reporter follows up in the same topic thread.
+        const topicPrRow = db.prepare(
+          `SELECT pr_number FROM discourse_bug
+           WHERE topic = ? AND post != ? AND pr_number IS NOT NULL
+           AND state IN ('open', 'investigating', 'fix-queued')`
+        ).get(c.topic, c.post) as { pr_number: number } | undefined
+        if (topicPrRow) {
+          upsertDiscourseBug(db, {
+            topic: Number(c.topic),
+            post: Number(c.post),
+            topicTitle: c.topicTitle ?? null,
+            reporter: c.user ?? null,
+            excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
+            state: 'fix-queued',
+            prNumber: topicPrRow.pr_number,
+            featureArea: c.featureArea ?? null,
+          })
+          out(`persist_classifications: topic ${c.topic} post ${c.post} linked to existing PR #${topicPrRow.pr_number} (same topic)`)
+          upserted++
+          continue
+        }
         upsertDiscourseBug(db, {
           topic: Number(c.topic),
           post: Number(c.post),
@@ -1916,7 +1964,19 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         return { _transition: 'COVERAGE_GATE', reason: `peak phase — no backlog bugs; deferring ${pendingCount} new bug(s) to off-peak` }
       }
 
+      // Dedup: skip bugs whose Discourse topic already has an active PR on another post.
+      // Without this, a follow-up post in the same topic (e.g. Carol post 219 after
+      // post 218 already has a PR) would be dispatched as a fresh bug and create a
+      // duplicate PR. persist_classifications handles the DB-insert path; this handles
+      // the in-memory classifications path (bugs seen this iteration, not yet persisted).
+      const topicsWithActivePr = new Set(
+        (db.prepare(
+          `SELECT DISTINCT topic FROM discourse_bug
+           WHERE pr_number IS NOT NULL AND state IN ('open', 'investigating', 'fix-queued')`
+        ).all() as Array<{ topic: number }>).map((r: { topic: number }) => r.topic)
+      )
       const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
+        .filter(b => !topicsWithActivePr.has(Number(b.topic)))
 
       if (allPending.length > 0) {
         return {

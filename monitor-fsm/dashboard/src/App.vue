@@ -26,6 +26,8 @@
             :loading="prsData.state.loading"
             :lastRefreshed="prsData.state.lastRefreshed"
             :exhaustedPRNumbers="prsData.state.exhaustedPRNumbers"
+            :focusPRNumber="prsData.state.focusPRNumber"
+            :runnerStatus="ciRunner.state.status"
             @refresh="prsData.refresh()"
           />
         </div>
@@ -115,7 +117,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useBugs, useDrafts, useIterations, usePrsLive } from './composables/useApi'
+import { useBugs, useCIRunner, useDrafts, useIterations, usePrsLive } from './composables/useApi'
 import PrPanel from './components/PrPanel.vue'
 import BugPanel from './components/BugPanel.vue'
 import ReplyQueue from './components/ReplyQueue.vue'
@@ -125,6 +127,7 @@ const bugsData = useBugs()
 const draftsData = useDrafts()
 const itersData = useIterations()
 const prsData = usePrsLive()
+const ciRunner = useCIRunner()
 
 const recentlyFixed = computed(() => {
   const sevenDaysAgo = new Date()
