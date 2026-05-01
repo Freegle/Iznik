@@ -1458,11 +1458,20 @@ async function saveMembershipSetting(name, val) {
   const settings = group.value.mysettings
   settings[name] = val
 
-  await authStore.setGroup({
+  const params = {
     groupid: groupid.value,
     userid: myid.value,
     settings,
-  })
+  }
+
+  // configid has a dedicated column and a dedicated server-side path (PR #309)
+  // that validates mod permissions and FK integrity. Send it as a top-level
+  // field so that path fires, rather than burying it in the settings blob.
+  if (name === 'configid') {
+    params.configid = val
+  }
+
+  await authStore.setGroup(params)
   fetchMe(true)
 }
 

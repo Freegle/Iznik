@@ -1386,27 +1386,6 @@ func PatchMemberships(c *fiber.Ctx) error {
 		// Save the membership settings JSON (active, configid, showmessages, etc.).
 		db.Exec("UPDATE memberships SET settings = ? WHERE userid = ? AND groupid = ?",
 			string(*req.Settings), userid, req.Groupid)
-
-		// configid is a dedicated column read by the session endpoint, not derived from
-		// the settings JSON. Keep it in sync when the settings JSON includes configid.
-		var settingsMap map[string]interface{}
-		if json.Unmarshal(*req.Settings, &settingsMap) == nil {
-			if configidVal, ok := settingsMap["configid"]; ok {
-				switch v := configidVal.(type) {
-				case float64:
-					if v > 0 {
-						db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?",
-							uint64(v), userid, req.Groupid)
-					} else {
-						db.Exec("UPDATE memberships SET configid = NULL WHERE userid = ? AND groupid = ?",
-							userid, req.Groupid)
-					}
-				case nil:
-					db.Exec("UPDATE memberships SET configid = NULL WHERE userid = ? AND groupid = ?",
-						userid, req.Groupid)
-				}
-			}
-		}
 	}
 
 	if req.Configid != nil {
