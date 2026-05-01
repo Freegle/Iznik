@@ -434,6 +434,58 @@ func TestPatchMembershipsSettings(t *testing.T) {
 	assert.Contains(t, settingsJSON, `"active":0`)
 }
 
+func TestPatchMembershipsSettingsConfigidNull(t *testing.T) {
+	prefix := uniquePrefix("mem_cfgnull")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// First set a non-null configid so we can verify it gets cleared.
+	db.Exec("UPDATE memberships SET configid = 99 WHERE userid = ? AND groupid = ?", userID, groupID)
+
+	// Send settings with configid: null — should clear configid column (case nil branch).
+	rawJSON := fmt.Sprintf(`{"userid":%d,"groupid":%d,"settings":{"active":1,"configid":null}}`, userID, groupID)
+	url := fmt.Sprintf("/api/memberships?jwt=%s", token)
+	req := httptest.NewRequest("PATCH", url, bytes.NewBufferString(rawJSON))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var configID *uint64
+	db.Raw("SELECT configid FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID).Scan(&configID)
+	assert.Nil(t, configID, "configid should be NULL when null is passed in settings")
+}
+
+func TestPatchMembershipsSettingsConfigidZero(t *testing.T) {
+	prefix := uniquePrefix("mem_cfgzero")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// First set a non-null configid so we can verify it gets cleared.
+	db.Exec("UPDATE memberships SET configid = 99 WHERE userid = ? AND groupid = ?", userID, groupID)
+
+	// Send settings with configid: 0 — should clear configid column (else branch when v <= 0).
+	rawJSON := fmt.Sprintf(`{"userid":%d,"groupid":%d,"settings":{"active":1,"configid":0}}`, userID, groupID)
+	url := fmt.Sprintf("/api/memberships?jwt=%s", token)
+	req := httptest.NewRequest("PATCH", url, bytes.NewBufferString(rawJSON))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var configID *uint64
+	db.Raw("SELECT configid FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID).Scan(&configID)
+	assert.Nil(t, configID, "configid should be NULL when 0 is passed in settings")
+}
+
 // TestPatchMembershipsStringEmailFrequency verifies that sending emailfrequency
 // as a JSON string (as HTML select elements emit) succeeds — FlexInt handles
 // both string and numeric JSON values.
