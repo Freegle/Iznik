@@ -25,6 +25,7 @@
             :prs="prsData.state.prs"
             :loading="prsData.state.loading"
             :lastRefreshed="prsData.state.lastRefreshed"
+            :exhaustedPRNumbers="prsData.state.exhaustedPRNumbers"
             @refresh="prsData.refresh()"
           />
         </div>
