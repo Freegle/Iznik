@@ -1,5 +1,6 @@
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import { testEnvCache, testEnvPending } from '../../../utils/testEnvCache'
 
 const execAsync = promisify(exec)
 
@@ -9,9 +10,9 @@ const execAsync = promisify(exec)
 // Idempotent: reuses existing data if prefix already exists.
 // Uses async exec so concurrent requests from 11 Playwright workers
 // don't block the Node.js event loop.
-
-const cache: Record<string, any> = {}
-const pending: Record<string, Promise<any>> = {}
+//
+// The cache is shared with playwright.post.ts via testEnvCache so it can be
+// cleared after a freeze-retry DB reset (stale postcode/IDs cause test failures).
 
 export default defineEventHandler(async (event) => {
   const prefix = getRouterParam(event, 'prefix')
@@ -21,28 +22,28 @@ export default defineEventHandler(async (event) => {
   }
 
   // Return cached result if already created this session
-  if (cache[prefix]) {
-    return cache[prefix]
+  if (testEnvCache[prefix]) {
+    return testEnvCache[prefix]
   }
 
   // Deduplicate concurrent requests for the same prefix
-  if (!pending[prefix]) {
-    pending[prefix] = (async () => {
+  if (!testEnvPending[prefix]) {
+    testEnvPending[prefix] = (async () => {
       const { stdout } = await execAsync(
         `docker exec ${process.env.COMPOSE_PROJECT_NAME || 'freegle'}-apiv1 php /var/www/iznik/install/create-test-env.php ${prefix}`,
         { encoding: 'utf8', timeout: 60000 }
       )
       const env = JSON.parse(stdout.trim())
-      cache[prefix] = env
-      delete pending[prefix]
+      testEnvCache[prefix] = env
+      delete testEnvPending[prefix]
       return env
     })()
   }
 
   try {
-    return await pending[prefix]
+    return await testEnvPending[prefix]
   } catch (e: any) {
-    delete pending[prefix]
+    delete testEnvPending[prefix]
     console.error(`Failed to create test env for ${prefix}:`, e.message)
     throw createError({
       statusCode: 500,

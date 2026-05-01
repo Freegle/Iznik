@@ -260,15 +260,18 @@ class ProcessBackgroundTasksCommand extends Command
         EmailSpoolerService $spooler,
         bool $shouldSpool
     ): void {
-        $required = ['user_id', 'user_name', 'user_email', 'newsfeed_id', 'reason'];
+        $required = ['user_id', 'user_email', 'newsfeed_id', 'reason'];
         foreach ($required as $field) {
             if (empty($data[$field])) {
                 throw new \RuntimeException("email_chitchat_report requires {$field}");
             }
         }
 
+        // user_name is cosmetic — reporters identified by id+email; fall back if blank.
+        $reporterName = !empty($data['user_name']) ? $data['user_name'] : 'A Freegle user';
+
         $mail = new ChitchatReportMail(
-            reporterName: $data['user_name'],
+            reporterName: $reporterName,
             reporterId: (int) $data['user_id'],
             reporterEmail: $data['user_email'],
             newsfeedId: (int) $data['newsfeed_id'],

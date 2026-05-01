@@ -1,6 +1,7 @@
 import { spawn, execSync } from 'child_process'
 import path from 'path'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
+import { clearTestEnvCache } from '../../utils/testEnvCache'
 
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
@@ -223,6 +224,12 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     const mainRunFailed = stateAfterMain.progress.failed
     const mainRunTotal  = stateAfterMain.progress.total
 
+    // Accumulate all spec basenames that have ever been identified as frozen across
+    // all retry rounds.  A spec that froze in round 0 but passed in round 1 should
+    // not be flagged as an "unaccounted failure" in round 2 just because its failure
+    // line still appears in the cumulative log from the initial run.
+    const allEverFrozenBasenames = new Set<string>()
+
     for (let freezeRound = 0; freezeRound < 2; freezeRound++) {
       try {
         const freezeOutput = execSync(
@@ -235,9 +242,14 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
         if (freezeSpecs.length === 0) break  // no frozen specs — done
 
+        // Add newly-frozen specs to the cumulative frozen set.
+        for (const f of freezeSpecs) {
+          allEverFrozenBasenames.add(path.basename(f))
+        }
+
         // Determine which spec files have failures in the cumulative logs so far.
-        // If any failing spec is NOT in the frozen list it is a genuine failure
-        // that the retry cannot fix — leave finalCode non-zero and bail out.
+        // If any failing spec is NOT in ANY round's frozen list it is a genuine
+        // failure that the retry cannot fix — leave finalCode non-zero and bail out.
         const currentLogs = getTestState('playwright').logs || ''
         const failedSpecBasenames = new Set<string>()
         const failedLines = currentLogs.match(/[✘✗×]\s+\d+\s+\[chromium\][^\n]*/g) || []
@@ -245,8 +257,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           const m = line.match(/›\s+(tests\/e2e\/[^:\s]+\.spec\.js)/)
           if (m) failedSpecBasenames.add(path.basename(m[1]))
         }
-        const frozenBasenames = new Set(freezeSpecs.map((f) => path.basename(f)))
-        const unaccountedFailures = [...failedSpecBasenames].filter((f) => !frozenBasenames.has(f))
+        const unaccountedFailures = [...failedSpecBasenames].filter((f) => !allEverFrozenBasenames.has(f))
         if (unaccountedFailures.length > 0) {
           appendTestLogs('playwright', `[FREEZE-RETRY round ${freezeRound + 1}] Non-frozen failures present (${unaccountedFailures.join(', ')}) — not retrying\n`)
           break
@@ -258,6 +269,63 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         const retryMsg = `[Freeze-retry ${freezeRound + 1}/2] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process`
         appendTestLogs('playwright', `\n${retryMsg}: ${retryFiles}\n`)
         setTestState('playwright', { message: retryMsg })
+
+        // Reset the test database before retry. Tests that ran in the main suite
+        // have already modified the iznik database (created posts, replies, users).
+        // Re-running those spec files against a dirty database causes failures unrelated
+        // to the actual code under test. Drop + recreate + migrate + testenv restores
+        // the same clean state that the main run started from.
+        appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Resetting test database to clean state...\n`)
+        try {
+          execSync(
+            `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
+            { encoding: 'utf8', timeout: 30000 }
+          )
+          execSync(
+            `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
+            { encoding: 'utf8', timeout: 120000 }
+          )
+          execSync(
+            `docker exec ${pfx}-apiv1 sh -c "rm -f /tmp/iznik.dbstatus.*.down && cd /var/www/iznik && php install/testenv.php"`,
+            { encoding: 'utf8', timeout: 60000 }
+          )
+          // The Go V2 API maintains a MySQL connection pool. Dropping and recreating
+          // the database invalidates those connections. Restart the container so it
+          // starts fresh — otherwise the location typeahead (used by postcode validation
+          // in the /give flow) returns empty results and Playwright tests time out.
+          execSync(`docker restart ${pfx}-apiv2`, { encoding: 'utf8', timeout: 30000 })
+          // Wait up to 60s for the Go API to be healthy before running tests.
+          const apiv2Start = Date.now()
+          let apiv2Ready = false
+          while (Date.now() - apiv2Start < 60000) {
+            try {
+              const health = execSync(
+                `docker inspect --format '{{.State.Health.Status}}' ${pfx}-apiv2`,
+                { encoding: 'utf8', timeout: 5000 }
+              ).trim()
+              if (health === 'healthy') { apiv2Ready = true; break }
+            } catch {}
+            await new Promise((r) => setTimeout(r, 2000))
+          }
+          if (!apiv2Ready) {
+            throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
+          }
+          // Clear the in-memory testEnv cache so the retry receives fresh
+          // postcode/ID data from the reset DB. Without this, the cache serves
+          // stale data (e.g. postcode 'NR1 3JD') that no longer exists in the
+          // recreated DB (only 'EH3 6SS' is seeded by testenv.php), causing the
+          // location typeahead to return empty results and the validation-tick
+          // to never appear in postMessage flows.
+          clearTestEnvCache()
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test environment cache cleared\n`)
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete (apiv2 healthy)\n`)
+        } catch (dbResetError: any) {
+          // Database reset failure means the retry would run against dirty data — any
+          // result would be unreliable. Fail the run so the root cause can be investigated.
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Database reset FAILED: ${(dbResetError as Error).message}\n`)
+          finalCode = 1
+          break
+        }
 
         // Clear freeze file before retry so the next round picks up only NEW freezes.
         try {
