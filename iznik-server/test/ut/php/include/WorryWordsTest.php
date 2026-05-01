@@ -114,6 +114,60 @@ class WorryWordsTest extends IznikTestCase
         $this->assertNotNull($w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody()));
     }
 
+    public function testFirewoodSingleWord()
+    {
+        $this->dbhm->preExec("INSERT IGNORE INTO worrywords (keyword, type) VALUES (?, ?);", [
+            'Firewood',
+            WorryWords::TYPE_REVIEW
+        ]);
+
+        $w = new WorryWords($this->dbhr, $this->dbhm);
+
+        $m = new Message($this->dbhr, $this->dbhm);
+        $mid = $m->createDraft();
+        $m = new Message($this->dbhr, $this->dbhm, $mid);
+        $m->setPrivate('subject', 'OFFER: Firewood (Somewhere)');
+        $m->setPrivate('textbody', 'Free firewood');
+        $result = $w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody());
+        $this->assertNotNull($result, 'Should flag "Firewood" as worry word');
+    }
+
+    public function testFirewoodTwoWords()
+    {
+        $this->dbhm->preExec("INSERT IGNORE INTO worrywords (keyword, type) VALUES (?, ?);", [
+            'fire wood',
+            WorryWords::TYPE_REVIEW
+        ]);
+
+        $w = new WorryWords($this->dbhr, $this->dbhm);
+
+        $m = new Message($this->dbhr, $this->dbhm);
+        $mid = $m->createDraft();
+        $m = new Message($this->dbhr, $this->dbhm, $mid);
+        $m->setPrivate('subject', 'OFFER: fire wood (Somewhere)');
+        $m->setPrivate('textbody', 'Some free fire wood here');
+        $result = $w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody());
+        $this->assertNotNull($result, 'Should flag "fire wood" (two words) as worry word');
+    }
+
+    public function testFirewoodCaseInsensitive()
+    {
+        $this->dbhm->preExec("INSERT IGNORE INTO worrywords (keyword, type) VALUES (?, ?);", [
+            'fire wood',
+            WorryWords::TYPE_REVIEW
+        ]);
+
+        $w = new WorryWords($this->dbhr, $this->dbhm);
+
+        $m = new Message($this->dbhr, $this->dbhm);
+        $mid = $m->createDraft();
+        $m = new Message($this->dbhr, $this->dbhm, $mid);
+        $m->setPrivate('subject', 'OFFER: FIRE WOOD (Somewhere)');
+        $m->setPrivate('textbody', 'Free Fire Wood');
+        $result = $w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody());
+        $this->assertNotNull($result, 'Should flag "FIRE WOOD" with case insensitivity');
+    }
+
 //
 //    public function testEH()
 //    {
