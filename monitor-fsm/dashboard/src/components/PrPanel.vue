@@ -41,12 +41,13 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="pr in prs" :key="pr.number" :class="{ 'table-warning': exhaustedPRNumbers.includes(pr.number) }">
+        <tr v-for="pr in prs" :key="pr.number" :class="{ 'table-warning': exhaustedPRNumbers.includes(pr.number), 'table-info': pr.number === focusPRNumber && !exhaustedPRNumbers.includes(pr.number) }">
           <td class="fw-bold">
             <a :href="pr.url" target="_blank" rel="noopener" class="text-decoration-none">
               #{{ pr.number }}
             </a>
-            <span v-if="exhaustedPRNumbers.includes(pr.number)" title="FSM gave up — needs human review" class="ms-1">⚠</span>
+            <span v-if="pr.number === focusPRNumber" title="FSM focus — only this PR gets fix attempts" class="ms-1">🎯</span>
+            <span v-else-if="exhaustedPRNumbers.includes(pr.number)" title="FSM gave up — needs human review" class="ms-1">⚠</span>
           </td>
           <td style="max-width: 220px;">
             <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ pr.title }}</div>
@@ -86,6 +87,7 @@ defineProps<{
   loading: boolean
   lastRefreshed: string | null
   exhaustedPRNumbers: number[]
+  focusPRNumber: number | null
 }>()
 
 const emit = defineEmits<{

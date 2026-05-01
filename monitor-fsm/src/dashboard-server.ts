@@ -259,7 +259,9 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     const exhausted = kvRows
       .map(r => ({ number: parseInt(r.key.replace('pr_fix_attempts_', ''), 10), attempts: parseInt(r.value, 10) }))
       .filter(r => r.attempts >= 3)
-    json(res, 200, { exhausted })
+    const focusRaw = kvGet(db, 'focus_pr_number')
+    const focusPRNumber = focusRaw ? parseInt(focusRaw, 10) : null
+    json(res, 200, { exhausted, focusPRNumber })
     return
   }
 
