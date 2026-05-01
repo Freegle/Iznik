@@ -915,16 +915,18 @@ func GetSession(c *fiber.Ctx) error {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
 				// Unheld spam members in active groups → spammembers (red).
+				// Condition matches getSpamMembers list: flag set and either never reviewed
+				// or re-flagged after the last review action.
 				db.Raw("SELECT COUNT(*) FROM memberships "+
-					"WHERE groupid IN ? AND (reviewrequestedat IS NOT NULL AND "+
-					"(reviewedat IS NULL OR DATE(reviewedat) < DATE_SUB(NOW(), INTERVAL 31 DAY))) "+
+					"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
+					"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
 					"AND heldby IS NULL",
 					activeGroupIDs).Scan(&spammembers)
 				// Held spam members in active groups → spammembersother (blue).
 				var heldActive int64
 				db.Raw("SELECT COUNT(*) FROM memberships "+
-					"WHERE groupid IN ? AND (reviewrequestedat IS NOT NULL AND "+
-					"(reviewedat IS NULL OR DATE(reviewedat) < DATE_SUB(NOW(), INTERVAL 31 DAY))) "+
+					"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
+					"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
 					"AND heldby IS NOT NULL",
 					activeGroupIDs).Scan(&heldActive)
 				spammembersother += heldActive
@@ -933,8 +935,8 @@ func GetSession(c *fiber.Ctx) error {
 				// All spam members in inactive groups → spammembersother (blue).
 				var inact int64
 				db.Raw("SELECT COUNT(*) FROM memberships "+
-					"WHERE groupid IN ? AND (reviewrequestedat IS NOT NULL AND "+
-					"(reviewedat IS NULL OR DATE(reviewedat) < DATE_SUB(NOW(), INTERVAL 31 DAY)))",
+					"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
+					"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat)",
 					inactiveGroupIDs).Scan(&inact)
 				spammembersother += inact
 			}
