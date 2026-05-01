@@ -99,7 +99,7 @@ describe('ComposeGroup', () => {
     it('applies width style when width prop is provided', () => {
       const wrapper = createWrapper({ width: 250 })
       expect(wrapper.find('.form-select').attributes('style')).toContain(
-        'width: 250px'
+        'width: 250px',
       )
     })
   })
@@ -121,7 +121,7 @@ describe('ComposeGroup', () => {
       const wrapper = createWrapper()
       const options = wrapper.findAll('option')
       expect(options.some((o) => o.text().includes('London Central'))).toBe(
-        true
+        true,
       )
       expect(options.some((o) => o.text().includes('Westminster'))).toBe(true)
     })
@@ -154,7 +154,7 @@ describe('ComposeGroup', () => {
       const wrapper = createWrapper()
       const options = wrapper.findAll('option')
       const londonOptions = options.filter((o) =>
-        o.text().includes('London Central')
+        o.text().includes('London Central'),
       )
       expect(londonOptions).toHaveLength(1)
     })
@@ -328,7 +328,7 @@ describe('ComposeGroup', () => {
     it('handles postcode fetch error gracefully', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       mockApi.location.typeahead.mockRejectedValueOnce(
-        new Error('Network error')
+        new Error('Network error'),
       )
 
       createWrapper()

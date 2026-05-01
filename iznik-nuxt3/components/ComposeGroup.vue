@@ -109,7 +109,9 @@ onMounted(async () => {
   if (postcode.value) {
     let location
     try {
-      location = await api(runtimeConfig).location.typeahead(postcode.value.name)
+      location = await api(runtimeConfig).location.typeahead(
+        postcode.value.name,
+      )
     } catch (e) {
       console.error('Failed to fetch postcode', e)
     }
@@ -146,7 +148,9 @@ onMounted(async () => {
     const groupsNear = postcode.value?.groupsnear || []
     const userSelectedGroupValid =
       groupsNear.some((g) => parseInt(g.id) === parseInt(composeStore.group)) ||
-      myGroups.value.some((g) => parseInt(g.groupid) === parseInt(composeStore.group))
+      myGroups.value.some(
+        (g) => parseInt(g.groupid) === parseInt(composeStore.group),
+      )
 
     if (!userSelectedGroupValid) {
       // User selected a group that's not in the available lists; fall back to original
