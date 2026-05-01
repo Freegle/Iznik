@@ -635,7 +635,7 @@ describe('ModChatModal', () => {
       expect(component.vm.user1).toBe(null)
     })
 
-    it('handles chat with null user2 by falling back to user1 when pov matches user1', async () => {
+    it('returns null for user2 when user2 is null (User2Mod: no second participant)', async () => {
       const onlyUser = createUser({ id: 456, displayname: 'Only User' })
       registerUsers(onlyUser)
       const chat = createChat({ user1: 456, user2: null })
@@ -646,8 +646,7 @@ describe('ModChatModal', () => {
       component.vm.chat2 = chat
       await nextTick()
 
-      // When pov matches u1id and user2 is null (u2id=0), falls back to u1id (pov user on right)
-      expect(component.vm.user2).toEqual(onlyUser)
+      expect(component.vm.user2).toBe(null)
     })
 
     it('returns u2id (not u1id) when pov matches neither participant, preventing self-talking', async () => {

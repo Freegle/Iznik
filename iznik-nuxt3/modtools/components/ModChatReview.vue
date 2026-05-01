@@ -25,7 +25,7 @@
               class="mt-1 text-info"
             />
             <ModChatReviewUser
-              v-if="message.touserid != null || message.touser"
+              v-if="message.touserid || message.touser"
               :userid="message.touserid || message.touser?.id"
               class="ms-2"
               tag="To: "
