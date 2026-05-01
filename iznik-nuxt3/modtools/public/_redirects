@@ -5,4 +5,6 @@
 # .well-known folder needs to be exposed.
 /.well-known/*  /well-known/:splat 200!
 
+/discourse_sso* https://api.ilovefreegle.org/discourse_sso:splat 200!
+
 /api* https://fdapilive.ilovefreegle.org/api/:splat 200!

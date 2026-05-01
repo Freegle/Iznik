@@ -274,15 +274,26 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
 	}
 
-	id, _ := strconv.ParseUint(c.Query("id", "0"), 10, 64)
-	if id == 0 {
+	type DeleteRequest struct {
+		ID uint64 `json:"id"`
+	}
+
+	var req DeleteRequest
+	if strings.Contains(c.Get("Content-Type"), "application/json") {
+		c.BodyParser(&req)
+	}
+	if req.ID == 0 {
+		req.ID, _ = strconv.ParseUint(c.Query("id", "0"), 10, 64)
+	}
+
+	if req.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}
 
 	db := database.DBConn
 
 	var configid uint64
-	db.Raw("SELECT configid FROM mod_stdmsgs WHERE id = ?", id).Scan(&configid)
+	db.Raw("SELECT configid FROM mod_stdmsgs WHERE id = ?", req.ID).Scan(&configid)
 	if configid == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}
@@ -291,7 +302,7 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to modify config"})
 	}
 
-	db.Exec("DELETE FROM mod_stdmsgs WHERE id = ?", id)
+	db.Exec("DELETE FROM mod_stdmsgs WHERE id = ?", req.ID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

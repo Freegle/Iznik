@@ -377,4 +377,290 @@ class AutoRepostServiceTest extends TestCase
             'chaseups' => 5,
         ], AutoRepostService::DEFAULT_REPOSTS);
     }
+
+    public function test_reposts_eligible_message_in_90_day_window(): void
+    {
+        // Test that messages within the 90-day mindate window are reposted if eligible.
+        // The 90-day window is a filter (messages must be newer than 90 days ago),
+        // but there's also a maxAge check: messages older than interval * (max + 1) days
+        // are excluded. For offers (interval=3, max=5), maxAge = 18 days.
+        // This test uses a message within the reposting window.
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+
+        DB::table('users')->where('id', $user->id)->update([
+            'lastaccess' => now()->subHours(1),
+        ]);
+
+        $this->createMembership($user, $group, [
+            'added' => now()->subDays(30),
+        ]);
+
+        // Create a message that's 10 days old (within maxAge window of 18 days, past 72h offer interval)
+        $message = $this->createTestMessage($user, $group, [
+            'type' => 'Offer',
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->update([
+                'arrival' => now()->subDays(10),
+                'autoreposts' => 0,
+            ]);
+
+        // This should be eligible: 10 days is within maxAge window, past 72h offer interval
+        $stats = $this->service->process();
+
+        $this->assertEquals(1, $stats['reposted']);
+    }
+
+    public function test_recent_reply_detection_boundary(): void
+    {
+        // Test that recent replies within the interval days are correctly detected
+        // and prevent reposting. This tests the fix for the V1 bug where recent
+        // replies were only checked within 3 hours instead of 3 days.
+
+        $data = $this->createRepostCandidate(hoursOld: 80);
+
+        $replier = $this->createTestUser();
+        $room = $this->createTestChatRoom($data['user'], $replier);
+
+        // Add a chat message with a reply within the last 2 days (but more than 3 hours)
+        // This should be detected as a recent reply and message should be skipped.
+        $this->createTestChatMessage($room, $replier, [
+            'refmsgid' => $data['message']->id,
+            'date' => now()->subHours(48), // 48 hours ago = 2 days
+        ]);
+
+        $stats = $this->service->process();
+
+        // Should be skipped due to recent reply (within interval days)
+        $this->assertEquals(0, $stats['reposted']);
+        $this->assertGreaterThan(0, $stats['skipped']);
+    }
+
+    public function test_message_exactly_90_days_old_is_excluded(): void
+    {
+        // Test the boundary condition: messages exactly 90 days old should be EXCLUDED
+        // because the query uses arrival > mindate (not >=).
+        // This might be the bug if the intent was to include messages from the "last 90 days".
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+
+        DB::table('users')->where('id', $user->id)->update([
+            'lastaccess' => now()->subHours(1),
+        ]);
+
+        $this->createMembership($user, $group, [
+            'added' => now()->subDays(100),
+        ]);
+
+        // Create a message that's exactly 90 days old
+        $message = $this->createTestMessage($user, $group, [
+            'type' => 'Offer',
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->update([
+                'arrival' => now()->subDays(90),
+                'autoreposts' => 0,
+            ]);
+
+        // This message should be EXCLUDED by the mindate > filter
+        // because it's exactly 90 days old.
+        // If it should be included, this test will fail and reveal the bug.
+        $stats = $this->service->process();
+
+        // Based on current code, this should NOT be reposted (should be skipped by getCandidates)
+        $this->assertEquals(0, $stats['reposted']);
+    }
+
+    public function test_skips_message_if_user_left_group(): void
+    {
+        // Test that messages are not reposted if the user is no longer a member of the group.
+        // This tests the INNER JOIN on memberships - if membership is deleted, message is excluded.
+
+        $data = $this->createRepostCandidate(hoursOld: 80);
+
+        // Remove the user's membership from the group
+        DB::table('memberships')
+            ->where('userid', $data['user']->id)
+            ->where('groupid', $data['group']->id)
+            ->delete();
+
+        $stats = $this->service->process();
+
+        // Should not be reposted because user is no longer a member
+        $this->assertEquals(0, $stats['reposted']);
+    }
+
+    public function test_multiple_groups_each_repost_independently(): void
+    {
+        // Test that when a message is posted to multiple groups,
+        // it's reposted on EACH group independently (multi-group fix).
+
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $domain = config('freegle.mail.user_domain', 'users.ilovefreegle.org');
+
+        DB::table('users')->where('id', $user->id)->update([
+            'lastaccess' => now()->subHours(1),
+        ]);
+
+        $this->createMembership($user, $group1, ['added' => now()->subDays(30)]);
+        $this->createMembership($user, $group2, ['added' => now()->subDays(30)]);
+
+        // Create message and post to both groups
+        $message = $this->createTestMessage($user, $group1, [
+            'type' => 'Offer',
+            'fromaddr' => 'test-' . $user->id . '@' . $domain,
+            'source' => Message::SOURCE_PLATFORM,
+        ]);
+
+        // Add to group2 as well
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id,
+            'groupid' => $group2->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subHours(80),
+            'autoreposts' => 0,
+        ]);
+
+        // Set group1's entry arrival time for repost
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group1->id)
+            ->update(['arrival' => now()->subHours(80)]);
+
+        $stats = $this->service->process();
+
+        // Should repost on BOTH groups (2 total)
+        $this->assertEquals(2, $stats['reposted']);
+
+        // Verify autoreposts incremented on both group entries
+        $mg1 = DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group1->id)
+            ->first();
+        $mg2 = DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group2->id)
+            ->first();
+
+        $this->assertEquals(1, $mg1->autoreposts);
+        $this->assertEquals(1, $mg2->autoreposts);
+    }
+
+    /**
+     * Regression test for Discourse #9481 (posts 502-510): messages 119974515 and 116335125
+     * were not auto-reposted even though they were eligible.
+     *
+     * Root cause: AutoRepostService::process() returned early when 'AutoRepost' was absent
+     * from FREEGLE_MAIL_ENABLED_TYPES, halting ALL reposts — not just warning emails.
+     * The feature flag controls email sending; it must not gate the actual DB repost.
+     */
+    public function test_reposts_still_happen_when_warning_emails_disabled(): void
+    {
+        // Simulate 'AutoRepost' removed from FREEGLE_MAIL_ENABLED_TYPES (e.g. to disable
+        // warning emails) — reposts must still proceed.
+        config(['freegle.mail.enabled_types' => '']);
+
+        $data = $this->createRepostCandidate(hoursOld: 80);
+
+        $stats = $this->service->process();
+
+        // Repost must happen even with warning emails disabled.
+        $this->assertEquals(1, $stats['reposted'], 'Repost should happen even when AutoRepost emails are disabled');
+
+        // Verify the DB was actually updated.
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->first();
+        $this->assertEquals(1, $mg->autoreposts, 'autoreposts counter must be incremented');
+
+        // Verify messages_postings entry was created.
+        $this->assertDatabaseHas('messages_postings', [
+            'msgid' => $data['message']->id,
+            'groupid' => $data['group']->id,
+            'repost' => 1,
+            'autorepost' => 1,
+        ]);
+    }
+
+    /**
+     * Regression: Discourse #9481 post 502 — Derek reported items 119974515 and 116335125
+     * were not auto-reposted despite being "bumped 4 days ago" (i.e. 96h old, past the
+     * 3-day offer interval).  Root cause: the early return in process() when 'AutoRepost'
+     * is absent from FREEGLE_MAIL_ENABLED_TYPES stopped all reposts, not just emails.
+     *
+     * A message at 96 h (day 4) with a 3-day offer interval satisfies hoursago > interval * 24
+     * and must be caught up as soon as the system runs again, regardless of email state.
+     *
+     * Without fix: process() returns early → 0 reposts (message stays stuck indefinitely).
+     * With fix:    process() runs, hits the repost branch, increments autoreposts → 1 repost.
+     */
+    public function test_missed_repost_window_caught_up_when_email_disabled(): void
+    {
+        // Simulate the condition that caused Derek's items to be missed:
+        // 'AutoRepost' removed from FREEGLE_MAIL_ENABLED_TYPES (e.g. to suppress warning emails).
+        config(['freegle.mail.enabled_types' => '']);
+
+        // 96 h = 4 days: past the 3-day offer interval and past the 24 h warning window.
+        // This matches "should have been bumped 4 days ago" from Discourse #9481 post 502.
+        $data = $this->createRepostCandidate(hoursOld: 96);
+
+        $stats = $this->service->process();
+
+        $this->assertEquals(
+            1,
+            $stats['reposted'],
+            'Item that missed its repost window while email was disabled must be caught up on next run'
+        );
+
+        // DB must reflect the repost.
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->first();
+        $this->assertEquals(1, $mg->autoreposts, 'autoreposts counter must be incremented after catch-up');
+    }
+
+    public function test_warning_email_skipped_when_email_type_disabled(): void
+    {
+        // When 'AutoRepost' is removed from FREEGLE_MAIL_ENABLED_TYPES, warning emails
+        // must not be sent, but the message must still be counted as warned (so callers
+        // can see the service ran).
+        config(['freegle.mail.enabled_types' => '']);
+
+        // Message in the warning window: offer interval=3d=72h; use hoursOld=50 (within 48-72h).
+        $data = $this->createRepostCandidate(hoursOld: 50);
+
+        $stats = $this->service->process();
+
+        // No repost at 50h (not yet past interval).
+        $this->assertEquals(0, $stats['reposted']);
+
+        // The warned count reflects the service ran, but no email was sent.
+        $this->assertEquals(1, $stats['warned']);
+
+        // lastautopostwarning must NOT have been updated (no email sent = no warning logged).
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->first();
+        $this->assertNull($mg->lastautopostwarning, 'lastautopostwarning should not be set when emails are disabled');
+    }
 }
