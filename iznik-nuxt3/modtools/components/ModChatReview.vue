@@ -265,19 +265,16 @@ const authStore = useAuthStore()
 
 const message = computed(() => chatStore.messageById(props.messageid))
 
-// Use a consistent pov based on the chatroom's user2, not the per-message touser.
-// This ensures messages from user1 always appear on the left and user2 on the right,
-// regardless of which direction the reviewed message was sent.
+// Use touserid (the recipient of the reviewed message) as pov so the sender always
+// appears on the left. Falling back to chat.user2 was wrong when the sender IS user2.
 const chatPov = computed(() => {
+  const touserid = message.value?.touserid
+  if (touserid) return touserid
+  // touserid=0 or absent (e.g. User2Mod with no specific recipient) — fall back to
+  // chat.user2, which is also 0 for User2Mod and becomes null via ||.
   const chat = chatStore.byChatId(message.value?.chatid)
-  if (chat) {
-    // Chat is loaded: use chatroom-level user2 as consistent pov across all messages.
-    // user2=0 means User2Mod (NULL in DB) — not a valid user ID, not a valid pov.
-    // || correctly skips 0; return null to let useChat.js use myid-based alignment.
-    return chat.user2 || null
-  }
-  // Chat not yet loaded: fall back to per-message touserid temporarily.
-  return message.value?.touserid || null
+  if (chat) return chat.user2 || null
+  return null
 })
 
 const isActiveMod = computed(() => {
