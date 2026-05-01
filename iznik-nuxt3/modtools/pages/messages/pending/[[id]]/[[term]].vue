@@ -34,17 +34,19 @@
       >
         There are no messages at the moment. This will refresh automatically.
       </NoticeMessage>
-      <div v-if="groupsreceived">
+      <div v-if="groupsreceived" class="messages-container">
         <ModMessages />
-        <infinite-loading
-          direction="top"
-          :identifier="bump"
-          @infinite="loadMore"
-        >
-          <template #spinner>
-            <Spinner :size="50" />
-          </template>
-        </infinite-loading>
+        <div class="infinite-loading-wrapper">
+          <infinite-loading
+            direction="top"
+            :identifier="bump"
+            @infinite="loadMore"
+          >
+            <template #spinner>
+              <Spinner :size="50" />
+            </template>
+          </infinite-loading>
+        </div>
       </div>
       <NoticeMessage v-else class="mt-2"> Please wait... </NoticeMessage>
 
@@ -331,3 +333,19 @@ defineExpose({
   loadMore,
 })
 </script>
+
+<style scoped>
+/* Reserve space for the infinite-loading spinner to prevent layout shift (CLS) */
+.infinite-loading-wrapper {
+  /* Ensure minimum height to accommodate spinner: 50px spinner + 20px padding */
+  min-height: 70px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Prevent layout shift by maintaining container stability */
+.messages-container {
+  position: relative;
+}
+</style>

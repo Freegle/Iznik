@@ -197,4 +197,71 @@ test.describe('ModTools Pending Messages', () => {
 
     await assertNoErrors(page)
   })
+
+  test('post list does not jump or scroll unexpectedly on load', async ({
+    page,
+    testEnv,
+    testEmail,
+    postMessage,
+    withdrawPost,
+  }) => {
+    // Regression test: post list UI should not jump/scroll when messages load
+    // This verifies that layout shift is prevented through stable height reservation
+    const item = `test-pending-jump-${Date.now()}`
+    const posted = await postMessage({
+      type: 'OFFER',
+      item,
+      description: 'Test item for layout stability check',
+      email: testEmail,
+    })
+    expect(posted.id).toBeTruthy()
+
+    await loginViaModTools(page, testEnv.mod.email)
+
+    await page.goto(`${MODTOOLS_URL}/messages/pending`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    const groupSelect = page.locator('#communitieslist')
+    await expect(groupSelect).toBeVisible({
+      timeout: timeouts.navigation.slowPage,
+    })
+
+    await dismissAllModals(page)
+
+    // Get initial scroll position before selecting group
+    const initialScrollY = await page.evaluate(() => window.scrollY)
+
+    // Select a group with pending messages (this triggers message loading)
+    await selectGroupWithPendingMessages(page, groupSelect)
+
+    // Wait for message cards to load
+    const messageCards = page.locator('.card')
+    await expect(messageCards.first()).toBeVisible({
+      timeout: timeouts.navigation.slowPage,
+    })
+
+    // Measure scroll position after messages load
+    const scrollAfterLoad = await page.evaluate(() => window.scrollY)
+
+    // The scroll position should not jump significantly (allow small variance for rendering)
+    // A jump would be > 100px, so we allow a small tolerance
+    const scrollDelta = Math.abs(scrollAfterLoad - initialScrollY)
+    expect(scrollDelta).toBeLessThan(100)
+
+    // Verify the infinite-loading wrapper has reserved height
+    const infiniteLoadingWrapper = page.locator('.infinite-loading-wrapper')
+    if (
+      await infiniteLoadingWrapper
+        .isVisible({ timeout: timeouts.ui.appearance })
+        .catch(() => false)
+    ) {
+      const boundingBox = await infiniteLoadingWrapper.boundingBox()
+      expect(boundingBox).toBeTruthy()
+      expect(boundingBox.height).toBeGreaterThanOrEqual(70)
+    }
+
+    // Cleanup
+    await withdrawPost({ item: posted.item })
+  })
 })
