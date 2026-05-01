@@ -1,6 +1,7 @@
 import { spawn, execSync } from 'child_process'
 import path from 'path'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
+import { clearTestEnvCache } from '../../utils/testEnvCache'
 
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
@@ -309,6 +310,14 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           if (!apiv2Ready) {
             throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
           }
+          // Clear the in-memory testEnv cache so the retry receives fresh
+          // postcode/ID data from the reset DB. Without this, the cache serves
+          // stale data (e.g. postcode 'NR1 3JD') that no longer exists in the
+          // recreated DB (only 'EH3 6SS' is seeded by testenv.php), causing the
+          // location typeahead to return empty results and the validation-tick
+          // to never appear in postMessage flows.
+          clearTestEnvCache()
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test environment cache cleared\n`)
           appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete (apiv2 healthy)\n`)
         } catch (dbResetError: any) {
           // Database reset failure means the retry would run against dirty data — any
