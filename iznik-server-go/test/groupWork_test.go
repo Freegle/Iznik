@@ -196,6 +196,47 @@ func TestGetGroupWork_SpamMembers(t *testing.T) {
 	assert.GreaterOrEqual(t, found.Spammembers, int64(1), "Expected spammembers >= 1")
 }
 
+func TestGetGroupWork_SpamMembersReFlaggedAfterRecentReview(t *testing.T) {
+	// Regression: commit 4749246f6 changed the membership list query to use
+	// reviewrequestedat > reviewedat (member re-flagged after a recent review).
+	// The badge count query in groupWork.go must use the same condition so the
+	// count matches what the Member Review page actually shows.
+	db := database.DBConn
+	prefix := uniquePrefix("gwreflg")
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Create a member who was reviewed recently (within 31 days) but then
+	// re-flagged AFTER that review. The old 31-day window would not count
+	// this member; the correct reviewrequestedat > reviewedat condition does.
+	spamUserID := CreateTestUser(t, prefix+"_spam", "User")
+	db.Exec(`INSERT INTO memberships (userid, groupid, role, collection, reviewedat, reviewrequestedat)
+		VALUES (?, ?, 'Member', 'Approved',
+		DATE_SUB(NOW(), INTERVAL 5 DAY),
+		NOW())`,
+		spamUserID, groupID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []group.GroupWork
+	json2.Unmarshal(rsp(resp), &result)
+
+	var found *group.GroupWork
+	for i := range result {
+		if result[i].Groupid == groupID {
+			found = &result[i]
+			break
+		}
+	}
+	assert.NotNil(t, found)
+	assert.GreaterOrEqual(t, found.Spammembers, int64(1),
+		"Re-flagged member (reviewrequestedat > reviewedat) must appear in spammembers count")
+}
+
 func TestGetGroupWork_MultipleGroups(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("gwmulti")
