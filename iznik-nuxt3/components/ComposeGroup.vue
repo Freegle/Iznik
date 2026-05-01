@@ -140,16 +140,40 @@ onMounted(async () => {
 
   // Final guard: b-form-select may have reset composeStore.group during the
   // async fetchUser wait (options re-evaluated while the saved group wasn't in
-  // groupsnear yet). Restore savedGroup if it is still valid — i.e. present in
-  // groupsnear or among the user's group memberships.
+  // groupsnear yet). Restore savedGroup if it is still valid — EXCEPT if the
+  // current group is not the default (first in groupsnear). If the current group
+  // differs from the default and is valid, the user likely chose it intentionally
+  // during the component lifecycle (repost group change bug fix) — don't override.
   if (savedGroup && composeStore.group !== savedGroup) {
     const groupsNear = postcode.value?.groupsnear || []
-    const savedGroupValid =
-      groupsNear.some((g) => parseInt(g.id) === parseInt(savedGroup)) ||
-      myGroups.value.some((g) => parseInt(g.groupid) === parseInt(savedGroup))
+    const defaultGroup = groupsNear.length > 0 ? groupsNear[0].id : null
+    const isCurrentGroupDefault = parseInt(composeStore.group) === parseInt(defaultGroup)
 
-    if (savedGroupValid) {
-      composeStore.group = savedGroup
+    // Only restore if current group is the default OR if it's invalid
+    if (isCurrentGroupDefault) {
+      const savedGroupValid =
+        groupsNear.some((g) => parseInt(g.id) === parseInt(savedGroup)) ||
+        myGroups.value.some((g) => parseInt(g.groupid) === parseInt(savedGroup))
+
+      if (savedGroupValid) {
+        composeStore.group = savedGroup
+      }
+    } else {
+      // Current group is not the default but might be invalid
+      const currentGroupValid =
+        groupsNear.some((g) => parseInt(g.id) === parseInt(composeStore.group)) ||
+        myGroups.value.some((g) => parseInt(g.groupid) === parseInt(composeStore.group))
+
+      if (!currentGroupValid) {
+        // Current group is invalid, try to restore savedGroup
+        const savedGroupValid =
+          groupsNear.some((g) => parseInt(g.id) === parseInt(savedGroup)) ||
+          myGroups.value.some((g) => parseInt(g.groupid) === parseInt(savedGroup))
+
+        if (savedGroupValid) {
+          composeStore.group = savedGroup
+        }
+      }
     }
   }
 
