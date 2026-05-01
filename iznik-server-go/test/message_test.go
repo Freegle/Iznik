@@ -7338,3 +7338,4 @@ func TestMessagePostingsVisibleUnauthenticated(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&msg)
 	assert.NotEmpty(t, msg.Postings, "postings should be visible to unauthenticated callers (V1 parity)")
 }
+

@@ -868,6 +868,50 @@ func TestPatchSessionConfirmEmailMergesUser(t *testing.T) {
 	db.Exec("DELETE FROM users_emails WHERE email = ?", testEmail)
 }
 
+// TestPatchSessionConfirmEmailDeletedUserNotRemerged verifies that new users
+// are not deleted when validating emails that previously belonged to deleted users.
+// Regression test for Discourse #9497: "Member is active but account still shows as deleted".
+func TestPatchSessionConfirmEmailDeletedUserNotRemerged(t *testing.T) {
+	prefix := uniquePrefix("confirm_deleted_email")
+	db := database.DBConn
+
+	// Step 1: Create old user with email, then delete them
+	oldUserID := CreateTestUser(t, prefix+"_old", "User")
+	oldEmail := prefix + "_deleted_user@test.com"
+	canon := strings.ToLower(strings.ReplaceAll(oldEmail, ".", ""))
+	db.Exec("UPDATE users_emails SET email = ?, canon = ?, backwards = ? WHERE userid = ?",
+		oldEmail, canon, reverseString(canon), oldUserID)
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", oldUserID)
+
+	// Step 2: Create new user and an unvalidated email record with the old user's email
+	newUserID := CreateTestUser(t, prefix+"_new", "User")
+	validateKey := prefix[:24]
+	db.Exec("INSERT INTO users_emails (email, canon, backwards, validatekey, userid) VALUES (?, ?, ?, ?, NULL)",
+		oldEmail, canon, reverseString(canon), validateKey)
+
+	// Step 3: Create session for new user and validate email
+	_, newToken := CreateTestSession(t, newUserID)
+	body, _ := json.Marshal(map[string]interface{}{
+		"key": validateKey,
+	})
+	req := httptest.NewRequest("PATCH", "/api/session?jwt="+newToken, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Step 4: Verify new user is NOT deleted after validating old user's email
+	var newUserDeleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", newUserID).Scan(&newUserDeleted)
+	assert.Nil(t, newUserDeleted, "New user should not be deleted after validating old user's email (Discourse #9497)")
+
+	// Cleanup
+	db.Exec("DELETE FROM users_emails WHERE email = ?", oldEmail)
+}
+
 // reverseString reverses a string for the backwards column.
 func reverseString(s string) string {
 	runes := []rune(s)
