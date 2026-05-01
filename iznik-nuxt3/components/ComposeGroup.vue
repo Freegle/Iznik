@@ -140,17 +140,19 @@ onMounted(async () => {
 
   // Final guard: b-form-select may have reset composeStore.group during the
   // async fetchUser wait (options re-evaluated while the saved group wasn't in
-  // groupsnear yet). Restore savedGroup if it is still valid — i.e. present in
-  // groupsnear or among the user's group memberships.
+  // groupsnear yet). If the user changed the group, verify their selection is
+  // valid; if not, fall back to the original group.
   if (savedGroup && composeStore.group !== savedGroup) {
     const groupsNear = postcode.value?.groupsnear || []
-    const savedGroupValid =
-      groupsNear.some((g) => parseInt(g.id) === parseInt(savedGroup)) ||
-      myGroups.value.some((g) => parseInt(g.groupid) === parseInt(savedGroup))
+    const userSelectedGroupValid =
+      groupsNear.some((g) => parseInt(g.id) === parseInt(composeStore.group)) ||
+      myGroups.value.some((g) => parseInt(g.groupid) === parseInt(composeStore.group))
 
-    if (savedGroupValid) {
+    if (!userSelectedGroupValid) {
+      // User selected a group that's not in the available lists; fall back to original
       composeStore.group = savedGroup
     }
+    // else: keep the user's selection since it's valid
   }
 
   // If we have a postcode with groups but no group selected, auto-select the first one.

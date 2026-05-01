@@ -295,6 +295,31 @@ describe('ComposeGroup', () => {
       // Group 99 is invalid, so the override (1) should stand
       expect(mockComposeStore.group).toBe(1)
     })
+
+    it('preserves user-selected group during repost when new group is valid', async () => {
+      // Bug fix: when user selects a different group during repost, preserve it if valid
+      // Initial state: group 1 (Bicester) is pre-set from repost
+      mockComposeStore.group = 1
+      // User is member of both group 1 and group 2 (Oxford)
+      mockAuthStore.groups = [
+        { groupid: 1, namedisplay: 'Bicester', nameshort: 'bicester' },
+        { groupid: 2, namedisplay: 'Oxford', nameshort: 'oxford' },
+      ]
+      // Simulate fetchUser not changing the group immediately
+      mockAuthStore.fetchUser = vi.fn().mockResolvedValue(undefined)
+
+      const wrapper = createWrapper()
+
+      // User selects Oxford before fetchUser completes
+      await wrapper.find('.form-select').setValue('2')
+      expect(mockComposeStore.group).toBe('2')
+
+      // Wait for fetchUser and final guard logic
+      await flushPromises()
+
+      // Group should remain 2 (Oxford) because it's valid (user is member)
+      expect(mockComposeStore.group).toBe('2')
+    })
   })
 
   describe('error handling', () => {
