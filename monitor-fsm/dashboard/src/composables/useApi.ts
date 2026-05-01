@@ -105,7 +105,7 @@ export async function pushStatusPost(): Promise<{ posted: boolean; reason?: stri
 }
 
 export function usePrsLive() {
-  const state = reactive({ prs: [] as PrLive[], loading: false, lastRefreshed: null as string | null, exhaustedPRNumbers: [] as number[] })
+  const state = reactive({ prs: [] as PrLive[], loading: false, lastRefreshed: null as string | null, exhaustedPRNumbers: [] as number[], focusPRNumber: null as number | null })
   let manualRefresh = false
 
   const refresh = async (bust = false) => {
@@ -119,6 +119,7 @@ export function usePrsLive() {
       ])
       state.prs = Array.isArray(data) ? data : []
       state.exhaustedPRNumbers = Array.isArray(exhaustedData?.exhausted) ? exhaustedData.exhausted.map((e: { number: number }) => e.number) : []
+      state.focusPRNumber = exhaustedData?.focusPRNumber ?? null
       state.lastRefreshed = new Date().toLocaleTimeString()
     } catch (error) {
       console.error('Failed to fetch PRs:', error)
