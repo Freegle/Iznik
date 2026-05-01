@@ -30,7 +30,7 @@ test.describe('ModTools hold and release message', () => {
       timeout: timeouts.navigation.slowPage,
     })
 
-    // Dismiss any modals (cake modal, etc.) that overlay the page after load.
+    // Dismiss any modals that overlay the page after load.
     // Use JS to forcefully remove all modals and backdrops, including those
     // rendered via Vue teleport into #teleports.
     async function dismissAllModals() {

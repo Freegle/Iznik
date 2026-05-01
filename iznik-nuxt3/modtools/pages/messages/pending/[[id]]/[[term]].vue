@@ -2,11 +2,6 @@
   <div>
     <client-only>
       <ScrollToTop />
-      <ModCakeModal
-        v-if="showCakeModal"
-        ref="showCakeModal"
-        @hidden="showCakeModal = false"
-      />
       <ModAimsModal
         v-if="showAimsModal"
         ref="showAimsModal"
@@ -105,7 +100,6 @@ const id = computed(() => {
 })
 
 // Data
-const showCakeModal = ref(false)
 const showAimsModal = ref(false)
 const shownRulePopup = ref(false)
 const bump = ref(0)
@@ -230,12 +224,6 @@ onMounted(async () => {
     })
   }
 
-  // CAKE
-  if (!miscStore.get('cakeasked')) {
-    showCakeModal.value = true
-    miscStore.set({ key: 'cakeasked', value: true })
-  }
-
   // Note: Don't restore remembered group here - ModGroupSelect handles it
   // via its remember prop. Doing it here would override URL params.
 })
@@ -311,7 +299,6 @@ async function loadMore($state) {
 
 // Expose for template and tests
 defineExpose({
-  showCakeModal,
   showAimsModal,
   bump,
   highlightMsgId,
