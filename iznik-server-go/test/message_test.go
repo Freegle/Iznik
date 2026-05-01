@@ -7338,3 +7338,35 @@ func TestMessagePostingsVisibleUnauthenticated(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&msg)
 	assert.NotEmpty(t, msg.Postings, "postings should be visible to unauthenticated callers (V1 parity)")
 }
+
+func TestDeletedUserCannotTakeAction(t *testing.T) {
+	// Regression test for member-status-persistence: user marked as deleted should not be able
+	// to take actions on messages (promise, reply, etc). Topic 9497, Post 62201.
+	db := database.DBConn
+	prefix := uniquePrefix("deluser")
+
+	userID := CreateTestUser(t, prefix, "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	msgID := CreateTestMessage(t, userID, groupID, "OFFER: Test Item", 55.9533, -3.1883)
+
+	// Mark user as deleted
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", userID)
+
+	// Try to take an action (Promise) on the message
+	reqBody := []byte(fmt.Sprintf(`{"id": %d, "action": "Promise"}`, msgID))
+	req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	// Should return 403 Forbidden or 401 Unauthorized, not 200 Success
+	assert.Greater(t, resp.StatusCode, 299, "Deleted user should not be able to take action on messages")
+
+	// Verify the promise was not recorded
+	var promiseCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_promises WHERE msgid = ? AND userid = ?", msgID, userID).Scan(&promiseCount)
+	assert.Equal(t, int64(0), promiseCount, "Promise should not be recorded for deleted user")
+}

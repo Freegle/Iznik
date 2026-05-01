@@ -1,6 +1,8 @@
 package message
 
 import (
+	"time"
+
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/freegle/iznik-server-go/user"
@@ -30,6 +32,14 @@ func MarkSeen(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
+	// Check if user is deleted (in limbo).
+	db := database.DBConn
+	var deleted *time.Time
+	db.Raw("SELECT deleted FROM users WHERE id = ?", myid).Scan(&deleted)
+	if deleted != nil {
+		return fiber.NewError(fiber.StatusForbidden, "Account has been deleted")
+	}
+
 	var req MarkSeenRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
@@ -38,8 +48,6 @@ func MarkSeen(c *fiber.Ctx) error {
 	if len(req.IDs) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Message IDs required")
 	}
-
-	db := database.DBConn
 
 	// Insert a View record for each message. ON DUPLICATE KEY UPDATE
 	// increments the count and updates the timestamp.

@@ -3042,6 +3042,14 @@ func PostMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
+	// Check if user is deleted (in limbo).
+	db := database.DBConn
+	var deleted *time.Time
+	db.Raw("SELECT deleted FROM users WHERE id = ?", myid).Scan(&deleted)
+	if deleted != nil {
+		return fiber.NewError(fiber.StatusForbidden, "Account has been deleted")
+	}
+
 	var req PostMessageRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
