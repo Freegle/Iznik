@@ -5,6 +5,7 @@
       :id="'msg-' + message.id"
       :key="'messagelist-' + message.id"
       class="p-0 mt-2"
+      style="contain: layout"
     >
       <div :ref="'top' + message.id" />
       <ModMessage

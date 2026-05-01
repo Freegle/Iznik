@@ -1,7 +1,7 @@
 <template>
   <div v-if="message">
-    <div ref="top" style="position: relative; top: -66px" />
-    <b-card bg-variant="white" no-body>
+    <div ref="top" style="scroll-margin-top: 66px" />
+    <b-card bg-variant="white" no-body style="scroll-margin-top: 66px">
       <b-card-header class="p-1 p-md-2">
         <div class="d-flex justify-content-between">
           <div class="flex-grow-1" style="min-width: 0">
