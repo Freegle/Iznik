@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import type { BugRow, DraftRow, IterRow, PrLive } from '../types'
+import type { BugRow, CIRunnerStatus, DraftRow, IterRow, PrLive } from '../types'
 
 export function useBugs() {
   const state = reactive({ bugs: [] as BugRow[], loading: false })
@@ -134,6 +134,28 @@ export function usePrsLive() {
   const stop = () => clearInterval(interval)
 
   return { state, refresh: () => refresh(true), stop }
+}
+
+export function useCIRunner() {
+  const state = reactive<{ status: CIRunnerStatus | null; loading: boolean }>({ status: null, loading: false })
+
+  const refresh = async () => {
+    state.loading = true
+    try {
+      const data = await fetch('/api/circleci/runner').then(r => r.json())
+      state.status = data
+    } catch (error) {
+      console.error('Failed to fetch CI runner status:', error)
+    } finally {
+      state.loading = false
+    }
+  }
+
+  refresh()
+  const interval = setInterval(refresh, 15000)
+  const stop = () => clearInterval(interval)
+
+  return { state, refresh, stop }
 }
 
 export async function mergePr(prNumber: number): Promise<void> {
