@@ -57,15 +57,17 @@
           <NoticeMessage v-if="!members.length && !busy" class="mt-2">
             There are no items to show at the moment.
           </NoticeMessage>
-          <div
-            v-for="item in visibleItems"
-            :key="'memberlist-' + item.id"
-            class="p-0 mt-2"
-          >
-            <ModMemberHappiness
-              v-if="item.type === 'Member'"
-              :id="item.object.id"
-            />
+          <div class="feedback-items-container">
+            <div
+              v-for="item in visibleItems"
+              :key="'memberlist-' + item.id"
+              class="feedback-item"
+            >
+              <ModMemberHappiness
+                v-if="item.type === 'Member'"
+                :id="item.object.id"
+              />
+            </div>
           </div>
         </b-tab>
 
@@ -218,7 +220,10 @@ watch(tabIndex, () => {
 })
 
 watch(showExpired, () => {
-  show.value = 0
+  /* Don't reset show.value immediately - instead, let the filter gradually
+     apply by having filterMatch hide items. This prevents a visible layout
+     collapse where all items disappear at once. The bump triggers the
+     infinite-loader to refresh without forcing a full reset. */
   bump.value++
 })
 
@@ -322,8 +327,44 @@ onMounted(async () => {
   await getHappiness()
 })
 </script>
-<style scoped>
+<style scoped lang="scss">
 select {
   max-width: 300px;
+}
+
+.feedback-items-container {
+  /* Isolate layout calculations to prevent cascading to parent elements */
+  contain: layout style paint;
+
+  /* Preserve dimensions when items are hidden/shown */
+  display: block;
+  width: 100%;
+
+  /* Prevent layout shift during filtering transitions */
+  will-change: opacity;
+}
+
+.feedback-item {
+  /* Smooth transitions when items appear/disappear */
+  transition: opacity 0.2s ease-in-out, max-height 0.2s ease-in-out;
+
+  /* Preserve space for enter/exit animations */
+  padding: 0;
+  margin-top: 0.5rem;
+
+  /* Isolate layout for this item */
+  contain: content;
+
+  /* Default state for item visibility */
+  opacity: 1;
+  max-height: 10000px;
+  overflow: hidden;
+}
+
+/* When items are being removed during filter transitions, fade them out smoothly */
+.feedback-item.hidden {
+  opacity: 0;
+  max-height: 0;
+  margin-top: 0;
 }
 </style>
