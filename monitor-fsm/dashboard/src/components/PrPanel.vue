@@ -103,12 +103,13 @@ const emit = defineEmits<{
 type CombinedStatus = 'running' | 'queued' | 'failed' | 'needs-rebase' | 'needs-review' | 'needs-update' | 'ready'
 
 function combinedStatus(pr: PrLive): CombinedStatus {
-  // BEHIND = CI is green on current HEAD; just needs a human to update branch + merge
-  if (pr.mergeStateStatus === 'BEHIND') return 'needs-update'
+  // CI status takes priority — a branch can be BEHIND *and* have pending/failing CI
   if (pr.ciStatus === 'red') return 'failed'
   if (pr.mergeStateStatus === 'UNSTABLE' || pr.ciStatus === 'pending' || pr.ciStatus === 'unknown') {
     return pr.ciRunning ? 'running' : 'queued'
   }
+  // CI is green — now check merge readiness
+  if (pr.mergeStateStatus === 'BEHIND') return 'needs-update'
   if (pr.mergeStateStatus === 'DIRTY') return 'needs-rebase'
   if (pr.mergeStateStatus === 'BLOCKED') return 'needs-review'
   if (pr.mergeStateStatus === 'CLEAN' || pr.mergeStateStatus === 'HAS_HOOKS') return 'ready'
