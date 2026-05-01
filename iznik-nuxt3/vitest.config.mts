@@ -162,6 +162,11 @@ export default defineConfig({
         'pages/**/*.vue',
         'modtools/pages/**/*.vue',
       ],
+      exclude: [
+        '**/useUppyRetryCoalesce.js',
+        '**/useSuppressException.js',
+        '**/ChatMobileNavbar.vue',
+      ],
     },
   },
 })
