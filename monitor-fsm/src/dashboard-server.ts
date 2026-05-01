@@ -175,9 +175,12 @@ async function fetchPrsLive(): Promise<any[]> {
             // GitHub returns two check types:
             //   CheckRun   → uses c.conclusion (SUCCESS/FAILURE/NEUTRAL/SKIPPED/...)
             //   StatusContext → uses c.state (SUCCESS/FAILURE/PENDING/ERROR)
-            const isFailure = (c: any) => c.__typename === 'StatusContext'
+            // Ignore branch/up-to-date: it's a GitHub housekeeping check that shows
+            // FAILURE simply because the branch is behind master — not a real CI failure.
+            const isNoise = (c: any) => /branch.?up.?to.?date|pages.?changed|header rules|redirect rules/i.test(c.context ?? c.name ?? '')
+            const isFailure = (c: any) => !isNoise(c) && (c.__typename === 'StatusContext'
               ? (c.state === 'FAILURE' || c.state === 'ERROR')
-              : (c.conclusion === 'FAILURE' || c.conclusion === 'ERROR')
+              : (c.conclusion === 'FAILURE' || c.conclusion === 'ERROR'))
             const isPending = (c: any) => c.__typename === 'StatusContext'
               ? (c.state === 'PENDING' || c.state === 'EXPECTED')
               : (!c.status || c.status === 'IN_PROGRESS' || c.status === 'QUEUED' || c.status === 'WAITING')
