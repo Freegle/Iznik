@@ -12,6 +12,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && mkdir -p /var/run/dbus \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy package files to install dependencies
+COPY package.json package-lock.json ./
+
+# Install project dependencies (including monocart-reporter, playwright, etc.)
+RUN npm install --production
+
 # Install Playwright and related packages
 # Version should match iznik-nuxt3/package.json
 RUN npm install -g @playwright/test@1.52.0 monocart-reporter coveralls
