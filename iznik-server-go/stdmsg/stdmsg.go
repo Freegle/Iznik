@@ -148,22 +148,40 @@ func PostStdMsg(c *fiber.Ctx) error {
 
 	// Apply optional attributes.
 	if req.Action != "" {
-		db.Exec("UPDATE mod_stdmsgs SET action = ? WHERE id = ?", req.Action, newID)
+		result := db.Exec("UPDATE mod_stdmsgs SET action = ? WHERE id = ?", req.Action, newID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Subjpref != "" {
-		db.Exec("UPDATE mod_stdmsgs SET subjpref = ? WHERE id = ?", req.Subjpref, newID)
+		result := db.Exec("UPDATE mod_stdmsgs SET subjpref = ? WHERE id = ?", req.Subjpref, newID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Subjsuff != "" {
-		db.Exec("UPDATE mod_stdmsgs SET subjsuff = ? WHERE id = ?", req.Subjsuff, newID)
+		result := db.Exec("UPDATE mod_stdmsgs SET subjsuff = ? WHERE id = ?", req.Subjsuff, newID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Body != "" {
-		db.Exec("UPDATE mod_stdmsgs SET body = ? WHERE id = ?", req.Body, newID)
+		result := db.Exec("UPDATE mod_stdmsgs SET body = ? WHERE id = ?", req.Body, newID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Rarelyused != 0 {
-		db.Exec("UPDATE mod_stdmsgs SET rarelyused = ? WHERE id = ?", req.Rarelyused, newID)
+		result := db.Exec("UPDATE mod_stdmsgs SET rarelyused = ? WHERE id = ?", req.Rarelyused, newID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Autosend != 0 {
-		db.Exec("UPDATE mod_stdmsgs SET autosend = ? WHERE id = ?", req.Autosend, newID)
+		result := db.Exec("UPDATE mod_stdmsgs SET autosend = ? WHERE id = ?", req.Autosend, newID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "id": newID})
@@ -224,37 +242,70 @@ func PatchStdMsg(c *fiber.Ctx) error {
 	}
 
 	if req.Title != nil {
-		db.Exec("UPDATE mod_stdmsgs SET title = ? WHERE id = ?", *req.Title, req.ID)
+		result := db.Exec("UPDATE mod_stdmsgs SET title = ? WHERE id = ?", *req.Title, req.ID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Action != nil {
-		db.Exec("UPDATE mod_stdmsgs SET action = ? WHERE id = ?", *req.Action, req.ID)
+		result := db.Exec("UPDATE mod_stdmsgs SET action = ? WHERE id = ?", *req.Action, req.ID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Subjpref != nil {
-		db.Exec("UPDATE mod_stdmsgs SET subjpref = ? WHERE id = ?", *req.Subjpref, req.ID)
+		result := db.Exec("UPDATE mod_stdmsgs SET subjpref = ? WHERE id = ?", *req.Subjpref, req.ID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Subjsuff != nil {
-		db.Exec("UPDATE mod_stdmsgs SET subjsuff = ? WHERE id = ?", *req.Subjsuff, req.ID)
+		result := db.Exec("UPDATE mod_stdmsgs SET subjsuff = ? WHERE id = ?", *req.Subjsuff, req.ID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Body != nil {
-		db.Exec("UPDATE mod_stdmsgs SET body = ? WHERE id = ?", *req.Body, req.ID)
+		result := db.Exec("UPDATE mod_stdmsgs SET body = ? WHERE id = ?", *req.Body, req.ID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Rarelyused != nil {
-		db.Exec("UPDATE mod_stdmsgs SET rarelyused = ? WHERE id = ?", *req.Rarelyused, req.ID)
+		result := db.Exec("UPDATE mod_stdmsgs SET rarelyused = ? WHERE id = ?", *req.Rarelyused, req.ID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Autosend != nil {
-		db.Exec("UPDATE mod_stdmsgs SET autosend = ? WHERE id = ?", *req.Autosend, req.ID)
+		result := db.Exec("UPDATE mod_stdmsgs SET autosend = ? WHERE id = ?", *req.Autosend, req.ID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Newmodstatus != nil {
-		db.Exec("UPDATE mod_stdmsgs SET newmodstatus = ? WHERE id = ?", *req.Newmodstatus, req.ID)
+		result := db.Exec("UPDATE mod_stdmsgs SET newmodstatus = ? WHERE id = ?", *req.Newmodstatus, req.ID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Newdelstatus != nil {
-		db.Exec("UPDATE mod_stdmsgs SET newdelstatus = ? WHERE id = ?", *req.Newdelstatus, req.ID)
+		result := db.Exec("UPDATE mod_stdmsgs SET newdelstatus = ? WHERE id = ?", *req.Newdelstatus, req.ID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Edittext != nil {
-		db.Exec("UPDATE mod_stdmsgs SET edittext = ? WHERE id = ?", *req.Edittext, req.ID)
+		result := db.Exec("UPDATE mod_stdmsgs SET edittext = ? WHERE id = ?", *req.Edittext, req.ID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 	if req.Insert != nil {
-		db.Exec("UPDATE mod_stdmsgs SET `insert` = ? WHERE id = ?", *req.Insert, req.ID)
+		result := db.Exec("UPDATE mod_stdmsgs SET `insert` = ? WHERE id = ?", *req.Insert, req.ID)
+		if result.Error != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Update failed"})
+		}
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -291,7 +342,10 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"ret": 4, "status": "Don't have rights to modify config"})
 	}
 
-	db.Exec("DELETE FROM mod_stdmsgs WHERE id = ?", id)
+	result := db.Exec("DELETE FROM mod_stdmsgs WHERE id = ?", id)
+	if result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"ret": 1, "status": "Delete failed"})
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
