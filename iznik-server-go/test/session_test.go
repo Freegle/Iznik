@@ -2709,6 +2709,54 @@ func TestGetSessionInventsNameFromEmail(t *testing.T) {
 	})
 }
 
+func TestPatchSessionConfirmEmailDeletedUserNotRemerged(t *testing.T) {
+	// Bug: When a new user validates an email that belonged to a deleted user,
+	// the new user should NOT be deleted. The code should only merge active
+	// users, not re-delete already-deleted accounts.
+	prefix := uniquePrefix("confirm_deleted_email")
+	db := database.DBConn
+
+	// Step 1: Create old user with email, then delete them
+	oldUserID := CreateTestUser(t, prefix+"_old", "User")
+	oldEmail := prefix + "_deleted_user@test.com"
+	canon := strings.ToLower(strings.ReplaceAll(oldEmail, ".", ""))
+	db.Exec("UPDATE users_emails SET email = ?, canon = ?, backwards = ? WHERE userid = ?",
+		oldEmail, canon, reverseString(canon), oldUserID)
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", oldUserID)
+
+	// Step 2: Create new user with same email (unvalidated)
+	newUserID := CreateTestUser(t, prefix+"_new", "User")
+	newEmail := prefix + "_new_user@test.com"
+	// Create unvalidated email record with validatekey
+	validateKey := prefix[:24]
+	db.Exec("INSERT INTO users_emails (email, canon, backwards, validatekey, userid) VALUES (?, ?, ?, ?, NULL)",
+		oldEmail, canon, reverseString(canon), validateKey)
+
+	// Step 3: Create session for new user
+	_, newToken := CreateTestSession(t, newUserID)
+
+	// Step 4: Validate email for new user
+	body, _ := json.Marshal(map[string]interface{}{
+		"key": validateKey,
+	})
+	req := httptest.NewRequest("PATCH", "/api/session?jwt="+newToken, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Step 5: Verify new user is NOT deleted
+	var newUserDeleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", newUserID).Scan(&newUserDeleted)
+	assert.Nil(t, newUserDeleted, "New user should not be deleted after validating old user's email")
+
+	// Cleanup
+	db.Exec("DELETE FROM users_emails WHERE email = ?", oldEmail)
+}
+
 func TestFetchEmailHealth(t *testing.T) {
 	// Deterministic coverage for the daytime-gated email health block in
 	// GetSession. Without this test the lines flip in and out of Go
