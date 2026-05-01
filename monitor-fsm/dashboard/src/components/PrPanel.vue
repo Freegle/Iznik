@@ -13,6 +13,20 @@
       </div>
     </div>
 
+    <!-- CircleCI runner status -->
+    <div v-if="runnerStatus" class="mb-2 small">
+      <template v-if="runnerStatus.running && runnerStatus.url">
+        <span class="text-muted">Runner: </span>
+        <a :href="runnerStatus.url" target="_blank" rel="noopener" class="text-decoration-none fw-semibold text-primary">
+          {{ runnerStatus.branch }}
+        </a>
+        <span class="text-muted"> ({{ runnerStatus.workflowName }})</span>
+      </template>
+      <template v-else>
+        <span class="text-muted">Runner: </span><span class="text-success">idle</span>
+      </template>
+    </div>
+
     <!-- Warning banner for PRs that hit the 3-attempt budget -->
     <div v-if="exhaustedPRNumbers.length > 0" class="alert alert-warning py-2 mb-2 small">
       <strong>⚠ Human review needed:</strong>
@@ -85,7 +99,7 @@
 
 <script setup lang="ts">
 import { defineProps } from 'vue'
-import type { PrLive } from '../types'
+import type { PrLive, CIRunnerStatus } from '../types'
 
 defineProps<{
   prs: PrLive[]
@@ -93,6 +107,7 @@ defineProps<{
   lastRefreshed: string | null
   exhaustedPRNumbers: number[]
   focusPRNumber: number | null
+  runnerStatus: CIRunnerStatus | null
 }>()
 
 const emit = defineEmits<{

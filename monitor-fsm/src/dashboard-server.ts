@@ -45,12 +45,103 @@ function readBody(req: IncomingMessage): Promise<string> {
   })
 }
 
+function httpsGet(url: string, headers: Record<string, string> = {}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers }, res => {
+      const chunks: Buffer[] = []
+      res.on('data', c => chunks.push(c))
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    })
+    req.on('error', reject)
+  })
+}
+
 function getDiscourseApiKey(): string {
   try {
     const profile = JSON.parse(readFileSync('/home/edward/profile.json', 'utf8'))
     return profile.auth_pairs[0].user_api_key
   } catch {
     throw new Error('Cannot read Discourse API key from profile.json')
+  }
+}
+
+function getCircleCIToken(): string {
+  try {
+    const env = readFileSync('/home/edward/FreegleDockerWSL/.env', 'utf8')
+    const match = env.match(/^CIRCLECI_TOKEN=(.+)$/m)
+    return match ? match[1].trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+interface CIRunnerStatus {
+  running: boolean
+  branch: string | null
+  workflowName: string | null
+  url: string | null
+  pipelineNumber: number | null
+  queueDepth: number
+}
+
+let ciRunnerCache: { data: CIRunnerStatus; timestamp: number } | null = null
+const CI_RUNNER_CACHE_TTL = 15000 // 15 seconds
+
+async function fetchCIRunnerStatus(): Promise<CIRunnerStatus> {
+  if (ciRunnerCache && Date.now() - ciRunnerCache.timestamp < CI_RUNNER_CACHE_TTL) {
+    return ciRunnerCache.data
+  }
+
+  const token = getCircleCIToken()
+  if (!token) return { running: false, branch: null, workflowName: null, url: null, pipelineNumber: null, queueDepth: 0 }
+
+  try {
+    // Fetch recent pipelines
+    const pipelinesRes = await httpsGet(
+      'https://circleci.com/api/v2/project/github/Freegle/Iznik/pipeline?limit=20',
+      { 'Circle-Token': token }
+    )
+    const pipelines: any[] = JSON.parse(pipelinesRes).items ?? []
+
+    let running: CIRunnerStatus | null = null
+    let queueDepth = 0
+
+    for (const pipeline of pipelines) {
+      const wfRes = await httpsGet(
+        `https://circleci.com/api/v2/pipeline/${pipeline.id}/workflow`,
+        { 'Circle-Token': token }
+      )
+      const workflows: any[] = JSON.parse(wfRes).items ?? []
+      const runningWf = workflows.find(w => w.status === 'running')
+      const hasQueued = workflows.some(w => w.status === 'on_hold' || w.status === 'not_run')
+
+      if (runningWf && !running) {
+        const url = `https://app.circleci.com/pipelines/github/Freegle/Iznik/${pipeline.number}/workflows/${runningWf.id}`
+        running = {
+          running: true,
+          branch: pipeline.vcs?.branch ?? null,
+          workflowName: runningWf.name,
+          url,
+          pipelineNumber: pipeline.number,
+          queueDepth: 0,
+        }
+      } else if (workflows.some(w => w.status === 'running' || hasQueued)) {
+        queueDepth++
+      }
+
+      // Stop scanning once we've seen enough
+      if (running && queueDepth >= 5) break
+    }
+
+    const result: CIRunnerStatus = running
+      ? { ...running, queueDepth }
+      : { running: false, branch: null, workflowName: null, url: null, pipelineNumber: null, queueDepth }
+
+    ciRunnerCache = { data: result, timestamp: Date.now() }
+    return result
+  } catch (err) {
+    console.error('Failed to fetch CircleCI runner status:', err)
+    return { running: false, branch: null, workflowName: null, url: null, pipelineNumber: null, queueDepth: 0 }
   }
 }
 
@@ -266,6 +357,13 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
   if (req.method === 'GET' && path === '/api/prs') {
     const rows = db.prepare('SELECT * FROM pr ORDER BY number DESC').all()
     json(res, 200, rows)
+    return
+  }
+
+  // GET /api/circleci/runner  — what's currently running on the self-hosted runner
+  if (req.method === 'GET' && path === '/api/circleci/runner') {
+    const status = await fetchCIRunnerStatus()
+    json(res, 200, status)
     return
   }
 

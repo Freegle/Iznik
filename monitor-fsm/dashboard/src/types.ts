@@ -43,6 +43,15 @@ export interface IterRow {
   note: string | null
 }
 
+export interface CIRunnerStatus {
+  running: boolean
+  branch: string | null
+  workflowName: string | null
+  url: string | null
+  pipelineNumber: number | null
+  queueDepth: number
+}
+
 export interface PrLive {
   number: number
   title: string
