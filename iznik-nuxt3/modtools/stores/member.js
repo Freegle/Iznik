@@ -298,11 +298,27 @@ export const useMemberStore = defineStore({
       console.log('useMemberStore askMerge', id, params)
       await api(this.config).merge.ask(params)
       delete this.list[id]
+      const authStore = useAuthStore()
+      if (
+        authStore.work &&
+        typeof authStore.work.relatedmembers === 'number' &&
+        authStore.work.relatedmembers > 0
+      ) {
+        authStore.work.relatedmembers--
+      }
     },
     async ignoreMerge(id, params) {
       console.log('useMemberStore ignoreMerge', id, params)
       await api(this.config).merge.ignore(params)
       delete this.list[id]
+      const authStore = useAuthStore()
+      if (
+        authStore.work &&
+        typeof authStore.work.relatedmembers === 'number' &&
+        authStore.work.relatedmembers > 0
+      ) {
+        authStore.work.relatedmembers--
+      }
     },
   },
   getters: {

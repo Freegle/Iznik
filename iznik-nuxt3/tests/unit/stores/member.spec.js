@@ -3,6 +3,8 @@ import { setActivePinia, createPinia } from 'pinia'
 
 const mockReviewIgnore = vi.fn().mockResolvedValue()
 const mockFetchMembers = vi.fn()
+const mockMergeAsk = vi.fn().mockResolvedValue()
+const mockMergeIgnore = vi.fn().mockResolvedValue()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -10,12 +12,19 @@ vi.mock('~/api', () => ({
       reviewIgnore: mockReviewIgnore,
       fetchMembers: mockFetchMembers,
     },
+    merge: {
+      ask: mockMergeAsk,
+      ignore: mockMergeIgnore,
+    },
   }),
 }))
+
+const mockAuthWork = { relatedmembers: 0 }
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({
     user: { id: 999 },
+    work: mockAuthWork,
   }),
 }))
 
@@ -65,6 +74,62 @@ describe('member store', () => {
       await store.spamignore({ userid: 456, groupid: 789 })
 
       expect(store.list[123]).toBeUndefined()
+    })
+  })
+
+  describe('askMerge / ignoreMerge — related-members counter (regression #9631)', () => {
+    // Regression: after PR #306 fixed the backend login-history query, the counter
+    // still showed 1 after a valid pair was processed because askMerge/ignoreMerge
+    // removed the pair from the store but did not decrement authStore.work.relatedmembers.
+    // The counter only updated on the next checkWork() cycle (up to 30 seconds later),
+    // leaving the nav badge stuck at 1 while the list was empty.
+
+    beforeEach(() => {
+      mockAuthWork.relatedmembers = 1
+    })
+
+    it('ignoreMerge decrements work.relatedmembers immediately', async () => {
+      const store = useMemberStore()
+      store.config = {}
+      store.list[10] = { id: 10, user1: 100, user2: 200, collection: 'Related' }
+
+      await store.ignoreMerge(10, { user1: 100, user2: 200 })
+
+      expect(mockAuthWork.relatedmembers).toBe(0)
+      expect(store.list[10]).toBeUndefined()
+    })
+
+    it('askMerge decrements work.relatedmembers immediately', async () => {
+      const store = useMemberStore()
+      store.config = {}
+      store.list[10] = { id: 10, user1: 100, user2: 200, collection: 'Related' }
+
+      await store.askMerge(10, { user1: 100, user2: 200 })
+
+      expect(mockAuthWork.relatedmembers).toBe(0)
+      expect(store.list[10]).toBeUndefined()
+    })
+
+    it('ignoreMerge does not decrement below zero', async () => {
+      mockAuthWork.relatedmembers = 0
+      const store = useMemberStore()
+      store.config = {}
+      store.list[10] = { id: 10, user1: 100, user2: 200, collection: 'Related' }
+
+      await store.ignoreMerge(10, { user1: 100, user2: 200 })
+
+      expect(mockAuthWork.relatedmembers).toBe(0)
+    })
+
+    it('askMerge does not decrement below zero', async () => {
+      mockAuthWork.relatedmembers = 0
+      const store = useMemberStore()
+      store.config = {}
+      store.list[10] = { id: 10, user1: 100, user2: 200, collection: 'Related' }
+
+      await store.askMerge(10, { user1: 100, user2: 200 })
+
+      expect(mockAuthWork.relatedmembers).toBe(0)
     })
   })
 
