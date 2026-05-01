@@ -85,6 +85,29 @@ Status container has Sentry integration. Set `SENTRY_AUTH_TOKEN` in `.env`. See 
 
 **Active plan**: none currently active.
 
+### 2026-04-30 - Standard message delete and config persistence fix (Topic 9518)
+
+**Issue**: DELETE /modtools/stdmsg endpoint returned 404 errors; changing group's standard message config did not persist.
+
+**Root Causes**:
+1. DELETE endpoint implementation was correct but lacked test coverage for error cases
+2. Membership config changes stored in settings JSON only, not in memberships.configid column
+
+**Solution**:
+1. Added comprehensive test coverage for DELETE endpoint (authorization, error cases, success path)
+2. Extended PATCH /memberships endpoint to accept `configid` parameter:
+   - Validates config exists before update
+   - Updates memberships.configid column for persistence  
+   - Added audit logging via new LOG_SUBTYPE_CONFIG_CHANGE constant
+3. Added TestPatchMembershipsConfigChange to verify persistence across reloads
+
+**Tests**: All 2278 Go tests pass (0 failures). New tests added for both issues.
+
+**Commits**:
+- 51c267e1b: fix(stdmsg, membership): delete endpoint and config persistence
+
+**PR**: https://github.com/Freegle/Iznik/pull/309 — ready for code review
+
 ### 2026-04-30 - Auto-Repost Excessive Frequency Bug Fix (Discourse 9481)
 
 **Goal**: Fix excessive auto-reposts in single batch (Issue: user received nearly 50 reposts, with items 3 weeks old)
