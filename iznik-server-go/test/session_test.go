@@ -1460,6 +1460,32 @@ func TestWorkCountSpamMessages(t *testing.T) {
 	assert.GreaterOrEqual(t, spam, float64(1), "Should count spam message")
 }
 
+func TestWorkCountSpamMembersReFlaggedAfterRecentReview(t *testing.T) {
+	// Regression: commit 4749246f6 changed the member list query to use
+	// reviewrequestedat > reviewedat, but session.go badge counts still used the
+	// old 31-day window. A member reviewed within 31 days and then re-flagged
+	// must appear in spammembers.
+	prefix := uniquePrefix("wc_reflg")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	spamUserID := CreateTestUser(t, prefix+"_spam", "User")
+	db.Exec(`INSERT INTO memberships (userid, groupid, role, collection, reviewedat, reviewrequestedat)
+		VALUES (?, ?, 'Member', 'Approved',
+		DATE_SUB(NOW(), INTERVAL 5 DAY),
+		NOW())`,
+		spamUserID, groupID)
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", spamUserID, groupID)
+
+	work := getSessionWork(t, token)
+	spammembers := work["spammembers"].(float64)
+	assert.GreaterOrEqual(t, spammembers, float64(1),
+		"Re-flagged member (reviewrequestedat > reviewedat) must count in spammembers badge")
+}
+
 // ---------------------------------------------------------------------------
 // Work Counts: Deleted messages excluded from pending/spam counts
 // ---------------------------------------------------------------------------
