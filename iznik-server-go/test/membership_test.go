@@ -3245,3 +3245,46 @@ func TestPatchMembershipsConfigChange(t *testing.T) {
 		modID, groupID).Scan(&configID2)
 	assert.Equal(t, cfgID2, configID2)
 }
+
+func TestGetMembershipsExcludesDeletedUsers(t *testing.T) {
+	// Regression: Deleted users should not appear in member lists even if they have memberships.
+	// This ensures that users in limbo (mark for deletion) don't appear as active members.
+	prefix := uniquePrefix("mem_deleted")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+
+	// Create moderator
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create two members
+	member1ID := CreateTestUser(t, prefix+"_member1", "User")
+	CreateTestMembership(t, member1ID, groupID, "Member")
+
+	member2ID := CreateTestUser(t, prefix+"_member2", "User")
+	CreateTestMembership(t, member2ID, groupID, "Member")
+
+	// Mark one member as deleted (in limbo)
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", member2ID)
+
+	// Get membership list
+	url := fmt.Sprintf("/api/memberships?jwt=%s&groupid=%d&collection=Approved", modToken, groupID)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Parse response
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	members := result["members"].([]interface{})
+
+	// Should only contain the non-deleted member
+	assert.Equal(t, 1, len(members), "Should only return non-deleted members")
+
+	// Verify it's the right member
+	member := members[0].(map[string]interface{})
+	assert.Equal(t, float64(member1ID), member["userid"])
+}

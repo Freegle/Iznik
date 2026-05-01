@@ -356,7 +356,7 @@ func GetMemberships(c *fiber.Ctx) error {
 			"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason "+
 			"FROM users_banned b "+
 			"JOIN users u ON u.id = b.userid "+
-			"WHERE b.groupid = ? "+
+			"WHERE b.groupid = ? AND u.deleted IS NULL "+
 			"ORDER BY b.date DESC LIMIT ?",
 			groupid, limit).Scan(&members)
 		if members == nil {
@@ -380,7 +380,7 @@ func GetMemberships(c *fiber.Ctx) error {
 			"JOIN users u ON u.id = m.userid "+
 			"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid "+
 			"INNER JOIN users_modmails um ON um.userid = m.userid AND um.groupid = m.groupid "+
-			"WHERE m.groupid = ? AND m.collection = ? "+
+			"WHERE m.groupid = ? AND m.collection = ? AND u.deleted IS NULL "+
 			"GROUP BY m.userid "+
 			"ORDER BY lastmodmail DESC LIMIT ?",
 			groupid, collection, limit).Scan(&members)
@@ -430,7 +430,7 @@ func GetMemberships(c *fiber.Ctx) error {
 		if numErr == nil && searchID > 0 {
 			db.Raw("SELECT "+selectCols+" "+
 				fromClause+filterJoin+" "+
-				"WHERE "+groupFilter+" AND m.collection = ?"+filterWhere+
+				"WHERE "+groupFilter+" AND m.collection = ? AND u.deleted IS NULL"+filterWhere+
 				" AND m.userid = ? "+
 				"ORDER BY m.added DESC LIMIT ?",
 				groupArg, collection, searchID, limit).Scan(&members)
@@ -439,7 +439,7 @@ func GetMemberships(c *fiber.Ctx) error {
 			db.Raw("SELECT "+selectCols+" "+
 				fromClause+filterJoin+
 				" LEFT JOIN users_emails ue ON ue.userid = m.userid "+
-				"WHERE "+groupFilter+" AND m.collection = ?"+filterWhere+
+				"WHERE "+groupFilter+" AND m.collection = ? AND u.deleted IS NULL"+filterWhere+
 				" AND (u.fullname LIKE ? OR ue.email LIKE ?) "+
 				"GROUP BY m.id "+
 				"ORDER BY m.added DESC LIMIT ?",
@@ -458,7 +458,7 @@ func GetMemberships(c *fiber.Ctx) error {
 
 		result := db.Raw("SELECT "+selectCols+" "+
 			fromClause+filterJoin+" "+
-			"WHERE m.groupid = ? AND m.collection = ?"+filterWhere+contextWhere+
+			"WHERE m.groupid = ? AND m.collection = ? AND u.deleted IS NULL"+filterWhere+contextWhere+
 			" ORDER BY m.id DESC LIMIT ?",
 			queryArgs...).Scan(&members)
 		if result.Error != nil {
@@ -484,7 +484,7 @@ func GetMemberships(c *fiber.Ctx) error {
 
 		countFrom := "FROM memberships m JOIN users u ON u.id = m.userid"
 		db.Raw("SELECT COUNT(DISTINCT m.userid) "+countFrom+filterJoin+
-			" WHERE m.groupid = ? AND m.collection = ?"+filterWhere,
+			" WHERE m.groupid = ? AND m.collection = ? AND u.deleted IS NULL"+filterWhere,
 			groupid, collection).Scan(&filterCount)
 
 		return c.JSON(fiber.Map{
@@ -579,6 +579,7 @@ func getSpamMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) error 
 		fromClause+" "+
 		"WHERE m.groupid IN ? AND m.reviewrequestedat IS NOT NULL "+
 		"AND (m.reviewedat IS NULL OR m.reviewrequestedat > m.reviewedat) "+
+		"AND u.deleted IS NULL "+
 		"ORDER BY m.userid DESC LIMIT ?",
 		modGroupIDs, limit).Scan(&members)
 	if result.Error != nil {
