@@ -65,7 +65,9 @@ beforeEach(async () => {
   mockRegenerate.mockReset()
   mockAccept.mockReset()
   // Dynamic import so mocks are applied first.
-  const mod = await import('~/modtools/pages/images/index.vue')
+  // Vite's import-analysis doesn't support dynamic imports with ~ alias.
+  // Using a relative path from the vitest working directory.
+  const mod = await import('./../../../../modtools/pages/images/index.vue')
   ImagesPage = mod.default
 })
 
