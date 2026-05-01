@@ -1640,6 +1640,8 @@ func TestJoinAndPostModeratedUserGoesToPending(t *testing.T) {
 }
 
 // TestJoinAndPostBannedUserReturns403 verifies that a banned user cannot post.
+// V1 parity: a ban deletes the memberships row and inserts into users_banned —
+// there is no memberships.collection='Banned' row. The check must consult users_banned.
 func TestJoinAndPostBannedUserReturns403(t *testing.T) {
 	prefix := uniquePrefix("msgmod_jap_ban")
 	db := database.DBConn
@@ -1648,8 +1650,8 @@ func TestJoinAndPostBannedUserReturns403(t *testing.T) {
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, userID)
 
-	// Create a Banned membership.
-	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Banned')", userID, groupID)
+	// Real ban state: no memberships row, row in users_banned.
+	db.Exec("INSERT INTO users_banned (userid, groupid, byuser) VALUES (?, ?, ?)", userID, groupID, userID)
 
 	// Create a draft message.
 	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Banned chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
@@ -1668,6 +1670,16 @@ func TestJoinAndPostBannedUserReturns403(t *testing.T) {
 	resp, err := getApp().Test(req)
 	require.NoError(t, err)
 	assert.Equal(t, 403, resp.StatusCode, "Banned user should get 403")
+
+	// The bypass also re-created the membership and the message_groups row —
+	// guard against regression by asserting neither was created.
+	var membershipCount int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID).Scan(&membershipCount)
+	assert.Equal(t, int64(0), membershipCount, "Banned user must not get a memberships row from JoinAndPost")
+
+	var msgGroupCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&msgGroupCount)
+	assert.Equal(t, int64(0), msgGroupCount, "Banned user's message must not be routed to the group")
 }
 
 // TestJoinAndPostProhibitedUserReturns403 verifies that a PROHIBITED user cannot post.

@@ -2075,8 +2075,10 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	}
 
 	// Check if user is banned from this group.
+	// V1 parity: a ban deletes the memberships row and inserts into users_banned —
+	// there is no memberships.collection='Banned' row, so the check must hit users_banned.
 	var bannedCount int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_BANNED).Scan(&bannedCount)
+	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?", myid, groupid).Scan(&bannedCount)
 	if bannedCount > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "You are banned from this group")
 	}
