@@ -730,4 +730,46 @@ describe('ModLog', () => {
       expect(wrapperWithoutByuser.text()).toContain('User left platform')
     })
   })
+
+  describe('Discourse #9622 post 12 — historical blank entries and auto-approved label', () => {
+    it('renders ModLogMessage for Message/Received when logMessage is null (deleted message)', () => {
+      // Bug (a): Message/Received had no v-else fallback when logMessage is null
+      // (message hard-deleted from DB). The inner v-if and v-else-if both require
+      // logMessage to be truthy, so a deleted message produced a completely blank row.
+      mockMessageStore.byId.mockReturnValue(null)
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Received',
+        msgid: 99,
+        // No message property → logMessage = null
+      })
+      // After fix: ModLogMessage stub must be present so the row is not blank
+      expect(wrapper.find('.mod-log-message').exists()).toBe(true)
+    })
+
+    it('labels Message/Autoapproved as "Auto-approved message" (not just "Auto-approved")', () => {
+      // Bug (b): "Auto-approved" label was ambiguous — reporter asked if it meant
+      // deletion. Fix: "Auto-approved message" matches the "Approved message" pattern
+      // for manual approval and makes clear a specific message was auto-approved.
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Autoapproved',
+        msgid: 123,
+      })
+      expect(wrapper.text()).toContain('Auto-approved message')
+    })
+
+    it('labels Group/Autoapproved as "Auto-approved message" (not just "Auto-approved")', () => {
+      // Same label fix applied to Group/Autoapproved for consistency.
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Group',
+        subtype: 'Autoapproved',
+        msgid: 456,
+      })
+      expect(wrapper.text()).toContain('Auto-approved message')
+    })
+  })
 })

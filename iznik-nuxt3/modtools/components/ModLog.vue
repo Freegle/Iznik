@@ -53,7 +53,7 @@
             Edited group settings <ModLogGroup :logid="logid" tag="for" />
           </span>
           <span v-else-if="log.subtype === 'Autoapproved'">
-            Auto-approved <ModLogMessage :logid="logid" />
+            Auto-approved message <ModLogMessage :logid="logid" />
             <ModLogGroup :logid="logid" tag="on" />
           </span>
           <span v-else>
@@ -97,6 +97,9 @@
                 Emailed <em>{{ logMessage.subject }}</em> to
                 <em>{{ logMessage.envelopeto }}</em>
               </span>
+            </span>
+            <span v-else>
+              Received <ModLogMessage :logid="logid" notext tag="to" />
             </span>
           </span>
           <span v-else-if="log.subtype === 'Autoreposted'">
@@ -188,7 +191,7 @@
             </span>
           </span>
           <span v-else-if="log.subtype === 'Autoapproved'">
-            Auto-approved <ModLogMessage :logid="logid" />
+            Auto-approved message <ModLogMessage :logid="logid" />
           </span>
           <span v-else-if="log.subtype === 'WorryWords'" class="text-danger">
             Flagged <ModLogMessage :logid="logid" notext /> {{ log.text }}
