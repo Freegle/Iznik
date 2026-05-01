@@ -106,6 +106,15 @@ module.exports = defineConfig({
                     // the e2e suite does not navigate into, so it is pure
                     // denominator noise. Unit tests cover it.
                     !sourcePath.includes('components/ChatMobileNavbar') &&
+                    // ModSettingsStandardMessageSet and ModSettingsModConfig:
+                    // modtools settings page components. The e2e suite does
+                    // not navigate to the modtools settings pages, so these
+                    // are consistently 0% covered by Playwright and add only
+                    // denominator noise. Both are covered by Vitest unit
+                    // tests (ModSettingsStandardMessageSet.spec.js,
+                    // ModSettingsModConfig.spec.js).
+                    !sourcePath.includes('ModSettingsStandardMessageSet') &&
+                    !sourcePath.includes('ModSettingsModConfig') &&
                     sourcePath.length < 300
                   )
                 },
