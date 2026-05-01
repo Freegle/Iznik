@@ -197,11 +197,11 @@ const activeSameDay = computed(() => {
 const groupsInCommon = computed(() => {
   if (!user1.value?.memberships || !user2.value?.memberships) return false
   const common = user1.value.memberships.filter((group) => {
-    const gid = group.id
+    const gid = group.groupid
     let found = false
 
     user2.value.memberships.forEach((group2) => {
-      if (group2.id === gid) {
+      if (group2.groupid === gid) {
         found = true
       }
     })

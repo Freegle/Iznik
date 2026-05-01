@@ -69,7 +69,7 @@ const visibleMembers = computed(() => {
 
     const inGroup = (user) => {
       if (!user?.memberships) return false
-      return user.memberships.some((g) => parseInt(g.id) === groupid.value)
+      return user.memberships.some((g) => parseInt(g.groupid) === groupid.value)
     }
 
     return inGroup(u1) || inGroup(u2)

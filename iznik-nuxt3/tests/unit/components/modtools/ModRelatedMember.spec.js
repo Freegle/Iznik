@@ -53,7 +53,7 @@ describe('ModRelatedMember', () => {
       ],
       lastaccess: now.subtract(1, 'day').toISOString(),
       messagehistory: [{ id: 101, subject: 'Test post' }],
-      memberships: [{ id: 10, namedisplay: 'Group 1' }],
+      memberships: [{ id: 50, groupid: 10, namedisplay: 'Group 1' }],
       ...user1Overrides,
     }
 
@@ -71,7 +71,7 @@ describe('ModRelatedMember', () => {
       ],
       lastaccess: now.subtract(2, 'day').toISOString(),
       messagehistory: [],
-      memberships: [{ id: 10, namedisplay: 'Group 1' }],
+      memberships: [{ id: 50, groupid: 10, namedisplay: 'Group 1' }],
       ...user2Overrides,
     }
 
@@ -226,7 +226,10 @@ describe('ModRelatedMember', () => {
 
   describe('whichjoined computed', () => {
     it('returns Both when both are members', () => {
-      setupData({ memberships: [{ id: 10 }] }, { memberships: [{ id: 20 }] })
+      setupData(
+        { memberships: [{ id: 50, groupid: 10 }] },
+        { memberships: [{ id: 60, groupid: 20 }] }
+      )
       const wrapper = mountComponent()
       expect(wrapper.vm.whichjoined).toBe('Both')
     })
@@ -268,19 +271,28 @@ describe('ModRelatedMember', () => {
 
   describe('groupsInCommon computed', () => {
     it('returns truthy when groups in common', () => {
-      setupData({ memberships: [{ id: 10 }] }, { memberships: [{ id: 10 }] })
+      setupData(
+        { memberships: [{ id: 50, groupid: 10 }] },
+        { memberships: [{ id: 51, groupid: 10 }] }
+      )
       const wrapper = mountComponent()
       expect(wrapper.vm.groupsInCommon).toBeTruthy()
     })
 
     it('returns falsy when no groups in common', () => {
-      setupData({ memberships: [{ id: 10 }] }, { memberships: [{ id: 20 }] })
+      setupData(
+        { memberships: [{ id: 51, groupid: 10 }] },
+        { memberships: [{ id: 52, groupid: 20 }] }
+      )
       const wrapper = mountComponent()
       expect(wrapper.vm.groupsInCommon).toBeFalsy()
     })
 
     it('shows Groups in common badge when true', () => {
-      setupData({ memberships: [{ id: 10 }] }, { memberships: [{ id: 10 }] })
+      setupData(
+        { memberships: [{ id: 50, groupid: 10 }] },
+        { memberships: [{ id: 51, groupid: 10 }] }
+      )
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('Groups in common')
     })
@@ -383,12 +395,12 @@ describe('ModRelatedMember', () => {
   describe('probablySame computed', () => {
     it('returns true when similar and groups in common', () => {
       setupData(
-        { displayname: 'John Smith', memberships: [{ id: 10 }] },
+        { displayname: 'John Smith', memberships: [{ id: 53, groupid: 10 }] },
         {
           displayname: 'John Smith',
           email: 'user2@example.com',
           emails: [],
-          memberships: [{ id: 10 }],
+          memberships: [{ id: 54, groupid: 10 }],
         }
       )
       const wrapper = mountComponent()
@@ -436,12 +448,12 @@ describe('ModRelatedMember', () => {
 
     it('shows Probably the same badge when true', () => {
       setupData(
-        { displayname: 'John Smith', memberships: [{ id: 10 }] },
+        { displayname: 'John Smith', memberships: [{ id: 53, groupid: 10 }] },
         {
           displayname: 'John Smith',
           email: 'user2@example.com',
           emails: [],
-          memberships: [{ id: 10 }],
+          memberships: [{ id: 54, groupid: 10 }],
         }
       )
       const wrapper = mountComponent()

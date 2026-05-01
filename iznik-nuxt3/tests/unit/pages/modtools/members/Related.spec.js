@@ -188,12 +188,12 @@ describe('Related Page', () => {
     it('visibleMembers filters by user1 groupid when groupid > 0', () => {
       addPair(100, 1, 2)
       addPair(101, 3, 4)
-      // Only user 1 is in group 5
+      // Only user 1 is in group 5 — memberships use {id: rowId, groupid: groupId}
       mockUserStore.list = {
-        1: { id: 1, memberships: [{ id: 5 }] },
-        2: { id: 2, memberships: [{ id: 6 }] },
-        3: { id: 3, memberships: [{ id: 7 }] },
-        4: { id: 4, memberships: [{ id: 8 }] },
+        1: { id: 1, memberships: [{ id: 501, groupid: 5 }] },
+        2: { id: 2, memberships: [{ id: 502, groupid: 6 }] },
+        3: { id: 3, memberships: [{ id: 503, groupid: 7 }] },
+        4: { id: 4, memberships: [{ id: 504, groupid: 8 }] },
       }
       mockGroupid.value = 5
       const wrapper = mountComponent()
@@ -207,10 +207,10 @@ describe('Related Page', () => {
       addPair(101, 3, 4)
       // User 2 is in group 5, user 4 is also in group 5
       mockUserStore.list = {
-        1: { id: 1, memberships: [{ id: 6 }] },
-        2: { id: 2, memberships: [{ id: 5 }] },
-        3: { id: 3, memberships: [{ id: 7 }] },
-        4: { id: 4, memberships: [{ id: 5 }] },
+        1: { id: 1, memberships: [{ id: 501, groupid: 6 }] },
+        2: { id: 2, memberships: [{ id: 502, groupid: 5 }] },
+        3: { id: 3, memberships: [{ id: 503, groupid: 7 }] },
+        4: { id: 4, memberships: [{ id: 504, groupid: 5 }] },
       }
       mockGroupid.value = 5
       const wrapper = mountComponent()
