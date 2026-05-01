@@ -311,4 +311,46 @@ describe('ComposeGroup', () => {
       consoleSpy.mockRestore()
     })
   })
+
+  describe('user-initiated group change during repost', () => {
+    it('should preserve user-chosen group even when savedGroup is still valid', async () => {
+      // Simulate repost scenario: original group 1, but user wants group 2
+      mockComposeStore.group = 1 // Initial group from repost
+      mockComposeStore.postcode = {
+        name: 'SW1A 1AA',
+        groupsnear: [
+          { id: 1, namedisplay: 'London Central', nameshort: 'london-central' },
+          { id: 2, namedisplay: 'Westminster', nameshort: 'westminster' },
+        ],
+      }
+
+      mockApi.location.typeahead.mockResolvedValueOnce([
+        {
+          name: 'SW1A 1AA',
+          groupsnear: [
+            { id: 1, namedisplay: 'London Central', nameshort: 'london-central' },
+            { id: 2, namedisplay: 'Westminster', nameshort: 'westminster' },
+          ],
+        },
+      ])
+
+      mockAuthStore.groups = [
+        { groupid: 1, namedisplay: 'London Central', nameshort: 'london' },
+        { groupid: 2, namedisplay: 'Westminster', nameshort: 'westminster' },
+      ]
+
+      const wrapper = createWrapper()
+
+      // User changes group to 2 after mount but before async operations complete
+      const select = wrapper.find('.form-select')
+      await select.setValue('2')
+      expect(mockComposeStore.group).toBe('2')
+
+      // Let async operations complete
+      await flushPromises()
+
+      // The group should remain 2 (user's choice), NOT revert to 1 (savedGroup)
+      expect(mockComposeStore.group).toBe('2')
+    })
+  })
 })

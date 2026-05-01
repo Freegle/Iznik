@@ -6,7 +6,7 @@
   />
 </template>
 <script setup>
-import { computed, nextTick, onMounted } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useComposeStore } from '~/stores/compose'
 import { useAuthStore } from '~/stores/auth'
 import { useGroupStore } from '~/stores/group'
@@ -25,6 +25,10 @@ const composeStore = useComposeStore()
 const authStore = useAuthStore()
 const groupStore = useGroupStore()
 const runtimeConfig = useRuntimeConfig()
+
+// Track the last group value the user explicitly set via the dropdown.
+// This lets us distinguish between user-chosen values and component-driven resets.
+const lastUserSelectedGroup = ref(null)
 
 const postcode = computed(() => {
   return composeStore?.postcode
@@ -48,6 +52,8 @@ const group = computed({
     return ret
   },
   set(newVal) {
+    // Track user-initiated changes so the final guard doesn't overwrite them
+    lastUserSelectedGroup.value = newVal
     composeStore.group = newVal
   },
 })
@@ -142,13 +148,15 @@ onMounted(async () => {
   // async fetchUser wait (options re-evaluated while the saved group wasn't in
   // groupsnear yet). Restore savedGroup if it is still valid — i.e. present in
   // groupsnear or among the user's group memberships.
+  // However, respect if the user explicitly selected a different group (don't override user choice).
   if (savedGroup && composeStore.group !== savedGroup) {
     const groupsNear = postcode.value?.groupsnear || []
     const savedGroupValid =
       groupsNear.some((g) => parseInt(g.id) === parseInt(savedGroup)) ||
       myGroups.value.some((g) => parseInt(g.groupid) === parseInt(savedGroup))
 
-    if (savedGroupValid) {
+    // Only restore savedGroup if the user hasn't explicitly chosen a different one
+    if (savedGroupValid && lastUserSelectedGroup.value === null) {
       composeStore.group = savedGroup
     }
   }
