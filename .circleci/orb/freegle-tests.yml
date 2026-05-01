@@ -2578,8 +2578,9 @@ jobs:
           name: Check patch coverage
           when: always
           command: |
-            # Skip on master — no diff to check, and Coveralls trend uploads above are sufficient.
+            # Skip on master/production — no PR diff to check against, and Coveralls trend uploads are sufficient.
             [ "${CIRCLE_BRANCH:-}" = "master" ] && echo "ℹ️ Skipping patch coverage on master" && exit 0
+            [ "${CIRCLE_BRANCH:-}" = "production" ] && echo "ℹ️ Skipping patch coverage on production" && exit 0
             [ "${SKIP_COVERAGE:-}" = "true" ] && echo "ℹ️ Skipping patch coverage (no token)" && exit 0
 
             echo "=== Patch Coverage Check ==="
