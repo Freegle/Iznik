@@ -649,6 +649,50 @@ describe('ModChatModal', () => {
       expect(component.vm.user2).toBe(null)
     })
 
+    it('returns u2id (not u1id) when pov matches neither participant, preventing self-talking', async () => {
+      // Bug C: when pov doesn't match u2id, the old code fell back to u1id unconditionally.
+      // If pov also doesn't match u1id, both user1 and user2 computed resolve to u1id — self-talking.
+      const user1 = createUser({ id: 456, displayname: 'User One' })
+      const user2 = createUser({ id: 789, displayname: 'User Two' })
+      registerUsers(user1, user2)
+      // pov=999 matches neither participant (edge case: stale pov after store update)
+      const chat = createChat({ user1: 456, user2: 789 })
+      mockChatStore.byChatId.mockReturnValue(chat)
+
+      const wrapper = await mountComponent({ id: 123, pov: 999 })
+      const component = getModChatModal(wrapper)
+      component.vm.chat2 = chat
+      await nextTick()
+
+      // user1 computed: u1id(456) !== pov(999) → id=456 → User One
+      expect(component.vm.user1).toEqual(user1)
+      // user2 computed (fixed): should fall back to u2id(789), not u1id(456)
+      // Old code: u2id(789) !== pov(999) → fell back to u1id(456) → same as user1 (self-talking)
+      expect(component.vm.user2).toEqual(user2)
+    })
+
+    it('when pov is touserid (recipient), sender appears on left and recipient on right', async () => {
+      // Symptom 2 (Carol1 #219): chatPov used chat.user2 (sender) placing the suspicious
+      // sender on the right as "self". Fixed chatPov now uses touserid (recipient) as pov,
+      // so this modal receives pov=recipient → sender appears on the left (correct view).
+      const sender = createUser({ id: 200, displayname: 'Sender' })
+      const recipient = createUser({ id: 100, displayname: 'Recipient' })
+      registerUsers(sender, recipient)
+      // DB: user1=100 (recipient), user2=200 (sender of suspicious message)
+      const chat = createChat({ user1: 100, user2: 200 })
+      mockChatStore.byChatId.mockReturnValue(chat)
+
+      const wrapper = await mountComponent({ id: 123, pov: 100 }) // pov = recipient
+      const component = getModChatModal(wrapper)
+      component.vm.chat2 = chat
+      await nextTick()
+
+      // user1 (left slot): u1id(100) === pov(100) → swap → id=u2id=200 → sender on left ✓
+      expect(component.vm.user1).toEqual(sender)
+      // user2 (right/self slot): u2id(200)===pov(100)? No → u1id(100)===pov(100)? Yes → id=100 → recipient ✓
+      expect(component.vm.user2).toEqual(recipient)
+    })
+
     it('handles empty chat messages array', async () => {
       const chat = createChat()
       mockChatStore.byChatId.mockReturnValue(chat)
