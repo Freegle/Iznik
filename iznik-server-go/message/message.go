@@ -2866,6 +2866,10 @@ func PutMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
+	// If user is deleted, reactivate them (set deleted = NULL).
+	// This allows deleted users to recover their account by posting a message.
+	db.Exec("UPDATE users SET deleted = NULL WHERE id = ? AND deleted IS NOT NULL", myid)
+
 	if req.Type != "Offer" && req.Type != "Wanted" {
 		return fiber.NewError(fiber.StatusBadRequest, "type must be Offer or Wanted")
 	}

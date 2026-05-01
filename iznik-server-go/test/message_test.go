@@ -2627,6 +2627,58 @@ func TestPutMessageNewEmailGetsJWT(t *testing.T) {
 	assert.True(t, hasJWT, "Response should contain JWT for new user")
 }
 
+func TestPutMessageReactivatesDeletedUser(t *testing.T) {
+	// When a deleted user posts a message, their account should be reactivated
+	// (deleted flag cleared). This allows deleted users to recover by posting.
+	// Related to Discourse topic 9497, post 62201: deleted account but could still post messages.
+	prefix := uniquePrefix("msgdel_reactivate")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	// Soft-delete the user (simulate account deletion).
+	// This sets deleted=NOW() as LimboUser does.
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", userID)
+
+	// Verify user is deleted before posting.
+	var deletedBefore *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&deletedBefore)
+	assert.NotNil(t, deletedBefore, "user should be marked as deleted before posting")
+
+	// Post a draft message. Deleted users should be able to post drafts.
+	body := map[string]interface{}{
+		"type":     "Wanted",
+		"subject":  prefix + " Test Offer",
+		"textbody": "A deleted user posting",
+		"item":     "Test Item",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "deleted user should be able to post")
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+	assert.Greater(t, result["id"], float64(0))
+
+	// Verify the message was created.
+	newID := uint64(result["id"].(float64))
+	var subject string
+	db.Raw("SELECT subject FROM messages WHERE id = ?", newID).Scan(&subject)
+	assert.Equal(t, prefix+" Test Offer", subject)
+
+	// Verify user is now reactivated (deleted flag is NULL).
+	var deletedAfter *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&deletedAfter)
+	assert.Nil(t, deletedAfter, "user should be reactivated (deleted set to NULL) after posting")
+}
+
 // --- Test: BackToPending ---
 
 func TestPostMessageBackToPending(t *testing.T) {
