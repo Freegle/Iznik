@@ -61,8 +61,7 @@
             <a :href="pr.url" target="_blank" rel="noopener" class="text-decoration-none">
               #{{ pr.number }}
             </a>
-            <span v-if="pr.number === focusPRNumber" title="FSM focus — only this PR gets fix attempts" class="ms-1">🎯</span>
-            <span v-else-if="exhaustedPRNumbers.includes(pr.number)" title="FSM gave up — needs human review" class="ms-1">⚠</span>
+            <span v-if="exhaustedPRNumbers.includes(pr.number)" title="FSM gave up — needs human review" class="ms-1">⚠</span>
           </td>
           <td style="max-width: 220px;">
             <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ pr.title }}</div>
@@ -142,7 +141,7 @@ function combinedStatusClass(pr: PrLive): string {
   if (s === 'queued') return 'bg-secondary'
   if (s === 'failed') return 'bg-danger'
   if (s === 'ready') return 'bg-success'
-  if (s === 'needs-update') return 'bg-info text-dark'
+  if (s === 'needs-update') return 'bg-secondary-subtle text-secondary-emphasis border border-secondary'
   return 'bg-warning text-dark' // needs-rebase / needs-review
 }
 
