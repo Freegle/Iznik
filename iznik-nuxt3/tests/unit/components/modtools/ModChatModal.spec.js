@@ -443,6 +443,21 @@ describe('ModChatModal', () => {
 
         expect(component.vm.user2).toEqual(first)
       })
+
+      it('returns null for User2Mod chat where user2=0 (no real second participant)', async () => {
+        // Bug: user2 computed fell back to user1 when u2id=null, showing the same user
+        // on both sides of the header ("shows other side as self")
+        const u1 = createUser({ id: 456, displayname: 'Sender' })
+        registerUsers(u1)
+        const chat = createChat({ user1: 456, user2: 0 })
+
+        const wrapper = await mountComponent({ pov: 456 })
+        const component = getModChatModal(wrapper)
+        component.vm.chat2 = chat
+        await nextTick()
+
+        expect(component.vm.user2).toBe(null)
+      })
     })
   })
 
@@ -620,7 +635,7 @@ describe('ModChatModal', () => {
       expect(component.vm.user1).toBe(null)
     })
 
-    it('handles chat with null user2 by falling back to user1', async () => {
+    it('returns null for user2 when user2 is null (User2Mod: no second participant)', async () => {
       const onlyUser = createUser({ id: 456, displayname: 'Only User' })
       registerUsers(onlyUser)
       const chat = createChat({ user1: 456, user2: null })
@@ -631,8 +646,7 @@ describe('ModChatModal', () => {
       component.vm.chat2 = chat
       await nextTick()
 
-      // When user2 is null, the computed property falls back to user1
-      expect(component.vm.user2).toEqual(onlyUser)
+      expect(component.vm.user2).toBe(null)
     })
 
     it('handles empty chat messages array', async () => {

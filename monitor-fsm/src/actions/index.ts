@@ -1026,8 +1026,12 @@ print(urllib.request.urlopen(req).read().decode())
           const name = cols[0] ?? ''
           const state = (cols[1] ?? '').toLowerCase()
           const url = cols[3] ?? ''
-          // Ignore Netlify "pages-changed" noise — it reports "skipping" when unchanged.
+          // Ignore known noise checks:
+          // - Netlify "pages-changed" etc. report "skipping" when nothing changed
+          // - "branch/up-to-date" is a GitHub housekeeping StatusContext that shows
+          //   FAILURE whenever a branch is behind master — it is not a real CI failure
           if (/pages.?changed|header rules|redirect rules/i.test(name) && /skipping/i.test(state)) continue
+          if (/branch.?up.?to.?date/i.test(name)) continue
           if (/^(fail|failure|cancelled|canceled|timed.?out|error)$/.test(state)) {
             failed.push({ context: name, state, url })
           } else if (/^(pending|queued|in.?progress|running)$/.test(state)) {
