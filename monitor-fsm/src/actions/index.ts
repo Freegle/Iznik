@@ -17,6 +17,7 @@ import {
   upsertDiscourseBug,
   reopenBugAfterRejection,
   upsertPr,
+  findTagDuplicate,
 } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
@@ -1838,10 +1839,17 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         out(`ci_router_decide: PR #${focusPR.number} fix attempt ${prev + 1}/${MAX_FIX_ATTEMPTS} (focus PR)`)
       }
 
+      // onlyFixPR: when there IS a focus PR to fix, the iteration should ONLY
+      // run the PR fix agent — no Discourse triage, no bug dispatch, no Sentry.
+      // This prevents newly-created bug PRs from flooding the CI queue and
+      // wasting tokens analysing work we couldn't act on anyway.
+      const onlyFixPR = focusPR != null
+
       return {
         _transition: 'PARALLEL_ANALYZE_AND_FIX',
-        reason: `master green, CI queue empty — focus PR: ${focusPR ? `#${focusPR.number}` : 'none'} (${pickableRedPRs.length} red, ${exhaustedPRs.size} exhausted) + ${topicsWithNew} active topics (${phase} phase)`,
+        reason: `master green, CI queue empty — focus PR: ${focusPR ? `#${focusPR.number}` : 'none'} (${pickableRedPRs.length} red, ${exhaustedPRs.size} exhausted) + ${topicsWithNew} active topics (${phase} phase)${onlyFixPR ? ' [onlyFixPR: triage skipped]' : ''}`,
         focusPRNumber: focusPR?.number ?? null,
+        onlyFixPR,
         exhaustedPRNumbers: [...exhaustedPRs],
         exhaustedPRCount: exhaustedPRs.size,
         activeTopicCount: topicsWithNew,
@@ -1870,9 +1878,13 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         // Don't downgrade a bug already in fix-queued or fixed state
         const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
         if (existing && ['fix-queued', 'fixed', 'confirmed', 'investigating'].includes(existing.state)) { skipped++; continue }
-        // Dedup: if another post in the same Discourse topic already has an active PR,
-        // link this post to that PR instead of creating a fresh open bug. Prevents the
-        // FSM opening a second PR when a reporter follows up in the same topic thread.
+        // Parse tags from classification output (TRIAGE emits symptom_tags + code_area)
+        const symptomTags: string[] = Array.isArray(c.symptom_tags)
+          ? c.symptom_tags.map((t: unknown) => String(t).toLowerCase())
+          : []
+        const codeArea: string | null = typeof c.code_area === 'string' ? c.code_area : null
+
+        // Dedup level 1: same Discourse topic already has an active PR → link, don't open new
         const topicPrRow = db.prepare(
           `SELECT pr_number FROM discourse_bug
            WHERE topic = ? AND post != ? AND pr_number IS NOT NULL
@@ -1880,28 +1892,45 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         ).get(c.topic, c.post) as { pr_number: number } | undefined
         if (topicPrRow) {
           upsertDiscourseBug(db, {
-            topic: Number(c.topic),
-            post: Number(c.post),
-            topicTitle: c.topicTitle ?? null,
-            reporter: c.user ?? null,
+            topic: Number(c.topic), post: Number(c.post),
+            topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
             excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
-            state: 'fix-queued',
-            prNumber: topicPrRow.pr_number,
-            featureArea: c.featureArea ?? null,
+            state: 'fix-queued', prNumber: topicPrRow.pr_number,
+            featureArea: c.featureArea ?? null, symptomTags, codeArea,
           })
-          out(`persist_classifications: topic ${c.topic} post ${c.post} linked to existing PR #${topicPrRow.pr_number} (same topic)`)
+          out(`persist_classifications: topic ${c.topic}/${c.post} linked to existing PR #${topicPrRow.pr_number} (same topic)`)
           upserted++
           continue
         }
+
+        // Dedup level 2: cross-topic tag similarity — if an open bug in a DIFFERENT topic
+        // shares ≥50% symptom tags and the same code area, mark this as a duplicate rather
+        // than opening a second PR. (Research: component filter first, then text similarity.)
+        if (symptomTags.length > 0) {
+          const tagDup = findTagDuplicate(db, symptomTags, codeArea, Number(c.topic), Number(c.post))
+          if (tagDup) {
+            upsertDiscourseBug(db, {
+              topic: Number(c.topic), post: Number(c.post),
+              topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
+              excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
+              state: 'duplicate',
+              prNumber: tagDup.pr_number ?? undefined,
+              featureArea: c.featureArea ?? null, symptomTags, codeArea,
+              reason: `Duplicate of topic ${tagDup.topic}/${tagDup.post} (tag overlap)`,
+            })
+            out(`persist_classifications: topic ${c.topic}/${c.post} marked duplicate of ${tagDup.topic}/${tagDup.post} (tag similarity)`)
+            upserted++
+            continue
+          }
+        }
+
         upsertDiscourseBug(db, {
-          topic: Number(c.topic),
-          post: Number(c.post),
-          topicTitle: c.topicTitle ?? null,
-          reporter: c.user ?? null,
+          topic: Number(c.topic), post: Number(c.post),
+          topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
           excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
-          state,
-          featureArea: c.featureArea ?? null,
+          state, featureArea: c.featureArea ?? null,
           reason: type === 'deferred' ? (c.reason ?? 'deferred by triage') : undefined,
+          symptomTags, codeArea,
         })
         upserted++
       }
@@ -1964,11 +1993,9 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         return { _transition: 'COVERAGE_GATE', reason: `peak phase — no backlog bugs; deferring ${pendingCount} new bug(s) to off-peak` }
       }
 
-      // Dedup: skip bugs whose Discourse topic already has an active PR on another post.
-      // Without this, a follow-up post in the same topic (e.g. Carol post 219 after
-      // post 218 already has a PR) would be dispatched as a fresh bug and create a
-      // duplicate PR. persist_classifications handles the DB-insert path; this handles
-      // the in-memory classifications path (bugs seen this iteration, not yet persisted).
+      // Dedup: skip bugs whose Discourse topic already has an active PR on another post,
+      // or which are marked as duplicates. Cross-topic tag dedup is handled at persist
+      // time; this handles the in-memory classifications path (seen this iteration).
       const topicsWithActivePr = new Set(
         (db.prepare(
           `SELECT DISTINCT topic FROM discourse_bug
@@ -1979,10 +2006,21 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         .filter(b => !topicsWithActivePr.has(Number(b.topic)))
 
       if (allPending.length > 0) {
+        // Dispatch ONE bug at a time (oldest first_seen_at). With a single self-hosted
+        // CI runner, parallel bug dispatch creates a queue of N simultaneous CI jobs
+        // that all wait behind each other — zero benefit, high cost. One bug → one PR
+        // → drive it to green → then pick the next. This is the same principle as the
+        // focus PR logic in ci_router_decide.
+        const oneBug = allPending.sort((a, b) => {
+          const at = typeof a.first_seen_at === 'string' ? a.first_seen_at : '9999'
+          const bt = typeof b.first_seen_at === 'string' ? b.first_seen_at : '9999'
+          return at < bt ? -1 : at > bt ? 1 : 0
+        })[0]
         return {
           _transition: 'DISPATCH_ALL_BUGS',
-          reason: `${allPending.length} unfixed bug(s) (${pendingBugs.length} this iteration + ${extraBugs.length} from DB) — parallel dispatch`,
-          dbOpenBugs: extraBugs,
+          reason: `${allPending.length} unfixed bug(s) queued — dispatching 1 (oldest: topic ${oneBug.topic}/${oneBug.post}); ${allPending.length - 1} deferred to next iteration`,
+          dbOpenBugs: [oneBug].filter(b => !pendingBugs.some((p: any) => `${p.topic}.${p.post}` === `${b.topic}.${b.post}`)),
+          singleBug: oneBug,
         }
       }
       const sentry = ctx?._action_check_sentry ?? {}

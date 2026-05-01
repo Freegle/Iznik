@@ -4,6 +4,7 @@ import {
   resetDbForTests,
   upsertDiscourseBug,
   getDiscourseBug,
+  tagJaccard,
 } from '../db/index.js'
 import type { Database } from 'better-sqlite3'
 
@@ -184,5 +185,114 @@ describe('persist_classifications action', () => {
     const newBug = getDiscourseBug(db, 140, 21)
     expect(newBug?.state).toBe('fix-queued')
     expect(newBug?.pr_number).toBe(200)
+  })
+})
+
+describe('tagJaccard helper', () => {
+  it('returns 1.0 for identical sets', () => {
+    expect(tagJaccard(['delete', '404', 'stdmsg'], ['delete', '404', 'stdmsg'])).toBe(1)
+  })
+
+  it('returns 0 for disjoint sets', () => {
+    expect(tagJaccard(['chat', 'message'], ['login', 'password'])).toBe(0)
+  })
+
+  it('returns 0 if either set is empty', () => {
+    expect(tagJaccard([], ['a', 'b'])).toBe(0)
+    expect(tagJaccard(['a'], [])).toBe(0)
+  })
+
+  it('computes partial overlap correctly', () => {
+    // A={a,b,c}, B={b,c,d} → intersection=2, union=4 → 0.5
+    expect(tagJaccard(['a', 'b', 'c'], ['b', 'c', 'd'])).toBeCloseTo(0.5)
+  })
+
+  it('is case-insensitive', () => {
+    expect(tagJaccard(['DELETE', 'StdMsg'], ['delete', 'stdmsg'])).toBe(1)
+  })
+})
+
+describe('cross-topic tag dedup in persist_classifications', () => {
+  it('marks new bug as duplicate when tag overlap ≥ 50% with existing open bug', async () => {
+    // Existing open bug in topic 200 with tags
+    upsertDiscourseBug(db, {
+      topic: 200, post: 1, state: 'open',
+      symptomTags: ['delete', 'stdmsg', '404'],
+      codeArea: 'go-api:DeleteStdMsg',
+      featureArea: 'modtools:stdmsg',
+    })
+    // New bug in different topic 201 — same tags, different topic
+    const result = await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 201, post: 1, type: 'bug', user: 'alice',
+        symptom_tags: ['delete', 'stdmsg', '404'],
+        code_area: 'go-api:DeleteStdMsg',
+        summary: 'Cannot delete standard message, API returns 404',
+      }],
+    })
+    expect(result.upserted).toBe(1)
+    const newBug = getDiscourseBug(db, 201, 1)
+    expect(newBug?.state).toBe('duplicate')
+    expect(newBug?.reason).toContain('200')
+  })
+
+  it('stores symptom_tags and code_area on new bugs', async () => {
+    await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 202, post: 1, type: 'bug', user: 'bob',
+        symptom_tags: ['scroll', 'jump', 'feedback'],
+        code_area: 'nuxt:ModFeedback',
+      }],
+    })
+    const bug = getDiscourseBug(db, 202, 1)
+    expect(bug?.symptom_tags).toBe(JSON.stringify(['scroll', 'jump', 'feedback']))
+    expect(bug?.code_area).toBe('nuxt:ModFeedback')
+  })
+
+  it('does not mark as duplicate when tag overlap is below threshold', async () => {
+    upsertDiscourseBug(db, {
+      topic: 203, post: 1, state: 'open',
+      symptomTags: ['login', 'auth', 'session'],
+    })
+    // Only 1 shared tag out of 5 unique → Jaccard = 1/5 = 0.2 < 0.5
+    const result = await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 204, post: 1, type: 'bug', user: 'carol',
+        symptom_tags: ['login', 'member', 'deleted', 'status'],
+      }],
+    })
+    expect(result.upserted).toBe(1)
+    const bug = getDiscourseBug(db, 204, 1)
+    expect(bug?.state).toBe('open')  // NOT a duplicate
+  })
+
+  it('does not mark as duplicate against fixed bugs', async () => {
+    upsertDiscourseBug(db, {
+      topic: 205, post: 1, state: 'fixed', prNumber: 99,
+      symptomTags: ['delete', 'stdmsg', '404'],
+    })
+    // Even if tags match, fixed bugs should not be dedup targets
+    await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 206, post: 1, type: 'bug', user: 'dave',
+        symptom_tags: ['delete', 'stdmsg', '404'],
+      }],
+    })
+    const bug = getDiscourseBug(db, 206, 1)
+    expect(bug?.state).toBe('open')  // new bug, not a duplicate of fixed
+  })
+
+  it('same topic dedup takes precedence over tag dedup', async () => {
+    // Same-topic PR linking should fire before tag matching
+    upsertDiscourseBug(db, { topic: 207, post: 1, state: 'open', prNumber: 77 })
+    await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 207, post: 2, type: 'bug', user: 'eve',
+        symptom_tags: ['delete', 'stdmsg'],
+      }],
+    })
+    const bug = getDiscourseBug(db, 207, 2)
+    expect(bug?.state).toBe('fix-queued')
+    expect(bug?.pr_number).toBe(77)
   })
 })

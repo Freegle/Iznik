@@ -2,7 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MIGRATION_V2_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
+import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -36,6 +36,11 @@ function applySchema(db: DB): void {
   const current = row?.v ?? 0
   if (current < 2) {
     try { db.exec(MIGRATION_V2_SQL) } catch { /* column already exists */ }
+  }
+  if (current < 3) {
+    for (const stmt of MIGRATION_V3_SQL.trim().split('\n').filter(s => s.trim())) {
+      try { db.exec(stmt) } catch { /* column already exists */ }
+    }
   }
   if (current < SCHEMA_VERSION) {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION)
@@ -96,6 +101,8 @@ export interface DiscourseBugRow {
   fixed_at: string | null
   deployed_at: string | null
   pr_rejections: number
+  symptom_tags: string | null  // JSON array e.g. '["delete","404","stdmsg"]'
+  code_area: string | null     // e.g. "go-api:DeleteStdMsg" or "nuxt:ModStdMsg"
 }
 
 export function upsertDiscourseBug(db: DB, bug: {
@@ -108,10 +115,12 @@ export function upsertDiscourseBug(db: DB, bug: {
   prNumber?: number
   featureArea?: string
   reason?: string
+  symptomTags?: string[]
+  codeArea?: string
 }): void {
   db.prepare(`
-    INSERT INTO discourse_bug (topic, post, topic_title, reporter, excerpt, state, pr_number, feature_area, reason, last_seen_at)
-    VALUES (?, ?, ?, ?, ?, COALESCE(?, 'open'), ?, ?, ?, datetime('now'))
+    INSERT INTO discourse_bug (topic, post, topic_title, reporter, excerpt, state, pr_number, feature_area, reason, symptom_tags, code_area, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, COALESCE(?, 'open'), ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(topic, post) DO UPDATE SET
       topic_title = COALESCE(excluded.topic_title, topic_title),
       reporter = COALESCE(excluded.reporter, reporter),
@@ -120,6 +129,8 @@ export function upsertDiscourseBug(db: DB, bug: {
       pr_number = COALESCE(excluded.pr_number, pr_number),
       feature_area = COALESCE(excluded.feature_area, feature_area),
       reason = COALESCE(excluded.reason, reason),
+      symptom_tags = COALESCE(excluded.symptom_tags, symptom_tags),
+      code_area = COALESCE(excluded.code_area, code_area),
       last_seen_at = excluded.last_seen_at
   `).run(
     bug.topic,
@@ -131,6 +142,8 @@ export function upsertDiscourseBug(db: DB, bug: {
     bug.prNumber ?? null,
     bug.featureArea ?? null,
     bug.reason ?? null,
+    bug.symptomTags ? JSON.stringify(bug.symptomTags) : null,
+    bug.codeArea ?? null,
   )
 }
 
@@ -144,6 +157,49 @@ export function listOpenDiscourseBugs(db: DB): DiscourseBugRow[] {
     WHERE state NOT IN ('fixed','confirmed','off-topic','duplicate')
     ORDER BY topic, post
   `).all() as DiscourseBugRow[]
+}
+
+/** Jaccard similarity between two tag sets: |A ∩ B| / |A ∪ B|. Returns 0 if either is empty. */
+export function tagJaccard(a: string[], b: string[]): number {
+  if (a.length === 0 || b.length === 0) return 0
+  const setA = new Set(a.map(t => t.toLowerCase()))
+  const setB = new Set(b.map(t => t.toLowerCase()))
+  let intersection = 0
+  for (const t of setA) { if (setB.has(t)) intersection++ }
+  const union = setA.size + setB.size - intersection
+  return union === 0 ? 0 : intersection / union
+}
+
+/**
+ * Find an existing open bug with tag overlap ≥ threshold against the given tags.
+ * Returns the first match (by first_seen_at ASC) or null.
+ */
+export function findTagDuplicate(
+  db: DB,
+  tags: string[],
+  codeArea: string | null,
+  excludeTopic: number,
+  excludePost: number,
+  threshold = 0.5,
+): DiscourseBugRow | null {
+  if (tags.length === 0) return null
+  const candidates = db.prepare(`
+    SELECT * FROM discourse_bug
+    WHERE state IN ('open','investigating','fix-queued')
+      AND symptom_tags IS NOT NULL
+      AND NOT (topic = ? AND post = ?)
+    ORDER BY first_seen_at ASC
+  `).all(excludeTopic, excludePost) as DiscourseBugRow[]
+
+  for (const row of candidates) {
+    let rowTags: string[] = []
+    try { rowTags = JSON.parse(row.symptom_tags ?? '[]') } catch { continue }
+    const similarity = tagJaccard(tags, rowTags)
+    // Code area match boosts confidence: if code area matches exactly, lower threshold
+    const effectiveThreshold = (codeArea && row.code_area === codeArea) ? threshold * 0.7 : threshold
+    if (similarity >= effectiveThreshold) return row
+  }
+  return null
 }
 
 export function reopenBugAfterRejection(db: DB, topic: number, post: number, rejectedPrNumber: number, reason?: string): void {
