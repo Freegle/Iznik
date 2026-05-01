@@ -2588,7 +2588,10 @@ jobs:
               echo "pip3 not found — installing python3-pip"
               sudo apt-get install -y --no-install-recommends python3-pip
             fi
-            pip3 install --quiet diff-cover lcov-cobertura 2>/dev/null || pip install --quiet diff-cover lcov-cobertura
+            pip3 install --quiet --break-system-packages diff-cover lcov-cobertura 2>/dev/null || \
+              pip install --quiet --break-system-packages diff-cover lcov-cobertura 2>/dev/null || \
+              pip3 install --quiet diff-cover lcov-cobertura 2>/dev/null || \
+              pip install --quiet diff-cover lcov-cobertura
 
             # Convert each available lcov file to Cobertura XML.
             # Paths in lcov files are already repo-root-relative (iznik-server-go/, iznik-nuxt3/, etc.)
