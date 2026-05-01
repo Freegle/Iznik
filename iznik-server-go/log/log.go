@@ -68,6 +68,8 @@ const LOG_SUBTYPE_OUR_EMAIL_FREQUENCY = "OurEmailFrequency"
 
 const LOG_SUBTYPE_ROLE_CHANGE = "RoleChange"
 
+const LOG_SUBTYPE_CONFIG_CHANGE = "ConfigChange"
+
 const LOG_SUBTYPE_MERGED = "Merged"
 
 const LOG_SUBTYPE_SPLIT = "Split"

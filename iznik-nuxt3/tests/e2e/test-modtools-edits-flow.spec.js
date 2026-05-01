@@ -78,13 +78,25 @@ test.describe('ModTools Edits Flow', () => {
     // (e.g. postMessage() picks a group from the postcode area, not necessarily the
     // test group). Using the wrong groupid in the approve call silently updates 0 rows,
     // leaving collection='Pending', which prevents edit review creation.
-    const msgResp = await page.request.get(
-      `${API_V2}/message/${posted.id}`,
-      {
-        headers: { Authorization: modJwt },
-      }
-    )
-    const msgData = await msgResp.json()
+    // Poll until groups is populated — a freshly posted message may still be
+    // in an intermediate state where groups is empty on the first GET.
+    let msgData = null
+    await expect
+      .poll(
+        async () => {
+          const resp = await page.request.get(`${API_V2}/message/${posted.id}`, {
+            headers: { Authorization: modJwt },
+          })
+          msgData = await resp.json()
+          return msgData?.groups?.length > 0
+        },
+        {
+          message: 'Waiting for message to have groups populated',
+          timeout: timeouts.api.slowApi,
+          intervals: [500, 500, 1000, 1000, 2000],
+        }
+      )
+      .toBe(true)
     const fromUserId = msgData?.fromuser
     const actualGroupId = msgData?.groups?.[0]?.groupid ?? testEnv.group.id
     console.log(`Message fromuser: ${fromUserId}, actual groupid: ${actualGroupId}`)

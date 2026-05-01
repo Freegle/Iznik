@@ -2497,6 +2497,7 @@ jobs:
             sed -i 's|^SF:/app/|SF:iznik-server-go/|' "$GO_DIR/coverage.lcov"
             cd "$COV_ROOT" && export COVERALLS_FLAG_NAME="go"
             cat "$GO_DIR/coverage.lcov" | coveralls && echo "✅ Uploaded" && echo "export COV_UPLOADS=$((COV_UPLOADS + 1))" >> $BASH_ENV || echo "⚠️ Upload failed"
+            cp "$GO_DIR/coverage.lcov" /tmp/patch-go.lcov 2>/dev/null || true
             rm -f "$GO_DIR/coverage.out" "$GO_DIR/coverage.lcov"
 
       - run:
@@ -2569,9 +2570,57 @@ jobs:
               echo "📊 Uploaded $COV_UPLOADS reports. Sending webhook (carryforward=go,laravel,vitest,playwright)..."
               curl -sf -X POST "https://coveralls.io/webhook?repo_token=${COVERALLS_REPO_TOKEN}" \
                 -H "Content-Type: application/json" \
-                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\",\"carryforward\":\"go,laravel,vitest,playwright\"}}" \
+                -d "{\"payload\":{\"build_num\":\"${CIRCLE_BUILD_NUM}\",\"status\":\"done\",\"carryforward\":[\"go\",\"laravel\",\"vitest\",\"playwright\"]}}" \
                 && echo "✅ Webhook sent" || echo "⚠️ Webhook failed"
             else echo "⚠️ No coverage uploaded"; fi
+
+      - run:
+          name: Check patch coverage
+          when: always
+          command: |
+            # Skip on master — no diff to check, and Coveralls trend uploads above are sufficient.
+            [ "${CIRCLE_BRANCH:-}" = "master" ] && echo "ℹ️ Skipping patch coverage on master" && exit 0
+            [ "${SKIP_COVERAGE:-}" = "true" ] && echo "ℹ️ Skipping patch coverage (no token)" && exit 0
+
+            echo "=== Patch Coverage Check ==="
+            pip3 install --quiet diff-cover lcov-cobertura 2>/dev/null || pip install --quiet diff-cover lcov-cobertura 2>/dev/null
+
+            # Convert each available lcov file to Cobertura XML.
+            # Paths in lcov files are already repo-root-relative (iznik-server-go/, iznik-nuxt3/, etc.)
+            # which matches what git diff produces.
+            XMLS=""
+            for pair in "/tmp/patch-go.lcov:/tmp/patch-go.xml" \
+                        "/tmp/lc.lcov:/tmp/patch-laravel.xml" \
+                        "/tmp/vl.lcov:/tmp/patch-vitest.xml" \
+                        "/tmp/pl-fixed.lcov:/tmp/patch-playwright.xml"; do
+              lcov="${pair%%:*}"
+              xml="${pair##*:}"
+              if [ -s "$lcov" ]; then
+                lcov_cobertura "$lcov" -o "$xml" 2>/dev/null && XMLS="$XMLS $xml" && echo "✅ Converted $lcov"
+              fi
+            done
+
+            if [ -z "$XMLS" ]; then
+              echo "⚠️ No coverage XML produced — skipping patch check"
+              exit 0
+            fi
+
+            cd "$COV_ROOT"
+            echo "Running diff-cover against origin/master..."
+            # Three-dot diff: lines changed since the branch point (excludes merge commits).
+            git diff origin/master...HEAD > /tmp/patch.diff 2>/dev/null || git diff origin/master > /tmp/patch.diff
+            if [ ! -s /tmp/patch.diff ]; then
+              echo "ℹ️ Empty diff vs master — no changed lines to check"
+              exit 0
+            fi
+
+            diff-cover $XMLS \
+              --diff-file=/tmp/patch.diff \
+              --fail-under=80 \
+              --html-report /tmp/patch-coverage.html 2>&1
+            EXIT=$?
+            [ $EXIT -ne 0 ] && echo "❌ Patch coverage below 80% — add tests for the changed lines" || echo "✅ Patch coverage ≥ 80%"
+            exit $EXIT
 
       - collect-artifacts
 
