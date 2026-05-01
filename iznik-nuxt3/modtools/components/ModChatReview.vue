@@ -283,16 +283,17 @@ const chatroomName = computed(() => {
   return chatroom.name || null
 })
 
+// Use touserid (the recipient of the reviewed message) as pov so the sender always
+// appears on the left in View Chat. chat.user2 was wrong when the sender IS user2 —
+// it placed the suspicious sender on the right as "self", masking who sent the message.
 const chatPov = computed(() => {
+  const touserid = message.value?.touserid
+  if (touserid) return touserid
+  // touserid=0 or absent (User2Mod with no specific recipient) — fall back to
+  // chat.user2, which is also 0 for User2Mod and becomes null via ||.
   const chat = chatStore.byChatId(message.value?.chatid)
-  if (chat) {
-    // Chat is loaded: use chatroom-level user2 as consistent pov across all messages.
-    // user2=0 means User2Mod (NULL in DB) — not a valid user ID, not a valid pov.
-    // || correctly skips 0; return null to let useChat.js use myid-based alignment.
-    return chat.user2 || null
-  }
-  // Chat not yet loaded: fall back to per-message touserid temporarily.
-  return message.value?.touserid || null
+  if (chat) return chat.user2 || null
+  return null
 })
 
 const isActiveMod = computed(() => {

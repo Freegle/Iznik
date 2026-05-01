@@ -657,6 +657,28 @@ describe('ModChatModal', () => {
       expect(component.vm.user2).toEqual(user2)
     })
 
+    it('when pov is touserid (recipient), sender appears on left and recipient on right', async () => {
+      // Symptom 2 (Carol1 #219): chatPov used chat.user2 (sender) placing the suspicious
+      // sender on the right as "self". Fixed chatPov now uses touserid (recipient) as pov,
+      // so this modal receives pov=recipient → sender appears on the left (correct view).
+      const sender = createUser({ id: 200, displayname: 'Sender' })
+      const recipient = createUser({ id: 100, displayname: 'Recipient' })
+      registerUsers(sender, recipient)
+      // DB: user1=100 (recipient), user2=200 (sender of suspicious message)
+      const chat = createChat({ user1: 100, user2: 200 })
+      mockChatStore.byChatId.mockReturnValue(chat)
+
+      const wrapper = await mountComponent({ id: 123, pov: 100 }) // pov = recipient
+      const component = getModChatModal(wrapper)
+      component.vm.chat2 = chat
+      await nextTick()
+
+      // user1 (left slot): u1id(100) === pov(100) → swap → id=u2id=200 → sender on left ✓
+      expect(component.vm.user1).toEqual(sender)
+      // user2 (right/self slot): u2id(200)===pov(100)? No → u1id(100)===pov(100)? Yes → id=100 → recipient ✓
+      expect(component.vm.user2).toEqual(recipient)
+    })
+
     it('handles empty chat messages array', async () => {
       const chat = createChat()
       mockChatStore.byChatId.mockReturnValue(chat)

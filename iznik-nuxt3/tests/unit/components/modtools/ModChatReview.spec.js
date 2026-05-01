@@ -557,7 +557,10 @@ describe('ModChatReview', () => {
       expect(wrapper.vm.chatPov).toBeNull()
     })
 
-    it('does not fall through to per-message touserid when chat is loaded (uses chatroom-level pov)', () => {
+    it('prefers touserid (recipient) as pov even when chat is loaded', () => {
+      // Symptom 2 fix: chatPov used to return chat.user2 when the chat was loaded,
+      // ignoring touserid. This placed the sender on the right as "self" in View Chat.
+      // Fix: always prefer touserid so the sender appears on the LEFT (correct reviewer POV).
       globalThis.__mockChatStore.byChatId = vi.fn(() => ({
         user1: 100,
         user2: 0,
@@ -565,9 +568,22 @@ describe('ModChatReview', () => {
       }))
       const wrapper = mountComponent({ touserid: 999 })
       const viewButton = wrapper.find('.chat-view-button')
-      // chat is loaded → use chat.user2 (0 → null), NOT per-message touserid (999)
+      // touserid present → use it (not chat.user2=0→null)
       expect(viewButton.exists()).toBe(true)
-      expect(wrapper.vm.chatPov).toBeNull()
+      expect(wrapper.vm.chatPov).toBe(999)
+    })
+
+    it('uses touserid (recipient) as pov for User2User so sender appears on left in View Chat', () => {
+      // Symptom 2 (Carol1 #219): chatPov=chat.user2 (sender) put the suspicious sender
+      // on the right as "self". Fix: chatPov=touserid (recipient) puts sender on the left.
+      globalThis.__mockChatStore.byChatId = vi.fn(() => ({
+        user1: 100,
+        user2: 200,
+        chattype: 'User2User',
+      }))
+      const wrapper = mountComponent({ touserid: 100 })
+      // pov = recipient (100), so sender (200) appears on the left in View Chat
+      expect(wrapper.vm.chatPov).toBe(100)
     })
 
     it('falls back to message.touserid when chat not found', () => {
