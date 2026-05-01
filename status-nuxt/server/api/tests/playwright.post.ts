@@ -334,7 +334,11 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
         // Run retry without monocart so the main-run coverage (full suite) is not
         // overwritten by partial coverage from just the re-run frozen specs.
-        const retryCode = await spawnPlaywrightProcess(`export ENABLE_MONOCART_REPORTER=false && npx playwright test ${retryFiles}`, pfx)
+        // --last-failed: only re-run the specific tests that failed, not the whole
+        // spec file. Without this, a spec with tests 3.1/3.2/3.3 would re-execute
+        // 3.1 and 3.2, re-accumulating V8 async context so that 3.3 hits the same
+        // freeze threshold again.
+        const retryCode = await spawnPlaywrightProcess(`export ENABLE_MONOCART_REPORTER=false && npx playwright test ${retryFiles} --last-failed`, pfx)
 
         // Restore full-suite coverage — the retry covered fewer tests than the main run.
         try {
