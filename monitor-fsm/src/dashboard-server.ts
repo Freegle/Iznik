@@ -96,15 +96,16 @@ async function fetchCIRunnerStatus(): Promise<CIRunnerStatus> {
   if (!token) return { running: false, branch: null, workflowName: null, url: null, pipelineNumber: null, queueDepth: 0 }
 
   try {
-    // Fetch recent pipelines
+    // Fetch enough pipelines to cover the full queue. With a single runner,
+    // the OLDEST running workflow is the one actually executing — newer ones are waiting.
     const pipelinesRes = await httpsGet(
-      'https://circleci.com/api/v2/project/github/Freegle/Iznik/pipeline?limit=20',
+      'https://circleci.com/api/v2/project/github/Freegle/Iznik/pipeline?limit=30',
       { 'Circle-Token': token }
     )
-    const pipelines: any[] = JSON.parse(pipelinesRes).items ?? []
+    // API returns newest first; reverse so we process oldest first
+    const pipelines: any[] = (JSON.parse(pipelinesRes).items ?? []).reverse()
 
-    let running: CIRunnerStatus | null = null
-    let queueDepth = 0
+    const runningWorkflows: Array<{ pipelineNumber: number; branch: string; workflowName: string; url: string }> = []
 
     for (const pipeline of pipelines) {
       const wfRes = await httpsGet(
@@ -112,30 +113,24 @@ async function fetchCIRunnerStatus(): Promise<CIRunnerStatus> {
         { 'Circle-Token': token }
       )
       const workflows: any[] = JSON.parse(wfRes).items ?? []
-      const runningWf = workflows.find(w => w.status === 'running')
-      const hasQueued = workflows.some(w => w.status === 'on_hold' || w.status === 'not_run')
-
-      if (runningWf && !running) {
-        const url = `https://app.circleci.com/pipelines/github/Freegle/Iznik/${pipeline.number}/workflows/${runningWf.id}`
-        running = {
-          running: true,
-          branch: pipeline.vcs?.branch ?? null,
-          workflowName: runningWf.name,
-          url,
-          pipelineNumber: pipeline.number,
-          queueDepth: 0,
+      for (const wf of workflows) {
+        if (wf.status === 'running') {
+          runningWorkflows.push({
+            pipelineNumber: pipeline.number,
+            branch: pipeline.vcs?.branch ?? '',
+            workflowName: wf.name,
+            url: `https://app.circleci.com/pipelines/github/Freegle/Iznik/${pipeline.number}/workflows/${wf.id}`,
+          })
         }
-      } else if (workflows.some(w => w.status === 'running' || hasQueued)) {
-        queueDepth++
       }
-
-      // Stop scanning once we've seen enough
-      if (running && queueDepth >= 5) break
     }
 
-    const result: CIRunnerStatus = running
-      ? { ...running, queueDepth }
-      : { running: false, branch: null, workflowName: null, url: null, pipelineNumber: null, queueDepth }
+    // The oldest running workflow (lowest pipeline number, already sorted) is on the runner.
+    // Everything else is queued behind it.
+    const active = runningWorkflows[0] ?? null
+    const result: CIRunnerStatus = active
+      ? { running: true, branch: active.branch, workflowName: active.workflowName, url: active.url, pipelineNumber: active.pipelineNumber, queueDepth: runningWorkflows.length - 1 }
+      : { running: false, branch: null, workflowName: null, url: null, pipelineNumber: null, queueDepth: 0 }
 
     ciRunnerCache = { data: result, timestamp: Date.now() }
     return result

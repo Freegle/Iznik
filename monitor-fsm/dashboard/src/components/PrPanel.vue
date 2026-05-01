@@ -20,7 +20,8 @@
         <a :href="runnerStatus.url" target="_blank" rel="noopener" class="text-decoration-none fw-semibold text-primary">
           {{ runnerStatus.branch }}
         </a>
-        <span class="text-muted"> ({{ runnerStatus.workflowName }})</span>
+        <span class="text-muted"> — {{ runnerStatus.workflowName }}</span>
+        <span v-if="runnerStatus.queueDepth > 0" class="text-muted"> (+{{ runnerStatus.queueDepth }} queued)</span>
       </template>
       <template v-else>
         <span class="text-muted">Runner: </span><span class="text-success">idle</span>
@@ -117,11 +118,15 @@ const emit = defineEmits<{
 // Single combined status: what matters right now?
 type CombinedStatus = 'running' | 'queued' | 'failed' | 'needs-rebase' | 'needs-review' | 'needs-update' | 'ready'
 
+function isRunnerActive(pr: PrLive): boolean {
+  return pr.ciRunning || (runnerStatus?.running === true && runnerStatus.branch === pr.branch)
+}
+
 function combinedStatus(pr: PrLive): CombinedStatus {
   // CI status takes priority — a branch can be BEHIND *and* have pending/failing CI
   if (pr.ciStatus === 'red') return 'failed'
   if (pr.mergeStateStatus === 'UNSTABLE' || pr.ciStatus === 'pending' || pr.ciStatus === 'unknown') {
-    return pr.ciRunning ? 'running' : 'queued'
+    return isRunnerActive(pr) ? 'running' : 'queued'
   }
   // CI is green — now check merge readiness
   if (pr.mergeStateStatus === 'BEHIND') return 'needs-update'
