@@ -100,13 +100,15 @@ const emit = defineEmits<{
 }>()
 
 // Single combined status: what matters right now?
-type CombinedStatus = 'running' | 'queued' | 'failed' | 'needs-rebase' | 'needs-review' | 'ready'
+type CombinedStatus = 'running' | 'queued' | 'failed' | 'needs-rebase' | 'needs-review' | 'needs-update' | 'ready'
 
 function combinedStatus(pr: PrLive): CombinedStatus {
+  // BEHIND = CI is green on current HEAD; just needs a human to update branch + merge
+  if (pr.mergeStateStatus === 'BEHIND') return 'needs-update'
+  if (pr.ciStatus === 'red') return 'failed'
   if (pr.mergeStateStatus === 'UNSTABLE' || pr.ciStatus === 'pending' || pr.ciStatus === 'unknown') {
     return pr.ciRunning ? 'running' : 'queued'
   }
-  if (pr.ciStatus === 'red') return 'failed'
   if (pr.mergeStateStatus === 'DIRTY') return 'needs-rebase'
   if (pr.mergeStateStatus === 'BLOCKED') return 'needs-review'
   if (pr.mergeStateStatus === 'CLEAN' || pr.mergeStateStatus === 'HAS_HOOKS') return 'ready'
@@ -119,6 +121,7 @@ function combinedStatusClass(pr: PrLive): string {
   if (s === 'queued') return 'bg-secondary'
   if (s === 'failed') return 'bg-danger'
   if (s === 'ready') return 'bg-success'
+  if (s === 'needs-update') return 'bg-info text-dark'
   return 'bg-warning text-dark' // needs-rebase / needs-review
 }
 
@@ -129,6 +132,7 @@ function combinedStatusLabel(pr: PrLive): string {
     case 'failed': return 'CI failed'
     case 'needs-rebase': return 'Needs rebase'
     case 'needs-review': return 'Needs review'
+    case 'needs-update': return 'Needs update'
     case 'ready': return 'Ready'
   }
 }
