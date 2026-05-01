@@ -124,14 +124,17 @@ describe('persist_classifications action', () => {
     expect(newBug?.pr_number).toBe(100)
   })
 
-  it('does not link to inactive PRs in same topic (fixed state)', async () => {
+  it('flags regression (not plain open) when prior fixed PR exists in same topic', async () => {
+    // A new bug in the same topic as a FIXED bug is a regression — flag for human review,
+    // not auto-dispatch. It should NOT be linked to the old PR (fix-queued) either.
     upsertDiscourseBug(db, { topic: 134, post: 13, state: 'fixed', prNumber: 101 })
     await persistClassificationsHandler({}, {
       classifications: [{ topic: 134, post: 14, type: 'bug', user: 'kate' }],
     })
     const newBug = getDiscourseBug(db, 134, 14)
-    expect(newBug?.state).toBe('open')
+    expect(newBug?.state).toBe('deferred')
     expect(newBug?.pr_number).toBeNull()
+    expect(newBug?.reason).toContain('REGRESSION')
   })
 
   it('inserts retest classification as open', async () => {
@@ -185,6 +188,51 @@ describe('persist_classifications action', () => {
     const newBug = getDiscourseBug(db, 140, 21)
     expect(newBug?.state).toBe('fix-queued')
     expect(newBug?.pr_number).toBe(200)
+  })
+})
+
+describe('regression detection in persist_classifications', () => {
+  it('flags new bug as regression when prior fixed bug exists in same topic', async () => {
+    upsertDiscourseBug(db, { topic: 300, post: 1, state: 'fixed', prNumber: 42 })
+    const result = await persistClassificationsHandler({}, {
+      classifications: [{ topic: 300, post: 5, type: 'bug', user: 'neville', summary: 'Still broken after fix' }],
+    })
+    expect(result.upserted).toBe(1)
+    const newBug = getDiscourseBug(db, 300, 5)
+    expect(newBug?.state).toBe('deferred')
+    expect(newBug?.reason).toContain('REGRESSION')
+    expect(newBug?.reason).toContain('42')
+  })
+
+  it('flags retest as regression when prior fixed bug exists', async () => {
+    upsertDiscourseBug(db, { topic: 301, post: 1, state: 'fixed', prNumber: 99 })
+    await persistClassificationsHandler({}, {
+      classifications: [{ topic: 301, post: 2, type: 'retest', user: 'alice' }],
+    })
+    const bug = getDiscourseBug(db, 301, 2)
+    expect(bug?.state).toBe('deferred')
+    expect(bug?.reason).toContain('REGRESSION')
+  })
+
+  it('does NOT flag regression when prior fixed bug has no PR (unverified fix)', async () => {
+    upsertDiscourseBug(db, { topic: 302, post: 1, state: 'fixed' })  // no prNumber
+    await persistClassificationsHandler({}, {
+      classifications: [{ topic: 302, post: 2, type: 'bug', user: 'bob' }],
+    })
+    const bug = getDiscourseBug(db, 302, 2)
+    expect(bug?.state).toBe('open')  // no PR to reference, treat as normal new bug
+  })
+
+  it('does NOT flag regression for off_topic or question types', async () => {
+    upsertDiscourseBug(db, { topic: 303, post: 1, state: 'fixed', prNumber: 55 })
+    await persistClassificationsHandler({}, {
+      classifications: [
+        { topic: 303, post: 2, type: 'question', user: 'carol' },
+      ],
+    })
+    const bug = getDiscourseBug(db, 303, 2)
+    // question goes to deferred via normal path, not regression
+    expect(bug?.reason ?? '').not.toContain('REGRESSION')
   })
 })
 

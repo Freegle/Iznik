@@ -1924,13 +1924,31 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           }
         }
 
+        // Dedup level 3: regression detection — if there's already a FIXED bug in the same
+        // topic, this new report means the fix didn't work. Flag for human review rather than
+        // auto-dispatching another fix attempt.
+        let finalState = state
+        let finalReason: string | undefined = type === 'deferred' ? (c.reason ?? 'deferred by triage') : undefined
+        if ((type === 'bug' || type === 'retest') && finalState === 'open') {
+          const priorFix = db.prepare(`
+            SELECT pr_number FROM discourse_bug
+            WHERE topic = ? AND state = 'fixed' AND pr_number IS NOT NULL
+            ORDER BY fixed_at DESC LIMIT 1
+          `).get(Number(c.topic)) as { pr_number: number } | undefined
+          if (priorFix) {
+            finalState = 'deferred'
+            finalReason = `REGRESSION: fix PR #${priorFix.pr_number} confirmed not working — needs human review`
+            out(`persist_classifications: topic ${c.topic}/${c.post} flagged regression (PR #${priorFix.pr_number} didn't fix it)`)
+          }
+        }
+
         upsertDiscourseBug(db, {
           topic: Number(c.topic), post: Number(c.post),
           topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
           excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
-          state, featureArea: c.featureArea ?? null,
-          reason: type === 'deferred' ? (c.reason ?? 'deferred by triage') : undefined,
-          symptomTags, codeArea,
+          state: finalState, featureArea: (c.featureArea as string) ?? undefined,
+          reason: finalReason,
+          symptomTags, codeArea: codeArea ?? undefined,
         })
         upserted++
       }
