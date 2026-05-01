@@ -193,8 +193,9 @@ const user2 = computed(() => {
   if (!chat2.value) return null
   const u1id = resolveUserId(chat2.value.user1)
   const u2id = resolveUserId(chat2.value.user2)
-  // Show the pov user on the right
-  const id = u2id === props.pov ? u2id : u1id
+  // Show the pov user on the right; if pov matches neither participant, show u2 (not u1,
+  // which would make both sides show the same person as user1 computed).
+  const id = u2id === props.pov ? u2id : u1id === props.pov ? u1id : u2id
   return id ? userStore.byId(id) : null
 })
 

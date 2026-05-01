@@ -620,7 +620,7 @@ describe('ModChatModal', () => {
       expect(component.vm.user1).toBe(null)
     })
 
-    it('handles chat with null user2 by falling back to user1', async () => {
+    it('handles chat with null user2 by falling back to user1 when pov matches user1', async () => {
       const onlyUser = createUser({ id: 456, displayname: 'Only User' })
       registerUsers(onlyUser)
       const chat = createChat({ user1: 456, user2: null })
@@ -631,8 +631,30 @@ describe('ModChatModal', () => {
       component.vm.chat2 = chat
       await nextTick()
 
-      // When user2 is null, the computed property falls back to user1
+      // When pov matches u1id and user2 is null (u2id=0), falls back to u1id (pov user on right)
       expect(component.vm.user2).toEqual(onlyUser)
+    })
+
+    it('returns u2id (not u1id) when pov matches neither participant, preventing self-talking', async () => {
+      // Bug C: when pov doesn't match u2id, the old code fell back to u1id unconditionally.
+      // If pov also doesn't match u1id, both user1 and user2 computed resolve to u1id — self-talking.
+      const user1 = createUser({ id: 456, displayname: 'User One' })
+      const user2 = createUser({ id: 789, displayname: 'User Two' })
+      registerUsers(user1, user2)
+      // pov=999 matches neither participant (edge case: stale pov after store update)
+      const chat = createChat({ user1: 456, user2: 789 })
+      mockChatStore.byChatId.mockReturnValue(chat)
+
+      const wrapper = await mountComponent({ id: 123, pov: 999 })
+      const component = getModChatModal(wrapper)
+      component.vm.chat2 = chat
+      await nextTick()
+
+      // user1 computed: u1id(456) !== pov(999) → id=456 → User One
+      expect(component.vm.user1).toEqual(user1)
+      // user2 computed (fixed): should fall back to u2id(789), not u1id(456)
+      // Old code: u2id(789) !== pov(999) → fell back to u1id(456) → same as user1 (self-talking)
+      expect(component.vm.user2).toEqual(user2)
     })
 
     it('handles empty chat messages array', async () => {

@@ -11,10 +11,10 @@
               class="me-2"
               tag="From: "
               :groupid="
-                message.groupid ||
-                message.group?.id ||
                 message.groupidfrom ||
                 message.groupfrom?.id ||
+                message.groupid ||
+                message.group?.id ||
                 0
               "
               @reload="reload"
@@ -38,6 +38,13 @@
               "
               @reload="reload"
             />
+            <span
+              v-else-if="chatroomName"
+              class="ms-2 align-self-center"
+              data-testid="user2mod-to"
+            >
+              <strong>To: </strong>{{ chatroomName }} Volunteers
+            </span>
           </div>
           <div v-if="message.bymailid || message.msgid">
             <b-button variant="white" class="ms-2" @click="showOriginal = true">
@@ -268,6 +275,14 @@ const message = computed(() => chatStore.messageById(props.messageid))
 // Use a consistent pov based on the chatroom's user2, not the per-message touser.
 // This ensures messages from user1 always appear on the left and user2 on the right,
 // regardless of which direction the reviewed message was sent.
+// For User2Mod chats (user2=NULL in DB, touserid=0), show the chatroom's group name in the To: position.
+// The chatroom name for User2Mod is the mod group's short name (set by Go API).
+const chatroomName = computed(() => {
+  const chatroom = chatStore.byChatId(message.value?.chatid)
+  if (!chatroom || chatroom.chattype !== 'User2Mod') return null
+  return chatroom.name || null
+})
+
 const chatPov = computed(() => {
   const chat = chatStore.byChatId(message.value?.chatid)
   if (chat) {
