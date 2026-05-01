@@ -104,7 +104,7 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 
 	var cookie struct {
 		ID     uint64 `json:"id"`
-		Series uint64 `json:"series"`
+		Series string `json:"series"`
 		Token  string `json:"token"`
 	}
 
@@ -112,7 +112,7 @@ func validateDiscourseSession(cookieValue string) (*ssoSession, error) {
 		return nil, fmt.Errorf("invalid cookie JSON: %w", err)
 	}
 
-	if cookie.ID == 0 || cookie.Series == 0 || cookie.Token == "" {
+	if cookie.ID == 0 || cookie.Series == "" || cookie.Token == "" {
 		return nil, fmt.Errorf("incomplete cookie data")
 	}
 
