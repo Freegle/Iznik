@@ -1036,6 +1036,22 @@ print(urllib.request.urlopen(req).read().decode())
 
       // allGreen: no red PRs and no actively pending CI. BEHIND PRs with green CI
       // do NOT block allGreen — they are waiting for a human to merge, not for the FSM.
+
+      // Reset per-PR fix counters for PRs that are now green (no longer red/pending).
+      // This lets us attempt again if future master changes re-break the PR.
+      const db = getDb()
+      const redAndPendingNums = new Set([...redPRs.map(p => p.number), ...pendingPRs.map(p => p.number)])
+      for (const pr of prs) {
+        if (!redAndPendingNums.has(pr.number)) {
+          const key = `pr_fix_attempts_${pr.number}`
+          const existing = kvGet(db, key)
+          if (existing && existing !== '0') {
+            kvSet(db, key, '0')
+            out(`check_my_open_pr_ci: PR #${pr.number} is green — reset fix attempt counter (was ${existing})`)
+          }
+        }
+      }
+
       return { redPRs, pendingPRs, behindPRs, allGreen: redPRs.length === 0 && pendingPRs.length === 0 }
     },
   },
@@ -1746,7 +1762,25 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       // matches the original LLM prompt's "keep trying" rule. A terminal
       // record (loop-breaker) is respected.
       const attemptedNums = new Set(attempts.filter(a => a.terminal).map(a => a.prNumber))
-      const pickable = redPRs.find(p => !attemptedNums.has(p.number))
+
+      // Persistent per-PR fix attempt budget: if a PR has been picked >= 3 times
+      // across iterations (tracked in SQLite kv) without going green, give up and
+      // move to the next PR. The counter resets when the PR's CI goes green
+      // (see check_my_open_pr_ci). This prevents the FSM from thrashing on a single
+      // PR indefinitely while other PRs wait.
+      const MAX_FIX_ATTEMPTS = 3
+      const db = getDb()
+      const exhaustedPRs = new Set<number>()
+      for (const pr of redPRs) {
+        const countStr = kvGet(db, `pr_fix_attempts_${pr.number}`)
+        const count = countStr ? parseInt(countStr, 10) : 0
+        if (count >= MAX_FIX_ATTEMPTS) {
+          exhaustedPRs.add(pr.number)
+          out(`ci_router_decide: PR #${pr.number} exhausted after ${count} fix attempts — skipping this iteration`)
+        }
+      }
+
+      const pickable = redPRs.find(p => !attemptedNums.has(p.number) && !exhaustedPRs.has(p.number))
       // Priority 1: master red
       if (masterFailing && !masterFixAttempted) {
         return { _transition: 'FIX_MASTER_CI', reason: `master CI failing on run ${master.latestRun?.databaseId ?? '?'}` }
@@ -1768,10 +1802,23 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const activeTopics = (ctx?._action_discover_active_topics?.topics ?? []) as Array<{ id: number; hasNew?: boolean }>
       const topicsWithNew = activeTopics.filter(t => t.hasNew).length
       const phase = ctx?.phase ?? 'analysis'
+
+      // Increment persistent fix-attempt counter for each non-exhausted red PR we are
+      // about to dispatch. The counter resets when the PR goes green (check_my_open_pr_ci).
+      const pickableRedPRs = redPRs.filter(p => !exhaustedPRs.has(p.number))
+      for (const pr of pickableRedPRs) {
+        const key = `pr_fix_attempts_${pr.number}`
+        const prev = parseInt(kvGet(db, key) ?? '0', 10)
+        kvSet(db, key, String(prev + 1))
+        out(`ci_router_decide: PR #${pr.number} fix attempt ${prev + 1}/${MAX_FIX_ATTEMPTS}`)
+      }
+
       return {
         _transition: 'PARALLEL_ANALYZE_AND_FIX',
-        reason: `master green, no pending CI — parallel dispatch: ${redPRs.length} red PRs + ${topicsWithNew} active topics (${phase} phase)`,
-        redPRCount: redPRs.length,
+        reason: `master green, no pending CI — parallel dispatch: ${pickableRedPRs.length} red PRs (${exhaustedPRs.size} exhausted) + ${topicsWithNew} active topics (${phase} phase)`,
+        redPRCount: pickableRedPRs.length,
+        exhaustedPRNumbers: [...exhaustedPRs],
+        exhaustedPRCount: exhaustedPRs.size,
         activeTopicCount: topicsWithNew,
       }
     },

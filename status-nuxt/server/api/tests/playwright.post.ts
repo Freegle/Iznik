@@ -1,6 +1,7 @@
 import { spawn, execSync } from 'child_process'
 import path from 'path'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
+import { clearTestEnvCache } from '../../utils/testEnvCache'
 
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
@@ -288,7 +289,36 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
             `docker exec ${pfx}-apiv1 sh -c "rm -f /tmp/iznik.dbstatus.*.down && cd /var/www/iznik && php install/testenv.php"`,
             { encoding: 'utf8', timeout: 60000 }
           )
-          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete\n`)
+          // The Go V2 API maintains a MySQL connection pool. Dropping and recreating
+          // the database invalidates those connections. Restart the container so it
+          // starts fresh — otherwise the location typeahead (used by postcode validation
+          // in the /give flow) returns empty results and Playwright tests time out.
+          execSync(`docker restart ${pfx}-apiv2`, { encoding: 'utf8', timeout: 30000 })
+          // Wait up to 60s for the Go API to be healthy before running tests.
+          const apiv2Start = Date.now()
+          let apiv2Ready = false
+          while (Date.now() - apiv2Start < 60000) {
+            try {
+              const health = execSync(
+                `docker inspect --format '{{.State.Health.Status}}' ${pfx}-apiv2`,
+                { encoding: 'utf8', timeout: 5000 }
+              ).trim()
+              if (health === 'healthy') { apiv2Ready = true; break }
+            } catch {}
+            await new Promise((r) => setTimeout(r, 2000))
+          }
+          if (!apiv2Ready) {
+            throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
+          }
+          // Clear the in-memory testEnv cache so the retry receives fresh
+          // postcode/ID data from the reset DB. Without this, the cache serves
+          // stale data (e.g. postcode 'NR1 3JD') that no longer exists in the
+          // recreated DB (only 'EH3 6SS' is seeded by testenv.php), causing the
+          // location typeahead to return empty results and the validation-tick
+          // to never appear in postMessage flows.
+          clearTestEnvCache()
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test environment cache cleared\n`)
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete (apiv2 healthy)\n`)
         } catch (dbResetError: any) {
           // Database reset failure means the retry would run against dirty data — any
           // result would be unreliable. Fail the run so the root cause can be investigated.
@@ -304,7 +334,11 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
         // Run retry without monocart so the main-run coverage (full suite) is not
         // overwritten by partial coverage from just the re-run frozen specs.
-        const retryCode = await spawnPlaywrightProcess(`export ENABLE_MONOCART_REPORTER=false && npx playwright test ${retryFiles}`, pfx)
+        // --last-failed: only re-run the specific tests that failed, not the whole
+        // spec file. Without this, a spec with tests 3.1/3.2/3.3 would re-execute
+        // 3.1 and 3.2, re-accumulating V8 async context so that 3.3 hits the same
+        // freeze threshold again.
+        const retryCode = await spawnPlaywrightProcess(`export ENABLE_MONOCART_REPORTER=false && npx playwright test ${retryFiles} --last-failed`, pfx)
 
         // Restore full-suite coverage — the retry covered fewer tests than the main run.
         try {
