@@ -585,14 +585,26 @@ func DeleteModConfig(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
-	id, _ := strconv.ParseUint(c.Query("id", "0"), 10, 64)
-	if id == 0 {
+	type DeleteRequest struct {
+		ID uint64 `json:"id"`
+	}
+
+	var req DeleteRequest
+	c.BodyParser(&req)
+
+	// Fall back to query parameter if not in body (for backward compatibility)
+	if req.ID == 0 {
+		id, _ := strconv.ParseUint(c.Query("id", "0"), 10, 64)
+		req.ID = id
+	}
+
+	if req.ID == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid config id")
 	}
 
 	db := database.DBConn
 	var cfg ModConfig
-	db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE id = ?", id).Scan(&cfg)
+	db.Raw("SELECT "+configColumns+" FROM mod_configs WHERE id = ?", req.ID).Scan(&cfg)
 	if cfg.ID == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Invalid config id")
 	}
@@ -603,15 +615,15 @@ func DeleteModConfig(c *fiber.Ctx) error {
 
 	// Check if still in use.
 	var inUse int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE configid = ? AND role IN (?, ?)", id, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&inUse)
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE configid = ? AND role IN (?, ?)", req.ID, utils.ROLE_MODERATOR, utils.ROLE_OWNER).Scan(&inUse)
 	if inUse > 0 {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"ret": 5, "status": "Config still in use"})
 	}
 
-	db.Exec("DELETE FROM mod_configs WHERE id = ?", id)
+	db.Exec("DELETE FROM mod_configs WHERE id = ?", req.ID)
 
 	// Log the deletion.
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)", log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_DELETED, myid, id)
+	db.Exec("INSERT INTO logs (timestamp, type, subtype, byuser, configid) VALUES (NOW(), ?, ?, ?, ?)", log.LOG_TYPE_CONFIG, log.LOG_SUBTYPE_DELETED, myid, req.ID)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

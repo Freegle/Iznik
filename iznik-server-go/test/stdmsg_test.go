@@ -173,3 +173,32 @@ func TestGetStdMsgV2Path(t *testing.T) {
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 404, resp.StatusCode)
 }
+
+func TestDeleteStdMsgWithBodyParams(t *testing.T) {
+	// Test that DELETE request works when parameters are in JSON body (as sent by frontend)
+	prefix := uniquePrefix("StdMsgDelBody")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	_, token := CreateTestSession(t, modID)
+
+	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
+	msgID := createTestStdMsg(t, cfgID, prefix+"_msg")
+
+	// Send DELETE with parameters in JSON body (like the frontend does via $delv2)
+	body := fmt.Sprintf(`{"id":%d,"configid":%d}`, msgID, cfgID)
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/stdmsg?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode, "DELETE with body params should succeed")
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Verify the message was actually deleted
+	db := database.DBConn
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM mod_stdmsgs WHERE id = ?", msgID).Scan(&count)
+	assert.Equal(t, int64(0), count)
+}
