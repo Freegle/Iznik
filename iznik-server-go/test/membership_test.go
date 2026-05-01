@@ -462,8 +462,9 @@ func TestPatchMembershipsSettingsConfigidNull(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	CreateTestMembership(t, userID, groupID, "Member")
 
-	// First set a non-null configid so we can verify it gets cleared.
-	db.Exec("UPDATE memberships SET configid = 99 WHERE userid = ? AND groupid = ?", userID, groupID)
+	// Create a real mod_configs entry and pre-set it so we can verify it gets cleared.
+	cfgID := createTestModConfig(t, prefix+"_cfg", userID)
+	db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?", cfgID, userID, groupID)
 
 	// Send settings with configid: null — should clear configid column (case nil branch).
 	rawJSON := fmt.Sprintf(`{"userid":%d,"groupid":%d,"settings":{"active":1,"configid":null}}`, userID, groupID)
@@ -488,8 +489,9 @@ func TestPatchMembershipsSettingsConfigidZero(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	CreateTestMembership(t, userID, groupID, "Member")
 
-	// First set a non-null configid so we can verify it gets cleared.
-	db.Exec("UPDATE memberships SET configid = 99 WHERE userid = ? AND groupid = ?", userID, groupID)
+	// Create a real mod_configs entry and pre-set it so we can verify it gets cleared.
+	cfgID := createTestModConfig(t, prefix+"_cfg", userID)
+	db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?", cfgID, userID, groupID)
 
 	// Send settings with configid: 0 — should clear configid column (else branch when v <= 0).
 	rawJSON := fmt.Sprintf(`{"userid":%d,"groupid":%d,"settings":{"active":1,"configid":0}}`, userID, groupID)
