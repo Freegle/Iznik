@@ -2583,7 +2583,10 @@ jobs:
             [ "${SKIP_COVERAGE:-}" = "true" ] && echo "ℹ️ Skipping patch coverage (no token)" && exit 0
 
             echo "=== Patch Coverage Check ==="
-            pip3 install --quiet diff-cover lcov-cobertura 2>/dev/null || pip install --quiet diff-cover lcov-cobertura 2>/dev/null
+            python3 -m pip install --quiet diff-cover lcov-cobertura 2>/dev/null || \
+            pip3 install --quiet diff-cover lcov-cobertura 2>/dev/null || \
+            pip install --quiet diff-cover lcov-cobertura 2>/dev/null || \
+            { echo "⚠️ pip not available — skipping patch coverage"; exit 0; }
 
             # Convert each available lcov file to Cobertura XML.
             # Paths in lcov files are already repo-root-relative (iznik-server-go/, iznik-nuxt3/, etc.)
