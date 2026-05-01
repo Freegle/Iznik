@@ -556,17 +556,24 @@ describe('ModChatReview', () => {
       expect(wrapper.vm.chatPov).toBeNull()
     })
 
-    it('does not fall through to per-message touserid when chat is loaded (uses chatroom-level pov)', () => {
+    it('uses touserid (recipient) as pov for User2Mod chat when touserid is valid', () => {
+      // Bug: chatPov was returning null (chat.user2=0→null) even when touserid was a real recipient
+      // Fix: always prefer touserid so the sender appears on the left
       globalThis.__mockChatStore.byChatId = vi.fn(() => ({
         user1: 100,
         user2: 0,
         chattype: 'User2Mod',
       }))
       const wrapper = mountComponent({ touserid: 999 })
-      const viewButton = wrapper.find('.chat-view-button')
-      // chat is loaded → use chat.user2 (0 → null), NOT per-message touserid (999)
-      expect(viewButton.exists()).toBe(true)
-      expect(wrapper.vm.chatPov).toBeNull()
+      expect(wrapper.find('.chat-view-button').exists()).toBe(true)
+      expect(wrapper.vm.chatPov).toBe(999)
+    })
+
+    it('uses touserid (recipient) as pov even when chat is loaded, so sender stays on left', () => {
+      // Bug: when sender=user2 (789), chatPov=chat.user2=789 puts the sender on the right
+      // Fix: always prefer touserid (the recipient) so the sender appears on the left
+      const wrapper = mountComponent({ touserid: 200 })
+      expect(wrapper.vm.chatPov).toBe(200)
     })
 
     it('falls back to message.touserid when chat not found', () => {
