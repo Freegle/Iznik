@@ -136,20 +136,28 @@ onMounted(async () => {
     }
   }
 
+  // Save the group after the first restoration but before fetchUser.
+  // This captures either: (1) the user's choice if they changed it, or (2) savedGroup.
+  // We use this to distinguish user choices from cascade resets in the final guard.
+  const userChoice = composeStore.group
+
   await authStore.fetchUser()
 
   // Final guard: b-form-select may have reset composeStore.group during the
   // async fetchUser wait (options re-evaluated while the saved group wasn't in
-  // groupsnear yet). Restore savedGroup if it is still valid — i.e. present in
+  // groupsnear yet). Restore userChoice if it is still valid — i.e. present in
   // groupsnear or among the user's group memberships.
-  if (savedGroup && composeStore.group !== savedGroup) {
+  //
+  // We restore userChoice instead of savedGroup to respect any user-initiated
+  // group changes that happened during the earlier mount phase.
+  if (userChoice && composeStore.group !== userChoice) {
     const groupsNear = postcode.value?.groupsnear || []
-    const savedGroupValid =
-      groupsNear.some((g) => parseInt(g.id) === parseInt(savedGroup)) ||
-      myGroups.value.some((g) => parseInt(g.groupid) === parseInt(savedGroup))
+    const userChoiceValid =
+      groupsNear.some((g) => parseInt(g.id) === parseInt(userChoice)) ||
+      myGroups.value.some((g) => parseInt(g.groupid) === parseInt(userChoice))
 
-    if (savedGroupValid) {
-      composeStore.group = savedGroup
+    if (userChoiceValid) {
+      composeStore.group = userChoice
     }
   }
 

@@ -295,6 +295,41 @@ describe('ComposeGroup', () => {
       // Group 99 is invalid, so the override (1) should stand
       expect(mockComposeStore.group).toBe(1)
     })
+
+    it('respects user-initiated group change during repost (should not revert after fetchUser)', async () => {
+      // BUG: When user changes group from repost default during the mount flow,
+      // the final guard was incorrectly reverting to the original repost group.
+      // Simulate repost flow: group 55 is pre-set from repost
+      mockComposeStore.group = 55
+      mockAuthStore.groups = [
+        { groupid: 1, namedisplay: 'London Central', nameshort: 'london' },
+        { groupid: 55, namedisplay: 'Repost Group', nameshort: 'repost' },
+      ]
+
+      // Mock fetchUser to simulate a cascade reset to groupsnear[0] (group 1)
+      // during the async operation, then the user changes it back.
+      let groupWasChangedDuringFetch = false
+      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
+        // Simulate: during fetchUser, b-form-select might reset to first available group
+        mockComposeStore.group = 1
+        groupWasChangedDuringFetch = true
+      })
+
+      const wrapper = createWrapper()
+
+      // At this point, onMounted has started but fetchUser hasn't completed yet.
+      // User manually changes the group to group 1 (same as cascade default, but user's choice).
+      const select = wrapper.find('.form-select')
+      await select.setValue('1')
+
+      // Now let all promises complete (fetchUser, etc.)
+      await flushPromises()
+
+      // The user's choice (group 1) should be respected, NOT reverted to savedGroup (55)
+      // even though fetchUser might have reset it.
+      expect(groupWasChangedDuringFetch).toBe(true)
+      expect(mockComposeStore.group).toBe('1')
+    })
   })
 
   describe('error handling', () => {
