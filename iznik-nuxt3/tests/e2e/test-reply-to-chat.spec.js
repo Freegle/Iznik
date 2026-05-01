@@ -332,7 +332,7 @@ test.describe('Reply-to-Chat - Empty State', () => {
       timeout: timeouts.ui.appearance,
     })
     await expect(page.locator('text=No message to reply to.')).toBeVisible()
-    await expect(page.locator('a[href="/browse"]')).toBeVisible()
+    await expect(emptyState.locator('a[href="/browse"]')).toBeVisible()
     console.log('[Test] Empty state shown for /chats/reply without replyto param')
   })
 
