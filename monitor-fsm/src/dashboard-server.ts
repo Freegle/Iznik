@@ -80,6 +80,8 @@ async function fetchPrsLive(): Promise<any[]> {
 
           // Compute CI status
           let ciStatus = 'unknown'
+          let ciRunning = false
+          let ciUrl: string | null = null
           const failedChecks: string[] = []
 
           if (status.statusCheckRollup && Array.isArray(status.statusCheckRollup)) {
@@ -93,18 +95,28 @@ async function fetchPrsLive(): Promise<any[]> {
             const isPending = (c: any) => c.__typename === 'StatusContext'
               ? (c.state === 'PENDING' || c.state === 'EXPECTED')
               : (!c.status || c.status === 'IN_PROGRESS' || c.status === 'QUEUED' || c.status === 'WAITING')
+            const isRunning = (c: any) => c.__typename === 'CheckRun'
+              ? (c.status === 'IN_PROGRESS')
+              : (c.state === 'PENDING')
             // NEUTRAL/SKIPPED are informational — don't count toward pending
 
             const hasFailure = checks.some(isFailure)
             const hasPending = checks.some(isPending)
+            ciRunning = checks.some(isRunning)
 
             if (hasFailure) {
               ciStatus = 'red'
               failedChecks.push(...checks.filter(isFailure).map(c => c.name ?? c.context ?? '?'))
+              const failCheck = checks.find(isFailure)
+              ciUrl = failCheck?.detailsUrl ?? failCheck?.targetUrl ?? null
             } else if (hasPending) {
               ciStatus = 'pending'
+              const pendingCheck = checks.find(isRunning) ?? checks.find(isPending)
+              ciUrl = pendingCheck?.detailsUrl ?? pendingCheck?.targetUrl ?? null
             } else {
               ciStatus = 'green'
+              const anyCheck = checks.find(c => c.detailsUrl ?? c.targetUrl)
+              ciUrl = anyCheck?.detailsUrl ?? anyCheck?.targetUrl ?? null
             }
           }
 
@@ -118,6 +130,8 @@ async function fetchPrsLive(): Promise<any[]> {
             mergeable: pr.mergeable,
             mergeStateStatus: status.mergeStateStatus,
             ciStatus,
+            ciRunning,
+            ciUrl,
             failedChecks,
           }
         } catch (err) {
@@ -132,6 +146,8 @@ async function fetchPrsLive(): Promise<any[]> {
             mergeable: pr.mergeable,
             mergeStateStatus: 'UNKNOWN',
             ciStatus: 'unknown',
+            ciRunning: false,
+            ciUrl: null,
             failedChecks: [],
           }
         }

@@ -59,7 +59,12 @@
           </td>
           <td>
             <div class="d-flex flex-column gap-1">
-              <span :class="['badge', combinedStatusClass(pr)]">
+              <a v-if="pr.ciUrl" :href="pr.ciUrl" target="_blank" rel="noopener" class="text-decoration-none">
+                <span :class="['badge', combinedStatusClass(pr)]">
+                  {{ combinedStatusLabel(pr) }}
+                </span>
+              </a>
+              <span v-else :class="['badge', combinedStatusClass(pr)]">
                 {{ combinedStatusLabel(pr) }}
               </span>
               <div v-if="pr.ciStatus === 'red' && pr.failedChecks.length > 0" class="small text-danger lh-sm">
@@ -95,24 +100,23 @@ const emit = defineEmits<{
 }>()
 
 // Single combined status: what matters right now?
-// Running → nothing else matters yet
-// Failed → CI fix needed
-// Needs rebase → CI passed but conflict (FSM handles)
-// Ready → good to merge
-type CombinedStatus = 'running' | 'failed' | 'needs-rebase' | 'needs-review' | 'ready'
+type CombinedStatus = 'running' | 'queued' | 'failed' | 'needs-rebase' | 'needs-review' | 'ready'
 
 function combinedStatus(pr: PrLive): CombinedStatus {
-  if (pr.mergeStateStatus === 'UNSTABLE' || pr.ciStatus === 'pending' || pr.ciStatus === 'unknown') return 'running'
+  if (pr.mergeStateStatus === 'UNSTABLE' || pr.ciStatus === 'pending' || pr.ciStatus === 'unknown') {
+    return pr.ciRunning ? 'running' : 'queued'
+  }
   if (pr.ciStatus === 'red') return 'failed'
   if (pr.mergeStateStatus === 'DIRTY') return 'needs-rebase'
   if (pr.mergeStateStatus === 'BLOCKED') return 'needs-review'
   if (pr.mergeStateStatus === 'CLEAN' || pr.mergeStateStatus === 'HAS_HOOKS') return 'ready'
-  return 'running'
+  return 'queued'
 }
 
 function combinedStatusClass(pr: PrLive): string {
   const s = combinedStatus(pr)
-  if (s === 'running') return 'bg-secondary'
+  if (s === 'running') return 'bg-primary'
+  if (s === 'queued') return 'bg-secondary'
   if (s === 'failed') return 'bg-danger'
   if (s === 'ready') return 'bg-success'
   return 'bg-warning text-dark' // needs-rebase / needs-review
@@ -120,7 +124,8 @@ function combinedStatusClass(pr: PrLive): string {
 
 function combinedStatusLabel(pr: PrLive): string {
   switch (combinedStatus(pr)) {
-    case 'running': return 'CI pending'
+    case 'running': return 'CI running'
+    case 'queued': return 'CI queued'
     case 'failed': return 'CI failed'
     case 'needs-rebase': return 'Needs rebase'
     case 'needs-review': return 'Needs review'
