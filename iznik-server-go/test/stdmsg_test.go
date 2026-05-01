@@ -168,6 +168,32 @@ func TestDeleteStdMsgNotFound(t *testing.T) {
 	assert.Equal(t, float64(2), result["ret"])
 }
 
+func TestDeleteStdMsgWithBodyParameter(t *testing.T) {
+	prefix := uniquePrefix("StdMsgDelBody")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	_, token := CreateTestSession(t, modID)
+
+	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
+	msgID := createTestStdMsg(t, cfgID, prefix+"_msg")
+
+	body := fmt.Sprintf(`{"id":%d}`, msgID)
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/stdmsg?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	db := database.DBConn
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM mod_stdmsgs WHERE id = ?", msgID).Scan(&count)
+	assert.Equal(t, int64(0), count)
+}
+
 func TestGetStdMsgV2Path(t *testing.T) {
 	req := httptest.NewRequest("GET", "/apiv2/modtools/stdmsg?id=0", nil)
 	resp, _ := getApp().Test(req)
