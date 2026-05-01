@@ -85,7 +85,7 @@ const loadMore = async function ($state) {
   // console.log('UMM loadMore', context.value)
   if (show.value < members.value.length) {
     // console.log('UMM loadMore inc show')
-    show.value++
+    show.value = Math.min(show.value + 20, members.value.length)
     $state.loaded()
   } else {
     const membersstart = members.value.length
@@ -110,8 +110,7 @@ const loadMore = async function ($state) {
     context.value = memberStore.context
 
     if (show.value < members.value.length) {
-      // Just inc by one rather than set to members.value.length
-      show.value++
+      show.value = Math.min(show.value + 20, members.value.length)
     }
     if (show.value > members.value.length) {
       show.value = members.value.length

@@ -189,7 +189,7 @@ async function loadMore($state) {
     // triggers the API call and sets show.value to 1.
     await baseLoadMore($state)
   } else if (show.value < sortedItems.value.length) {
-    show.value++
+    show.value = Math.min(show.value + 20, sortedItems.value.length)
     $state.loaded()
   } else {
     // All currently-filtered items are visible. Try fetching the next API

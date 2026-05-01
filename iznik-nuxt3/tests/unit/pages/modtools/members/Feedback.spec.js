@@ -465,7 +465,27 @@ describe('Feedback Page', () => {
       expect(mockLoadMore).toHaveBeenCalledWith(state)
     })
 
-    it('loadMore increments show when filtered items remain', async () => {
+    it('loadMore increments show by batch of 20 when many filtered items remain', async () => {
+      mockFilter.value = 'Comments'
+      // 25 members with comments — enough to verify a batch of 20, not 1
+      mockMembers.value = Array.from({ length: 25 }, (_, i) => ({
+        id: i + 1,
+        timestamp: `2024-01-${String(i + 1).padStart(2, '0')}T10:00:00Z`,
+        comments: `Comment ${i + 1}`,
+        happiness: 'Happy',
+      }))
+      mockShow.value = 0
+      const wrapper = mountComponent()
+
+      const state = { loaded: vi.fn(), complete: vi.fn() }
+      await wrapper.vm.loadMore(state)
+
+      expect(mockShow.value).toBe(20)
+      expect(state.loaded).toHaveBeenCalled()
+      expect(state.complete).not.toHaveBeenCalled()
+    })
+
+    it('loadMore caps show at sortedItems.length when fewer than 20 remain', async () => {
       mockFilter.value = 'Comments'
       mockMembers.value = [
         {
@@ -487,7 +507,7 @@ describe('Feedback Page', () => {
       const state = { loaded: vi.fn(), complete: vi.fn() }
       await wrapper.vm.loadMore(state)
 
-      expect(mockShow.value).toBe(1)
+      expect(mockShow.value).toBe(2)
       expect(state.loaded).toHaveBeenCalled()
       expect(state.complete).not.toHaveBeenCalled()
     })

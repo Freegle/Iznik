@@ -107,6 +107,45 @@ describe('useModMembers loadMore - cursor-based pagination', () => {
     expect(state2.loaded).toHaveBeenCalled()
   })
 
+  it('increments show by 20 when buffered items exceed current show', async () => {
+    const batch = Array.from({ length: 30 }, (_, i) => ({
+      id: i + 1,
+      userid: i + 1,
+      groupid: 1,
+      collection: 'Approved',
+      added: '2026-01-01',
+    }))
+
+    mockFetchMembers.mockImplementationOnce(async () => {
+      batch.forEach((m) => {
+        mockListRef[m.id] = m
+      })
+      mockStoreContext.value = null
+    })
+
+    const { setupModMembers } = await import(
+      '~/modtools/composables/useModMembers'
+    )
+    const { loadMore, groupid, collection, show, members } =
+      setupModMembers(true)
+
+    groupid.value = 1
+    collection.value = 'Approved'
+
+    // First call: store empty → triggers API fetch
+    const state1 = { loaded: vi.fn(), complete: vi.fn() }
+    await loadMore(state1)
+    // show should have advanced by 20 (or capped at 30)
+    expect(show.value).toBe(20)
+    expect(state1.loaded).toHaveBeenCalled()
+
+    // Second call: items still buffered, advance another 20 (capped at 30)
+    const state2 = { loaded: vi.fn(), complete: vi.fn() }
+    await loadMore(state2)
+    expect(show.value).toBe(30)
+    expect(state2.loaded).toHaveBeenCalled()
+  })
+
   it('calls $state.complete() when no new members arrive', async () => {
     const batch = Array.from({ length: 5 }, (_, i) => ({
       id: i + 1,
