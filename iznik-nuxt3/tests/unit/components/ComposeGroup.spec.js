@@ -297,6 +297,58 @@ describe('ComposeGroup', () => {
     })
   })
 
+  describe('user group selection after mount', () => {
+    it('preserves user selection when group changed after mount but before fetchUser completes', async () => {
+      // Simulate repost flow: group 1 is pre-set (original group)
+      mockComposeStore.group = 1
+      mockAuthStore.groups = [
+        { groupid: 1, namedisplay: 'Original Group', nameshort: 'original' },
+        { groupid: 2, namedisplay: 'New Group', nameshort: 'new' },
+      ]
+
+      // fetchUser will be called but we want to simulate it happening after user changes selection
+      let fetchUserCalled = false
+      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
+        // Simulate that user changed group to 2 while fetch was in progress
+        // The group should stay as 2, not be restored to 1
+        fetchUserCalled = true
+      })
+
+      const wrapper = createWrapper()
+
+      // User changes group selection to 2
+      await wrapper.find('.form-select').setValue('2')
+      expect(mockComposeStore.group).toBe('2')
+
+      // Wait for lifecycle to complete
+      await flushPromises()
+      expect(fetchUserCalled).toBe(true)
+
+      // The group should still be 2 (user's selection), not restored to 1
+      // Because we only restore if group was cleared (falsy), not if it changed
+      expect(mockComposeStore.group).toBe('2')
+    })
+
+    it('restores savedGroup if it was cleared (falsy) but is still valid', async () => {
+      // Simulate repost flow: group 1 is pre-set
+      mockComposeStore.group = 1
+      mockAuthStore.groups = [
+        { groupid: 1, namedisplay: 'Original Group', nameshort: 'original' },
+      ]
+
+      // Simulate b-form-select clearing the group during fetchUser
+      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
+        mockComposeStore.group = null // Group was cleared by b-form-select
+      })
+
+      createWrapper()
+      await flushPromises()
+
+      // The final guard should restore 1 because it was cleared (falsy) and is valid
+      expect(mockComposeStore.group).toBe(1)
+    })
+  })
+
   describe('error handling', () => {
     it('handles postcode fetch error gracefully', async () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
