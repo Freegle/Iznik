@@ -1,5 +1,5 @@
 <template>
-  <div v-if="user" class="bg-white rounded border border-info p-2">
+  <div v-if="userid" class="bg-white rounded border border-info p-2">
     <div>
       {{ tag }}<strong>{{ user ? user.displayname : '#' + userid }}</strong>
       <span class="small">

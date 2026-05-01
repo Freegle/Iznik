@@ -2,9 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
-
-// definePageMeta is a Nuxt compiler macro not available in Vitest
-globalThis.definePageMeta = vi.fn()
+import ImagesPage from '~/modtools/pages/images/index.vue'
 
 // Mock useMe composable
 vi.mock('~/composables/useMe', () => ({
@@ -55,8 +53,6 @@ const stubComponents = {
   'b-alert': { template: '<div class="alert"><slot /></div>' },
 }
 
-let ImagesPage
-
 beforeEach(async () => {
   setActivePinia(createPinia())
   mockImages.value = []
@@ -64,9 +60,6 @@ beforeEach(async () => {
   mockFetchReview.mockReset()
   mockRegenerate.mockReset()
   mockAccept.mockReset()
-  // Dynamic import so mocks are applied first.
-  const mod = await import('~/modtools/pages/images/index.vue')
-  ImagesPage = mod.default
 })
 
 describe('Images page', () => {
