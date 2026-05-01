@@ -32,12 +32,20 @@ const mockApi = {
   },
 }
 
+const mockGroupStore = {
+  get: vi.fn().mockReturnValue(null),
+}
+
 vi.mock('~/stores/compose', () => ({
   useComposeStore: () => mockComposeStore,
 }))
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
+}))
+
+vi.mock('~/stores/group', () => ({
+  useGroupStore: () => mockGroupStore,
 }))
 
 vi.mock('~/api', () => ({
@@ -63,6 +71,7 @@ describe('ComposeGroup', () => {
     mockAuthStore.groups = [
       { groupid: 3, namedisplay: 'My Group', nameshort: 'my-group' },
     ]
+    mockGroupStore.get.mockReturnValue(null)
   })
 
   function createWrapper(props = {}) {
@@ -155,6 +164,40 @@ describe('ComposeGroup', () => {
       mockAuthStore.groups = []
       const wrapper = createWrapper()
       expect(wrapper.findAll('option')).toHaveLength(0)
+    })
+
+    it('includes current group as first option when not in groupsnear or myGroups', () => {
+      mockComposeStore.group = 55
+      mockAuthStore.groups = []
+      mockComposeStore.postcode = {
+        name: 'SW1A 1AA',
+        groupsnear: [
+          { id: 1, namedisplay: 'London Central', nameshort: 'london-central' },
+        ],
+      }
+      const wrapper = createWrapper()
+      const options = wrapper.findAll('option')
+      // Group 55 should be prepended even though it's not in groupsnear or myGroups
+      expect(options[0].element.value).toBe('55')
+    })
+
+    it('uses cached group name when group store has it', () => {
+      mockComposeStore.group = 55
+      mockAuthStore.groups = []
+      mockComposeStore.postcode = {
+        name: 'SW1A 1AA',
+        groupsnear: [
+          { id: 1, namedisplay: 'London Central', nameshort: 'london-central' },
+        ],
+      }
+      mockGroupStore.get.mockReturnValue({
+        namedisplay: 'Repost Group',
+        nameshort: 'repost',
+      })
+      const wrapper = createWrapper()
+      const options = wrapper.findAll('option')
+      expect(options[0].element.value).toBe('55')
+      expect(options[0].text()).toBe('Repost Group')
     })
   })
 

@@ -113,6 +113,43 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertNotNull($task->processed_at);
     }
 
+    public function test_email_chitchat_report_falls_back_when_user_name_blank(): void
+    {
+        // Users without a fullname (or whose fullname is blank) used to fail
+        // the report with "email_chitchat_report requires user_name". The report
+        // should still send — id + email identify the reporter; the name is cosmetic.
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chitchat_report',
+            'data' => json_encode([
+                'user_id' => 42076407,
+                'user_name' => '',
+                'user_email' => 'mail@mattbloomfield.co.uk',
+                'newsfeed_id' => 604243,
+                'reason' => 'This is a bot or AI post.',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        Mail::assertSent(ChitchatReportMail::class, function (ChitchatReportMail $mail) {
+            return $mail->reporterName === 'A Freegle user'
+                && $mail->reporterId === 42076407
+                && $mail->reporterEmail === 'mail@mattbloomfield.co.uk';
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+        $this->assertNull($task->failed_at);
+    }
+
     public function test_skips_already_processed_tasks(): void
     {
         DB::table('background_tasks')->insert([
