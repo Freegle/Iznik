@@ -30,7 +30,7 @@
               Mark all as seen
             </b-button>
           </div>
-          <b-card v-if="happinessData.length" variant="white" class="mt-1">
+          <b-card v-if="happinessData.length" variant="white" class="mt-1 happiness-chart-card">
             <b-card-text>
               <p class="text-center">
                 This is what people have said over the last year<span
@@ -325,5 +325,11 @@ onMounted(async () => {
 <style scoped>
 select {
   max-width: 300px;
+}
+
+.happiness-chart-card {
+  /* Layout containment prevents layout shift when filtering expired posts changes
+     the items list height below. The browser optimizes reflow to just this card. */
+  contain: layout;
 }
 </style>

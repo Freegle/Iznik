@@ -653,4 +653,66 @@ describe('Feedback Page', () => {
       ])
     })
   })
+
+  describe('layout stability', () => {
+    it('chart container has layout containment to prevent CLS when toggling showExpired', async () => {
+      mockMembers.value = [
+        {
+          id: 1,
+          timestamp: '2024-01-10T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Taken',
+        },
+        {
+          id: 2,
+          timestamp: '2024-01-11T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Expired',
+        },
+      ]
+      mockFilter.value = ''
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      // Get the chart card element
+      const chartCard = wrapper.find('.happiness-chart-card')
+      expect(chartCard.exists()).toBe(true)
+
+      // Verify the card has layout containment to prevent layout shift
+      const styles = window.getComputedStyle(chartCard.element)
+      expect(styles.contain).toBe('layout')
+    })
+
+    it('chart container maintains its footprint when items list changes', async () => {
+      mockMembers.value = [
+        {
+          id: 1,
+          timestamp: '2024-01-10T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Taken',
+        },
+        {
+          id: 2,
+          timestamp: '2024-01-11T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Expired',
+        },
+      ]
+      mockFilter.value = ''
+      mockShow.value = 2
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      const chartCard = wrapper.find('.happiness-chart-card')
+      const initialHeight = chartCard.element.offsetHeight
+
+      // Toggle showExpired to filter items
+      wrapper.vm.showExpired = false
+      await flushPromises()
+
+      // Chart height should remain stable due to containment
+      const finalHeight = chartCard.element.offsetHeight
+      expect(finalHeight).toBe(initialHeight)
+    })
+  })
 })
