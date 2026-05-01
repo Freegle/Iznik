@@ -264,8 +264,8 @@ func PatchStdMsg(c *fiber.Ctx) error {
 //
 // @Summary Delete standard message
 // @Tags stdmsg
+// @Accept json
 // @Produce json
-// @Param id query integer true "StdMsg ID"
 // @Security BearerAuth
 // @Router /api/stdmsg [delete]
 func DeleteStdMsg(c *fiber.Ctx) error {
@@ -274,8 +274,19 @@ func DeleteStdMsg(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"ret": 1, "status": "Not logged in"})
 	}
 
-	id, _ := strconv.ParseUint(c.Query("id", "0"), 10, 64)
-	if id == 0 {
+	type DeleteRequest struct {
+		ID       uint64 `json:"id"`
+		Configid uint64 `json:"configid"`
+	}
+
+	var req DeleteRequest
+	if strings.Contains(c.Get("Content-Type"), "application/json") {
+		c.BodyParser(&req)
+	}
+	if req.ID == 0 {
+		req.ID, _ = strconv.ParseUint(c.Query("id", "0"), 10, 64)
+	}
+	if req.ID == 0 {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"ret": 2, "status": "Invalid stdmsg id"})
 	}
 
