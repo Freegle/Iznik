@@ -1859,9 +1859,9 @@ jobs:
             fi
 
             if [ -n "$CHANGED_FILES" ]; then
-              NON_SKIPPABLE_FILES=$(echo "$CHANGED_FILES" | grep -v -E '^(plans/|yesterday/)' || true)
+              NON_SKIPPABLE_FILES=$(echo "$CHANGED_FILES" | grep -v -E '^(plans/|yesterday/|monitor-fsm/)' || true)
               if [ -z "$NON_SKIPPABLE_FILES" ]; then
-                echo "Only plans/ or yesterday/ files were changed. Skipping build."
+                echo "Only plans/, yesterday/, or monitor-fsm/ files were changed. Skipping build."
                 circleci-agent step halt
               fi
             fi

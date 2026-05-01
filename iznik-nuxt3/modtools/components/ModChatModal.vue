@@ -184,6 +184,8 @@ const user1 = computed(() => {
   if (!chat2.value) return null
   const u1id = resolveUserId(chat2.value.user1)
   const u2id = resolveUserId(chat2.value.user2)
+  // User2Mod: only one real participant — show them directly
+  if (!u2id) return u1id ? userStore.byId(u1id) : null
   // Show the "other" user on the left — swap if pov matches user1
   const id = u1id === props.pov ? u2id : u1id
   return id ? userStore.byId(id) : null
@@ -193,6 +195,8 @@ const user2 = computed(() => {
   if (!chat2.value) return null
   const u1id = resolveUserId(chat2.value.user1)
   const u2id = resolveUserId(chat2.value.user2)
+  // User2Mod: user2=0 in DB (no real second participant) — show nothing on the right
+  if (!u2id) return null
   // Show the pov user on the right
   const id = u2id === props.pov ? u2id : u1id
   return id ? userStore.byId(id) : null

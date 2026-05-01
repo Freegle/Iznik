@@ -43,6 +43,15 @@ export interface IterRow {
   note: string | null
 }
 
+export interface CIRunnerStatus {
+  running: boolean
+  branch: string | null
+  workflowName: string | null
+  url: string | null
+  pipelineNumber: number | null
+  queueDepth: number
+}
+
 export interface PrLive {
   number: number
   title: string
@@ -53,6 +62,8 @@ export interface PrLive {
   mergeable: boolean
   mergeStateStatus: string
   ciStatus: 'green' | 'red' | 'pending' | 'unknown'
+  ciRunning: boolean
+  ciUrl: string | null
   failedChecks: string[]
   bug?: { topic: number; post: number; reporter: string | null; excerpt: string | null }
 }
