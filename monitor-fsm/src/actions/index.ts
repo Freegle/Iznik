@@ -1011,8 +1011,9 @@ print(urllib.request.urlopen(req).read().decode())
         // posts a visual ✗ on GitHub so the stale state is visible without FSM action.
         if (pr.mergeStateStatus === 'BEHIND') {
           behindPRs.push({ number: pr.number, title: pr.title, url: pr.url })
-          // Don't add to pendingPRs — BEHIND with green CI is not blocking work
-          continue
+          // Note: still fall through to CI check below. A branch can be BEHIND *and*
+          // have genuinely failing CI (separate from the branch/up-to-date noise). We
+          // don't auto-update the branch, but we do need to detect and fix real failures.
         }
 
         const chk = await sh('gh', ['pr', 'checks', String(pr.number), '--repo', 'Freegle/Iznik'])
