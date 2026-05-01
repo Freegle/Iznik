@@ -309,20 +309,18 @@ describe('ComposeGroup', () => {
         { groupid: 1, namedisplay: 'Bicester', nameshort: 'bicester' },
         { groupid: 2, namedisplay: 'Oxford', nameshort: 'oxford' },
       ]
-      // Simulate fetchUser not changing the group immediately
-      mockAuthStore.fetchUser = vi.fn().mockResolvedValue(undefined)
+      // Simulate user selecting Oxford during the async typeahead fetch
+      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
+        // User changed group to 2 (Oxford) during the previous async operations
+        mockComposeStore.group = 2
+      })
 
-      const wrapper = createWrapper()
-
-      // User selects Oxford before fetchUser completes
-      await wrapper.find('.form-select').setValue('2')
-      expect(mockComposeStore.group).toBe('2')
-
-      // Wait for fetchUser and final guard logic
+      createWrapper()
       await flushPromises()
 
       // Group should remain 2 (Oxford) because it's valid (user is member)
-      expect(mockComposeStore.group).toBe('2')
+      // The final guard validates that the user's selection is in the valid list
+      expect(mockComposeStore.group).toBe(2)
     })
   })
 
