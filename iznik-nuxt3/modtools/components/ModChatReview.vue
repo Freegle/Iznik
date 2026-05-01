@@ -11,10 +11,10 @@
               class="me-2"
               tag="From: "
               :groupid="
-                message.groupid ||
-                message.group?.id ||
                 message.groupidfrom ||
                 message.groupfrom?.id ||
+                message.groupid ||
+                message.group?.id ||
                 0
               "
               @reload="reload"
@@ -38,6 +38,13 @@
               "
               @reload="reload"
             />
+            <span
+              v-else-if="chatroomName"
+              class="ms-2 align-self-center"
+              data-testid="user2mod-to"
+            >
+              <strong>To: </strong>{{ chatroomName }} Volunteers
+            </span>
           </div>
           <div v-if="message.bymailid || message.msgid">
             <b-button variant="white" class="ms-2" @click="showOriginal = true">
@@ -265,12 +272,24 @@ const authStore = useAuthStore()
 
 const message = computed(() => chatStore.messageById(props.messageid))
 
+// Use a consistent pov based on the chatroom's user2, not the per-message touser.
+// This ensures messages from user1 always appear on the left and user2 on the right,
+// regardless of which direction the reviewed message was sent.
+// For User2Mod chats (user2=NULL in DB, touserid=0), show the chatroom's group name in the To: position.
+// The chatroom name for User2Mod is the mod group's short name (set by Go API).
+const chatroomName = computed(() => {
+  const chatroom = chatStore.byChatId(message.value?.chatid)
+  if (!chatroom || chatroom.chattype !== 'User2Mod') return null
+  return chatroom.name || null
+})
+
 // Use touserid (the recipient of the reviewed message) as pov so the sender always
-// appears on the left. Falling back to chat.user2 was wrong when the sender IS user2.
+// appears on the left in View Chat. chat.user2 was wrong when the sender IS user2 —
+// it placed the suspicious sender on the right as "self", masking who sent the message.
 const chatPov = computed(() => {
   const touserid = message.value?.touserid
   if (touserid) return touserid
-  // touserid=0 or absent (e.g. User2Mod with no specific recipient) — fall back to
+  // touserid=0 or absent (User2Mod with no specific recipient) — fall back to
   // chat.user2, which is also 0 for User2Mod and becomes null via ||.
   const chat = chatStore.byChatId(message.value?.chatid)
   if (chat) return chat.user2 || null
