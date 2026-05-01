@@ -453,6 +453,94 @@ describe('Feedback Page', () => {
     })
   })
 
+  describe('showExpired watcher prevents layout shift', () => {
+    it('adjusts show.value when showExpired changes to prevent layout shift', async () => {
+      mockMembers.value = [
+        {
+          id: 1,
+          timestamp: '2024-01-10T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Taken',
+        },
+        {
+          id: 2,
+          timestamp: '2024-01-11T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Expired',
+        },
+        {
+          id: 3,
+          timestamp: '2024-01-12T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Received',
+        },
+      ]
+      const wrapper = mountComponent()
+      mockFilter.value = ''
+      // Initially showing all 3 items
+      mockShow.value = 3
+      await flushPromises()
+
+      // Turn off showExpired — should only show 2 items (Taken and Received)
+      wrapper.vm.showExpired = false
+      await flushPromises()
+
+      // show.value should adjust to 2, not reset to 0
+      expect(wrapper.vm.show).toBe(2)
+      expect(wrapper.vm.visibleItems).toHaveLength(2)
+    })
+
+    it('keeps show.value as-is when filtering does not reduce visible items', async () => {
+      mockMembers.value = [
+        {
+          id: 1,
+          timestamp: '2024-01-10T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Taken',
+        },
+        {
+          id: 2,
+          timestamp: '2024-01-11T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Received',
+        },
+      ]
+      const wrapper = mountComponent()
+      mockFilter.value = ''
+      // All items are non-expired, so show.value stays the same
+      mockShow.value = 2
+      await flushPromises()
+
+      wrapper.vm.showExpired = false
+      await flushPromises()
+
+      // show.value should stay 2 since both items pass the filter
+      expect(wrapper.vm.show).toBe(2)
+    })
+
+    it('sets show.value to at least 1 to avoid empty display', async () => {
+      mockMembers.value = [
+        {
+          id: 1,
+          timestamp: '2024-01-10T10:00:00Z',
+          happiness: 'Happy',
+          outcome: 'Expired',
+        },
+      ]
+      const wrapper = mountComponent()
+      mockFilter.value = ''
+      mockShow.value = 1
+      await flushPromises()
+
+      // The only item is expired, so filtering removes it
+      wrapper.vm.showExpired = false
+      await flushPromises()
+
+      // show.value should be 1 (at least 1) even though sortedItems is empty
+      expect(wrapper.vm.show).toBe(1)
+    })
+  })
+
   describe('scroll behaviour: loadMore uses filtered count', () => {
     it('loadMore calls baseLoadMore for initial fetch when members is empty', async () => {
       mockMembers.value = []

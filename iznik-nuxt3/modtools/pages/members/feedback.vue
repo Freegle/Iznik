@@ -10,7 +10,9 @@
               Feedback <span v-if="members.length">({{ members.length }})</span>
             </h4>
           </template>
-          <div class="d-flex justify-content-between flex-wrap gap-2 align-items-center">
+          <div
+            class="d-flex justify-content-between flex-wrap gap-2 align-items-center"
+          >
             <ModGroupSelect
               v-model="groupid"
               modonly
@@ -57,16 +59,18 @@
           <NoticeMessage v-if="!members.length && !busy" class="mt-2">
             There are no items to show at the moment.
           </NoticeMessage>
-          <div
-            v-for="item in visibleItems"
-            :key="'memberlist-' + item.id"
-            class="p-0 mt-2"
-          >
-            <ModMemberHappiness
-              v-if="item.type === 'Member'"
-              :id="item.object.id"
-            />
-          </div>
+          <transition-group name="fade" tag="div" class="feedback-list">
+            <div
+              v-for="item in visibleItems"
+              :key="'memberlist-' + item.id"
+              class="p-0 mt-2"
+            >
+              <ModMemberHappiness
+                v-if="item.type === 'Member'"
+                :id="item.object.id"
+              />
+            </div>
+          </transition-group>
         </b-tab>
 
         <b-tab>
@@ -218,8 +222,11 @@ watch(tabIndex, () => {
 })
 
 watch(showExpired, () => {
-  show.value = 0
-  bump.value++
+  // Don't reset to 0 — adjust based on filtered count to prevent layout shift
+  const visibleCount = sortedItems.value.length
+  if (show.value > visibleCount) {
+    show.value = Math.max(1, visibleCount)
+  }
 })
 
 // Methods
@@ -325,5 +332,19 @@ onMounted(async () => {
 <style scoped>
 select {
   max-width: 300px;
+}
+
+.feedback-list {
+  display: block;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>
