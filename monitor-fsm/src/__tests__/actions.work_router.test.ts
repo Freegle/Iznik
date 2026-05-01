@@ -9,7 +9,7 @@ import {
 // Action handlers call getDb() internally. We initialise the singleton with
 // getDb(':memory:') so both the test and the handler share the same in-memory DB.
 
-let workRouterHandler: (params: object, context: object) => Promise<any>
+let workRouterHandler: (params: Record<string, unknown>, context: Record<string, unknown>) => Promise<any>
 let db: ReturnType<typeof getDb>
 
 beforeEach(async () => {

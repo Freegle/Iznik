@@ -11,7 +11,8 @@ import type { Database } from 'better-sqlite3'
 // resetDbForTests() then getDb(':memory:') so both the test and the handler
 // operate on the same in-memory database.
 
-let persistClassificationsHandler: (params: object, context: object) => Promise<{ upserted: number; skipped: number }>
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let persistClassificationsHandler: (params: Record<string, unknown>, context: Record<string, unknown>) => Promise<any>
 let db: ReturnType<typeof getDb>
 
 beforeEach(async () => {
