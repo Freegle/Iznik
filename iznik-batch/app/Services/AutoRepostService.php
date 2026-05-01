@@ -65,9 +65,14 @@ class AutoRepostService
             'errors' => 0,
         ];
 
-        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
-            Log::info('AutoRepost emails disabled via FREEGLE_MAIL_ENABLED_TYPES');
-            return $stats;
+        // The feature flag controls warning EMAILS only, not the repost itself.
+        // Reposts must happen even when warning emails are disabled — otherwise
+        // removing AutoRepost from FREEGLE_MAIL_ENABLED_TYPES silently halts
+        // all auto-reposting (the root cause of the missed reposts in #9481).
+        $warningEmailEnabled = self::isEmailTypeEnabled(self::EMAIL_TYPE);
+
+        if (!$warningEmailEnabled) {
+            Log::info('AutoRepost warning emails disabled via FREEGLE_MAIL_ENABLED_TYPES; reposts will still run');
         }
 
         $mindate = now()->subDays(self::LOOKBACK_DAYS)->format('Y-m-d');
@@ -83,7 +88,7 @@ class AutoRepostService
             $reposts = $group->getSetting('reposts', self::DEFAULT_REPOSTS);
 
             try {
-                $groupStats = $this->processGroup($group, $reposts, $mindate, $dryRun);
+                $groupStats = $this->processGroup($group, $reposts, $mindate, $dryRun, $warningEmailEnabled);
                 $stats['reposted'] += $groupStats['reposted'];
                 $stats['warned'] += $groupStats['warned'];
                 $stats['skipped'] += $groupStats['skipped'];
@@ -99,7 +104,7 @@ class AutoRepostService
     /**
      * Process auto-reposts for a single group.
      */
-    protected function processGroup(Group $group, array $reposts, string $mindate, bool $dryRun): array
+    protected function processGroup(Group $group, array $reposts, string $mindate, bool $dryRun, bool $warningEmailEnabled = true): array
     {
         $stats = ['reposted' => 0, 'warned' => 0, 'skipped' => 0];
 
@@ -171,6 +176,7 @@ class AutoRepostService
                 : null;
 
             // V1 WARNING: within 24h window before repost is due.
+            // Warning emails are gated on $warningEmailEnabled; the repost itself is not.
             if ($msg->hoursago <= $interval * 24
                 && $msg->hoursago > ($interval - 1) * 24
                 && (is_null($lastwarnago) || $lastwarnago > 24 * 60 * 60)
@@ -178,7 +184,7 @@ class AutoRepostService
                 if (!$msg->lastautopostwarning || ($lastwarnago > 24 * 60 * 60)) {
                     if ($dryRun) {
                         Log::info("Dry run: would send repost warning for message #{$msg->msgid} on group #{$group->id}");
-                    } else {
+                    } elseif ($warningEmailEnabled) {
                         // Multi-group fix: update per-group, not global.
                         // V1: UPDATE messages_groups SET lastautopostwarning = NOW() WHERE msgid = ?
                         DB::table('messages_groups')

@@ -560,4 +560,67 @@ class AutoRepostServiceTest extends TestCase
         $this->assertEquals(1, $mg1->autoreposts);
         $this->assertEquals(1, $mg2->autoreposts);
     }
+
+    /**
+     * Regression test for Discourse #9481 (posts 502-510): messages 119974515 and 116335125
+     * were not auto-reposted even though they were eligible.
+     *
+     * Root cause: AutoRepostService::process() returned early when 'AutoRepost' was absent
+     * from FREEGLE_MAIL_ENABLED_TYPES, halting ALL reposts — not just warning emails.
+     * The feature flag controls email sending; it must not gate the actual DB repost.
+     */
+    public function test_reposts_still_happen_when_warning_emails_disabled(): void
+    {
+        // Simulate 'AutoRepost' removed from FREEGLE_MAIL_ENABLED_TYPES (e.g. to disable
+        // warning emails) — reposts must still proceed.
+        config(['freegle.mail.enabled_types' => '']);
+
+        $data = $this->createRepostCandidate(hoursOld: 80);
+
+        $stats = $this->service->process();
+
+        // Repost must happen even with warning emails disabled.
+        $this->assertEquals(1, $stats['reposted'], 'Repost should happen even when AutoRepost emails are disabled');
+
+        // Verify the DB was actually updated.
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->first();
+        $this->assertEquals(1, $mg->autoreposts, 'autoreposts counter must be incremented');
+
+        // Verify messages_postings entry was created.
+        $this->assertDatabaseHas('messages_postings', [
+            'msgid' => $data['message']->id,
+            'groupid' => $data['group']->id,
+            'repost' => 1,
+            'autorepost' => 1,
+        ]);
+    }
+
+    public function test_warning_email_skipped_when_email_type_disabled(): void
+    {
+        // When 'AutoRepost' is removed from FREEGLE_MAIL_ENABLED_TYPES, warning emails
+        // must not be sent, but the message must still be counted as warned (so callers
+        // can see the service ran).
+        config(['freegle.mail.enabled_types' => '']);
+
+        // Message in the warning window: offer interval=3d=72h; use hoursOld=50 (within 48-72h).
+        $data = $this->createRepostCandidate(hoursOld: 50);
+
+        $stats = $this->service->process();
+
+        // No repost at 50h (not yet past interval).
+        $this->assertEquals(0, $stats['reposted']);
+
+        // The warned count reflects the service ran, but no email was sent.
+        $this->assertEquals(1, $stats['warned']);
+
+        // lastautopostwarning must NOT have been updated (no email sent = no warning logged).
+        $mg = DB::table('messages_groups')
+            ->where('msgid', $data['message']->id)
+            ->where('groupid', $data['group']->id)
+            ->first();
+        $this->assertNull($mg->lastautopostwarning, 'lastautopostwarning should not be set when emails are disabled');
+    }
 }
