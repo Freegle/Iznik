@@ -218,7 +218,9 @@ watch(tabIndex, () => {
 })
 
 watch(showExpired, () => {
+  context.value = null
   show.value = 0
+  memberStore.clear()
   bump.value++
 })
 

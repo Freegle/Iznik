@@ -653,4 +653,86 @@ describe('Feedback Page', () => {
       ])
     })
   })
+
+  describe('showExpired watcher: state consistency', () => {
+    it('clears memberStore when showExpired changes', async () => {
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      // Simulate having loaded members
+      mockMemberStore.list = {
+        'member-1': { id: 1, happiness: 'Happy', outcome: 'Expired' },
+        'member-2': { id: 2, happiness: 'Happy', outcome: 'Taken' },
+      }
+      mockMembers.value = [
+        { id: 1, happiness: 'Happy', outcome: 'Expired' },
+        { id: 2, happiness: 'Happy', outcome: 'Taken' },
+      ]
+
+      // Sanity check: memberStore has data
+      expect(mockMemberStore.list).toHaveProperty('member-1')
+
+      // Change showExpired
+      wrapper.vm.showExpired = false
+
+      // memberStore should be cleared
+      expect(mockMemberStore.clear).toHaveBeenCalled()
+    })
+
+    it('resets context when showExpired changes', async () => {
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      // Set a context value
+      mockContext.value = 'some-context'
+
+      // Change showExpired
+      wrapper.vm.showExpired = false
+
+      // context should be reset to null
+      expect(mockContext.value).toBeNull()
+    })
+
+    it('resets show and bumps identifier on showExpired change', async () => {
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      mockShow.value = 5
+      const initialBump = wrapper.vm.bump
+
+      // Change showExpired
+      wrapper.vm.showExpired = false
+
+      // show should reset and bump should increment
+      expect(mockShow.value).toBe(0)
+      expect(wrapper.vm.bump).toBe(initialBump + 1)
+    })
+
+    it('showExpired watcher pattern matches filter watcher pattern', async () => {
+      // This test verifies that both watchers do equivalent cleanup
+      // Filter watcher clears: context, show, memberStore, bump
+      // showExpired watcher should do the same
+      const wrapper = mountComponent()
+      await flushPromises()
+
+      // Setup state
+      mockMembers.value = [
+        { id: 1, timestamp: '2024-01-15T10:00:00Z', happiness: 'Happy', outcome: 'Expired' },
+      ]
+      mockShow.value = 1
+      mockContext.value = 'test'
+      mockMemberStore.list = { 'member-1': mockMembers.value[0] }
+
+      const clearCallsBeforeShowExpiredChange = mockMemberStore.clear.mock.calls.length
+
+      // Toggle showExpired
+      wrapper.vm.showExpired = false
+      await flushPromises()
+
+      // Verify cleanup occurred
+      expect(mockMemberStore.clear.mock.calls.length).toBeGreaterThan(clearCallsBeforeShowExpiredChange)
+      expect(mockShow.value).toBe(0)
+      expect(mockContext.value).toBeNull()
+    })
+  })
 })
