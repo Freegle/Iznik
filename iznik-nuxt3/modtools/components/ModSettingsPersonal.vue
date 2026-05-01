@@ -135,9 +135,6 @@
         variant="modgreen"
       />
     </b-form-group>
-    <b-form-group label="Would you like some cake?">
-      <ModCake />
-    </b-form-group>
     <h5 class="mt-3">Useful Links</h5>
     <p>
       <ExternalLink

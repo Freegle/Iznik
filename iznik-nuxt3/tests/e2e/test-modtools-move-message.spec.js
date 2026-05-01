@@ -61,21 +61,6 @@ test.describe('ModTools move message', () => {
         timeout: timeouts.navigation.slowPage,
       })
 
-      // Dismiss modals
-      await page.evaluate(() => {
-        const modal = document.getElementById('modcakemodal')
-        if (modal) {
-          modal.classList.remove('show')
-          modal.style.display = 'none'
-        }
-        document
-          .querySelectorAll('.modal-backdrop')
-          .forEach((el) => el.remove())
-        document.body.classList.remove('modal-open')
-        document.body.style.removeProperty('overflow')
-        document.body.style.removeProperty('padding-right')
-      })
-
       // Check if messages are visible (short timeout)
       try {
         await expect(page.locator('.card').first()).toBeVisible({
