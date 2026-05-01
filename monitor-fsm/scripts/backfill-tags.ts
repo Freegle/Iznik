@@ -61,10 +61,15 @@ Rules:
   })
 
   try {
-    const parsed = JSON.parse((msg.content[0] as { text: string }).text.trim())
+    let raw = (msg.content[0] as { text: string }).text.trim()
+    // Strip markdown code fence if present
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim()
+    const parsed = JSON.parse(raw)
     return {
-      symptomTags: Array.isArray(parsed.symptom_tags) ? parsed.symptom_tags.map((t: unknown) => String(t).toLowerCase()) : [],
-      codeArea: typeof parsed.code_area === 'string' ? parsed.code_area : null,
+      symptomTags: Array.isArray(parsed.symptom_tags)
+        ? parsed.symptom_tags.flatMap((t: unknown) => String(t).toLowerCase().split(/\s+/)).filter(Boolean)
+        : [],
+      codeArea: typeof parsed.code_area === 'string' && parsed.code_area.includes(':') ? parsed.code_area : null,
     }
   } catch { return { symptomTags: [], codeArea: null } }
 }
@@ -87,8 +92,11 @@ async function backfillPhase(apiKey: string): Promise<number> {
 
   for (const bug of bugs) {
     process.stdout.write(`  ${bug.state} ${bug.topic}/${bug.post} (${bug.feature_area ?? '?'})... `)
-    let text = fetchPost(apiKey, bug.post)
-    if (!text && bug.excerpt) text = bug.excerpt
+    // Use excerpt as primary source — bug.post is a post NUMBER within the topic,
+    // not the global Discourse post ID, so fetchPost() via /posts/<n>.json would
+    // return the wrong post. Only fall back to Discourse when excerpt is absent.
+    let text = bug.excerpt ?? ''
+    if (!text) text = fetchPost(apiKey, bug.post)
     if (!text) { console.log('skip (no text)'); continue }
 
     const { symptomTags, codeArea } = await extractTags(text, bug.feature_area)
