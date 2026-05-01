@@ -401,6 +401,7 @@ async function main() {
   // After 2 entries with no commit, we force-add an "effective" openPRFixAttempt
   // record that ROUTER's rule skips (distinct number already in openPRFixAttempts).
   const openPRFixEntries = new Map<number, number>()
+  let consecutiveCoverageFailures = 0
 
   let step = 0
   while (step < MAX_STEPS) {
@@ -699,6 +700,7 @@ async function main() {
           dbg('red-pr: no open PRs I authored have red CI')
         }
       }
+      consecutiveCoverageFailures = 0
     } catch (err: any) {
       outWarn(`step ${step} error: ${err.message ?? err}`)
       // Claude subscription quota exhausted — retrying will produce the same
@@ -709,17 +711,19 @@ async function main() {
         break
       }
       // Safety net: if the LLM produced invalid JSON across all retries, don't
-      // leave the instance stuck mid-workflow. Force-transition to
-      // COVERAGE_GATE so the iteration wraps up cleanly (WRAP_UP → SEND_EMAIL
-      // → SCHEDULE_NEXT). A genuine stuck-loop exits via MAX_STEPS instead.
+      // leave the instance stuck mid-workflow. After 2 consecutive coverage
+      // failures force-transition to WRAP_UP (avoids COVERAGE_GATE → WRITE_COVERAGE
+      // → fail → COVERAGE_GATE infinite loop). First failure still tries COVERAGE_GATE
+      // so a transient LLM hiccup doesn't silently skip coverage entirely.
       if (err.message?.includes('failed validation after')) {
-        outWarn('LLM produced invalid JSON after retries — skipping to COVERAGE_GATE')
+        consecutiveCoverageFailures++
+        const target = consecutiveCoverageFailures >= 2 ? 'WRAP_UP' : 'COVERAGE_GATE'
+        const reason = consecutiveCoverageFailures >= 2
+          ? `LLM coverage JSON failed ${consecutiveCoverageFailures}× in a row — skipping to WRAP_UP`
+          : 'LLM JSON-validation failure after retries — skipping to COVERAGE_GATE'
+        outWarn(reason)
         try {
-          await engine.forceTransition(
-            instance.id,
-            'COVERAGE_GATE',
-            'LLM JSON-validation failure after retries; skip to COVERAGE_GATE to end iteration.',
-          )
+          await engine.forceTransition(instance.id, target, reason)
         } catch (forceErr: any) {
           outWarn(`force-transition failed: ${forceErr.message ?? forceErr}`)
           break

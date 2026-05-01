@@ -1011,8 +1011,9 @@ print(urllib.request.urlopen(req).read().decode())
         // posts a visual ✗ on GitHub so the stale state is visible without FSM action.
         if (pr.mergeStateStatus === 'BEHIND') {
           behindPRs.push({ number: pr.number, title: pr.title, url: pr.url })
-          // Don't add to pendingPRs — BEHIND with green CI is not blocking work
-          continue
+          // Note: still fall through to CI check below. A branch can be BEHIND *and*
+          // have genuinely failing CI (separate from the branch/up-to-date noise). We
+          // don't auto-update the branch, but we do need to detect and fix real failures.
         }
 
         const chk = await sh('gh', ['pr', 'checks', String(pr.number), '--repo', 'Freegle/Iznik'])
@@ -1869,6 +1870,29 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         // Don't downgrade a bug already in fix-queued or fixed state
         const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
         if (existing && ['fix-queued', 'fixed', 'confirmed', 'investigating'].includes(existing.state)) { skipped++; continue }
+        // Dedup: if another post in the same Discourse topic already has an active PR,
+        // link this post to that PR instead of creating a fresh open bug. Prevents the
+        // FSM opening a second PR when a reporter follows up in the same topic thread.
+        const topicPrRow = db.prepare(
+          `SELECT pr_number FROM discourse_bug
+           WHERE topic = ? AND post != ? AND pr_number IS NOT NULL
+           AND state IN ('open', 'investigating', 'fix-queued')`
+        ).get(c.topic, c.post) as { pr_number: number } | undefined
+        if (topicPrRow) {
+          upsertDiscourseBug(db, {
+            topic: Number(c.topic),
+            post: Number(c.post),
+            topicTitle: c.topicTitle ?? null,
+            reporter: c.user ?? null,
+            excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
+            state: 'fix-queued',
+            prNumber: topicPrRow.pr_number,
+            featureArea: c.featureArea ?? null,
+          })
+          out(`persist_classifications: topic ${c.topic} post ${c.post} linked to existing PR #${topicPrRow.pr_number} (same topic)`)
+          upserted++
+          continue
+        }
         upsertDiscourseBug(db, {
           topic: Number(c.topic),
           post: Number(c.post),
@@ -1940,7 +1964,19 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         return { _transition: 'COVERAGE_GATE', reason: `peak phase — no backlog bugs; deferring ${pendingCount} new bug(s) to off-peak` }
       }
 
+      // Dedup: skip bugs whose Discourse topic already has an active PR on another post.
+      // Without this, a follow-up post in the same topic (e.g. Carol post 219 after
+      // post 218 already has a PR) would be dispatched as a fresh bug and create a
+      // duplicate PR. persist_classifications handles the DB-insert path; this handles
+      // the in-memory classifications path (bugs seen this iteration, not yet persisted).
+      const topicsWithActivePr = new Set(
+        (db.prepare(
+          `SELECT DISTINCT topic FROM discourse_bug
+           WHERE pr_number IS NOT NULL AND state IN ('open', 'investigating', 'fix-queued')`
+        ).all() as Array<{ topic: number }>).map((r: { topic: number }) => r.topic)
+      )
       const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
+        .filter(b => !topicsWithActivePr.has(Number(b.topic)))
 
       if (allPending.length > 0) {
         return {
