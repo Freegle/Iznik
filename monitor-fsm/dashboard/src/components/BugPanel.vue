@@ -25,13 +25,13 @@
           <th>Summary</th>
           <th style="width: 80px;">State</th>
           <th style="width: 50px;">PR</th>
-          <th v-if="hasHumanBugs" style="width: 130px;"></th>
+          <th style="width: 60px;"></th>
         </tr>
       </thead>
       <tbody>
         <template v-for="(group, featureArea) in groupedBugs" :key="featureArea">
           <tr class="table-light">
-            <td :colspan="hasHumanBugs ? 5 : 4" class="text-muted fst-italic small">
+            <td :colspan="5" class="text-muted fst-italic small">
               {{ featureArea }}
             </td>
           </tr>
@@ -66,12 +66,12 @@
               </a>
               <span v-else class="text-muted small">—</span>
             </td>
-            <td v-if="hasHumanBugs">
+            <td class="text-end">
               <template v-if="bug.state === 'deferred'">
                 <button
                   class="btn btn-outline-secondary btn-xs me-1"
                   title="Dismiss — remove from active bugs"
-                  @click="dismiss(bug)"
+                  @click="showDismissModal(bug)"
                 >✕</button>
                 <button
                   class="btn btn-outline-primary btn-xs"
@@ -79,16 +79,63 @@
                   @click="promptLinkPr(bug)"
                 >PR#</button>
               </template>
+              <template v-else>
+                <button
+                  class="btn btn-outline-secondary btn-xs"
+                  title="Dismiss — remove from active bugs"
+                  @click="showDismissModal(bug)"
+                >✕</button>
+              </template>
             </td>
           </tr>
         </template>
       </tbody>
     </table>
+
+    <!-- Dismiss Confirmation Modal -->
+    <div class="modal fade" id="dismissModal" tabindex="-1">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title">Confirm Dismiss</h5>
+            <button type="button" class="btn-close" @click="hideDismissModal"></button>
+          </div>
+          <div v-if="selectedBug" class="modal-body">
+            <p>Are you sure you want to dismiss this bug?</p>
+            <div class="alert alert-light border">
+              <div class="small text-muted mb-1">Reporter:</div>
+              <div class="mb-3">
+                <a
+                  :href="`https://discourse.ilovefreegle.org/t/${selectedBug.topic}/${selectedBug.post}`"
+                  target="_blank"
+                  rel="noopener"
+                  class="text-decoration-none fw-semibold"
+                >
+                  {{ selectedBug.reporter || 'Unknown' }}
+                </a>
+              </div>
+              <div class="small text-muted mb-1">Summary:</div>
+              <div class="fw-semibold text-truncate">
+                {{ selectedBug.excerpt || selectedBug.topic_title || '—' }}
+              </div>
+            </div>
+            <p class="text-muted small mb-0">
+              This will mark the bug as off-topic and remove it from the active list.
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" @click="hideDismissModal">Cancel</button>
+            <button type="button" class="btn btn-danger" @click="confirmDismiss">Dismiss</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, nextTick } from 'vue'
+import { Modal } from 'bootstrap'
 import type { BugRow } from '../types'
 import StateBadge from './StateBadge.vue'
 
@@ -100,6 +147,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   refresh: []
 }>()
+
+const selectedBug = ref<BugRow | null>(null)
+let dismissModal: Modal | null = null
 
 const activeBugs = computed(() =>
   props.bugs.filter(bug => ['open', 'investigating', 'fix-queued', 'deferred'].includes(bug.state))
@@ -117,7 +167,34 @@ const groupedBugs = computed(() => {
   return groups
 })
 
-async function dismiss(bug: BugRow) {
+function showDismissModal(bug: BugRow) {
+  selectedBug.value = bug
+  nextTick(() => {
+    if (!dismissModal) {
+      const modal = document.getElementById('dismissModal')
+      if (modal) {
+        dismissModal = new Modal(modal)
+      }
+    }
+    if (dismissModal) {
+      dismissModal.show()
+    }
+  })
+}
+
+function hideDismissModal() {
+  if (dismissModal) {
+    dismissModal.hide()
+  }
+  selectedBug.value = null
+}
+
+async function confirmDismiss() {
+  if (!selectedBug.value) return
+  const bug = selectedBug.value
+
+  hideDismissModal()
+
   await fetch(`/api/bugs/${bug.topic}/${bug.post}/state`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
