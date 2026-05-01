@@ -60,7 +60,16 @@ func WhoAmI(c *fiber.Ctx) uint64 {
 		}
 	}
 
+	// Verify that the user is not deleted - deleted users cannot remain authenticated
 	if id > 0 {
+		db := database.DBConn
+		var deleted *time.Time
+		db.Raw("SELECT deleted FROM users WHERE id = ?", id).Scan(&deleted)
+		if deleted != nil {
+			// User is deleted, return 0 (not logged in)
+			return 0
+		}
+
 		// Signal to the auth middleware that this handler used auth — if the JWT
 		// turns out to be stale the middleware should return 401.
 		c.Locals("authUsed", true)

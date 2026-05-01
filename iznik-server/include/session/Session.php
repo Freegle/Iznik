@@ -180,8 +180,11 @@ class Session {
             $r = User::get($dbhr, $dbhm, $id);
 
             if ($r->getId() == $id) {
-                #error_log("Return cached user $id");
-                $ret = $r;
+                # Check if user is deleted - deleted users cannot remain authenticated
+                if (!$r->getPrivate('deleted')) {
+                    #error_log("Return cached user $id");
+                    $ret = $r;
+                }
             }
             #error_log("Found " . $ret->getId() . " role " . $ret->isModerator());
         }

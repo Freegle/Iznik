@@ -1043,4 +1043,23 @@ class sessionTest extends IznikAPITestCase
 //        $this->assertEquals(0, $ret['ret']);
 //        $this->assertEquals(User::SYSTEMROLE_SUPPORT, $ret['me']['systemrole']);
 //    }
+
+    public function testDeletedUserCannotAuthenticate()
+    {
+        // Create and login a test user
+        list($u, $uid) = $this->createTestUserAndLogin('Test Delete User', 'testdel@test.com', 'testpw');
+
+        // Verify the user is logged in
+        $ret = $this->call('session', 'GET', []);
+        $this->assertEquals(0, $ret['ret']);
+        $this->assertNotNull($ret['user']);
+
+        // Mark the user as deleted
+        $this->dbhm->preExec("UPDATE users SET deleted = NOW() WHERE id = ?;", [$uid]);
+
+        // Session should now return NULL for deleted user
+        $ret = $this->call('session', 'GET', []);
+        $this->assertEquals(1, $ret['ret']);  // Not logged in
+        $this->assertNull($ret['user'] ?? NULL);
+    }
 }

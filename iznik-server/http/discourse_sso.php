@@ -46,6 +46,12 @@ if (($sso->validatePayload($payload,$signature))) {
             foreach ($sessions as &$session) {
                 $u = new User($dbhr, $dbhm, $session['userid']);
 
+                if ($u->getPrivate('deleted')) {
+                    error_log('discourse_sso - User is deleted: '.$u->getEmailPreferred());
+                    echo "Your account has been deleted. You cannot access Discourse.";
+                    exit(0);
+                }
+
                 if ($u->isModerator()) {
                     $atts = $u->getPublic(NULL, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, MessageCollection::APPROVED, FALSE);
 
