@@ -13,6 +13,16 @@
       </div>
     </div>
 
+    <!-- Warning banner for PRs that hit the 3-attempt budget -->
+    <div v-if="exhaustedPRNumbers.length > 0" class="alert alert-warning py-2 mb-2 small">
+      <strong>⚠ Human review needed:</strong>
+      PR{{ exhaustedPRNumbers.length > 1 ? 's' : '' }}
+      <span v-for="(n, i) in exhaustedPRNumbers" :key="n">
+        <a :href="`https://github.com/Freegle/Iznik/pull/${n}`" target="_blank" rel="noopener" class="alert-link">#{{ n }}</a><span v-if="i < exhaustedPRNumbers.length - 1">, </span>
+      </span>
+      — FSM gave up after 3 fix attempts. Investigate manually.
+    </div>
+
     <div v-if="loading" class="spinner-border spinner-border-sm" role="status">
       <span class="visually-hidden">Loading...</span>
     </div>
@@ -31,11 +41,12 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="pr in prs" :key="pr.number">
+        <tr v-for="pr in prs" :key="pr.number" :class="{ 'table-warning': exhaustedPRNumbers.includes(pr.number) }">
           <td class="fw-bold">
             <a :href="pr.url" target="_blank" rel="noopener" class="text-decoration-none">
               #{{ pr.number }}
             </a>
+            <span v-if="exhaustedPRNumbers.includes(pr.number)" title="FSM gave up — needs human review" class="ms-1">⚠</span>
           </td>
           <td style="max-width: 220px;">
             <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ pr.title }}</div>
@@ -74,6 +85,7 @@ defineProps<{
   prs: PrLive[]
   loading: boolean
   lastRefreshed: string | null
+  exhaustedPRNumbers: number[]
 }>()
 
 const emit = defineEmits<{
