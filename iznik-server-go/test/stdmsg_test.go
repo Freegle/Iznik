@@ -151,6 +151,26 @@ func TestDeleteStdMsgInvalidBody(t *testing.T) {
 	assert.Equal(t, float64(3), result["ret"])
 }
 
+// TestDeleteStdMsgViaBodyWithoutId covers the branch where a valid JSON body is
+// sent but the id field is absent (zero), so both the body-id and query-string
+// fallback are zero, and the handler returns 404 with ret=2.
+func TestDeleteStdMsgViaBodyWithoutId(t *testing.T) {
+	prefix := uniquePrefix("StdMsgDelNoId")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Valid JSON with no id — exercises: JSON branch true → BodyParser ok → req.ID=0
+	// → first id==0 branch true → query fallback id=0 → second id==0 branch true → 404
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/stdmsg?jwt=%s", token), strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 404, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(2), result["ret"])
+}
+
 func TestPostStdMsgMissingTitle(t *testing.T) {
 	prefix := uniquePrefix("StdMsgNoTitle")
 	groupID := CreateTestGroup(t, prefix)

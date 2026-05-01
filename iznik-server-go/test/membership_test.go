@@ -434,6 +434,39 @@ func TestPatchMembershipsSettings(t *testing.T) {
 	assert.Contains(t, settingsJSON, `"active":0`)
 }
 
+// TestPatchMembershipsSettingsNonObjectValue covers the branch where the settings
+// field is valid JSON but NOT a JSON object (e.g. a string), so json.Unmarshal
+// into map[string]interface{} fails and the configid sync block is skipped.
+// The settings string is still saved to the DB; configid is left unchanged.
+func TestPatchMembershipsSettingsNonObjectValue(t *testing.T) {
+	prefix := uniquePrefix("mem_settings_str")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// Pre-set a configid so we can verify it is NOT cleared.
+	db.Exec("UPDATE memberships SET configid = 99 WHERE userid = ? AND groupid = ?", userID, groupID)
+
+	// settings is a JSON string, not a JSON object — Unmarshal into map fails,
+	// so the configid-sync block is skipped. The handler should still return 200.
+	rawJSON := fmt.Sprintf(`{"userid":%d,"groupid":%d,"settings":"not-an-object"}`, userID, groupID)
+	url := fmt.Sprintf("/api/memberships?jwt=%s", token)
+	req := httptest.NewRequest("PATCH", url, bytes.NewBufferString(rawJSON))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// configid column must be unchanged (sync skipped because settings is not an object).
+	var configID *uint64
+	db.Raw("SELECT configid FROM memberships WHERE userid = ? AND groupid = ?", userID, groupID).Scan(&configID)
+	assert.NotNil(t, configID)
+	assert.Equal(t, uint64(99), *configID, "configid should be unchanged when settings is not a JSON object")
+}
+
 func TestPatchMembershipsSettingsConfigidNull(t *testing.T) {
 	prefix := uniquePrefix("mem_cfgnull")
 	db := database.DBConn
