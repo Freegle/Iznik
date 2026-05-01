@@ -57,16 +57,22 @@
           <NoticeMessage v-if="!members.length && !busy" class="mt-2">
             There are no items to show at the moment.
           </NoticeMessage>
-          <div
-            v-for="item in visibleItems"
-            :key="'memberlist-' + item.id"
-            class="p-0 mt-2"
+          <transition-group
+            name="fade-slide"
+            tag="div"
+            class="items-container"
           >
-            <ModMemberHappiness
-              v-if="item.type === 'Member'"
-              :id="item.object.id"
-            />
-          </div>
+            <div
+              v-for="item in visibleItems"
+              :key="'memberlist-' + item.id"
+              class="p-0 mt-2 item-wrapper"
+            >
+              <ModMemberHappiness
+                v-if="item.type === 'Member'"
+                :id="item.object.id"
+              />
+            </div>
+          </transition-group>
         </b-tab>
 
         <b-tab>
@@ -325,5 +331,33 @@ onMounted(async () => {
 <style scoped>
 select {
   max-width: 300px;
+}
+
+.items-container {
+  display: block;
+  will-change: contents;
+}
+
+.item-wrapper {
+  will-change: opacity, transform;
+}
+
+.fade-slide-enter-active,
+.fade-slide-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.fade-slide-enter-from {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.fade-slide-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.fade-slide-move {
+  transition: transform 0.2s ease;
 }
 </style>
