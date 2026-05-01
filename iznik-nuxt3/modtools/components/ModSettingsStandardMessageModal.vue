@@ -105,7 +105,19 @@ const stdmsgStore = useStdmsgStore()
 const { modal, hide } = useOurModal()
 const { myid } = useMe()
 
-const newmsg = reactive([])
+const newmsg = reactive({
+  title: '',
+  action: null,
+  autosend: 0,
+  rarelyused: 0,
+  newmodstatus: 'UNCHANGED',
+  newdelstatus: 'UNCHANGED',
+  subjpref: '',
+  subjsuff: '',
+  insert: 'Top',
+  body: '',
+  edittext: 'Unchanged',
+})
 
 const allOptions = [
   { value: null, text: '-- Pending Messages -- ' },
@@ -169,6 +181,21 @@ async function show() {
   // Fetch the current value, if any, before opening the modal.
   if (props.id) {
     await stdmsgStore.fetch(props.id)
+  } else {
+    // Reset the form for a new message.
+    Object.assign(newmsg, {
+      title: '',
+      action: null,
+      autosend: 0,
+      rarelyused: 0,
+      newmodstatus: 'UNCHANGED',
+      newdelstatus: 'UNCHANGED',
+      subjpref: '',
+      subjsuff: '',
+      insert: 'Top',
+      body: '',
+      edittext: 'Unchanged',
+    })
   }
   modal.value.show()
 }

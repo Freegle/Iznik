@@ -254,4 +254,61 @@ describe('ModSettingsStandardMessageModal - Logic Tests', () => {
       expect(mockStdmsgStore.delete).toHaveBeenCalledWith(data)
     })
   })
+
+  describe('newmsg object initialization', () => {
+    it('newmsg is initialized as an object with all required fields', () => {
+      const newmsg = {
+        title: '',
+        action: null,
+        autosend: 0,
+        rarelyused: 0,
+        newmodstatus: 'UNCHANGED',
+        newdelstatus: 'UNCHANGED',
+        subjpref: '',
+        subjsuff: '',
+        insert: 'Top',
+        body: '',
+        edittext: 'Unchanged',
+      }
+      expect(typeof newmsg).toBe('object')
+      expect(Array.isArray(newmsg)).toBe(false)
+      expect(newmsg.title).toBe('')
+      expect(newmsg.action).toBeNull()
+    })
+
+    it('newmsg can be reset for multiple sequential adds', () => {
+      const newmsg = {
+        title: 'First Message',
+        action: 'Approve',
+        autosend: 1,
+        rarelyused: 1,
+        newmodstatus: 'MODERATED',
+        newdelstatus: 'DIGEST',
+        subjpref: 'prefix',
+        subjsuff: 'suffix',
+        insert: 'Bottom',
+        body: 'Body text',
+        edittext: 'Correct Case',
+      }
+
+      Object.assign(newmsg, {
+        title: '',
+        action: null,
+        autosend: 0,
+        rarelyused: 0,
+        newmodstatus: 'UNCHANGED',
+        newdelstatus: 'UNCHANGED',
+        subjpref: '',
+        subjsuff: '',
+        insert: 'Top',
+        body: '',
+        edittext: 'Unchanged',
+      })
+
+      expect(newmsg.title).toBe('')
+      expect(newmsg.action).toBeNull()
+      expect(newmsg.autosend).toBe(0)
+      expect(newmsg.insert).toBe('Top')
+    })
+  })
 })

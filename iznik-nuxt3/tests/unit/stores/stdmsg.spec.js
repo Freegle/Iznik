@@ -103,4 +103,34 @@ describe('stdmsg store', () => {
       configuring: true,
     })
   })
+
+  it('can add multiple messages in sequence', async () => {
+    const store = useStdmsgStore()
+    store.init({})
+
+    const id1 = await store.add({ title: 'First', configid: 2 })
+    expect(id1).toBe(99)
+    expect(mockFetchConfig).toHaveBeenCalledTimes(1)
+
+    const id2 = await store.add({ title: 'Second', configid: 2 })
+    expect(id2).toBe(99)
+    expect(mockFetchConfig).toHaveBeenCalledTimes(2)
+  })
+
+  it('delete and add in sequence works correctly', async () => {
+    const store = useStdmsgStore()
+    store.init({})
+
+    await store.delete({ id: 5, configid: 1 })
+    expect(mockDeleteStdMsg).toHaveBeenCalledWith({ id: 5, configid: 1 })
+    expect(mockFetchConfig).toHaveBeenCalledWith({
+      id: 1,
+      configuring: true,
+    })
+
+    const id = await store.add({ title: 'New', configid: 1 })
+    expect(id).toBe(99)
+    expect(mockAddStdMsg).toHaveBeenCalled()
+    expect(mockFetchConfig).toHaveBeenCalledTimes(2)
+  })
 })
