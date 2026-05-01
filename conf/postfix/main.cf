@@ -55,9 +55,10 @@ smtpd_recipient_restrictions =
     check_policy_service unix:private/policyd-spf
 policyd-spf_time_limit = 3600
 
-# Queue settings
-maximal_queue_lifetime = 1d
-bounce_queue_lifetime = 1d
+# Queue settings — keep deferred mail for 5 days so a multi-day batch outage
+# doesn't expire mail before we can fix it.
+maximal_queue_lifetime = 5d
+bounce_queue_lifetime = 5d
 
 # Logging
 maillog_file = /dev/stdout

@@ -397,19 +397,23 @@ print(json.dumps(results))
 
   {
     name: 'queue_deployed_reply_drafts',
-    description: 'Called automatically during LOAD_STATE. For every fix-queued bug whose PR is MERGED, checks the production branch deployment via check_pr_deployed. If deployed and no pending draft exists: auto-queues a reply draft using the PR title as the description. Updates pr.deploy_state to "deployed" or "pending_deploy". Returns {queued: [prNumbers], pendingDeploy: [prNumbers], alreadyDrafted: [prNumbers]}.',
+    description: 'Called automatically during LOAD_STATE. For every bug in fix-queued or fixed state whose PR is MERGED and deploy_state is pending_deploy, checks the production branch deployment via check_pr_deployed. If deployed and no pending draft exists: auto-queues a reply draft using the PR title as the description. Updates pr.deploy_state to "deployed" or "pending_deploy". Returns {queued: [prNumbers], pendingDeploy: [prNumbers], alreadyDrafted: [prNumbers]}.',
     handler: async () => {
       const db = getDb()
 
-      // Bugs with MERGED PRs that are still fix-queued
+      // Bugs with MERGED PRs still awaiting confirmed deployment.
+      // Include fix-queued (PR merged, bug not yet advanced) AND fixed (bug
+      // advanced before production branch was updated — deploy_state stays
+      // pending_deploy until we confirm the commit is live).
       const bugs = db.prepare(`
         SELECT b.topic, b.post, b.reporter, b.excerpt, b.pr_number,
                p.title AS pr_title, p.frontend_only, p.preview_url, p.deploy_state
         FROM discourse_bug b
         JOIN pr p ON p.number = b.pr_number
-        WHERE b.state = 'fix-queued'
+        WHERE b.state IN ('fix-queued', 'fixed')
           AND b.pr_number IS NOT NULL
           AND p.state = 'MERGED'
+          AND (p.deploy_state IS NULL OR p.deploy_state = 'pending_deploy')
         ORDER BY b.topic, b.post
       `).all() as Array<{
         topic: number; post: number; reporter: string | null; excerpt: string | null

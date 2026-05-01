@@ -118,7 +118,7 @@ function combinedStatusClass(pr: PrLive): string {
 
 function combinedStatusLabel(pr: PrLive): string {
   switch (combinedStatus(pr)) {
-    case 'running': return 'CI running'
+    case 'running': return 'CI pending'
     case 'failed': return 'CI failed'
     case 'needs-rebase': return 'Needs rebase'
     case 'needs-review': return 'Needs review'
