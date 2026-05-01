@@ -279,7 +279,11 @@ const replyToPostChatButton = ref(null)
 const emailValidatorRef = ref(null)
 
 // Fetch the message data
-await messageStore.fetch(props.messageId)
+try {
+  await messageStore.fetch(props.messageId)
+} catch (error) {
+  console.error(`[ChatReplyPane] Failed to fetch message ${props.messageId}:`, error)
+}
 
 const message = computed(() => {
   return messageStore?.byId(props.messageId)
