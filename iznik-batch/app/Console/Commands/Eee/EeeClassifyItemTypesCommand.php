@@ -66,10 +66,19 @@ class EeeClassifyItemTypesCommand extends Command
             "item_types_limit_{$limit}",
         );
 
-        $stats = $this->classifier->classifyItemTypes($limit, $force);
+        $stats = $this->classifier->classifyItemTypes($limit, $force, function (string $itemName, ?array $result) {
+            if ($result === null) {
+                $this->line("  <comment>skip</comment>  {$itemName} (no images)");
+            } else {
+                $eeeLabel = $result['is_eee'] ? '<info>EEE</info>    ' : '<fg=gray>non-EEE</fg=gray>';
+                $cost     = '$' . number_format($result['cost'], 5);
+                $this->line("  {$eeeLabel}  {$itemName}  {$cost}");
+            }
+        });
 
         $this->sqlite->finishRun($runId, $stats['processed'], $stats['eee'], $stats['skipped'], $stats['cost']);
 
+        $this->newLine();
         $this->table(['Metric', 'Value'], [
             ['Item types processed', $stats['processed']],
             ['EEE item types found', $stats['eee']],
