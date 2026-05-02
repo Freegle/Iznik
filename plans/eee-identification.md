@@ -1,7 +1,6 @@
 # EEE Identification Project — Design Plan
 
 **Status**: Design complete, implementation in progress.
-**Funding**: Approved, £5,500 / 10 days.
 **Branch**: `feature/eee-identification`
 **Implementation target**: `iznik-batch` Laravel batch code.
 
