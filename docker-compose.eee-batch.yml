@@ -1,0 +1,47 @@
+networks:
+  default:
+    external: true
+    name: freegle_default
+
+services:
+  batch:
+    container_name: freegle-eee-batch
+    build:
+      context: ./iznik-batch
+      dockerfile: docker/Dockerfile
+    extra_hosts:
+      - "db-live:host-gateway"
+    volumes:
+      - ./iznik-batch:/var/www/html
+    restart: "no"
+    environment:
+      - APP_NAME=Freegle EEE Batch
+      - APP_KEY=base64:/9sYlNDiNQ27/09jvTm4G+bs2x/1bY8/QGktENKPy4k=
+      - APP_ENV=local
+      - APP_DEBUG=true
+      - RUN_MIGRATIONS=false
+      - APP_URL=http://localhost
+      - LOG_CHANNEL=stderr
+      - DB_CONNECTION=mysql
+      - DB_HOST=db-live
+      - DB_PORT=${LIVE_DB_PORT:-11234}
+      - DB_DATABASE=iznik
+      - DB_USERNAME=${LIVE_DB_USER:-root}
+      - DB_PASSWORD=${LIVE_DB_PASSWORD}
+      - CACHE_STORE=array
+      - QUEUE_CONNECTION=sync
+      - SESSION_DRIVER=array
+      # EEE — override with values from .env.background
+      - EEE_MODEL=${EEE_MODEL:-claude-bridge}
+      - EEE_BRIDGE_PATH=${EEE_BRIDGE_PATH:-/var/www/html/storage/eee/bridge}
+      - EEE_BRIDGE_TIMEOUT=${EEE_BRIDGE_TIMEOUT:-300}
+      - EEE_SQLITE_PATH=${EEE_SQLITE_PATH:-/var/www/html/storage/eee/classifications.sqlite}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - TOGETHER_API_KEY=${TOGETHER_API_KEY:-}
+      - EEE_CLAUDE_MODEL=${EEE_CLAUDE_MODEL:-claude-sonnet-4-6}
+      - EEE_GEMINI_MODEL=${EEE_GEMINI_MODEL:-gemini-2.0-flash-lite}
+      - EEE_OPENAI_MODEL=${EEE_OPENAI_MODEL:-gpt-4o}
+      - EEE_TOGETHER_MODEL=${EEE_TOGETHER_MODEL:-}
+      - EEE_OLLAMA_BASE_URL=${EEE_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
