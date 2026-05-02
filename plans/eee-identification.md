@@ -6,6 +6,18 @@
 
 ---
 
+## What this project does (plain English)
+
+Freegle members give away millions of items every year. Many of those items are electrical — phones, laptops, washing machines, toasters — and under UK/EU law these are classed as WEEE (Waste Electrical and Electronic Equipment), which have specific recycling requirements and are valuable to track.
+
+At the moment we have no idea how much electrical equipment passes through Freegle. This project uses AI to look at the photos that members post and automatically decide: is this item electrical? If so, which category does it fall into, how heavy is it likely to be, what condition is it in?
+
+Because there are millions of photos, we can't look at each one individually. Instead we start by looking at common item categories (the top 200 most-posted types cover about 80% of everything posted). We send photos of those categories to an AI model and ask it to make a judgement. We then run the same photos through several different AI models and compare the answers — where they all agree, we can be confident; where they disagree, we know to be cautious.
+
+The end result is a public stats page showing how much electrical equipment Freegle diverts from landfill, broken down by category, condition, weight, and trend over time.
+
+---
+
 ## Goal
 
 Use AI vision models to classify Freegle post photos as EEE (Electrical and Electronic Equipment) or not, extract attributes (WEEE category, weight, size, condition, brand, material), and produce a public stats page showing EEE passing through the platform.
@@ -30,15 +42,20 @@ The `items` table has a `popularity` column. A small number of item types accoun
 
 1. Take the top N item types by popularity
 2. For each, fetch K=10 random real photos via `messages_attachments → messages_items`
-3. Run the reference model (Claude) on those 10 images → compute consensus (majority vote + mean confidence)
-4. Store result in `eee_item_types` SQLite table
-5. Flag types with low agreement (`agree_rate < 0.75`) as `needs_image_analysis` — these are genuinely ambiguous (e.g. "lamp" could be electric or oil)
+3. Run the reference model on those 10 images → compute consensus (majority vote + mean confidence)
+4. Store result in `eee_item_types` SQLite table, including `eee_sample_count` (how many of the 10 were classified EEE, even if they lost the vote)
+5. Flag types with low agreement (`agree_rate < 0.85`) as `needs_image_analysis`
 
-For any historical message whose item type is in the lookup with high confidence → apply the lookup result directly. No per-image API call needed.
+**Important: item type names are heterogeneous.** "Sofa" covers regular sofas (not EEE) *and* sofas with powered recliners, massage motors, or USB chargers (EEE). A type lookup that says "sofa = not EEE" based on 9/10 sampled images being non-EEE would silently miss the 10% that are electrical. Three rules prevent this:
+
+- **Non-EEE + zero EEE minority** (`eee_sample_count = 0`): safe to skip per-image. If none of the sample was EEE, this type is genuinely homogeneous non-EEE.
+- **Non-EEE + any EEE minority** (`eee_sample_count > 0`): always run per-image, regardless of confidence. The type is mixed.
+- **EEE type**: never skip per-image. The lookup result is used as a prior, but per-image is always needed for instance-specific attributes (weight, brand, model number, WEEE subcategory). A "laptop" type lookup won't tell us if this one is a 1kg ultrabook or a 4kg gaming machine.
+- **Text signal override**: if the type lookup says non-EEE but EEE text signals are present in the title/description ("sofa with USB charger"), escalate to per-image regardless.
 
 ### Tier 2 — Per-image analysis (slow path)
 
-Used for: item types not in the lookup; types flagged `needs_image_analysis`; messages with no recognised item type.
+Used for: all EEE-classified types (always); non-EEE types with any EEE minority; types flagged `needs_image_analysis`; items with EEE text signals despite non-EEE type lookup; messages with no recognised item type.
 
 ### Iterative expansion
 
@@ -55,19 +72,17 @@ Each phase is run, accuracy-compared, then expanded. No need to process a full y
 
 ## Model selection
 
-Run a blind comparison using **together.ai** as the harness (single API, access to multiple models at transparent per-token pricing). Same ~200-item sample through all candidates:
+All testing done via **together.ai** — single API key, access to many open-weight vision models, transparent per-token pricing, cheap enough that broad comparison is practical. Claude runs separately (Anthropic API) as the reference labeller.
 
-| Model | Notes |
-|---|---|
-| Claude Sonnet (reference) | Acts as the reference labeller |
-| Gemini 2.0 Flash | Cheapest; already configured |
-| Gemini 2.5 Pro | Higher-quality Gemini tier |
-| GPT-4o | Strong general vision; batch API available |
-| Llama 3.2 90B Vision | Open-weight via together.ai |
-| Qwen2.5-VL 72B | Strong on product images via together.ai |
-| Ollama (local) | No models installed yet; add when ready |
+| Model | Together.ai slug | Notes |
+|---|---|---|
+| Claude Sonnet (reference) | via Anthropic API | Reference labeller — not run through together.ai |
+| Llama 3.2 90B Vision | `meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo` | Default comparison model |
+| Qwen2.5-VL 72B | `Qwen/Qwen2.5-VL-72B-Instruct` | Strong on product/label images |
+| Llama 3.2 11B Vision | `meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo` | Smaller/faster; check if accuracy holds |
+| Ollama (local Windows) | via `host.docker.internal:11434` | Free; add model when ready |
 
-Score each on: EEE F1 vs Claude reference, WEEE category agreement, JSON reliability, cost per 1,000 images. Production model selected on F1 + cost trade-off.
+Score each on: EEE F1 vs Claude reference, per-attribute agreement rate, JSON reliability, cost per 1,000 images. Production model selected on F1 + cost trade-off. Gemini Flash remains an option if together.ai open-weight models underperform.
 
 ---
 
@@ -284,17 +299,17 @@ Versioned via `PROMPT_VERSION` semver constant (currently `1.1.0`). Key elements
 
 200 reference messages × 4 comparison models = 800 calls → **~$1.85**
 
-### Backfill (per-image path only)
+### Backfill (per-image path)
 
-The type lookup covers 80% of posts at zero extra cost after Phase 1. Only uncovered messages need per-image calls.
+The type lookup is only a definitive skip for **non-EEE types with no EEE minority in the sample**. EEE types, mixed types, and uncovered types always get per-image calls. Assuming ~20% of Freegle offers are EEE items:
 
-| Type coverage | Per-image % | Cost per 10,000 offers |
-|---|---|---|
-| Top 200 (Phase 1) | 20% → 2,000 calls | ~$4.60 |
-| Top 500 (Phase 2) | 10% → 1,000 calls | ~$2.30 |
-| Top 1,000 (Phase 3) | 5% → 500 calls | ~$1.15 |
+| Coverage | Uncovered | Always-EEE | Mixed est. | Total per-image | Cost / 10k offers |
+|---|---|---|---|---|---|
+| Phase 1 (top 200) | 20% | 16% | 3% | ~39% → 3,900 calls | ~$9 |
+| Phase 2 (top 500) | 10% | 16% | 2% | ~28% → 2,800 calls | ~$6.50 |
+| Phase 3 (top 1,000) | 5% | 16% | 1% | ~22% → 2,200 calls | ~$5 |
 
-Scale these linearly for the actual backfill volume.
+The EEE-always-per-image rule roughly doubles the per-image volume vs. a naive lookup strategy, but prevents false negatives on heterogeneous types like "sofa with built-in charger". Scale linearly for actual backfill volume.
 
 ### Comparison: other models (per 10,000 calls)
 

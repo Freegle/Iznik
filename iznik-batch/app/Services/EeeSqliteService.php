@@ -50,6 +50,7 @@ class EeeSqliteService
                 popularity               INTEGER,
                 sample_size              INTEGER DEFAULT 0,
                 images_analysed          INTEGER DEFAULT 0,
+                eee_sample_count         INTEGER DEFAULT 0,
                 is_eee                   INTEGER,
                 is_eee_confidence        REAL,
                 is_eee_agree_rate        REAL,

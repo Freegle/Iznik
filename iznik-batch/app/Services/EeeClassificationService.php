@@ -16,8 +16,8 @@ use Illuminate\Support\Facades\Log;
 class EeeClassificationService
 {
     protected const SAMPLE_SIZE        = 10;
-    protected const CONFIDENCE_MIN     = 0.80;
-    protected const AGREE_RATE_MIN     = 0.75;
+    protected const CONFIDENCE_MIN     = 0.92;
+    protected const AGREE_RATE_MIN     = 0.85;
 
     protected const EEE_TEXT_SIGNALS = [
         'plug', 'mains', 'electric', 'electrical', 'battery', 'batteries',
@@ -120,6 +120,7 @@ class EeeClassificationService
             'popularity'              => $popularity,
             'sample_size'             => self::SAMPLE_SIZE,
             'images_analysed'         => count($results),
+            'eee_sample_count'        => $consensus['eee_sample_count'],
             'is_eee'                  => $consensus['is_eee'] ? 1 : 0,
             'is_eee_confidence'       => $consensus['is_eee_confidence'],
             'is_eee_agree_rate'       => $consensus['is_eee_agree_rate'],
@@ -254,13 +255,21 @@ class EeeClassificationService
 
         $textSignals = $this->extractTextSignals($message->subject . ' ' . $message->textbody);
 
-        // Try the item-type lookup first.
+        // Try the item-type lookup as a definitive skip ONLY for non-EEE homogeneous types.
+        // Rules:
+        //  1. EEE types: always run per-image (lookup is a prior only; attributes vary by instance).
+        //  2. Non-EEE types with any EEE minority (eee_sample_count > 0): always per-image (mixed type).
+        //  3. EEE text signals present despite non-EEE type: escalate to per-image.
+        //  4. Non-EEE + zero EEE minority + high confidence/agreement + no EEE text: safe to skip.
         if ($message->item_name) {
             $type = $this->sqlite->getItemType($message->item_name);
             if ($type
                 && !$type['needs_image_analysis']
+                && !$type['is_eee']
+                && (int) ($type['eee_sample_count'] ?? 1) === 0
                 && $type['is_eee_confidence'] >= self::CONFIDENCE_MIN
                 && $type['is_eee_agree_rate']  >= self::AGREE_RATE_MIN
+                && empty($textSignals['eee'])
             ) {
                 return $this->storeTypeLookupResult($message, $type, $textSignals);
             }
@@ -432,6 +441,7 @@ class EeeClassificationService
         $agreeCount  = max($eeeCount, $totalVotes - $eeeCount);
         $agreeRate   = $totalVotes > 0 ? $agreeCount / $totalVotes : 0.0;
         $isEee       = $totalVotes > 0 && ($eeeCount / $totalVotes) > 0.5;
+        $eeeSampleCount = $eeeCount;
 
         $confidences    = array_filter(array_map(fn($r) => $r['is_eee_confidence'] ?? null, $results));
         $meanConf       = count($confidences) > 0 ? array_sum($confidences) / count($confidences) : 0.0;
@@ -453,6 +463,7 @@ class EeeClassificationService
             'is_eee'                  => $isEee,
             'is_eee_confidence'       => round($meanConf, 4),
             'is_eee_agree_rate'       => round($agreeRate, 4),
+            'eee_sample_count'        => $eeeSampleCount,
             'weee_category'           => $catMode,
             'weee_category_name'      => $catName,
             'weee_category_confidence' => round($catConf, 4),
