@@ -338,6 +338,13 @@ return [
         'ollama_base_url' => env('EEE_OLLAMA_BASE_URL', 'http://host.docker.internal:11434'),
         'ollama_model'    => env('EEE_OLLAMA_MODEL', 'llama3.2-vision'),
 
+        // Claude subscription bridge — file-based IPC so Claude Code processes
+        // images using the subscription rather than the pay-per-token API.
+        // PHP writes job files here; Claude Code reads them and writes results.
+        // Path must be visible to both the PHP container and the host Claude session.
+        'bridge_path'            => env('EEE_BRIDGE_PATH', storage_path('eee/bridge')),
+        'bridge_timeout_seconds' => env('EEE_BRIDGE_TIMEOUT', 300),
+
         // Whether to include follow-on chat as classification context.
         // Off by default — chat messages are private between users.
         'use_chat_data'   => env('EEE_USE_CHAT_DATA', false),

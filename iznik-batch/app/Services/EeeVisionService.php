@@ -46,24 +46,26 @@ class EeeVisionService
     public function getModelName(): string
     {
         return match ($this->driver) {
-            'claude'   => config('freegle.eee.claude_model', 'claude-sonnet-4-6'),
-            'gemini'   => config('freegle.eee.gemini_model', 'gemini-2.0-flash'),
-            'openai'   => config('freegle.eee.openai_model', 'gpt-4o'),
-            'together' => config('freegle.eee.together_model', 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo'),
-            'ollama'   => config('freegle.eee.ollama_model', 'llama3.2-vision'),
-            default    => $this->driver,
+            'claude'        => config('freegle.eee.claude_model', 'claude-sonnet-4-6'),
+            'claude-bridge' => 'claude-subscription-bridge',
+            'gemini'        => config('freegle.eee.gemini_model', 'gemini-2.0-flash'),
+            'openai'        => config('freegle.eee.openai_model', 'gpt-4o'),
+            'together'      => config('freegle.eee.together_model', 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo'),
+            'ollama'        => config('freegle.eee.ollama_model', 'llama3.2-vision'),
+            default         => $this->driver,
         };
     }
 
     public function isConfigured(): bool
     {
         return match ($this->driver) {
-            'claude'   => !empty(config('freegle.eee.anthropic_api_key')),
-            'gemini'   => !empty(config('freegle.eee.gemini_api_key')),
-            'openai'   => !empty(config('freegle.eee.openai_api_key')),
-            'together' => !empty(config('freegle.eee.together_api_key')),
-            'ollama'   => true,
-            default    => false,
+            'claude'        => !empty(config('freegle.eee.anthropic_api_key')),
+            'claude-bridge' => is_dir(config('freegle.eee.bridge_path', '')),
+            'gemini'        => !empty(config('freegle.eee.gemini_api_key')),
+            'openai'        => !empty(config('freegle.eee.openai_api_key')),
+            'together'      => !empty(config('freegle.eee.together_api_key')),
+            'ollama'        => true,
+            default         => false,
         };
     }
 
@@ -85,12 +87,13 @@ class EeeVisionService
         $userText = $this->buildUserText($context);
 
         $raw = match ($this->driver) {
-            'claude'   => $this->callClaude($imageUrl, $system, $userText),
-            'gemini'   => $this->callGemini($imageUrl, $system, $userText),
-            'openai'   => $this->callOpenAI($imageUrl, $system, $userText),
-            'together' => $this->callTogether($imageUrl, $system, $userText),
-            'ollama'   => $this->callOllama($imageUrl, $system, $userText),
-            default    => null,
+            'claude'        => $this->callClaude($imageUrl, $system, $userText),
+            'claude-bridge' => $this->callClaudeBridge($imageUrl, $system, $userText),
+            'gemini'        => $this->callGemini($imageUrl, $system, $userText),
+            'openai'        => $this->callOpenAI($imageUrl, $system, $userText),
+            'together'      => $this->callTogether($imageUrl, $system, $userText),
+            'ollama'        => $this->callOllama($imageUrl, $system, $userText),
+            default         => null,
         };
 
         return $raw ? $this->parseAndAnnotate($raw) : null;
@@ -379,6 +382,49 @@ PROMPT;
             Log::error('EeeVisionService Ollama exception', ['error' => $e->getMessage()]);
             return null;
         }
+    }
+
+    protected function callClaudeBridge(string $imageUrl, string $system, string $userText): ?array
+    {
+        $bridgeDir = rtrim(config('freegle.eee.bridge_path'), '/');
+        $jobId     = uniqid('job_', true);
+
+        $pendingFile   = "{$bridgeDir}/pending/{$jobId}.json";
+        $doneFile      = "{$bridgeDir}/done/{$jobId}.json";
+        $errorFile     = "{$bridgeDir}/errors/{$jobId}.json";
+
+        file_put_contents($pendingFile, json_encode([
+            'job_id'         => $jobId,
+            'image_url'      => $imageUrl,
+            'system'         => $system,
+            'user_text'      => $userText,
+            'prompt_version' => self::PROMPT_VERSION,
+            'created_at'     => now()->toIso8601String(),
+        ], JSON_PRETTY_PRINT));
+
+        $timeout = config('freegle.eee.bridge_timeout_seconds', 300);
+        $deadline = time() + $timeout;
+
+        while (time() < $deadline) {
+            if (file_exists($doneFile)) {
+                $result = json_decode(file_get_contents($doneFile), true);
+                unlink($doneFile);
+                return $result;
+            }
+            if (file_exists($errorFile)) {
+                Log::warning('EeeVisionService bridge error', ['job_id' => $jobId]);
+                unlink($errorFile);
+                return null;
+            }
+            sleep(2);
+        }
+
+        // Timed out — move job to errors so bridge doesn't keep trying.
+        if (file_exists($pendingFile)) {
+            rename($pendingFile, $errorFile);
+        }
+        Log::warning('EeeVisionService bridge timeout', ['job_id' => $jobId, 'timeout' => $timeout]);
+        return null;
     }
 
     // -------------------------------------------------------------------------
