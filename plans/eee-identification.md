@@ -6,6 +6,30 @@
 
 ---
 
+## ⚑ Key architectural insight (2026-05-02)
+
+**Do not ask the model for an overall EEE judgment. Ask it to observe components.**
+
+The single most important design decision in this project: the original approach asked "is this item EEE?" as a single holistic question. This fails on boundary cases like gas cookers (look identical to electric cookers in photos) and items with supplementary electrics.
+
+The correct framing separates two distinct questions that require different evidence:
+
+1. **"What electrical components can you see?"** — answered from the image, open-ended, no taxonomy needed. A gas cooker correctly answers: "electronic ignition, digital clock, interior light". This tells us the item *contains* EEE components (`contains_eee_components = true`).
+
+2. **"Does the primary function require electricity?"** — answered from the title and description text, not the image. "Gas cooker" text → `is_eee_from_text = false`. This is the WEEE basic-function test.
+
+These two answers compose to give both EEE fields we need:
+- `contains_eee_components`: from image observation (always well-defined)
+- `is_eee` (strictly EEE): from text signal (authoritative when not null; image cannot reliably determine this for visually ambiguous items)
+
+**Why holistic judgment fails:** A gas cooker and an electric cooker are visually indistinguishable in many photos. Asking "is this EEE?" forces the model to make an inference about primary power source from appearance alone, which it cannot do reliably. Asking "what electrical components can you see?" is a factual observation question the model answers accurately.
+
+**Why the image cannot determine `is_eee`:** The WEEE test is about the *primary function*, not about the presence of electrical components. A gas cooker has electrical components (ignition, clock) but its primary function (cooking) is gas-powered. This distinction can only be reliably read from the item title/description, not from the photo.
+
+**Validated:** 12/12 across Gas Cooker, Electric Cooker, Petrol Lawnmower, Chainsaw; 44/48 (92%) across 24-item-type wide validation.
+
+---
+
 ## Approach History
 
 | Date | Decision | Reason |
