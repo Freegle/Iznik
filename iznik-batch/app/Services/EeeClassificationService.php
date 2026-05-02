@@ -47,7 +47,7 @@ class EeeClassificationService
      * Classify the top $limit item types by popularity.
      * Skips types already in the cache unless $forceRefresh is true.
      */
-    public function classifyItemTypes(int $limit, bool $forceRefresh = false): array
+    public function classifyItemTypes(int $limit, bool $forceRefresh = false, ?callable $progress = null): array
     {
         $items = DB::table('items')
             ->orderByDesc('popularity')
@@ -69,6 +69,9 @@ class EeeClassificationService
                 $stats['processed']++;
                 $stats['cost'] += $result['cost'];
                 if ($result['is_eee']) $stats['eee']++;
+            }
+            if ($progress) {
+                ($progress)($itemName, $result);
             }
         }
 
