@@ -154,12 +154,12 @@
                       >
                     </template>
                     <span
-                      v-if="messageGroups.length && timeAgoExpanded"
+                      v-if="messageGroups.length && timeAgoExpandedDisplay"
                       class="group-time-separator"
                       >·</span
                     >
-                    <span v-if="timeAgoExpanded" class="group-time"
-                      >{{ timeAgoExpanded }} ago</span
+                    <span v-if="timeAgoExpandedDisplay" class="group-time"
+                      >{{ timeAgoExpandedDisplay }}</span
                     >
                     <span class="group-time-separator">·</span>
                     <nuxt-link
@@ -221,9 +221,9 @@
                         </span>
                       </template>
                     </template>
-                    <template v-if="timeAgoExpanded">
+                    <template v-if="timeAgoExpandedDisplay">
                       <span class="desktop-sep">·</span>
-                      <span>{{ timeAgoExpanded }} ago</span>
+                      <span>{{ timeAgoExpandedDisplay }}</span>
                     </template>
                     <span class="desktop-sep">·</span>
                     <nuxt-link
@@ -596,6 +596,7 @@ const {
   strippedSubject,
   gotAttachments: hasPhoto,
   timeAgoExpanded,
+  timeAgoExpandedDisplay,
   placeholderClass,
   categoryIcon,
 } = useMessageDisplay(idRef)
