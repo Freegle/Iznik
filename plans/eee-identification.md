@@ -654,19 +654,31 @@ The reconciliation call sees both the image and the competing explanations. It i
 
 **Cost**: the reconciliation call only fires on disagreements. If text and image agree for ~80% of items, the per-item cost is ~2 calls, not 3.
 
-### What needs to be researched
+### What the research says about LLM self-explanation reliability
 
-This is a hypothesis, not an established technique. Before building the full pipeline, we need to validate:
+*Researched 2026-05-02. Sources: Turpin et al. 2307.13702 (faithfulness), LLMs-as-Judges survey 2411.15594, verbalized confidence 2412.14737.*
 
-1. **Does the reconciliation call actually change its mind when text is right?** Run gas cooker: text says non-EEE, image says EEE. Does the reconciler correctly identify the image reasoning as "inferred from visual similarity" and rule for text?
+**Chain-of-thought explanations are not faithful to actual computation.** Models frequently post-hoc rationalise — they arrive at a conclusion via implicit computation and then generate a plausible-sounding narrative to justify it. The reasoning string in `is_eee_reasoning` may not reflect *why* the model classified as it did; it reflects a narrative the model constructed afterwards. Critically, unfaithfulness *worsens with larger models*.
 
-2. **Does it correctly defer to image when image has direct evidence?** Run a chainsaw photo that clearly shows a power cable. Does the reconciler correctly identify the image reasoning as "directly observed" and rule for image even if text is ambiguous?
+**Consequences for the reconciliation approach:**
+- The reasoning strings we're comparing (text_reasoning vs image_reasoning) are likely post-hoc narratives, not faithful process descriptions
+- The reconciliation call evaluates *narrative coherence*, not *ground-truth reasoning*
+- A well-written but wrong argument can beat a correct but tersely-expressed one (verbosity bias)
 
-3. **Is the reconciler's reasoning auditable?** We need to be able to read its output and understand *why* it chose one signal. If it just produces a confident verdict with no traceable argument, it's not trustworthy.
+**LLM-as-judge is an active, partially validated technique** but introduces systematic biases:
+- **Position bias**: the reconciler may favour whichever reasoning it sees first
+- **Verbosity bias**: longer, more detailed explanations are rated more plausible regardless of correctness
+- **Self-enhancement bias**: if the reconciler is the same model that generated one of the inputs, it may favour its own prior output
 
-4. **Does it introduce new errors on easy cases?** If we run the reconciler on items where text and image agree (washing machine, laptop), does it hallucinate disagreement or change the result?
+**Confidence scores are severely miscalibrated** (Expected Calibration Error 0.108–0.427 across studies). Self-reported `is_eee_confidence` from a single call should not be treated as a probability. Post-hoc calibration (isotonic regression on a validation set) is needed before confidence scores can be used in a weighting scheme.
 
-5. **Calibration**: is `reconciler_confidence` actually correlated with accuracy? Or does it express high confidence regardless?
+**Bottom line for this project:** The reconciliation approach is architecturally sound but epistemically fragile. It improves on a naive combined call by separating the signals, but the third call is judging narrative quality, not truth. It will likely perform better than random on clear cases (gas cooker: text has an explicit power-source name, image reasoning says "looks like a cooker") but may be unreliable on genuinely ambiguous items where both reasoning strings are coherent.
+
+**Required before relying on reconciliation in production:**
+1. Validate reconciler accuracy against a ground-truth test set (not just the hard-cases set — expand to 50+ items with known answers)
+2. Mitigate verbosity bias: ask the reconciler to assess *logical consistency* and *directness of evidence*, not overall plausibility
+3. Do not use reconciler confidence scores without calibration
+4. Keep `dominant_signal` and `reconciler_reasoning` in the stored output so every decision is auditable and can be reviewed when the model is wrong
 
 ### Implementation plan (after research)
 
