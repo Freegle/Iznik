@@ -163,4 +163,30 @@ test.describe('ModTools Page Loads', () => {
     await assertNoErrors(page)
     expect(errors).toHaveLength(0)
   })
+
+  test('Related Members page loads without errors', async ({
+    page,
+    testEnv,
+  }) => {
+    // Regression test for flash bug and single-community filter bug fixed in
+    // related.vue (Discourse #9631).
+    await loginViaModTools(page, testEnv.mod.email)
+
+    const errors = []
+    page.on('pageerror', (error) => {
+      errors.push(error.message)
+    })
+
+    await page.goto(`${MODTOOLS_URL}/members/related`, {
+      timeout: timeouts.navigation.initial,
+    })
+
+    await page.waitForLoadState('domcontentloaded', {
+      timeout: timeouts.navigation.default,
+    })
+
+    await dismissAllModals(page)
+    await assertNoErrors(page)
+    expect(errors).toHaveLength(0)
+  })
 })
