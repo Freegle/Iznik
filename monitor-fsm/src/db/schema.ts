@@ -2,12 +2,19 @@
 // Inlined (not a .sql file) so TS compilation produces a single self-contained
 // dist/ without needing a post-build copy step.
 
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 
 // v2 migration: add pr_rejections column to discourse_bug.
 // Applied in applySchema() via ALTER TABLE (idempotent — caught by DUPLICATE COLUMN error).
 export const MIGRATION_V2_SQL = `
 ALTER TABLE discourse_bug ADD COLUMN pr_rejections INTEGER NOT NULL DEFAULT 0;
+`
+
+// v3 migration: add symptom_tags (JSON array) and code_area (layer:component string)
+// for cross-topic deduplication. Both nullable — older rows have no tags.
+export const MIGRATION_V3_SQL = `
+ALTER TABLE discourse_bug ADD COLUMN symptom_tags TEXT;
+ALTER TABLE discourse_bug ADD COLUMN code_area TEXT;
 `
 
 export const SCHEMA_SQL = `

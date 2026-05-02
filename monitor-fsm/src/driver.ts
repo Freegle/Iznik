@@ -24,7 +24,8 @@
 // behaviour. Must be set BEFORE the adapter import.
 if (!process.env.CLAUDECODE) process.env.CLAUDECODE = '1'
 
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile, unlink } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
@@ -284,7 +285,37 @@ function logInstance(i: WorkflowInstance, note: string) {
   dbg(`${note} state=${i.currentState} status=${i.status} history=${i.history.length}`)
 }
 
+const DRIVER_LOCK_PATH = '/tmp/freegle-monitor-driver.lock'
+
+async function acquireDriverLock(): Promise<() => Promise<void>> {
+  if (existsSync(DRIVER_LOCK_PATH)) {
+    const pidStr = await readFile(DRIVER_LOCK_PATH, 'utf8').catch(() => '')
+    const pid = parseInt(pidStr.trim(), 10)
+    if (pid) {
+      // Check if the PID is actually still running
+      try {
+        process.kill(pid, 0) // signal 0 = existence check only
+        outWarn(`driver lock held by PID ${pid} — another iteration is still running, exiting`)
+        process.exit(0)
+      } catch {
+        // PID not running — stale lock, safe to overwrite
+        outWarn(`removing stale driver lock (PID ${pid} not running)`)
+      }
+    }
+  }
+  await writeFile(DRIVER_LOCK_PATH, String(process.pid), 'utf8')
+  const release = async () => { await unlink(DRIVER_LOCK_PATH).catch(() => {}) }
+  // Release on process exit (normal or signal)
+  process.once('exit', () => { try { require('node:fs').unlinkSync(DRIVER_LOCK_PATH) } catch {} })
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(sig, async () => { await release(); process.exit(0) })
+  }
+  return release
+}
+
 async function main() {
+  const releaseLock = await acquireDriverLock()
+
   const definition = JSON.parse(await readFile(WORKFLOW_PATH, 'utf8')) as WorkflowDefinition
 
   const storage = new JSONFileStorage(INSTANCE_STORE)
@@ -773,6 +804,8 @@ async function main() {
       outWarn(`putStatusPost threw: ${err}`)
     }
   }
+
+  await releaseLock()
 }
 
 main().catch(err => {

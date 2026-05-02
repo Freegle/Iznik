@@ -12,12 +12,11 @@
 import { readFileSync } from 'node:fs'
 import type { Database as DB } from 'better-sqlite3'
 import { listOpenDiscourseBugs, markDiscourseBugFixed, type DiscourseBugRow } from './index.js'
+import { DISCOURSE_BASE } from '../discourse.js'
 
 export const STATUS_POST_ID = 63250
 export const STATUS_TOPIC_ID = 9599
 export const STATUS_CATEGORY_ID = 17
-
-const DISCOURSE_BASE = 'https://discourse.ilovefreegle.org'
 
 export interface StatusRenderResult {
   raw: string
