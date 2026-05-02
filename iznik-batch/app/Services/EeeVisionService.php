@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
  */
 class EeeVisionService
 {
-    public const PROMPT_VERSION = '1.0.0';
+    public const PROMPT_VERSION = '1.1.0';
 
     public const WEEE_CATEGORIES = [
         1 => 'Temperature exchange equipment',
@@ -111,15 +111,22 @@ class EeeVisionService
         return <<<PROMPT
 You are analysing a photo of a second-hand household item being given away free on Freegle.
 
-Step 1 — Power source: Does this item use electrical power of any kind (mains plug, battery, USB, solar, induction)? Consider unusual items: aquariums (pump/heater/light), salt lamps (bulb), baby bouncers (vibration motor), dimmer switches (electronic component), electric toothbrushes, powered toys, LED fairy lights.
+Step 1 — Photo quality: Before examining the item, rate the photo itself.
+  photo_quality: integer 1–5 where 5=sharp, well-lit, item clearly visible; 1=blurry/dark/item obscured.
+  photo_quality_notes: brief note on any issues (blur, poor lighting, item only partially visible, multiple unrelated items, etc.), or null if fine.
+  A low photo_quality should lower your confidence on ALL attributes below.
 
-Step 2 — If electrical, assign to one EU WEEE category:
+Step 2 — Power source: Does this item use electrical power of any kind (mains plug, battery, USB, solar, induction)? Consider unusual items: aquariums (pump/heater/light), salt lamps (bulb), baby bouncers (vibration motor), dimmer switches (electronic component), electric toothbrushes, powered toys, LED fairy lights.
+
+Step 3 — If electrical, assign to one EU WEEE category:
 {$categories}
 
-Step 3 — Extract all attributes.
+Step 4 — Extract all attributes including completeness and value.
 
 Return ONLY valid JSON with no markdown or explanation:
 {
+  "photo_quality": 1-5,
+  "photo_quality_notes": "notes or null",
   "is_eee": true/false,
   "is_eee_confidence": 0.0-1.0,
   "is_eee_reasoning": "one sentence chain of thought",
@@ -131,6 +138,8 @@ Return ONLY valid JSON with no markdown or explanation:
   "primary_item": "main item name",
   "brand": "brand or null",
   "brand_confidence": 0.0-1.0,
+  "model_number": "exact model/product code if legible in photo or null",
+  "model_number_confidence": 0.0-1.0,
   "material_primary": "dominant material",
   "material_secondary": "secondary material or null",
   "material_confidence": 0.0-1.0,
@@ -141,6 +150,12 @@ Return ONLY valid JSON with no markdown or explanation:
   "size_confidence": 0.0-1.0,
   "condition": "Reusable" or "Damaged" or "Unknown",
   "condition_confidence": 0.0-1.0,
+  "item_complete": true/false/null,
+  "item_complete_confidence": 0.0-1.0,
+  "item_complete_notes": "e.g. 'missing lid visible' or null",
+  "accessories_visible": ["cable", "remote", "manual"] or [],
+  "value_band_gbp": "0-20" or "20-100" or "100-500" or "500+" or null,
+  "value_band_confidence": 0.0-1.0,
   "short_description": "one sentence from giver perspective",
   "long_description": "two to three sentences from giver perspective"
 }

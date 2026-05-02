@@ -129,6 +129,10 @@ prompt_version       TEXT NOT NULL,
 run_at               DATETIME NOT NULL,
 data_sources         TEXT,             -- JSON: {image, type_lookup, text, chat}
 
+-- Photo meta (rated before item analysis; low quality downgrades all confidence)
+photo_quality        INTEGER,          -- 1 (blurry/obscured) – 5 (sharp, well-lit)
+photo_quality_notes  TEXT,             -- brief description of issues or null
+
 -- EEE determination
 is_eee               INTEGER,          -- 0/1/NULL
 is_eee_confidence    REAL,
@@ -151,6 +155,8 @@ condition_confidence REAL,
 -- Item details
 brand                TEXT,
 brand_confidence     REAL,
+model_number         TEXT,             -- explicit model/product code if legible in photo
+model_number_confidence REAL,
 material_primary     TEXT,
 material_secondary   TEXT,
 material_confidence  REAL,
@@ -158,12 +164,20 @@ primary_item         TEXT,
 short_description    TEXT,
 long_description     TEXT,
 
+-- Completeness and value
+item_complete        INTEGER,          -- 0/1/NULL: does item appear complete?
+item_complete_confidence REAL,
+item_complete_notes  TEXT,             -- e.g. "missing lid visible"
+accessories_visible  TEXT,             -- JSON array e.g. ["cable","remote","manual"]
+value_band_gbp       TEXT,             -- "0-20" / "20-100" / "100-500" / "500+"
+value_band_confidence REAL,
+
 -- Fusion metadata
 text_eee_signals     TEXT,             -- JSON array of matched signal words
 chat_eee_signals     TEXT,             -- JSON array (when chat enabled)
 conflict_flag        INTEGER,          -- 1 = image/text disagree
 
--- Cost tracking
+-- Cost tracking and training data
 raw_response         TEXT,
 input_tokens         INTEGER,
 output_tokens        INTEGER,
@@ -181,13 +195,33 @@ scope, processed, eee_found, errors, cost_usd_total, notes
 
 ## Prompt design
 
-Versioned via `PROMPT_VERSION` semver constant. Key elements:
+Versioned via `PROMPT_VERSION` semver constant (currently `1.1.0`). Key elements:
 
-1. **Chain-of-thought for EEE**: "Does this item require electrical power of any kind (mains, battery, USB, solar, induction)?" — explicitly calls out unusual EEE (aquariums, salt lamps, baby bouncers, dimmer switches)
-2. **WEEE category assignment**: 6 EU categories listed in prompt with examples
-3. **All physical attributes**: weight range, size WxHxD, condition, brand, materials
-4. **Confidence scores per attribute**: 0.0–1.0 for every field
-5. **Structured JSON only**: `response_mime_type: application/json` for Gemini; `response_format: json_object` for OpenAI
+1. **Photo quality first**: Model scores photo quality (1–5) *before* examining the item. Low quality explicitly downgrades confidence on all downstream attributes. This makes photo quality a calibration signal for training data quality.
+2. **Chain-of-thought for EEE**: "Does this item require electrical power of any kind (mains, battery, USB, solar, induction)?" — explicitly calls out unusual EEE (aquariums, salt lamps, baby bouncers, dimmer switches)
+3. **WEEE category assignment**: 6 EU categories listed in prompt with examples
+4. **All physical attributes**: weight range, size WxHxD, condition, brand, materials
+5. **Model number**: extract exact product/model code if legible in photo — enables external spec lookup (weight, WEEE category confirmation) by model number
+6. **Completeness and accessories**: whether item appears complete; list of accessories visible (cable, remote, manual, etc.)
+7. **Value band (GBP)**: 0–20 / 20–100 / 100–500 / 500+ — not the primary goal but cheap to extract; inter-model agreement will tell us if it's reliable enough to use
+8. **Confidence scores per attribute**: 0.0–1.0 for every field
+9. **Structured JSON only**: `response_mime_type: application/json` for Gemini; `response_format: json_object` for OpenAI
+
+### Per-attribute reliability methodology
+
+`eee:compare-models` reports agreement per-attribute (not just `is_eee`). Agreement thresholds for publishing:
+
+| Attribute | Min agreement to publish |
+|---|---|
+| is_eee | 85% |
+| weee_category | 80% |
+| condition | 75% |
+| value_band_gbp | 70% (loose — bands are wide) |
+| item_complete | 70% |
+| brand | 65% (model diverges on unknown brands) |
+| model_number | n/a — only published when both models agree exactly |
+| photo_quality | use ±1 tolerance |
+| weight | use ±20% tolerance |
 
 ---
 

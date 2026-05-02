@@ -119,6 +119,19 @@ class EeeCompareModelsCommand extends Command
     {
         $refModelName = $this->vision->withDriver($referenceModel)->getModelName();
 
+        // Attributes to compare: [column, label, is_numeric_diff (vs exact match)]
+        $compareAttrs = [
+            ['is_eee',              'EEE (binary)',        false],
+            ['weee_category',       'WEEE category',      false],
+            ['condition',           'Condition',          false],
+            ['value_band_gbp',      'Value band',         false],
+            ['item_complete',       'Item complete',      false],
+            ['brand',               'Brand',              false],
+            ['model_number',        'Model number',       false],
+            ['photo_quality',       'Photo quality ±1',   true],
+            ['weight_kg_min',       'Weight min ±20%',    true],
+        ];
+
         $rows = [];
         foreach ($messageIds as $messageid) {
             $all = $this->sqlite->getClassificationsForMessage($messageid);
@@ -132,19 +145,31 @@ class EeeCompareModelsCommand extends Command
                 if (!isset($all[$modelName])) {
                     continue;
                 }
-                $cmpRow = $all[$modelName];
-                $rows[] = [
-                    'messageid'         => $messageid,
-                    'model'             => $model,
-                    'ref_is_eee'        => $refRow['is_eee'],
-                    'cmp_is_eee'        => $cmpRow['is_eee'],
-                    'is_eee_agree'      => (int) ($refRow['is_eee'] === $cmpRow['is_eee']),
-                    'ref_weee'          => $refRow['weee_category'],
-                    'cmp_weee'          => $cmpRow['weee_category'],
-                    'weee_agree'        => (int) ($refRow['weee_category'] === $cmpRow['weee_category']),
-                    'ref_confidence'    => $refRow['is_eee_confidence'],
-                    'cmp_confidence'    => $cmpRow['is_eee_confidence'],
-                ];
+                $cmpRow  = $all[$modelName];
+                $rowData = ['messageid' => $messageid, 'model' => $model];
+
+                foreach ($compareAttrs as [$col, , $numeric]) {
+                    $ref = $refRow[$col] ?? null;
+                    $cmp = $cmpRow[$col] ?? null;
+                    if ($numeric) {
+                        if ($ref === null || $cmp === null) {
+                            $agree = null;
+                        } elseif ($col === 'photo_quality') {
+                            $agree = (int) (abs((float)$ref - (float)$cmp) <= 1);
+                        } else {
+                            // weight: agree within 20%
+                            $avg = ((float)$ref + (float)$cmp) / 2;
+                            $agree = $avg > 0 ? (int) (abs((float)$ref - (float)$cmp) / $avg <= 0.20) : (int) ($ref == $cmp);
+                        }
+                    } else {
+                        $agree = ($ref === null && $cmp === null) ? null : (int) ($ref === $cmp);
+                    }
+                    $rowData["agree_{$col}"] = $agree;
+                    $rowData["ref_{$col}"]   = $ref;
+                    $rowData["cmp_{$col}"]   = $cmp;
+                }
+
+                $rows[] = $rowData;
             }
         }
 
@@ -153,32 +178,41 @@ class EeeCompareModelsCommand extends Command
             return;
         }
 
-        // Aggregate per model.
+        // Aggregate per model per attribute.
         $stats = [];
         foreach ($rows as $row) {
             $m = $row['model'];
             if (!isset($stats[$m])) {
-                $stats[$m] = ['total' => 0, 'eee_agree' => 0, 'weee_agree' => 0];
+                $stats[$m] = ['total' => 0];
+                foreach ($compareAttrs as [$col]) {
+                    $stats[$m]["agree_{$col}"] = 0;
+                    $stats[$m]["seen_{$col}"]  = 0;
+                }
             }
             $stats[$m]['total']++;
-            $stats[$m]['eee_agree']  += $row['is_eee_agree'];
-            $stats[$m]['weee_agree'] += $row['weee_agree'];
+            foreach ($compareAttrs as [$col]) {
+                $v = $row["agree_{$col}"] ?? null;
+                if ($v !== null) {
+                    $stats[$m]["agree_{$col}"] += $v;
+                    $stats[$m]["seen_{$col}"]++;
+                }
+            }
         }
 
-        $tableRows = [];
-        foreach ($stats as $model => $s) {
-            $tableRows[] = [
-                $model,
-                $s['total'],
-                number_format(100 * $s['eee_agree'] / $s['total'], 1) . '%',
-                number_format(100 * $s['weee_agree'] / $s['total'], 1) . '%',
-            ];
+        // Print per-attribute agreement table.
+        foreach ($compareAttrs as [$col, $label]) {
+            $attrRows = [];
+            foreach ($stats as $model => $s) {
+                $seen = $s["seen_{$col}"];
+                $attrRows[] = [
+                    $model,
+                    $seen,
+                    $seen > 0 ? number_format(100 * $s["agree_{$col}"] / $seen, 1) . '%' : 'n/a',
+                ];
+            }
+            $this->line("<comment>Attribute: {$label}</comment>");
+            $this->table(['Model', 'Comparable', 'Agreement w/ Claude'], $attrRows);
         }
-
-        $this->table(
-            ['Model', 'Messages', 'EEE agree w/ Claude', 'WEEE category agree'],
-            $tableRows,
-        );
 
         // Optional CSV dump.
         $reportPath = $this->option('report');
