@@ -126,15 +126,16 @@ class EeeCompareModelsCommand extends Command
 
         // Attributes to compare: [column, label, is_numeric_diff (vs exact match)]
         $compareAttrs = [
-            ['is_eee',              'EEE (binary)',        false],
-            ['weee_category',       'WEEE category',      false],
-            ['condition',           'Condition',          false],
-            ['value_band_gbp',      'Value band',         false],
-            ['item_complete',       'Item complete',      false],
-            ['brand',               'Brand',              false],
-            ['model_number',        'Model number',       false],
-            ['photo_quality',       'Photo quality ±1',   true],
-            ['weight_kg_min',       'Weight min ±20%',    true],
+            ['is_eee',                  'EEE (binary)',        false],
+            ['is_eee_from_components',  'EEE (component rule)',false],
+            ['weee_category',           'WEEE category',      false],
+            ['condition',               'Condition',          false],
+            ['value_band_gbp',          'Value band',         false],
+            ['item_complete',           'Item complete',      false],
+            ['brand',                   'Brand',              false],
+            ['model_number',            'Model number',       false],
+            ['photo_quality',           'Photo quality ±1',   true],
+            ['weight_kg_min',           'Weight min ±20%',    true],
         ];
 
         $rows = [];

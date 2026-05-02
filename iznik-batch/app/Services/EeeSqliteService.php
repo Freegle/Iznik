@@ -197,6 +197,10 @@ class EeeSqliteService
         if (!in_array('electrical_components_description', $clsCols)) {
             $this->pdo->exec("ALTER TABLE eee_classifications ADD COLUMN electrical_components_description TEXT");
         }
+        // Component-index derived EEE verdict (rule-based, no model judgment).
+        if (!in_array('is_eee_from_components', $clsCols)) {
+            $this->pdo->exec("ALTER TABLE eee_classifications ADD COLUMN is_eee_from_components INTEGER");
+        }
 
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_cls_messageid ON eee_classifications(messageid)");
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_cls_is_eee ON eee_classifications(is_eee)");
