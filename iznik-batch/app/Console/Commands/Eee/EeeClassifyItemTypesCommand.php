@@ -23,7 +23,6 @@ class EeeClassifyItemTypesCommand extends Command
     protected $signature = 'eee:classify-item-types
                             {--limit=200 : Number of top item types to process}
                             {--items=    : Comma-separated list of specific item type names to classify}
-                            {--mode=combined : Classification mode: combined, text_only, image_only}
                             {--force     : Re-classify already-classified types}
                             {--dry-run   : Show pending types without making API calls}';
 
@@ -42,29 +41,21 @@ class EeeClassifyItemTypesCommand extends Command
         $limit      = (int)  $this->option('limit');
         $force      = (bool) $this->option('force');
         $dryRun     = (bool) $this->option('dry-run');
-        $mode       = $this->option('mode') ?? 'combined';
         $itemsOpt   = $this->option('items');
         $namedItems = $itemsOpt
             ? array_map('trim', explode(',', $itemsOpt))
             : null;
-
-        $validModes = ['combined', 'text_only', 'image_only'];
-        if (!in_array($mode, $validModes)) {
-            $this->error("Invalid --mode '{$mode}'. Must be one of: " . implode(', ', $validModes));
-            return Command::FAILURE;
-        }
 
         if (!$dryRun && !$this->vision->isConfigured()) {
             $this->error('Vision service not configured. Check EEE_MODEL and API keys.');
             return Command::FAILURE;
         }
 
-        $scope = ($namedItems
+        $scope = $namedItems
             ? 'items:' . implode(',', $namedItems)
-            : "item_types_limit_{$limit}")
-            . ":mode_{$mode}";
+            : "item_types_limit_{$limit}";
 
-        $this->info("EEE item-type classification | model: {$this->vision->getModelName()} | mode: {$mode} | " .
+        $this->info("EEE item-type classification | model: {$this->vision->getModelName()} | " .
             ($namedItems ? count($namedItems) . ' named items' : "limit: {$limit}"));
 
         if ($dryRun) {
@@ -76,7 +67,7 @@ class EeeClassifyItemTypesCommand extends Command
             }
             $pending = $force
                 ? array_keys($items)
-                : $this->sqlite->getUnclassifiedItemTypeNames(array_keys($items), $this->vision->getModelName(), $this->vision->getPromptVersion(), $mode);
+                : $this->sqlite->getUnclassifiedItemTypeNames(array_keys($items), $this->vision->getModelName(), $this->vision->getPromptVersion());
             $this->info(count($pending) . ' item types would be classified:');
             foreach (array_slice($pending, 0, 20) as $name) {
                 $pop = $items[$name] ?? '?';
@@ -93,15 +84,20 @@ class EeeClassifyItemTypesCommand extends Command
         );
 
         $classifyFn = $namedItems
-            ? fn($f, $r) => $this->classifier->classifyNamedItems($namedItems, $f, $r, $mode)
-            : fn($f, $r) => $this->classifier->classifyItemTypes($limit, $f, $r, $mode);
+            ? fn($f, $r) => $this->classifier->classifyNamedItems($namedItems, $f, $r)
+            : fn($f, $r) => $this->classifier->classifyItemTypes($limit, $f, $r);
 
         $stats = $classifyFn($force, function (string $itemName, ?array $result) {
             if ($result === null) {
                 $this->line("  <comment>skip</comment>  {$itemName} (no images)");
             } else {
-                $eeeLabel = $result['is_eee'] ? '<info>EEE</info>    ' : '<fg=gray>non-EEE</fg=gray>';
-                $cost     = '$' . number_format($result['cost'], 5);
+                $isEee    = $result['is_eee'];
+                $eeeLabel = match(true) {
+                    $isEee === true  => '<info>EEE</info>       ',
+                    $isEee === false => '<fg=gray>non-EEE</fg=gray>   ',
+                    default          => '<comment>uncertain</comment>  ',
+                };
+                $cost = '$' . number_format($result['cost'], 5);
                 $this->line("  {$eeeLabel}  {$itemName}  {$cost}");
             }
         });

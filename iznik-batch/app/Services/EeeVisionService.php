@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Log;
  */
 class EeeVisionService
 {
-    public const PROMPT_VERSION = '1.2.0';
+    public const PROMPT_VERSION = '1.3.0';
 
     public const WEEE_CATEGORIES = [
         1 => 'Temperature exchange equipment',
@@ -115,49 +115,6 @@ class EeeVisionService
         };
     }
 
-    /**
-     * Classify multiple items using text only (no image). Each job: ['context' => array].
-     * Used for the text_only classification mode research.
-     */
-    public function analyseManyTextOnly(array $jobs): array
-    {
-        $system   = $this->buildTextOnlyPrompt();
-        $headers  = [
-            'x-api-key'         => config('freegle.eee.anthropic_api_key'),
-            'anthropic-version' => '2023-06-01',
-            'content-type'      => 'application/json',
-        ];
-
-        $responses = Http::pool(function (Pool $pool) use ($jobs, $system, $headers) {
-            return array_map(function ($job) use ($pool, $system, $headers) {
-                $payload = [
-                    'model'      => $this->getModelName(),
-                    'max_tokens' => 1024,
-                    'system'     => $system,
-                    'messages'   => [['role' => 'user', 'content' => $this->buildUserText($job['context'])]],
-                ];
-                return $pool->withHeaders($headers)->timeout(60)->post('https://api.anthropic.com/v1/messages', $payload);
-            }, $jobs);
-        });
-
-        return array_map(function ($response) {
-            if ($response instanceof \Throwable) {
-                Log::error('EeeVisionService text-only pool exception', ['error' => $response->getMessage()]);
-                return null;
-            }
-            if (!$response->successful()) {
-                Log::warning('EeeVisionService text-only pool error', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
-                return null;
-            }
-            return $this->parseAndAnnotate([
-                'text'          => $response->json('content.0.text'),
-                'input_tokens'  => $response->json('usage.input_tokens', 0),
-                'output_tokens' => $response->json('usage.output_tokens', 0),
-                'cost_usd'      => $this->estimateCost('claude', $response->json('usage.input_tokens', 0), $response->json('usage.output_tokens', 0)),
-            ]);
-        }, $responses);
-    }
-
     /** Fetch all images concurrently; returns array of base64 data (null on failure), same order as $jobs. */
     protected function fetchImagesMany(array $jobs): array
     {
@@ -236,7 +193,7 @@ class EeeVisionService
             },
             function ($pool, $job, $img) use ($system, $headers) {
                 $payload = [
-                    'model' => $this->getModelName(), 'max_tokens' => 1024, 'system' => $system,
+                    'model' => $this->getModelName(), 'max_tokens' => 1500, 'system' => $system,
                     'messages' => [['role' => 'user', 'content' => [
                         ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => $img['mime_type'], 'data' => $img['base64']]],
                         ['type' => 'text', 'text' => $this->buildUserText($job['context'])],
@@ -320,7 +277,7 @@ class EeeVisionService
             },
             function ($pool, $job, $_img) use ($system, $token) {
                 $payload = [
-                    'model' => $this->getModelName(), 'max_tokens' => 1024, 'temperature' => 0.1,
+                    'model' => $this->getModelName(), 'max_tokens' => 1500, 'temperature' => 0.1,
                     'response_format' => ['type' => 'json_object'],
                     'messages' => [
                         ['role' => 'system', 'content' => $system],
@@ -348,29 +305,39 @@ class EeeVisionService
         ));
 
         return <<<PROMPT
-You are analysing a photo of a second-hand household item being given away free on Freegle.
+You are examining a photo of a second-hand item being given away on Freegle (UK free reuse platform).
 
-Step 1 — Photo quality: Before examining the item, rate the photo itself.
-  photo_quality: integer 1–5 where 5=sharp, well-lit, item clearly visible; 1=blurry/dark/item obscured.
-  photo_quality_notes: brief note on any issues (blur, poor lighting, item only partially visible, multiple unrelated items, etc.), or null if fine.
-  A low photo_quality should lower your confidence on ALL attributes below.
+PART 1 — PHOTO QUALITY:
+Rate the photo. photo_quality: 1–5 (5=sharp and clear, 1=blurry/dark/item obscured). photo_quality_notes: brief note on issues, or null.
 
-Step 2 — Is this EEE? Under UK/EU WEEE regulations, an item is EEE if it is *dependent on electric currents or electromagnetic fields in order to work properly* — meaning electricity is required for its basic function, not merely for a supplementary or convenience feature. Apply this definition strictly based on what you can observe in the photo and item description.
+PART 2 — ELECTRICAL COMPONENTS (image only):
+List every component you can directly observe in the photo that uses mains power, battery power, USB, solar, or any other external electrical supply. Describe each one briefly in plain English (e.g. "digital display panel", "mains power flex", "LED strip lights", "rechargeable battery pack"). Only include components that are part of the item being offered — exclude items visible in the background that are clearly separate. Be inclusive: even a clock, indicator light, or built-in rechargeable counts. If you cannot see any such components, return an empty list.
 
-Step 3 — If electrical, assign to one EU WEEE category:
+PART 3 — TEXT SIGNALS (from title and description only):
+From the item title and description, extract any words or phrases that explicitly name the item's primary power source. Examples: "gas cooker", "petrol engine", "electric", "battery-powered", "manual", "solar", "cordless", "wind-up", "no electricity needed".
+
+PART 4 — IS_EEE FROM TEXT:
+Based on text signals only (ignore the image for this part), does this item's PRIMARY FUNCTION require electricity? WEEE test: would the item be completely unable to perform its main purpose without electricity?
+- true  = primary function requires electricity (electric cooker, laptop, cordless drill)
+- false = primary function does not (gas cooker, petrol lawnmower, manual wheelchair, acoustic guitar)
+- null  = text signals insufficient to decide
+
+PART 5 — WEEE CATEGORY:
+If the item's primary function requires electricity (is_eee_from_text true, or substantial electrical components clearly make it primarily electrical), assign a WEEE category:
 {$categories}
+Otherwise return null.
 
-Step 4 — Extract all attributes including completeness and value.
+PART 6 — PHYSICAL ATTRIBUTES:
+Extract all observable attributes.
 
 Return ONLY valid JSON with no markdown or explanation:
 {
   "photo_quality": 1-5,
   "photo_quality_notes": "notes or null",
-  "is_eee": true/false,
-  "is_eee_confidence": 0.0-1.0,
-  "is_eee_reasoning": "one sentence chain of thought",
-  "is_unusual_eee": true/false,
-  "unusual_eee_reason": "reason or null",
+  "electrical_components_observed": ["digital display panel", "mains power flex"],
+  "text_power_signals": ["gas cooker"],
+  "is_eee_from_text": true/false/null,
+  "observation_notes": "brief note on anything ambiguous or notable, or null",
   "weee_category": 1-6 or null,
   "weee_category_name": "name or null",
   "weee_category_confidence": 0.0-1.0,
@@ -391,67 +358,12 @@ Return ONLY valid JSON with no markdown or explanation:
   "condition_confidence": 0.0-1.0,
   "item_complete": true/false/null,
   "item_complete_confidence": 0.0-1.0,
-  "item_complete_notes": "e.g. 'missing lid visible' or null",
-  "accessories_visible": ["cable", "remote", "manual"] or [],
+  "item_complete_notes": "e.g. missing lid or null",
+  "accessories_visible": ["cable", "remote"] or [],
   "value_band_gbp": "0-20" or "20-100" or "100-500" or "500+" or null,
   "value_band_confidence": 0.0-1.0,
   "short_description": "one sentence from giver perspective",
   "long_description": "two to three sentences from giver perspective"
-}
-PROMPT;
-    }
-
-    protected function buildTextOnlyPrompt(): string
-    {
-        $categories = implode("\n", array_map(
-            fn($k, $v) => "  {$k}. {$v}",
-            array_keys(self::WEEE_CATEGORIES),
-            self::WEEE_CATEGORIES
-        ));
-
-        return <<<PROMPT
-You are classifying a second-hand household item being given away free on Freegle, based on its title and description only — no image is provided.
-
-Step 1 — Is this EEE? Under UK/EU WEEE regulations, an item is EEE if it is *dependent on electric currents or electromagnetic fields in order to work properly* — meaning electricity is required for its basic function, not merely for a supplementary or convenience feature. Apply this definition strictly based on the title and description.
-
-Step 2 — If electrical, assign to one EU WEEE category:
-{$categories}
-
-Return ONLY valid JSON with no markdown or explanation:
-{
-  "photo_quality": null,
-  "photo_quality_notes": null,
-  "is_eee": true/false,
-  "is_eee_confidence": 0.0-1.0,
-  "is_eee_reasoning": "one sentence chain of thought",
-  "is_unusual_eee": true/false,
-  "unusual_eee_reason": "reason or null",
-  "weee_category": 1-6 or null,
-  "weee_category_name": "name or null",
-  "weee_category_confidence": 0.0-1.0,
-  "primary_item": "main item name",
-  "brand": null,
-  "brand_confidence": 0.0,
-  "model_number": null,
-  "model_number_confidence": 0.0,
-  "material_primary": null,
-  "material_secondary": null,
-  "material_confidence": 0.0,
-  "weight_kg_min": null,
-  "weight_kg_max": null,
-  "weight_kg_confidence": 0.0,
-  "size_cm": null,
-  "size_confidence": 0.0,
-  "condition": "Unknown",
-  "condition_confidence": 0.0,
-  "item_complete": null,
-  "item_complete_confidence": 0.0,
-  "item_complete_notes": null,
-  "accessories_visible": [],
-  "value_band_gbp": null,
-  "value_band_confidence": 0.0,
-  "short_description": "one sentence from giver perspective",
-  "long_description": null
 }
 PROMPT;
     }
@@ -476,7 +388,7 @@ PROMPT;
 
         $payload = [
             'model'      => $this->getModelName(),
-            'max_tokens' => 1024,
+            'max_tokens' => 1500,
             'system'     => $system,
             'messages'   => [[
                 'role'    => 'user',
@@ -769,6 +681,26 @@ PROMPT;
             Log::warning('EeeVisionService: JSON parse failed', ['driver' => $this->driver, 'error' => $e->getMessage()]);
             return null;
         }
+
+        // Derive is_eee, contains_eee_components, and confidence from new structured fields.
+        $components    = $data['electrical_components_observed'] ?? [];
+        $isEeeFromText = $data['is_eee_from_text'] ?? null;
+        $containsEee   = !empty($components);
+
+        if ($isEeeFromText !== null) {
+            $data['is_eee']            = $isEeeFromText;
+            $data['is_eee_confidence'] = 0.90;
+        } elseif (!$containsEee) {
+            $data['is_eee']            = false;
+            $data['is_eee_confidence'] = 0.70;
+        } else {
+            $data['is_eee']            = null;   // uncertain: has components but text didn't specify
+            $data['is_eee_confidence'] = 0.50;
+        }
+
+        $data['contains_eee_components']          = $containsEee;
+        $data['electrical_components_description'] = $containsEee ? implode('; ', $components) : null;
+        $data['is_eee_reasoning']                  = $data['observation_notes'] ?? null;
 
         $data['_meta'] = [
             'driver'        => $this->driver,

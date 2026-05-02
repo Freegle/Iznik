@@ -46,9 +46,8 @@ class EeeClassificationService
     /**
      * Classify the top $limit item types by popularity.
      * Skips types already in the cache unless $forceRefresh is true.
-     * $mode: 'combined' (default), 'text_only', 'image_only'.
      */
-    public function classifyItemTypes(int $limit, bool $forceRefresh = false, ?callable $progress = null, string $mode = 'combined'): array
+    public function classifyItemTypes(int $limit, bool $forceRefresh = false, ?callable $progress = null): array
     {
         $items = DB::table('items')
             ->orderByDesc('popularity')
@@ -58,12 +57,12 @@ class EeeClassificationService
 
         $toClassify = $forceRefresh
             ? array_keys($items)
-            : $this->sqlite->getUnclassifiedItemTypeNames(array_keys($items), $this->vision->getModelName(), $this->vision->getPromptVersion(), $mode);
+            : $this->sqlite->getUnclassifiedItemTypeNames(array_keys($items), $this->vision->getModelName(), $this->vision->getPromptVersion());
 
         $stats = ['processed' => 0, 'eee' => 0, 'skipped' => 0, 'cost' => 0.0];
 
         foreach ($toClassify as $itemName) {
-            $result = $this->classifySingleItemType($itemName, $items[$itemName] ?? 0, $mode);
+            $result = $this->classifySingleItemType($itemName, $items[$itemName] ?? 0);
             if ($result === null) {
                 $stats['skipped']++;
             } else {
@@ -79,7 +78,7 @@ class EeeClassificationService
         return $stats;
     }
 
-    public function classifyNamedItems(array $itemNames, bool $forceRefresh = false, ?callable $progress = null, string $mode = 'combined'): array
+    public function classifyNamedItems(array $itemNames, bool $forceRefresh = false, ?callable $progress = null): array
     {
         $popularities = DB::table('items')
             ->whereIn('name', $itemNames)
@@ -88,12 +87,12 @@ class EeeClassificationService
 
         $toClassify = $forceRefresh
             ? $itemNames
-            : $this->sqlite->getUnclassifiedItemTypeNames($itemNames, $this->vision->getModelName(), $this->vision->getPromptVersion(), $mode);
+            : $this->sqlite->getUnclassifiedItemTypeNames($itemNames, $this->vision->getModelName(), $this->vision->getPromptVersion());
 
         $stats = ['processed' => 0, 'eee' => 0, 'skipped' => 0, 'cost' => 0.0];
 
         foreach ($toClassify as $itemName) {
-            $result = $this->classifySingleItemType($itemName, $popularities[$itemName] ?? 0, $mode);
+            $result = $this->classifySingleItemType($itemName, $popularities[$itemName] ?? 0);
             if ($result === null) {
                 $stats['skipped']++;
             } else {
@@ -109,7 +108,7 @@ class EeeClassificationService
         return $stats;
     }
 
-    protected function classifySingleItemType(string $itemName, int $popularity, string $mode = 'combined'): ?array
+    protected function classifySingleItemType(string $itemName, int $popularity): ?array
     {
         $attachments = DB::table('messages_attachments as ma')
             ->join('messages as m', 'm.id', '=', 'ma.msgid')
@@ -123,6 +122,7 @@ class EeeClassificationService
             ->whereNotNull('ma.externaluid')
             ->where('ma.archived', 0)
             ->where('ma.primary', 1)
+            ->where('m.type', 'Offer')   // WANTED posts use stock illustrations — exclude
             ->whereRaw("(ma.externalmods IS NULL OR JSON_EXTRACT(ma.externalmods, '$.ai') IS NULL)")
             ->orderByDesc('m.arrival')
             ->limit(self::SAMPLE_SIZE)
@@ -133,26 +133,12 @@ class EeeClassificationService
             return null;
         }
 
-        // Build context for each attachment. For image_only mode, omit subject/description.
-        $rawResults = match ($mode) {
-            'text_only' => $this->vision->analyseManyTextOnly(
-                $attachments->map(fn($att) => [
-                    'context' => ['subject' => $att->subject ?? '', 'description' => $att->textbody ?? ''],
-                ])->all()
-            ),
-            'image_only' => $this->vision->analyseMany(
-                $attachments->map(fn($att) => [
-                    'imageUrl' => EeeVisionService::buildImageUrl($att->externaluid),
-                    'context'  => ['subject' => '', 'description' => ''],
-                ])->all()
-            ),
-            default => $this->vision->analyseMany(
-                $attachments->map(fn($att) => [
-                    'imageUrl' => EeeVisionService::buildImageUrl($att->externaluid),
-                    'context'  => ['subject' => $att->subject ?? '', 'description' => $att->textbody ?? ''],
-                ])->all()
-            ),
-        };
+        $rawResults = $this->vision->analyseMany(
+            $attachments->map(fn($att) => [
+                'imageUrl' => EeeVisionService::buildImageUrl($att->externaluid),
+                'context'  => ['subject' => $att->subject ?? '', 'description' => $att->textbody ?? ''],
+            ])->all()
+        );
 
         $results   = array_values(array_filter($rawResults));
         $totalCost = array_sum(array_map(fn($r) => $r['_meta']['cost_usd'] ?? 0.0, $results));
@@ -164,23 +150,25 @@ class EeeClassificationService
         $consensus = $this->computeConsensus($results);
 
         $this->sqlite->upsertItemType([
-            'item_name'                => $itemName,
-            'item_id'                  => DB::table('items')->where('name', $itemName)->value('id'),
-            'popularity'               => $popularity,
-            'sample_size'              => self::SAMPLE_SIZE,
-            'images_analysed'          => count($results),
-            'eee_sample_count'         => $consensus['eee_sample_count'],
-            'is_eee'                   => $consensus['is_eee'] ? 1 : 0,
-            'is_eee_confidence'        => $consensus['is_eee_confidence'],
-            'is_eee_agree_rate'        => $consensus['is_eee_agree_rate'],
-            'weee_category'            => $consensus['weee_category'],
-            'weee_category_name'       => $consensus['weee_category_name'],
-            'weee_category_confidence' => $consensus['weee_category_confidence'],
-            'needs_image_analysis'     => $consensus['needs_image_analysis'] ? 1 : 0,
-            'model'                    => $this->vision->getModelName(),
-            'prompt_version'           => $this->vision->getPromptVersion(),
-            'classification_mode'      => $mode,
-            'classified_at'            => now()->toIso8601String(),
+            'item_name'                        => $itemName,
+            'item_id'                          => DB::table('items')->where('name', $itemName)->value('id'),
+            'popularity'                       => $popularity,
+            'sample_size'                      => self::SAMPLE_SIZE,
+            'images_analysed'                  => count($results),
+            'eee_sample_count'                 => $consensus['eee_sample_count'],
+            'is_eee'                           => $consensus['is_eee'],
+            'is_eee_confidence'                => $consensus['is_eee_confidence'],
+            'is_eee_agree_rate'                => $consensus['is_eee_agree_rate'],
+            'contains_eee_components'          => $consensus['contains_eee_components'],
+            'electrical_components_description'=> $consensus['electrical_components_description'],
+            'weee_category'                    => $consensus['weee_category'],
+            'weee_category_name'               => $consensus['weee_category_name'],
+            'weee_category_confidence'         => $consensus['weee_category_confidence'],
+            'needs_image_analysis'             => $consensus['needs_image_analysis'] ? 1 : 0,
+            'model'                            => $this->vision->getModelName(),
+            'prompt_version'                   => $this->vision->getPromptVersion(),
+            'classification_mode'              => 'combined',
+            'classified_at'                    => now()->toIso8601String(),
         ]);
 
         return ['is_eee' => $consensus['is_eee'], 'cost' => $totalCost];
@@ -392,64 +380,66 @@ class EeeClassificationService
 
     protected function storeImageResult(object $message, int $attid, array $result, array $textSignals, array $context): array
     {
-        $meta             = $result['_meta'];
-        $isEee            = (bool) ($result['is_eee'] ?? false);
-        $isEeeConfidence  = (float) ($result['is_eee_confidence'] ?? 0.5);
-        $conflictFlag     = 0;
+        $meta            = $result['_meta'];
+        $isEee           = $result['is_eee'];               // may be true/false/null
+        $isEeeConfidence = (float) ($result['is_eee_confidence'] ?? 0.5);
+        $conflictFlag    = 0;
 
-        if (!empty($textSignals['non_eee']) && $isEee)  $conflictFlag = 1;
-        if (!empty($textSignals['eee'])     && !$isEee) $conflictFlag = 1;
-        if (!empty($textSignals['eee'])     && $isEee)  $isEeeConfidence = min(1.0, $isEeeConfidence + 0.05);
+        // Conflict detection only when is_eee is conclusive.
+        if ($isEee !== null) {
+            if (!empty($textSignals['non_eee']) && $isEee)  $conflictFlag = 1;
+            if (!empty($textSignals['eee'])     && !$isEee) $conflictFlag = 1;
+        }
 
         $data = [
-            'messageid'                => $message->id,
-            'attid'                    => $attid,
-            'model'                    => $meta['model'],
-            'prompt_version'           => $this->vision->getPromptVersion(),
-            'run_at'                   => now()->toIso8601String(),
-            'data_sources'             => json_encode(['image' => true, 'type_lookup' => false, 'text' => !empty($textSignals['eee']), 'chat' => !empty($context['chat'])]),
-            'is_eee'                   => $isEee ? 1 : 0,
-            'is_eee_confidence'        => round($isEeeConfidence, 4),
-            'is_eee_reasoning'         => $result['is_eee_reasoning'] ?? null,
-            'is_unusual_eee'           => ($result['is_unusual_eee'] ?? false) ? 1 : 0,
-            'unusual_eee_reason'       => $result['unusual_eee_reason'] ?? null,
-            'weee_category'            => $result['weee_category'] ?? null,
-            'weee_category_name'       => $result['weee_category_name'] ?? null,
-            'weee_category_confidence' => $result['weee_category_confidence'] ?? null,
-            'weight_kg_min'            => $result['weight_kg_min'] ?? null,
-            'weight_kg_max'            => $result['weight_kg_max'] ?? null,
-            'weight_kg_confidence'     => $result['weight_kg_confidence'] ?? null,
-            'size_cm'                  => isset($result['size_cm']) ? json_encode($result['size_cm']) : null,
-            'size_confidence'          => $result['size_confidence'] ?? null,
-            'condition'                => $result['condition'] ?? null,
-            'condition_confidence'     => $result['condition_confidence'] ?? null,
-            'brand'                    => $result['brand'] ?? null,
-            'brand_confidence'         => $result['brand_confidence'] ?? null,
-            'model_number'             => $result['model_number'] ?? null,
-            'model_number_confidence'  => $result['model_number_confidence'] ?? null,
-            'material_primary'         => $result['material_primary'] ?? null,
-            'material_secondary'       => $result['material_secondary'] ?? null,
-            'material_confidence'      => $result['material_confidence'] ?? null,
-            'primary_item'             => $result['primary_item'] ?? null,
-            'short_description'        => $result['short_description'] ?? null,
-            'long_description'         => $result['long_description'] ?? null,
-            'photo_quality'            => $result['photo_quality'] ?? null,
-            'photo_quality_notes'      => $result['photo_quality_notes'] ?? null,
-            'item_complete'            => isset($result['item_complete']) ? ($result['item_complete'] ? 1 : 0) : null,
-            'item_complete_confidence' => $result['item_complete_confidence'] ?? null,
-            'item_complete_notes'      => $result['item_complete_notes'] ?? null,
-            'accessories_visible'      => isset($result['accessories_visible']) ? json_encode($result['accessories_visible']) : null,
-            'value_band_gbp'           => $result['value_band_gbp'] ?? null,
-            'value_band_confidence'    => $result['value_band_confidence'] ?? null,
-            'text_eee_signals'         => json_encode($textSignals['eee']),
-            'chat_eee_signals'         => isset($context['chat'])
+            'messageid'                        => $message->id,
+            'attid'                            => $attid,
+            'model'                            => $meta['model'],
+            'prompt_version'                   => $this->vision->getPromptVersion(),
+            'run_at'                           => now()->toIso8601String(),
+            'data_sources'                     => json_encode(['image' => true, 'type_lookup' => false, 'text' => !empty($textSignals['eee']), 'chat' => !empty($context['chat'])]),
+            'is_eee'                           => $isEee !== null ? ($isEee ? 1 : 0) : null,
+            'is_eee_confidence'                => round($isEeeConfidence, 4),
+            'is_eee_reasoning'                 => $result['is_eee_reasoning'] ?? null,
+            'contains_eee_components'          => ($result['contains_eee_components'] ?? false) ? 1 : 0,
+            'electrical_components_description'=> $result['electrical_components_description'] ?? null,
+            'weee_category'                    => $result['weee_category'] ?? null,
+            'weee_category_name'               => $result['weee_category_name'] ?? null,
+            'weee_category_confidence'         => $result['weee_category_confidence'] ?? null,
+            'weight_kg_min'                    => $result['weight_kg_min'] ?? null,
+            'weight_kg_max'                    => $result['weight_kg_max'] ?? null,
+            'weight_kg_confidence'             => $result['weight_kg_confidence'] ?? null,
+            'size_cm'                          => isset($result['size_cm']) ? json_encode($result['size_cm']) : null,
+            'size_confidence'                  => $result['size_confidence'] ?? null,
+            'condition'                        => $result['condition'] ?? null,
+            'condition_confidence'             => $result['condition_confidence'] ?? null,
+            'brand'                            => $result['brand'] ?? null,
+            'brand_confidence'                 => $result['brand_confidence'] ?? null,
+            'model_number'                     => $result['model_number'] ?? null,
+            'model_number_confidence'          => $result['model_number_confidence'] ?? null,
+            'material_primary'                 => $result['material_primary'] ?? null,
+            'material_secondary'               => $result['material_secondary'] ?? null,
+            'material_confidence'              => $result['material_confidence'] ?? null,
+            'primary_item'                     => $result['primary_item'] ?? null,
+            'short_description'                => $result['short_description'] ?? null,
+            'long_description'                 => $result['long_description'] ?? null,
+            'photo_quality'                    => $result['photo_quality'] ?? null,
+            'photo_quality_notes'              => $result['photo_quality_notes'] ?? null,
+            'item_complete'                    => isset($result['item_complete']) ? ($result['item_complete'] ? 1 : 0) : null,
+            'item_complete_confidence'         => $result['item_complete_confidence'] ?? null,
+            'item_complete_notes'              => $result['item_complete_notes'] ?? null,
+            'accessories_visible'              => isset($result['accessories_visible']) ? json_encode($result['accessories_visible']) : null,
+            'value_band_gbp'                   => $result['value_band_gbp'] ?? null,
+            'value_band_confidence'            => $result['value_band_confidence'] ?? null,
+            'text_eee_signals'                 => json_encode($textSignals['eee']),
+            'chat_eee_signals'                 => isset($context['chat'])
                 ? json_encode($this->extractTextSignals($context['chat'])['eee'])
                 : null,
-            'conflict_flag'            => $conflictFlag,
-            'raw_response'             => $meta['raw_response'] ?? null,
-            'input_tokens'             => $meta['input_tokens'] ?? 0,
-            'output_tokens'            => $meta['output_tokens'] ?? 0,
-            'cost_usd'                 => $meta['cost_usd'] ?? 0.0,
+            'conflict_flag'                    => $conflictFlag,
+            'raw_response'                     => $meta['raw_response'] ?? null,
+            'input_tokens'                     => $meta['input_tokens'] ?? 0,
+            'output_tokens'                    => $meta['output_tokens'] ?? 0,
+            'cost_usd'                         => $meta['cost_usd'] ?? 0.0,
         ];
 
         $this->sqlite->insertClassification($data);
@@ -485,39 +475,68 @@ class EeeClassificationService
 
     protected function computeConsensus(array $results): array
     {
-        $isEeeVotes  = array_filter(array_map(fn($r) => $r['is_eee'] ?? null, $results), fn($v) => $v !== null);
-        $eeeCount    = count(array_filter($isEeeVotes, fn($v) => $v === true));
-        $totalVotes  = count($isEeeVotes);
-        $agreeCount  = max($eeeCount, $totalVotes - $eeeCount);
-        $agreeRate   = $totalVotes > 0 ? $agreeCount / $totalVotes : 0.0;
-        $isEee       = $totalVotes > 0 && ($eeeCount / $totalVotes) > 0.5;
-        $eeeSampleCount = $eeeCount;
+        // Text votes: collect non-null is_eee_from_text values across images.
+        $textVotes  = array_values(array_filter(
+            array_map(fn($r) => $r['is_eee_from_text'] ?? null, $results),
+            fn($v) => $v !== null
+        ));
+        $eeeTextCount   = count(array_filter($textVotes, fn($v) => $v === true));
+        $totalTextVotes = count($textVotes);
 
-        $confidences    = array_filter(array_map(fn($r) => $r['is_eee_confidence'] ?? null, $results));
-        $meanConf       = count($confidences) > 0 ? array_sum($confidences) / count($confidences) : 0.0;
+        // Component detection: true if any image found electrical components.
+        $containsEee = !empty(array_filter($results, fn($r) => !empty($r['electrical_components_observed'])));
 
-        $categories     = array_filter(array_map(fn($r) => $r['weee_category'] ?? null, $results));
-        $catMode        = null;
-        $catName        = null;
-        $catConf        = 0.0;
+        // Union of all component descriptions across images.
+        $allComponents = [];
+        foreach ($results as $r) {
+            foreach ($r['electrical_components_observed'] ?? [] as $c) {
+                if (!in_array($c, $allComponents, true)) {
+                    $allComponents[] = $c;
+                }
+            }
+        }
+
+        // Determine consensus is_eee and confidence.
+        if ($totalTextVotes > 0) {
+            $isEee     = ($eeeTextCount / $totalTextVotes) > 0.5;
+            $agreeRate = max($eeeTextCount, $totalTextVotes - $eeeTextCount) / $totalTextVotes;
+            $confidence = round(0.90 * $agreeRate, 4);
+        } elseif (!$containsEee) {
+            $isEee      = false;
+            $agreeRate  = 1.0;
+            $confidence = 0.70;
+        } else {
+            $isEee      = null;   // uncertain: components present but no text signal
+            $agreeRate  = 0.0;
+            $confidence = 0.50;
+        }
+
+        $eeeSampleCount = count(array_filter($results, fn($r) => $r['is_eee'] ?? false));
+
+        // WEEE category: modal value across images.
+        $categories = array_filter(array_map(fn($r) => $r['weee_category'] ?? null, $results));
+        $catMode = $catName = null;
+        $catConf = 0.0;
         if (!empty($categories)) {
-            $freq   = array_count_values(array_map('strval', $categories));
+            $freq    = array_count_values(array_map('strval', $categories));
             arsort($freq);
-            $top    = (int) array_key_first($freq);
+            $top     = (int) array_key_first($freq);
             $catMode = $top;
             $catName = EeeVisionService::WEEE_CATEGORIES[$top] ?? null;
             $catConf = $freq[strval($top)] / count($categories);
         }
 
         return [
-            'is_eee'                  => $isEee,
-            'is_eee_confidence'       => round($meanConf, 4),
-            'is_eee_agree_rate'       => round($agreeRate, 4),
-            'eee_sample_count'        => $eeeSampleCount,
-            'weee_category'           => $catMode,
-            'weee_category_name'      => $catName,
-            'weee_category_confidence' => round($catConf, 4),
-            'needs_image_analysis'    => $agreeRate < self::AGREE_RATE_MIN || $meanConf < self::CONFIDENCE_MIN,
+            'is_eee'                           => $isEee,
+            'is_eee_confidence'                => $confidence,
+            'is_eee_agree_rate'                => round($agreeRate, 4),
+            'eee_sample_count'                 => $eeeSampleCount,
+            'contains_eee_components'          => $containsEee ? 1 : 0,
+            'electrical_components_description'=> !empty($allComponents) ? implode('; ', $allComponents) : null,
+            'weee_category'                    => $catMode,
+            'weee_category_name'               => $catName,
+            'weee_category_confidence'         => round($catConf, 4),
+            'needs_image_analysis'             => $agreeRate < self::AGREE_RATE_MIN || $confidence < self::CONFIDENCE_MIN,
         ];
     }
 
