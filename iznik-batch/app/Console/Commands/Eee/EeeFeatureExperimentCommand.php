@@ -8,14 +8,17 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
 /**
- * Research experiment: feature-detection approach to EEE classification.
+ * Research experiment: component-observation approach to EEE classification.
  *
- * Instead of asking "is this EEE?", ask the model to list specific observable
- * electrical and non-electrical features. Derive the WEEE judgment from those
- * feature observations via deterministic rules.
+ * Instead of asking "is this EEE?" or listing a fixed taxonomy of features,
+ * ask the model to describe any components it can see that use electricity in
+ * any form. Derive contains_eee_components from that observation. Derive
+ * is_eee (strictly EEE under WEEE) separately from text signals.
  *
- * Hypothesis: models are more reliable at "is this feature visible?" than at
- * "make an overall EEE judgment", and the feature list is directly auditable.
+ * Hypothesis: models are reliable at "describe what uses electricity here"
+ * (open-ended observation), and a gas cooker will correctly report its ignition
+ * circuit / clock as electrical components while the text signals identify it
+ * as non-EEE (primary function = gas combustion).
  *
  * Run: php artisan eee:feature-experiment --items="Gas Cooker,Electric Cooker,Chainsaw"
  */
@@ -25,33 +28,7 @@ class EeeFeatureExperimentCommand extends Command
                             {--items= : Comma-separated item names to test}
                             {--sample=3 : Images per item type}';
 
-    protected $description = 'Research: feature-detection approach to EEE classification (experimental)';
-
-    // Observable electrical features — things a model can directly see or read.
-    public const ELECTRICAL_FEATURES = [
-        'mains_cable'        => 'Electrical power cable/flex visible',
-        'mains_plug'         => 'Mains plug (3-pin or 2-pin) visible',
-        'battery_compartment'=> 'Battery door or compartment visible',
-        'display_screen'     => 'Digital/LCD/LED display panel or screen',
-        'control_panel'      => 'Electronic buttons, switches, or touchpad (not simple mechanical dials)',
-        'charging_port'      => 'USB or proprietary charging port visible',
-        'solar_panel'        => 'Photovoltaic/solar panel visible',
-        'motor_housing'      => 'Motor unit, motor housing, or "motor" label visible',
-        'led_lights'         => 'LED strip lights or LED bulbs built into item',
-        'speaker_grille'     => 'Speaker grille or mesh (indicates audio electronics)',
-        'heating_element'    => 'Electric heating element, coil, or ceramic hob surface',
-    ];
-
-    // Observable non-electrical indicators — things that suggest combustion/manual power.
-    public const NON_ELECTRICAL_FEATURES = [
-        'gas_burner_grates'  => 'Gas ring burner grates visible on hob',
-        'gas_control_knobs'  => 'Knobs with flame symbols or described as gas controls',
-        'fuel_filler_cap'    => 'Fuel filler cap (petrol/diesel engine)',
-        'pull_cord_starter'  => 'Pull-cord starter rope visible',
-        'exhaust_pipe'       => 'Exhaust pipe visible',
-        'manual_mechanism'   => 'Pedals, hand cranks, or purely mechanical linkage with no electronics',
-        'hand_pump'          => 'Manual hand pump mechanism',
-    ];
+    protected $description = 'Research: open-ended electrical-component observation approach (experimental)';
 
     public function handle(): int
     {
@@ -65,8 +42,8 @@ class EeeFeatureExperimentCommand extends Command
 
         $itemNames = array_map('trim', explode(',', $itemsOpt));
 
-        $this->info("EEE feature-detection experiment | items: " . implode(', ', $itemNames));
-        $this->info("Approach: model lists observable features → rules derive EEE status");
+        $this->info("EEE component-observation experiment | items: " . implode(', ', $itemNames));
+        $this->info("Approach: open-ended 'what uses electricity here?' → contains_eee_components; text → is_eee");
         $this->newLine();
 
         foreach ($itemNames as $itemName) {
@@ -101,11 +78,9 @@ class EeeFeatureExperimentCommand extends Command
             return;
         }
 
-        // Fetch images concurrently.
         $urls      = $attachments->map(fn($a) => EeeVisionService::buildImageUrl($a->externaluid))->all();
         $imageData = $this->fetchImages($urls);
 
-        // Run feature-detection calls concurrently.
         $jobs = [];
         foreach ($attachments as $i => $att) {
             if ($imageData[$i] === null) continue;
@@ -121,85 +96,81 @@ class EeeFeatureExperimentCommand extends Command
             return;
         }
 
-        $results = $this->runFeatureDetection($jobs);
+        $results = $this->runComponentObservation($jobs);
 
-        // Aggregate across images for this item type.
-        $allElectrical    = [];
-        $allNonElectrical = [];
-        $allTextSignals   = [];
+        $allElectricalComponents = [];
+        $itemsWithElectrical     = 0;
+        $itemsStrictlyEee        = 0;
 
         foreach ($results as $idx => $r) {
             if ($r === null) continue;
 
-            $electrical    = $r['electrical_features_observed']    ?? [];
-            $nonElectrical = $r['non_electrical_features_observed'] ?? [];
-            $textSignals   = $r['text_power_signals']              ?? [];
+            $components  = $r['electrical_components_observed'] ?? [];
+            $textSignals = $r['text_power_signals']             ?? [];
+            $isEee       = $r['is_eee_from_text']              ?? null;
+            $containsEee = !empty($components);
 
-            foreach ($electrical    as $f) $allElectrical[$f]    = ($allElectrical[$f]    ?? 0) + 1;
-            foreach ($nonElectrical as $f) $allNonElectrical[$f] = ($allNonElectrical[$f] ?? 0) + 1;
-            foreach ($textSignals   as $f) $allTextSignals[$f]   = ($allTextSignals[$f]   ?? 0) + 1;
+            foreach ($components as $c) {
+                $allElectricalComponents[$c] = ($allElectricalComponents[$c] ?? 0) + 1;
+            }
+            if ($containsEee) $itemsWithElectrical++;
+            if ($isEee === true) $itemsStrictlyEee++;
 
-            $imageLabel = "Image " . ($idx + 1) . " (\"" . substr($jobs[$idx]['subject'], 0, 40) . "\")";
+            $imageLabel  = "Image " . ($idx + 1) . " (\"" . substr($jobs[$idx]['subject'], 0, 40) . "\")";
+            $eeeIcon     = $isEee === true ? '<info>EEE</info>' : ($isEee === false ? '<fg=gray>non-EEE</fg=gray>' : '<comment>uncertain</comment>');
+            $containsTag = $containsEee ? '<info>contains-EEE-components</info>' : '<fg=gray>no-EEE-components</fg=gray>';
+
             $this->line("  {$imageLabel}");
-            $this->line("    Electrical features:     " . (empty($electrical)    ? '(none)' : implode(', ', $electrical)));
-            $this->line("    Non-electrical features: " . (empty($nonElectrical) ? '(none)' : implode(', ', $nonElectrical)));
-            $this->line("    Text power signals:      " . (empty($textSignals)   ? '(none)' : implode(', ', $textSignals)));
-            $this->line("    Other notes:             " . ($r['feature_notes'] ?? '(none)'));
-
-            // Show derived status for this image.
-            $derived = $this->deriveEeeStatus($electrical, $nonElectrical, $textSignals);
-            $eeeIcon = $derived['is_eee'] ? '<info>EEE</info>' : ($derived['is_eee'] === false ? '<fg=gray>non-EEE</fg=gray>' : '<comment>?</comment>');
-            $this->line("    Derived: {$eeeIcon} | contains_eee_components=" . ($derived['contains_eee'] ? 'yes' : 'no') . " | basis={$derived['basis']}");
+            $this->line("    Components using electricity:  " . (empty($components) ? '(none seen)' : implode('; ', $components)));
+            $this->line("    Text power signals:           " . (empty($textSignals) ? '(none)' : implode(', ', $textSignals)));
+            $this->line("    is_eee (from text):           {$eeeIcon}  |  {$containsTag}");
+            $this->line("    Notes: " . ($r['observation_notes'] ?? '(none)'));
         }
 
-        // Aggregate summary.
+        $n = count(array_filter($results));
         $this->newLine();
-        $this->line("  <comment>Aggregate across " . count($results) . " images:</comment>");
-        if (!empty($allElectrical)) {
-            arsort($allElectrical);
-            $this->line("    Electrical (count of images where seen):");
-            foreach ($allElectrical as $f => $cnt) {
-                $label = self::ELECTRICAL_FEATURES[$f] ?? $f;
-                $this->line("      {$f} ({$cnt}x): {$label}");
+        $this->line("  <comment>Summary across {$n} image(s):</comment>");
+        $this->line("    Images with electrical components: {$itemsWithElectrical}/{$n}");
+        $this->line("    Images classified strictly EEE:    {$itemsStrictlyEee}/{$n}");
+        if (!empty($allElectricalComponents)) {
+            arsort($allElectricalComponents);
+            $this->line("    Components seen (image count):");
+            foreach ($allElectricalComponents as $component => $cnt) {
+                $this->line("      ({$cnt}x) {$component}");
             }
-        }
-        if (!empty($allNonElectrical)) {
-            arsort($allNonElectrical);
-            $this->line("    Non-electrical:");
-            foreach ($allNonElectrical as $f => $cnt) {
-                $label = self::NON_ELECTRICAL_FEATURES[$f] ?? $f;
-                $this->line("      {$f} ({$cnt}x): {$label}");
-            }
-        }
-        if (!empty($allTextSignals)) {
-            $this->line("    Text signals: " . implode(', ', array_keys($allTextSignals)));
         }
     }
 
-    protected function runFeatureDetection(array $jobs): array
+    protected function runComponentObservation(array $jobs): array
     {
-        $electricalList    = implode("\n", array_map(fn($k, $v) => "  - {$k}: {$v}", array_keys(self::ELECTRICAL_FEATURES),    self::ELECTRICAL_FEATURES));
-        $nonElectricalList = implode("\n", array_map(fn($k, $v) => "  - {$k}: {$v}", array_keys(self::NON_ELECTRICAL_FEATURES), self::NON_ELECTRICAL_FEATURES));
+        $system = <<<'PROMPT'
+You are examining a photo of a second-hand item for Freegle (UK free reuse platform).
 
-        $system = <<<PROMPT
-You are examining a photo of a second-hand item. Your task is to list ONLY what you can directly observe or what is explicitly stated — do not infer or classify overall.
+Your task has three parts:
 
-Step 1 — Electrical features: List which of the following you can directly see in the photo:
-{$electricalList}
+PART 1 — ELECTRICAL COMPONENTS (image only):
+List every component you can directly observe in the photo that uses electricity in any form — any component that runs on mains power, battery, USB, or any other electrical supply. Describe each one briefly in plain English (e.g. "digital display panel", "mains power flex", "LED strip lights", "electronic control board"). If you cannot see any such components, return an empty list.
 
-Step 2 — Non-electrical features: List which of the following you can directly see:
-{$nonElectricalList}
+Be inclusive: even a clock, indicator light, or ignition circuit counts. Do not classify whether the item as a whole is electrical — just list the components you can see.
 
-Step 3 — Text signals: From the item title and description (if provided), list any words or phrases that explicitly name the power source or electrical status (e.g. "gas", "electric", "petrol", "battery", "USB", "manual", "solar", "cordless", "wind-up", "no electricity needed").
+PART 2 — TEXT SIGNALS (title and description only):
+From the item title and description (if provided), extract any words or phrases that explicitly name the item's primary power source or how the item is used. Examples: "gas cooker", "petrol engine", "electric", "battery-powered", "manual", "solar", "cordless", "wind-up", "no electricity needed".
 
-Step 4 — Other attributes: Extract what you can observe about the item's physical attributes.
+PART 3 — IS_EEE FROM TEXT:
+Based on the text signals only (ignore the image for this part), decide whether this item's PRIMARY FUNCTION requires electricity to work. The WEEE test: would the item be completely unable to perform its main purpose without electricity?
+- true  = primary function requires electricity (electric cooker, laptop, cordless drill)
+- false = primary function does not require electricity (gas cooker, petrol lawnmower, manual wheelchair, acoustic guitar)
+- null  = text signals insufficient to decide
+
+PART 4 — PHYSICAL ATTRIBUTES:
+Extract what you can observe about the item.
 
 Return ONLY valid JSON:
 {
-  "electrical_features_observed": ["mains_cable", "display_screen"],
-  "non_electrical_features_observed": ["gas_burner_grates"],
+  "electrical_components_observed": ["digital display panel", "mains power cable"],
   "text_power_signals": ["gas cooker"],
-  "feature_notes": "brief note on anything visually ambiguous or notable",
+  "is_eee_from_text": true/false/null,
+  "observation_notes": "brief note on anything ambiguous or notable, or null",
   "photo_quality": 1-5,
   "photo_quality_notes": "notes or null",
   "primary_item": "main item name",
@@ -209,9 +180,9 @@ Return ONLY valid JSON:
   "model_number_confidence": 0.0-1.0,
   "material_primary": "dominant material",
   "material_secondary": "secondary material or null",
-  "weight_kg_min": float or null,
-  "weight_kg_max": float or null,
-  "size_cm": {"w": float, "h": float, "d": float} or null,
+  "weight_kg_min": null,
+  "weight_kg_max": null,
+  "size_cm": {"w": null, "h": null, "d": null},
   "condition": "Reusable" or "Damaged" or "Unknown",
   "condition_confidence": 0.0-1.0,
   "item_complete": true/false/null,
@@ -229,9 +200,9 @@ PROMPT;
 
         $responses = Http::pool(function ($pool) use ($jobs, $system, $headers) {
             return array_map(function ($job) use ($pool, $system, $headers) {
-                $userText = 'Identify the features of this item.';
-                if (!empty($job['subject']))  $userText .= "\nTitle: "       . $job['subject'];
-                if (!empty($job['desc']))     $userText .= "\nDescription: " . $job['desc'];
+                $userText = 'Examine this item.';
+                if (!empty($job['subject'])) $userText .= "\nTitle: "       . $job['subject'];
+                if (!empty($job['desc']))    $userText .= "\nDescription: " . $job['desc'];
 
                 return $pool->withHeaders($headers)->timeout(60)->post('https://api.anthropic.com/v1/messages', [
                     'model'      => config('freegle.eee.claude_model', 'claude-sonnet-4-6'),
@@ -247,7 +218,7 @@ PROMPT;
 
         return array_map(function ($response) {
             if ($response instanceof \Throwable || !$response->successful()) return null;
-            $text  = trim($response->json('content.0.text', ''));
+            $text = trim($response->json('content.0.text', ''));
             if (preg_match('/```(?:json)?\s*(.*?)\s*```/s', $text, $m)) $text = $m[1];
             $start = strpos($text, '{');
             $end   = strrpos($text, '}');
@@ -269,59 +240,5 @@ PROMPT;
             if (!str_starts_with($mime, 'image/')) return null;
             return ['base64' => base64_encode($r->body()), 'mime_type' => $mime];
         }, $responses);
-    }
-
-    /**
-     * Derive EEE status from observed features using deterministic rules.
-     * Returns: is_eee (true/false/null=uncertain), contains_eee (bool), basis (string).
-     */
-    protected function deriveEeeStatus(array $electrical, array $nonElectrical, array $textSignals): array
-    {
-        $hasMains     = in_array('mains_cable', $electrical)    || in_array('mains_plug', $electrical)
-                     || in_array('heating_element', $electrical);
-        $hasBattery   = in_array('battery_compartment', $electrical);
-        $hasMotor     = in_array('motor_housing', $electrical);
-        $hasDisplay   = in_array('display_screen', $electrical) || in_array('control_panel', $electrical);
-        $hasLed       = in_array('led_lights', $electrical)     || in_array('solar_panel', $electrical);
-        $hasCharging  = in_array('charging_port', $electrical);
-
-        $hasGas       = in_array('gas_burner_grates', $nonElectrical) || in_array('gas_control_knobs', $nonElectrical);
-        $hasPetrol    = in_array('fuel_filler_cap', $nonElectrical)   || in_array('pull_cord_starter', $nonElectrical);
-        $hasManual    = in_array('manual_mechanism', $nonElectrical);
-
-        $textGas      = !empty(array_filter($textSignals, fn($s) => str_contains(strtolower($s), 'gas')));
-        $textElec     = !empty(array_filter($textSignals, fn($s) => preg_match('/electric|mains|plug|usb|battery|solar|cordless/i', $s)));
-        $textPetrol   = !empty(array_filter($textSignals, fn($s) => preg_match('/petrol|diesel|combustion/i', $s)));
-        $textManual   = !empty(array_filter($textSignals, fn($s) => preg_match('/manual|wind.up|no electric/i', $s)));
-
-        $containsEee  = !empty($electrical);
-
-        // Strictly EEE: basic function depends on electricity.
-        if ($textElec || $hasMains || $hasBattery || $hasMotor) {
-            // But gas overrides if it's a gas cooker with supplementary electrics.
-            if (($hasGas || $textGas) && !$hasMains && !$hasBattery) {
-                return ['is_eee' => false, 'contains_eee' => $containsEee, 'basis' => 'gas+supplementary-electrics'];
-            }
-            return ['is_eee' => true, 'contains_eee' => true, 'basis' => $hasMains ? 'mains_cable/plug/element' : ($hasBattery ? 'battery_compartment' : ($hasMotor ? 'motor_housing' : 'text_electric'))];
-        }
-
-        if ($textGas || $hasPetrol || ($textPetrol)) {
-            return ['is_eee' => false, 'contains_eee' => $containsEee, 'basis' => $textGas ? 'text:gas' : 'petrol_indicators'];
-        }
-
-        if ($textManual || ($hasManual && !$containsEee)) {
-            return ['is_eee' => false, 'contains_eee' => false, 'basis' => 'manual/no-electrical-features'];
-        }
-
-        // Only display/LED/charging visible — contains EEE components but basic function unclear.
-        if ($hasDisplay || $hasLed || $hasCharging) {
-            return ['is_eee' => null, 'contains_eee' => true, 'basis' => 'display/led/charging-only:ambiguous'];
-        }
-
-        if (empty($electrical) && empty($textSignals)) {
-            return ['is_eee' => false, 'contains_eee' => false, 'basis' => 'no-electrical-features-detected'];
-        }
-
-        return ['is_eee' => null, 'contains_eee' => $containsEee, 'basis' => 'insufficient-evidence'];
     }
 }
