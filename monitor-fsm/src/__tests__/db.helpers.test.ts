@@ -12,7 +12,7 @@ import {
   reopenBugAfterRejection,
   markDiscourseBugFixed,
 } from '../db/index'
-import { SCHEMA_SQL, MIGRATION_V2_SQL } from '../db/schema'
+import { SCHEMA_SQL, MIGRATION_V2_SQL, MIGRATION_V3_SQL } from '../db/schema'
 
 describe('Database Helpers', () => {
   let testDb: Database.Database
@@ -23,6 +23,9 @@ describe('Database Helpers', () => {
     testDb.pragma('foreign_keys = ON')
     testDb.exec(SCHEMA_SQL)
     testDb.exec(MIGRATION_V2_SQL)
+    for (const stmt of MIGRATION_V3_SQL.trim().split('\n').filter(s => s.trim())) {
+      testDb.exec(stmt)
+    }
   })
 
   afterEach(() => {

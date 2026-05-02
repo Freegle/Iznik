@@ -42,58 +42,60 @@
         </div>
       </div>
 
-      <!-- Recently Fixed -->
+      <!-- Recently Fixed (collapsible) -->
       <div v-if="recentlyFixed.length > 0" class="mt-4">
-        <div class="d-flex align-items-center mb-2">
-          <h6 class="mb-0 text-muted">Recently Fixed</h6>
-          <span class="badge bg-success ms-2">{{ recentlyFixed.length }}</span>
-        </div>
-        <div class="card">
-          <table class="table table-sm mb-0" style="table-layout: fixed; width: 100%;">
-            <colgroup>
-              <col style="width: 13%;">
-              <col style="width: 10%;">
-              <col>
-              <col style="width: 6%;">
-              <col style="width: 9%;">
-              <col style="width: 7%;">
-            </colgroup>
-            <thead class="table-light">
-              <tr>
-                <th>Area</th>
-                <th>Reporter</th>
-                <th>Summary</th>
-                <th>PR</th>
-                <th>Deploy</th>
-                <th>Fixed</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="bug in recentlyFixed" :key="`${bug.topic}-${bug.post}`">
-                <td class="text-muted small" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ (bug as any).group_key || bug.feature_area || 'Uncategorised' }}</td>
-                <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                  <a :href="`https://discourse.ilovefreegle.org/t/${bug.topic}/${bug.post}`" target="_blank" rel="noopener" class="text-decoration-none">
-                    {{ bug.reporter || 'Unknown' }}
-                  </a>
-                </td>
-                <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                  <span :title="bug.excerpt || bug.topic_title || ''">{{ bug.excerpt || bug.topic_title || '—' }}</span>
-                </td>
-                <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                  <a v-if="bug.pr_number" :href="`https://github.com/Freegle/Iznik/pull/${bug.pr_number}`" target="_blank" rel="noopener" class="text-decoration-none">#{{ bug.pr_number }}</a>
-                  <span v-else class="text-muted">—</span>
-                </td>
-                <td style="white-space: nowrap;">
-                  <span v-if="bug.deploy_state === 'deployed'" class="badge bg-success">Live</span>
-                  <span v-else-if="bug.deploy_state === 'pending_deploy'" class="badge bg-warning text-dark">Deploying</span>
-                  <span v-else-if="bug.pr_number" class="badge bg-secondary">Pending</span>
-                  <span v-else class="text-muted">—</span>
-                </td>
-                <td class="text-muted small" style="white-space: nowrap;">{{ formatFixedAge(bug.fixed_at) }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <details class="card">
+          <summary class="card-header" style="cursor: pointer; user-select: none;">
+            <span class="ms-2">Recently Fixed</span>
+            <span class="badge bg-success ms-2">{{ recentlyFixed.length }}</span>
+          </summary>
+          <div style="overflow-x: auto;">
+            <table class="table table-sm mb-0" style="table-layout: fixed; width: 100%;">
+              <colgroup>
+                <col style="width: 13%;">
+                <col style="width: 10%;">
+                <col>
+                <col style="width: 6%;">
+                <col style="width: 9%;">
+                <col style="width: 7%;">
+              </colgroup>
+              <thead class="table-light">
+                <tr>
+                  <th>Area</th>
+                  <th>Reporter</th>
+                  <th>Summary</th>
+                  <th>PR</th>
+                  <th>Deploy</th>
+                  <th>Fixed</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="bug in recentlyFixed" :key="`${bug.topic}-${bug.post}`">
+                  <td class="text-muted small" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ (bug as any).group_key || bug.feature_area || 'Uncategorised' }}</td>
+                  <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <a :href="`https://discourse.ilovefreegle.org/t/${bug.topic}/${bug.post}`" target="_blank" rel="noopener" class="text-decoration-none">
+                      {{ bug.reporter || 'Unknown' }}
+                    </a>
+                  </td>
+                  <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <span :title="bug.excerpt || bug.topic_title || ''">{{ bug.excerpt || bug.topic_title || '—' }}</span>
+                  </td>
+                  <td style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    <a v-if="bug.pr_number" :href="`https://github.com/Freegle/Iznik/pull/${bug.pr_number}`" target="_blank" rel="noopener" class="text-decoration-none">#{{ bug.pr_number }}</a>
+                    <span v-else class="text-muted">—</span>
+                  </td>
+                  <td style="white-space: nowrap;">
+                    <span v-if="bug.deploy_state === 'deployed'" class="badge bg-success">Live</span>
+                    <span v-else-if="bug.deploy_state === 'pending_deploy'" class="badge bg-warning text-dark">Deploying</span>
+                    <span v-else-if="bug.pr_number" class="badge bg-secondary">Pending</span>
+                    <span v-else class="text-muted">—</span>
+                  </td>
+                  <td class="text-muted small" style="white-space: nowrap;">{{ formatFixedAge(bug.fixed_at) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
       </div>
 
       <!-- Iteration history (collapsible) -->

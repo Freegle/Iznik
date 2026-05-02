@@ -27,6 +27,21 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# ── Single-instance guard ─────────────────────────────────────────────────────
+# Prevent two run-loop.sh processes from running concurrently (e.g. if the
+# scheduled /loop wakeup fires while a prior run is still in progress).
+# flock -n acquires the lock non-blocking; if it fails, another instance holds
+# it and we exit immediately rather than queuing up behind it.
+LOCK_FILE="/tmp/freegle-monitor-run-loop.lock"
+exec 200>"$LOCK_FILE"
+if ! flock -n 200; then
+  echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] run-loop: another instance already running (lock held by $(cat "${LOCK_FILE}.pid" 2>/dev/null || echo '?')) — exiting"
+  exit 0
+fi
+echo $$ > "${LOCK_FILE}.pid"
+trap 'rm -f "${LOCK_FILE}.pid"' EXIT
+# ─────────────────────────────────────────────────────────────────────────────
+
 INTERVAL=1800
 while (( $# > 0 )); do
   case "$1" in
