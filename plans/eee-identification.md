@@ -564,6 +564,61 @@ Feature detection is directionally better and produces richer output even when t
 
 ---
 
+## Revised approach: open-ended component observation (2026-05-02)
+
+*Feedback: the fixed taxonomy approach is overfitted. It lists gas-specific features (gas_burner_grates, pull_cord_starter) which causes it to treat gas vs electric as the fundamental axis. The user's requirement is different:*
+
+**A gas cooker SHOULD report that it contains electrical components** (the ignition circuit, clock, control board). The taxonomy-based approach was trying to make gas cooker → non-EEE, which is correct for `is_eee` but wrong for `contains_eee_components`.
+
+### The corrected two-question structure
+
+The image call should answer one open-ended question only:
+
+> "List every component you can directly observe that uses electricity in any form."
+
+This gives:
+- Gas cooker: `["electronic ignition circuit", "digital clock/timer display"]` → `contains_eee_components: true`
+- Gas cooker (from text "gas cooker"): `is_eee_from_text: false`
+- Result: `contains_eee_components=true`, `is_eee=false` — correct on both counts
+
+A fixed taxonomy (`NON_ELECTRICAL_FEATURES: [gas_burner_grates, pull_cord_starter, ...]`) was doing the wrong job: trying to use non-electrical visual features to infer `is_eee=false`. That's the job of the text signal, not the image.
+
+### Why the image shouldn't decide `is_eee`
+
+- A gas cooker and an electric cooker can look identical in a photo
+- The `is_eee` determination depends on what powers the *primary function*, not what's visible in the photo
+- The text (item title + description) contains explicit power-source information ("gas cooker", "electric cooker", "petrol lawnmower")
+- Image → "what electrical components are present?" (always answerable from photo)
+- Text → "does the primary function require electricity?" (reliably answered from title/description)
+
+### What changed in `EeeFeatureExperimentCommand.php`
+
+- Removed `ELECTRICAL_FEATURES` and `NON_ELECTRICAL_FEATURES` class constants (taxonomy eliminated)
+- Prompt now asks open-ended: "list every component you can see that uses electricity in any form — even a clock, indicator light, or ignition circuit counts"
+- Added explicit instruction: "do not classify whether the item as a whole is electrical — just list the components you can see"
+- `is_eee_from_text` added: model derives `true/false/null` from text signals only, explicitly ignoring the image for this step
+- `contains_eee_components` = `!empty(electrical_components_observed)` — derived from observation, not rules
+- Removed the `deriveEeeStatus()` rule engine entirely (was the source of multiple bugs)
+- The model's natural language component descriptions are more useful than constrained taxonomic keys
+
+### Expected behaviour for hard cases
+
+| Item | electrical_components_observed (image) | is_eee_from_text (text) | contains_eee |
+|---|---|---|---|
+| Gas Cooker | "electronic ignition", "digital clock" | false (text: "gas") | true |
+| Electric Cooker | "ceramic hob elements", "mains cable", "control panel" | true | true |
+| Exercise Bike | "digital display panel" or empty | null/false | depends on photo |
+| Chainsaw (with cord) | "mains power cord" | null (title ambiguous) | true |
+| Petrol Chainsaw | empty | false (text: "petrol") | false |
+| Manual Wheelchair | empty | false (text: "manual") | false |
+
+The `is_eee` final determination (for the production pipeline) would be:
+- If `is_eee_from_text` is not null → use it (text is authoritative for primary-function question)
+- If null and `contains_eee_components` = false → `is_eee = false`
+- If null and `contains_eee_components` = true → uncertain, flag for review or use category heuristics
+
+---
+
 ## Two EEE classifications: strictly EEE vs contains-EEE-components
 
 *Observation recorded 2026-05-02 from hard-cases research.*
