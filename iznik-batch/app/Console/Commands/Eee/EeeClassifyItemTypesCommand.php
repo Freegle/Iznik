@@ -77,6 +77,7 @@ class EeeClassifyItemTypesCommand extends Command
         });
 
         $this->sqlite->finishRun($runId, $stats['processed'], $stats['eee'], $stats['skipped'], $stats['cost']);
+        $this->sqlite->journalItemTypeRun($runId, $this->vision->getPromptVersion());
 
         $this->newLine();
         $this->table(['Metric', 'Value'], [
