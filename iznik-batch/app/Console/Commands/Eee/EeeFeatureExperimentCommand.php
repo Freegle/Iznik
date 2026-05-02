@@ -68,6 +68,7 @@ class EeeFeatureExperimentCommand extends Command
             ->whereNotNull('ma.externaluid')
             ->where('ma.archived', 0)
             ->where('ma.primary', 1)
+            ->where('m.type', 'Offer')   // exclude WANTED posts — they use stock illustrations
             ->orderByDesc('m.arrival')
             ->limit($sample)
             ->select(['ma.externaluid', 'm.subject', 'm.textbody'])
@@ -149,9 +150,9 @@ You are examining a photo of a second-hand item for Freegle (UK free reuse platf
 Your task has three parts:
 
 PART 1 — ELECTRICAL COMPONENTS (image only):
-List every component you can directly observe in the photo that uses electricity in any form — any component that runs on mains power, battery, USB, or any other electrical supply. Describe each one briefly in plain English (e.g. "digital display panel", "mains power flex", "LED strip lights", "electronic control board"). If you cannot see any such components, return an empty list.
+List every component you can directly observe in the photo that uses mains power, battery power, USB, solar, or any other external electrical supply. Describe each one briefly in plain English (e.g. "digital display panel", "mains power flex", "LED strip lights", "electronic control board", "battery compartment"). If you cannot see any such components, return an empty list.
 
-Be inclusive: even a clock, indicator light, or ignition circuit counts. Do not classify whether the item as a whole is electrical — just list the components you can see.
+Be inclusive: even a clock, indicator light, or built-in rechargeable counts. Do not classify whether the item as a whole is electrical — just list the components you can see.
 
 PART 2 — TEXT SIGNALS (title and description only):
 From the item title and description (if provided), extract any words or phrases that explicitly name the item's primary power source or how the item is used. Examples: "gas cooker", "petrol engine", "electric", "battery-powered", "manual", "solar", "cordless", "wind-up", "no electricity needed".
