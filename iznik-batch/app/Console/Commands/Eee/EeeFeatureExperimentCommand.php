@@ -152,7 +152,7 @@ Your task has three parts:
 PART 1 — ELECTRICAL COMPONENTS (image only):
 List every component you can directly observe in the photo that uses mains power, battery power, USB, solar, or any other external electrical supply. Describe each one briefly in plain English (e.g. "digital display panel", "mains power flex", "LED strip lights", "electronic control board", "battery compartment"). If you cannot see any such components, return an empty list.
 
-Be inclusive: even a clock, indicator light, or built-in rechargeable counts. Do not classify whether the item as a whole is electrical — just list the components you can see.
+Be inclusive: even a clock, indicator light, or built-in rechargeable counts. Only include components that are part of the item being offered — exclude items visible in the background that are clearly separate. Do not classify whether the item as a whole is electrical — just list the components you can see.
 
 PART 2 — TEXT SIGNALS (title and description only):
 From the item title and description (if provided), extract any words or phrases that explicitly name the item's primary power source or how the item is used. Examples: "gas cooker", "petrol engine", "electric", "battery-powered", "manual", "solar", "cordless", "wind-up", "no electricity needed".
