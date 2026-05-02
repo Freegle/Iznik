@@ -633,43 +633,60 @@ For an electric chainsaw (photographed with visible power cable):
 
 Here the image reasoning is more reliable because it has direct visual evidence.
 
-### Proposed approach: deliberate multi-signal reasoning in a single structured prompt
+### Why a structured single-call prompt doesn't work either
 
-Rather than running two calls and post-processing their outputs, restructure the combined prompt to force explicit epistemic reasoning about each signal:
+The next idea was to structure the combined prompt to force explicit per-signal reasoning steps. But this also fails: once the model receives the image, it has already processed it. There is no reliable way to ask a vision model to "ignore the photo for step 2" — it has already encoded the image into its attention context. Any "text signal assessment" step will be rationalization coloured by what it already saw. The separate calls we've already implemented (`text_only` and `image_only` modes) are the only way to get genuinely independent signal assessments.
 
+### Proposed approach: reconciliation as a third call
+
+Run two independent calls, then reconcile only when they disagree:
+
+1. **`text_only` call** → `text_is_eee` + `text_reasoning` (e.g. "A gas cooker operates on gas combustion; electricity is not required for its basic cooking function")
+2. **`image_only` call** → `image_is_eee` + `image_reasoning` (e.g. "This appears to be a freestanding electric cooker with ceramic hob")
+3. **If they agree** → done, high confidence, no further call needed
+4. **If they disagree** → **reconciliation call** that receives:
+   - The image (so it can verify what the image_only call saw)
+   - The `text_reasoning` string from call 1
+   - The `image_reasoning` string from call 2
+   - Instruction: "These two assessments disagree. Evaluate which reasoning is more epistemically reliable for this specific item, and explain why."
+
+The reconciliation call sees both the image and the competing explanations. It is not being asked to classify from scratch — it is being asked to judge between two already-formed arguments. This is a different cognitive task: arbitration, not classification. The hope is that it can recognise patterns like "the image reasoning is based on visual similarity to a different item type" or "the text reasoning references an explicit power-source name" and weight accordingly.
+
+**Cost**: the reconciliation call only fires on disagreements. If text and image agree for ~80% of items, the per-item cost is ~2 calls, not 3.
+
+### What needs to be researched
+
+This is a hypothesis, not an established technique. Before building the full pipeline, we need to validate:
+
+1. **Does the reconciliation call actually change its mind when text is right?** Run gas cooker: text says non-EEE, image says EEE. Does the reconciler correctly identify the image reasoning as "inferred from visual similarity" and rule for text?
+
+2. **Does it correctly defer to image when image has direct evidence?** Run a chainsaw photo that clearly shows a power cable. Does the reconciler correctly identify the image reasoning as "directly observed" and rule for image even if text is ambiguous?
+
+3. **Is the reconciler's reasoning auditable?** We need to be able to read its output and understand *why* it chose one signal. If it just produces a confident verdict with no traceable argument, it's not trustworthy.
+
+4. **Does it introduce new errors on easy cases?** If we run the reconciler on items where text and image agree (washing machine, laptop), does it hallucinate disagreement or change the result?
+
+5. **Calibration**: is `reconciler_confidence` actually correlated with accuracy? Or does it express high confidence regardless?
+
+### Implementation plan (after research)
+
+New fields in `eee_item_types` and `eee_classifications`:
 ```
-Step 2 — Text signal: Based ONLY on the title and description, what does the text 
-tell you about EEE status? Rate text_signal_reliability (0-1): 1.0 if the title 
-explicitly names the power source (gas/electric/petrol/battery/solar/manual/wind-up);
-lower if ambiguous or generic item name.
-
-Step 3 — Image signal: Based ONLY on the image (ignoring title), what does the 
-visual evidence tell you? Rate image_signal_reliability (0-1): 1.0 if the image 
-provides direct visual evidence of power source (visible flames/gas valves/power cord/
-battery compartment); lower if you are inferring from general appearance.
-
-Step 4 — Reconciliation: If text and image agree, report consensus. If they disagree,
-give the final verdict based on which signal has higher reliability, and explain why
-one signal is more epistemically trustworthy than the other for this specific item.
+text_is_eee              INTEGER   -- result from text_only call
+text_confidence          REAL
+text_reasoning           TEXT
+image_is_eee             INTEGER   -- result from image_only call
+image_confidence         REAL
+image_reasoning          TEXT
+signals_agree            INTEGER   -- 1 if both calls agree
+reconciler_verdict       INTEGER   -- NULL if not needed; 0/1 if reconciler ran
+reconciler_reasoning     TEXT
+dominant_signal          TEXT      -- 'text' / 'image' / 'both' / 'reconciled'
 ```
 
-New JSON fields:
-```json
-"text_signal_reliability": 0.0-1.0,
-"text_signal_reasoning": "why the text signal is/isn't reliable here",
-"image_signal_reliability": 0.0-1.0,
-"image_signal_reasoning": "what the image shows directly vs infers from appearance",
-"signals_agree": true/false,
-"dominant_signal": "text" or "image" or "both",
-"is_eee_reasoning": "final verdict with explicit reference to dominant signal"
-```
-
-This approach is better than weighting because:
-1. The model self-reports signal reliability *for this specific item*, not as a fixed prior
-2. Disagreements surface *why* they disagree, not just *that* they disagree
-3. A clear gas flame in the photo would raise `image_signal_reliability` and *confirm* non-EEE, not confuse it
-4. An ambiguous cooker photo would lower `image_signal_reliability`, letting text dominate
-5. The reasoning chain is fully auditable — you can read *why* the model trusted one signal over the other
+The final `is_eee` stored in the main fields comes from:
+- `both` if text and image agree
+- `reconciler_verdict` if they disagree and reconciler ran
 
 ### Implementation plan
 
