@@ -243,8 +243,91 @@ Versioned via `PROMPT_VERSION` semver constant. Key elements:
 
 ---
 
+## Future: fine-tuning / custom model
+
+This work is designed to capture a dataset that can train a custom EEE classifier later — even if existing commercial models are good enough for the initial production run. Nothing is discarded that would be needed.
+
+### How the current data becomes a training set
+
+Every row in `eee_classifications` is a supervised training example:
+
+```
+input:  image (via attid → messages_attachments → Uploadcare URL)
+        + subject + description (text context)
+        + optional chat snippet
+output: structured JSON (is_eee, weee_category, weight, condition, brand, …)
+```
+
+The schema already captures everything needed:
+
+| Column | Training signal |
+|---|---|
+| `raw_response` | Full model output — the "label" in its richest form |
+| `is_eee_reasoning` | Chain-of-thought trace — useful for fine-tuning reasoning |
+| `is_eee_confidence` | Label quality weight — filter on `>= 0.90` for high-quality training examples |
+| `is_eee_agree_rate` (via `eee_item_types`) | Inter-model agreement — agree_rate >= 0.90 is a strong positive signal |
+| `conflict_flag` | Boundary cases / hard negatives — valuable for robustness |
+| `model` + `prompt_version` | Multi-annotator, versioned — lets you track label drift |
+
+### Distillation strategy (Claude as teacher)
+
+1. Run Claude (reference) over N images → these are the ground-truth labels
+2. Run smaller/cheaper models over the same images
+3. Train the cheaper model to match Claude's outputs (knowledge distillation)
+4. Distilled model can run locally (Ollama) or as a fine-tuned Gemini Flash / GPT-4o-mini
+
+This is the standard LLM distillation loop. The `agree_rate` from `eee_item_types` gives a quality filter: only use item types with `agree_rate >= 0.90` as training examples.
+
+### What volume is needed?
+
+| Task | Typical examples needed |
+|---|---|
+| Binary EEE / non-EEE only | 500–1,000 |
+| EEE + WEEE category (6 classes) | 2,000–5,000 |
+| All attributes (weight, brand, condition) | 5,000–20,000 |
+
+Phase 1 (top 200 item types × 10 images) = 2,000 examples — enough for binary + category.
+Phase 2 (top 500) = 5,000 — enough for full attribute extraction.
+
+### Export format for fine-tuning
+
+`eee:export-training` (future command) produces JSONL in OpenAI/Anthropic fine-tuning format:
+
+```jsonl
+{"messages": [
+  {"role": "system", "content": "<EEE_SYSTEM_PROMPT>"},
+  {"role": "user",   "content": [
+    {"type": "image_url", "image_url": {"url": "https://ucarecdn.com/..."}},
+    {"type": "text",      "text": "Subject: Old TV\nDescription: ..."}
+  ]},
+  {"role": "assistant", "content": "{\"is_eee\": 1, \"weee_category\": 2, ...}"}
+]}
+```
+
+Filter to rows where: `is_eee_confidence >= 0.90 AND (agree_rate >= 0.90 OR conflict_flag = 0)`.
+
+### Implementation choices that preserve training data
+
+These are already baked into the schema and services — nothing extra needed now:
+
+1. **`raw_response` always stored** — never stripped, even when parsing succeeds
+2. **`is_eee_reasoning` stored** — chain-of-thought visible in the record
+3. **One row per model per message** — `hasClassification()` prevents overwriting; multi-annotator structure preserved
+4. **`attid` stored** — direct link to the original image; URL can always be reconstructed
+5. **`prompt_version` semver** — if the prompt changes, old labels are still valid for the prompt version they were generated with; don't mix versions in training data
+6. **`data_sources` JSON** — documents what inputs (image, text, chat) were available; avoids training on examples where context was incomplete
+
+### When to revisit
+
+- After Phase 1: check inter-model agreement distribution. If >70% of item types have `agree_rate >= 0.90`, the dataset is clean enough for binary classification fine-tuning.
+- After Phase 2: enough data for full-attribute fine-tuning if commercial model costs prove significant at scale.
+- If a Gemma/Phi/Qwen local vision model becomes good enough at binary EEE detection, distill from Claude outputs to get a free local classifier.
+
+---
+
 ## Out of scope for this round
 
 - Training a custom classifier (this work creates the dataset for that)
+- `eee:export-training` command (design above; implement once Phase 1 data is collected)
 - Ollama self-hosting (no models installed; plug in when infrastructure is ready)
 - Chat data (designed in, enabled by `EEE_USE_CHAT_DATA=true` when privacy reviewed)
