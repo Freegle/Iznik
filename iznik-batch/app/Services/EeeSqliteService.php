@@ -136,6 +136,28 @@ class EeeSqliteService
                 notes          TEXT
             )
         ");
+
+        // Research journal: structured observations with confidence progression.
+        // Confidence levels: preliminary → emerging → consistent → verified
+        // Observations are auto-generated at end of each run and can be promoted
+        // manually as the same finding recurs across runs and models.
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS eee_observations (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                observed_at    DATETIME NOT NULL,
+                run_id         INTEGER,
+                phase          TEXT NOT NULL,
+                scope          TEXT NOT NULL,
+                finding        TEXT NOT NULL,
+                confidence     TEXT NOT NULL DEFAULT 'preliminary',
+                evidence       TEXT,
+                supersedes_id  INTEGER,
+                prompt_version TEXT,
+                FOREIGN KEY (run_id) REFERENCES eee_runs(id)
+            )
+        ");
+        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_obs_scope ON eee_observations(scope)");
+        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_obs_confidence ON eee_observations(confidence)");
     }
 
     public function upsertItemType(array $data): void
@@ -286,5 +308,161 @@ class EeeSqliteService
         ");
         $stmt->execute([$model, $limit]);
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
+    }
+
+    // -------------------------------------------------------------------------
+    // Research journal
+    // -------------------------------------------------------------------------
+
+    public function recordObservation(
+        string $phase,
+        string $scope,
+        string $finding,
+        string $confidence = 'preliminary',
+        ?array $evidence   = null,
+        ?int   $runId      = null,
+        ?int   $supersedes = null,
+    ): int {
+        $pdo = $this->getPdo();
+        $pdo->prepare("
+            INSERT INTO eee_observations
+                (observed_at, run_id, phase, scope, finding, confidence, evidence, supersedes_id, prompt_version)
+            VALUES (datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?)
+        ")->execute([
+            $runId,
+            $phase,
+            $scope,
+            $finding,
+            $confidence,
+            $evidence ? json_encode($evidence) : null,
+            $supersedes,
+            config('freegle.eee.prompt_version', '1.1.0'),
+        ]);
+        return (int) $pdo->lastInsertId();
+    }
+
+    public function getObservations(string $minConfidence = 'preliminary'): array
+    {
+        $order = ['preliminary' => 0, 'emerging' => 1, 'consistent' => 2, 'verified' => 3];
+        $level = $order[$minConfidence] ?? 0;
+
+        $pdo  = $this->getPdo();
+        $rows = $pdo->query("
+            SELECT o.*, r.scope as run_scope
+            FROM eee_observations o
+            LEFT JOIN eee_runs r ON r.id = o.run_id
+            WHERE o.supersedes_id IS NULL
+            ORDER BY
+                CASE o.confidence
+                    WHEN 'verified'    THEN 0
+                    WHEN 'consistent'  THEN 1
+                    WHEN 'emerging'    THEN 2
+                    WHEN 'preliminary' THEN 3
+                END,
+                o.observed_at DESC
+        ")->fetchAll(\PDO::FETCH_ASSOC);
+
+        return array_values(array_filter($rows, function ($r) use ($order, $level) {
+            return ($order[$r['confidence']] ?? 0) >= $level;
+        }));
+    }
+
+    /**
+     * Auto-generate journal observations from a completed classify-item-types run.
+     * Called at the end of EeeClassifyItemTypesCommand.
+     */
+    public function journalItemTypeRun(int $runId, string $promptVersion): void
+    {
+        $pdo = $this->getPdo();
+
+        $total    = (int) $pdo->query("SELECT COUNT(*) FROM eee_item_types")->fetchColumn();
+        $eeeCount = (int) $pdo->query("SELECT COUNT(*) FROM eee_item_types WHERE is_eee = 1")->fetchColumn();
+        $eeeRate  = $total > 0 ? round(100 * $eeeCount / $total, 1) : 0;
+
+        $this->recordObservation('classify_item_types', 'overall',
+            "{$eeeCount} of {$total} item types classified as EEE ({$eeeRate}%).",
+            'preliminary',
+            ['eee_count' => $eeeCount, 'total' => $total],
+            $runId,
+        );
+
+        // Mixed types: item types where some sampled images were EEE even though majority was not.
+        $mixed = $pdo->query("
+            SELECT item_name, eee_sample_count, images_analysed, is_eee_agree_rate
+            FROM eee_item_types
+            WHERE is_eee = 0 AND eee_sample_count > 0
+            ORDER BY eee_sample_count DESC LIMIT 20
+        ")->fetchAll(\PDO::FETCH_ASSOC);
+
+        if (!empty($mixed)) {
+            $names = implode(', ', array_column($mixed, 'item_name'));
+            $this->recordObservation('classify_item_types', 'mixed_types',
+                count($mixed) . " nominally non-EEE types had EEE variants in the sample (will always run per-image): {$names}.",
+                'preliminary',
+                ['types' => $mixed],
+                $runId,
+            );
+        }
+
+        // Low-agreement types that need per-image regardless.
+        $ambiguous = $pdo->query("
+            SELECT item_name, is_eee_agree_rate, is_eee_confidence
+            FROM eee_item_types
+            WHERE needs_image_analysis = 1
+            ORDER BY is_eee_agree_rate ASC LIMIT 20
+        ")->fetchAll(\PDO::FETCH_ASSOC);
+
+        if (!empty($ambiguous)) {
+            $names = implode(', ', array_column($ambiguous, 'item_name'));
+            $this->recordObservation('classify_item_types', 'ambiguous_types',
+                count($ambiguous) . " item types flagged as ambiguous (low agreement/confidence, needs per-image): {$names}.",
+                'preliminary',
+                ['types' => $ambiguous],
+                $runId,
+            );
+        }
+
+        // Photo quality observations.
+        $lowQuality = $pdo->query("
+            SELECT AVG(photo_quality) as avg_quality, COUNT(*) as cnt
+            FROM eee_classifications
+            WHERE photo_quality IS NOT NULL
+        ")->fetch(\PDO::FETCH_ASSOC);
+
+        if ($lowQuality && $lowQuality['cnt'] > 0) {
+            $avgQ = round((float) $lowQuality['avg_quality'], 2);
+            $this->recordObservation('classify_item_types', 'photo_quality',
+                "Average photo quality across {$lowQuality['cnt']} images: {$avgQ}/5.",
+                'preliminary',
+                ['avg_quality' => $avgQ, 'sample_count' => $lowQuality['cnt']],
+                $runId,
+            );
+        }
+    }
+
+    /**
+     * Auto-generate observations from a completed compare-models run.
+     */
+    public function journalCompareRun(int $runId, array $agreementStats): void
+    {
+        foreach ($agreementStats as $model => $attrs) {
+            foreach ($attrs as $attr => $stat) {
+                if (!isset($stat['seen'], $stat['agree']) || $stat['seen'] < 10) {
+                    continue;
+                }
+                $rate = round(100 * $stat['agree'] / $stat['seen'], 1);
+                $confidence = match (true) {
+                    $stat['seen'] >= 100 && $rate >= 85 => 'consistent',
+                    $stat['seen'] >= 50  => 'emerging',
+                    default              => 'preliminary',
+                };
+                $this->recordObservation('compare_models', "model:{$model}:attr:{$attr}",
+                    "{$model} agrees with reference on '{$attr}' at {$rate}% ({$stat['seen']} samples).",
+                    $confidence,
+                    $stat,
+                    $runId,
+                );
+            }
+        }
     }
 }
