@@ -302,4 +302,51 @@ return [
         // --dry-run still works regardless (it only reads).
         'tn_enabled' => env('TN_DEDUP_ENABLED', false),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | EEE (Electrical and Electronic Equipment) Identification
+    |--------------------------------------------------------------------------
+    |
+    | AI-powered classification of EEE items from Freegle post photos.
+    | Results stored in SQLite to avoid MySQL schema churn.
+    |
+    | model options: 'claude' (reference), 'gemini', 'openai', 'together', 'ollama'
+    |
+    */
+    'eee' => [
+        'sqlite_path'     => env('EEE_SQLITE_PATH', storage_path('eee/classifications.sqlite')),
+        'model'           => env('EEE_MODEL', 'gemini'),
+
+        // Anthropic (Claude) — reference labeller.
+        'anthropic_api_key' => env('ANTHROPIC_API_KEY', ''),
+        'claude_model'      => env('EEE_CLAUDE_MODEL', 'claude-sonnet-4-6'),
+
+        // Google Gemini.
+        'gemini_api_key'  => env('GOOGLE_GEMINI_API_KEY', ''),
+        'gemini_model'    => env('EEE_GEMINI_MODEL', 'gemini-2.0-flash'),
+
+        // OpenAI.
+        'openai_api_key'  => env('OPENAI_API_KEY', ''),
+        'openai_model'    => env('EEE_OPENAI_MODEL', 'gpt-4o'),
+
+        // Together.ai — for multi-model comparison (Llama, Qwen etc.).
+        'together_api_key' => env('TOGETHER_API_KEY', ''),
+        'together_model'   => env('EEE_TOGETHER_MODEL', 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo'),
+
+        // Ollama — local self-hosted models.
+        'ollama_base_url' => env('EEE_OLLAMA_BASE_URL', 'http://localhost:11434'),
+        'ollama_model'    => env('EEE_OLLAMA_MODEL', 'llama3.2-vision'),
+
+        // Whether to include follow-on chat as classification context.
+        // Off by default — chat messages are private between users.
+        'use_chat_data'   => env('EEE_USE_CHAT_DATA', false),
+
+        // Stats page: toggle each attribute on only after model comparison
+        // confirms high inter-model agreement for that attribute.
+        'publish_weight'    => env('EEE_PUBLISH_WEIGHT', false),
+        'publish_brands'    => env('EEE_PUBLISH_BRANDS', false),
+        'publish_category'  => env('EEE_PUBLISH_CATEGORY', true),
+        'publish_condition' => env('EEE_PUBLISH_CONDITION', true),
+    ],
 ];
