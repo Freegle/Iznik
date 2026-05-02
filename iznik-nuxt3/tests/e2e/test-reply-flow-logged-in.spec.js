@@ -2,11 +2,10 @@
  * Reply Flow Tests - Logged In User (Tests 1.1, 1.2, 1.3)
  *
  * These tests cover the reply flow for users who are already logged in.
- * They MUST run serially because they share existingTestEmail (pre-registered user).
+ * They use testEnv.user (created by create-test-env.php) as the logged-in replier.
  */
 
 const { test, expect } = require('./fixtures')
-const { environment } = require('./config')
 const { loginViaHomepage, logoutIfLoggedIn } = require('./utils/user')
 const {
   waitForAuthInLocalStorage,
@@ -20,7 +19,7 @@ test.describe('Reply Flow - Logged In User', () => {
   test('1.1 can reply from Message Page', async ({
     page,
     postMessage,
-    existingTestEmail,
+    testEnv,
     getTestEmail,
     withdrawPost,
   }) => {
@@ -40,13 +39,12 @@ test.describe('Reply Flow - Logged In User', () => {
     // Log out from poster
     await logoutIfLoggedIn(page)
 
-    // Login as existingTestEmail FIRST (before navigating to message page)
-    // This uses a pre-registered test user to ensure login succeeds
-    // Must pass the correct password for the pre-registered test user
+    // Login as testEnv.user FIRST (before navigating to message page)
+    // testEnv.user is a pre-registered test user created by create-test-env.php with password 'freegle'
     await loginViaHomepage(
       page,
-      existingTestEmail,
-      environment.unmodded_password
+      testEnv.user.email,
+      'freegle'
     )
     await waitForAuthInLocalStorage(page)
     console.log('[Test] Logged in as existingTestEmail')
@@ -78,7 +76,7 @@ test.describe('Reply Flow - Logged In User', () => {
   test('1.2 can reply from Browse Page', async ({
     page,
     postMessage,
-    existingTestEmail,
+    testEnv,
     getTestEmail,
     withdrawPost,
   }) => {
@@ -97,13 +95,12 @@ test.describe('Reply Flow - Logged In User', () => {
     // Log out from poster
     await logoutIfLoggedIn(page)
 
-    // Login as existingTestEmail FIRST (before navigating)
-    // This uses a pre-registered test user to ensure login succeeds
-    // Must pass the correct password for the pre-registered test user
+    // Login as testEnv.user FIRST (before navigating)
+    // testEnv.user is a pre-registered test user created by create-test-env.php with password 'freegle'
     await loginViaHomepage(
       page,
-      existingTestEmail,
-      environment.unmodded_password
+      testEnv.user.email,
+      'freegle'
     )
     await waitForAuthInLocalStorage(page)
     console.log('[Test] Logged in as existingTestEmail')
@@ -135,7 +132,7 @@ test.describe('Reply Flow - Logged In User', () => {
   test('1.3 can reply from Explore Page', async ({
     page,
     postMessage,
-    existingTestEmail,
+    testEnv,
     getTestEmail,
     withdrawPost,
   }) => {
@@ -154,13 +151,12 @@ test.describe('Reply Flow - Logged In User', () => {
     // Log out from poster
     await logoutIfLoggedIn(page)
 
-    // Login as existingTestEmail FIRST (before navigating)
-    // This uses a pre-registered test user to ensure login succeeds
-    // Must pass the correct password for the pre-registered test user
+    // Login as testEnv.user FIRST (before navigating)
+    // testEnv.user is a pre-registered test user created by create-test-env.php with password 'freegle'
     await loginViaHomepage(
       page,
-      existingTestEmail,
-      environment.unmodded_password
+      testEnv.user.email,
+      'freegle'
     )
     await waitForAuthInLocalStorage(page)
     console.log('[Test] Logged in as existingTestEmail')
