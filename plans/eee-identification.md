@@ -603,19 +603,73 @@ Questions this answers:
 
 **Exercise Bike note**: The image-only model sees the display panel and classifies as EEE. The text-only model correctly identifies most exercise bikes as mechanical. The combined model follows the image. The text result is arguably more correct for the *typical* exercise bike (most are mechanical with a passive display — the display's resistance comes from the rider, not from the motor).
 
-### If the combined call is dominated by image
+### Why simple weighting is wrong
 
-The architecturally correct solution is a two-score ensemble:
-1. Run text-only → get `text_is_eee` + `text_confidence`
-2. Run image-only → get `image_is_eee` + `image_confidence`
-3. Apply a weighting function to produce the final `is_eee` decision
+The first instinct is a two-score ensemble:
+1. Run text-only → `text_is_eee` + `text_confidence`
+2. Run image-only → `image_is_eee` + `image_confidence`
+3. Apply weights
 
-The weighting function could be:
-- **Fixed**: text_weight=0.6 if text confidence ≥ 0.9, otherwise image dominates
-- **Learned**: logistic regression over (text_confidence, image_confidence, agree/disagree) once we have enough labelled examples
-- **Rule-based override**: if text names an explicit power source ("gas", "electric", "petrol", "battery", "wind-up", "manual"), use text result directly; otherwise use image
+But disagreement alone doesn't tell you *which signal is right*. Consider:
+- A gas cooker photographed head-on looks like an electric cooker → image says EEE, text says non-EEE. Text is right.
+- A gas cooker photographed with the gas hobs clearly lit, flames visible → image actually *confirms* it's gas. Now both signals should agree: non-EEE.
+- A chainsaw photographed with a visible power cord → image signal is strong and informative: this specific chainsaw is electric. Text says "chainsaw" (ambiguous). Here image is the more reliable signal.
 
-The rule-based override is the simplest to implement and most interpretable. It handles the gas cooker case without needing any training data.
+A fixed weight (text=0.6, image=0.4) treats all disagreements the same, which is wrong in both directions — it would underweight a clear visual confirmation (lit gas flames) and overweight a misleading visual similarity (electric-looking cooker body).
+
+### What we actually need: explanation plausibility comparison
+
+The model already returns `is_eee_reasoning` — a sentence explaining why it decided what it decided. The key insight is: **compare the plausibility of those explanations given all the evidence**, not the numeric scores.
+
+For gas cooker:
+- image_only reasoning: "This appears to be a freestanding electric cooker with ceramic hob and oven" — plausible but based on visual similarity; the model has not seen the hob type clearly
+- text_only reasoning: "A gas cooker operates on gas combustion; electricity is not required for its basic cooking function" — directly addresses the WEEE definition with explicit reference to the power source named in the title
+
+The text reasoning is more *epistemically reliable* for this item because the title is an explicit declaration of power source, whereas the image reasoning is inferential from appearance.
+
+For an electric chainsaw (photographed with visible power cable):
+- image_only reasoning: "This is an electric chainsaw with a visible power cord attached" — directly observed, not inferred from appearance
+- text_only reasoning: "Chainsaws are commonly petrol-powered; unclear from title alone" — defaults to category base rate
+
+Here the image reasoning is more reliable because it has direct visual evidence.
+
+### Proposed approach: deliberate multi-signal reasoning in a single structured prompt
+
+Rather than running two calls and post-processing their outputs, restructure the combined prompt to force explicit epistemic reasoning about each signal:
+
+```
+Step 2 — Text signal: Based ONLY on the title and description, what does the text 
+tell you about EEE status? Rate text_signal_reliability (0-1): 1.0 if the title 
+explicitly names the power source (gas/electric/petrol/battery/solar/manual/wind-up);
+lower if ambiguous or generic item name.
+
+Step 3 — Image signal: Based ONLY on the image (ignoring title), what does the 
+visual evidence tell you? Rate image_signal_reliability (0-1): 1.0 if the image 
+provides direct visual evidence of power source (visible flames/gas valves/power cord/
+battery compartment); lower if you are inferring from general appearance.
+
+Step 4 — Reconciliation: If text and image agree, report consensus. If they disagree,
+give the final verdict based on which signal has higher reliability, and explain why
+one signal is more epistemically trustworthy than the other for this specific item.
+```
+
+New JSON fields:
+```json
+"text_signal_reliability": 0.0-1.0,
+"text_signal_reasoning": "why the text signal is/isn't reliable here",
+"image_signal_reliability": 0.0-1.0,
+"image_signal_reasoning": "what the image shows directly vs infers from appearance",
+"signals_agree": true/false,
+"dominant_signal": "text" or "image" or "both",
+"is_eee_reasoning": "final verdict with explicit reference to dominant signal"
+```
+
+This approach is better than weighting because:
+1. The model self-reports signal reliability *for this specific item*, not as a fixed prior
+2. Disagreements surface *why* they disagree, not just *that* they disagree
+3. A clear gas flame in the photo would raise `image_signal_reliability` and *confirm* non-EEE, not confuse it
+4. An ambiguous cooker photo would lower `image_signal_reliability`, letting text dominate
+5. The reasoning chain is fully auditable — you can read *why* the model trusted one signal over the other
 
 ### Implementation plan
 
