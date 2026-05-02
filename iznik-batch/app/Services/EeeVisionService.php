@@ -502,6 +502,12 @@ PROMPT;
 
     public static function buildImageUrl(string $externaluid): string
     {
+        if (str_starts_with($externaluid, 'freegletusd-')) {
+            // TUS-uploaded image: strip prefix, route via delivery proxy (wsrv.nl-compatible).
+            $fileId = substr($externaluid, 12);
+            return 'https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/' . $fileId . '&w=768&h=768&fit=inside&output=jpg';
+        }
+        // Legacy Uploadcare CDN UUID.
         return "https://ucarecdn.com/{$externaluid}/-/preview/768x768/-/format/jpeg/";
     }
 }

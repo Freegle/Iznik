@@ -88,7 +88,7 @@ class EeeClassificationService
             ->whereNotNull('ma.externaluid')
             ->where('ma.archived', 0)
             ->whereRaw("(ma.externalmods IS NULL OR JSON_EXTRACT(ma.externalmods, '$.ai') IS NULL)")
-            ->inRandomOrder()
+            ->orderByDesc('m.arrival')
             ->limit(self::SAMPLE_SIZE)
             ->select(['ma.id as attid', 'ma.externaluid', 'm.id as messageid', 'm.subject', 'm.textbody'])
             ->get();
