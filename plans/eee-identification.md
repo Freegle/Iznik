@@ -617,6 +617,72 @@ The `is_eee` final determination (for the production pipeline) would be:
 - If null and `contains_eee_components` = false → `is_eee = false`
 - If null and `contains_eee_components` = true → uncertain, flag for review or use category heuristics
 
+### Results from revised open-ended experiment (2026-05-02)
+
+Run: `eee:feature-experiment --items="Gas Cooker,Electric Cooker,Exercise Bike,Chainsaw,Petrol Lawnmower" --sample=3`
+
+| Item | contains_eee (image) | is_eee (text) | Correct? | Notes |
+|---|---|---|---|---|
+| Gas Cooker 1 | ✅ true (ignition, clock, mains cable, control panel) | ✅ false | ✓ | Correctly identifies supplementary electrics without calling it EEE |
+| Gas Cooker 2 | ✅ true (display, ignition, indicator lights, oven light) | ✅ false | ✓ | |
+| Gas Cooker 3 | ✅ true (ignition, oven light, clock/timer) | ✅ false | ✓ | |
+| Electric Cooker 1 | ✅ true (solid plate hobs, heating element, controls) | ✅ true | ✓ | WANTED stock image, model notes it's not a real photo |
+| Electric Cooker 2 | ✅ true (ceramic hob zones, oven elements, control panel) | ✅ true | ✓ | Vintage Belling model correctly identified |
+| Electric Cooker 3 | ❌ false (WANTED vector illustration, no real components) | ✅ true | partial | Text correctly says EEE; image is a stylised graphic, model correctly notes this |
+| Exercise Bike 1 | ✅ true (electronic display console) | ⚠️ uncertain | ✓ | Title alone ("Exercise Bike") insufficient — model correctly unsure |
+| Exercise Bike 2 | ✅ true (digital display console) | ✅ false | ✓ | Model notes display likely battery-powered, primary function mechanical |
+| Exercise Bike 3 | ✅ true (display, control panel, resistance electronics) | ⚠️ uncertain | ✓ | Description says "display doesn't work" — model correctly notes electrical fault |
+| Chainsaw 1 | ❌ false (WANTED icon illustration) | ⚠️ uncertain | ✓ | Stock icon; model cannot determine power type |
+| Chainsaw 2 | ✅ true (mains cable, motor housing, trigger, safety switch) | ✅ true | ✓ | Text: "Electric corded chainsaw" |
+| Chainsaw 3 | ✅ true (motor housing, trigger, mains cable, connection point) | ✅ true | ✓ | Text: "Electric chainsaw" |
+| Petrol Lawnmower 1 | ⚠️ true (ignition/spark plug system) | ✅ false | partial | Spark plug identified as electrical component — technically correct but arguably over-inclusive |
+| Petrol Lawnmower 2 | ✅ false (none seen) | ✅ false | ✓ | |
+| Petrol Lawnmower 3 | ✅ false (none seen) | ✅ false | ✓ | |
+
+**Score: Gas Cooker 3/3 ✓ | Electric Cooker 2/3 (1 illustration) | Exercise Bike 3/3 ✓ | Chainsaw 2/3 (1 illustration) | Petrol Lawnmower 2.5/3**
+
+### Key findings from revised experiment
+
+**1. Gas Cooker: perfect.** All 3 images correctly return `contains_eee_components=true` (ignition, clock, interior light, mains cable for clock) AND `is_eee=false` (text: "gas cooker"). This is exactly the desired behaviour. The previous taxonomy-based approach was getting 1/3 wrong by classifying the mains cable as EEE.
+
+**2. Separation of image/text concerns is working.** The model correctly uses image for "what's visible" and text for "primary power source". On exercise bikes, where the title alone is ambiguous, it correctly returns `uncertain` rather than forcing a decision.
+
+**3. Illustration/stock image detection is reliable.** The model consistently identifies WANTED posts using stock illustrations and correctly returns empty component lists with explanatory notes. This is useful for filtering.
+
+**4. Spark plug over-inclusion.** One petrol lawnmower image had the model identify "ignition/spark plug system (part of petrol engine)" as an electrical component. The model's own observation_notes correctly flags this: "not mains/battery EEE". Technically a spark plug does use electricity, but it's integral to the combustion engine and not separately collectable as WEEE. The prompt wording "electricity in any form" is slightly too broad — it should exclude electrical systems that are integral parts of combustion engines.
+
+**Prompt fix**: change "uses electricity in any form" to "uses mains power, battery power, USB, solar, or any external electrical supply — exclude spark ignition systems that are part of petrol/diesel combustion engines".
+
+**5. Natural language descriptions are rich.** The model's free-text component descriptions capture useful detail: "Oregon Double Guard 91 bar", "Domyos/Decathlon Essential+ model 06", "requires hardwired cooker circuit connection, not 13A socket". The non-EEE attributes (brand, model, condition) are also coming through correctly.
+
+**6. WANTED posts are systematic noise.** Both Electric Cooker and Chainsaw samples included WANTED posts with illustrations. The primary-image filter (`ma.primary = 1`) doesn't exclude WANTED posts. Should add a filter on message type to only sample OFFER posts.
+
+### Results after fixes: re-run with OFFER filter + "external electrical supply" wording (2026-05-02)
+
+Changes applied:
+- Added `m.type = 'Offer'` filter to exclude WANTED posts
+- Prompt changed from "electricity in any form" to "mains power, battery power, USB, solar, or any other external electrical supply"
+- Removed overfitted spark plug exclusion (not needed — "external supply" framing handles it)
+
+| Item | contains_eee (image) | is_eee (text) | Correct? | Notes |
+|---|---|---|---|---|
+| Gas Cooker 1 | ✅ true (display, control board, mains cable, mains plug) | ✅ false | ✓ | |
+| Gas Cooker 2 | ✅ true (display, ignition, oven light, indicator lights) | ✅ false | ✓ | |
+| Gas Cooker 3 | ✅ true (ignition, oven light, clock/timer) | ✅ false | ✓ | |
+| Petrol Lawnmower 1 | ✅ false (none seen) | ✅ false | ✓ | Spark plug mentioned in text but not classified as electrical component |
+| Petrol Lawnmower 2 | ✅ false (none seen) | ✅ false | ✓ | |
+| Petrol Lawnmower 3 | ✅ false (none seen) | ✅ false | ✓ | |
+| Electric Cooker 1 | ✅ true (ceramic hob, oven elements, control knobs) | ✅ true | ✓ | Belling 1970s model |
+| Electric Cooker 2 | ✅ true (oven element, controls, display, oven light) | ✅ true | ✓ | |
+| Electric Cooker 3 | ✅ true (ceramic hob, oven elements, controls, oven light) | ✅ true | ✓ | Zanussi, wall socket behind noted in observation_notes |
+| Chainsaw 1 | ✅ true (mains cable, motor, trigger, safety switch) | ✅ true | ✓ | Electric corded — Oregon bar |
+| Chainsaw 2 | ✅ true (motor, trigger, mains cable nearby) | ✅ true | ✓ | Extension lead included |
+| Chainsaw 3 | ✅ false (none seen) | ✅ false | ✓ | Model read "PETROL CHAIN SAW" label from image → text_signal → non-EEE |
+
+**Score: 12/12 ✓** across all four item types.
+
+**Notable behaviour**: Chainsaw image 3 had only "Chainsaw" in the post title, but the model read "PETROL CHAIN SAW JCB-PCS38AF" from a label in the photo and used that as the text signal to derive `is_eee=false`. The prompt says "from the item title and description" — in practice the model also reads visible text in the image. This is beneficial: a petrol chainsaw listed as just "Chainsaw" gets correctly classified from its own label.
+
 ---
 
 ## Two EEE classifications: strictly EEE vs contains-EEE-components
