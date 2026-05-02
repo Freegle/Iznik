@@ -203,6 +203,22 @@ class EeeSqliteService
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_cls_model ON eee_classifications(model, prompt_version)");
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_cls_run_at ON eee_classifications(run_at)");
 
+        // Canonical sample set per item type: the exact messages used by the reference run.
+        // Comparison models always classify these same messages to ensure apples-to-apples comparison.
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS eee_item_type_samples (
+                item_name      TEXT NOT NULL,
+                messageid      INTEGER NOT NULL,
+                attid          INTEGER NOT NULL,
+                externaluid    TEXT NOT NULL,
+                subject        TEXT,
+                textbody       TEXT,
+                sampled_at     DATETIME NOT NULL,
+                PRIMARY KEY (item_name, messageid)
+            )
+        ");
+        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_samples_item ON eee_item_type_samples(item_name)");
+
         $this->pdo->exec("
             CREATE TABLE IF NOT EXISTS eee_runs (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -240,6 +256,21 @@ class EeeSqliteService
         ");
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_obs_scope ON eee_observations(scope)");
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_obs_confidence ON eee_observations(confidence)");
+
+        // Component knowledge base: canonical electrical component types with categories + embeddings.
+        // category: primary_eee | supplementary_eee | non_electrical | unknown
+        $this->pdo->exec("
+            CREATE TABLE IF NOT EXISTS eee_component_types (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                canonical_name  TEXT NOT NULL UNIQUE,
+                category        TEXT NOT NULL DEFAULT 'unknown',
+                embedding       BLOB,
+                raw_strings     TEXT,
+                created_at      DATETIME NOT NULL DEFAULT (datetime('now')),
+                updated_at      DATETIME NOT NULL DEFAULT (datetime('now'))
+            )
+        ");
+        $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_comp_category ON eee_component_types(category)");
     }
 
     public function upsertItemType(array $data): void
@@ -379,6 +410,57 @@ class EeeSqliteService
 
         return compact('total', 'eeeCount', 'unusual', 'typesCount',
             'byCategory', 'byCondition', 'topBrands', 'monthlyTrend', 'weightTotal');
+    }
+
+    /**
+     * Record the canonical sample set for an item type (called once by the reference model run).
+     * Subsequent models use getSampleForItemType() to classify the exact same messages.
+     */
+    public function recordItemTypeSample(string $itemName, array $attachments): void
+    {
+        $pdo  = $this->getPdo();
+        $stmt = $pdo->prepare("
+            INSERT OR IGNORE INTO eee_item_type_samples
+                (item_name, messageid, attid, externaluid, subject, textbody, sampled_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        ");
+        foreach ($attachments as $att) {
+            $stmt->execute([
+                $itemName,
+                $att->messageid,
+                $att->attid,
+                $att->externaluid,
+                $att->subject ?? null,
+                $att->textbody ?? null,
+            ]);
+        }
+    }
+
+    /** Returns the canonical sample attachments for an item type, or empty array if not yet recorded. */
+    public function getSampleForItemType(string $itemName): array
+    {
+        $pdo  = $this->getPdo();
+        $stmt = $pdo->prepare("SELECT * FROM eee_item_type_samples WHERE item_name = ? ORDER BY messageid");
+        $stmt->execute([$itemName]);
+        return array_map(fn($row) => (object) $row, $stmt->fetchAll(\PDO::FETCH_ASSOC));
+    }
+
+    /** True if the canonical sample for this item type has been recorded. */
+    public function hasSampleForItemType(string $itemName): bool
+    {
+        $pdo  = $this->getPdo();
+        $stmt = $pdo->prepare("SELECT 1 FROM eee_item_type_samples WHERE item_name = ? LIMIT 1");
+        $stmt->execute([$itemName]);
+        return (bool) $stmt->fetchColumn();
+    }
+
+    /** Returns all message IDs from the canonical sample set (used by compare-models). */
+    public function getSampleMessageIds(int $limit = 10000): array
+    {
+        $pdo  = $this->getPdo();
+        $stmt = $pdo->prepare("SELECT DISTINCT messageid FROM eee_item_type_samples LIMIT ?");
+        $stmt->execute([$limit]);
+        return $stmt->fetchAll(\PDO::FETCH_COLUMN);
     }
 
     /**
@@ -525,6 +607,64 @@ class EeeSqliteService
                 $runId,
             );
         }
+    }
+
+    // ── Component knowledge base ──────────────────────────────────────────────
+
+    public function upsertComponentType(array $data): void
+    {
+        $pdo  = $this->getPdo();
+        $stmt = $pdo->prepare("
+            INSERT INTO eee_component_types (canonical_name, category, embedding, raw_strings, created_at, updated_at)
+            VALUES (:canonical_name, :category, :embedding, :raw_strings, datetime('now'), datetime('now'))
+            ON CONFLICT(canonical_name) DO UPDATE SET
+                category    = excluded.category,
+                embedding   = COALESCE(excluded.embedding, eee_component_types.embedding),
+                raw_strings = excluded.raw_strings,
+                updated_at  = datetime('now')
+        ");
+
+        $stmt->bindValue(':canonical_name', $data['canonical_name']);
+        $stmt->bindValue(':category',       $data['category'] ?? 'unknown');
+        $stmt->bindValue(':raw_strings',    $data['raw_strings'] ?? null);
+
+        // BLOB must be bound explicitly to avoid PDO truncating at embedded null bytes.
+        if (isset($data['embedding']) && $data['embedding'] !== null) {
+            $stmt->bindValue(':embedding', $data['embedding'], \PDO::PARAM_LOB);
+        } else {
+            $stmt->bindValue(':embedding', null, \PDO::PARAM_NULL);
+        }
+
+        $stmt->execute();
+    }
+
+    public function getComponentTypeByName(string $canonicalName): ?array
+    {
+        $pdo  = $this->getPdo();
+        $stmt = $pdo->prepare("SELECT * FROM eee_component_types WHERE LOWER(canonical_name) = LOWER(?)");
+        $stmt->execute([$canonicalName]);
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        return $row ?: null;
+    }
+
+    public function getComponentTypes(string $category = null): array
+    {
+        $pdo = $this->getPdo();
+        if ($category) {
+            $stmt = $pdo->prepare("SELECT * FROM eee_component_types WHERE category = ? ORDER BY canonical_name");
+            $stmt->execute([$category]);
+        } else {
+            $stmt = $pdo->query("SELECT * FROM eee_component_types ORDER BY category, canonical_name");
+        }
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    public function countComponentTypes(): array
+    {
+        $pdo  = $this->getPdo();
+        $rows = $pdo->query("SELECT category, COUNT(*) AS n FROM eee_component_types GROUP BY category ORDER BY category")
+                    ->fetchAll(\PDO::FETCH_ASSOC);
+        return array_column($rows, 'n', 'category');
     }
 
     /**

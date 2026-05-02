@@ -42,7 +42,8 @@ class EeeCompareModelsCommand extends Command
         $sample = (int) $this->option('sample');
         $force  = (bool) $this->option('force');
 
-        $referenceModel = 'claude';
+        $referenceModel     = 'claude';
+        $referenceModelName = $this->vision->withDriver($referenceModel)->getModelName();
 
         // Determine which models to run.
         $modelsOpt = $this->option('models');
@@ -55,11 +56,15 @@ class EeeCompareModelsCommand extends Command
         // Remove reference model from comparison set — it's the baseline.
         $compareModels = array_values(array_filter($models, fn($m) => $m !== $referenceModel));
 
-        $this->info("EEE model comparison | reference: {$referenceModel} | comparing: " . implode(', ', $compareModels));
+        $this->info("EEE model comparison | reference: {$referenceModelName} | comparing: " . implode(', ', $compareModels));
         $this->info("Sample size: {$sample}");
 
-        // Pull a sample of message IDs that the reference model has classified.
-        $referenceIds = $this->sqlite->getMessageidsForModel($referenceModel, $sample);
+        // Pull the canonical sample IDs from eee_item_type_samples (the exact messages used
+        // during classify-item-types). Fall back to eee_classifications if not yet recorded.
+        $referenceIds = $this->sqlite->getSampleMessageIds($sample);
+        if (empty($referenceIds)) {
+            $referenceIds = $this->sqlite->getMessageidsForModel($referenceModelName, $sample);
+        }
 
         if (empty($referenceIds)) {
             $this->error("No reference classifications found. Run 'eee:classify-item-types' first.");
@@ -104,7 +109,7 @@ class EeeCompareModelsCommand extends Command
         // Build and display the agreement report.
         $this->newLine();
         $this->info('=== Inter-model Agreement Report ===');
-        $this->outputAgreementReport($referenceModel, $compareModels, $referenceIds);
+        $this->outputAgreementReport($referenceModelName, $compareModels, $referenceIds);
 
         return Command::SUCCESS;
     }

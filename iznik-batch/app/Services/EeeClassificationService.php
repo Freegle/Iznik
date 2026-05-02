@@ -110,37 +110,63 @@ class EeeClassificationService
 
     protected function classifySingleItemType(string $itemName, int $popularity): ?array
     {
-        $attachments = DB::table('messages_attachments as ma')
-            ->join('messages as m', 'm.id', '=', 'ma.msgid')
-            ->whereExists(function ($query) use ($itemName) {
-                $query->select(DB::raw(1))
-                    ->from('messages_items as mi')
-                    ->join('items as i', 'i.id', '=', 'mi.itemid')
-                    ->whereColumn('mi.msgid', 'm.id')
-                    ->where('i.name', $itemName);
-            })
-            ->whereNotNull('ma.externaluid')
-            ->where('ma.archived', 0)
-            ->where('ma.primary', 1)
-            ->where('m.type', 'Offer')   // WANTED posts use stock illustrations — exclude
-            ->whereRaw("(ma.externalmods IS NULL OR JSON_EXTRACT(ma.externalmods, '$.ai') IS NULL)")
-            ->orderByDesc('m.arrival')
-            ->limit(self::SAMPLE_SIZE)
-            ->select(['ma.id as attid', 'ma.externaluid', 'm.id as messageid', 'm.subject', 'm.textbody'])
-            ->get();
+        // Use the canonical sample if it exists — guarantees all models run on the same messages.
+        if ($this->sqlite->hasSampleForItemType($itemName)) {
+            $attachments = collect($this->sqlite->getSampleForItemType($itemName));
+        } else {
+            $attachments = DB::table('messages_attachments as ma')
+                ->join('messages as m', 'm.id', '=', 'ma.msgid')
+                ->whereExists(function ($query) use ($itemName) {
+                    $query->select(DB::raw(1))
+                        ->from('messages_items as mi')
+                        ->join('items as i', 'i.id', '=', 'mi.itemid')
+                        ->whereColumn('mi.msgid', 'm.id')
+                        ->where('i.name', $itemName);
+                })
+                ->whereNotNull('ma.externaluid')
+                ->where('ma.archived', 0)
+                ->where('ma.primary', 1)
+                ->where('m.type', 'Offer')   // WANTED posts use stock illustrations — exclude
+                ->whereRaw("(ma.externalmods IS NULL OR JSON_EXTRACT(ma.externalmods, '$.ai') IS NULL)")
+                ->orderByDesc('m.arrival')
+                ->limit(self::SAMPLE_SIZE)
+                ->select(['ma.id as attid', 'ma.externaluid', 'm.id as messageid', 'm.subject', 'm.textbody'])
+                ->get();
+
+            if ($attachments->isEmpty()) {
+                return null;
+            }
+
+            // Record the canonical sample so subsequent model runs use the same messages.
+            $this->sqlite->recordItemTypeSample($itemName, $attachments->all());
+        }
 
         if ($attachments->isEmpty()) {
             return null;
         }
 
-        $rawResults = $this->vision->analyseMany(
-            $attachments->map(fn($att) => [
-                'imageUrl' => EeeVisionService::buildImageUrl($att->externaluid),
-                'context'  => ['subject' => $att->subject ?? '', 'description' => $att->textbody ?? ''],
-            ])->all()
-        );
+        $jobs = $attachments->map(fn($att) => [
+            'imageUrl' => EeeVisionService::buildImageUrl($att->externaluid),
+            'context'  => ['subject' => $att->subject ?? '', 'description' => $att->textbody ?? ''],
+        ])->all();
 
-        $results   = array_values(array_filter($rawResults));
+        $rawResults = $this->vision->analyseMany($jobs);
+
+        // rawResults is same-order as $attachments. Store each per-image result in
+        // eee_classifications so compare-models can use the same messages later.
+        $results = [];
+        foreach ($rawResults as $i => $result) {
+            if ($result === null) continue;
+            $att = $attachments[$i];
+            if (!$this->sqlite->hasClassification($att->messageid, $this->vision->getModelName())) {
+                $fakeMsg     = (object)['id' => $att->messageid, 'subject' => $att->subject, 'textbody' => $att->textbody];
+                $textSignals = $this->extractTextSignals(($att->subject ?? '') . ' ' . ($att->textbody ?? ''));
+                $context     = ['subject' => $att->subject ?? '', 'description' => $att->textbody ?? ''];
+                $this->storeImageResult($fakeMsg, $att->attid, $result, $textSignals, $context);
+            }
+            $results[] = $result;
+        }
+
         $totalCost = array_sum(array_map(fn($r) => $r['_meta']['cost_usd'] ?? 0.0, $results));
 
         if (empty($results)) {
@@ -156,7 +182,7 @@ class EeeClassificationService
             'sample_size'                      => self::SAMPLE_SIZE,
             'images_analysed'                  => count($results),
             'eee_sample_count'                 => $consensus['eee_sample_count'],
-            'is_eee'                           => $consensus['is_eee'],
+            'is_eee'                           => $consensus['is_eee'] !== null ? ($consensus['is_eee'] ? 1 : 0) : null,
             'is_eee_confidence'                => $consensus['is_eee_confidence'],
             'is_eee_agree_rate'                => $consensus['is_eee_agree_rate'],
             'contains_eee_components'          => $consensus['contains_eee_components'],
