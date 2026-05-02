@@ -10,7 +10,12 @@ set -euo pipefail
 
 API_KEY="46b3754526cb8b721315ebafe949448d"
 API_CLIENT="discourse-mcp"
-BASE_URL="https://discourse.ilovefreegle.org"
+# Read DISCOURSE_URL from .env if not set in environment.
+if [ -z "${DISCOURSE_URL:-}" ]; then
+  ENV_FILE="$(dirname "$0")/../.env"
+  DISCOURSE_URL=$(grep -E '^DISCOURSE_URL=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)
+fi
+BASE_URL="${DISCOURSE_URL:-https://community.ilovefreegle.org}"
 USERNAME="Edward_Hibbert"
 OUTPUT_DIR="/home/edward/FreegleDockerWSL/discourse-corpus"
 OUTPUT_FILE="$OUTPUT_DIR/edward_posts.jsonl"

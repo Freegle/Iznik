@@ -4,6 +4,7 @@ import { promisify } from 'node:util'
 import { readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
+import { DISCOURSE_BASE } from '../discourse.js'
 import {
   getDb,
   getTopicCursor,
@@ -257,7 +258,7 @@ for bug in bugs:
     orig_post = bug['post']
     reporter = bug.get('reporter') or ''
 
-    d = fetch(f'https://discourse.ilovefreegle.org/t/{topic_id}.json')
+    d = fetch(f'${DISCOURSE_BASE}/t/{topic_id}.json')
     if not d:
         continue
 
@@ -272,7 +273,7 @@ for bug in bugs:
     for i in range(0, len(new_ids), 50):
         batch = new_ids[i:i+50]
         qs = '&'.join(f'post_ids[]={pid}' for pid in batch)
-        pd = fetch(f'https://discourse.ilovefreegle.org/t/{topic_id}/posts.json?{qs}')
+        pd = fetch(f'${DISCOURSE_BASE}/t/{topic_id}/posts.json?{qs}')
         if pd:
             new_posts.extend(pd.get('post_stream', {}).get('posts', []))
 
@@ -530,7 +531,7 @@ def fetch(url, retries=4):
             raise
 
 # 1. Get latest-${recentLimit} to find recently-active topics (may include new untracked ones)
-d = fetch('https://discourse.ilovefreegle.org/latest.json?order=activity&per_page=${recentLimit}')
+d = fetch('${DISCOURSE_BASE}/latest.json?order=activity&per_page=${recentLimit}')
 latest_topics = {str(t['id']): t for t in d['topic_list']['topics'][:${recentLimit}]}
 
 # 2. Filter tracked topics to those with activity since cursor (latest_posted_at isn't
@@ -558,7 +559,7 @@ for i, tid in enumerate(sorted(topic_ids)):
         time.sleep(0.4)  # gentle rate limit — stay well under Discourse's budget
     cursor = tracked_cursors.get(tid, 0)  # 0 for untracked → we'll only take OP (post 1) below to avoid flooding
     try:
-        td = fetch(f'https://discourse.ilovefreegle.org/t/{tid}.json')
+        td = fetch(f'${DISCOURSE_BASE}/t/{tid}.json')
     except Exception as e:
         sys.stderr.write(f'topic {tid} failed: {e}\\n')
         continue
@@ -714,7 +715,7 @@ import json, urllib.request, sys
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
 req = urllib.request.Request(
-    'https://discourse.ilovefreegle.org/latest.json?order=activity&per_page=${recentLimit}',
+    '${DISCOURSE_BASE}/latest.json?order=activity&per_page=${recentLimit}',
     headers={'User-Api-Key': api_key}
 )
 d = json.load(urllib.request.urlopen(req, timeout=15))
@@ -1704,7 +1705,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
       const lines: string[] = []
       lines.push('# Freegle Monitor — iteration summary', '')
-      lines.push('**Full bug list (live):** https://discourse.ilovefreegle.org/t/bug-reports-live-summary/9599', '')
+      lines.push(`**Full bug list (live):** ${DISCOURSE_BASE}/t/bug-reports-live-summary/9599`, '')
       lines.push(`- Iteration start: ${iterationStartTs}`)
       lines.push(`- Phase: ${phase}`)
       lines.push('')
