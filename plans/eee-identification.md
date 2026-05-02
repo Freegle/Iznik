@@ -467,6 +467,103 @@ These are already baked into the schema and services — nothing extra needed no
 
 ---
 
+## Feature-detection approach: list observable features, derive judgment from rules
+
+*Experiment run 2026-05-02, command `eee:feature-experiment`. See `EeeFeatureExperimentCommand.php`.*
+
+### Hypothesis
+
+Instead of asking "is this EEE?", ask the model to list specific observable features (mains cable, gas burner grates, motor housing, etc.) and derive the WEEE judgment via deterministic rules. This separates *observation* from *classification*, making both steps more auditable and reliable.
+
+### Observable feature taxonomy
+
+**Electrical features** (presence indicates EEE or EEE components):
+- `mains_cable` — power cable/flex visible
+- `mains_plug` — 3-pin/2-pin mains plug visible
+- `battery_compartment` — battery door or compartment
+- `display_screen` — digital/LCD/LED display or screen
+- `control_panel` — electronic buttons, switches, touchpad
+- `charging_port` — USB or proprietary charging socket
+- `solar_panel` — photovoltaic panel
+- `motor_housing` — motor unit or "motor" label
+- `led_lights` — LED strips or bulbs integral to the item
+- `speaker_grille` — speaker mesh (audio electronics)
+- `heating_element` — electric coil, ceramic hob surface
+
+**Non-electrical indicators** (presence indicates combustion or manual power):
+- `gas_burner_grates` — gas ring grates visible
+- `gas_control_knobs` — knobs with flame symbols
+- `fuel_filler_cap` — fuel tank cap
+- `pull_cord_starter` — pull-start rope
+- `exhaust_pipe` — exhaust pipe visible
+- `manual_mechanism` — pedals, cranks, purely mechanical linkage
+- `hand_pump` — manual pump mechanism
+
+### Results from hard-cases run (5 items × 3 images each)
+
+| Item | Features detected (aggregate) | Derived is_eee | Correct? | Notes |
+|---|---|---|---|---|
+| Gas Cooker | gas_burner_grates(2×), gas_control_knobs(3×), control_panel(3×), display_screen(2×), mains_cable(1×), mains_plug(1×) | 2/3 non-EEE ✅, 1/3 EEE ❌ | Mostly | 1 image had mains cable for clock/ignition → rule incorrectly said EEE |
+| Electric Cooker | heating_element(3×), control_panel(3×) | EEE ✅ all 3 | ✓ | |
+| Chainsaw | mains_cable(2×), control_panel(2×) (electric images) | EEE where cable visible ✅ | ✓ | Sample happened to pick 2 electric + 1 illustration |
+| Treadmill | motor_housing(3×), control_panel(3×), display_screen(2×) | EEE ✅ all 3 | ✓ | Many were illustrations but motor_housing correctly detected |
+| Wheelchair | manual_mechanism(3×) | non-EEE ✅ all 3 | ✓ | |
+| Piano | manual_mechanism(3×) | 2/3 non-EEE ✅, 1/3 incorrectly EEE ❌ | Mostly | Text "no electricity needed" triggered EEE regex — bug |
+| Fish Tank | led_lights(1×), text "no pumps lights or filters"(1×) | ambiguous / no-features | ✓ | Correctly shows variability: tank with vs without accessories |
+| Exercise Bike | display_screen(3×), control_panel(3×), manual_mechanism(3×) | ambiguous ✅ all 3 | ✓ | Correctly captures: has display but primary mechanism is mechanical |
+| Sofa | (none — all WANTED stock illustrations) | non-EEE | n/a | WANTED posts use stock images, no real features |
+| Christmas Tree | led_lights(1×) from pre-lit tree, text "pre-lit, LED lights" | ambiguous ❌ | ✗ | Pre-lit tree LEDs should be EEE (lamp); rule puts LED-only in ambiguous bucket |
+
+### Key findings
+
+**1. The approach is working well for clear cases.** The model correctly identifies gas burner grates, mains cables, motor housings, and manual mechanisms. The feature list is directly verifiable — you can look at the photo and check.
+
+**2. Gas cooker clock cable is correctly observed but wrongly rules.** One image showed a mains cable for the cooker's clock/ignition. The model correctly identified it in `feature_notes` as "likely for ignition/clock". But the rule engine saw `mains_cable` and classified as EEE. Fix: `mains_cable` + `gas_burner_grates`/`text:gas` → `contains_eee_components=true, is_eee=false` (supplementary electrics).
+
+**3. Rule engine bug: negative text signals match positive regex.** "No electricity needed" contains "electric" and matches the EEE text signal regex, causing a false EEE classification for an acoustic piano. Fix: the prompt should ask the model to classify each text signal as EEE-positive or EEE-negative explicitly, not return a flat list.
+
+**4. `led_lights` and `display_screen` need different EEE treatment:**
+   - `led_lights` integral to the item → item IS essentially a lamp → EEE (Category 3). A pre-lit Christmas tree, a lamp, LED strip light fittings.
+   - `display_screen` + `manual_mechanism` only → ambiguous. The display may be a passive cycle computer. Need to determine if the display/resistance is electronic (EEE) or purely mechanical (non-EEE).
+   - `display_screen` + `motor_housing` → EEE (the whole system is electromechanical).
+
+**5. `feature_notes` is highly valuable.** The model's free-text notes captured nuances that no structured feature list can: "mains cable likely for clock/ignition", "likely battery-powered cycle computer", "mains socket on wall behind not connected to cooker", "this is a WANTED listing using a stock illustration". The notes should be stored and surfaced.
+
+**6. WANTED posts use generic stock illustrations.** The primary-image filter (`ma.primary = 1`) doesn't distinguish OFFER from WANTED. The model correctly identifies illustrations and explicitly notes it cannot assess real features. Should filter to OFFER posts only for training data.
+
+**7. Item variability is handled correctly by design.** Fish tank with pump/lights = `contains_eee_components=yes`. Fish tank with text "no pumps lights or filters" = `contains_eee_components=no`. The feature detection naturally captures this — unlike a holistic "fish tank = EEE" judgment that loses the variability.
+
+### Rule fixes needed before next run
+
+```php
+// 1. LED lights integral to item → EEE (it's a lamp)
+if (in_array('led_lights', $electrical) && !$hasManual) {
+    return ['is_eee' => true, 'contains_eee' => true, 'basis' => 'led_lights:lamp'];
+}
+
+// 2. Gas + mains cable → contains EEE components (supplementary clock/ignition) but not strictly EEE
+if (($hasGas || $textGas) && $hasMains && !$hasHeatingElement) {
+    return ['is_eee' => false, 'contains_eee' => true, 'basis' => 'gas+supplementary_mains'];
+}
+
+// 3. Separate text signals into positive and negative in the prompt.
+// Prompt change: ask model to return:
+//   "text_eee_positive": ["electric", "USB charging"]      // explicit EEE indicators
+//   "text_eee_negative": ["manual", "no electricity"]      // explicit non-EEE indicators
+// rather than a flat "text_power_signals" list.
+```
+
+### Comparison with holistic EEE judgment
+
+| Approach | Gas Cooker | Exercise Bike | Chainsaw | Auditability |
+|---|---|---|---|---|
+| Holistic combined (v1.2.0) | EEE ❌ | EEE ❌ | non-EEE ✅ | Low — single opaque verdict |
+| Feature detection + rules | 2/3 non-EEE ✅ | ambiguous ✅ | EEE where cable visible ✅ | High — feature list is verifiable |
+
+Feature detection is directionally better and produces richer output even when the final verdict is uncertain.
+
+---
+
 ## Two EEE classifications: strictly EEE vs contains-EEE-components
 
 *Observation recorded 2026-05-02 from hard-cases research.*
