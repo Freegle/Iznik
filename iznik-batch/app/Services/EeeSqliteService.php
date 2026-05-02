@@ -84,6 +84,15 @@ class EeeSqliteService
             )
         ");
 
+        // Add new component-observation columns if missing (prompt v1.3.0+).
+        $cols = $this->getItemTypeColumns();
+        if (!in_array('contains_eee_components', $cols)) {
+            $this->pdo->exec("ALTER TABLE eee_item_types ADD COLUMN contains_eee_components INTEGER");
+        }
+        if (!in_array('electrical_components_description', $cols)) {
+            $this->pdo->exec("ALTER TABLE eee_item_types ADD COLUMN electrical_components_description TEXT");
+        }
+
         // Upgrade v1 (single PK) or v2 (composite 3-col PK missing classification_mode).
         $cols   = $this->getItemTypeColumns();
         $pkCols = $this->getItemTypePkCount();
@@ -176,6 +185,18 @@ class EeeSqliteService
                 cost_usd                  REAL
             )
         ");
+
+        // Add new component-observation columns to classifications if missing (prompt v1.3.0+).
+        $clsCols = array_column(
+            $this->pdo->query("PRAGMA table_info(eee_classifications)")->fetchAll(PDO::FETCH_ASSOC),
+            'name'
+        );
+        if (!in_array('contains_eee_components', $clsCols)) {
+            $this->pdo->exec("ALTER TABLE eee_classifications ADD COLUMN contains_eee_components INTEGER");
+        }
+        if (!in_array('electrical_components_description', $clsCols)) {
+            $this->pdo->exec("ALTER TABLE eee_classifications ADD COLUMN electrical_components_description TEXT");
+        }
 
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_cls_messageid ON eee_classifications(messageid)");
         $this->pdo->exec("CREATE INDEX IF NOT EXISTS idx_cls_is_eee ON eee_classifications(is_eee)");
