@@ -28,9 +28,8 @@ class AutoApproveService
      *
      * V1 side effects included:
      *   - notSpam(): records HAM in messages_spamham
-     *   - Log APPROVED entry (from approve())
      *   - SQL UPDATE messages_groups (collection, approvedby, approvedat, arrival)
-     *   - Log AUTOAPPROVED entry (from autoapprove())
+     *   - Log AUTOAPPROVED entry only (not the redundant APPROVED entry from approve())
      *
      * V1 side effects NOT included (handled elsewhere):
      *   - release(): query already filters heldby IS NULL
@@ -176,18 +175,6 @@ class AutoApproveService
                 ['spamham']
             );
         }
-
-        // V1 approve() log: type=Message, subtype=Approved.
-        // V1 uses Session::whoAmId() which returns NULL in cron context.
-        DB::table('logs')->insert([
-            'timestamp' => now(),
-            'type' => 'Message',
-            'subtype' => 'Approved',
-            'msgid' => $candidate->msgid,
-            'groupid' => $groupid,
-            'user' => $candidate->fromuser,
-            'byuser' => null,
-        ]);
 
         // V1 approve(): UPDATE messages_groups SET collection='Approved', approvedby=whoAmId(),
         // approvedat=NOW(), arrival=NOW() WHERE msgid=? AND groupid=? AND collection!='Approved'

@@ -53,7 +53,7 @@
             Edited group settings <ModLogGroup :logid="logid" tag="for" />
           </span>
           <span v-else-if="log.subtype === 'Autoapproved'">
-            Auto-approved message <ModLogMessage :logid="logid" />
+            Auto-approved <ModLogMessage :logid="logid" />
             <ModLogGroup :logid="logid" tag="on" />
           </span>
           <span v-else>
@@ -191,7 +191,7 @@
             </span>
           </span>
           <span v-else-if="log.subtype === 'Autoapproved'">
-            Auto-approved message <ModLogMessage :logid="logid" />
+            Auto-approved <ModLogMessage :logid="logid" />
           </span>
           <span v-else-if="log.subtype === 'WorryWords'" class="text-danger">
             Flagged <ModLogMessage :logid="logid" notext /> {{ log.text }}

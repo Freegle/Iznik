@@ -748,28 +748,26 @@ describe('ModLog', () => {
       expect(wrapper.find('.mod-log-message').exists()).toBe(true)
     })
 
-    it('labels Message/Autoapproved as "Auto-approved message" (not just "Auto-approved")', () => {
-      // Bug (b): "Auto-approved" label was ambiguous — reporter asked if it meant
-      // deletion. Fix: "Auto-approved message" matches the "Approved message" pattern
-      // for manual approval and makes clear a specific message was auto-approved.
+    it('labels Message/Autoapproved as "Auto-approved"', () => {
       const wrapper = createWrapper({
         id: 1,
         type: 'Message',
         subtype: 'Autoapproved',
         msgid: 123,
       })
-      expect(wrapper.text()).toContain('Auto-approved message')
+      expect(wrapper.text()).toContain('Auto-approved')
+      expect(wrapper.text()).not.toContain('Auto-approved message')
     })
 
-    it('labels Group/Autoapproved as "Auto-approved message" (not just "Auto-approved")', () => {
-      // Same label fix applied to Group/Autoapproved for consistency.
+    it('labels Group/Autoapproved as "Auto-approved"', () => {
       const wrapper = createWrapper({
         id: 1,
         type: 'Group',
         subtype: 'Autoapproved',
         msgid: 456,
       })
-      expect(wrapper.text()).toContain('Auto-approved message')
+      expect(wrapper.text()).toContain('Auto-approved')
+      expect(wrapper.text()).not.toContain('Auto-approved message')
     })
   })
 })
