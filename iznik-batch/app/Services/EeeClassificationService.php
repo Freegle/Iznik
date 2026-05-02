@@ -46,8 +46,9 @@ class EeeClassificationService
     /**
      * Classify the top $limit item types by popularity.
      * Skips types already in the cache unless $forceRefresh is true.
+     * $mode: 'combined' (default), 'text_only', 'image_only'.
      */
-    public function classifyItemTypes(int $limit, bool $forceRefresh = false, ?callable $progress = null): array
+    public function classifyItemTypes(int $limit, bool $forceRefresh = false, ?callable $progress = null, string $mode = 'combined'): array
     {
         $items = DB::table('items')
             ->orderByDesc('popularity')
@@ -57,12 +58,12 @@ class EeeClassificationService
 
         $toClassify = $forceRefresh
             ? array_keys($items)
-            : $this->sqlite->getUnclassifiedItemTypeNames(array_keys($items));
+            : $this->sqlite->getUnclassifiedItemTypeNames(array_keys($items), $this->vision->getModelName(), $this->vision->getPromptVersion(), $mode);
 
         $stats = ['processed' => 0, 'eee' => 0, 'skipped' => 0, 'cost' => 0.0];
 
         foreach ($toClassify as $itemName) {
-            $result = $this->classifySingleItemType($itemName, $items[$itemName] ?? 0);
+            $result = $this->classifySingleItemType($itemName, $items[$itemName] ?? 0, $mode);
             if ($result === null) {
                 $stats['skipped']++;
             } else {
@@ -78,7 +79,37 @@ class EeeClassificationService
         return $stats;
     }
 
-    protected function classifySingleItemType(string $itemName, int $popularity): ?array
+    public function classifyNamedItems(array $itemNames, bool $forceRefresh = false, ?callable $progress = null, string $mode = 'combined'): array
+    {
+        $popularities = DB::table('items')
+            ->whereIn('name', $itemNames)
+            ->pluck('popularity', 'name')
+            ->toArray();
+
+        $toClassify = $forceRefresh
+            ? $itemNames
+            : $this->sqlite->getUnclassifiedItemTypeNames($itemNames, $this->vision->getModelName(), $this->vision->getPromptVersion(), $mode);
+
+        $stats = ['processed' => 0, 'eee' => 0, 'skipped' => 0, 'cost' => 0.0];
+
+        foreach ($toClassify as $itemName) {
+            $result = $this->classifySingleItemType($itemName, $popularities[$itemName] ?? 0, $mode);
+            if ($result === null) {
+                $stats['skipped']++;
+            } else {
+                $stats['processed']++;
+                $stats['cost'] += $result['cost'];
+                if ($result['is_eee']) $stats['eee']++;
+            }
+            if ($progress) {
+                ($progress)($itemName, $result);
+            }
+        }
+
+        return $stats;
+    }
+
+    protected function classifySingleItemType(string $itemName, int $popularity, string $mode = 'combined'): ?array
     {
         $attachments = DB::table('messages_attachments as ma')
             ->join('messages as m', 'm.id', '=', 'ma.msgid')
@@ -91,6 +122,7 @@ class EeeClassificationService
             })
             ->whereNotNull('ma.externaluid')
             ->where('ma.archived', 0)
+            ->where('ma.primary', 1)
             ->whereRaw("(ma.externalmods IS NULL OR JSON_EXTRACT(ma.externalmods, '$.ai') IS NULL)")
             ->orderByDesc('m.arrival')
             ->limit(self::SAMPLE_SIZE)
@@ -101,19 +133,29 @@ class EeeClassificationService
             return null;
         }
 
-        $results   = [];
-        $totalCost = 0.0;
+        // Build context for each attachment. For image_only mode, omit subject/description.
+        $rawResults = match ($mode) {
+            'text_only' => $this->vision->analyseManyTextOnly(
+                $attachments->map(fn($att) => [
+                    'context' => ['subject' => $att->subject ?? '', 'description' => $att->textbody ?? ''],
+                ])->all()
+            ),
+            'image_only' => $this->vision->analyseMany(
+                $attachments->map(fn($att) => [
+                    'imageUrl' => EeeVisionService::buildImageUrl($att->externaluid),
+                    'context'  => ['subject' => '', 'description' => ''],
+                ])->all()
+            ),
+            default => $this->vision->analyseMany(
+                $attachments->map(fn($att) => [
+                    'imageUrl' => EeeVisionService::buildImageUrl($att->externaluid),
+                    'context'  => ['subject' => $att->subject ?? '', 'description' => $att->textbody ?? ''],
+                ])->all()
+            ),
+        };
 
-        foreach ($attachments as $att) {
-            $result = $this->vision->analyse(
-                EeeVisionService::buildImageUrl($att->externaluid),
-                ['subject' => $att->subject ?? '', 'description' => $att->textbody ?? '']
-            );
-            if ($result !== null) {
-                $results[]  = $result;
-                $totalCost += $result['_meta']['cost_usd'] ?? 0.0;
-            }
-        }
+        $results   = array_values(array_filter($rawResults));
+        $totalCost = array_sum(array_map(fn($r) => $r['_meta']['cost_usd'] ?? 0.0, $results));
 
         if (empty($results)) {
             return null;
@@ -122,22 +164,23 @@ class EeeClassificationService
         $consensus = $this->computeConsensus($results);
 
         $this->sqlite->upsertItemType([
-            'item_name'               => $itemName,
-            'item_id'                 => DB::table('items')->where('name', $itemName)->value('id'),
-            'popularity'              => $popularity,
-            'sample_size'             => self::SAMPLE_SIZE,
-            'images_analysed'         => count($results),
-            'eee_sample_count'        => $consensus['eee_sample_count'],
-            'is_eee'                  => $consensus['is_eee'] ? 1 : 0,
-            'is_eee_confidence'       => $consensus['is_eee_confidence'],
-            'is_eee_agree_rate'       => $consensus['is_eee_agree_rate'],
-            'weee_category'           => $consensus['weee_category'],
-            'weee_category_name'      => $consensus['weee_category_name'],
+            'item_name'                => $itemName,
+            'item_id'                  => DB::table('items')->where('name', $itemName)->value('id'),
+            'popularity'               => $popularity,
+            'sample_size'              => self::SAMPLE_SIZE,
+            'images_analysed'          => count($results),
+            'eee_sample_count'         => $consensus['eee_sample_count'],
+            'is_eee'                   => $consensus['is_eee'] ? 1 : 0,
+            'is_eee_confidence'        => $consensus['is_eee_confidence'],
+            'is_eee_agree_rate'        => $consensus['is_eee_agree_rate'],
+            'weee_category'            => $consensus['weee_category'],
+            'weee_category_name'       => $consensus['weee_category_name'],
             'weee_category_confidence' => $consensus['weee_category_confidence'],
-            'needs_image_analysis'    => $consensus['needs_image_analysis'] ? 1 : 0,
-            'model'                   => $this->vision->getModelName(),
-            'prompt_version'          => $this->vision->getPromptVersion(),
-            'classified_at'           => now()->toIso8601String(),
+            'needs_image_analysis'     => $consensus['needs_image_analysis'] ? 1 : 0,
+            'model'                    => $this->vision->getModelName(),
+            'prompt_version'           => $this->vision->getPromptVersion(),
+            'classification_mode'      => $mode,
+            'classified_at'            => now()->toIso8601String(),
         ]);
 
         return ['is_eee' => $consensus['is_eee'], 'cost' => $totalCost];
@@ -172,7 +215,7 @@ class EeeClassificationService
             ->where('msgid', $messageid)
             ->whereNotNull('externaluid')
             ->where('archived', 0)
-            ->orderBy('id')
+            ->where('primary', 1)
             ->first(['id as attid', 'externaluid']);
 
         if (!$att) {
@@ -291,8 +334,8 @@ class EeeClassificationService
             ->where('msgid', $message->id)
             ->whereNotNull('externaluid')
             ->where('archived', 0)
+            ->where('primary', 1)
             ->whereRaw("(externalmods IS NULL OR JSON_EXTRACT(externalmods, '$.ai') IS NULL)")
-            ->orderBy('id')
             ->first(['id as attid', 'externaluid']);
 
         $context = [

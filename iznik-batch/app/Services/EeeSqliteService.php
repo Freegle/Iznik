@@ -41,11 +41,29 @@ class EeeSqliteService
         return $this->pdo;
     }
 
+    protected function getItemTypeColumns(): array
+    {
+        return array_column(
+            $this->pdo->query("PRAGMA table_info(eee_item_types)")->fetchAll(PDO::FETCH_ASSOC),
+            'name'
+        );
+    }
+
+    protected function getItemTypePkCount(): int
+    {
+        return count(array_filter(
+            $this->pdo->query("PRAGMA table_info(eee_item_types)")->fetchAll(PDO::FETCH_ASSOC),
+            fn($col) => $col['pk'] > 0
+        ));
+    }
+
     protected function migrate(): void
     {
+        // Always create with the current target schema; IF NOT EXISTS means this is a no-op
+        // on subsequent runs. Migrations below handle upgrading old schemas.
         $this->pdo->exec("
             CREATE TABLE IF NOT EXISTS eee_item_types (
-                item_name                TEXT PRIMARY KEY,
+                item_name                TEXT,
                 item_id                  INTEGER,
                 popularity               INTEGER,
                 sample_size              INTEGER DEFAULT 0,
@@ -60,9 +78,52 @@ class EeeSqliteService
                 needs_image_analysis     INTEGER DEFAULT 0,
                 model                    TEXT,
                 prompt_version           TEXT,
-                classified_at            DATETIME
+                classification_mode      TEXT NOT NULL DEFAULT 'combined',
+                classified_at            DATETIME,
+                PRIMARY KEY (item_name, model, prompt_version, classification_mode)
             )
         ");
+
+        // Upgrade v1 (single PK) or v2 (composite 3-col PK missing classification_mode).
+        $cols   = $this->getItemTypeColumns();
+        $pkCols = $this->getItemTypePkCount();
+        if (!in_array('classification_mode', $cols) || $pkCols < 4) {
+            $hasMode = in_array('classification_mode', $cols);
+            $this->pdo->exec("
+                CREATE TABLE IF NOT EXISTS eee_item_types_new (
+                    item_name                TEXT,
+                    item_id                  INTEGER,
+                    popularity               INTEGER,
+                    sample_size              INTEGER DEFAULT 0,
+                    images_analysed          INTEGER DEFAULT 0,
+                    eee_sample_count         INTEGER DEFAULT 0,
+                    is_eee                   INTEGER,
+                    is_eee_confidence        REAL,
+                    is_eee_agree_rate        REAL,
+                    weee_category            INTEGER,
+                    weee_category_name       TEXT,
+                    weee_category_confidence REAL,
+                    needs_image_analysis     INTEGER DEFAULT 0,
+                    model                    TEXT,
+                    prompt_version           TEXT,
+                    classification_mode      TEXT NOT NULL DEFAULT 'combined',
+                    classified_at            DATETIME,
+                    PRIMARY KEY (item_name, model, prompt_version, classification_mode)
+                )
+            ");
+            if ($hasMode) {
+                $this->pdo->exec("INSERT OR IGNORE INTO eee_item_types_new SELECT * FROM eee_item_types");
+            } else {
+                $this->pdo->exec("INSERT OR IGNORE INTO eee_item_types_new
+                    SELECT item_name, item_id, popularity, sample_size, images_analysed,
+                           eee_sample_count, is_eee, is_eee_confidence, is_eee_agree_rate,
+                           weee_category, weee_category_name, weee_category_confidence,
+                           needs_image_analysis, model, prompt_version, 'combined', classified_at
+                    FROM eee_item_types");
+            }
+            $this->pdo->exec("DROP TABLE eee_item_types");
+            $this->pdo->exec("ALTER TABLE eee_item_types_new RENAME TO eee_item_types");
+        }
 
         $this->pdo->exec("
             CREATE TABLE IF NOT EXISTS eee_classifications (
@@ -166,36 +227,41 @@ class EeeSqliteService
         $cols = implode(', ', array_keys($data));
         $vals = ':' . implode(', :', array_keys($data));
 
-        $updates = implode(', ', array_map(
+        $keyColumns = ['item_name', 'model', 'prompt_version', 'classification_mode'];
+        $nonKey     = fn($k) => !in_array($k, $keyColumns);
+        $updates    = implode(', ', array_map(
             fn($k) => "$k = excluded.$k",
-            array_filter(array_keys($data), fn($k) => $k !== 'item_name')
+            array_filter(array_keys($data), $nonKey)
         ));
 
         $pdo->prepare("
             INSERT INTO eee_item_types ($cols) VALUES ($vals)
-            ON CONFLICT(item_name) DO UPDATE SET $updates
+            ON CONFLICT(item_name, model, prompt_version, classification_mode) DO UPDATE SET $updates
         ")->execute($data);
     }
 
-    public function getItemType(string $itemName): ?array
+    public function getItemType(string $itemName, string $model, string $promptVersion, string $mode = 'combined'): ?array
     {
         $pdo  = $this->getPdo();
-        $stmt = $pdo->prepare("SELECT * FROM eee_item_types WHERE item_name = ?");
-        $stmt->execute([$itemName]);
+        $stmt = $pdo->prepare("SELECT * FROM eee_item_types WHERE item_name = ? AND model = ? AND prompt_version = ? AND classification_mode = ?");
+        $stmt->execute([$itemName, $model, $promptVersion, $mode]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row ?: null;
     }
 
-    /** Returns names from $itemNames that are NOT yet in eee_item_types. */
-    public function getUnclassifiedItemTypeNames(array $itemNames): array
+    /** Returns names from $itemNames not yet classified with the given model + prompt version + mode. */
+    public function getUnclassifiedItemTypeNames(array $itemNames, string $model = '', string $promptVersion = '', string $mode = 'combined'): array
     {
         if (empty($itemNames)) {
             return [];
         }
         $pdo          = $this->getPdo();
         $placeholders = implode(',', array_fill(0, count($itemNames), '?'));
-        $stmt         = $pdo->prepare("SELECT item_name FROM eee_item_types WHERE item_name IN ($placeholders)");
-        $stmt->execute($itemNames);
+        $stmt         = $pdo->prepare("
+            SELECT item_name FROM eee_item_types
+            WHERE item_name IN ($placeholders) AND model = ? AND prompt_version = ? AND classification_mode = ?
+        ");
+        $stmt->execute([...$itemNames, $model, $promptVersion, $mode]);
         $classified = $stmt->fetchAll(PDO::FETCH_COLUMN);
         return array_values(array_diff($itemNames, $classified));
     }

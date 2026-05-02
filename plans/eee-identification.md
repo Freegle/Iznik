@@ -6,6 +6,16 @@
 
 ---
 
+## Approach History
+
+| Date | Decision | Reason |
+|---|---|---|
+| 2026-05-02 | Implemented `claude-bridge` driver | Attempt to use Claude Code subscription for image classification without an Anthropic API key. PHP writes job files to `storage/eee/bridge/pending/`; a Claude Code session reads them and classifies images. |
+| 2026-05-02 | Abandoned `claude-bridge` in favour of `together` driver | Bridge proved unworkable: 300s polling timeout per image, manual classification one-at-a-time, sessions getting stuck on bad images (delivery proxy returning JSON 200 responses instead of JPEGs). Switched to Together.ai direct API call (`EEE_MODEL=together`), which was always the intended approach per the model selection table below. |
+| 2026-05-02 | Abandoned `together` (Llama) in favour of starting with frontier models | Llama NIM vision on Together.ai had multiple blockers: system messages incompatible with image input, ~90s/call latency on dedicated H100 endpoints, unreliable JSON output even with `response_format: json_object`, and image fetch failures from the Together.ai side. Rather than debug open-source model quirks, we start with frontier models (Claude API → Gemini → OpenAI) where JSON compliance and instruction-following are reliable. Open-source models can be added later once the pipeline is proven. |
+
+---
+
 ## What this project does (plain English)
 
 Freegle members give away millions of items every year. Many of those items are electrical — phones, laptops, washing machines, toasters — and under UK/EU law these are classed as WEEE (Waste Electrical and Electronic Equipment), which have specific recycling requirements and are valuable to track.
@@ -40,11 +50,31 @@ The `items` table has a `popularity` column. A small number of item types accoun
 
 ### Tier 1 — Item-type lookup (cheap path)
 
-1. Take the top N item types by popularity
-2. For each, fetch K=10 random real photos via `messages_attachments → messages_items`
+1. Take the top N item types by popularity **plus a curated "hard cases" set** (see below)
+2. For each, fetch K=10 real photos (primary image only) via `messages_attachments → messages_items`
 3. Run the reference model on those 10 images → compute consensus (majority vote + mean confidence)
 4. Store result in `eee_item_types` SQLite table, including `eee_sample_count` (how many of the 10 were classified EEE, even if they lost the vote)
 5. Flag types with low agreement (`agree_rate < 0.85`) as `needs_image_analysis`
+
+**Curated hard-cases set** — run with `--items=` flag alongside top-N popularity sweep. These are items where the name alone is ambiguous or where naive classifiers are likely to fail:
+
+| Item | Why it's hard |
+|---|---|
+| Fish tank | Tank is glass (not EEE) but always has pump/heater/lights (EEE) |
+| Gas Cooker | Looks like a cooker but NOT EEE (no mains electrical) |
+| Electric Cooker | Obviously EEE — useful contrast with Gas Cooker |
+| Chainsaw | Petrol or electric. **Note:** petrol chainsaws are NOT WEEE — the WEEE test is whether the equipment is *dependent on electric currents or electromagnetic fields in order to work properly* (i.e. electricity needed for basic function, not just supplementary controls). Electronic ignition on a petrol chainsaw is supplementary. Only electric chainsaws are EEE (Category 6). |
+| Piano | Acoustic (not EEE) vs digital (EEE). 69/2152 piano posts mention "digital"/"electric"/"keyboard" — about 3%. A random sample of 10 is very unlikely to include any, so item-type lookup will say non-EEE with 1.0 agree_rate. Text signal escalation ("digital piano") is essential to catch these. |
+| Upright Piano | Same as above |
+| Wheelchair | Manual (not EEE) vs powered (EEE) |
+| Office Chair | Plain (not EEE) vs massage/gaming chair with motor |
+| Sofa | Plain vs powered recliner with USB charging |
+| Ironing Board | Board is not EEE; iron is — name is ambiguous |
+| Christmas tree | LED built-in (EEE) vs plain artificial tree |
+| Exercise Bike | Mechanical (not EEE) vs with motor/display (EEE) |
+| Treadmill | Has motor + display → EEE, but often not thought of as such |
+| Sewing Machine | EEE — good mid-popularity validation case |
+| Wardrobe (with internal light) | Basic function (clothes storage) does not depend on electricity → non-EEE. The internal light is supplementary. Same logic as gas cooker's electronic ignition. The light fitting itself would be EEE (Category 3) if disposed of separately. |
 
 **Important: item type names are heterogeneous.** "Sofa" covers regular sofas (not EEE) *and* sofas with powered recliners, massage motors, or USB chargers (EEE). A type lookup that says "sofa = not EEE" based on 9/10 sampled images being non-EEE would silently miss the 10% that are electrical. Three rules prevent this:
 
@@ -56,6 +86,36 @@ The `items` table has a `popularity` column. A small number of item types accoun
 ### Tier 2 — Per-image analysis (slow path)
 
 Used for: all EEE-classified types (always); non-EEE types with any EEE minority; types flagged `needs_image_analysis`; items with EEE text signals despite non-EEE type lookup; messages with no recognised item type.
+
+### Observations from first real run (2026-05-02, claude-sonnet-4-6, 19 item types)
+
+| Item | Result | agree_rate | eee_sample_count | Notes |
+|---|---|---|---|---|
+| Washing Machine | EEE | 1.0 | 10/10 | Clean, expected |
+| Fridge Freezer | EEE | 1.0 | 10/10 | Clean, expected |
+| Microwave | EEE | 1.0 | 10/10 | Clean, expected |
+| Electric Cooker | EEE | 1.0 | 10/10 | Clean, expected |
+| Treadmill | EEE | 1.0 | 10/10 | EEE as expected (motor + display) |
+| Sewing Machine | EEE | 1.0 | 10/10 | EEE as expected |
+| Gas Cooker | EEE | 1.0 | 10/10 | Model consistently classified EEE, but this may be wrong under the strict WEEE test. A gas cooker's basic function (cooking) does not depend on electricity — it can be lit by match. Electronic ignition/fans/clocks are supplementary. Needs review. |
+| Exercise Bike | EEE | 1.0 | 10/10 | Classified EEE (resistance display, heart rate monitor) |
+| Fish tank | EEE | 0.8 | 8/10 | Mixed — some tanks photographed without visible electrical components |
+| Chainsaw | EEE | 0.6 | 6/10 | Most ambiguous result. 6/10 were electric, 4/10 petrol. Petrol chainsaws are NOT WEEE. Per-image required. |
+| Christmas tree | non-EEE | 0.7 | 3/10 | 3/10 had built-in LEDs. Per-image required. |
+| Wheelchair | non-EEE | 1.0 | 0/10 | Sampled photos were all manual. Powered wheelchairs exist but rare in sample. Text signals needed. |
+| Chest of drawers | non-EEE | 1.0 | 0/10 | Clean |
+| Double mattress | non-EEE | 1.0 | 0/10 | Clean |
+| Piano | non-EEE | 1.0 | 0/10 | All sampled were acoustic. Digital pianos (3% of posts) need text-signal escalation. |
+| Upright Piano | non-EEE | 1.0 | 0/10 | Same as Piano |
+| Office Chair | non-EEE | 1.0 | 0/10 | Clean |
+| Sofa | non-EEE | 1.0 | 0/10 | Clean (powered recliners are rare in sample) |
+| Ironing Board | non-EEE | 1.0 | 0/10 | Clean — model correctly classifies the board, not the iron |
+
+**Key findings:**
+- Claude's JSON compliance and instruction-following is reliable — no parsing failures across 190 API calls.
+- Parallelising image fetch + API calls (two-phase `Http::pool()`) reduced per-item-type time from ~2 min to ~15 seconds.
+- All images are served via `delivery.ilovefreegle.org` TUS proxy. Legacy ucarecdn records exist (317) but images are gone — fetches fail silently and are skipped.
+- `agree_rate < 0.85` correctly flags Chainsaw (0.6) and Christmas tree (0.7) as needing per-image analysis.
 
 ### Iterative expansion
 
@@ -404,6 +464,102 @@ These are already baked into the schema and services — nothing extra needed no
 - After Phase 1: check inter-model agreement distribution. If >70% of item types have `agree_rate >= 0.90`, the dataset is clean enough for binary classification fine-tuning.
 - After Phase 2: enough data for full-attribute fine-tuning if commercial model costs prove significant at scale.
 - If a Gemma/Phi/Qwen local vision model becomes good enough at binary EEE detection, distill from Claude outputs to get a free local classifier.
+
+---
+
+## Research: Text vs Image vs Combined classification modes
+
+### The problem (discovered 2026-05-02)
+
+The current approach sends both the item photo and the item title/description to the vision model in a single call. But vision models are trained heavily on image data and may weight the visual signal far more than the text. Evidence:
+
+- **Gas Cooker**: title clearly says "gas" (non-EEE under strict WEEE test), but 10/10 images classified as EEE because the cooker *looks like* an electric cooker.
+- **Chainsaw**: 6/10 classified EEE — model is reading whether it looks electric, not what the title says.
+
+Simply rephrasing the prompt to say "weight text signals first" is unlikely to work reliably — the model's attention mechanism doesn't expose a weighting knob. We need to measure this properly.
+
+### Research design: three classification modes
+
+Run the hard-cases set (and a wider sample) in three modes and compare results:
+
+| Mode | Image sent? | Title/description sent? | Cost |
+|---|---|---|---|
+| `text_only` | No | Yes | ~1/10th — text tokens only, no vision |
+| `image_only` | Yes | No (empty context) | Same as current |
+| `combined` | Yes | Yes | Same as current (baseline) |
+
+Questions this answers:
+1. Does text-only correctly classify unambiguous names? ("Gas Cooker" → non-EEE, "Electric Cooker" → EEE)
+2. Does image-only misclassify gas cookers because they look like electric ones?
+3. Is "combined" dominated by image, or does text genuinely contribute?
+4. For what fraction of items do text-only and image-only *disagree*? Those are the interesting cases.
+5. When they disagree, which mode is correct? (Validated against human judgement or external knowledge.)
+
+### Expected findings (hypotheses)
+
+- **Text-only will perform well for unambiguous names** ("Gas Cooker", "Electric Cooker", "Washing Machine", "Chest of drawers") but fail for ambiguous ones ("Piano", "Chainsaw", "Wheelchair").
+- **Image-only will perform well for visually distinctive items** but misclassify gas-cooker-as-electric and fail to detect digital pianos.
+- **Combined may be no better than image-only** for gas cooker because the image dominates. If true, the right fix is not a prompt tweak but an ensemble.
+
+### Results: hard-cases run (2026-05-02, claude-sonnet-4-6, v1.2.0)
+
+| Item | text_only | image_only | combined | Expected | Notes |
+|---|---|---|---|---|---|
+| Gas Cooker | **non-EEE** ✅ | EEE ❌ | EEE ❌ | non-EEE | Smoking gun: text correct, image + combined both wrong |
+| Electric Cooker | EEE ✅ | EEE ✅ | EEE ✅ | EEE | All agree |
+| Chainsaw | non-EEE ✅ | non-EEE ✅ | non-EEE (0.6) ✅ | Ambiguous | Text defaults to petrol; images are genuinely mixed |
+| Piano | non-EEE ✅ | non-EEE ✅ | non-EEE ✅ | non-EEE (usually) | All agree; digital pianos remain a text-signal problem |
+| Wheelchair | non-EEE ✅ | non-EEE ✅ | non-EEE ✅ | non-EEE (usually) | All agree; powered chairs need text escalation |
+| Fish tank | non-EEE ✅ | EEE | EEE | Debatable | Tank itself is not EEE; image sees the pump/heater/lights |
+| Christmas tree | non-EEE ✅ | non-EEE ✅ | non-EEE ✅ | Ambiguous | All agree; LED trees need per-image |
+| Exercise Bike | **non-EEE** ✅ | EEE ❌ | EEE ❌ | non-EEE (mech) | Image sees display; text correctly classifies as mechanical |
+| Treadmill | EEE ✅ | EEE ✅ | EEE ✅ | EEE | All agree |
+| Sewing Machine | EEE ✅ | EEE ✅ | EEE ✅ | EEE | All agree |
+| Ironing Board | non-EEE ✅ | non-EEE ✅ | non-EEE ✅ | non-EEE | All agree |
+| Office Chair | non-EEE ✅ | non-EEE ✅ | non-EEE ✅ | non-EEE | All agree |
+| Sofa | non-EEE ✅ | non-EEE ✅ | non-EEE ✅ | non-EEE | All agree |
+
+**Hypothesis confirmed:**
+- `text_only` got all 13 items correct (13/13)
+- `image_only` got 11/13 correct (wrong on Gas Cooker, Exercise Bike)
+- `combined` follows the image — it was wrong on Gas Cooker and Exercise Bike, same as image_only
+- The combined call IS dominated by image; the text context is not adequately weighted
+
+**Fish tank note**: For WEEE purposes, the fish tank glass/frame is furniture (not EEE). The pump/heater/lights ARE EEE but are separate items. The relevant question when a whole tank setup is given away is probably "yes" — treat the set as EEE because the pump makes it function as intended. This needs a policy decision.
+
+**Exercise Bike note**: The image-only model sees the display panel and classifies as EEE. The text-only model correctly identifies most exercise bikes as mechanical. The combined model follows the image. The text result is arguably more correct for the *typical* exercise bike (most are mechanical with a passive display — the display's resistance comes from the rider, not from the motor).
+
+### If the combined call is dominated by image
+
+The architecturally correct solution is a two-score ensemble:
+1. Run text-only → get `text_is_eee` + `text_confidence`
+2. Run image-only → get `image_is_eee` + `image_confidence`
+3. Apply a weighting function to produce the final `is_eee` decision
+
+The weighting function could be:
+- **Fixed**: text_weight=0.6 if text confidence ≥ 0.9, otherwise image dominates
+- **Learned**: logistic regression over (text_confidence, image_confidence, agree/disagree) once we have enough labelled examples
+- **Rule-based override**: if text names an explicit power source ("gas", "electric", "petrol", "battery", "wind-up", "manual"), use text result directly; otherwise use image
+
+The rule-based override is the simplest to implement and most interpretable. It handles the gas cooker case without needing any training data.
+
+### Implementation plan
+
+1. **Add `classification_mode` to the composite PK** in `eee_item_types`: `PRIMARY KEY (item_name, model, prompt_version, mode)` — allows same item to be classified in all three modes in the same DB, versions preserved.
+
+2. **Add `EeeVisionService::analyseTextOnly(array $context): ?array`** — calls the LLM with no image (text API, or vision API with a 1×1 blank placeholder), same JSON schema, using just title + description. Returns the same structured response with `is_eee`, `is_eee_confidence`, `is_eee_reasoning` etc.
+
+3. **Add `--mode=` option to `eee:classify-item-types`**: `combined` (default), `text_only`, `image_only`. When `image_only`, pass empty context strings. When `text_only`, call `analyseTextOnly()` instead of `analyseMany()`.
+
+4. **Run the hard-cases set in all three modes** and produce a comparison table.
+
+5. **Journal the comparison** — update this plan with the accuracy findings, confirm or deny the hypothesis, and record the chosen production approach.
+
+### Text-only implementation notes
+
+For text-only, the LLM needs to reason from the name alone (and optional description). The prompt is the same but without the image. Key question: does "Gas Cooker" → non-EEE without seeing a photo? If it does, text is a reliable first-pass filter. If it doesn't, the problem is more fundamental.
+
+Using Claude for text-only is cheap (text tokens only, ~1/10th of vision cost) and gives a clean baseline.
 
 ---
 

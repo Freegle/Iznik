@@ -22,6 +22,8 @@ class EeeClassifyItemTypesCommand extends Command
 {
     protected $signature = 'eee:classify-item-types
                             {--limit=200 : Number of top item types to process}
+                            {--items=    : Comma-separated list of specific item type names to classify}
+                            {--mode=combined : Classification mode: combined, text_only, image_only}
                             {--force     : Re-classify already-classified types}
                             {--dry-run   : Show pending types without making API calls}';
 
@@ -37,24 +39,48 @@ class EeeClassifyItemTypesCommand extends Command
 
     public function handle(): int
     {
-        $limit  = (int)  $this->option('limit');
-        $force  = (bool) $this->option('force');
-        $dryRun = (bool) $this->option('dry-run');
+        $limit      = (int)  $this->option('limit');
+        $force      = (bool) $this->option('force');
+        $dryRun     = (bool) $this->option('dry-run');
+        $mode       = $this->option('mode') ?? 'combined';
+        $itemsOpt   = $this->option('items');
+        $namedItems = $itemsOpt
+            ? array_map('trim', explode(',', $itemsOpt))
+            : null;
+
+        $validModes = ['combined', 'text_only', 'image_only'];
+        if (!in_array($mode, $validModes)) {
+            $this->error("Invalid --mode '{$mode}'. Must be one of: " . implode(', ', $validModes));
+            return Command::FAILURE;
+        }
 
         if (!$dryRun && !$this->vision->isConfigured()) {
             $this->error('Vision service not configured. Check EEE_MODEL and API keys.');
             return Command::FAILURE;
         }
 
-        $this->info("EEE item-type classification | model: {$this->vision->getModelName()} | limit: {$limit}");
+        $scope = ($namedItems
+            ? 'items:' . implode(',', $namedItems)
+            : "item_types_limit_{$limit}")
+            . ":mode_{$mode}";
+
+        $this->info("EEE item-type classification | model: {$this->vision->getModelName()} | mode: {$mode} | " .
+            ($namedItems ? count($namedItems) . ' named items' : "limit: {$limit}"));
 
         if ($dryRun) {
             $this->warn('[DRY RUN]');
-            $items = DB::table('items')->orderByDesc('popularity')->limit($limit)->pluck('popularity', 'name')->toArray();
-            $pending = $force ? array_keys($items) : $this->sqlite->getUnclassifiedItemTypeNames(array_keys($items));
+            if ($namedItems) {
+                $items = DB::table('items')->whereIn('name', $namedItems)->pluck('popularity', 'name')->toArray();
+            } else {
+                $items = DB::table('items')->orderByDesc('popularity')->limit($limit)->pluck('popularity', 'name')->toArray();
+            }
+            $pending = $force
+                ? array_keys($items)
+                : $this->sqlite->getUnclassifiedItemTypeNames(array_keys($items), $this->vision->getModelName(), $this->vision->getPromptVersion(), $mode);
             $this->info(count($pending) . ' item types would be classified:');
             foreach (array_slice($pending, 0, 20) as $name) {
-                $this->line("  {$name} (popularity: {$items[$name]})");
+                $pop = $items[$name] ?? '?';
+                $this->line("  {$name} (popularity: {$pop})");
             }
             if (count($pending) > 20) $this->line('  ... and ' . (count($pending) - 20) . ' more');
             return Command::SUCCESS;
@@ -63,10 +89,14 @@ class EeeClassifyItemTypesCommand extends Command
         $runId = $this->sqlite->startRun(
             $this->vision->getModelName(),
             $this->vision->getPromptVersion(),
-            "item_types_limit_{$limit}",
+            $scope,
         );
 
-        $stats = $this->classifier->classifyItemTypes($limit, $force, function (string $itemName, ?array $result) {
+        $classifyFn = $namedItems
+            ? fn($f, $r) => $this->classifier->classifyNamedItems($namedItems, $f, $r, $mode)
+            : fn($f, $r) => $this->classifier->classifyItemTypes($limit, $f, $r, $mode);
+
+        $stats = $classifyFn($force, function (string $itemName, ?array $result) {
             if ($result === null) {
                 $this->line("  <comment>skip</comment>  {$itemName} (no images)");
             } else {
