@@ -467,6 +467,80 @@ These are already baked into the schema and services — nothing extra needed no
 
 ---
 
+## Two EEE classifications: strictly EEE vs contains-EEE-components
+
+*Observation recorded 2026-05-02 from hard-cases research.*
+
+The three-mode experiment revealed a conceptual gap in the current single `is_eee` field. There are actually two meaningfully different things we want to know:
+
+### Category 1: Strictly EEE (WEEE-qualifying item)
+
+The item's **primary function depends on electricity** (the strict WEEE test). The item itself would be collected under WEEE regulations if discarded.
+
+Examples: washing machine, fridge, laptop, electric cooker, treadmill, sewing machine, phone.
+
+### Category 2: Contains EEE components (embedded or bundled accessories)
+
+The item's **primary function does not require electricity**, but it physically contains or is typically sold with electrical components that would qualify as EEE on their own.
+
+Examples:
+- **Gas cooker**: not EEE; may have electronic ignition clock, extraction fan — those parts are EEE but supplementary
+- **Fish tank**: the glass tank is not EEE; the pump, heater, and lights that come with it are EEE (Category 5/3)
+- **Wardrobe with internal light**: the wardrobe is not EEE; the lamp fitting inside it is EEE (Category 3)
+- **Sofa with USB ports**: the sofa is not EEE; the charging module is EEE (Category 5)
+- **Exercise bike with display**: the bike frame is not EEE; the display/resistance unit may be EEE
+- **Christmas tree with built-in LEDs**: the tree is not EEE; the LED string is EEE (Category 3)
+
+### Why this distinction matters
+
+1. **WEEE tracking accuracy**: An item in Category 2 still represents WEEE material passing through Freegle — we just can't count the whole item as WEEE. We can note that it *contains* WEEE.
+
+2. **Fish tank edge case**: When someone gives away "a fish tank", they almost always include the electrical accessories (pump, heater, lights). These accessories ARE WEEE even though the tank body isn't. The correct representation is: non-EEE container + EEE accessories bundled with it.
+
+3. **Policy decision needed**: Do we count a "fish tank with pump and heater" as one EEE item (treating the bundle as a unit) or as one non-EEE item + multiple small EEE accessories? This needs a decision. The WEEE regulations track individual items, so the pump and heater are separate WEEE items even if given away together.
+
+4. **Data value**: Knowing that a gas cooker post *sometimes* includes an EEE component (e.g. "integrated extractor fan included") is useful even if the cooker itself isn't EEE.
+
+### Proposed schema additions
+
+Two new fields in both `eee_item_types` and `eee_classifications`:
+
+```
+contains_eee_components     INTEGER  -- 0/1/NULL: item has embedded or bundled EEE accessories
+eee_components_description  TEXT     -- what the EEE components are (e.g. "pump, heater, LED lights")
+eee_components_confidence   REAL
+```
+
+And in the prompt, a new step after the WEEE classification:
+
+```
+Step 3 — EEE components: Even if the item itself is not EEE, does it physically contain or
+typically come bundled with electrical accessories that would qualify as EEE on their own?
+(e.g. a fish tank with pump/heater/lights; a gas cooker with an integrated extractor fan;
+a wardrobe with an internal light fitting.) Describe what those components are.
+```
+
+### Expected results if we re-ran the hard cases
+
+| Item | is_eee | contains_eee_components | components |
+|---|---|---|---|
+| Gas Cooker | false | maybe | electronic ignition, clock (if visible) |
+| Electric Cooker | true | — | — |
+| Fish tank | false | true | pump, heater, LED light (almost always present) |
+| Wardrobe (with light) | false | true | internal lamp fitting |
+| Christmas tree (LED) | false | true | integrated LED string |
+| Exercise Bike | false | maybe | passive display unit |
+| Treadmill | true | — | — |
+| Sofa (with USB) | false | maybe | USB charging module |
+
+### Implementation priority
+
+- **Not in the current phase**: adding two more fields to the prompt and schema is a second prompt version bump. Do this after the ensemble approach (text + image weighting) is settled.
+- **Record now**: the `accessories_visible` field already partially captures this — it lists accessories visible in the photo. We can mine this for EEE components retroactively.
+- **Prompt version 1.3.0**: first add `contains_eee_components` + `eee_components_description`. Run the hard cases again and compare.
+
+---
+
 ## Research: Text vs Image vs Combined classification modes
 
 ### The problem (discovered 2026-05-02)
