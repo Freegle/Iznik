@@ -17,7 +17,7 @@ fi
 echo "Waiting for database server..."
 maxTries=30
 while [ $maxTries -gt 0 ]; do
-    if php -r "try { new PDO('mysql:host='.getenv('DB_HOST'), getenv('DB_USERNAME'), getenv('DB_PASSWORD')); echo 'OK'; exit(0); } catch(Exception \$e) { exit(1); }" 2>/dev/null; then
+    if php -r "\$port=getenv('DB_PORT')?:3306; try { new PDO('mysql:host='.getenv('DB_HOST').';port='.\$port, getenv('DB_USERNAME'), getenv('DB_PASSWORD')); echo 'OK'; exit(0); } catch(Exception \$e) { exit(1); }" 2>/dev/null; then
         echo "Database server is ready!"
         break
     fi
@@ -34,7 +34,8 @@ fi
 # Create the Laravel databases if they don't exist (main + test)
 echo "Ensuring databases exist..."
 php -r "
-\$pdo = new PDO('mysql:host='.getenv('DB_HOST'), getenv('DB_USERNAME'), getenv('DB_PASSWORD'));
+\$port=getenv('DB_PORT')?:3306;
+\$pdo = new PDO('mysql:host='.getenv('DB_HOST').';port='.\$port, getenv('DB_USERNAME'), getenv('DB_PASSWORD'));
 \$pdo->exec('CREATE DATABASE IF NOT EXISTS '.getenv('DB_DATABASE'));
 \$pdo->exec('CREATE DATABASE IF NOT EXISTS '.getenv('DB_DATABASE').'_test');
 echo 'Database ready: '.getenv('DB_DATABASE').PHP_EOL;
