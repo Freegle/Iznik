@@ -10,6 +10,7 @@ import { execSync } from 'node:child_process'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { tagJaccard, findTagDuplicate, type DiscourseBugRow } from '../src/db/index.js'
+import { DISCOURSE_BASE } from '../src/discourse.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DB_PATH = resolve(__dirname, '..', 'monitor.db')
@@ -29,7 +30,7 @@ function fetchPost(apiKey: string, postId: number): string {
   try {
     const out = execSync(
       `curl -sf -H "User-Api-Key: ${apiKey}" -H "Api-Username: Edward_Hibbert" ` +
-      `"https://discourse.ilovefreegle.org/posts/${postId}.json"`,
+      `"${DISCOURSE_BASE}/posts/${postId}.json"`,
       { encoding: 'utf8', timeout: 10000 }
     )
     const data = JSON.parse(out)

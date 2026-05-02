@@ -13,6 +13,7 @@ import { promisify } from 'node:util'
 import https from 'node:https'
 import { getDb, kvGet } from './db/index.js'
 import { putStatusPost } from './db/discourse-status.js'
+import { DISCOURSE_BASE } from './discourse.js'
 import type { Database as DB } from 'better-sqlite3'
 
 const execAsync = promisify(exec)
@@ -266,7 +267,7 @@ function postToDiscourse(topicId: number, raw: string): Promise<{ ok: boolean; e
     const body = JSON.stringify({ topic_id: topicId, raw })
 
     const options = {
-      hostname: 'discourse.ilovefreegle.org',
+      hostname: new URL(DISCOURSE_BASE).hostname,
       port: 443,
       path: '/posts.json',
       method: 'POST',
