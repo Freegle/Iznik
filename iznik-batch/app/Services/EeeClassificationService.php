@@ -37,6 +37,7 @@ class EeeClassificationService
     public function __construct(
         protected EeeVisionService $vision,
         protected EeeSqliteService $sqlite,
+        protected EeeComponentService $componentService,
     ) {}
 
     // -------------------------------------------------------------------------
@@ -417,6 +418,17 @@ class EeeClassificationService
             if (!empty($textSignals['eee'])     && !$isEee) $conflictFlag = 1;
         }
 
+        // Component-index derived EEE verdict (deterministic, no model judgment).
+        $isEeeFromComponents = null;
+        $compDesc = $result['electrical_components_description'] ?? null;
+        if ($compDesc && !$this->componentService->needsBuilding()) {
+            $components = array_filter(array_map('trim', explode(';', $compDesc)));
+            if (!empty($components)) {
+                $verdict = $this->componentService->classifyComponents($components);
+                $isEeeFromComponents = $verdict['is_eee'] !== null ? ($verdict['is_eee'] ? 1 : 0) : null;
+            }
+        }
+
         $data = [
             'messageid'                        => $message->id,
             'attid'                            => $attid,
@@ -427,6 +439,7 @@ class EeeClassificationService
             'is_eee'                           => $isEee !== null ? ($isEee ? 1 : 0) : null,
             'is_eee_confidence'                => round($isEeeConfidence, 4),
             'is_eee_reasoning'                 => $result['is_eee_reasoning'] ?? null,
+            'is_eee_from_components'           => $isEeeFromComponents,
             'contains_eee_components'          => ($result['contains_eee_components'] ?? false) ? 1 : 0,
             'electrical_components_description'=> $result['electrical_components_description'] ?? null,
             'weee_category'                    => $result['weee_category'] ?? null,
