@@ -334,8 +334,8 @@ return [
         'together_api_key' => env('TOGETHER_API_KEY', ''),
         'together_model'   => env('EEE_TOGETHER_MODEL', 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo'),
 
-        // Ollama — local self-hosted models.
-        'ollama_base_url' => env('EEE_OLLAMA_BASE_URL', 'http://localhost:11434'),
+        // Ollama — runs on Windows host; accessible from WSL/Docker via host.docker.internal.
+        'ollama_base_url' => env('EEE_OLLAMA_BASE_URL', 'http://host.docker.internal:11434'),
         'ollama_model'    => env('EEE_OLLAMA_MODEL', 'llama3.2-vision'),
 
         // Whether to include follow-on chat as classification context.

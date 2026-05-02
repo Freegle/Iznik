@@ -264,15 +264,49 @@ Versioned via `PROMPT_VERSION` semver constant (currently `1.1.0`). Key elements
 
 ---
 
-## Timeline (10 days)
+## Cost estimates (together.ai)
 
-| Task | Days | Maps to |
+**Token assumptions per vision call** (768×768 JPEG image):
+- Input: ~1,500 tokens (image ~800 + system prompt ~500 + subject/description ~200)
+- Output: ~400 tokens (structured JSON)
+- Together.ai Llama 3.2 90B Vision pricing: $1.20 / M input + $1.20 / M output
+- **Cost per call: ~$0.0023**
+
+### Item-type classification phases
+
+| Phase | Item types | API calls | Cost |
+|---|---|---|---|
+| Phase 1 | top 200 | 2,000 | ~$4.60 |
+| Phase 2 | top 500 | 5,000 total | ~$11.50 |
+| Phase 3 | top 1,000 | 10,000 total | ~$23.00 |
+
+### Model comparison run
+
+200 reference messages × 4 comparison models = 800 calls → **~$1.85**
+
+### Backfill (per-image path only)
+
+The type lookup covers 80% of posts at zero extra cost after Phase 1. Only uncovered messages need per-image calls.
+
+| Type coverage | Per-image % | Cost per 10,000 offers |
 |---|---|---|
-| Model comparison + prompt tuning | 2 | `eee:classify-item-types` + `eee:compare-models` |
-| Core coding | 2.5 | Services, commands, SQLite schema |
-| Accuracy analysis + refinement | 3 | Inter-model agreement reports, prompt iterations |
-| Stats web page | 1 | `eee:stats` + Nuxt page |
-| Report writing | 1.5 | Methodology + findings |
+| Top 200 (Phase 1) | 20% → 2,000 calls | ~$4.60 |
+| Top 500 (Phase 2) | 10% → 1,000 calls | ~$2.30 |
+| Top 1,000 (Phase 3) | 5% → 500 calls | ~$1.15 |
+
+Scale these linearly for the actual backfill volume.
+
+### Comparison: other models (per 10,000 calls)
+
+| Model | Input $/M | Output $/M | Cost / 10k calls |
+|---|---|---|---|
+| Together.ai Llama 3.2 90B | $1.20 | $1.20 | $23 |
+| Gemini 2.0 Flash | $0.075 | $0.30 | $1.50 |
+| GPT-4o | $2.50 | $10.00 | $54 |
+| Claude Sonnet | $3.00 | $15.00 | $66 |
+| Ollama (local, Windows) | free | free | $0 |
+
+Gemini Flash is by far the cheapest paid option. Together.ai is useful for model comparison (single API, multiple open-weight models) but Gemini is the likely production choice on cost.
 
 ---
 
@@ -362,5 +396,5 @@ These are already baked into the schema and services — nothing extra needed no
 
 - Training a custom classifier (this work creates the dataset for that)
 - `eee:export-training` command (design above; implement once Phase 1 data is collected)
-- Ollama self-hosting (no models installed; plug in when infrastructure is ready)
+- Ollama fine-tuning (Ollama is installed on Windows host, accessible at `host.docker.internal:11434`; usable for inference now, fine-tuning via separate tooling)
 - Chat data (designed in, enabled by `EEE_USE_CHAT_DATA=true` when privacy reviewed)
