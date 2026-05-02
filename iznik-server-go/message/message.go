@@ -2446,6 +2446,19 @@ func PatchMessage(c *fiber.Ctx) error {
 		db.Exec("UPDATE messages SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", args...)
 	}
 
+	// PHP parity (message.php:371-372): when a groupid is supplied, persist it to
+	// messages_drafts so the subsequent JoinAndPost reads the user's chosen group
+	// rather than the original one from RejectToDraft.  Without this, the group
+	// change is silently dropped and the message is reposted to the wrong community.
+	// The UPDATE is a no-op when the message is not in draft state (0 rows affected).
+	if req.Groupid != nil && *req.Groupid > 0 {
+		var groupExists int64
+		db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", *req.Groupid).Scan(&groupExists)
+		if groupExists > 0 {
+			db.Exec("UPDATE messages_drafts SET groupid = ? WHERE msgid = ?", *req.Groupid, req.ID)
+		}
+	}
+
 	// If the user is setting a future deadline, clear any Expired outcome so the post
 	// becomes active again (batch job marks posts Expired when deadline passes; extending
 	// the deadline should move the post back out of "Old Posts").

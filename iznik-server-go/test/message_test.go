@@ -7350,3 +7350,72 @@ func TestMessagePostingsVisibleUnauthenticated(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&msg)
 	assert.NotEmpty(t, msg.Postings, "postings should be visible to unauthenticated callers (V1 parity)")
 }
+
+// TestPatchMessageGroupidUpdatesDraft verifies the repost flow bug:
+// PATCH /message with groupid must persist the new group to messages_drafts
+// so that the subsequent JoinAndPost (which reads messages_drafts.groupid)
+// posts to the user's chosen group, not the original one.
+//
+// PHP parity: message.php:371-372 does this explicitly after every PATCH.
+// The Go handler accepted groupid in PatchMessageRequest but never wrote it.
+func TestPatchMessageGroupidUpdatesDraft(t *testing.T) {
+	prefix := uniquePrefix("patch_groupid_draft")
+	db := database.DBConn
+
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, group1ID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	// Create message on group1, then move to draft (simulating user pressing "Repost").
+	msgID := createPendingMessage(t, userID, group1ID, prefix)
+
+	rejectBody := map[string]interface{}{"id": msgID, "action": "RejectToDraft"}
+	rejectBytes, _ := json.Marshal(rejectBody)
+	req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(rejectBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Baseline: draft should record the original group.
+	var draftGroupid uint64
+	db.Raw("SELECT groupid FROM messages_drafts WHERE msgid = ?", msgID).Scan(&draftGroupid)
+	assert.Equal(t, group1ID, draftGroupid, "draft should initially record the original group")
+
+	// User changes group selection via PATCH.
+	patchBody := map[string]interface{}{"id": msgID, "groupid": group2ID}
+	patchBytes, _ := json.Marshal(patchBody)
+	req2 := httptest.NewRequest("PATCH", "/api/message?jwt="+token, bytes.NewBuffer(patchBytes))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := getApp().Test(req2)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	// messages_drafts.groupid must be updated — this is the key assertion.
+	db.Raw("SELECT groupid FROM messages_drafts WHERE msgid = ?", msgID).Scan(&draftGroupid)
+	assert.Equal(t, group2ID, draftGroupid, "PATCH with groupid must update messages_drafts.groupid")
+
+	// JoinAndPost without explicit groupid — must read from messages_drafts and land on group2.
+	joinBody := map[string]interface{}{"id": msgID, "action": "JoinAndPost"}
+	joinBytes, _ := json.Marshal(joinBody)
+	req3 := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(joinBytes))
+	req3.Header.Set("Content-Type", "application/json")
+	resp3, err := getApp().Test(req3)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp3.StatusCode)
+
+	var joinResult map[string]interface{}
+	json.NewDecoder(resp3.Body).Decode(&joinResult)
+	assert.Equal(t, float64(group2ID), joinResult["groupid"], "JoinAndPost should use the new group, not the original")
+
+	// Message must be in group2 only.
+	var mgCount1 int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group1ID).Scan(&mgCount1)
+	assert.Equal(t, int64(0), mgCount1, "message must not land on original group1")
+
+	var mgCount2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, group2ID).Scan(&mgCount2)
+	assert.Equal(t, int64(1), mgCount2, "message must land on the user-selected group2")
+}
