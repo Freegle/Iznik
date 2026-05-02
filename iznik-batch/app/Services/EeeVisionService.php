@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Http\Client\Pool;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -13,7 +14,7 @@ use Illuminate\Support\Facades\Log;
  */
 class EeeVisionService
 {
-    public const PROMPT_VERSION = '1.1.0';
+    public const PROMPT_VERSION = '1.2.0';
 
     public const WEEE_CATEGORIES = [
         1 => 'Temperature exchange equipment',
@@ -99,6 +100,241 @@ class EeeVisionService
         return $raw ? $this->parseAndAnnotate($raw) : null;
     }
 
+    /**
+     * Classify multiple images concurrently. Returns array of results (nulls for failures),
+     * in the same order as $jobs. Each job: ['imageUrl' => string, 'context' => array].
+     * Falls back to sequential for drivers that don't support pooling.
+     */
+    public function analyseMany(array $jobs): array
+    {
+        return match ($this->driver) {
+            'claude' => $this->analyseManyClaude($jobs),
+            'gemini' => $this->analyseManyGemini($jobs),
+            'openai' => $this->analyseManyOpenAI($jobs),
+            default  => array_map(fn($job) => $this->analyse($job['imageUrl'], $job['context']), $jobs),
+        };
+    }
+
+    /**
+     * Classify multiple items using text only (no image). Each job: ['context' => array].
+     * Used for the text_only classification mode research.
+     */
+    public function analyseManyTextOnly(array $jobs): array
+    {
+        $system   = $this->buildTextOnlyPrompt();
+        $headers  = [
+            'x-api-key'         => config('freegle.eee.anthropic_api_key'),
+            'anthropic-version' => '2023-06-01',
+            'content-type'      => 'application/json',
+        ];
+
+        $responses = Http::pool(function (Pool $pool) use ($jobs, $system, $headers) {
+            return array_map(function ($job) use ($pool, $system, $headers) {
+                $payload = [
+                    'model'      => $this->getModelName(),
+                    'max_tokens' => 1024,
+                    'system'     => $system,
+                    'messages'   => [['role' => 'user', 'content' => $this->buildUserText($job['context'])]],
+                ];
+                return $pool->withHeaders($headers)->timeout(60)->post('https://api.anthropic.com/v1/messages', $payload);
+            }, $jobs);
+        });
+
+        return array_map(function ($response) {
+            if ($response instanceof \Throwable) {
+                Log::error('EeeVisionService text-only pool exception', ['error' => $response->getMessage()]);
+                return null;
+            }
+            if (!$response->successful()) {
+                Log::warning('EeeVisionService text-only pool error', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
+                return null;
+            }
+            return $this->parseAndAnnotate([
+                'text'          => $response->json('content.0.text'),
+                'input_tokens'  => $response->json('usage.input_tokens', 0),
+                'output_tokens' => $response->json('usage.output_tokens', 0),
+                'cost_usd'      => $this->estimateCost('claude', $response->json('usage.input_tokens', 0), $response->json('usage.output_tokens', 0)),
+            ]);
+        }, $responses);
+    }
+
+    /** Fetch all images concurrently; returns array of base64 data (null on failure), same order as $jobs. */
+    protected function fetchImagesMany(array $jobs): array
+    {
+        $responses = Http::pool(function (Pool $pool) use ($jobs) {
+            return array_map(fn($job) => $pool->timeout(30)->get($job['imageUrl']), $jobs);
+        });
+
+        return array_map(function ($response) {
+            if ($response instanceof \Throwable || !$response->successful()) return null;
+            $mime = trim(explode(';', $response->header('Content-Type') ?? '')[0]);
+            if (!str_starts_with($mime, 'image/')) return null;
+            return ['base64' => base64_encode($response->body()), 'mime_type' => $mime];
+        }, $responses);
+    }
+
+    /**
+     * Pool API calls for jobs whose images fetched successfully.
+     * $buildPayload(job, imageData) → payload array.
+     * $parseResponse(response) → raw array or null.
+     * Returns results in original job order.
+     */
+    protected function poolApiCalls(array $jobs, array $imageData, callable $parseResponse, callable $buildRequest): array
+    {
+        $apiRequests = [];
+        $indexMap    = [];
+        foreach ($imageData as $i => $img) {
+            if ($img === null) continue;
+            $indexMap[]    = $i;
+            $apiRequests[] = $img;
+        }
+
+        if (empty($apiRequests)) {
+            return array_fill(0, count($jobs), null);
+        }
+
+        $apiResponses = Http::pool(function (Pool $pool) use ($apiRequests, $jobs, $indexMap, $buildRequest) {
+            return array_map(function ($img, $k) use ($pool, $jobs, $indexMap, $buildRequest) {
+                return $buildRequest($pool, $jobs[$indexMap[$k]], $img);
+            }, $apiRequests, array_keys($apiRequests));
+        });
+
+        $results = array_fill(0, count($jobs), null);
+        foreach ($apiResponses as $k => $response) {
+            $results[$indexMap[$k]] = $parseResponse($response);
+        }
+        return $results;
+    }
+
+    protected function analyseManyClaude(array $jobs): array
+    {
+        $system  = $this->buildSystemPrompt();
+        $headers = [
+            'x-api-key'         => config('freegle.eee.anthropic_api_key'),
+            'anthropic-version' => '2023-06-01',
+            'content-type'      => 'application/json',
+        ];
+
+        return $this->poolApiCalls(
+            $jobs,
+            $this->fetchImagesMany($jobs),
+            function ($response) {
+                if ($response instanceof \Throwable) {
+                    Log::error('EeeVisionService Claude pool exception', ['error' => $response->getMessage()]);
+                    return null;
+                }
+                if (!$response->successful()) {
+                    Log::warning('EeeVisionService Claude pool error', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
+                    return null;
+                }
+                return $this->parseAndAnnotate([
+                    'text'          => $response->json('content.0.text'),
+                    'input_tokens'  => $response->json('usage.input_tokens', 0),
+                    'output_tokens' => $response->json('usage.output_tokens', 0),
+                    'cost_usd'      => $this->estimateCost('claude', $response->json('usage.input_tokens', 0), $response->json('usage.output_tokens', 0)),
+                ]);
+            },
+            function ($pool, $job, $img) use ($system, $headers) {
+                $payload = [
+                    'model' => $this->getModelName(), 'max_tokens' => 1024, 'system' => $system,
+                    'messages' => [['role' => 'user', 'content' => [
+                        ['type' => 'image', 'source' => ['type' => 'base64', 'media_type' => $img['mime_type'], 'data' => $img['base64']]],
+                        ['type' => 'text', 'text' => $this->buildUserText($job['context'])],
+                    ]]],
+                ];
+                return $pool->withHeaders($headers)->timeout(90)->post('https://api.anthropic.com/v1/messages', $payload);
+            }
+        );
+    }
+
+    protected function analyseManyGemini(array $jobs): array
+    {
+        $system = $this->buildSystemPrompt();
+        $model  = $this->getModelName();
+        $apiKey = config('freegle.eee.gemini_api_key');
+        $url    = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key={$apiKey}";
+
+        return $this->poolApiCalls(
+            $jobs,
+            $this->fetchImagesMany($jobs),
+            function ($response) {
+                if ($response instanceof \Throwable) {
+                    Log::error('EeeVisionService Gemini pool exception', ['error' => $response->getMessage()]);
+                    return null;
+                }
+                if (!$response->successful()) {
+                    Log::warning('EeeVisionService Gemini pool error', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
+                    return null;
+                }
+                $in  = $response->json('usageMetadata.promptTokenCount', 0);
+                $out = $response->json('usageMetadata.candidatesTokenCount', 0);
+                return $this->parseAndAnnotate([
+                    'text'          => $response->json('candidates.0.content.parts.0.text'),
+                    'input_tokens'  => $in,
+                    'output_tokens' => $out,
+                    'cost_usd'      => $this->estimateCost('gemini', $in, $out),
+                ]);
+            },
+            function ($pool, $job, $img) use ($system, $url) {
+                $payload = [
+                    'system_instruction' => ['parts' => [['text' => $system]]],
+                    'contents'           => [['parts' => [
+                        ['text' => $this->buildUserText($job['context'])],
+                        ['inline_data' => ['mime_type' => $img['mime_type'], 'data' => $img['base64']]],
+                    ]]],
+                    'generationConfig'   => ['response_mime_type' => 'application/json', 'temperature' => 0.1],
+                ];
+                return $pool->timeout(90)->post($url, $payload);
+            }
+        );
+    }
+
+    protected function analyseManyOpenAI(array $jobs): array
+    {
+        $system = $this->buildSystemPrompt();
+        $token  = config('freegle.eee.openai_api_key');
+
+        // OpenAI can fetch image URLs directly, so no base64 pre-fetch needed.
+        $fakeImageData = array_fill(0, count($jobs), ['placeholder' => true]);
+
+        return $this->poolApiCalls(
+            $jobs,
+            $fakeImageData,
+            function ($response) {
+                if ($response instanceof \Throwable) {
+                    Log::error('EeeVisionService OpenAI pool exception', ['error' => $response->getMessage()]);
+                    return null;
+                }
+                if (!$response->successful()) {
+                    Log::warning('EeeVisionService OpenAI pool error', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
+                    return null;
+                }
+                $in  = $response->json('usage.prompt_tokens', 0);
+                $out = $response->json('usage.completion_tokens', 0);
+                return $this->parseAndAnnotate([
+                    'text'          => $response->json('choices.0.message.content'),
+                    'input_tokens'  => $in,
+                    'output_tokens' => $out,
+                    'cost_usd'      => $this->estimateCost('openai', $in, $out),
+                ]);
+            },
+            function ($pool, $job, $_img) use ($system, $token) {
+                $payload = [
+                    'model' => $this->getModelName(), 'max_tokens' => 1024, 'temperature' => 0.1,
+                    'response_format' => ['type' => 'json_object'],
+                    'messages' => [
+                        ['role' => 'system', 'content' => $system],
+                        ['role' => 'user', 'content' => [
+                            ['type' => 'text', 'text' => $this->buildUserText($job['context'])],
+                            ['type' => 'image_url', 'image_url' => ['url' => $job['imageUrl'], 'detail' => 'low']],
+                        ]],
+                    ],
+                ];
+                return $pool->withToken($token)->timeout(90)->post('https://api.openai.com/v1/chat/completions', $payload);
+            }
+        );
+    }
+
     // -------------------------------------------------------------------------
     // Prompt
     // -------------------------------------------------------------------------
@@ -119,7 +355,7 @@ Step 1 — Photo quality: Before examining the item, rate the photo itself.
   photo_quality_notes: brief note on any issues (blur, poor lighting, item only partially visible, multiple unrelated items, etc.), or null if fine.
   A low photo_quality should lower your confidence on ALL attributes below.
 
-Step 2 — Power source: Does this item use electrical power of any kind (mains plug, battery, USB, solar, induction)? Consider unusual items: aquariums (pump/heater/light), salt lamps (bulb), baby bouncers (vibration motor), dimmer switches (electronic component), electric toothbrushes, powered toys, LED fairy lights.
+Step 2 — Is this EEE? Under UK/EU WEEE regulations, an item is EEE if it is *dependent on electric currents or electromagnetic fields in order to work properly* — meaning electricity is required for its basic function, not merely for a supplementary or convenience feature. Apply this definition strictly based on what you can observe in the photo and item description.
 
 Step 3 — If electrical, assign to one EU WEEE category:
 {$categories}
@@ -161,6 +397,61 @@ Return ONLY valid JSON with no markdown or explanation:
   "value_band_confidence": 0.0-1.0,
   "short_description": "one sentence from giver perspective",
   "long_description": "two to three sentences from giver perspective"
+}
+PROMPT;
+    }
+
+    protected function buildTextOnlyPrompt(): string
+    {
+        $categories = implode("\n", array_map(
+            fn($k, $v) => "  {$k}. {$v}",
+            array_keys(self::WEEE_CATEGORIES),
+            self::WEEE_CATEGORIES
+        ));
+
+        return <<<PROMPT
+You are classifying a second-hand household item being given away free on Freegle, based on its title and description only — no image is provided.
+
+Step 1 — Is this EEE? Under UK/EU WEEE regulations, an item is EEE if it is *dependent on electric currents or electromagnetic fields in order to work properly* — meaning electricity is required for its basic function, not merely for a supplementary or convenience feature. Apply this definition strictly based on the title and description.
+
+Step 2 — If electrical, assign to one EU WEEE category:
+{$categories}
+
+Return ONLY valid JSON with no markdown or explanation:
+{
+  "photo_quality": null,
+  "photo_quality_notes": null,
+  "is_eee": true/false,
+  "is_eee_confidence": 0.0-1.0,
+  "is_eee_reasoning": "one sentence chain of thought",
+  "is_unusual_eee": true/false,
+  "unusual_eee_reason": "reason or null",
+  "weee_category": 1-6 or null,
+  "weee_category_name": "name or null",
+  "weee_category_confidence": 0.0-1.0,
+  "primary_item": "main item name",
+  "brand": null,
+  "brand_confidence": 0.0,
+  "model_number": null,
+  "model_number_confidence": 0.0,
+  "material_primary": null,
+  "material_secondary": null,
+  "material_confidence": 0.0,
+  "weight_kg_min": null,
+  "weight_kg_max": null,
+  "weight_kg_confidence": 0.0,
+  "size_cm": null,
+  "size_confidence": 0.0,
+  "condition": "Unknown",
+  "condition_confidence": 0.0,
+  "item_complete": null,
+  "item_complete_confidence": 0.0,
+  "item_complete_notes": null,
+  "accessories_visible": [],
+  "value_band_gbp": null,
+  "value_band_confidence": 0.0,
+  "short_description": "one sentence from giver perspective",
+  "long_description": null
 }
 PROMPT;
     }
@@ -315,14 +606,16 @@ PROMPT;
     protected function callTogether(string $imageUrl, string $system, string $userText): ?array
     {
         // Together.ai uses the OpenAI-compatible chat completions endpoint.
+        // Llama NIM vision models reject a separate 'system' role when an image is present,
+        // so we fold the system prompt into the user message.
         $payload = [
-            'model'       => $this->getModelName(),
-            'max_tokens'  => 1024,
-            'temperature' => 0.1,
-            'messages'    => [
-                ['role' => 'system', 'content' => $system],
+            'model'           => $this->getModelName(),
+            'max_tokens'      => 2048,
+            'temperature'     => 0.1,
+            'response_format' => ['type' => 'json_object'],
+            'messages'        => [
                 ['role' => 'user', 'content' => [
-                    ['type' => 'text', 'text' => $userText],
+                    ['type' => 'text', 'text' => $system . "\n\n" . $userText],
                     ['type' => 'image_url', 'image_url' => ['url' => $imageUrl]],
                 ]],
             ],
@@ -439,10 +732,13 @@ PROMPT;
                 Log::warning('EeeVisionService image fetch failed', ['url' => $url, 'status' => $response->status()]);
                 return null;
             }
-            $contentType = $response->header('Content-Type') ?? 'image/jpeg';
-            // Normalise to just mime type without params.
-            $mimeType = explode(';', $contentType)[0];
-            return ['base64' => base64_encode($response->body()), 'mime_type' => trim($mimeType)];
+            $contentType = $response->header('Content-Type') ?? '';
+            $mimeType = trim(explode(';', $contentType)[0]);
+            if (!str_starts_with($mimeType, 'image/')) {
+                Log::warning('EeeVisionService image fetch returned non-image content', ['url' => $url, 'content_type' => $contentType]);
+                return null;
+            }
+            return ['base64' => base64_encode($response->body()), 'mime_type' => $mimeType];
         } catch (\Exception $e) {
             Log::error('EeeVisionService image fetch exception', ['url' => $url, 'error' => $e->getMessage()]);
             return null;
