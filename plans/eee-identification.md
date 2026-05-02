@@ -685,6 +685,65 @@ Changes applied:
 
 ---
 
+## Wide validation run: 24 item types (2026-05-02)
+
+Run: `eee:feature-experiment --items="Washing Machine,Fridge Freezer,..." --sample=2`
+
+### Scoring
+
+| Category | Items | Images | contains_eee correct | is_eee_from_text correct |
+|---|---|---|---|---|
+| Clear EEE | 15 | 30 | 27/30 (3 clipart illustrations) | 21/30 (9 "uncertain" for ambiguous titles) |
+| Clear non-EEE | 7 | 14 | 13/14 (1 background item) | 14/14 |
+| Edge cases | 2 | 4 | 4/4 | 4/4 |
+| **Total** | **24** | **48** | **44/48 (92%)** | **39/48 (81%)** |
+
+### contains_eee_components accuracy
+
+**Perfect (2/2):** Washing Machine, Tumble Dryer, TV, Dishwasher, Laptop, DVD player, Printer, Sewing Machine, Fish tank, Sofa, Wardrobe, Upright Piano, Wheelbarrow, Dining table, Wheelchair
+
+**Partial — clipart/illustration:** Microwave (1 clipart), Vacuum cleaner (1 clipart), Fridge Freezer (1 clipart), Christmas tree (correctly: 1 real tree with no lights, 1 pre-lit)
+
+**False positive:** Ironing Board image 1 — model detected electrical items in the background (on a worktop behind the ironing board) and listed them, correctly noting in observation_notes they are "not the offered item". The `is_eee` was still correctly non-EEE. This is a background-clutter issue.
+
+### is_eee_from_text accuracy
+
+**"uncertain" returns are largely correct, not errors.** Items where the title alone is genuinely ambiguous:
+- "Kettle" → uncertain ✓ (stovetop kettles exist)
+- "Bread Maker" (no title signal) → uncertain ✓ (but contains_eee=true from image)
+- "Sewing Machine" → uncertain ✓ (hand-cranked machines exist)
+- "Dehumidifier" (no title signal) → uncertain ✓ (but contains_eee=true from image)
+- "Fridge Freezer" (image 1 title only) → uncertain ✓ (the image shows the mains cable)
+- "Treadmill" → uncertain for one image ✓ (manual treadmill with battery display is real)
+- "Treadmill" → EEE for the other ✓ (the description mentioned motorised indicators)
+
+The model is appropriately conservative on `is_eee_from_text` — it won't say "EEE" unless the title/description explicitly names an electrical power source. This is correct: we don't want false positives from inference.
+
+**Production implication**: A final `is_eee` determination will combine:
+1. `is_eee_from_text` (authoritative when not null)
+2. `contains_eee_components` from image (authoritative for "has electrical parts")
+3. Category prior (for items like "Kettle" that are virtually always electric — can be applied after classification, not during)
+
+### Notable behaviours observed
+
+**1. Model reads product labels from images.** Petrol Chainsaw with title "Chainsaw" → model read "PETROL CHAIN SAW JCB-PCS38AF" from a label on the body → correctly `is_eee=false`. Useful free signal.
+
+**2. Background item detection.** Ironing Board image showed electrical items on a worktop behind it. Model listed them but correctly noted "not the offered item" in observation_notes. This produces a false positive in `contains_eee_components`. Fix: add "only include components that appear to be part of the item being offered" to the prompt.
+
+**3. Clipart/illustration handling is consistent.** When the photo is a generic stock image or clipart, the model always notes it and may return fewer components. `is_eee_from_text` still works correctly from the text signals regardless of image quality.
+
+**4. Fish tank is handled correctly by design.** Image 1 had text "No pumps, lights or filters" — model detected the lid hood visually but read the text signal and returned `is_eee: non-EEE`. Image 2 had filter and heater visible → `contains_eee=true`. The two-signal approach naturally handles this variability per listing.
+
+**5. Pre-lit Christmas tree vs real tree.** Image 1 = living tree in pot (no electrical components, non-EEE). Image 2 = boxed pre-lit artificial tree (LED lights on box artwork → `contains_eee=true`, text "pre-lit LED lights" → `is_eee=true`). Perfect discrimination without any special-casing.
+
+### One prompt fix needed
+
+Add to PART 1 of the prompt: "Only include components that appear to be part of the item being offered — exclude items visible in the background that are clearly separate."
+
+This prevents the background-item false positive while keeping everything else unchanged.
+
+---
+
 ## Two EEE classifications: strictly EEE vs contains-EEE-components
 
 *Observation recorded 2026-05-02 from hard-cases research.*
