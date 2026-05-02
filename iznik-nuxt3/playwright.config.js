@@ -106,6 +106,24 @@ module.exports = defineConfig({
                     // the e2e suite does not navigate into, so it is pure
                     // denominator noise. Unit tests cover it.
                     !sourcePath.includes('components/ChatMobileNavbar') &&
+                    // DonationButton: loads PayPal SDK via top-level await;
+                    // coverage of its branches (GTM tracking, PayPal button
+                    // click) depends on whether the external SDK resolves
+                    // before monocart snapshots the bundle — non-deterministic
+                    // in CI. Covered 13–18/29 lines per run (45–62%), making
+                    // it pure denominator noise on PHP-only PRs. Vitest unit
+                    // tests cover the component logic independently.
+                    !sourcePath.includes('components/DonationButton') &&
+                    // pages/index.vue: Nuxt's SSR chunk-splitter emits
+                    // different relevant-line counts per build (25 vs 31
+                    // observed across master/PR runs with identical source).
+                    // The non-determinism comes from the production container
+                    // building at startup rather than image-build time, so
+                    // each CI run gets a different Rollup/Nitro chunk layout.
+                    // Homepage flows are exercised throughout the e2e suite;
+                    // the denominator variance causes false coverage drops
+                    // on PRs that touch no frontend code.
+                    !sourcePath.includes('pages/index') &&
                     sourcePath.length < 300
                   )
                 },
