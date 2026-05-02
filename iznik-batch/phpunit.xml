@@ -47,7 +47,7 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
-        <env name="FREEGLE_MAIL_ENABLED_TYPES" value="Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry" force="true"/>
+        <env name="FREEGLE_MAIL_ENABLED_TYPES" value="Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry" force="true"/>
         <env name="VIEW_CHECK_TIMESTAMPS" value="false" force="true"/>
     </php>
 </phpunit>

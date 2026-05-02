@@ -964,10 +964,11 @@ const test = base.test.extend({
     // fresh Playwright process, and the page is closed to abort the frozen test in
     // seconds rather than waiting for the 600s test timeout.
     //
-    // The timeout is 10s (not 3s) to avoid false positives: page.evaluate() can
-    // legitimately block while a slow navigation completes (e.g. Explore page
-    // loading hundreds of posts). Genuine V8 renderer freezes are indefinite, so
-    // 10s is still far more than enough to catch them.
+    // The timeout is 25s to avoid false positives: page.evaluate() can
+    // legitimately block while a slow navigation completes (e.g. homepage loading
+    // in a resource-constrained CI environment after a long test run can take 14+s).
+    // Genuine V8 renderer freezes are indefinite, so 25s is still far more than
+    // enough to catch them while giving legitimate slow page loads more headroom.
     const FREEZE_SPECS_FILE = '/tmp/playwright-freeze-specs.txt'
     let heartbeatTimer = null
     let heartbeatBusy = false
@@ -984,11 +985,11 @@ const test = base.test.extend({
         await Promise.race([
           page.evaluate(() => 1),
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('freeze')), 10000)
+            setTimeout(() => reject(new Error('freeze')), 25000)
           ),
         ])
       } catch (err) {
-        // Only treat as a renderer freeze if the race was won by OUR 10s timeout
+        // Only treat as a renderer freeze if the race was won by OUR 25s timeout
         // sentinel. page.evaluate() can also throw immediately (e.g. "Execution
         // context was destroyed" during a navigation) — that is healthy renderer
         // behaviour, not a freeze. Treating any exception as a freeze produces

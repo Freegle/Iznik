@@ -3,11 +3,13 @@
 namespace App\Mail\Digest;
 
 use App\Mail\MjmlMailable;
+use App\Mail\Traits\AmpEmail;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\User;
 use App\Services\UnifiedDigestService;
 use App\Support\EmojiUtils;
+use Carbon\Carbon;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
@@ -21,6 +23,7 @@ use Illuminate\Support\Facades\DB;
  */
 class UnifiedDigest extends MjmlMailable
 {
+    use AmpEmail;
     use LoggableEmail;
     use TrackableEmail;
 
@@ -29,6 +32,8 @@ class UnifiedDigest extends MjmlMailable
     public string $deliveryUrl;
 
     protected Collection $preparedPosts;
+
+    protected int $digestNumber;
 
     public function __construct(
         protected User $user,
@@ -41,10 +46,10 @@ class UnifiedDigest extends MjmlMailable
         $this->userSite = config('freegle.sites.user');
         $this->deliveryUrl = config('freegle.delivery.base_url');
 
-        // Prepare posts with tracking URLs and decoded text.
-        $this->preparedPosts = $this->preparePosts();
+        // Look up digest number for this user.
+        $this->digestNumber = $this->getDigestNumber();
 
-        // Initialize email tracking.
+        // Initialize email tracking BEFORE preparePosts so trackedUrl() works.
         $userId = $this->user->exists ? $this->user->id : null;
 
         $this->initTracking(
@@ -56,8 +61,13 @@ class UnifiedDigest extends MjmlMailable
             [
                 'mode' => $this->mode,
                 'post_count' => $this->posts->count(),
+                'digest_number' => $this->digestNumber,
+                'has_amp' => $this->isAmpEnabled(),
             ]
         );
+
+        // Prepare posts with tracking URLs and decoded text.
+        $this->preparedPosts = $this->preparePosts();
     }
 
     /**
@@ -73,17 +83,40 @@ class UnifiedDigest extends MjmlMailable
      */
     public function build(): static
     {
-        return $this->mjmlView('emails.mjml.digest.unified', array_merge([
+        $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
             'posts' => $this->preparedPosts,
             'postCount' => $this->posts->count(),
+            'mode' => $this->mode,
             'sponsors' => $this->sponsors,
             'settingsUrl' => $this->trackedUrl($this->userSite . '/settings', 'footer_settings', 'settings'),
-            'browseUrl' => $this->trackedUrl($this->userSite . '/browse', 'browse_button', 'browse'),
+            'unsubscribeUrl' => $this->trackedUrl($this->userSite . '/unsubscribe', 'footer_unsubscribe', 'unsubscribe'),
+            'browseUrl' => $this->trackedUrl($this->userSite . '/browse', 'browse_cta', 'browse'),
             'userSite' => $this->userSite,
         ], $this->getTrackingData()), 'emails.text.digest.unified')
             ->to($this->user->email_preferred)
             ->applyLogging('UnifiedDigest');
+
+        // Render AMP variant if enabled.
+        if ($this->isAmpEnabled()) {
+            $ampPosts = $this->prepareAmpPosts();
+
+            $this->renderAmpTemplate('emails.amp.digest.unified', [
+                'user' => $this->user,
+                'posts' => $ampPosts,
+                'postCount' => $this->posts->count(),
+                'settingsUrl' => $this->trackedUrl($this->userSite . '/settings', 'amp_settings', 'settings'),
+                'unsubscribeUrl' => $this->trackedUrl($this->userSite . '/unsubscribe', 'amp_unsubscribe', 'unsubscribe'),
+                'browseUrl' => $this->trackedUrl($this->userSite . '/browse', 'amp_browse', 'browse'),
+                'userSite' => $this->userSite,
+            ]);
+
+            $result->withSymfonyMessage(function ($message) {
+                $this->applyAmpToMessage($message);
+            });
+        }
+
+        return $result;
     }
 
     /**
@@ -169,9 +202,23 @@ class UnifiedDigest extends MjmlMailable
      */
     protected function preparePosts(): Collection
     {
-        return $this->posts->map(function ($post, $index) {
+        $totalPosts = $this->posts->count();
+
+        // Get user's location for distance calculation.
+        $userLat = null;
+        $userLng = null;
+        if ($this->user->lastlocation) {
+            $loc = DB::table('locations')->where('id', $this->user->lastlocation)->first(['lat', 'lng']);
+            if ($loc) {
+                $userLat = (float) $loc->lat;
+                $userLng = (float) $loc->lng;
+            }
+        }
+
+        return $this->posts->map(function ($post, $index) use ($totalPosts, $userLat, $userLng) {
             $message = $post['message'];
             $postedToGroups = $post['postedToGroups'];
+            $isOffer = $message->type === 'Offer';
 
             // Get group names for "Posted to:" display.
             $postedToText = count($postedToGroups) > 1
@@ -180,6 +227,18 @@ class UnifiedDigest extends MjmlMailable
 
             // Get image URL via delivery service.
             $imageUrl = $this->getMessageImageUrl($message);
+
+            // Use type-specific placeholder if no photo.
+            $placeholderUrl = $isOffer
+                ? config('freegle.images.offer_placeholder')
+                : config('freegle.images.wanted_placeholder');
+
+            // Create tracked image URL with scroll depth.
+            $scrollPercent = $totalPosts > 0 ? round(($index / $totalPosts) * 100) : 0;
+            $displayImageUrl = $imageUrl ?? $placeholderUrl;
+            $trackedImage = $displayImageUrl !== null
+                ? $this->trackedImageUrl($displayImageUrl, "image_{$index}", $scrollPercent)
+                : null;
 
             // Decode emoji sequences in message text.
             $messageText = $message->textbody
@@ -193,17 +252,98 @@ class UnifiedDigest extends MjmlMailable
                 'view_message'
             );
 
+            // Format arrival time for display.
+            $arrival = $message->arrival instanceof Carbon ? $message->arrival : Carbon::parse($message->arrival);
+            $arrivalFormatted = $arrival->format('D j M, ga'); // e.g. "Sun 1 Mar, 9pm"
+            $arrivalIso = $arrival->toIso8601String();
+
+            // Calculate distance from user.
+            $distanceText = null;
+            if ($userLat !== null && $userLng !== null && $message->lat && $message->lng) {
+                $miles = $this->haversineDistance($userLat, $userLng, (float) $message->lat, (float) $message->lng);
+                $distanceText = $miles < 1 ? '< 1 mile' : round($miles) . ' miles';
+            }
+
             return [
                 'message' => $message,
                 'messageText' => $messageText,
                 'messageUrl' => $messageUrl,
                 'imageUrl' => $imageUrl,
+                'displayImageUrl' => $displayImageUrl,
+                'trackedImageUrl' => $trackedImage,
+                'isPlaceholder' => $imageUrl === null,
                 'postedToText' => $postedToText,
                 'type' => $message->type,
                 'subject' => $message->subject,
                 'itemName' => $this->extractItemName($message->subject),
+                'locationName' => $this->extractLocationName($message->subject),
+                'arrivalFormatted' => $arrivalFormatted,
+                'arrivalIso' => $arrivalIso,
+                'distanceText' => $distanceText,
             ];
         });
+    }
+
+    /**
+     * Extract location name from subject line.
+     * Returns the text in parentheses at the end, e.g. "Edinburgh" from "OFFER: Sofa (Edinburgh)".
+     */
+    protected function extractLocationName(string $subject): ?string
+    {
+        if (preg_match('/\(([^)]+)\)\s*$/', $subject, $matches)) {
+            return $matches[1];
+        }
+
+        return null;
+    }
+
+    /**
+     * Haversine distance in miles between two lat/lng points.
+     */
+    protected function haversineDistance(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $earthRadiusMiles = 3959;
+        $dLat = deg2rad($lat2 - $lat1);
+        $dLng = deg2rad($lng2 - $lng1);
+        $a = sin($dLat / 2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng / 2) ** 2;
+
+        return $earthRadiusMiles * 2 * atan2(sqrt($a), sqrt(1 - $a));
+    }
+
+    /**
+     * Prepare posts with AMP reply URLs and tokens.
+     */
+    protected function prepareAmpPosts(): Collection
+    {
+        $ampApiBase = config('freegle.amp.api_base', $this->userSite);
+        $userId = $this->user->id;
+
+        return $this->preparedPosts->map(function ($post) use ($ampApiBase, $userId) {
+            $messageId = $post['message']->id;
+            $token = $this->generateToken($userId, $messageId);
+
+            $post['ampReplyUrl'] = "{$ampApiBase}/amp/digest/reply?" . http_build_query([
+                'rt' => $token,
+                'uid' => $userId,
+                'mid' => $messageId,
+            ]);
+
+            // Fallback URL for non-AMP clients or AMP form errors.
+            $post['fallbackReplyUrl'] = $post['messageUrl'];
+
+            return $post;
+        });
+    }
+
+    /**
+     * Get the digest number for this user (count of previously sent digests).
+     */
+    protected function getDigestNumber(): int
+    {
+        return (int) DB::table('email_tracking')
+            ->where('userid', $this->user->id)
+            ->where('email_type', 'UnifiedDigest')
+            ->count();
     }
 
     /**
