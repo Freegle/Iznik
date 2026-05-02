@@ -715,7 +715,8 @@ describe('MessageExpanded', () => {
       expect(wrapper.find('.reply-button').exists()).toBe(false)
     })
 
-    it('expands reply section when reply button clicked', async () => {
+    it('expands reply section when reply button clicked (desktop)', async () => {
+      mockBreakpoint.value = 'lg'
       const wrapper = await createWrapper()
       expect(wrapper.find('.message-reply-section').exists()).toBe(false)
 
@@ -723,6 +724,7 @@ describe('MessageExpanded', () => {
       await flushPromises()
 
       expect(wrapper.find('.message-reply-section').exists()).toBe(true)
+      mockBreakpoint.value = 'md'
     })
 
     it('shows cancel button in modal/fullscreen mode', async () => {
@@ -772,10 +774,11 @@ describe('MessageExpanded', () => {
   })
 
   describe('replied state', () => {
-    it('shows confirmation alert after sending reply', async () => {
+    it('shows confirmation alert after sending reply (desktop)', async () => {
+      mockBreakpoint.value = 'lg'
       const wrapper = await createWrapper()
 
-      // Expand reply section
+      // Expand reply section (only works on desktop lg+)
       await wrapper.find('.reply-button').trigger('click')
       await flushPromises()
 
@@ -786,6 +789,7 @@ describe('MessageExpanded', () => {
 
       expect(wrapper.find('.b-alert').exists()).toBe(true)
       expect(wrapper.text()).toContain('Message sent')
+      mockBreakpoint.value = 'md'
     })
   })
 
@@ -1191,11 +1195,47 @@ describe('MessageExpanded', () => {
       expect(comp.vm.showMessagePhotosModal).toBe(true)
     })
 
-    it('expandReply sets replyExpanded to true', async () => {
+    it('expandReply sets replyExpanded to true on desktop (lg+)', async () => {
+      mockBreakpoint.value = 'lg'
       const wrapper = await createWrapper()
       const comp = wrapper.findComponent(MessageExpanded)
       comp.vm.expandReply()
       expect(comp.vm.replyExpanded).toBe(true)
+      mockBreakpoint.value = 'md' // restore default
+    })
+
+    it('expandReply navigates to chat reply page on mobile/tablet', async () => {
+      const mockPush = vi.fn()
+      globalThis.__testUseRouter = () => ({
+        push: mockPush,
+        replace: vi.fn(),
+        currentRoute: { value: { path: '/' } },
+      })
+
+      mockBreakpoint.value = 'sm'
+      const wrapper = await createWrapper()
+      const comp = wrapper.findComponent(MessageExpanded)
+      comp.vm.expandReply()
+      expect(comp.vm.replyExpanded).toBe(false)
+      expect(mockPush).toHaveBeenCalledWith({
+        path: '/chats/reply',
+        query: { replyto: mockMessage.value.id },
+      })
+
+      mockBreakpoint.value = 'md' // restore default
+      delete globalThis.__testUseRouter
+    })
+
+    it('expandReply defaults to inline reply when breakpoint unknown', async () => {
+      // When breakpoint is null/empty (not yet set by BreakpointFettler), we
+      // default to inline reply to avoid spurious navigation on desktop fast loads.
+      mockBreakpoint.value = ''
+      const wrapper = await createWrapper()
+      const comp = wrapper.findComponent(MessageExpanded)
+      comp.vm.expandReply()
+      expect(comp.vm.replyExpanded).toBe(true)
+
+      mockBreakpoint.value = 'md' // restore default
     })
 
     it('sent sets replied to true and replyExpanded to false', async () => {

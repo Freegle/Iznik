@@ -594,6 +594,7 @@ import {
   onMounted,
   onUnmounted,
 } from 'vue'
+import { useRouter } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
 import { useMe } from '~/composables/useMe'
@@ -650,6 +651,7 @@ const props = defineProps({
 
 const emit = defineEmits(['zoom', 'close'])
 
+const router = useRouter()
 const miscStore = useMiscStore()
 const mobileStore = useMobileStore()
 const { me, loggedIn } = useMe()
@@ -862,14 +864,20 @@ function stopThumbnailAutoScroll() {
 }
 
 function expandReply() {
-  console.log(
-    'DEBUG expandReply called, replyable:',
-    props.replyable,
-    'replied:',
-    replied.value,
-    'fromme:',
-    fromme.value
-  )
+  // On mobile/tablet (xs/sm/md breakpoints), navigate to the dedicated chat
+  // reply pane for a simpler UX. Desktop (lg+) keeps the inline reply section
+  // so users can see the post alongside. When breakpoint is null (not yet
+  // determined by BreakpointFettler), default to inline to avoid spurious
+  // navigation on fast desktop loads before the ResizeObserver fires.
+  const mobileBreakpoints = ['xs', 'sm', 'md']
+  if (mobileBreakpoints.includes(miscStore.breakpoint)) {
+    router.push({
+      path: '/chats/reply',
+      query: { replyto: props.id },
+    })
+    return
+  }
+
   replyExpanded.value = true
 }
 

@@ -1855,7 +1855,7 @@ jobs:
             if [ "$CIRCLE_BRANCH" = "master" ]; then
               CHANGED_FILES=$(git diff-tree --no-commit-id --name-only -r HEAD)
             else
-              CHANGED_FILES=$(git diff --name-only origin/master...HEAD)
+              CHANGED_FILES=$(git diff --name-only origin/master...HEAD 2>/dev/null || true)
             fi
 
             if [ -n "$CHANGED_FILES" ]; then
