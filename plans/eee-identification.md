@@ -680,6 +680,52 @@ The reconciliation call sees both the image and the competing explanations. It i
 3. Do not use reconciler confidence scores without calibration
 4. Keep `dominant_signal` and `reconciler_reasoning` in the stored output so every decision is auditable and can be reviewed when the model is wrong
 
+### Experiment results: synthetic rationale pairs (2026-05-02)
+
+*Method: 10 cases with hand-written realistic rationales and known correct answers. Text-only and image-only rationales written to match what the actual model returns. Judge call is text-only (no image). Command: `eee:judge-experiment --show-reasoning`.*
+
+| Item | Signals disagree? | Expected | Judge picked | Correct? |
+|---|---|---|---|---|
+| Gas Cooker | yes (text=non-EEE, image=EEE) | text | **ambiguous** | ✗ |
+| Exercise Bike | yes (text=non-EEE, image=EEE) | text | **image** | ✗ |
+| Chainsaw (power cord visible) | yes (text=non-EEE, image=EEE) | image | image | ✓ |
+| Washing Machine | no (both EEE) | both | both | ✓ |
+| Digital Piano | yes (text=EEE, image=non-EEE) | text | text | ✓ |
+| Wheelchair (described as manual) | no (both non-EEE) | both | both | ✓ |
+| Sofa (USB+recliner in description) | yes (text=EEE, image=non-EEE) | text | text | ✓ |
+| Fish Tank | yes (text=non-EEE, image=EEE) | ambiguous | image | (not scored) |
+| Petrol Lawnmower | no (both non-EEE) | both | both | ✓ |
+| Electric Cooker | no (both EEE) | both | both | ✓ |
+
+**Score: 7/9 (78%) on unambiguous cases.**
+
+#### What the judge got right
+
+- **Chainsaw with cord**: correctly identified the power-cord observation as direct physical evidence overriding the text's base-rate default.
+- **Digital Piano**: correctly identified the explicit product name ("Digital Piano") as more epistemically reliable than visual appearance.
+- **Sofa with USB**: correctly identified explicit textual description of powered features as overriding visual appearance.
+- **All agreement cases**: handled cleanly.
+
+#### What the judge got wrong, and why
+
+**Gas Cooker (judge said "ambiguous" instead of "text"):**  
+The judge picked up on something the synthetic rationale understated: it noted that "circular heating elements" are visually diagnostic of electric cookers, because gas hobs have grated burners not flat circular zones. This is actually a reasonable observation — the visual signal IS more informative than "looks like a cooker" implies. The synthetic rationale was too vague about what exactly the image shows. In the real world, if the image clearly shows gas burner grates, the image_only reasoning would say non-EEE. If it shows flat ceramic zones, both text and image might agree on gas cooker = non-EEE. The failure here is partly an artefact of imprecise synthetic rationale, not a clean judge error.
+
+**Exercise Bike (judge sided with image = EEE):**  
+The judge's reasoning is defensible: a digital display with control buttons *does* require electricity, and observing that it's present on *this specific item* is direct evidence. Whether an exercise bike with an electronic display constitutes EEE depends on whether the display is a "basic function" or supplementary. This is a genuinely contested case, and the judge's choice to side with the image may not be wrong — it exposed a gap in our own expected-answer definition.
+
+#### Limitations of the synthetic approach
+
+1. **Imprecise visual descriptions**: Real image_only reasoning describes *specific* visual features ("flat ceramic hob zones" vs "gas burner grates"). Our synthetic rationale said "circular elements" which is ambiguous. The judge correctly flagged this ambiguity.
+
+2. **Position bias untested**: Text was always "Assessment A" in the experiment. To properly test, every disagreement case should be run twice with order swapped; the correct answer should be stable regardless of order.
+
+3. **78% on synthetic ≠ 78% on real outputs**: Synthetic rationales are cleaner and more explicit than what models actually produce. Real rationales may be less diagnostic, affecting judge accuracy in either direction.
+
+#### Bottom line
+
+The judge approach is more viable than the LLM-faithfulness research suggested for this *specific* task. The judge is not being asked to introspect on its own computation — it is being asked to evaluate two externally-provided arguments for logical quality and directness of evidence, which is a different (and more tractable) task. 78% on synthetic cases is a reasonable starting point, and the two failures are both at least defensible rather than random. The main caveat is that position bias testing is still needed.
+
 ### Implementation plan (after research)
 
 New fields in `eee_item_types` and `eee_classifications`:
