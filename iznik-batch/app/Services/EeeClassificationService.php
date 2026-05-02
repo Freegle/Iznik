@@ -82,9 +82,13 @@ class EeeClassificationService
     {
         $attachments = DB::table('messages_attachments as ma')
             ->join('messages as m', 'm.id', '=', 'ma.msgid')
-            ->join('messages_items as mi', 'mi.msgid', '=', 'm.id')
-            ->join('items as i', 'i.id', '=', 'mi.itemid')
-            ->where('i.name', $itemName)
+            ->whereExists(function ($query) use ($itemName) {
+                $query->select(DB::raw(1))
+                    ->from('messages_items as mi')
+                    ->join('items as i', 'i.id', '=', 'mi.itemid')
+                    ->whereColumn('mi.msgid', 'm.id')
+                    ->where('i.name', $itemName);
+            })
             ->whereNotNull('ma.externaluid')
             ->where('ma.archived', 0)
             ->whereRaw("(ma.externalmods IS NULL OR JSON_EXTRACT(ma.externalmods, '$.ai') IS NULL)")
