@@ -1230,19 +1230,13 @@ const testWithFixtures = test.extend({
       // first, causing the message to be posted to a group the test mod cannot see.
       // Explicitly selecting the test group avoids cross-group pollution.
       if (groupId) {
-        // The group dropdown only appears when multiple groups are near the postcode.
-        // If only one group exists it is auto-selected and the dropdown is never shown.
-        const groupDropdown = page.locator('#communitieslist')
-        const appeared = await groupDropdown
-          .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
-          .then(() => true)
-          .catch(() => false)
-        if (appeared) {
-          await groupDropdown.selectOption(String(groupId))
-          console.log(`Selected group ${groupId} in postMessage dropdown`)
-        } else {
-          console.log(`Group dropdown not shown (single group auto-selected), skipping groupId selection`)
-        }
+        // The give flow uses ComposeGroup (inside .community-select-wrapper), not
+        // GroupSelect (#communitieslist). ComposeGroup has no ID — target by wrapper.
+        // It is always rendered once postcodeValid is true (confirmed above).
+        const groupDropdown = page.locator('.community-select-wrapper select')
+        await groupDropdown.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+        await groupDropdown.selectOption(String(groupId))
+        console.log(`Selected group ${groupId} in postMessage dropdown`)
       }
 
       // Click the Next/Continue button (Playwright auto-scrolls)
