@@ -770,4 +770,47 @@ describe('ModLog', () => {
       expect(wrapper.text()).not.toContain('Auto-approved message')
     })
   })
+
+  describe('Message subtypes — logUser "from" attribution', () => {
+    // These tests cover the v-if="logUser" true branches for Message subtypes.
+    // Previously all Message subtype tests omitted the user field, leaving the
+    // "from <user>" spans uncovered.
+
+    it.each([
+      ['Autoreposted', { text: '2' }, 'from'],
+      ['Repost', {}, 'by'],
+      ['Approved', {}, 'from'],
+      ['ClassifiedSpam', {}, 'from'],
+      ['Rejected', {}, 'from'],
+      ['Deleted', {}, 'from'],
+      ['Hold', {}, 'from'],
+      ['Release', {}, 'from'],
+      ['Outcome', { text: 'TAKEN' }, 'from'],
+    ])(
+      'Message/%s with logUser renders attribution',
+      (subtype, extra, expectedAttr) => {
+        const wrapper = createWrapper({
+          id: 1,
+          type: 'Message',
+          subtype,
+          user: { id: 42, displayname: 'Poster' },
+          ...extra,
+        })
+        expect(wrapper.find('.mod-log-user').exists()).toBe(true)
+        expect(wrapper.text()).toContain(expectedAttr)
+      }
+    )
+
+    it('Message/Edit with logUser shows "from" attribution', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Edit',
+        user: { id: 42, displayname: 'Poster' },
+        text: 'Subject changed',
+      })
+      expect(wrapper.text()).toContain('from')
+      expect(wrapper.find('.mod-log-user').exists()).toBe(true)
+    })
+  })
 })
