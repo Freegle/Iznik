@@ -116,6 +116,7 @@ import {
   ref,
   onMounted,
   onBeforeUnmount,
+  onServerPrefetch,
   nextTick,
   useHead,
   useRuntimeConfig,
@@ -153,28 +154,32 @@ const head = buildHead(
 
 useHead(head)
 
-await groupStore.fetch()
+// SSR data prefetch — onServerPrefetch keeps the setup function synchronous,
+// which produces a stable V8-coverage source map between builds.
+onServerPrefetch(async () => {
+  await groupStore.fetch()
 
-try {
-  const list = await messageStore.fetchInBounds(
-    49.45,
-    -9,
-    61,
-    2,
-    null,
-    50,
-    true
-  )
-  const offers = list.filter((item) => item.type === 'Offer')
+  try {
+    const list = await messageStore.fetchInBounds(
+      49.45,
+      -9,
+      61,
+      2,
+      null,
+      50,
+      true
+    )
+    const offers = list.filter((item) => item.type === 'Offer')
 
-  const preloadPromises = []
-  for (const offer of offers.slice(0, 12)) {
-    preloadPromises.push(messageStore.fetch(offer.id))
+    const preloadPromises = []
+    for (const offer of offers.slice(0, 12)) {
+      preloadPromises.push(messageStore.fetch(offer.id))
+    }
+    await Promise.all(preloadPromises)
+  } catch (e) {
+    console.log('SSR: Failed to prefetch messages', e)
   }
-  await Promise.all(preloadPromises)
-} catch (e) {
-  console.log('SSR: Failed to prefetch messages', e)
-}
+})
 
 // Computed properties
 const me = computed(() => {
