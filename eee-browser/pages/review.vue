@@ -70,6 +70,11 @@
           </button>
         </div>
 
+        <!-- Field introduction -->
+        <div v-if="currentFieldDef" class="bg-indigo-950/40 border border-indigo-800/40 rounded-xl px-5 py-4 mb-4 text-sm text-indigo-200 leading-relaxed">
+          {{ currentFieldDef.intro }}
+        </div>
+
         <!-- Progress bar for selected field (my progress) -->
         <div class="bg-gray-900 rounded-lg border border-gray-800 p-3">
           <div class="flex items-center justify-between mb-2">
@@ -305,6 +310,7 @@ interface Field {
   dbColumn: string
   type: 'binary' | 'correct' | 'bucket'
   buckets?: { label: string; key: string }[]
+  intro: string
   total: number
 }
 
@@ -317,13 +323,34 @@ const WEIGHT_BUCKETS = [
 ]
 
 const FIELDS: Field[] = [
-  { field: 'EEE', short: 'EEE', weight: 5, dbColumn: 'is_eee', type: 'binary', total: 0 },
-  { field: 'Electrical components', short: 'Electrical', weight: 4, dbColumn: 'electrical_components_description', type: 'correct', total: 0 },
-  { field: 'Photo quality', short: 'Photo', weight: 4, dbColumn: 'photo_quality', type: 'correct', total: 0 },
-  { field: 'Condition', short: 'Condition', weight: 3, dbColumn: 'condition', type: 'correct', total: 0 },
-  { field: 'Weight (kg)', short: 'Weight', weight: 3, dbColumn: 'weight_kg_min', type: 'bucket', buckets: WEIGHT_BUCKETS, total: 0 },
-  { field: 'Value band', short: 'Value', weight: 2, dbColumn: 'value_band_gbp', type: 'correct', total: 0 },
-  { field: 'Brand', short: 'Brand', weight: 1, dbColumn: 'brand', type: 'correct', total: 0 },
+  {
+    field: 'EEE', short: 'EEE', weight: 5, dbColumn: 'is_eee', type: 'binary', total: 0,
+    intro: 'EEE (Electrical and Electronic Equipment) is the most important field — it determines whether an item falls under the WEEE recycling directive and must be handled by a licensed collector. An item is EEE if it requires electricity or a battery to function, even partially. Common examples: TVs, laptops, phones, power tools, kettles, lamps. Items that are purely mechanical (wooden furniture, clothing, books) are not EEE. If there\'s genuine doubt — e.g. a toy that might have batteries — mark it EEE to be safe.',
+  },
+  {
+    field: 'Electrical components', short: 'Electrical', weight: 4, dbColumn: 'electrical_components_description', type: 'correct', total: 0,
+    intro: 'The model lists the key electrical components it believes are present in the item (e.g. "motor, heating element, thermostat" for a kettle). You\'re checking whether these components are plausible given what you can see in the photo and the item name — not whether the list is exhaustive. Mark Correct if the listed components make sense for this type of item. Mark Incorrect if the model has hallucinated components that clearly don\'t belong (e.g. listing "LCD screen" for a toaster).',
+  },
+  {
+    field: 'Photo quality', short: 'Photo', weight: 4, dbColumn: 'photo_quality', type: 'correct', total: 0,
+    intro: 'The model rates photo quality as Good, Adequate, or Poor. Good means the item is clearly visible, well-lit, and the photo gives enough detail to classify the item confidently. Adequate means the photo is usable but has issues (blurry, dark, partial view). Poor means the photo is too unclear to be useful. Check whether the model\'s rating matches your own impression of the photo.',
+  },
+  {
+    field: 'Condition', short: 'Condition', weight: 3, dbColumn: 'condition', type: 'correct', total: 0,
+    intro: 'The model assesses the physical condition of the item: New, Good, Fair, or Poor. New means unused or as-new. Good means clearly used but fully functional with no significant damage. Fair means visible wear, minor damage, or unclear functionality. Poor means significant damage, broken, or unusable. Check whether the model\'s assessment matches what you can see in the photo. If the photo is too poor quality to judge, use "Can\'t tell".',
+  },
+  {
+    field: 'Weight (kg)', short: 'Weight', weight: 3, dbColumn: 'weight_kg_min', type: 'bucket', buckets: WEIGHT_BUCKETS, total: 0,
+    intro: 'Select the weight band that best matches this item type. You\'re not checking the model\'s specific number — you\'re providing the ground-truth bucket so we can see whether the model\'s estimate is in the right range. Use your general knowledge of the item type: a phone is under 1 kg, a laptop is 1–5 kg, a washing machine is 20–100 kg. If you genuinely have no idea, choose "Can\'t tell".',
+  },
+  {
+    field: 'Value band', short: 'Value', weight: 2, dbColumn: 'value_band_gbp', type: 'correct', total: 0,
+    intro: 'The model estimates the second-hand / donation value in GBP: Under £20, £20–100, £100–500, or Over £500. This is the realistic resale or rehoming value, not the original retail price. A working iPhone might be £100–500; a broken kettle is Under £20. Check whether the model\'s band is reasonable for this item type and apparent condition. If the photo quality makes it impossible to judge condition, use "Can\'t tell".',
+  },
+  {
+    field: 'Brand', short: 'Brand', weight: 1, dbColumn: 'brand', type: 'correct', total: 0,
+    intro: 'The model tries to identify the manufacturer or brand from the photo (e.g. "Samsung", "Dyson", "unknown"). Mark Correct if the brand shown matches what you can see in the image, or if the model correctly says "unknown" when no brand is visible. Mark Incorrect if the model has named a wrong brand or missed an obvious one that\'s clearly visible. If the photo quality makes the brand impossible to read, use "Can\'t tell".',
+  },
 ]
 
 // Reviewer auth
