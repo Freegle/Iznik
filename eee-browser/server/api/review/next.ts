@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { openLabelsDb, resolveLabeller } from '~/server/utils/labelsDb'
 
 interface FieldDef {
   field: string
@@ -62,24 +63,6 @@ function buildImageUrl(externaluid: string): string {
   return `https://ucarecdn.com/${externaluid}/-/preview/768x768/-/format/jpeg/`
 }
 
-function getLabelsDb(): Database.Database {
-  const basePath = process.env.EEE_SQLITE_PATH || '/tmp/classifications.sqlite'
-  const labelsPath = process.env.EEE_LABELS_PATH || basePath.replace(/[^/]*$/, 'eee-labels.db')
-  const db = new Database(labelsPath)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS eee_field_labels (
-      messageid INTEGER NOT NULL,
-      attid INTEGER NOT NULL,
-      field TEXT NOT NULL,
-      label TEXT NOT NULL,
-      labelled_at TEXT NOT NULL DEFAULT (datetime('now')),
-      notes TEXT,
-      PRIMARY KEY (messageid, attid, field)
-    )
-  `)
-  return db
-}
-
 const MODEL_DISPLAY: Record<string, string> = {
   'claude-opus-4-7': 'Claude Opus',
   'claude-sonnet-4-6': 'Claude Sonnet',
@@ -103,14 +86,20 @@ export default defineEventHandler(async (event) => {
     })
   }
 
+  const token = getCookie(event, 'eee_reviewer')
   const fieldDef = FIELD_MAP[fieldParam]
 
   try {
     const classDb = new Database(classdbPath, { readonly: true })
-    const labelsDb = getLabelsDb()
+    const labelsDb = openLabelsDb()
 
-    // One canonical image per item type: pick the image with the most model disagreement
-    // on the current field (most distinct values across models). Single query, no loop.
+    const labeller = resolveLabeller(labelsDb, token)
+    if (!labeller) {
+      labelsDb.close()
+      classDb.close()
+      throw createError({ statusCode: 401, statusMessage: 'Not registered — please choose a reviewer name first' })
+    }
+
     const canonicalSamples = classDb.prepare(`
       WITH per_sample AS (
         SELECT s.messageid, s.attid, s.item_name, s.externaluid,
@@ -135,17 +124,14 @@ export default defineEventHandler(async (event) => {
 
     const total = canonicalSamples.length
 
-    // Which of these have already been labelled for this field?
     const labelledSet = new Set(
-      (labelsDb.prepare('SELECT messageid, attid FROM eee_field_labels WHERE field = ?').all(fieldParam) as any[])
+      (labelsDb.prepare('SELECT messageid, attid FROM eee_field_labels WHERE field = ? AND labeller = ?').all(fieldParam, labeller) as any[])
         .map((r: any) => `${r.messageid}-${r.attid}`)
     )
 
     const labelledCount = labelledSet.size
     const unlabelled = canonicalSamples.filter(s => !labelledSet.has(`${s.messageid}-${s.attid}`))
 
-    // Deterministic order: disagreements first (most distinct values), then by messageid.
-    // Same item appears each refresh until it's labelled.
     const disagreements = unlabelled.filter(s => s.distinct_values > 1)
       .sort((a, b) => b.distinct_values - a.distinct_values || a.messageid - b.messageid)
     const pool = disagreements.length > 0
@@ -161,6 +147,7 @@ export default defineEventHandler(async (event) => {
         messageid: null, attid: null, itemName: null, imageUrl: null,
         field: fieldParam, fieldQuestion: fieldDef.question,
         modelValues: [], progress: { labelled: labelledCount, total }, hasDisagreement: false,
+        labeller,
       }
     }
 
@@ -195,8 +182,10 @@ export default defineEventHandler(async (event) => {
       modelValues,
       progress: { labelled: labelledCount, total },
       hasDisagreement,
+      labeller,
     }
-  } catch (error) {
+  } catch (error: any) {
+    if (error.statusCode) throw error
     console.error('Review next error:', error)
     throw createError({ statusCode: 500, statusMessage: `Database error: ${(error as Error).message}` })
   }

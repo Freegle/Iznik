@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { openLabelsDb } from '~/server/utils/labelsDb'
 
 interface FieldDef {
   field: string
@@ -7,13 +8,12 @@ interface FieldDef {
   type: 'binary' | 'correct' | 'bucket'
 }
 
-// Bucket ranges for weight field — label key → [min, max) in kg (null = no bound)
 const WEIGHT_BUCKETS: Record<string, [number | null, number | null]> = {
-  under_1kg:   [null, 1],
-  '1_5kg':     [1, 5],
-  '5_20kg':    [5, 20],
-  '20_100kg':  [20, 100],
-  over_100kg:  [100, null],
+  under_1kg:  [null, 1],
+  '1_5kg':    [1, 5],
+  '5_20kg':   [5, 20],
+  '20_100kg': [20, 100],
+  over_100kg: [100, null],
 }
 
 function weightInBucket(kg: number, bucketKey: string): boolean {
@@ -35,110 +35,100 @@ const FIELDS: FieldDef[] = [
   { field: 'Brand', weight: 1, dbColumn: 'brand', type: 'correct' },
 ]
 
-function getLabelsDb(): Database.Database {
-  const basePath = process.env.EEE_SQLITE_PATH || '/tmp/classifications.sqlite'
-  const labelsPath = process.env.EEE_LABELS_PATH || basePath.replace(/[^/]*$/, 'eee-labels.db')
+// Compute quorum label for each (messageid, attid) across all labellers.
+// Returns map of "messageid-attid" → plurality label (null if tied or no labels).
+function computeQuorumLabels(
+  labels: { messageid: number; attid: number; labeller: string; label: string }[]
+): Map<string, string | null> {
+  // Group by item
+  const byItem = new Map<string, Map<string, number>>()
+  for (const row of labels) {
+    const key = `${row.messageid}-${row.attid}`
+    if (!byItem.has(key)) byItem.set(key, new Map())
+    const votes = byItem.get(key)!
+    votes.set(row.label, (votes.get(row.label) ?? 0) + 1)
+  }
 
-  const db = new Database(labelsPath)
-  // Create table if not exists
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS eee_field_labels (
-      messageid INTEGER NOT NULL,
-      attid INTEGER NOT NULL,
-      field TEXT NOT NULL,
-      label TEXT NOT NULL,
-      labelled_at TEXT NOT NULL DEFAULT (datetime('now')),
-      notes TEXT,
-      PRIMARY KEY (messageid, attid, field)
-    )
-  `)
-  return db
-}
-
-function formatModelName(model: string): string {
-  if (model.includes('claude-sonnet-4-6')) return 'Claude Sonnet'
-  if (model.includes('claude-opus-4-7')) return 'Claude Opus'
-  if (model.includes('claude')) return 'Claude'
-  if (model.includes('gemini')) return 'Gemini Flash Lite'
-  if (model.includes('gpt-4o')) return 'GPT-4o'
-  if (model.includes('Qwen')) return 'Qwen2.5-VL 72B'
-  return model
+  const result = new Map<string, string | null>()
+  for (const [key, votes] of byItem.entries()) {
+    const maxVotes = Math.max(...votes.values())
+    const winners = [...votes.entries()].filter(([, v]) => v === maxVotes).map(([l]) => l)
+    // Only use the quorum label if there's a clear plurality
+    result.set(key, winners.length === 1 ? winners[0] : null)
+  }
+  return result
 }
 
 export default defineEventHandler(async (event) => {
   const classDbPath = process.env.EEE_SQLITE_PATH
   if (!classDbPath) {
-    throw createError({
-      statusCode: 500,
-      statusMessage: 'EEE_SQLITE_PATH environment variable not set',
-    })
+    throw createError({ statusCode: 500, statusMessage: 'EEE_SQLITE_PATH environment variable not set' })
   }
 
   try {
     const classDb = new Database(classDbPath, { readonly: true })
-    const labelsDb = getLabelsDb()
+    const labelsDb = openLabelsDb()
+
+    // List all reviewers
+    const reviewers = (labelsDb.prepare('SELECT name FROM eee_reviewers ORDER BY name').all() as any[]).map(r => r.name as string)
 
     const result = {
       fields: [] as any[],
+      reviewers,
     }
 
-    // For each field, compute labelled count and per-model accuracy
+    const totalRow = classDb.prepare('SELECT COUNT(DISTINCT item_name) as count FROM eee_item_type_samples').get() as any
+    const totalCount = totalRow?.count || 0
+
     for (const fieldDef of FIELDS) {
-      // Count labelled for this field
-      const labelledRow = labelsDb.prepare(`
-        SELECT COUNT(*) as count
-        FROM eee_field_labels
-        WHERE field = ?
-      `).get(fieldDef.field) as any
-      const labelledCount = labelledRow?.count || 0
-
-      // Total = one canonical image per item type (same pool as review/next)
-      const totalRow = classDb.prepare(`
-        SELECT COUNT(DISTINCT item_name) as count FROM eee_item_type_samples
-      `).get() as any
-      const totalCount = totalRow?.count || 0
-
-      // Get all labels for this field
-      const labels = labelsDb.prepare(`
-        SELECT messageid, attid, label
+      // All labels for this field across all labellers
+      const allLabels = labelsDb.prepare(`
+        SELECT messageid, attid, labeller, label
         FROM eee_field_labels
         WHERE field = ?
       `).all(fieldDef.field) as any[]
 
-      // Build per-model accuracy
+      // Per-labeller counts
+      const perLabeller: Record<string, number> = {}
+      for (const row of allLabels) {
+        perLabeller[row.labeller] = (perLabeller[row.labeller] ?? 0) + 1
+      }
+
+      // Quorum labels (plurality across labellers)
+      const quorumMap = computeQuorumLabels(allLabels)
+      const quorumLabels = [...quorumMap.entries()].filter(([, l]) => l !== null)
+
+      // Per-model accuracy against quorum
       const modelAccuracyMap: Record<string, { correct: number; total: number }> = {}
 
-      for (const label of labels) {
-        // Get classifications for this item+field
+      for (const [itemKey, quorumLabel] of quorumLabels) {
+        if (!quorumLabel) continue
+        const [mid, aid] = itemKey.split('-').map(Number)
+
         const classifications = classDb.prepare(`
           SELECT DISTINCT model, ${fieldDef.dbColumn}
           FROM eee_classifications
           WHERE messageid = ? AND attid = ? AND prompt_version = '1.4.1'
           AND ${fieldDef.dbColumn} IS NOT NULL
-        `).all(label.messageid, label.attid) as any[]
+        `).all(mid, aid) as any[]
 
         for (const clf of classifications) {
           if (!modelAccuracyMap[clf.model]) {
             modelAccuracyMap[clf.model] = { correct: 0, total: 0 }
           }
-
           modelAccuracyMap[clf.model].total++
 
           if (fieldDef.type === 'binary') {
             const modelSaysEee = clf.is_eee === 1
-            const labelIsEee = label.label === 'eee'
-            if (modelSaysEee === labelIsEee) {
-              modelAccuracyMap[clf.model].correct++
-            }
+            const labelIsEee = quorumLabel === 'eee'
+            if (modelSaysEee === labelIsEee) modelAccuracyMap[clf.model].correct++
           } else if (fieldDef.type === 'bucket') {
             const modelKg = parseFloat(clf[fieldDef.dbColumn])
-            if (!isNaN(modelKg) && label.label !== 'unsure' && weightInBucket(modelKg, label.label)) {
+            if (!isNaN(modelKg) && quorumLabel !== 'unsure' && weightInBucket(modelKg, quorumLabel)) {
               modelAccuracyMap[clf.model].correct++
             }
           } else {
-            if (label.label === 'correct') {
-              modelAccuracyMap[clf.model].correct++
-            }
+            if (quorumLabel === 'correct') modelAccuracyMap[clf.model].correct++
           }
         }
       }
@@ -152,7 +142,8 @@ export default defineEventHandler(async (event) => {
         field: fieldDef.field,
         weight: fieldDef.weight,
         dbColumn: fieldDef.dbColumn,
-        labelled: labelledCount,
+        labelledTotal: quorumLabels.length,
+        labelledByReviewer: perLabeller,
         total: totalCount,
         modelAccuracy,
       })
@@ -164,9 +155,6 @@ export default defineEventHandler(async (event) => {
     return result
   } catch (error) {
     console.error('Database error:', error)
-    throw createError({
-      statusCode: 500,
-      statusMessage: `Database error: ${(error as Error).message}`,
-    })
+    throw createError({ statusCode: 500, statusMessage: `Database error: ${(error as Error).message}` })
   }
 })
