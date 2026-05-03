@@ -83,6 +83,7 @@ $knownPrefixes = [
     'mtspammers'              => 22,
     'repostgroupchange'       => 23,
     'mtmemberreview'          => 24,
+    'mobilechatnavbar'        => 25,
 ];
 
 if (isset($knownPrefixes[$prefix])) {

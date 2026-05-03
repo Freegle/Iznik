@@ -12,7 +12,8 @@ test.describe('Mobile Chat Navbar', () => {
     // chat page first loads — resizing after load can miss the initial render.
     await page.setViewportSize({ width: 375, height: 667 })
 
-    await loginViaHomepage(page, testEnv.user.email)
+    // testEnv.user is created by create-test-env.php with password 'freegle'
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
 
     await page.gotoAndVerify(`/chats/${testEnv.chats.user2user}`)
     await waitForNuxtPageLoad({ timeout: timeouts.navigation.default })
