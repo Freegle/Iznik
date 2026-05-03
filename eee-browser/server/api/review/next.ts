@@ -9,48 +9,14 @@ interface FieldDef {
 }
 
 const FIELDS: FieldDef[] = [
-  {
-    field: 'EEE',
-    weight: 5,
-    dbColumn: 'is_eee',
-    question: 'Is this item EEE (electrical/electronic equipment requiring WEEE recycling)?',
-  },
-  {
-    field: 'Electrical components',
-    weight: 4,
-    dbColumn: 'electrical_components_description',
-    question: 'Are the electrical components listed plausible for this item?',
-  },
-  {
-    field: 'Photo quality',
-    weight: 4,
-    dbColumn: 'photo_quality',
-    question: "Is the model's photo quality rating correct?",
-  },
-  {
-    field: 'Condition',
-    weight: 3,
-    dbColumn: 'condition',
-    question: "Is the model's condition assessment correct?",
-  },
-  {
-    field: 'Weight (kg)',
-    weight: 3,
-    dbColumn: 'weight_kg_min',
-    question: "Does the model's weight estimate seem plausible?",
-  },
-  {
-    field: 'Value band',
-    weight: 2,
-    dbColumn: 'value_band_gbp',
-    question: "Is the model's value band reasonable?",
-  },
-  {
-    field: 'Brand',
-    weight: 1,
-    dbColumn: 'brand',
-    question: "Is the model's brand identification correct?",
-  },
+  { field: 'EEE',                   weight: 5, dbColumn: 'is_eee',                          question: 'Is this item EEE?' },
+  { field: 'Electrical components', weight: 4, dbColumn: 'electrical_components_description', question: 'Can you see electrical components?' },
+  { field: 'Photo quality',         weight: 4, dbColumn: 'photo_quality',                    question: 'Rate the photo quality (1=poor, 5=excellent)' },
+  { field: 'Condition',             weight: 3, dbColumn: 'condition',                        question: 'What is the condition of this item?' },
+  { field: 'Weight (kg)',           weight: 3, dbColumn: 'weight_kg_min',                   question: 'Which weight range fits this item?' },
+  { field: 'Size',                  weight: 2, dbColumn: 'size_cm',                         question: 'Which size range fits this item (longest dimension)?' },
+  { field: 'Value band',            weight: 2, dbColumn: 'value_band_gbp',                  question: 'What is the second-hand / rehoming value?' },
+  { field: 'Brand',                 weight: 1, dbColumn: 'brand',                           question: 'Is a brand clearly visible in the photo?' },
 ]
 
 const FIELD_MAP = Object.fromEntries(FIELDS.map(f => [f.field, f]))
@@ -63,13 +29,14 @@ function buildImageUrl(externaluid: string): string {
   return `https://ucarecdn.com/${externaluid}/-/preview/768x768/-/format/jpeg/`
 }
 
+// Opus excluded from main comparison — one-off research run, not a production candidate
 const MODEL_DISPLAY: Record<string, string> = {
-  'claude-opus-4-7': 'Claude Opus',
   'claude-sonnet-4-6': 'Claude Sonnet',
   'gemini-2.0-flash-lite': 'Gemini Flash Lite',
   'gpt-4o': 'GPT-4o',
   'geeks_c87e/Qwen/Qwen2.5-VL-72B-Instruct-e07a2308': 'Qwen2.5-VL 72B',
 }
+const EXCLUDE_MODELS = new Set(['claude-opus-4-7'])
 
 export default defineEventHandler(async (event) => {
   const classdbPath = process.env.EEE_SQLITE_PATH
@@ -153,13 +120,15 @@ export default defineEventHandler(async (event) => {
 
     const classifications = classDb.prepare(`
       SELECT model, is_eee, electrical_components_description, photo_quality,
-             condition, weight_kg_min, value_band_gbp, brand
+             condition, weight_kg_min, size_cm, value_band_gbp, brand
       FROM eee_classifications
-      WHERE messageid = ? AND attid = ? AND prompt_version = '1.4.1'
+      WHERE messageid = ? AND attid = ?
+      AND prompt_version IN ('1.4.1','1.4.2')
       ORDER BY model
     `).all(item.messageid, item.attid) as any[]
 
     const modelValues = classifications
+      .filter((c: any) => !EXCLUDE_MODELS.has(c.model))
       .filter((c: any) => c[fieldDef.dbColumn] !== null && c[fieldDef.dbColumn] !== undefined)
       .map((c: any) => ({
         model: c.model,

@@ -1,8 +1,20 @@
 import { openLabelsDb, resolveLabeller } from '~/server/utils/labelsDb'
 
-const BUCKET_LABELS = ['under_1kg', '1_5kg', '5_20kg', '20_100kg', 'over_100kg']
-const VALID_LABELS = ['eee', 'not_eee', 'unsure', 'correct', 'incorrect', ...BUCKET_LABELS]
-const FIELD_NAMES = ['EEE', 'Electrical components', 'Photo quality', 'Condition', 'Weight (kg)', 'Value band', 'Brand']
+const WEIGHT_BUCKET_KEYS = ['under_1kg', '1_5kg', '5_20kg', '20_100kg', 'over_100kg']
+const SIZE_BUCKET_KEYS   = ['tiny', 'small', 'medium', 'large']
+
+const VALID_LABELS: Record<string, string[]> = {
+  'EEE':                     ['eee', 'not_eee', 'unsure'],
+  'Electrical components':   ['present', 'absent', 'unsure'],
+  'Photo quality':           ['1', '2', '3', '4', '5', 'unsure'],
+  'Condition':               ['reusable', 'damaged', 'unsure'],
+  'Weight (kg)':             [...WEIGHT_BUCKET_KEYS, 'unsure'],
+  'Size':                    [...SIZE_BUCKET_KEYS, 'unsure'],
+  'Value band':              ['0-20', '20-100', '100-500', '500+', 'unsure'],
+  'Brand':                   ['visible', 'not_visible', 'unsure'],
+}
+
+const FIELD_NAMES = Object.keys(VALID_LABELS)
 
 export default defineEventHandler(async (event) => {
   const token = getCookie(event, 'eee_reviewer')
@@ -17,8 +29,9 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `Invalid field. Must be one of: ${FIELD_NAMES.join(', ')}` })
   }
 
-  if (!VALID_LABELS.includes(label)) {
-    throw createError({ statusCode: 400, statusMessage: `Invalid label. Must be one of: ${VALID_LABELS.join(', ')}` })
+  const allowed = VALID_LABELS[field]
+  if (!allowed.includes(label)) {
+    throw createError({ statusCode: 400, statusMessage: `Invalid label "${label}" for field "${field}". Must be one of: ${allowed.join(', ')}` })
   }
 
   const db = openLabelsDb()

@@ -1,7 +1,7 @@
 <template>
   <div class="min-h-screen bg-gray-950 text-gray-100">
 
-    <!-- Registration overlay — shown until reviewer is known -->
+    <!-- Registration overlay -->
     <div v-if="!reviewerName" class="fixed inset-0 bg-gray-950/95 flex items-center justify-center z-50 px-4">
       <div class="bg-gray-900 border border-gray-700 rounded-2xl p-8 max-w-md w-full">
         <h2 class="text-xl font-bold text-white mb-2">Choose your reviewer name</h2>
@@ -50,7 +50,7 @@
     <main class="max-w-7xl mx-auto px-4 py-8">
       <!-- Field selector tabs -->
       <div v-if="fields.length > 0" class="mb-8">
-        <div class="flex gap-3 flex-wrap mb-6">
+        <div class="flex gap-3 flex-wrap mb-4">
           <button
             v-for="field in fields"
             :key="field.field"
@@ -65,7 +65,6 @@
             <div class="flex items-center gap-2">
               <span>{{ field.short }}</span>
               <span class="text-xs bg-gray-700 px-2 py-0.5 rounded">{{ myLabelledCount(field.field) }}/{{ field.total }}</span>
-              <span class="text-xs text-gray-500">w{{ field.weight }}</span>
             </div>
           </button>
         </div>
@@ -75,7 +74,7 @@
           {{ currentFieldDef.intro }}
         </div>
 
-        <!-- Progress bar for selected field (my progress) -->
+        <!-- Progress bar (my progress) -->
         <div class="bg-gray-900 rounded-lg border border-gray-800 p-3">
           <div class="flex items-center justify-between mb-2">
             <span class="text-xs text-gray-500 uppercase tracking-wider">Your progress</span>
@@ -97,9 +96,8 @@
       <div v-else-if="error" class="bg-red-900/30 border border-red-700 rounded-lg p-4 text-red-300">{{ error }}</div>
 
       <template v-else-if="currentItem.messageid">
-        <!-- Two-column layout -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          <!-- Left: Image -->
+          <!-- Image -->
           <div class="lg:col-span-2">
             <div class="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden h-full flex flex-col">
               <div class="flex-1 bg-black flex items-center justify-center min-h-96">
@@ -117,10 +115,25 @@
                   </div>
                 </div>
               </div>
+
+              <!-- Model answers (revealed after submission) -->
+              <div v-if="showModelValues && currentItem.modelValues.length > 0" class="border-t border-gray-800 p-4">
+                <p class="text-xs text-gray-500 uppercase tracking-wider mb-3">Model answers (revealed)</p>
+                <div class="flex flex-wrap gap-2">
+                  <div
+                    v-for="model in currentItem.modelValues"
+                    :key="model.model"
+                    class="bg-gray-800/70 rounded-lg px-3 py-2 border border-gray-700/50 text-xs"
+                  >
+                    <span class="font-semibold mr-1" :class="modelColor(model.model)">{{ model.displayName }}:</span>
+                    <span :class="fieldValueClass(model.value, selectedField)">{{ formatFieldValue(model.value, selectedField) }}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
-          <!-- Right: Item info, question, classification -->
+          <!-- Right: Item info + labelling -->
           <div class="lg:col-span-1 flex flex-col gap-6">
             <!-- Item name -->
             <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6">
@@ -129,94 +142,135 @@
               <p class="text-xs text-gray-600 mt-3">msg {{ currentItem.messageid }} / att {{ currentItem.attid }}</p>
             </div>
 
-            <!-- Field question -->
-            <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6">
-              <p class="text-sm font-semibold text-white mb-4">{{ currentItem.fieldQuestion }}</p>
+            <!-- Labelling panel -->
+            <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6 space-y-4">
+              <p class="text-sm font-semibold text-white">{{ currentItem.fieldQuestion }}</p>
 
-              <div v-if="currentItem.hasDisagreement" class="mb-4 inline-block">
-                <span class="text-xs px-3 py-1.5 rounded-full bg-amber-900/60 text-amber-300 border border-amber-700">
-                  ⚠ Models disagree
-                </span>
+              <!-- EEE: binary yes/no -->
+              <div v-if="currentFieldDef?.type === 'binary'" class="grid grid-cols-3 gap-3">
+                <button @click="submitLabel('eee')" :disabled="submitting"
+                  class="bg-green-900/70 hover:bg-green-800 disabled:opacity-50 text-green-300 border border-green-700 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  EEE ✓<br><span class="text-xs font-normal">Y</span>
+                </button>
+                <button @click="submitLabel('not_eee')" :disabled="submitting"
+                  class="bg-red-900/70 hover:bg-red-800 disabled:opacity-50 text-red-300 border border-red-700 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  Not EEE ✗<br><span class="text-xs font-normal">N</span>
+                </button>
+                <button @click="submitLabel('unsure')" :disabled="submitting"
+                  class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  Can't tell<br><span class="text-xs font-normal">U</span>
+                </button>
               </div>
 
-              <!-- Per-model values -->
-              <div class="space-y-3">
-                <div
-                  v-for="model in currentItem.modelValues"
-                  :key="model.model"
-                  class="bg-gray-800/50 rounded-lg p-3 border border-gray-700/50"
-                >
-                  <div class="flex items-start justify-between">
-                    <span class="text-sm font-semibold" :class="modelColor(model.model)">
-                      {{ model.displayName }}
-                    </span>
-                    <span
-                      class="text-xs px-2 py-1 rounded font-medium"
-                      :class="[fieldValueClass(model.value, selectedField), selectedField === 'Electrical components' ? 'block max-w-xs text-left whitespace-normal' : '']"
-                    >
-                      {{ formatFieldValue(model.value, selectedField) }}
-                    </span>
-                  </div>
+              <!-- Electrical components: presence -->
+              <div v-else-if="currentFieldDef?.type === 'presence'" class="grid grid-cols-3 gap-3">
+                <button @click="submitLabel('present')" :disabled="submitting"
+                  class="bg-green-900/70 hover:bg-green-800 disabled:opacity-50 text-green-300 border border-green-700 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  Yes, visible<br><span class="text-xs font-normal">Y</span>
+                </button>
+                <button @click="submitLabel('absent')" :disabled="submitting"
+                  class="bg-red-900/70 hover:bg-red-800 disabled:opacity-50 text-red-300 border border-red-700 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  None visible<br><span class="text-xs font-normal">N</span>
+                </button>
+                <button @click="submitLabel('unsure')" :disabled="submitting"
+                  class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  Can't tell<br><span class="text-xs font-normal">U</span>
+                </button>
+              </div>
+
+              <!-- Photo quality: 1-5 rating -->
+              <div v-else-if="currentFieldDef?.type === 'rating5'" class="space-y-2">
+                <div class="grid grid-cols-5 gap-2">
+                  <button v-for="n in [1,2,3,4,5]" :key="n"
+                    @click="submitLabel(String(n))" :disabled="submitting"
+                    class="bg-gray-700 hover:bg-blue-900/70 disabled:opacity-50 text-gray-200 border border-gray-600 rounded-lg py-3 text-sm font-bold transition">
+                    {{ n }}
+                  </button>
                 </div>
+                <div class="flex justify-between text-xs text-gray-500 px-1">
+                  <span>Poor</span><span>Excellent</span>
+                </div>
+                <button @click="submitLabel('unsure')" :disabled="submitting"
+                  class="w-full bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-400 border border-gray-700 rounded-lg px-3 py-2 text-xs transition">
+                  Can't assess (U)
+                </button>
               </div>
-            </div>
 
-            <!-- Label buttons -->
-            <div class="bg-gray-900 rounded-2xl border border-gray-800 p-6 space-y-3">
-              <p class="text-xs text-gray-500 uppercase tracking-wider mb-4">
-                {{ currentFieldDef?.type === 'bucket' ? 'Select weight range' : currentFieldDef?.type === 'binary' ? 'Your label (Y/N/?)' : 'Is this correct? (Y/N/?)' }}
-              </p>
+              <!-- Condition -->
+              <div v-else-if="currentFieldDef?.type === 'condition'" class="grid grid-cols-3 gap-3">
+                <button @click="submitLabel('reusable')" :disabled="submitting"
+                  class="bg-green-900/70 hover:bg-green-800 disabled:opacity-50 text-green-300 border border-green-700 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  Working<br><span class="text-xs font-normal">Y</span>
+                </button>
+                <button @click="submitLabel('damaged')" :disabled="submitting"
+                  class="bg-red-900/70 hover:bg-red-800 disabled:opacity-50 text-red-300 border border-red-700 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  Damaged<br><span class="text-xs font-normal">N</span>
+                </button>
+                <button @click="submitLabel('unsure')" :disabled="submitting"
+                  class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  Can't tell<br><span class="text-xs font-normal">U</span>
+                </button>
+              </div>
 
-              <!-- Bucket buttons (weight) -->
-              <div v-if="currentFieldDef?.type === 'bucket'" class="space-y-2 mb-4">
-                <button
-                  v-for="bucket in currentFieldDef.buckets"
-                  :key="bucket.key"
-                  @click="submitLabel(bucket.key)"
-                  :disabled="submitting"
-                  class="w-full bg-blue-900/40 hover:bg-blue-800/60 disabled:opacity-50 text-blue-200 border border-blue-700/50 rounded-lg px-4 py-2.5 text-sm font-medium transition text-left"
-                >
+              <!-- Weight bucket -->
+              <div v-else-if="currentFieldDef?.type === 'bucket'" class="space-y-2">
+                <button v-for="bucket in currentFieldDef.buckets" :key="bucket.key"
+                  @click="submitLabel(bucket.key)" :disabled="submitting"
+                  class="w-full bg-blue-900/40 hover:bg-blue-800/60 disabled:opacity-50 text-blue-200 border border-blue-700/50 rounded-lg px-4 py-2.5 text-sm font-medium transition text-left">
                   {{ bucket.label }}
                 </button>
-                <button
-                  @click="submitLabel('unsure')"
-                  :disabled="submitting"
-                  class="w-full bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-4 py-2 text-sm transition"
-                >
+                <button @click="submitLabel('unsure')" :disabled="submitting"
+                  class="w-full bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-4 py-2 text-sm transition">
                   Can't tell (U)
                 </button>
               </div>
 
-              <!-- Binary / correct buttons -->
-              <div v-else class="grid grid-cols-3 gap-3 mb-4">
-                <button
-                  @click="submitLabel(currentFieldDef?.type === 'binary' ? 'eee' : 'correct')"
-                  :disabled="submitting"
-                  class="bg-green-900/70 hover:bg-green-800 disabled:opacity-50 text-green-300 border border-green-700 rounded-lg px-4 py-3 text-sm font-bold transition"
-                >
-                  {{ currentFieldDef?.type === 'binary' ? 'EEE ✓' : 'Correct ✓' }}<br /><span class="text-xs font-normal">Y</span>
+              <!-- Size bucket -->
+              <div v-else-if="currentFieldDef?.type === 'size_bucket'" class="space-y-2">
+                <button v-for="bucket in currentFieldDef.buckets" :key="bucket.key"
+                  @click="submitLabel(bucket.key)" :disabled="submitting"
+                  class="w-full bg-blue-900/40 hover:bg-blue-800/60 disabled:opacity-50 text-blue-200 border border-blue-700/50 rounded-lg px-4 py-2.5 text-sm font-medium transition text-left">
+                  {{ bucket.label }}
                 </button>
-                <button
-                  @click="submitLabel(currentFieldDef?.type === 'binary' ? 'not_eee' : 'incorrect')"
-                  :disabled="submitting"
-                  class="bg-red-900/70 hover:bg-red-800 disabled:opacity-50 text-red-300 border border-red-700 rounded-lg px-4 py-3 text-sm font-bold transition"
-                >
-                  {{ currentFieldDef?.type === 'binary' ? 'Not EEE ✗' : 'Incorrect ✗' }}<br /><span class="text-xs font-normal">N</span>
-                </button>
-                <button
-                  @click="submitLabel('unsure')"
-                  :disabled="submitting"
-                  class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-4 py-3 text-sm font-bold transition"
-                >
-                  Can't tell<br /><span class="text-xs font-normal">U</span>
+                <button @click="submitLabel('unsure')" :disabled="submitting"
+                  class="w-full bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-4 py-2 text-sm transition">
+                  Can't tell (U)
                 </button>
               </div>
 
-              <!-- Notes toggle -->
+              <!-- Value band -->
+              <div v-else-if="currentFieldDef?.type === 'value_band'" class="space-y-2">
+                <button v-for="band in VALUE_BANDS" :key="band.key"
+                  @click="submitLabel(band.key)" :disabled="submitting"
+                  class="w-full bg-blue-900/40 hover:bg-blue-800/60 disabled:opacity-50 text-blue-200 border border-blue-700/50 rounded-lg px-4 py-2.5 text-sm font-medium transition text-left">
+                  {{ band.label }}
+                </button>
+                <button @click="submitLabel('unsure')" :disabled="submitting"
+                  class="w-full bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-4 py-2 text-sm transition">
+                  Can't tell (U)
+                </button>
+              </div>
+
+              <!-- Brand: visibility -->
+              <div v-else-if="currentFieldDef?.type === 'brand_presence'" class="grid grid-cols-3 gap-3">
+                <button @click="submitLabel('visible')" :disabled="submitting"
+                  class="bg-green-900/70 hover:bg-green-800 disabled:opacity-50 text-green-300 border border-green-700 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  Visible<br><span class="text-xs font-normal">Y</span>
+                </button>
+                <button @click="submitLabel('not_visible')" :disabled="submitting"
+                  class="bg-red-900/70 hover:bg-red-800 disabled:opacity-50 text-red-300 border border-red-700 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  Not visible<br><span class="text-xs font-normal">N</span>
+                </button>
+                <button @click="submitLabel('unsure')" :disabled="submitting"
+                  class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-3 py-3 text-sm font-bold transition">
+                  Can't tell<br><span class="text-xs font-normal">U</span>
+                </button>
+              </div>
+
+              <!-- Notes -->
               <button @click="showNotes = !showNotes" class="text-xs text-gray-400 hover:text-gray-300 transition">
                 {{ showNotes ? '✕ Hide' : '+ Add' }} notes
               </button>
-
               <textarea
                 v-show="showNotes"
                 v-model="notes"
@@ -225,35 +279,32 @@
                 rows="3"
               />
 
-              <button
-                @click="skipItem"
-                :disabled="submitting"
-                class="w-full text-xs text-gray-500 hover:text-gray-400 py-2 transition"
-              >
+              <button @click="skipItem" :disabled="submitting"
+                class="w-full text-xs text-gray-500 hover:text-gray-400 py-2 transition">
                 S: Skip to next
               </button>
             </div>
 
             <Transition name="fade">
               <div v-if="showConfirmation" class="bg-green-900/60 border border-green-700 rounded-lg p-3 text-green-300 text-xs text-center">
-                Saved ✓
+                Saved ✓ — model answers revealed below
               </div>
             </Transition>
           </div>
         </div>
 
-        <!-- Accuracy table (shown once any field has ≥10 quorum labels) -->
+        <!-- Accuracy table (≥10 quorum labels) -->
         <div v-if="hasAnyLabels" class="bg-gray-900 rounded-2xl border border-gray-800 overflow-hidden">
           <div class="px-6 py-4 border-b border-gray-800">
             <h3 class="text-sm font-semibold text-white">Model accuracy by field</h3>
-            <p class="text-xs text-gray-500 mt-1">Based on quorum labels (plurality across reviewers)</p>
+            <p class="text-xs text-gray-500 mt-1">Blind-labelled ground truth, quorum across reviewers. Photo quality: ±1 accepted.</p>
           </div>
           <div class="overflow-x-auto">
             <table class="w-full text-sm">
               <thead>
                 <tr class="border-b border-gray-800 text-xs text-gray-500 uppercase tracking-wider">
                   <th class="text-left px-6 py-3 font-medium">Field</th>
-                  <th class="text-center px-4 py-3 font-medium">Quorum labels</th>
+                  <th class="text-center px-4 py-3 font-medium">Labels</th>
                   <th v-for="model in allModels" :key="model" class="text-center px-4 py-3 font-medium">{{ formatModelName(model) }}</th>
                 </tr>
               </thead>
@@ -262,7 +313,7 @@
                   <td class="px-6 py-3 font-medium text-gray-200">{{ field.field }}</td>
                   <td class="px-4 py-3 text-center text-gray-300">{{ field.labelledTotal }}</td>
                   <td v-for="model in allModels" :key="model" class="px-4 py-3 text-center">
-                    <span v-if="field.modelAccuracy && field.modelAccuracy[model] !== undefined" :class="accuracyColor(field.modelAccuracy[model])">
+                    <span v-if="field.modelAccuracy?.[model] !== undefined" :class="accuracyColor(field.modelAccuracy[model])">
                       {{ field.modelAccuracy[model] }}%
                     </span>
                     <span v-else class="text-gray-600">—</span>
@@ -271,22 +322,19 @@
               </tbody>
             </table>
           </div>
-          <!-- Per-reviewer contribution -->
-          <div v-if="stats.reviewers && stats.reviewers.length > 0" class="px-6 py-4 border-t border-gray-800">
+          <div v-if="stats.reviewers?.length > 0" class="px-6 py-4 border-t border-gray-800">
             <p class="text-xs text-gray-500 uppercase tracking-wider mb-3">Labels by reviewer</p>
             <div class="flex flex-wrap gap-4">
               <div v-for="reviewer in stats.reviewers" :key="reviewer" class="text-xs">
                 <span class="text-gray-300 font-semibold">{{ reviewer }}</span>
-                <span class="text-gray-500 ml-1">
-                  {{ totalLabelsByReviewer(reviewer) }} labels
-                </span>
+                <span class="text-gray-500 ml-1">{{ totalLabelsByReviewer(reviewer) }} labels</span>
               </div>
             </div>
           </div>
         </div>
       </template>
 
-      <!-- All items labelled -->
+      <!-- All done -->
       <template v-else>
         <div class="bg-green-900/30 border border-green-700 rounded-2xl p-8 text-center">
           <p class="text-xl font-semibold text-green-300 mb-2">All items labelled for this field! 🎉</p>
@@ -308,7 +356,7 @@ interface Field {
   short: string
   weight: number
   dbColumn: string
-  type: 'binary' | 'correct' | 'bucket'
+  type: 'binary' | 'presence' | 'rating5' | 'condition' | 'bucket' | 'size_bucket' | 'value_band' | 'brand_presence'
   buckets?: { label: string; key: string }[]
   intro: string
   total: number
@@ -322,34 +370,52 @@ const WEIGHT_BUCKETS = [
   { label: '> 100 kg', key: 'over_100kg' },
 ]
 
+const SIZE_BUCKETS = [
+  { label: 'Tiny — under 20 cm (phone, remote, small gadget)', key: 'tiny' },
+  { label: 'Small — 20–50 cm (laptop, tablet, small appliance)', key: 'small' },
+  { label: 'Medium — 50–100 cm (monitor, printer, microwave)', key: 'medium' },
+  { label: 'Large — over 100 cm (washing machine, large TV, fridge)', key: 'large' },
+]
+
+const VALUE_BANDS = [
+  { label: 'Under £20', key: '0-20' },
+  { label: '£20–100', key: '20-100' },
+  { label: '£100–500', key: '100-500' },
+  { label: 'Over £500', key: '500+' },
+]
+
 const FIELDS: Field[] = [
   {
     field: 'EEE', short: 'EEE', weight: 5, dbColumn: 'is_eee', type: 'binary', total: 0,
-    intro: 'EEE (Electrical and Electronic Equipment) is the most important field — it determines whether an item falls under the WEEE recycling directive and must be handled by a licensed collector. An item is EEE if it requires electricity or a battery to function, even partially. Common examples: TVs, laptops, phones, power tools, kettles, lamps. Items that are purely mechanical (wooden furniture, clothing, books) are not EEE. If there\'s genuine doubt — e.g. a toy that might have batteries — mark it EEE to be safe.',
+    intro: 'An item is EEE if it requires electricity or a battery to function, even partially. Common examples: TVs, laptops, phones, power tools, kettles, lamps. Purely mechanical items (furniture, clothing, books) are not EEE. When in doubt, mark EEE to be safe.',
   },
   {
-    field: 'Electrical components', short: 'Electrical', weight: 4, dbColumn: 'electrical_components_description', type: 'correct', total: 0,
-    intro: 'The model lists the key electrical components it believes are present in the item (e.g. "motor, heating element, thermostat" for a kettle). You\'re checking whether these components are plausible given what you can see in the photo and the item name — not whether the list is exhaustive. Mark Correct if the listed components make sense for this type of item. Mark Incorrect if the model has hallucinated components that clearly don\'t belong (e.g. listing "LCD screen" for a toaster).',
+    field: 'Electrical components', short: 'Electrical', weight: 4, dbColumn: 'electrical_components_description', type: 'presence', total: 0,
+    intro: 'Look at the photo and decide: can you directly see any electrical components? This includes cables, displays, batteries, motors, circuit boards, or any other part that uses power. Mark "Yes, visible" if you can clearly see at least one electrical component in the photo.',
   },
   {
-    field: 'Photo quality', short: 'Photo', weight: 4, dbColumn: 'photo_quality', type: 'correct', total: 0,
-    intro: 'The model rates photo quality as Good, Adequate, or Poor. Good means the item is clearly visible, well-lit, and the photo gives enough detail to classify the item confidently. Adequate means the photo is usable but has issues (blurry, dark, partial view). Poor means the photo is too unclear to be useful. Check whether the model\'s rating matches your own impression of the photo.',
+    field: 'Photo quality', short: 'Photo', weight: 4, dbColumn: 'photo_quality', type: 'rating5', total: 0,
+    intro: 'Rate the photo quality on a scale of 1 to 5. 5 = sharp, well-lit, item clearly visible with good detail. 3 = usable but some issues (slight blur, partial view, dark). 1 = too unclear or dark to classify the item confidently.',
   },
   {
-    field: 'Condition', short: 'Condition', weight: 3, dbColumn: 'condition', type: 'correct', total: 0,
-    intro: 'The model assesses the physical condition of the item: New, Good, Fair, or Poor. New means unused or as-new. Good means clearly used but fully functional with no significant damage. Fair means visible wear, minor damage, or unclear functionality. Poor means significant damage, broken, or unusable. Check whether the model\'s assessment matches what you can see in the photo. If the photo is too poor quality to judge, use "Can\'t tell".',
+    field: 'Condition', short: 'Condition', weight: 3, dbColumn: 'condition', type: 'condition', total: 0,
+    intro: 'Based on what you can see, is this item working and undamaged, or is it clearly broken/damaged? Mark "Working" if it looks functional and undamaged. Mark "Damaged" if there is visible damage, breakage, or it obviously does not work. Use "Can\'t tell" if the photo quality makes it impossible to judge.',
   },
   {
     field: 'Weight (kg)', short: 'Weight', weight: 3, dbColumn: 'weight_kg_min', type: 'bucket', buckets: WEIGHT_BUCKETS, total: 0,
-    intro: 'Select the weight band that best matches this item type. You\'re not checking the model\'s specific number — you\'re providing the ground-truth bucket so we can see whether the model\'s estimate is in the right range. Use your general knowledge of the item type: a phone is under 1 kg, a laptop is 1–5 kg, a washing machine is 20–100 kg. If you genuinely have no idea, choose "Can\'t tell".',
+    intro: 'Select the weight range you would expect for this type of item. Use your general knowledge: a phone is under 1 kg, a laptop is 1–5 kg, a microwave is 5–20 kg, a washing machine is 20–100 kg. You do not need to see the weight — estimate from the item type.',
   },
   {
-    field: 'Value band', short: 'Value', weight: 2, dbColumn: 'value_band_gbp', type: 'correct', total: 0,
-    intro: 'The model estimates the second-hand / donation value in GBP: Under £20, £20–100, £100–500, or Over £500. This is the realistic resale or rehoming value, not the original retail price. A working iPhone might be £100–500; a broken kettle is Under £20. Check whether the model\'s band is reasonable for this item type and apparent condition. If the photo quality makes it impossible to judge condition, use "Can\'t tell".',
+    field: 'Size', short: 'Size', weight: 2, dbColumn: 'size_cm', type: 'size_bucket', buckets: SIZE_BUCKETS, total: 0,
+    intro: 'Select the size range based on the item\'s longest dimension. Use the photo and your knowledge of the item type. A phone is tiny (<20 cm), a laptop is small (20–50 cm), a monitor is medium (50–100 cm), a fridge is large (>100 cm).',
   },
   {
-    field: 'Brand', short: 'Brand', weight: 1, dbColumn: 'brand', type: 'correct', total: 0,
-    intro: 'The model tries to identify the manufacturer or brand from the photo (e.g. "Samsung", "Dyson", "unknown"). Mark Correct if the brand shown matches what you can see in the image, or if the model correctly says "unknown" when no brand is visible. Mark Incorrect if the model has named a wrong brand or missed an obvious one that\'s clearly visible. If the photo quality makes the brand impossible to read, use "Can\'t tell".',
+    field: 'Value band', short: 'Value', weight: 2, dbColumn: 'value_band_gbp', type: 'value_band', total: 0,
+    intro: 'What is the realistic second-hand / rehoming value of this item in its apparent condition? Use the donation/resale market — not the original retail price. A working iPhone might be £100–500; a broken kettle is under £20.',
+  },
+  {
+    field: 'Brand', short: 'Brand', weight: 1, dbColumn: 'brand', type: 'brand_presence', total: 0,
+    intro: 'Is a brand name or logo clearly readable in this photo? Mark "Visible" only if you can actually read the brand from the image. Mark "Not visible" if no brand is discernible. Use "Can\'t tell" if the photo is too poor quality.',
   },
 ]
 
@@ -369,27 +435,18 @@ const register = async () => {
       body: JSON.stringify({ name: registrationName.value }),
     })
     const data = await resp.json()
-    if (!resp.ok) {
-      registrationError.value = data.statusMessage || 'Registration failed'
-      return
-    }
+    if (!resp.ok) { registrationError.value = data.statusMessage || 'Registration failed'; return }
     reviewerName.value = data.name
     await loadNextItem()
-  } catch (e) {
-    registrationError.value = 'Network error — please try again'
-  } finally {
-    registering.value = false
-  }
+  } catch { registrationError.value = 'Network error — please try again' }
+  finally { registering.value = false }
 }
 
 const checkWhoami = async () => {
   try {
     const resp = await fetch('/api/review/whoami')
     const data = await resp.json()
-    if (data.name) {
-      reviewerName.value = data.name
-      await loadNextItem()
-    }
+    if (data.name) { reviewerName.value = data.name; await loadNextItem() }
   } catch {}
 }
 
@@ -411,6 +468,7 @@ const imageFailed = ref(false)
 const showNotes = ref(false)
 const notes = ref('')
 const showConfirmation = ref(false)
+const showModelValues = ref(false)
 
 const myLabelledCount = (fieldName: string): number => {
   if (!reviewerName.value) return 0
@@ -420,36 +478,31 @@ const myLabelledCount = (fieldName: string): number => {
 
 const fieldProgress = computed(() => {
   const f = fields.value.find(f => f.field === selectedField.value)
-  const labelled = myLabelledCount(selectedField.value)
-  return { labelled, total: f?.total ?? 0 }
+  return { labelled: myLabelledCount(selectedField.value), total: f?.total ?? 0 }
 })
 
 const reviewerTotalsForField = computed(() => {
   const f = stats.value.fields.find((f: any) => f.field === selectedField.value)
   if (!f?.labelledByReviewer) return ''
   return Object.entries(f.labelledByReviewer as Record<string, number>)
-    .map(([name, count]) => `${name}: ${count}`)
-    .join(', ')
+    .map(([name, count]) => `${name}: ${count}`).join(', ')
 })
 
 const allModels = computed(() => {
   const models = new Set<string>()
   for (const field of stats.value.fields) {
-    if (field.modelAccuracy) Object.keys(field.modelAccuracy).forEach(m => models.add(m))
+    if (field.modelAccuracy) Object.keys(field.modelAccuracy).forEach((m: string) => models.add(m))
   }
   return Array.from(models).sort()
 })
 
-const hasAnyLabels = computed(() =>
-  stats.value.fields.some((f: any) => f.labelledTotal >= 10)
-)
+const hasAnyLabels = computed(() => stats.value.fields.some((f: any) => f.labelledTotal >= 10))
 
 const totalLabelsByReviewer = (reviewer: string): number =>
   stats.value.fields.reduce((sum: number, f: any) => sum + (f.labelledByReviewer?.[reviewer] ?? 0), 0)
 
 const formatModelName = (model: string) => {
-  if (model.includes('claude-sonnet-4-6')) return 'Claude Sonnet'
-  if (model.includes('claude-opus-4-7')) return 'Claude Opus'
+  if (model.includes('claude-sonnet')) return 'Claude Sonnet'
   if (model.includes('gemini')) return 'Gemini Flash'
   if (model.includes('gpt-4o')) return 'GPT-4o'
   if (model.includes('Qwen')) return 'Qwen2.5'
@@ -460,8 +513,7 @@ const modelColor = (model: string) => {
   if (model.includes('claude')) return 'text-blue-400'
   if (model.includes('gemini')) return 'text-violet-400'
   if (model.includes('gpt')) return 'text-emerald-400'
-  if (model.includes('Qwen')) return 'text-teal-400'
-  return 'text-gray-300'
+  return 'text-teal-400'
 }
 
 const accuracyColor = (acc: number) => {
@@ -472,17 +524,17 @@ const accuracyColor = (acc: number) => {
 
 const formatFieldValue = (value: any, field?: string) => {
   if (value === null || value === undefined) return '—'
-  if (field === 'EEE') return value == 1 ? 'Yes' : 'No'
+  if (field === 'EEE') return value == 1 ? 'Yes (EEE)' : 'No'
   return String(value)
 }
 
 const fieldValueClass = (value: any, field?: string) => {
   if (field === 'EEE') {
     return value == 1
-      ? 'bg-green-900/60 text-green-300 border border-green-700/50'
-      : 'bg-blue-900/60 text-blue-300 border border-blue-700/50'
+      ? 'text-green-300 bg-green-900/40 px-2 py-0.5 rounded'
+      : 'text-blue-300 bg-blue-900/40 px-2 py-0.5 rounded'
   }
-  return 'bg-gray-700 text-gray-300'
+  return 'text-gray-300'
 }
 
 const selectField = (field: string) => {
@@ -497,24 +549,20 @@ const loadNextItem = async () => {
   imageFailed.value = false
   showNotes.value = false
   notes.value = ''
+  showModelValues.value = false
 
   try {
     const [nextResp, statsResp] = await Promise.all([
       fetch(`/api/review/next?field=${encodeURIComponent(selectedField.value)}`),
       fetch('/api/review/stats'),
     ])
-
-    if (nextResp.status === 401) {
-      reviewerName.value = null
-      return
-    }
+    if (nextResp.status === 401) { reviewerName.value = null; return }
     if (!nextResp.ok) throw new Error((await nextResp.json()).statusMessage || nextResp.statusText)
     if (!statsResp.ok) throw new Error(`Stats error: ${statsResp.statusText}`)
 
     currentItem.value = await nextResp.json()
     const statsData = await statsResp.json()
     stats.value = statsData
-
     for (const statField of statsData.fields) {
       const f = fields.value.find(f => f.field === statField.field)
       if (f) f.total = statField.total
@@ -540,15 +588,15 @@ const submitLabel = async (label: string) => {
         notes: notes.value || null,
       }),
     })
-
     if (resp.status === 401) { reviewerName.value = null; return }
     if (!resp.ok) throw new Error('Failed to save label')
 
+    showModelValues.value = true  // reveal model answers after submission
     showConfirmation.value = true
     setTimeout(() => {
       showConfirmation.value = false
       loadNextItem()
-    }, 1500)
+    }, 2500)
   } catch (e) {
     error.value = (e as Error).message
     submitting.value = false
@@ -562,23 +610,21 @@ const skipItem = async () => {
 
 const handleKeydown = (e: KeyboardEvent) => {
   if (submitting.value || loading.value || !reviewerName.value) return
-  const fieldType = currentFieldDef.value?.type
-  if (e.key.toLowerCase() === 'y' && fieldType !== 'bucket') {
-    e.preventDefault()
-    submitLabel(fieldType === 'binary' ? 'eee' : 'correct')
-  } else if (e.key.toLowerCase() === 'n' && fieldType !== 'bucket') {
-    e.preventDefault()
-    submitLabel(fieldType === 'binary' ? 'not_eee' : 'incorrect')
-  } else if (e.key.toLowerCase() === 'u' || e.key === '?') {
-    e.preventDefault()
-    submitLabel('unsure')
-  } else if (e.key.toLowerCase() === 's') {
-    e.preventDefault()
-    skipItem()
-  } else if (e.key === 'Tab') {
-    e.preventDefault()
-    showNotes.value = !showNotes.value
+  const ft = currentFieldDef.value?.type
+  if (ft === 'binary' || ft === 'presence' || ft === 'condition' || ft === 'brand_presence') {
+    if (e.key.toLowerCase() === 'y') {
+      e.preventDefault()
+      const yesLabel = ft === 'binary' ? 'eee' : ft === 'presence' ? 'present' : ft === 'condition' ? 'reusable' : 'visible'
+      submitLabel(yesLabel)
+    } else if (e.key.toLowerCase() === 'n') {
+      e.preventDefault()
+      const noLabel = ft === 'binary' ? 'not_eee' : ft === 'presence' ? 'absent' : ft === 'condition' ? 'damaged' : 'not_visible'
+      submitLabel(noLabel)
+    }
   }
+  if (e.key.toLowerCase() === 'u' || e.key === '?') { e.preventDefault(); submitLabel('unsure') }
+  if (e.key.toLowerCase() === 's') { e.preventDefault(); skipItem() }
+  if (e.key === 'Tab') { e.preventDefault(); showNotes.value = !showNotes.value }
 }
 
 onMounted(async () => {
@@ -586,9 +632,7 @@ onMounted(async () => {
   await checkWhoami()
 })
 
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleKeydown)
-})
+onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 </script>
 
 <style scoped>
