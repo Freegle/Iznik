@@ -42,54 +42,31 @@ async function navigateToMobileDetails(page, flowType) {
   const mobileDetailsPath =
     flowType === 'give' ? '/give/mobile/details' : '/find/mobile/details'
 
-  // Attempt the photos → Skip → details flow up to 2 times.
-  // In rare CI runs a Nuxt async redirect races the Skip click and sends
-  // the page to / → /browse → /explore instead of /mobile/details.
-  // Retrying the full gotoAndVerify + Skip restores a clean state.
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    // Go straight to the mobile photos page — this runs getOrCreateMessageId()
-    // which ensures a compose message exists in the store before we reach details.
-    await page.gotoAndVerify(mobilePhotosPath, {
-      timeout: timeouts.navigation.default,
-    })
+  // Go straight to the mobile photos page — this runs getOrCreateMessageId()
+  // which ensures a compose message exists in the store before we reach details.
+  await page.gotoAndVerify(mobilePhotosPath, {
+    timeout: timeouts.navigation.default,
+  })
 
-    console.log(`Navigated to mobile photos: ${page.url()} (attempt ${attempt}/2)`)
+  console.log(`Navigated to mobile photos: ${page.url()}`)
 
-    // Skip the photos step (no photos needed for these tests).
-    // The "Next" button only appears when photos are present; the Skip link is
-    // always shown by PhotoUploader and calls goNext() via the @skip emit.
-    // Use the .skip-link class to avoid matching unrelated Skip links.
-    const skipLink = page.locator('.skip-link a:has-text("Skip"), a:has-text("Skip")')
-    await expect(skipLink.first()).toBeVisible({
-      timeout: timeouts.ui.appearance,
-    })
-    console.log('Clicking Skip to proceed to details')
-    await skipLink.first().click()
+  // Skip the photos step (no photos needed for these tests).
+  // The "Next" button only appears when photos are present; the Skip link is
+  // always shown by PhotoUploader and calls goNext() via the @skip emit.
+  const skipLink = page.locator('a:has-text("Skip")')
+  await expect(skipLink.first()).toBeVisible({
+    timeout: timeouts.ui.appearance,
+  })
+  console.log('Clicking Skip to proceed to details')
+  await skipLink.first().click()
 
-    // Wait until we're on the details page.
-    // Use the full navigation timeout on all attempts. A short first-attempt
-    // timeout caused spurious retries whenever CI navigation exceeded the
-    // hardcoded value, resulting in double-navigation and coverage drift.
-    // The rare Nuxt async redirect-to-/ race is still caught: if waitForURL
-    // times out after the full timeout the catch block retries the whole flow.
-    const waitTimeout = timeouts.navigation.default
-    try {
-      await page.waitForURL(`**${mobileDetailsPath}`, {
-        timeout: waitTimeout,
-        waitUntil: 'domcontentloaded',
-      })
-      console.log(`Now on details page: ${page.url()}`)
-      return
-    } catch (e) {
-      if (attempt < 2) {
-        console.log(
-          `Navigation to ${mobileDetailsPath} did not complete (got ${page.url()}), retrying...`
-        )
-        continue
-      }
-      throw e
-    }
-  }
+  // Wait until we're on the details page.
+  // Use domcontentloaded — the load event can be slow in CI on older hardware.
+  await page.waitForURL(`**${mobileDetailsPath}`, {
+    timeout: timeouts.navigation.default,
+    waitUntil: 'domcontentloaded',
+  })
+  console.log(`Now on details page: ${page.url()}`)
 }
 
 /**

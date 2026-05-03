@@ -2791,21 +2791,8 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            # cimg/android:*-node images ship with Node.js; skip nvm when already at v22
-            # to avoid nodesource PPA apt-get timeouts (ppa.launchpadcontent.net).
-            if node --version 2>/dev/null | grep -qE "^v22\."; then
-              echo "Node.js 22 already installed: $(node --version)"
-            else
-              echo "Installing Node.js 22 via nvm (avoids apt-get PPA timeouts)"
-              curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-              export NVM_DIR="$HOME/.nvm"
-              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-              nvm install 22
-              nvm use 22
-              nvm alias default 22
-              echo 'export NVM_DIR="$HOME/.nvm"' >> $BASH_ENV
-              echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> $BASH_ENV
-            fi
+            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+            sudo apt-get install -y nodejs
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -2943,21 +2930,8 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            # cimg/android:*-node images ship with Node.js; skip nvm when already at v22
-            # to avoid nodesource PPA apt-get timeouts (ppa.launchpadcontent.net).
-            if node --version 2>/dev/null | grep -qE "^v22\."; then
-              echo "Node.js 22 already installed: $(node --version)"
-            else
-              echo "Installing Node.js 22 via nvm (avoids apt-get PPA timeouts)"
-              curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-              export NVM_DIR="$HOME/.nvm"
-              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-              nvm install 22
-              nvm use 22
-              nvm alias default 22
-              echo 'export NVM_DIR="$HOME/.nvm"' >> $BASH_ENV
-              echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> $BASH_ENV
-            fi
+            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+            sudo apt-get install -y nodejs
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
@@ -3339,21 +3313,8 @@ jobs:
       - run:
           name: Install Node.js 22
           command: |
-            # cimg/android:*-node images ship with Node.js; skip nvm when already at v22
-            # to avoid nodesource PPA apt-get timeouts (ppa.launchpadcontent.net).
-            if node --version 2>/dev/null | grep -qE "^v22\."; then
-              echo "Node.js 22 already installed: $(node --version)"
-            else
-              echo "Installing Node.js 22 via nvm (avoids apt-get PPA timeouts)"
-              curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-              export NVM_DIR="$HOME/.nvm"
-              [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-              nvm install 22
-              nvm use 22
-              nvm alias default 22
-              echo 'export NVM_DIR="$HOME/.nvm"' >> $BASH_ENV
-              echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> $BASH_ENV
-            fi
+            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+            sudo apt-get install -y nodejs
           max_auto_reruns: 3
           auto_rerun_delay: 10s
       - run:
