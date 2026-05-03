@@ -3,30 +3,14 @@ FROM ghcr.io/freegle/freegle-base:latest
 WORKDIR /app
 
 ENV IZNIK_API_V1=http://freegle-apiv1:80/api \
-    IZNIK_API_V2=http://freegle-apiv2:8192/api \
-    NUXT_NITRO_PRERENDER_ROUTES=false \
-    NITRO_PRESET=node-server
+    IZNIK_API_V2=http://freegle-apiv2:8192/api
 
 COPY package*.json setup-hooks.* ./
 COPY patches/ ./patches/
 RUN npm ci --legacy-peer-deps && npm rebuild --legacy-peer-deps
 
-# Copy source code
+# Copy source code (includes .nuxt cache if restored by CircleCI)
 COPY . .
-
-# NODE_ENV=production is set here (after npm ci) so that npm ci installs
-# devDependencies (which include nuxt/nuxi).  The ENV is still available at
-# runtime so the Node server runs in production mode.
-ENV NODE_ENV=production
-
-# Build at image time so Rollup/Nitro chunk layout is fixed for this image.
-# When the build runs at container startup the module-resolution order can
-# differ between CI runs, causing monocart to report different relevant-line
-# counts for the same source file and producing false playwright coverage
-# decreases on PRs that do not change any frontend code.
-# start-with-nginx.sh already skips the build when .output/ is non-empty,
-# so existing local-dev and yesterday-overlay workflows are unaffected.
-RUN NODE_OPTIONS=--max-old-space-size=8192 npm run build
 
 EXPOSE 3003
 
