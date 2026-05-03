@@ -100,17 +100,6 @@ module.exports = defineConfig({
                     // via the host components; excluded from Playwright to
                     // avoid dragging per-job coverage down.
                     !sourcePath.includes('useUppyRetryCoalesce') &&
-                    // ChatMobileNavbar: 198 relevant L+B, consistently 0%
-                    // covered across every Playwright run (master + PR).
-                    // It only renders in the mobile chat layout path that
-                    // the e2e suite does not navigate into, so it is pure
-                    // denominator noise. Unit tests cover it.
-                    !sourcePath.includes('components/ChatMobileNavbar') &&
-                    // DonationButton: loads PayPal SDK via top-level await;
-                    // branch coverage varies 13-18/29 lines between CI runs
-                    // depending on SDK resolution timing — pure noise on
-                    // PHP-only PRs. Unit tests cover the donation logic.
-                    !sourcePath.includes('components/DonationButton') &&
                     // pages/index.vue: non-deterministic relevant-line count
                     // (25 vs 31 observed) because the Nuxt production container
                     // builds at startup, so each CI run may get a different

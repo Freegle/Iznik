@@ -1,5 +1,17 @@
 const { test, expect } = require('./fixtures')
 
+// Intercept PayPal SDK so DonationButton.makeButton() always runs regardless
+// of PayPal CDN response time — keeps coverage deterministic across CI runs.
+test.beforeEach(async ({ page: pageObj }) => {
+  await pageObj.route('**paypalobjects.com**', (route) => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/javascript',
+      body: `window.PayPal={Donation:{Button:function(cfg){return{render:function(s){}}}}}`,
+    })
+  })
+})
+
 const publicPages = [
   { path: '/', title: "Don't throw it away, give it away!" },
   { path: '/about', title: 'About Us' },
