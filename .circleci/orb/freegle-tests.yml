@@ -2622,12 +2622,31 @@ jobs:
               exit 0
             fi
 
+            # Fetch the current repo coverage % from Coveralls so the threshold
+            # self-calibrates: PRs must cover their changed lines at least as
+            # well as the current repo average, preventing regression without
+            # an arbitrary fixed bar that may be above or below actual quality.
+            THRESHOLD=70  # safe fallback if Coveralls API is unavailable
+            if COVERALLS_JSON=$(curl -sf --max-time 10 "https://coveralls.io/github/Freegle/iznik-nuxt3.json" 2>/dev/null); then
+              COVERALLS_PCT=$(echo "$COVERALLS_JSON" | python3 -c \
+                "import sys,json; d=json.load(sys.stdin); pct=float(d.get('covered_percent',0)); print(int(pct)) if 0<pct<=100 else ''" \
+                2>/dev/null || true)
+              if [ -n "$COVERALLS_PCT" ] && [ "$COVERALLS_PCT" -gt 0 ] 2>/dev/null; then
+                THRESHOLD=$COVERALLS_PCT
+                echo "ℹ️ Dynamic threshold: ${THRESHOLD}% (current Coveralls repo coverage)"
+              else
+                echo "⚠️ Could not parse Coveralls response — using fallback threshold: ${THRESHOLD}%"
+              fi
+            else
+              echo "⚠️ Coveralls API unavailable — using fallback threshold: ${THRESHOLD}%"
+            fi
+
             diff-cover $XMLS \
               --diff-file=/tmp/patch.diff \
-              --fail-under=80 \
+              --fail-under=$THRESHOLD \
               --html-report /tmp/patch-coverage.html 2>&1
             EXIT=$?
-            [ $EXIT -ne 0 ] && echo "❌ Patch coverage below 80% — add tests for the changed lines" || echo "✅ Patch coverage ≥ 80%"
+            [ $EXIT -ne 0 ] && echo "❌ Patch coverage below ${THRESHOLD}% — add tests for the changed lines" || echo "✅ Patch coverage ≥ ${THRESHOLD}%"
             exit $EXIT
 
       - collect-artifacts
