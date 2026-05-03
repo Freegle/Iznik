@@ -52,6 +52,7 @@ test.describe('ModTools Edits Flow', () => {
       item: `EditTest ${Date.now()}`,
       description: 'Original description for edit test',
       email: testEmail,
+      groupId: testEnv.group.id,
     })
     console.log(`Posted: id=${posted.id}, item=${posted.item}`)
 

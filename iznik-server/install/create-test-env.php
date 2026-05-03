@@ -322,6 +322,19 @@ $pendingWantedId = findOrCreateMessage($dbhr, $dbhm, "OFFER: PW_$prefix Pending 
 # Create a rejected message owned by the regular user (for repost-group-change tests).
 $rejectedOfferId = findOrCreateMessage($dbhr, $dbhm, "OFFER: PW_$prefix Rejected Chair ($locName)", $gid, $groupName, $modUid, $pcid, $location['lat'], $location['lng'], $userEmail, 'Rejected');
 
+# Reset messages_drafts.groupid for the rejected message on every test env refresh.
+# The Go API's groupid-persistence fix (PATCH /message) writes the user-selected groupid
+# to messages_drafts, so a prior test run that changed the group dropdown will leave the
+# wrong groupid in the draft. If not reset here, the next run's repost form pre-selects
+# the stale groupid instead of the test group, breaking test-repost-group-change.
+if ($rejectedOfferId) {
+    $dbhm->preExec(
+        "UPDATE messages_drafts SET groupid = ? WHERE msgid = ?",
+        [$gid, $rejectedOfferId]
+    );
+    error_log("Reset messages_drafts.groupid=$gid for rejected message $rejectedOfferId");
+}
+
 # Ensure pending messages start unheld (clean state for hold/release tests).
 $dbhm->preExec("UPDATE messages SET heldby = NULL WHERE id IN (?, ?)", [$pendingOfferId, $pendingWantedId]);
 

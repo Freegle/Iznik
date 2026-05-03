@@ -1120,6 +1120,7 @@ const testWithFixtures = test.extend({
         postcode = testEnv?.postcode || environment.postcode,
         email,
         deadline,
+        groupId = null,
       } = options
 
       if (!email) {
@@ -1222,6 +1223,18 @@ const testWithFixtures = test.extend({
         state: 'visible',
         timeout: timeouts.api.default,
       })
+
+      // If a specific groupId was requested, select it in the group dropdown.
+      // By default the UI auto-selects the first group near the postcode. Real
+      // Freegle groups covering the same postcode as PW_* test groups may appear
+      // first, causing the message to be posted to a group the test mod cannot see.
+      // Explicitly selecting the test group avoids cross-group pollution.
+      if (groupId) {
+        const groupDropdown = page.locator('select').first()
+        await groupDropdown.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+        await groupDropdown.selectOption(String(groupId))
+        console.log(`Selected group ${groupId} in postMessage dropdown`)
+      }
 
       // Click the Next/Continue button (Playwright auto-scrolls)
       await page.locator('.next-btn:has-text("Next")').click()
