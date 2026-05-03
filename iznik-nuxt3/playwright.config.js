@@ -106,17 +106,6 @@ module.exports = defineConfig({
                     // the e2e suite does not navigate into, so it is pure
                     // denominator noise. Unit tests cover it.
                     !sourcePath.includes('components/ChatMobileNavbar') &&
-                    // DonationButton: loads PayPal SDK via top-level await;
-                    // branch coverage varies 13-18/29 lines between CI runs
-                    // depending on SDK resolution timing — pure noise on
-                    // PHP-only PRs. Unit tests cover the donation logic.
-                    !sourcePath.includes('components/DonationButton') &&
-                    // pages/index.vue: non-deterministic relevant-line count
-                    // (25 vs 31 observed) because the Nuxt production container
-                    // builds at startup, so each CI run may get a different
-                    // Rollup/Nitro chunk layout for the same source. Causes
-                    // false coverage drops on PRs that touch no frontend code.
-                    !sourcePath.includes('pages/index.vue') &&
                     sourcePath.length < 300
                   )
                 },
