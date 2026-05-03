@@ -31,9 +31,9 @@
       />
     </div>
     <ModCommentAddModal
-      v-if="showAddCommentModal && groupid"
+      v-if="showAddCommentModal"
       :userid="userid"
-      :groupid="groupid"
+      :groupid="groupid || null"
       @added="updateComments"
       @hidden="showAddCommentModal = false"
     />

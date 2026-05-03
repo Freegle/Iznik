@@ -62,8 +62,8 @@ class AutoApproveServiceTest extends TestCase
         $this->assertEquals(MessageGroup::COLLECTION_APPROVED, $mg->collection);
         $this->assertNull($mg->approvedby);
 
-        // Verify dual log entries (Approved + Autoapproved).
-        $this->assertDatabaseHas('logs', [
+        // Auto-approve logs only Autoapproved — not the generic Approved entry.
+        $this->assertDatabaseMissing('logs', [
             'msgid' => $message->id,
             'groupid' => $group->id,
             'type' => 'Message',

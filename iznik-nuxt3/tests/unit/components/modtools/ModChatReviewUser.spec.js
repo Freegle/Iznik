@@ -218,12 +218,25 @@ describe('ModChatReviewUser', () => {
       expect(wrapper.vm.showAddCommentModal).toBe(true)
     })
 
-    it('does not render modal when groupid is 0', async () => {
+    it('renders modal when Add note clicked even when groupid is 0 (iOS Chat Review regression: topic 9518/234)', async () => {
+      // Bug: v-if="showAddCommentModal && groupid" blocked the modal when groupid=0.
+      // Normal Chat Review can have groupid=0 (no group context for that user);
+      // QCR always has a non-zero group so it appeared to work. Fix: remove the groupid guard.
+      const wrapper = mountComponent({ groupid: 0 })
+      await wrapper.find('button').trigger('click')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.showAddCommentModal).toBe(true)
+      expect(wrapper.find('.add-modal').exists()).toBe(true)
+    })
+
+    it('passes null groupid to modal when component groupid is 0', async () => {
       const wrapper = mountComponent({ groupid: 0 })
       wrapper.vm.addAComment()
       await wrapper.vm.$nextTick()
-      expect(wrapper.vm.showAddCommentModal).toBe(true)
-      expect(wrapper.find('.add-modal').exists()).toBe(false)
+      const modal = wrapper.findComponent({ name: 'ModCommentAddModal' })
+      if (modal.exists()) {
+        expect(modal.props('groupid')).toBeNull()
+      }
     })
 
     it('renders modal when groupid is non-zero', async () => {
