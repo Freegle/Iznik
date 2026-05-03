@@ -1230,7 +1230,7 @@ const testWithFixtures = test.extend({
       // first, causing the message to be posted to a group the test mod cannot see.
       // Explicitly selecting the test group avoids cross-group pollution.
       if (groupId) {
-        const groupDropdown = page.locator('select').first()
+        const groupDropdown = page.locator('#communitieslist')
         await groupDropdown.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
         await groupDropdown.selectOption(String(groupId))
         console.log(`Selected group ${groupId} in postMessage dropdown`)
