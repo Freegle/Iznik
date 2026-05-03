@@ -12,6 +12,9 @@ use Illuminate\Support\Facades\Log;
  * Supported drivers: claude, gemini, openai, together, ollama.
  * Selected via config('freegle.eee.model') / EEE_MODEL env var.
  *
+ * v1.4.2: extended INTERNAL COMPONENTS inference — TVs, speakers, vacuums, lamps, set-top boxes.
+ *          Component index updated with /primary EEE component/i catch-all + specific patterns.
+ * v1.4.1: internal heating element inference for appliances where primary component is hidden.
  * v1.4.0: claude/gemini/openai make two separate API calls per item:
  *   - Image call (no text context): extracts visual attributes — brand, model#, components, size etc.
  *   - Text call  (no image):        extracts power signals, is_eee_from_text, weee_category.
@@ -20,7 +23,7 @@ use Illuminate\Support\Facades\Log;
  */
 class EeeVisionService
 {
-    public const PROMPT_VERSION = '1.4.1';
+    public const PROMPT_VERSION = '1.4.2';
 
     public const WEEE_CATEGORIES = [
         1 => 'Temperature exchange equipment',
@@ -419,7 +422,15 @@ Rate the photo. photo_quality: 1–5 (5=sharp and clear, 1=blurry/dark/item obsc
 
 PART 2 — ELECTRICAL COMPONENTS (image only):
 List every component you can directly observe in the photo that uses mains power, battery power, USB, solar, or any other external electrical supply. Describe each one briefly in plain English (e.g. "digital display panel", "mains power flex", "LED strip lights", "rechargeable battery pack"). Only include components that are part of the item being offered — exclude items visible in the background that are clearly separate. Be inclusive: even a clock, indicator light, or built-in rechargeable counts. If you cannot see any such components, return an empty list.
-INTERNAL COMPONENTS: For well-known appliance types where the primary electrical component is always internal and not visible, add it with the suffix "(inferred from appliance type)". Examples: slow cooker → "internal heating element (inferred from appliance type)"; bread maker → "internal heating element (inferred from appliance type)"; laser printer → "laser print engine (inferred from appliance type)"; inkjet printer → "inkjet print mechanism (inferred from appliance type)". Only do this when you can identify the appliance type with high confidence from visual form factor alone (not from any text in the image).
+INTERNAL COMPONENTS: For well-known appliance types where the primary electrical component is always internal and not visible, add it with the suffix "(primary EEE component, inferred from appliance type)". Only do this when you can identify the appliance type with high confidence from visual form factor alone — not from any text in the image. Examples:
+- Slow cooker / bread maker / rice cooker / soup maker / electric kettle / steam iron / hair dryer → "internal heating element (primary EEE component, inferred from appliance type)"
+- Laser printer → "laser print engine (primary EEE component, inferred from appliance type)"
+- Inkjet printer → "inkjet print mechanism (primary EEE component, inferred from appliance type)"
+- Television / monitor / screen / display → "built-in LCD/LED panel (primary EEE component, inferred from appliance type)"
+- Set-top box / Freeview box / satellite receiver / cable box → "DVB-T/S digital tuner (primary EEE component, inferred from appliance type)"
+- Loudspeakers / hi-fi speakers / bookshelf speakers / floor-standing speakers → "audio amplifier and speaker driver (primary EEE component, inferred from appliance type)"
+- Vacuum cleaner / hoover / upright vacuum / cylinder vacuum / robot vacuum → "electric suction motor (primary EEE component, inferred from appliance type)"
+- LED light bulb / CFL bulb / compact fluorescent lamp → "light-emitting element/LED chip (primary EEE component, inferred from appliance type)"
 
 PART 3 — PHYSICAL ATTRIBUTES:
 Extract all observable attributes from the photo.

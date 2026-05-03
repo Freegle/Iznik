@@ -83,6 +83,20 @@ class EeeComponentService
             // Chain/trigger for power tools
             '/\btrigger switch\b/',
             '/\bon\/off trigger\b/',
+            // Display panels as primary function (TVs / monitors — model uses v1.4.2 inference suffix)
+            '/\bbuilt.in (lcd|led) (panel|screen|display)\b/i',
+            '/primary EEE component/i',
+            // Audio transducers (speakers, hi-fi)
+            '/\baudio amplifier\b/i',
+            '/\bspeaker driver\b/i',
+            '/\bvoice coil\b/i',
+            // Suction motors (vacuums — belt-drive "motor" already matched by /\bmotor\b/, belt-drive explicit)
+            '/\belectric suction motor\b/i',
+            '/\bsuction motor\b/i',
+            // Light-emitting primary elements (LED/CFL bulbs, lamps)
+            '/\blight.emitting element\b/i',
+            '/\bLED (chip|element|driver)\b/i',
+            '/\blight.emitting diode element\b/i',
         ],
         'supplementary_eee' => [
             // Display / indicators
