@@ -1,0 +1,25 @@
+app = "freegle-eee-browser"
+primary_region = "lhr"
+
+[build]
+
+[env]
+  PORT = "3000"
+  HOST = "0.0.0.0"
+  EEE_SQLITE_PATH = "/data/classifications.sqlite"
+  EEE_LABELS_PATH = "/data/eee-labels.db"
+
+[[mounts]]
+  source = "eee_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
