@@ -39,15 +39,17 @@
   </div>
 </template>
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, watch } from 'vue'
 import { setupModMembers } from '~/composables/useModMembers'
 import { useMemberStore } from '~/stores/member'
-import { useUserStore } from '~/stores/user'
 
 const memberStore = useMemberStore()
-const userStore = useUserStore()
-const { bump, collection, distance, groupid, loadMore } = setupModMembers(true)
+const { bump, collection, context, distance, groupid, show, loadMore } =
+  setupModMembers(true)
 collection.value = 'Related'
+
+// Clear synchronously so no stale data from a prior visit flashes on first render.
+memberStore.clear()
 
 // Only the related pair entries (not the synthetic per-user entries).
 const members = computed(() => {
@@ -57,28 +59,17 @@ const members = computed(() => {
   )
 })
 
-const visibleMembers = computed(() => {
-  return members.value.filter((pair) => {
-    if (groupid.value <= 0) {
-      return true
-    }
+// Filtering by groupid is handled by the API (groupid is passed in loadMore).
+// No client-side filter needed — it would require userStore data that isn't
+// populated for Related pairs, causing the single-community view to show nothing.
+const visibleMembers = computed(() => members.value)
 
-    // Check if either user in the pair is a member of the selected group.
-    const u1 = userStore.list[pair.user1]
-    const u2 = userStore.list[pair.user2]
-
-    const inGroup = (user) => {
-      if (!user?.memberships) return false
-      return user.memberships.some((g) => parseInt(g.id) === groupid.value)
-    }
-
-    return inGroup(u1) || inGroup(u2)
-  })
-})
-
-// Lifecycle
-onMounted(() => {
-  // reset infiniteLoading on return to page
+// When the community selection changes, reset state so loadMore re-fetches
+// from the API with the new groupid rather than re-filtering stale data.
+watch(groupid, () => {
   memberStore.clear()
+  context.value = null
+  show.value = 0
+  bump.value++
 })
 </script>
