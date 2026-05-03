@@ -57,7 +57,7 @@ class EeeVisionService
             'claude-bridge' => 'claude-subscription-bridge',
             'gemini'        => config('freegle.eee.gemini_model', 'gemini-2.0-flash'),
             'openai'        => config('freegle.eee.openai_model', 'gpt-4o'),
-            'together'      => config('freegle.eee.together_model', 'meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo'),
+            'together'      => config('freegle.eee.together_model', 'Qwen/Qwen2.5-VL-72B-Instruct'),
             'ollama'        => config('freegle.eee.ollama_model', 'llama3.2-vision'),
             default         => $this->driver,
         };
@@ -108,13 +108,14 @@ class EeeVisionService
                 $textRaw  = $hasText ? $this->callTextOpenAI($this->buildTextSystemPrompt(), $context) : null;
                 return $this->mergeAndAnnotate($imageRaw, $textRaw);
 
+            case 'together':
+                $imageRaw = $this->callTogetherImage($imageUrl, $this->buildImageSystemPrompt(), $this->buildImageUserText());
+                $textRaw  = $hasText ? $this->callTextTogether($this->buildTextSystemPrompt(), $context) : null;
+                return $this->mergeAndAnnotate($imageRaw, $textRaw);
+
             // Legacy drivers: single combined call, no text bleed-over fix.
             case 'claude-bridge':
                 $raw = $this->callClaudeBridge($imageUrl, $this->buildSystemPrompt(), $this->buildUserText($context));
-                return $this->mergeAndAnnotate($raw, null);
-
-            case 'together':
-                $raw = $this->callTogether($imageUrl, $this->buildSystemPrompt(), $this->buildUserText($context));
                 return $this->mergeAndAnnotate($raw, null);
 
             case 'ollama':
@@ -134,10 +135,11 @@ class EeeVisionService
     public function analyseMany(array $jobs): array
     {
         return match ($this->driver) {
-            'claude' => $this->analyseManyClaude($jobs),
-            'gemini' => $this->analyseManyGemini($jobs),
-            'openai' => $this->analyseManyOpenAI($jobs),
-            default  => array_map(fn($job) => $this->analyse($job['imageUrl'], $job['context']), $jobs),
+            'claude'   => $this->analyseManyClaude($jobs),
+            'gemini'   => $this->analyseManyGemini($jobs),
+            'openai'   => $this->analyseManyOpenAI($jobs),
+            'together' => $this->analyseManyTogether($jobs),
+            default    => array_map(fn($job) => $this->analyse($job['imageUrl'], $job['context']), $jobs),
         };
     }
 
@@ -343,6 +345,57 @@ class EeeVisionService
                     ],
                 ]
             )
+        );
+
+        return array_map(fn($ir, $tr) => $this->mergeAndAnnotate($ir, $tr), $imageResults, $textResults);
+    }
+
+    protected function analyseManyTogether(array $jobs): array
+    {
+        $imageSystem   = $this->buildImageSystemPrompt();
+        $textSystem    = $this->buildTextSystemPrompt();
+        $imageUserText = $this->buildImageUserText();
+        $token   = config('freegle.eee.together_api_key');
+        $baseUrl = 'https://api.together.xyz/v1/chat/completions';
+
+        // Fetch images locally — Together.ai cannot reliably reach Freegle CDN URLs.
+        $fetchedImages = $this->fetchImagesMany($jobs);
+        // Convert to data URIs for inline base64 delivery.
+        $imageDataUris = array_map(
+            fn($img) => $img ? ('data:' . $img['mime_type'] . ';base64,' . $img['base64']) : null,
+            $fetchedImages
+        );
+        // poolApiCalls expects imageData as ['placeholder' => true] or real data; we pass uris as fake data.
+        $fakeImageData = array_map(fn($uri) => $uri !== null ? ['uri' => $uri] : null, $imageDataUris);
+
+        $imageResults = $this->poolApiCalls(
+            $jobs,
+            $fakeImageData,
+            fn($r) => $this->extractOpenAIRaw($r),
+            fn($pool, $job, $img) => $pool->withToken($token)->timeout(120)->post($baseUrl, [
+                'model' => $this->getModelName(), 'max_tokens' => 1200, 'temperature' => 0.1,
+                'response_format' => ['type' => 'json_object'],
+                'messages' => [
+                    ['role' => 'system', 'content' => $imageSystem],
+                    ['role' => 'user', 'content' => [
+                        ['type' => 'image_url', 'image_url' => ['url' => $img['uri']]],
+                        ['type' => 'text', 'text' => $imageUserText],
+                    ]],
+                ],
+            ])
+        );
+
+        $textResults = $this->poolTextApiCalls(
+            $jobs,
+            fn($r) => $this->extractOpenAIRaw($r),
+            fn($pool, $job) => $pool->withToken($token)->timeout(60)->post($baseUrl, [
+                'model' => $this->getModelName(), 'max_tokens' => 400, 'temperature' => 0.1,
+                'response_format' => ['type' => 'json_object'],
+                'messages' => [
+                    ['role' => 'system', 'content' => $textSystem],
+                    ['role' => 'user', 'content' => $this->buildTextUserText($job['context'])],
+                ],
+            ])
         );
 
         return array_map(fn($ir, $tr) => $this->mergeAndAnnotate($ir, $tr), $imageResults, $textResults);
@@ -797,6 +850,90 @@ PROMPT;
             ];
         } catch (\Exception $e) {
             Log::error('EeeVisionService OpenAI text exception', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    protected function callTogetherImage(string $imageUrl, string $system, string $userText): ?array
+    {
+        $imageData = $this->fetchImageBase64($imageUrl);
+        if (!$imageData) return null;
+
+        $dataUri = 'data:' . $imageData['mime_type'] . ';base64,' . $imageData['base64'];
+
+        $payload = [
+            'model'           => $this->getModelName(),
+            'max_tokens'      => 1200,
+            'temperature'     => 0.1,
+            'response_format' => ['type' => 'json_object'],
+            'messages'        => [
+                ['role' => 'system', 'content' => $system],
+                ['role' => 'user', 'content' => [
+                    ['type' => 'image_url', 'image_url' => ['url' => $dataUri]],
+                    ['type' => 'text', 'text' => $userText],
+                ]],
+            ],
+        ];
+
+        try {
+            $response = Http::timeout(120)
+                ->withToken(config('freegle.eee.together_api_key'))
+                ->post('https://api.together.xyz/v1/chat/completions', $payload);
+
+            if (!$response->successful()) {
+                Log::warning('EeeVisionService Together image error', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
+                return null;
+            }
+
+            $in  = $response->json('usage.prompt_tokens', 0);
+            $out = $response->json('usage.completion_tokens', 0);
+
+            return [
+                'text'          => $response->json('choices.0.message.content'),
+                'input_tokens'  => $in,
+                'output_tokens' => $out,
+                'cost_usd'      => $this->estimateCost('together', $in, $out),
+            ];
+        } catch (\Exception $e) {
+            Log::error('EeeVisionService Together image exception', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
+
+    protected function callTextTogether(string $system, array $context): ?array
+    {
+        $payload = [
+            'model'           => $this->getModelName(),
+            'max_tokens'      => 400,
+            'temperature'     => 0.1,
+            'response_format' => ['type' => 'json_object'],
+            'messages'        => [
+                ['role' => 'system', 'content' => $system],
+                ['role' => 'user', 'content' => $this->buildTextUserText($context)],
+            ],
+        ];
+
+        try {
+            $response = Http::timeout(60)
+                ->withToken(config('freegle.eee.together_api_key'))
+                ->post('https://api.together.xyz/v1/chat/completions', $payload);
+
+            if (!$response->successful()) {
+                Log::warning('EeeVisionService Together text error', ['status' => $response->status(), 'body' => substr($response->body(), 0, 300)]);
+                return null;
+            }
+
+            $in  = $response->json('usage.prompt_tokens', 0);
+            $out = $response->json('usage.completion_tokens', 0);
+
+            return [
+                'text'          => $response->json('choices.0.message.content'),
+                'input_tokens'  => $in,
+                'output_tokens' => $out,
+                'cost_usd'      => $this->estimateCost('together', $in, $out),
+            ];
+        } catch (\Exception $e) {
+            Log::error('EeeVisionService Together text exception', ['error' => $e->getMessage()]);
             return null;
         }
     }

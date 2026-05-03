@@ -1,8 +1,32 @@
 # EEE Identification Project — Design Plan
 
-**Status**: Design complete, implementation in progress.
+**Status**: Three-model comparison complete (Claude, Gemini, GPT-4o). Open-weights model comparison pending.
 **Branch**: `feature/eee-identification`
 **Implementation target**: `iznik-batch` Laravel batch code.
+
+---
+
+## Results to date (2026-05-03)
+
+**Core methodology — component-based classification.** The key breakthrough was abandoning reliance on a model's overall "is this electrical?" judgment. Instead, the model lists every electrical component it can physically observe in the photo (display panel, motor, battery, heating element, power flex, etc.). These are checked against a curated index that classifies each one as **primary EEE** (proves the item's primary function is electrical), **supplementary** (confirms it plugs in, but doesn't prove primary function — e.g. a clock on a gas cooker), or **non-electrical**. An item is only classified as WEEE if it has at least one primary EEE component. This makes every decision auditable — you can see exactly which component triggered it — and eliminates pattern-matching on item names.
+
+**Inference for hidden components.** For well-known appliance types where the primary component is always internal and invisible (slow cookers, laser printers, etc.), models are allowed to infer the component by appliance type — but must name it specifically and only when the appliance type is visually unambiguous from form factor alone. This drove EEE reliability from near-zero to ~92% for Claude. We stopped short of adding item-type-specific examples to the prompt to avoid overfitting.
+
+**Model comparison — 200 item types at prompt v1.4.1:**
+
+| Model | Composite score | EEE reliability | Est. cost / year (Freegle scale) |
+|---|---|---|---|
+| Claude Sonnet 4.6 | **85.0%** | 92.3% | ~£3,500 |
+| GPT-4o | 73.1% | 42.0% | ~£650 |
+| Gemini 2.0 Flash Lite | 71.9% | 44.6% | **~£80** |
+
+Claude is the clear quality leader. Gemini is 45× cheaper and nearly as good on most dimensions — the obvious production choice on cost. GPT-4o has high quality when it responds, but a 30k TPM rate limit causes silent failures on ~80% of images in batch mode, making it unreliable for bulk processing.
+
+**Total API spend to date: ~$44.48** (Claude $41, GPT-4o $2.12, Gemini $1.33).
+
+**Remaining gaps:**
+1. **Open-weights model** — Together.ai was the planned platform but now requires a paid dedicated endpoint for all vision models (no serverless access). Decision needed on whether to spin one up or skip.
+2. **External sense-check of physical attributes** — weight/size/WEEE-category estimates have only been validated by cross-model agreement, not against real product specs. Model numbers are already being extracted and could enable automated spec lookups.
 
 ---
 

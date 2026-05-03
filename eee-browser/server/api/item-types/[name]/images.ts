@@ -52,36 +52,43 @@ export default defineEventHandler(async (event) => {
     const result = samples.map((sample) => {
       const classificationsQuery = `
         SELECT
-          model,
-          is_eee,
-          is_eee_confidence,
-          is_eee_reasoning,
-          is_eee_from_components,
-          contains_eee_components,
-          electrical_components_description,
-          weee_category,
-          condition,
-          brand,
-          model_number,
-          photo_quality,
-          value_band_gbp,
-          weight_kg_min,
-          weight_kg_max,
-          size_cm,
-          size_confidence,
-          material_primary,
-          material_secondary,
-          item_complete,
-          item_complete_notes,
-          accessories_visible
-        FROM eee_classifications
-        WHERE messageid = ? AND attid = ?
-        ORDER BY model
+          c.model,
+          c.prompt_version,
+          c.is_eee,
+          c.is_eee_confidence,
+          c.is_eee_reasoning,
+          c.is_eee_from_components,
+          c.contains_eee_components,
+          c.electrical_components_description,
+          c.weee_category,
+          c.condition,
+          c.brand,
+          c.model_number,
+          c.photo_quality,
+          c.value_band_gbp,
+          c.weight_kg_min,
+          c.weight_kg_max,
+          c.size_cm,
+          c.size_confidence,
+          c.material_primary,
+          c.material_secondary,
+          c.item_complete,
+          c.item_complete_notes,
+          c.accessories_visible
+        FROM eee_classifications c
+        INNER JOIN (
+          SELECT model, MAX(prompt_version) AS max_pv
+          FROM eee_classifications
+          WHERE messageid = ? AND attid = ?
+          GROUP BY model
+        ) latest ON c.model = latest.model AND c.prompt_version = latest.max_pv
+        WHERE c.messageid = ? AND c.attid = ?
+        ORDER BY c.model
       `
 
       const classifications = db
         .prepare(classificationsQuery)
-        .all(sample.messageid, sample.attid) as any[]
+        .all(sample.messageid, sample.attid, sample.messageid, sample.attid) as any[]
 
       const imageUrl = buildImageUrl(sample.externaluid)
 
@@ -94,6 +101,7 @@ export default defineEventHandler(async (event) => {
         textbody: sample.textbody,
         classifications: classifications.map((c) => ({
           model: c.model,
+          promptVersion: c.prompt_version,
           isEee: c.is_eee,
           isEeeConfidence: c.is_eee_confidence,
           isEeeReasoning: c.is_eee_reasoning,

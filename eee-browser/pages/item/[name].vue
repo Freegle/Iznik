@@ -297,20 +297,35 @@ const parseComponents = (desc: string | null): string[] => {
   return desc.split(';').map((s) => s.trim()).filter(Boolean)
 }
 
-// Binary EEE rule verdict: EEE only when primary_eee components confirmed.
-// Supplementary-only components and no-components are both "Not EEE".
-const isEeeByRule = (cls: any): boolean => cls.isEeeFromComponents === 1
+// Three-state EEE rule verdict:
+//   'eee'        — primary_eee component confirmed (isEeeFromComponents = 1)
+//   'electrical' — electrical components found but none are primary_eee
+//   'none'       — no electrical components identified at all
+const eeeState = (cls: any): 'eee' | 'electrical' | 'none' => {
+  if (cls.isEeeFromComponents === 1) return 'eee'
+  const comps = parseComponents(cls.electricalComponentsDescription)
+  return comps.length > 0 ? 'electrical' : 'none'
+}
 
-const eeeRuleLabel = (cls: any): string => isEeeByRule(cls) ? 'EEE ✓' : 'Not EEE'
+const isEeeByRule = (cls: any): boolean => eeeState(cls) === 'eee'
 
-const eeeRuleBadge = (cls: any): string =>
-  isEeeByRule(cls)
-    ? 'bg-green-900/50 text-green-300 border-green-700'
-    : 'bg-red-900/50 text-red-300 border-red-700'
+const eeeRuleLabel = (cls: any): string => {
+  const s = eeeState(cls)
+  if (s === 'eee') return 'EEE ✓'
+  if (s === 'electrical') return 'Electrical components'
+  return 'No electrical components'
+}
+
+const eeeRuleBadge = (cls: any): string => {
+  const s = eeeState(cls)
+  if (s === 'eee') return 'bg-green-900/50 text-green-300 border-green-700'
+  if (s === 'electrical') return 'bg-amber-900/50 text-amber-300 border-amber-700'
+  return 'bg-gray-800 text-gray-400 border-gray-600'
+}
 
 const eeeRuleDisagrees = (classifications: any[]) => {
   if (classifications.length < 2) return false
-  const states = classifications.map(c => isEeeByRule(c) ? 'eee' : 'not_eee')
+  const states = classifications.map(c => eeeState(c))
   return new Set(states).size > 1
 }
 
