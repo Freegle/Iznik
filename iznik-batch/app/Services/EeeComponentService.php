@@ -59,9 +59,27 @@ class EeeComponentService
             '/\bsubmersible heater\b/',
             '/\baquarium heater\b/',
             '/\bheater\b/',
-            // Batteries / power storage
+            // Batteries / power storage (primary function of laptops, tablets, cordless tools)
             '/\brechargeable battery\b/',
+            '/\brechargeable lithium/',
+            '/\binternal.*battery\b/',
+            '/\bbuilt.in.*battery\b/',
+            '/\blithium.*battery\b/',
             '/\bbattery pack\b/',
+            // Printing mechanisms (primary function of printers)
+            '/print(ing)? (head|mechanism|engine)/',
+            '/\blaser print/',
+            '/\binkjet print/',
+            '/mains.?powered.*print/',
+            // Signal processing / tuners (primary function of set-top boxes, radios)
+            '/\btuner\b/',
+            '/\bsignal tuner\b/',
+            '/\bfreeview tuner\b/',
+            '/\bdvb.t\b/',
+            '/\bsignal processor\b/',
+            // Image sensors (primary function of cameras)
+            '/\bimage sensor\b/',
+            '/\b(ccd|cmos) (image )?sensor\b/',
             // Chain/trigger for power tools
             '/\btrigger switch\b/',
             '/\bon\/off trigger\b/',
