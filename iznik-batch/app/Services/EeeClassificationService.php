@@ -40,6 +40,13 @@ class EeeClassificationService
         protected EeeComponentService $componentService,
     ) {}
 
+    public function withDriver(string $driver): static
+    {
+        $clone = clone $this;
+        $clone->vision = $this->vision->withDriver($driver);
+        return $clone;
+    }
+
     // -------------------------------------------------------------------------
     // Tier 1 — Item-type lookup cache
     // -------------------------------------------------------------------------
@@ -159,7 +166,7 @@ class EeeClassificationService
         foreach ($rawResults as $i => $result) {
             if ($result === null) continue;
             $att = $attachments[$i];
-            if (!$this->sqlite->hasClassification($att->messageid, $this->vision->getModelName())) {
+            if (!$this->sqlite->hasClassification($att->messageid, $this->vision->getModelName(), $this->vision->getPromptVersion())) {
                 $fakeMsg     = (object)['id' => $att->messageid, 'subject' => $att->subject, 'textbody' => $att->textbody];
                 $textSignals = $this->extractTextSignals(($att->subject ?? '') . ' ' . ($att->textbody ?? ''));
                 $context     = ['subject' => $att->subject ?? '', 'description' => $att->textbody ?? ''];
@@ -419,14 +426,18 @@ class EeeClassificationService
         }
 
         // Component-index derived EEE verdict (deterministic, no model judgment).
-        $isEeeFromComponents = null;
+        // Empty component list = evidence of absence → Not EEE (0).
+        // Supplementary-only components → Uncertain (null).
+        // Primary EEE component found → EEE (1).
         $compDesc = $result['electrical_components_description'] ?? null;
-        if ($compDesc && !$this->componentService->needsBuilding()) {
+        if (!$compDesc) {
+            $isEeeFromComponents = 0; // model listed nothing electrical — treat as not EEE
+        } elseif (!$this->componentService->needsBuilding()) {
             $components = array_filter(array_map('trim', explode(';', $compDesc)));
-            if (!empty($components)) {
-                $verdict = $this->componentService->classifyComponents($components);
-                $isEeeFromComponents = $verdict['is_eee'] !== null ? ($verdict['is_eee'] ? 1 : 0) : null;
-            }
+            $verdict = $this->componentService->classifyComponents($components);
+            $isEeeFromComponents = $verdict['is_eee'] !== null ? ($verdict['is_eee'] ? 1 : 0) : null;
+        } else {
+            $isEeeFromComponents = null; // components exist but index not built yet
         }
 
         $data = [

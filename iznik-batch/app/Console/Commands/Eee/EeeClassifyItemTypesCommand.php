@@ -23,6 +23,7 @@ class EeeClassifyItemTypesCommand extends Command
     protected $signature = 'eee:classify-item-types
                             {--limit=200 : Number of top item types to process}
                             {--items=    : Comma-separated list of specific item type names to classify}
+                            {--driver=   : Override model driver (claude, gemini, openai, together, ollama)}
                             {--force     : Re-classify already-classified types}
                             {--dry-run   : Show pending types without making API calls}';
 
@@ -45,6 +46,12 @@ class EeeClassifyItemTypesCommand extends Command
         $namedItems = $itemsOpt
             ? array_map('trim', explode(',', $itemsOpt))
             : null;
+
+        $driver = $this->option('driver');
+        if ($driver) {
+            $this->vision     = $this->vision->withDriver($driver);
+            $this->classifier = $this->classifier->withDriver($driver);
+        }
 
         if (!$dryRun && !$this->vision->isConfigured()) {
             $this->error('Vision service not configured. Check EEE_MODEL and API keys.');

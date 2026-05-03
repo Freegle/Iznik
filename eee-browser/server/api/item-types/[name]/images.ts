@@ -1,5 +1,14 @@
 import Database from 'better-sqlite3'
 
+function buildImageUrl(externaluid: string): string {
+  if (externaluid.startsWith('freegletusd-')) {
+    const fileId = externaluid.slice('freegletusd-'.length)
+    return `https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/${fileId}&w=768&h=768&fit=inside&output=jpg`
+  }
+  // Legacy Uploadcare UUID
+  return `https://ucarecdn.com/${externaluid}/-/preview/768x768/-/format/jpeg/`
+}
+
 export default defineEventHandler(async (event) => {
   const itemName = getRouterParam(event, 'name')
   if (!itemName) {
@@ -47,15 +56,24 @@ export default defineEventHandler(async (event) => {
           is_eee,
           is_eee_confidence,
           is_eee_reasoning,
+          is_eee_from_components,
           contains_eee_components,
           electrical_components_description,
+          weee_category,
           condition,
           brand,
           model_number,
           photo_quality,
           value_band_gbp,
           weight_kg_min,
-          weight_kg_max
+          weight_kg_max,
+          size_cm,
+          size_confidence,
+          material_primary,
+          material_secondary,
+          item_complete,
+          item_complete_notes,
+          accessories_visible
         FROM eee_classifications
         WHERE messageid = ? AND attid = ?
         ORDER BY model
@@ -65,8 +83,7 @@ export default defineEventHandler(async (event) => {
         .prepare(classificationsQuery)
         .all(sample.messageid, sample.attid) as any[]
 
-      const tusBase = process.env.TUS_BASE_URL || 'https://images.ilovefreegle.org/'
-      const imageUrl = `${tusBase}${sample.externaluid}`
+      const imageUrl = buildImageUrl(sample.externaluid)
 
       return {
         messageid: sample.messageid,
@@ -80,8 +97,10 @@ export default defineEventHandler(async (event) => {
           isEee: c.is_eee,
           isEeeConfidence: c.is_eee_confidence,
           isEeeReasoning: c.is_eee_reasoning,
+          isEeeFromComponents: c.is_eee_from_components,
           containsEeeComponents: c.contains_eee_components,
           electricalComponentsDescription: c.electrical_components_description,
+          weeeCategory: c.weee_category,
           condition: c.condition,
           brand: c.brand,
           modelNumber: c.model_number,
@@ -89,6 +108,13 @@ export default defineEventHandler(async (event) => {
           valueBandGbp: c.value_band_gbp,
           weightKgMin: c.weight_kg_min,
           weightKgMax: c.weight_kg_max,
+          sizeCm: c.size_cm ? JSON.parse(c.size_cm) : null,
+          sizeConfidence: c.size_confidence,
+          materialPrimary: c.material_primary,
+          materialSecondary: c.material_secondary,
+          itemComplete: c.item_complete,
+          itemCompleteNotes: c.item_complete_notes,
+          accessoriesVisible: c.accessories_visible ? JSON.parse(c.accessories_visible) : [],
         })),
       }
     })

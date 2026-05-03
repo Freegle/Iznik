@@ -331,11 +331,16 @@ class EeeSqliteService
         return (int) $pdo->lastInsertId();
     }
 
-    public function hasClassification(int $messageid, string $model): bool
+    public function hasClassification(int $messageid, string $model, ?string $promptVersion = null): bool
     {
         $pdo  = $this->getPdo();
-        $stmt = $pdo->prepare("SELECT 1 FROM eee_classifications WHERE messageid = ? AND model = ? LIMIT 1");
-        $stmt->execute([$messageid, $model]);
+        if ($promptVersion !== null) {
+            $stmt = $pdo->prepare("SELECT 1 FROM eee_classifications WHERE messageid = ? AND model = ? AND prompt_version = ? LIMIT 1");
+            $stmt->execute([$messageid, $model, $promptVersion]);
+        } else {
+            $stmt = $pdo->prepare("SELECT 1 FROM eee_classifications WHERE messageid = ? AND model = ? LIMIT 1");
+            $stmt->execute([$messageid, $model]);
+        }
         return (bool) $stmt->fetchColumn();
     }
 
