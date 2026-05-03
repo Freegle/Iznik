@@ -116,20 +116,6 @@
                 </div>
               </div>
 
-              <!-- Model answers (revealed after submission) -->
-              <div v-if="showModelValues && currentItem.modelValues.length > 0" class="border-t border-gray-800 p-4">
-                <p class="text-xs text-gray-500 uppercase tracking-wider mb-3">Model answers (revealed)</p>
-                <div class="flex flex-wrap gap-2">
-                  <div
-                    v-for="model in currentItem.modelValues"
-                    :key="model.model"
-                    class="bg-gray-800/70 rounded-lg px-3 py-2 border border-gray-700/50 text-xs"
-                  >
-                    <span class="font-semibold mr-1" :class="modelColor(model.model)">{{ model.displayName }}:</span>
-                    <span :class="fieldValueClass(model.value, selectedField)">{{ formatFieldValue(model.value, selectedField) }}</span>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
 
@@ -287,7 +273,7 @@
 
             <Transition name="fade">
               <div v-if="showConfirmation" class="bg-green-900/60 border border-green-700 rounded-lg p-3 text-green-300 text-xs text-center">
-                Saved ✓ — model answers revealed below
+                Saved ✓
               </div>
             </Transition>
           </div>
@@ -468,7 +454,6 @@ const imageFailed = ref(false)
 const showNotes = ref(false)
 const notes = ref('')
 const showConfirmation = ref(false)
-const showModelValues = ref(false)
 
 const myLabelledCount = (fieldName: string): number => {
   if (!reviewerName.value) return 0
@@ -549,7 +534,6 @@ const loadNextItem = async () => {
   imageFailed.value = false
   showNotes.value = false
   notes.value = ''
-  showModelValues.value = false
 
   try {
     const [nextResp, statsResp] = await Promise.all([
@@ -591,12 +575,11 @@ const submitLabel = async (label: string) => {
     if (resp.status === 401) { reviewerName.value = null; return }
     if (!resp.ok) throw new Error('Failed to save label')
 
-    showModelValues.value = true  // reveal model answers after submission
     showConfirmation.value = true
     setTimeout(() => {
       showConfirmation.value = false
       loadNextItem()
-    }, 2500)
+    }, 800)
   } catch (e) {
     error.value = (e as Error).message
     submitting.value = false
