@@ -67,9 +67,12 @@ async function navigateToMobileDetails(page, flowType) {
     await skipLink.first().click()
 
     // Wait until we're on the details page.
-    // Use a short timeout on the first attempt so a redirect to / (caused by
-    // a rare async race in Nuxt router) fails fast and we can retry.
-    const waitTimeout = attempt === 1 ? 10000 : timeouts.navigation.default
+    // Use the full navigation timeout on all attempts. A short first-attempt
+    // timeout caused spurious retries whenever CI navigation exceeded the
+    // hardcoded value, resulting in double-navigation and coverage drift.
+    // The rare Nuxt async redirect-to-/ race is still caught: if waitForURL
+    // times out after the full timeout the catch block retries the whole flow.
+    const waitTimeout = timeouts.navigation.default
     try {
       await page.waitForURL(`**${mobileDetailsPath}`, {
         timeout: waitTimeout,
