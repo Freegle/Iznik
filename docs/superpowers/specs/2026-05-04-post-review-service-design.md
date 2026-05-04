@@ -300,9 +300,10 @@ A single structured prompt call. Only called when Stages 1 and 2 produce no `blo
 
 1. **System rules** (always active): no loans or borrowing, no events, no volunteering requests, no commercial services
 2. **Group rules**: only rules set `true` in `groups.rules` (28-rule taxonomy, same as existing ModBot)
-3. **Post quality**: Is the description adequate? Dangerously vague Wanteds (e.g. "Furniture any", bare category words with no detail)
-4. **Safety-trigger items**: car seats, helmets, knives/swords, upholstered furniture, cot mattresses, banned invasive plants (see Safety Triggers section)
-5. **Location extraction**: any place names or collection-point addresses mentioned in the post body
+3. **Post quality**: Is the description adequate? Dangerously vague Wanteds (e.g. "Furniture any", bare category words with no detail). Note: vague post detection is best-effort — reliability is lower than other checks and should be validated against production data before treating as high-confidence.
+4. **Scam behaviour signals**: Does the post attempt to extract money (mention of payment, bank transfer, deposit), move the conversation off-platform (references to WhatsApp, Telegram, texting a number), or show other patterns inconsistent with free giving? This is behaviour-based, not item-value-based — there is no attempt to assess whether an item is expensive.
+5. **Safety-trigger items**: car seats, helmets, knives/swords, upholstered furniture, cot mattresses, banned invasive plants (see Safety Triggers section)
+6. **Location extraction**: any place names or collection-point addresses mentioned in the post body
 
 Any `flag`-action keyword matches from Stage 2 are passed to the LLM as context hints, not as definitive verdicts.
 
@@ -514,7 +515,17 @@ Used for: threshold calibration, moderator trust-building, false-positive analys
 2. Set `ai_review: true` on 2–3 volunteer groups
 3. Monitor `messages_review_log` for false positives (approved posts that mods later reject) and false negatives (pending posts that would have been fine)
 4. Adjust LLM confidence threshold (currently 0.85) and keyword `block`/`flag` assignments based on data
-5. Roll out to further groups on request
+5. Roll out to all groups — the per-group `ai_review` flag is a **staging mechanism**, not a permanent feature. The aim is a short, decisive prototype period (weeks, not months), not an open-ended opt-in/out rollout. A prolonged multi-group opt-in creates maintenance overhead and leaves the codebase in a half-finished state indefinitely.
+
+### Transition: existing members
+
+When `ai_review` is enabled on a group, existing members need tier assignment:
+
+- Members currently on `POSTING_MODERATED` who have a **mod note** remain on `POSTING_MODERATED` (manual moderation preserved for flagged accounts)
+- Members on `POSTING_MODERATED` with no mod note, and all members on `POSTING_DEFAULT`, enter the new pipeline normally
+- Members on `POSTING_UNMODERATED` (Trusted) are unaffected
+
+Note: some groups apply mod notes universally as a record-keeping habit rather than as a flag. This is an edge case to be handled operationally rather than by special-casing in code.
 
 ---
 

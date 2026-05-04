@@ -694,6 +694,7 @@ const SYSTEM_RULES = [
   'no events or gatherings',
   'no volunteering requests or offers',
   'no commercial services or business advertising',
+  'no scam behaviour: requesting payment, deposits, or bank transfers; attempting to move conversation off-platform (e.g. WhatsApp, Telegram, texting a number in the post)',
 ]
 
 function buildSystemRules(groupRules: Record<string, boolean>): string {
