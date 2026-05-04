@@ -181,4 +181,44 @@ describe('work_router_decide action', () => {
     expect(result._transition).toBe('DIAGNOSE_BUG')
     expect(result.reason).toContain('2 unfixed bug(s)')
   })
+
+  it('GitHub scan: links existing PR to bug and skips dispatch when branch matches topic-post', async () => {
+    // Bug 9500/42 is open in DB with no PR — normally would be dispatched.
+    upsertDiscourseBug(db, { topic: 9500, post: 42, state: 'open' })
+
+    // Inject a mock open PR list whose branch contains the topic-post pattern.
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [],
+      bugsFixed: [],
+      _githubPrListOverride: [
+        { number: 999, headRefName: 'fix/some-feature-9500-42' },
+      ],
+    })
+
+    // The bug should be linked to PR #999 and excluded from dispatch.
+    const linked = getDiscourseBug(db, 9500, 42)
+    expect(linked?.pr_number).toBe(999)
+    expect(linked?.state).toBe('fix-queued')
+    // No other pending bugs → should advance past dispatch
+    expect(result._transition).toBe('COVERAGE_GATE')
+  })
+
+  it('GitHub scan: does not link PR when branch pattern does not match', async () => {
+    upsertDiscourseBug(db, { topic: 9501, post: 7, state: 'open' })
+
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [],
+      bugsFixed: [],
+      _githubPrListOverride: [
+        { number: 888, headRefName: 'fix/unrelated-feature-1234-56' },
+      ],
+    })
+
+    // Bug is still open, no PR linked — dispatched normally.
+    const bug = getDiscourseBug(db, 9501, 7)
+    expect(bug?.pr_number).toBeNull()
+    expect(result._transition).toBe('DIAGNOSE_BUG')
+  })
 })

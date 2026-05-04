@@ -742,11 +742,39 @@ async function main() {
         break
       }
       // Safety net: if the LLM produced invalid JSON across all retries, don't
-      // leave the instance stuck mid-workflow. After 2 consecutive coverage
-      // failures force-transition to WRAP_UP (avoids COVERAGE_GATE → WRITE_COVERAGE
-      // → fail → COVERAGE_GATE infinite loop). First failure still tries COVERAGE_GATE
-      // so a transient LLM hiccup doesn't silently skip coverage entirely.
+      // leave the instance stuck mid-workflow.
       if (err.message?.includes('failed validation after')) {
+        // Special case: DIAGNOSE_BUG failure means this specific bug can't be
+        // diagnosed (code not found, UI-only, wrong repo, etc.). Defer it and
+        // loop back to WORK_ROUTER to try the next bug — don't skip to
+        // COVERAGE_GATE while there are still open bugs in the queue.
+        if (current.currentState === 'DIAGNOSE_BUG') {
+          const { getDb, upsertDiscourseBug } = await import('./db/index.js')
+          const diagCtx = (current as any).context ?? {}
+          const singleBug = diagCtx._action_work_router_decide?.singleBug
+          if (singleBug?.topic && singleBug?.post) {
+            const db = getDb()
+            db.prepare(`
+              UPDATE discourse_bug SET state = 'deferred',
+                reason = 'DIAGNOSE_BUG failed — code not found or undiagnosable; skipped',
+                last_seen_at = datetime('now')
+              WHERE topic = ? AND post = ?
+            `).run(singleBug.topic, singleBug.post)
+            outWarn(`DIAGNOSE_BUG failed for ${singleBug.topic}/${singleBug.post} — deferred, retrying next bug`)
+          } else {
+            outWarn('DIAGNOSE_BUG failed — no singleBug in context, forcing to WORK_ROUTER')
+          }
+          try {
+            await engine.forceTransition(instance.id, 'WORK_ROUTER', 'DIAGNOSE_BUG failed — trying next bug')
+          } catch (forceErr: any) {
+            outWarn(`force-transition to WORK_ROUTER failed: ${forceErr.message ?? forceErr}`)
+            break
+          }
+          continue
+        }
+
+        // For coverage/other states: after 2 consecutive failures force WRAP_UP
+        // (avoids COVERAGE_GATE → WRITE_COVERAGE → fail → COVERAGE_GATE loop).
         consecutiveCoverageFailures++
         const target = consecutiveCoverageFailures >= 2 ? 'WRAP_UP' : 'COVERAGE_GATE'
         const reason = consecutiveCoverageFailures >= 2

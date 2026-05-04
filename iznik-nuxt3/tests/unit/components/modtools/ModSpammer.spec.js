@@ -243,5 +243,16 @@ describe('ModSpammer', () => {
       expect(wrapper.text()).toContain('Minimal User')
       expect(wrapper.text()).toContain('Confirmed Spammer')
     })
+
+    it('handles null spammer object without crashing', () => {
+      const user = {
+        id: 100,
+        displayname: 'User with Null Spammer',
+        spammer: null,
+      }
+      const wrapper = mountComponent({ user })
+      // Should not render the NoticeMessage when spammer is null
+      expect(wrapper.find('.notice').exists()).toBe(false)
+    })
   })
 })

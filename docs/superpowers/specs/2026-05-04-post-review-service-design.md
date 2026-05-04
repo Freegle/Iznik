@@ -206,6 +206,8 @@ Regex patterns (UK-focused), run in-process. Post content never leaves the machi
 
 On any match: add reason tag `pii:<type>` (e.g. `pii:phone`, `pii:postcode`, `pii:occupancy`), transition to `PENDING_END`. Post never reaches the LLM.
 
+**Per-group opt-out:** Some groups permit members to include contact details in posts (e.g. phone number for collection arrangements). Groups set `contactdetails: true` in `groups.rules` via a new ModSettings toggle: "Do you allow members to include personal contact details (phone numbers, addresses) in posts?" When this is true, PII matches are logged but do not trigger `PENDING_END` — the post continues to Stage 2. The default (absent or false) is to block. The `contactdetails` rule is also added to ModBot's `getRuleDescriptions()` so it participates in the existing Gemini-based rule check for groups not yet on the new pipeline.
+
 Moderator-visible label: "Possible personal information detected — please ask the member to remove it."
 
 ---
@@ -298,19 +300,22 @@ A single structured prompt call. Only called when Stages 1 and 2 produce no `blo
 
 1. **System rules** (always active): no loans or borrowing, no events, no volunteering requests, no commercial services
 2. **Group rules**: only rules set `true` in `groups.rules` (28-rule taxonomy, same as existing ModBot)
-3. **Post quality**: Is the description adequate? Dangerously vague Wanteds (e.g. "Furniture any", bare category words with no detail)
-4. **Safety-trigger items**: car seats, helmets, knives/swords, upholstered furniture, cot mattresses, banned invasive plants (see Safety Triggers section)
-5. **Location extraction**: any place names or collection-point addresses mentioned in the post body
+3. **Post quality**: Is the description adequate? Dangerously vague Wanteds (e.g. "Furniture any", bare category words with no detail). Note: vague post detection is best-effort — reliability is lower than other checks and should be validated against production data before treating as high-confidence.
+4. **Scam behaviour signals**: Does the post attempt to extract money (mention of payment, bank transfer, deposit), move the conversation off-platform (references to WhatsApp, Telegram, texting a number), or show other patterns inconsistent with free giving? This is behaviour-based, not item-value-based — there is no attempt to assess whether an item is expensive.
+5. **Safety-trigger items**: car seats, helmets, knives/swords, upholstered furniture, cot mattresses, banned invasive plants (see Safety Triggers section)
+6. **Location extraction**: any place names or collection-point addresses mentioned in the post body
 
 Any `flag`-action keyword matches from Stage 2 are passed to the LLM as context hints, not as definitive verdicts.
 
 ### What the LLM does not judge
 
 - Whether a location is out-of-area (it lacks geographic context — handled post-LLM)
-- PII (already handled in Stage 1)
+- PII (already handled in Stage 1, unless the group has opted to allow contact details)
 - High-confidence spam patterns (handled in Stage 2 as `block`)
 
 ### Prompt design
+
+Scam behaviour, when flagged, uses the tag `rule:scam_behaviour` in `reasons` — there is no separate response field.
 
 ```
 System: You are a post reviewer for Freegle, a UK community platform where people
@@ -318,7 +323,16 @@ give away items for free. Review the following post against the rules below and
 return a structured JSON assessment. Be fair: consider intent and context, not
 just literal rule matching. Do not be over-cautious.
 
-Rules active for this group: [list from groupRules + system rules]
+System rules (always active):
+1. no loans or borrowing of items
+2. no events or gatherings
+3. no volunteering requests or offers
+4. no commercial services or business advertising
+5. no scam behaviour: requesting payment, deposits, or bank transfers;
+   attempting to move conversation off-platform (e.g. WhatsApp, Telegram,
+   texting a phone number given in the post)
+
+Group rules: [list from groupRules — only those set true]
 Context flags from automated checks: [flag-action keyword matches, if any]
 
 Post subject: {subject}
@@ -328,7 +342,7 @@ Return JSON:
 {
   "verdict": "APPROVE" | "PENDING",
   "confidence": 0.0–1.0,
-  "reasons": [{ "tag": "rule:weapons", "detail": "brief explanation" }],
+  "reasons": [{ "tag": "rule:scam_behaviour", "detail": "brief explanation" }],
   "location_mentions": ["Manchester", "Didsbury M20"],
   "safety_triggers": ["car_seat", "knife"]
 }
@@ -512,7 +526,17 @@ Used for: threshold calibration, moderator trust-building, false-positive analys
 2. Set `ai_review: true` on 2–3 volunteer groups
 3. Monitor `messages_review_log` for false positives (approved posts that mods later reject) and false negatives (pending posts that would have been fine)
 4. Adjust LLM confidence threshold (currently 0.85) and keyword `block`/`flag` assignments based on data
-5. Roll out to further groups on request
+5. Roll out to all groups — the per-group `ai_review` flag is a **staging mechanism**, not a permanent feature. The aim is a short, decisive prototype period (weeks, not months), not an open-ended opt-in/out rollout. A prolonged multi-group opt-in creates maintenance overhead and leaves the codebase in a half-finished state indefinitely.
+
+### Transition: existing members
+
+When `ai_review` is enabled on a group, existing members need tier assignment:
+
+- Members currently on `POSTING_MODERATED` who have a **mod note** remain on `POSTING_MODERATED` (manual moderation preserved for flagged accounts)
+- Members on `POSTING_MODERATED` with no mod note, and all members on `POSTING_DEFAULT`, enter the new pipeline normally
+- Members on `POSTING_UNMODERATED` (Trusted) are unaffected
+
+Note: some groups apply mod notes universally as a record-keeping habit rather than as a flag. This is an edge case to be handled operationally rather than by special-casing in code.
 
 ---
 
@@ -521,3 +545,13 @@ Used for: threshold calibration, moderator trust-building, false-positive analys
 - **Beanstalkd persistence in production**: Enable `-b /var/lib/beanstalkd/binlog` in the production beanstalkd config to survive restarts. Confirm this is done before enabling `ai_review` on any group.
 - **together.io**: Out of scope for prototype. The ai-flower adapter interface makes it a later drop-in if Gemini cost or availability becomes a concern.
 - **Rspamd score tuning**: The initial thresholds (add_header=5, reject=15) are conservative guesses. After a few weeks of production traffic, review the score distribution in rspamd's web UI (`rspamd.localhost`) and adjust.
+
+---
+
+## Out of Scope (Related Ideas for Separate Consideration)
+
+These arose during the community discussion but are independent of the post-review pipeline:
+
+- **Improved post reporting flow**: Rather than each report going individually to mods, a revised flow could: (1) hide the reported post only for the member who reported it; (2) once 2 or more members report the same post, escalate as a single consolidated report; (3) mods act once and a single response goes to all reporters; (4) subsequent reports on the same post receive the previous reply automatically. This would substantially reduce moderator effort on post-live complaints.
+- **Automated reporter acknowledgement**: Auto-reply to members who report a post, reducing the need for moderators to manually thank each reporter.
+- **Microvolunteering as bystander-effect mitigation**: Active microvolunteers are more likely to report problematic posts than casual members.
