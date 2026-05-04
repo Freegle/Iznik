@@ -445,9 +445,9 @@ print(json.dumps(results))
           continue
         }
 
-        // Draft already exists (pending or sent) — don't duplicate
+        // Draft already exists (pending, sent, or rejected) — don't duplicate
         const existingDraft = db.prepare(
-          `SELECT id FROM discourse_draft WHERE topic = ? AND post = ? AND posted_at IS NULL AND rejected_at IS NULL`
+          `SELECT id FROM discourse_draft WHERE topic = ? AND post = ?`
         ).get(bug.topic, bug.post)
         if (existingDraft) {
           alreadyDrafted.push(bug.pr_number)
