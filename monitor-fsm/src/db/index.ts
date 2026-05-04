@@ -2,7 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
+import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -42,6 +42,9 @@ function applySchema(db: DB): void {
       try { db.exec(stmt) } catch { /* column already exists */ }
     }
   }
+  if (current < 4) {
+    db.exec(MIGRATION_V4_SQL)
+  }
   if (current < SCHEMA_VERSION) {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION)
   }
@@ -67,6 +70,26 @@ export function setTopicCursor(db: DB, topicId: number, lastPostNumber: number, 
 
 export function listTopicCursors(db: DB): Array<{ topic_id: number; last_post_number: number; title: string | null }> {
   return db.prepare('SELECT topic_id, last_post_number, title FROM topic_cursor').all() as Array<{ topic_id: number; last_post_number: number; title: string | null }>
+}
+
+// -------- Excluded topics --------
+
+export function isTopicExcluded(db: DB, topicId: number): boolean {
+  const row = db.prepare('SELECT 1 FROM excluded_topics WHERE topic_id = ?').get(topicId)
+  return row !== undefined
+}
+
+export function excludeTopic(db: DB, topicId: number, reason: string): void {
+  db.prepare(`
+    INSERT INTO excluded_topics (topic_id, reason)
+    VALUES (?, ?)
+    ON CONFLICT(topic_id) DO UPDATE SET reason = excluded.reason
+  `).run(topicId, reason)
+}
+
+export function listExcludedTopicIds(db: DB): Set<number> {
+  const rows = db.prepare('SELECT topic_id FROM excluded_topics').all() as Array<{ topic_id: number }>
+  return new Set(rows.map(r => r.topic_id))
 }
 
 // -------- KV --------
