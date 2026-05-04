@@ -388,6 +388,9 @@ describe('detectPII', () => {
     expect(detectPII('Free sofa, good condition, oak frame')).toHaveLength(0)
   })
 })
+
+// workflow.ts integration: PII gating by group rule
+// (tested in workflow.test.ts — see Task 7)
 ```
 
 - [ ] **Step 2: Run to confirm failure**
@@ -896,7 +899,7 @@ describe('runReview', () => {
 })
 
 describe('runReview PII path', () => {
-  it('routes to Pending when PII found', async () => {
+  it('routes to Pending when PII found and group disallows contact details', async () => {
     const { detectPII } = await import('../actions/pii.js')
     vi.mocked(detectPII).mockReturnValueOnce([{ tag: 'pii:phone', detail: 'Phone number' }])
     const result = await runReview({
@@ -904,6 +907,20 @@ describe('runReview PII path', () => {
       groupId: 1, groupRules: {}, groupCentreLat: 51.5, groupCentreLng: -0.12, groupAreaRadiusMiles: 20,
     })
     expect(result.verdict).toBe('Pending')
+    expect(result.stageStopped).toBe('pii')
+    expect(result.reasons.some(r => r.tag === 'pii:phone')).toBe(true)
+  })
+
+  it('does not block on PII when group allows contact details', async () => {
+    const { detectPII } = await import('../actions/pii.js')
+    vi.mocked(detectPII).mockReturnValueOnce([{ tag: 'pii:phone', detail: 'Phone number' }])
+    const result = await runReview({
+      messageId: 3, subject: 'Sofa', body: 'Call 07712345678',
+      groupId: 1, groupRules: { contactdetails: true },
+      groupCentreLat: 51.5, groupCentreLng: -0.12, groupAreaRadiusMiles: 20,
+    })
+    // PII logged in reasons but post should continue to LLM and (in this mock context) approve
+    expect(result.stageStopped).not.toBe('pii')
     expect(result.reasons.some(r => r.tag === 'pii:phone')).toBe(true)
   })
 })
@@ -954,13 +971,19 @@ export async function runReview(req: ReviewRequest): Promise<ReviewVerdict> {
   const reasons: Array<{ tag: string; detail: string }> = []
 
   // Stage 1: PII detection (local, no API call)
+  // Groups with contactdetails:true permit phone/address in posts — PII matches are
+  // logged as reasons but do not block (post continues to Stage 2).
   const piiMatches = detectPII(fullText)
   if (piiMatches.length > 0) {
-    return {
-      verdict: 'Pending',
-      reasons: piiMatches,
-      stageStopped: 'pii',
-      durationMs: Date.now() - start,
+    if (req.groupRules.contactdetails) {
+      reasons.push(...piiMatches)  // log for audit trail, but don't block
+    } else {
+      return {
+        verdict: 'Pending',
+        reasons: piiMatches,
+        stageStopped: 'pii',
+        durationMs: Date.now() - start,
+      }
     }
   }
 
@@ -1654,12 +1677,42 @@ git commit -m "feat(post-review): sweeper command moves stranded AutoReview post
 
 ---
 
-### Task 12: Add POST_REVIEW_URL to docker-compose and enable prototype
+### Task 12: Add POST_REVIEW_URL to docker-compose, add contactdetails group rule, and enable prototype
 
 **Files:**
 - Modify: `docker-compose.yml` — add POST_REVIEW_URL to batch-prod env
+- Modify: `iznik-nuxt3/modtools/components/ModSettingsGroup.vue` — add contactdetails toggle
+- Modify: `iznik-server/include/ai/ModBot.php` — add contactdetails to getRuleDescriptions
 
-- [ ] **Step 1: Add env var to batch-prod**
+- [ ] **Step 1: Add contactdetails toggle to ModSettingsGroup.vue**
+
+In `iznik-nuxt3/modtools/components/ModSettingsGroup.vue`, find the `[false, 'Rules about specific items']` section header and add a new entry immediately before it:
+
+```javascript
+  [
+    'contactdetails',
+    'toggle',
+    'Do you allow members to include personal contact details (phone numbers, home addresses) in posts?',
+    'Yes',
+    'No',
+  ],
+```
+
+- [ ] **Step 2: Add contactdetails to ModBot getRuleDescriptions**
+
+In `iznik-server/include/ai/ModBot.php`, in the `getRuleDescriptions()` method, add after the `personal` entry:
+
+```php
+            'contactdetails' => ['description' => 'Personal contact details (phone numbers, home addresses) are allowed in posts for this group', 'threshold' => 0.5],
+```
+
+Also remove (or comment out) the dead `personal` entry to avoid duplicate intent:
+
+```php
+//            'personal' => ['description' => 'No personal information sharing', 'threshold' => 0.8],
+```
+
+- [ ] **Step 3: Add env var to batch-prod**
 
 In the `batch-prod` service environment:
 
@@ -1667,7 +1720,7 @@ In the `batch-prod` service environment:
       - POST_REVIEW_URL=http://post-review:3000
 ```
 
-- [ ] **Step 2: Enable ai_review on one test group via the DB**
+- [ ] **Step 4: Enable ai_review on one test group via the DB**
 
 ```bash
 docker exec freegle-percona mysql -u root -piznik iznik -e "
@@ -1679,14 +1732,14 @@ docker exec freegle-percona mysql -u root -piznik iznik -e "
 
 Replace `<YOUR_TEST_GROUP_ID>` with a real group ID from the dev DB.
 
-- [ ] **Step 3: Rebuild and restart**
+- [ ] **Step 5: Rebuild and restart**
 
 ```bash
 docker-compose build post-review batch-prod
 docker-compose up -d post-review batch-prod
 ```
 
-- [ ] **Step 4: Submit a test post via the Go API and watch it flow through**
+- [ ] **Step 6: Submit a test post via the Go API and watch it flow through**
 
 ```bash
 # Post via the API (or via the UI as a member of the opted-in group)
@@ -1702,11 +1755,13 @@ docker exec freegle-percona mysql -u root -piznik iznik -e "
 "
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add docker-compose.yml
-git commit -m "feat(post-review): wire POST_REVIEW_URL into batch-prod container"
+git add docker-compose.yml \
+        iznik-nuxt3/modtools/components/ModSettingsGroup.vue \
+        iznik-server/include/ai/ModBot.php
+git commit -m "feat(post-review): add contactdetails group rule, wire POST_REVIEW_URL into batch-prod"
 ```
 
 ---

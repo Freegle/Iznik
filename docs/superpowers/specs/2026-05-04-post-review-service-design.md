@@ -206,6 +206,8 @@ Regex patterns (UK-focused), run in-process. Post content never leaves the machi
 
 On any match: add reason tag `pii:<type>` (e.g. `pii:phone`, `pii:postcode`, `pii:occupancy`), transition to `PENDING_END`. Post never reaches the LLM.
 
+**Per-group opt-out:** Some groups permit members to include contact details in posts (e.g. phone number for collection arrangements). Groups set `contactdetails: true` in `groups.rules` via a new ModSettings toggle: "Do you allow members to include personal contact details (phone numbers, addresses) in posts?" When this is true, PII matches are logged but do not trigger `PENDING_END` — the post continues to Stage 2. The default (absent or false) is to block. The `contactdetails` rule is also added to ModBot's `getRuleDescriptions()` so it participates in the existing Gemini-based rule check for groups not yet on the new pipeline.
+
 Moderator-visible label: "Possible personal information detected — please ask the member to remove it."
 
 ---
@@ -307,7 +309,7 @@ Any `flag`-action keyword matches from Stage 2 are passed to the LLM as context 
 ### What the LLM does not judge
 
 - Whether a location is out-of-area (it lacks geographic context — handled post-LLM)
-- PII (already handled in Stage 1)
+- PII (already handled in Stage 1, unless the group has opted to allow contact details)
 - High-confidence spam patterns (handled in Stage 2 as `block`)
 
 ### Prompt design
