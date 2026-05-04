@@ -67,22 +67,20 @@ describe('useThrottle', () => {
       expect(promise).toBeInstanceOf(Promise)
     })
 
-    it('should resolve after checkThrottle completes', async () => {
-      let resolveCalled = false
+    it('should resolve after checkThrottle completes', () => {
       mockMessageStore.fetchingCount = 5
+      const mockResolve = vi.fn()
 
-      const promise = throttleFetches().then(() => {
-        resolveCalled = true
-      })
+      checkThrottle(mockResolve)
 
-      // fetchingCount is still 5, should not resolve yet
-      await vi.runAllTimersAsync()
-      expect(resolveCalled).toBe(false)
+      // Advance timers with fetchingCount > 0, should not resolve
+      vi.advanceTimersByTime(300)
+      expect(mockResolve).not.toHaveBeenCalled()
 
-      // Set fetchingCount to 0
+      // Set fetchingCount to 0 and advance timers
       mockMessageStore.fetchingCount = 0
-      await vi.runAllTimersAsync()
-      expect(resolveCalled).toBe(true)
+      vi.advanceTimersByTime(100)
+      expect(mockResolve).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -151,6 +149,10 @@ describe('useThrottle', () => {
       // Third retry
       vi.advanceTimersByTime(100)
       mockMessageStore.fetchingCount = 0
+      expect(mockResolve).not.toHaveBeenCalled()
+
+      // Fourth retry (callback sees fetchingCount = 0 and resolves)
+      vi.advanceTimersByTime(100)
       expect(mockResolve).toHaveBeenCalledTimes(1)
     })
   })
@@ -333,6 +335,9 @@ describe('useThrottle', () => {
 
       // Fetches have been called but not yet resolved
       expect(fetchCompleted).toBe(false)
+
+      // Advance all timers to allow the mocked fetch promises to resolve (without infinite loop)
+      await vi.advanceTimersByTimeAsync(100)
 
       // Wait for Promise.all to complete
       await promise
