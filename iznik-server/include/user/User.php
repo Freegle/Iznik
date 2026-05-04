@@ -6410,11 +6410,7 @@ class User extends Entity
 
                 # Image column - compact.
                 $ret .= '<td style="width:40px; padding:4px 8px 4px 0;">';
-                if ($image) {
-                    $ret .= '<a href="' . $url . '" target="_blank"><img src="' . htmlspecialchars($image) . '" alt="" style="width:36px; height:36px; object-fit:cover; border-radius:4px;"></a>';
-                } else {
-                    $ret .= '<a href="' . $url . '" target="_blank"><img src="https://' . USER_SITE . '/emailimages/briefcase.png" alt="" style="width:36px; height:36px; object-fit:cover; border-radius:4px;"></a>';
-                }
+                $ret .= '<a href="' . $url . '" target="_blank"><img src="https://' . USER_SITE . '/emailimages/briefcase.png" alt="" style="width:36px; height:36px; object-fit:cover; border-radius:4px;"></a>';
                 $ret .= '</td>';
 
                 # Text column - title and location on one line where possible.
