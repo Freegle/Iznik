@@ -96,9 +96,13 @@ export function setup(type) {
       // This can happen if you repost, don't complete, log in as another user.  The server submit call will
       // fail in that case, so we are better off not showing the message at all and letting them compose from
       // scratch.
+      //
+      // Also exclude synthetic default messages (those whose id doesn't exist in messages[]) — using them
+      // creates a sparse array that corrupts the store after Pinia's JSON round-trip + prune().
       if (
         message.type === type &&
-        (!message.savedBy || message.savedBy === myid)
+        (!message.savedBy || message.savedBy === myid) &&
+        composeStore.messages[message.id]
       ) {
         messageIds.push(message.id)
       }
@@ -112,6 +116,14 @@ export function setup(type) {
 
   // We also want to prune any old messages from our store.
   composeStore.prune()
+
+  // Ensure a real message of this type exists so the ids computed never returns a synthetic default.
+  // Synthetic defaults have ids that don't exist in messages[], which creates a sparse array on write
+  // that corrupts submit() after Pinia's JSON round-trip compacts the array.
+  if (!composeStore.messages.some((m) => m && m.type === type)) {
+    const newId = composeStore.add()
+    composeStore.setType({ id: newId, type })
+  }
 
   const myid = authStore.user?.id
 

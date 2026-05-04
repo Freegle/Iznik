@@ -34,7 +34,7 @@ describe('work_router_decide action', () => {
       ],
       bugsFixed: [],
     })
-    expect(result._transition).toBe('DISPATCH_ALL_BUGS')
+    expect(result._transition).toBe('DIAGNOSE_BUG')
     expect(result.reason).toContain('2 unfixed bug(s)')
   })
 
@@ -47,7 +47,7 @@ describe('work_router_decide action', () => {
       ],
       bugsFixed: [{ topic: 102, post: 3 }],
     })
-    expect(result._transition).toBe('DISPATCH_ALL_BUGS')
+    expect(result._transition).toBe('DIAGNOSE_BUG')
     expect(result.reason).toContain('1 unfixed bug(s)')
   })
 
@@ -74,7 +74,7 @@ describe('work_router_decide action', () => {
       classifications: [{ topic: 106, post: 7, type: 'retest', user: 'grace' }],
       bugsFixed: [],
     })
-    expect(result._transition).toBe('DISPATCH_ALL_BUGS')
+    expect(result._transition).toBe('DIAGNOSE_BUG')
   })
 
   it('escalates bugs with 1+ rejected PRs to deferred', async () => {
@@ -93,7 +93,7 @@ describe('work_router_decide action', () => {
     const result = await workRouterHandler({}, { phase: 'analysis', classifications: [], bugsFixed: [] })
 
     expect(getDiscourseBug(db, 108, 9)?.state).toBe('open')
-    expect(result._transition).toBe('DISPATCH_ALL_BUGS')
+    expect(result._transition).toBe('DIAGNOSE_BUG')
   })
 
   it('defers to COVERAGE_GATE during peak phase when no DB backlog', async () => {
@@ -113,7 +113,7 @@ describe('work_router_decide action', () => {
       classifications: [{ topic: 111, post: 12, type: 'bug', user: 'iris' }],
       bugsFixed: [],
     })
-    expect(result._transition).toBe('DISPATCH_ALL_BUGS')
+    expect(result._transition).toBe('DIAGNOSE_BUG')
   })
 
   it('excludes topics with active PRs from in-memory classifications dispatch', async () => {
@@ -135,7 +135,7 @@ describe('work_router_decide action', () => {
       ],
       bugsFixed: [],
     })
-    expect(result._transition).toBe('DISPATCH_ALL_BUGS')
+    expect(result._transition).toBe('DIAGNOSE_BUG')
     expect(result.reason).toContain('2 unfixed bug(s)')
   })
 
@@ -178,7 +178,7 @@ describe('work_router_decide action', () => {
       classifications: [{ topic: 117, post: 20, type: 'bug', user: 'nancy' }],
       bugsFixed: [],
     })
-    expect(result._transition).toBe('DISPATCH_ALL_BUGS')
+    expect(result._transition).toBe('DIAGNOSE_BUG')
     expect(result.reason).toContain('2 unfixed bug(s)')
   })
 })
