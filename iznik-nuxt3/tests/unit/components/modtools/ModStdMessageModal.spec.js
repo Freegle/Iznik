@@ -579,4 +579,28 @@ describe('ModStdMessageModal', () => {
       expect(wrapper.vm.toEmail).toBe('member@test.com')
     })
   })
+
+  describe('Edit action - empty content handling', () => {
+    it('should not revert edited content when fillin is called after save', async () => {
+      const wrapper = mountComponent(
+        {},
+        { stdmsgData: createStdmsg({ action: 'Edit', body: null }) }
+      )
+
+      // Initial fill-in from the message
+      await wrapper.vm.fillin()
+      expect(wrapper.vm.body).toBe('This is the message body.')
+
+      // User deletes all content
+      wrapper.vm.body = ''
+      expect(wrapper.vm.body).toBe('')
+
+      // After save, if fillin is called again, it should NOT revert the body
+      // (This simulates a scenario where fillin might be called in a save handler)
+      await wrapper.vm.fillin()
+
+      // Body should remain empty, not revert to original message content
+      expect(wrapper.vm.body).toBe('')
+    })
+  })
 })

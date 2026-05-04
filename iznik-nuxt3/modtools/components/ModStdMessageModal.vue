@@ -432,6 +432,12 @@ async function fillin() {
 
   subject.value = await substitutionStrings(subject.value)
 
+  // For Edit actions, do not overwrite body if it's already been set by the user
+  const isEdit = stdmsg.value && stdmsg.value.action === 'Edit'
+  if (isEdit && body.value !== null && body.value !== undefined) {
+    return
+  }
+
   // Calculate initial body
   let msg = message.value ? message.value.textbody : ''
   msg = msg || ''
