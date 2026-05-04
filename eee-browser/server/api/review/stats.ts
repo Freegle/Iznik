@@ -5,7 +5,7 @@ interface FieldDef {
   field: string
   weight: number
   dbColumn: string
-  type: 'binary' | 'presence' | 'rating5' | 'condition' | 'bucket' | 'size_bucket' | 'value_band' | 'brand_presence'
+  type: 'binary' | 'presence' | 'rating5' | 'condition' | 'bucket' | 'size_bucket' | 'value_band'
 }
 
 const WEIGHT_BUCKETS: Record<string, [number | null, number | null]> = {
@@ -49,7 +49,6 @@ const FIELDS: FieldDef[] = [
   { field: 'Weight (kg)',           weight: 3, dbColumn: 'weight_kg_min',                   type: 'bucket' },
   { field: 'Size',                  weight: 2, dbColumn: 'size_cm',                         type: 'size_bucket' },
   { field: 'Value band',            weight: 2, dbColumn: 'value_band_gbp',                  type: 'value_band' },
-  { field: 'Brand',                 weight: 1, dbColumn: 'brand',                           type: 'brand_presence' },
 ]
 
 const EXCLUDE_MODELS = new Set(['claude-opus-4-7'])
@@ -110,11 +109,6 @@ function isCorrect(fieldDef: FieldDef, quorumLabel: string, clf: any): boolean {
 
     case 'value_band':
       return clf.value_band_gbp === quorumLabel
-
-    case 'brand_presence':
-      // human: 'visible'/'not_visible'. Model: brand IS NOT NULL = visible
-      const modelBrandVisible = clf.brand !== null && clf.brand !== ''
-      return (quorumLabel === 'visible') === modelBrandVisible
 
     default:
       return false

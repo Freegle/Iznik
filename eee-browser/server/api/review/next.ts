@@ -16,7 +16,6 @@ const FIELDS: FieldDef[] = [
   { field: 'Weight (kg)',           weight: 3, dbColumn: 'weight_kg_min',                   question: 'Which weight range fits this item?' },
   { field: 'Size',                  weight: 2, dbColumn: 'size_cm',                         question: 'Which size range fits this item (longest dimension)?' },
   { field: 'Value band',            weight: 2, dbColumn: 'value_band_gbp',                  question: 'What is the second-hand / rehoming value?' },
-  { field: 'Brand',                 weight: 1, dbColumn: 'brand',                           question: 'Is a brand clearly visible in the photo?' },
 ]
 
 const FIELD_MAP = Object.fromEntries(FIELDS.map(f => [f.field, f]))
