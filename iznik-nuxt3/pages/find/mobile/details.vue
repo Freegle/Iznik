@@ -114,8 +114,13 @@ const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 // Initialize message ID synchronously so it's available for computed properties
 function getMessageId() {
   const myid = authStore.user?.id
+  // Only use real (non-synthetic) messages — synthetic defaults from all getter
+  // have ids that don't exist in composeStore.messages.
   const existingMessages = composeStore.all.filter(
-    (m) => m.type === 'Wanted' && (!m.savedBy || m.savedBy === myid)
+    (m) =>
+      m.type === 'Wanted' &&
+      (!m.savedBy || m.savedBy === myid) &&
+      composeStore.messages[m.id]
   )
 
   if (existingMessages.length > 0) {

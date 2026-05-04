@@ -224,6 +224,36 @@ test.describe('Post flow tests', () => {
     await withdrawPost({ item: result.item })
   })
 
+  test('Logged out, new user, WANTED post via mobile find flow', async ({
+    page,
+    testEmail,
+    postMessage,
+    withdrawPost,
+  }) => {
+    // Regression test: the mobile find flow (/find/mobile/photos → details → whereami)
+    // created a sparse messages array [empty, {id:1}] in the compose store.
+    // After Pinia JSON round-trip, prune() compacted it to [{id:1}] at index 0,
+    // but the internal .id field stayed 1. The submit loop then accessed
+    // this.messages[message.id] (= this.messages[1] = undefined) → TypeError →
+    // "Something went wrong" with no server-side trace.
+    const uniqueItem = `test-wanted-mobile-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 5)}`
+    const result = await postMessage({
+      type: 'WANTED',
+      mobile: true,
+      item: uniqueItem,
+      description: `Created by automated test at ${new Date().toISOString()}`,
+      email: testEmail,
+    })
+
+    console.log(`Mobile WANTED post result: ${JSON.stringify(result)}`)
+    expect(result.id).toBeTruthy()
+    console.log(`Mobile WANTED post created with ID: ${result.id}`)
+
+    await withdrawPost({ item: result.item })
+  })
+
   test("Email existence check - prevents posting with someone else's email", async ({
     page,
     testEmail,
