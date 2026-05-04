@@ -152,8 +152,6 @@ services:
         required: false
       spamassassin-app:
         condition: service_started
-      rspamd:
-        condition: service_healthy
       reverse-proxy:
         condition: service_healthy
     environment:
@@ -203,38 +201,6 @@ services:
     environment:
       - CONTAINER_NAME=spamassassin-app
     restart: "no"
-
-  rspamd:
-    image: rspamd/rspamd:latest
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-rspamd
-    profiles:
-      - backend
-      - dev
-    networks:
-      - default
-    ports:
-      - "${PORT_RSPAMD:-11334}:11334"
-    volumes:
-      - ./conf/rspamd/local.d:/etc/rspamd/local.d:ro
-      - rspamd_data:/var/lib/rspamd
-    depends_on:
-      redis:
-        condition: service_healthy
-        required: false
-    environment:
-      - REDIS_SERVERS=redis:6379
-    restart: "no"
-    healthcheck:
-      test: ["CMD-SHELL", "rspamadm control stat > /dev/null || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.rspamd.rule=Host(`rspamd.localhost`)"
-      - "traefik.http.routers.rspamd.entrypoints=web"
-      - "traefik.http.services.rspamd.loadbalancer.server.port=11334"
 
   redis:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-redis
@@ -1524,47 +1490,6 @@ services:
   # =========================================
   # Incoming Mail Processing (Postfix)
   # =========================================
-  # Receives incoming mail and routes to Laravel for processing.
-  # IMPORTANT: This container does NOT receive mail until MX records are updated.
-  # Safe to run - mail only arrives when DNS points to this server.
-
-  postfix:
-    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-postfix
-    profiles:
-      - mail
-    build:
-      context: ./conf/postfix
-      dockerfile: Dockerfile
-    networks:
-      - default
-    ports:
-      - "${PORT_POSTFIX_SMTP:-25}:25"
-    depends_on:
-      batch-prod:
-        condition: service_healthy
-        required: false
-    restart: unless-stopped
-    volumes:
-      # Persist the mail spool across container rebuilds so a deploy that
-      # touches this image doesn't wipe the deferred queue.
-      - postfix_spool:/var/spool/postfix
-    environment:
-      # Endpoint the freegle-mail-handler script POSTs incoming mail to.
-      # Uses the docker-compose service alias rather than container_name so
-      # COMPOSE_PROJECT_NAME changes can't break the bridge.
-      BATCH_URL: http://batch-prod:8080/api/mail/incoming
-    healthcheck:
-      # Postfix must be running AND the batch bridge must be reachable —
-      # a silently broken bridge would otherwise defer mail for hours.
-      test:
-        - CMD-SHELL
-        - postfix status && curl -fsS --max-time 5 -o /dev/null http://batch-prod:8080/up
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  # =========================================
   # MCP Support Tools (Privacy-Preserving Log Analysis)
   # =========================================
 
@@ -1669,10 +1594,6 @@ volumes:
   phpmyadmin-sessions:
     driver: local
   geoip_data:
-    driver: local
-  rspamd_data:
-    driver: local
-  postfix_spool:
     driver: local
   loki-data:
     name: ${LOKI_VOLUME:-loki-data}
