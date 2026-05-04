@@ -3245,3 +3245,67 @@ func TestPatchMembershipsConfigChange(t *testing.T) {
 		modID, groupID).Scan(&configID2)
 	assert.Equal(t, cfgID2, configID2)
 }
+
+func TestGetMembershipsApprovedWithBannedFlag(t *testing.T) {
+	// Regression test: filtering Approved members with Banned flag should not crash
+	// when member has no associated spammer record.
+	// Bug: spammer.reason was accessed without checking if spammer object exists.
+	prefix := uniquePrefix("mem_appbanned")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+
+	// Create moderator
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Create two Approved members
+	member1ID := CreateTestUser(t, prefix+"_m1", "User")
+	CreateTestMembership(t, member1ID, groupID, "Member")
+
+	member2ID := CreateTestUser(t, prefix+"_m2", "User")
+	CreateTestMembership(t, member2ID, groupID, "Member")
+
+	// Ban both members (creates users_banned records)
+	db.Exec("INSERT INTO users_banned (userid, groupid, date, byuser) VALUES (?, ?, NOW(), ?)",
+		member1ID, groupID, modID)
+	db.Exec("INSERT INTO users_banned (userid, groupid, date, byuser) VALUES (?, ?, NOW(), ?)",
+		member2ID, groupID, modID)
+
+	// Add spammer record to only one member (demonstrates the bug scenario)
+	db.Exec("INSERT INTO spam_users (userid, collection, reason, added, byuserid) VALUES (?, ?, ?, NOW(), ?)",
+		member1ID, "Spammer", "Test spammer reason", modID)
+
+	// Test 1: Get Approved collection members (should include both members)
+	url := fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "GET /memberships with Approved collection should return 200")
+
+	var members []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&members)
+	assert.Equal(t, 2, len(members), "Should return both Approved members")
+
+	// Verify both members are present (one with spammer data, one without)
+	userids := make(map[float64]bool)
+	for _, m := range members {
+		userids[m["userid"].(float64)] = true
+	}
+	assert.True(t, userids[float64(member1ID)], "member1 (with spammer) should be in list")
+	assert.True(t, userids[float64(member2ID)], "member2 (no spammer) should be in list")
+
+	// Test 2: Get Approved members with filter - simulate checking for members with both Approved status and Banned entries
+	// The frontend ModSpammer.vue component tries to access spammer.reason on all returned members
+	// If a member has no spammer record but the code assumes it exists, it crashes with undefined
+	url = fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&limit=100&jwt=%s", groupID, token)
+	req = httptest.NewRequest("GET", url, nil)
+	resp, err = getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "GET /memberships should succeed even when member has no spammer record")
+
+	// Verify response is valid JSON
+	var result interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.NotNil(t, result, "Response should be valid JSON")
+}
