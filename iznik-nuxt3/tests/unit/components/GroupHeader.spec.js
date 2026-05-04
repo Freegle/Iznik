@@ -406,4 +406,18 @@ describe('GroupHeader', () => {
       expect(component.vm.description).not.toContain('<p><br></p>')
     })
   })
+
+  describe('caretaker group contact button label', () => {
+    it('shows "Contact Volunteers" label for caretaker-type groups (mentored=true)', () => {
+      mockUser.value = { id: 456 }
+      const wrapper = createWrapper({
+        group: { ...mockGroup, mentored: true },
+      })
+      // For caretaker-type groups (mentored=true), the contact label should say "volunteers" not "caretakers"
+      // This is the bug being fixed: caretaker groups incorrectly show "contact our lovely local caretakers"
+      const html = wrapper.html()
+      expect(html).not.toContain('contact our lovely local caretakers')
+      expect(html).toContain('contact our lovely local volunteers')
+    })
+  })
 })
