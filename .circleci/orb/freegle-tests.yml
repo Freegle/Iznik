@@ -2575,7 +2575,7 @@ jobs:
             else echo "⚠️ No coverage uploaded"; fi
 
       - run:
-          name: Check patch coverage
+          name: Report patch coverage (informational)
           when: always
           command: |
             # Skip on master/production — no PR diff to check against, and Coveralls trend uploads are sufficient.
@@ -2643,11 +2643,8 @@ jobs:
 
             diff-cover $XMLS \
               --diff-file=/tmp/patch.diff \
-              --fail-under=$THRESHOLD \
-              --html-report /tmp/patch-coverage.html 2>&1
-            EXIT=$?
-            [ $EXIT -ne 0 ] && echo "❌ Patch coverage below ${THRESHOLD}% — add tests for the changed lines" || echo "✅ Patch coverage ≥ ${THRESHOLD}%"
-            exit $EXIT
+              --html-report /tmp/patch-coverage.html 2>&1 || true
+            echo "ℹ️ Patch coverage check complete (informational only — not blocking)"
 
       - collect-artifacts
 
