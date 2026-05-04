@@ -234,6 +234,59 @@ describe('regression detection in persist_classifications', () => {
     // question goes to deferred via normal path, not regression
     expect(bug?.reason ?? '').not.toContain('REGRESSION')
   })
+
+  it('does NOT flag regression when new bug symptom_tags have ZERO overlap with fixed bug tags', async () => {
+    // 9518/238 scenario: prior fix was for iOS add-note bug; new bug is a 500-error on Banned filter
+    upsertDiscourseBug(db, {
+      topic: 304, post: 1, state: 'fixed', prNumber: 350,
+      symptomTags: ['ios', 'add-note', 'chat-review', 'button-disabled'],
+    })
+    await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 304, post: 5, type: 'bug', user: 'reporter',
+        symptom_tags: ['500-error', 'banned-filter', 'spammer-undefined'],
+        summary: 'Members > Approved filtered by Banned causes 500',
+      }],
+    })
+    const bug = getDiscourseBug(db, 304, 5)
+    expect(bug?.state).toBe('open')
+    expect(bug?.reason ?? '').not.toContain('REGRESSION')
+  })
+
+  it('DOES flag regression when new bug symptom_tags significantly overlap with fixed bug tags', async () => {
+    // 9631/16 scenario: prior fix was for counter-stuck bug; new report has the same symptom
+    upsertDiscourseBug(db, {
+      topic: 305, post: 1, state: 'fixed', prNumber: 351,
+      symptomTags: ['counter', 'stuck', 'related-members', 'regression'],
+    })
+    await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 305, post: 3, type: 'bug', user: 'reporter2',
+        symptom_tags: ['counter-stuck', 'related-members', 'regression'],
+        summary: 'Counter still stuck after fix',
+      }],
+    })
+    const bug = getDiscourseBug(db, 305, 3)
+    expect(bug?.state).toBe('deferred')
+    expect(bug?.reason).toContain('REGRESSION')
+    expect(bug?.reason).toContain('351')
+  })
+
+  it('flags regression conservatively when prior fixed bug has NO symptom_tags (cannot distinguish)', async () => {
+    // If we have no tag info on the prior fix, we cannot tell if the new bug is related —
+    // fall back to the original conservative behaviour and flag for human review.
+    upsertDiscourseBug(db, { topic: 306, post: 1, state: 'fixed', prNumber: 200 })
+    await persistClassificationsHandler({}, {
+      classifications: [{
+        topic: 306, post: 2, type: 'bug', user: 'reporter3',
+        symptom_tags: ['login', 'auth', 'session'],
+        summary: 'Cannot log in',
+      }],
+    })
+    const bug = getDiscourseBug(db, 306, 2)
+    expect(bug?.state).toBe('deferred')
+    expect(bug?.reason).toContain('REGRESSION')
+  })
 })
 
 describe('tagJaccard helper', () => {

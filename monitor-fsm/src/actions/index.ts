@@ -19,6 +19,7 @@ import {
   reopenBugAfterRejection,
   upsertPr,
   findTagDuplicate,
+  tagJaccard,
 } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
@@ -1926,20 +1927,28 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         }
 
         // Dedup level 3: regression detection — if there's already a FIXED bug in the same
-        // topic, this new report means the fix didn't work. Flag for human review rather than
-        // auto-dispatching another fix attempt.
+        // topic, this new report might mean the fix didn't work. Only flag as regression when
+        // symptom_tags overlap with the prior fix — completely different symptoms in the same
+        // topic mean a new independent bug, not a regression of the prior PR.
         let finalState = state
         let finalReason: string | undefined = type === 'deferred' ? (c.reason ?? 'deferred by triage') : undefined
         if ((type === 'bug' || type === 'retest') && finalState === 'open') {
           const priorFix = db.prepare(`
-            SELECT pr_number FROM discourse_bug
+            SELECT pr_number, symptom_tags FROM discourse_bug
             WHERE topic = ? AND state = 'fixed' AND pr_number IS NOT NULL
             ORDER BY fixed_at DESC LIMIT 1
-          `).get(Number(c.topic)) as { pr_number: number } | undefined
+          `).get(Number(c.topic)) as { pr_number: number; symptom_tags: string | null } | undefined
           if (priorFix) {
-            finalState = 'deferred'
-            finalReason = `REGRESSION: fix PR #${priorFix.pr_number} confirmed not working — needs human review`
-            out(`persist_classifications: topic ${c.topic}/${c.post} flagged regression (PR #${priorFix.pr_number} didn't fix it)`)
+            const priorTags: string[] = (() => {
+              try { return JSON.parse(priorFix.symptom_tags ?? '[]') } catch { return [] }
+            })()
+            // If both have non-empty tags but zero overlap, it's a new independent bug
+            const isIndependentBug = symptomTags.length > 0 && priorTags.length > 0 && tagJaccard(symptomTags, priorTags) === 0
+            if (!isIndependentBug) {
+              finalState = 'deferred'
+              finalReason = `REGRESSION: fix PR #${priorFix.pr_number} confirmed not working — needs human review`
+              out(`persist_classifications: topic ${c.topic}/${c.post} flagged regression (PR #${priorFix.pr_number} didn't fix it)`)
+            }
           }
         }
 
