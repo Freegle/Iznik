@@ -2746,6 +2746,11 @@ jobs:
             ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
             git config --global user.email "circleci@freegle.org"
             git config --global user.name "CircleCI Auto-merge"
+            # The checkout step forces HTTPS via a global insteadOf rewrite to avoid
+            # SSH hangs on non-master jobs. Undo that rewrite here so the push uses
+            # the runner's SSH deploy key rather than prompting for HTTPS credentials.
+            git config --global --unset-all url.https://github.com/.insteadOf 2>/dev/null || true
+            git remote set-url origin git@github.com:Freegle/Iznik.git
             git fetch origin production:production
             git checkout production
             MASTER_COMMIT_MSG=$(git log master -1 --pretty=%B | head -n 1)
