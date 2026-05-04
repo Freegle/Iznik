@@ -21,6 +21,7 @@
     <table v-else class="table table-sm table-hover">
       <thead>
         <tr>
+          <th style="width: 75px;">ID</th>
           <th style="width: 100px;">Reporter</th>
           <th>Summary</th>
           <th style="width: 80px;">State</th>
@@ -31,11 +32,14 @@
       <tbody>
         <template v-for="(group, featureArea) in groupedBugs" :key="featureArea">
           <tr class="table-light">
-            <td :colspan="5" class="text-muted fst-italic small">
+            <td :colspan="6" class="text-muted fst-italic small">
               {{ featureArea }}
             </td>
           </tr>
           <tr v-for="bug in group" :key="`${bug.topic}-${bug.post}`" :class="{ 'table-warning': bug.state === 'deferred' }">
+            <td class="text-muted font-monospace" style="font-size: 0.75em; white-space: nowrap;">
+              {{ bug.topic }}/{{ bug.post }}
+            </td>
             <td>
               <a
                 :href="`https://discourse.ilovefreegle.org/t/${bug.topic}/${bug.post}`"
@@ -73,6 +77,11 @@
                   title="Dismiss — remove from active bugs"
                   @click="showDismissModal(bug)"
                 >✕</button>
+                <button
+                  class="btn btn-outline-warning btn-xs me-1"
+                  title="Reset — clear fix attempts and let FSM retry"
+                  @click="resetAttempts(bug)"
+                >↺</button>
                 <button
                   class="btn btn-outline-primary btn-xs"
                   title="Link a PR — marks bug as fix-queued"
@@ -200,6 +209,11 @@ async function confirmDismiss() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ state: 'off-topic', reason: 'Dismissed by human' }),
   })
+  emit('refresh')
+}
+
+async function resetAttempts(bug: BugRow) {
+  await fetch(`/api/bugs/${bug.topic}/${bug.post}/reset-attempts`, { method: 'POST' })
   emit('refresh')
 }
 

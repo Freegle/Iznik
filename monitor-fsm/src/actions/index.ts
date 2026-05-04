@@ -19,6 +19,7 @@ import {
   reopenBugAfterRejection,
   upsertPr,
   findTagDuplicate,
+  tagJaccard,
 } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
@@ -444,9 +445,9 @@ print(json.dumps(results))
           continue
         }
 
-        // Draft already exists (pending or sent) — don't duplicate
+        // Draft already exists (pending, sent, or rejected) — don't duplicate
         const existingDraft = db.prepare(
-          `SELECT id FROM discourse_draft WHERE topic = ? AND post = ? AND posted_at IS NULL AND rejected_at IS NULL`
+          `SELECT id FROM discourse_draft WHERE topic = ? AND post = ?`
         ).get(bug.topic, bug.post)
         if (existingDraft) {
           alreadyDrafted.push(bug.pr_number)
@@ -1897,7 +1898,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
             excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
             state: 'fix-queued', prNumber: topicPrRow.pr_number,
-            featureArea: c.featureArea ?? null, symptomTags, codeArea,
+            featureArea: c.featureArea ?? undefined, symptomTags, codeArea: codeArea ?? undefined,
           })
           out(`persist_classifications: topic ${c.topic}/${c.post} linked to existing PR #${topicPrRow.pr_number} (same topic)`)
           upserted++
@@ -1916,7 +1917,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
               excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
               state: 'duplicate',
               prNumber: tagDup.pr_number ?? undefined,
-              featureArea: c.featureArea ?? null, symptomTags, codeArea,
+              featureArea: c.featureArea ?? undefined, symptomTags, codeArea: codeArea ?? undefined,
               reason: `Duplicate of topic ${tagDup.topic}/${tagDup.post} (tag overlap)`,
             })
             out(`persist_classifications: topic ${c.topic}/${c.post} marked duplicate of ${tagDup.topic}/${tagDup.post} (tag similarity)`)
@@ -1926,20 +1927,28 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         }
 
         // Dedup level 3: regression detection — if there's already a FIXED bug in the same
-        // topic, this new report means the fix didn't work. Flag for human review rather than
-        // auto-dispatching another fix attempt.
+        // topic, this new report might mean the fix didn't work. Only flag as regression when
+        // symptom_tags overlap with the prior fix — completely different symptoms in the same
+        // topic mean a new independent bug, not a regression of the prior PR.
         let finalState = state
         let finalReason: string | undefined = type === 'deferred' ? (c.reason ?? 'deferred by triage') : undefined
         if ((type === 'bug' || type === 'retest') && finalState === 'open') {
           const priorFix = db.prepare(`
-            SELECT pr_number FROM discourse_bug
+            SELECT pr_number, symptom_tags FROM discourse_bug
             WHERE topic = ? AND state = 'fixed' AND pr_number IS NOT NULL
             ORDER BY fixed_at DESC LIMIT 1
-          `).get(Number(c.topic)) as { pr_number: number } | undefined
+          `).get(Number(c.topic)) as { pr_number: number; symptom_tags: string | null } | undefined
           if (priorFix) {
-            finalState = 'deferred'
-            finalReason = `REGRESSION: fix PR #${priorFix.pr_number} confirmed not working — needs human review`
-            out(`persist_classifications: topic ${c.topic}/${c.post} flagged regression (PR #${priorFix.pr_number} didn't fix it)`)
+            const priorTags: string[] = (() => {
+              try { return JSON.parse(priorFix.symptom_tags ?? '[]') } catch { return [] }
+            })()
+            // If both have non-empty tags but zero overlap, it's a new independent bug
+            const isIndependentBug = symptomTags.length > 0 && priorTags.length > 0 && tagJaccard(symptomTags, priorTags) === 0
+            if (!isIndependentBug) {
+              finalState = 'deferred'
+              finalReason = `REGRESSION: fix PR #${priorFix.pr_number} confirmed not working — needs human review`
+              out(`persist_classifications: topic ${c.topic}/${c.post} flagged regression (PR #${priorFix.pr_number} didn't fix it)`)
+            }
           }
         }
 

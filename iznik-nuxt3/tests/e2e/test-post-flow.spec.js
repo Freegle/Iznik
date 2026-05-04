@@ -427,3 +427,96 @@ test.describe('Post flow tests', () => {
     console.log('Test completed - email existence check verified successfully')
   })
 })
+
+test.describe('Mobile post flow tests', () => {
+  // Use a mobile viewport for these tests
+  test.use({ viewport: { width: 414, height: 896 } })
+
+  test('Logged-in user can post OFFER through mobile give flow', async ({
+    page,
+    testEnv,
+    withdrawPost,
+  }) => {
+    // Regression test for the sparse-array crash on submit:
+    // photos.vue and details.vue were using synthetic default messages (id=1 but
+    // not in composeStore.messages), which created a sparse array that crashed
+    // after Pinia's JSON round-trip on submit.
+    const uniqueItem = `test-mobile-offer-${Date.now()}-${Math.random()
+      .toString(36)
+      .substr(2, 5)}`
+    const postcode = testEnv?.postcode || environment.postcode
+
+    // Log in first so the mobile flow creates a real (non-synthetic) message
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
+    console.log(`Logged in as ${testEnv.user.email}`)
+
+    // Step 1: Photos page — skip adding a photo
+    await page.gotoAndVerify('/give/mobile/photos', {
+      timeout: timeouts.navigation.default,
+    })
+    await page.waitForSelector('.photo-uploader, .app-give-photos', {
+      timeout: timeouts.ui.appearance,
+    })
+    const skipLink = page.locator('a').filter({ hasText: /skip/i })
+    await skipLink.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await skipLink.click()
+    console.log('Skipped photo upload')
+
+    // Step 2: Details page — fill item name and description
+    await page.waitForSelector('#item-name', { timeout: timeouts.ui.appearance })
+    await page.locator('#item-name').fill(uniqueItem)
+    await page.locator('#description').fill('Test description for mobile OFFER post')
+    console.log(`Filled item name: ${uniqueItem}`)
+
+    const nextButton = page.locator('button.w-100').filter({ hasText: 'Next' })
+    await nextButton.click()
+    console.log('Clicked Next on details page')
+
+    // Step 3: Options page — accept defaults (collection only, no deadline)
+    await page.waitForURL('**/give/mobile/options', {
+      timeout: timeouts.navigation.default,
+    })
+    const optionsNext = page.locator('button.w-100').filter({ hasText: 'Next' })
+    await optionsNext.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await optionsNext.click()
+    console.log('Clicked Next on options page')
+
+    // Step 4: Whereami page — enter postcode and submit
+    await page.waitForURL('**/give/mobile/whereami', {
+      timeout: timeouts.navigation.default,
+    })
+    const postcodeInput = page.locator('.pcinp, input[placeholder="Type postcode"]')
+    await postcodeInput.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await postcodeInput.fill(postcode)
+    console.log(`Filled postcode: ${postcode}`)
+
+    // Wait for postcode validation tick
+    const validationTick = page.locator(
+      '.validation-tick, .fa-check-circle, .v-icon[icon="check-circle"]'
+    )
+    await validationTick.waitFor({ state: 'visible', timeout: timeouts.api.default })
+    console.log('Postcode validated')
+
+    // Wait for the Freegle it! button to become active (groups loaded)
+    const freegleButton = page.locator('button.w-100').filter({ hasText: /Freegle it!/i })
+    await freegleButton.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await expect(freegleButton).toBeEnabled()
+    await freegleButton.click()
+    console.log('Clicked Freegle it!')
+
+    // Verify we navigated to /myposts after successful submission
+    await page.waitForURL(/\/myposts/, { timeout: timeouts.navigation.default })
+    console.log('Navigated to /myposts after submission')
+
+    // Verify our post appears on the page
+    const itemLocator = page
+      .locator('.message-card, .card-body')
+      .filter({ hasText: uniqueItem })
+    await itemLocator.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    console.log(`Found mobile OFFER item "${uniqueItem}" on myposts page`)
+
+    // Clean up
+    await withdrawPost({ item: uniqueItem })
+    console.log('Mobile OFFER post withdrawn')
+  })
+})
