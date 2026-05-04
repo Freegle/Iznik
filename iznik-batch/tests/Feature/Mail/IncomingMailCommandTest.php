@@ -457,6 +457,69 @@ class IncomingMailCommandTest extends TestCase
         ])->assertExitCode(0);  // EX_OK - drop message to prevent retry loop
     }
 
+    public function test_returns_tempfail_on_pdo_server_gone_away(): void
+    {
+        // PDOException with code 2006 where message doesn't match string patterns.
+        // This exercises the PDOException error-code branch (lines not reached by
+        // message-pattern tests because "MySQL server has gone away" matches nothing).
+        $this->mock(\App\Services\Mail\Incoming\IncomingMailService::class)
+            ->shouldReceive('route')
+            ->andThrow(new \PDOException('MySQL server has gone away', 2006));
+
+        $rawEmail = $this->createMinimalEmail([
+            'From' => 'user@example.com',
+            'To' => 'test@groups.ilovefreegle.org',
+            'Subject' => 'Test',
+        ]);
+
+        $this->artisan('mail:incoming', [
+            'sender' => 'user@example.com',
+            'recipient' => 'test@groups.ilovefreegle.org',
+            '--stdin-content' => $rawEmail,
+        ])->assertExitCode(75);  // EX_TEMPFAIL
+    }
+
+    public function test_returns_tempfail_on_pdo_lock_wait_timeout(): void
+    {
+        // PDOException with code 1205 where message doesn't match string patterns.
+        // "Lock wait timeout exceeded" doesn't contain "deadlock" so hits the code branch.
+        $this->mock(\App\Services\Mail\Incoming\IncomingMailService::class)
+            ->shouldReceive('route')
+            ->andThrow(new \PDOException('Lock wait timeout exceeded; try restarting transaction', 1205));
+
+        $rawEmail = $this->createMinimalEmail([
+            'From' => 'user@example.com',
+            'To' => 'test@groups.ilovefreegle.org',
+            'Subject' => 'Test',
+        ]);
+
+        $this->artisan('mail:incoming', [
+            'sender' => 'user@example.com',
+            'recipient' => 'test@groups.ilovefreegle.org',
+            '--stdin-content' => $rawEmail,
+        ])->assertExitCode(75);  // EX_TEMPFAIL
+    }
+
+    public function test_returns_success_on_pdo_with_unrecognised_code(): void
+    {
+        // PDOException where neither message nor code match transient patterns.
+        $this->mock(\App\Services\Mail\Incoming\IncomingMailService::class)
+            ->shouldReceive('route')
+            ->andThrow(new \PDOException('SQLSTATE[42S02]: Table not found', 42));
+
+        $rawEmail = $this->createMinimalEmail([
+            'From' => 'user@example.com',
+            'To' => 'test@groups.ilovefreegle.org',
+            'Subject' => 'Test',
+        ]);
+
+        $this->artisan('mail:incoming', [
+            'sender' => 'user@example.com',
+            'recipient' => 'test@groups.ilovefreegle.org',
+            '--stdin-content' => $rawEmail,
+        ])->assertExitCode(0);  // EX_OK - non-transient, drop the message
+    }
+
     // ========================================
     // Log Generation Tests
     // ========================================
