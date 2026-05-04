@@ -27,6 +27,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Load parent project env vars (DISCOURSE_URL, etc.) if not already set
+PARENT_ENV="$(dirname "$0")/../.env"
+if [ -f "$PARENT_ENV" ]; then
+  set -a; source "$PARENT_ENV"; set +a
+fi
+
 # ── Single-instance guard ─────────────────────────────────────────────────────
 # Prevent two run-loop.sh processes from running concurrently (e.g. if the
 # scheduled /loop wakeup fires while a prior run is still in progress).
