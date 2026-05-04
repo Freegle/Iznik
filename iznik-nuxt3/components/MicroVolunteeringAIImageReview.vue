@@ -11,7 +11,7 @@
     <div class="image-card mb-3">
       <div class="image-container">
         <img
-          :src="aiimage.url"
+          :src="currentImageUrl"
           :alt="'AI image for ' + aiimage.name"
           class="review-image"
           @error="brokenImage"
@@ -45,24 +45,44 @@
         </div>
       </div>
 
+      <div class="regen-group mb-3 d-flex gap-2">
+        <button class="btn btn-outline-secondary" @click="regenerate">
+          Regenerate
+        </button>
+        <button
+          v-if="currentIndex > 0"
+          class="btn btn-outline-secondary"
+          @click="previous"
+        >
+          Previous
+        </button>
+        <button
+          v-if="currentIndex < images.length - 1"
+          class="btn btn-outline-secondary"
+          @click="next"
+        >
+          Next
+        </button>
+      </div>
+
       <div class="question-block mb-3">
         <p class="question-label">
           Is this a good image for &ldquo;{{ aiimage.name }}&rdquo;?
         </p>
         <div class="d-flex gap-2">
           <SpinButton
-            variant="success"
-            icon-name="thumbs-up"
-            label="Yes, looks good"
-            :disabled="containsPeople === null"
-            @handle="approve"
-          />
-          <SpinButton
             variant="danger"
             icon-name="thumbs-down"
             label="No, not great"
             :disabled="containsPeople === null"
             @handle="reject"
+          />
+          <SpinButton
+            variant="success"
+            icon-name="thumbs-up"
+            label="Accept - looks good"
+            :disabled="containsPeople === null"
+            @handle="approve"
           />
         </div>
         <p v-if="containsPeople === null" class="help-hint mt-2">
@@ -74,9 +94,10 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import SpinButton from './SpinButton'
 import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
+import AIImagesAPI from '~/api/AIImagesAPI'
 
 const props = defineProps({
   aiimage: {
@@ -91,6 +112,30 @@ const microVolunteeringStore = useMicroVolunteeringStore()
 
 const containsPeople = ref(null)
 const submitted = ref(false)
+
+const images = ref([props.aiimage.url])
+const currentIndex = ref(0)
+
+const currentImageUrl = computed(() => images.value[currentIndex.value])
+
+async function regenerate() {
+  const api = new AIImagesAPI()
+  const result = await api.regenerate(props.aiimage.id)
+  images.value.push(result.url)
+  currentIndex.value = images.value.length - 1
+}
+
+function previous() {
+  if (currentIndex.value > 0) {
+    currentIndex.value--
+  }
+}
+
+function next() {
+  if (currentIndex.value < images.value.length - 1) {
+    currentIndex.value++
+  }
+}
 
 async function approve(callback) {
   await microVolunteeringStore.respond({
