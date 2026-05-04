@@ -362,6 +362,13 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
   // GET /api/circleci/runner  — what's currently running on the self-hosted runner
   if (req.method === 'GET' && path === '/api/circleci/runner') {
     const status = await fetchCIRunnerStatus()
+    if (status.running && status.branch) {
+      const prRow = db.prepare('SELECT number, title FROM pr WHERE branch = ?').get(status.branch) as { number: number; title: string } | undefined
+      if (prRow) {
+        (status as any).prNumber = prRow.number
+        ;(status as any).prTitle = prRow.title
+      }
+    }
     json(res, 200, status)
     return
   }
@@ -459,6 +466,21 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     } catch (err: any) {
       json(res, 500, { error: String(err?.message ?? err) })
     }
+    return
+  }
+
+  // POST /api/bugs/:topic/:post/reset-attempts  — clear fix attempt counter and reopen
+  const bugReset = path.match(/^\/api\/bugs\/(\d+)\/(\d+)\/reset-attempts$/)
+  if (req.method === 'POST' && bugReset) {
+    const topic = Number(bugReset[1])
+    const post = Number(bugReset[2])
+    const bug = db.prepare('SELECT pr_number FROM discourse_bug WHERE topic = ? AND post = ?').get(topic, post) as { pr_number: number | null } | undefined
+    if (bug?.pr_number) {
+      db.prepare("DELETE FROM kv WHERE key = ?").run(`pr_fix_attempts_${bug.pr_number}`)
+    }
+    db.prepare("UPDATE discourse_bug SET state = 'open', reason = NULL WHERE topic = ? AND post = ?").run(topic, post)
+    const row = db.prepare('SELECT * FROM discourse_bug WHERE topic = ? AND post = ?').get(topic, post)
+    json(res, 200, row ?? { error: 'not found' })
     return
   }
 

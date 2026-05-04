@@ -22,6 +22,7 @@ workflows:
 
   # Main test workflow — runs on all branches
   # Uses self-hosted runner when available, cloud otherwise
+  # Android debug builds run after tests pass so they don't compete for the runner
   build-test-local:
     when:
       and:
@@ -36,6 +37,22 @@ workflows:
             branches:
               ignore:
                 - modtools
+      - freegle/build-android-dev:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              ignore:
+                - production
+                - modtools
+      - freegle/build-android-debug:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              ignore:
+                - production
+                - modtools
 
   build-test-cloud:
     when:
@@ -49,21 +66,17 @@ workflows:
             branches:
               ignore:
                 - modtools
-
-  # Build Android debug APKs for non-production branches
-  build-android-apps:
-    when:
-      and:
-        - not: << pipeline.parameters.run_manual_promote >>
-        - not: << pipeline.parameters.build_testflight >>
-    jobs:
       - freegle/build-android-dev:
+          requires:
+            - freegle/build-and-test
           filters:
             branches:
               ignore:
                 - production
                 - modtools
       - freegle/build-android-debug:
+          requires:
+            - freegle/build-and-test
           filters:
             branches:
               ignore:
