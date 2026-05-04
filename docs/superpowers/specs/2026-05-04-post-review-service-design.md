@@ -315,13 +315,24 @@ Any `flag`-action keyword matches from Stage 2 are passed to the LLM as context 
 
 ### Prompt design
 
+Scam behaviour, when flagged, uses the tag `rule:scam_behaviour` in `reasons` — there is no separate response field.
+
 ```
 System: You are a post reviewer for Freegle, a UK community platform where people
 give away items for free. Review the following post against the rules below and
 return a structured JSON assessment. Be fair: consider intent and context, not
 just literal rule matching. Do not be over-cautious.
 
-Rules active for this group: [list from groupRules + system rules]
+System rules (always active):
+1. no loans or borrowing of items
+2. no events or gatherings
+3. no volunteering requests or offers
+4. no commercial services or business advertising
+5. no scam behaviour: requesting payment, deposits, or bank transfers;
+   attempting to move conversation off-platform (e.g. WhatsApp, Telegram,
+   texting a phone number given in the post)
+
+Group rules: [list from groupRules — only those set true]
 Context flags from automated checks: [flag-action keyword matches, if any]
 
 Post subject: {subject}
@@ -331,7 +342,7 @@ Return JSON:
 {
   "verdict": "APPROVE" | "PENDING",
   "confidence": 0.0–1.0,
-  "reasons": [{ "tag": "rule:weapons", "detail": "brief explanation" }],
+  "reasons": [{ "tag": "rule:scam_behaviour", "detail": "brief explanation" }],
   "location_mentions": ["Manchester", "Didsbury M20"],
   "safety_triggers": ["car_seat", "knife"]
 }
@@ -534,3 +545,13 @@ Note: some groups apply mod notes universally as a record-keeping habit rather t
 - **Beanstalkd persistence in production**: Enable `-b /var/lib/beanstalkd/binlog` in the production beanstalkd config to survive restarts. Confirm this is done before enabling `ai_review` on any group.
 - **together.io**: Out of scope for prototype. The ai-flower adapter interface makes it a later drop-in if Gemini cost or availability becomes a concern.
 - **Rspamd score tuning**: The initial thresholds (add_header=5, reject=15) are conservative guesses. After a few weeks of production traffic, review the score distribution in rspamd's web UI (`rspamd.localhost`) and adjust.
+
+---
+
+## Out of Scope (Related Ideas for Separate Consideration)
+
+These arose during the community discussion but are independent of the post-review pipeline:
+
+- **Improved post reporting flow**: Rather than each report going individually to mods, a revised flow could: (1) hide the reported post only for the member who reported it; (2) once 2 or more members report the same post, escalate as a single consolidated report; (3) mods act once and a single response goes to all reporters; (4) subsequent reports on the same post receive the previous reply automatically. This would substantially reduce moderator effort on post-live complaints.
+- **Automated reporter acknowledgement**: Auto-reply to members who report a post, reducing the need for moderators to manually thank each reporter.
+- **Microvolunteering as bystander-effect mitigation**: Active microvolunteers are more likely to report problematic posts than casual members.
