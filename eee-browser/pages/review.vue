@@ -152,11 +152,11 @@
               <div v-else-if="currentFieldDef?.type === 'presence'" class="grid grid-cols-3 gap-3">
                 <button @click="submitLabel('present')" :disabled="submitting"
                   class="bg-green-900/70 hover:bg-green-800 disabled:opacity-50 text-green-300 border border-green-700 rounded-lg px-3 py-3 text-sm font-bold transition">
-                  Yes, visible<br><span class="text-xs font-normal">Y</span>
+                  Yes<br><span class="text-xs font-normal">Y</span>
                 </button>
                 <button @click="submitLabel('absent')" :disabled="submitting"
                   class="bg-red-900/70 hover:bg-red-800 disabled:opacity-50 text-red-300 border border-red-700 rounded-lg px-3 py-3 text-sm font-bold transition">
-                  None visible<br><span class="text-xs font-normal">N</span>
+                  No<br><span class="text-xs font-normal">N</span>
                 </button>
                 <button @click="submitLabel('unsure')" :disabled="submitting"
                   class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-3 py-3 text-sm font-bold transition">
@@ -186,7 +186,7 @@
               <div v-else-if="currentFieldDef?.type === 'condition'" class="grid grid-cols-3 gap-3">
                 <button @click="submitLabel('reusable')" :disabled="submitting"
                   class="bg-green-900/70 hover:bg-green-800 disabled:opacity-50 text-green-300 border border-green-700 rounded-lg px-3 py-3 text-sm font-bold transition">
-                  Working<br><span class="text-xs font-normal">Y</span>
+                  Reusable<br><span class="text-xs font-normal">Y</span>
                 </button>
                 <button @click="submitLabel('damaged')" :disabled="submitting"
                   class="bg-red-900/70 hover:bg-red-800 disabled:opacity-50 text-red-300 border border-red-700 rounded-lg px-3 py-3 text-sm font-bold transition">
@@ -234,22 +234,6 @@
                 <button @click="submitLabel('unsure')" :disabled="submitting"
                   class="w-full bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-4 py-2 text-sm transition">
                   Can't tell (U)
-                </button>
-              </div>
-
-              <!-- Brand: visibility -->
-              <div v-else-if="currentFieldDef?.type === 'brand_presence'" class="grid grid-cols-3 gap-3">
-                <button @click="submitLabel('visible')" :disabled="submitting"
-                  class="bg-green-900/70 hover:bg-green-800 disabled:opacity-50 text-green-300 border border-green-700 rounded-lg px-3 py-3 text-sm font-bold transition">
-                  Visible<br><span class="text-xs font-normal">Y</span>
-                </button>
-                <button @click="submitLabel('not_visible')" :disabled="submitting"
-                  class="bg-red-900/70 hover:bg-red-800 disabled:opacity-50 text-red-300 border border-red-700 rounded-lg px-3 py-3 text-sm font-bold transition">
-                  Not visible<br><span class="text-xs font-normal">N</span>
-                </button>
-                <button @click="submitLabel('unsure')" :disabled="submitting"
-                  class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-3 py-3 text-sm font-bold transition">
-                  Can't tell<br><span class="text-xs font-normal">U</span>
                 </button>
               </div>
 
@@ -342,7 +326,7 @@ interface Field {
   short: string
   weight: number
   dbColumn: string
-  type: 'binary' | 'presence' | 'rating5' | 'condition' | 'bucket' | 'size_bucket' | 'value_band' | 'brand_presence'
+  type: 'binary' | 'presence' | 'rating5' | 'condition' | 'bucket' | 'size_bucket' | 'value_band'
   buckets?: { label: string; key: string }[]
   intro: string
   total: number
@@ -373,11 +357,11 @@ const VALUE_BANDS = [
 const FIELDS: Field[] = [
   {
     field: 'EEE', short: 'EEE', weight: 5, dbColumn: 'is_eee', type: 'binary', total: 0,
-    intro: 'An item is EEE if it requires electricity or a battery to function, even partially. Common examples: TVs, laptops, phones, power tools, kettles, lamps. Purely mechanical items (furniture, clothing, books) are not EEE. When in doubt, mark EEE to be safe.',
+    intro: 'An item is EEE (Electrical & Electronic Equipment) if its PRIMARY function requires electricity or a battery. A gas cooker with an electronic ignition is NOT EEE — cooking is the primary function (gas). A cordless drill IS EEE — drilling requires the battery. A clock radio is EEE even if you could wind it. When the primary function clearly needs power, mark EEE.',
   },
   {
     field: 'Electrical components', short: 'Electrical', weight: 4, dbColumn: 'electrical_components_description', type: 'presence', total: 0,
-    intro: 'Look at the photo and decide: can you directly see any electrical components? This includes cables, displays, batteries, motors, circuit boards, or any other part that uses power. Mark "Yes, visible" if you can clearly see at least one electrical component in the photo.',
+    intro: 'Does this type of item contain electrical components — even if they are internal and not visible in this photo? A TV has internal circuit boards and a display panel even if the photo shows only the back of the case. A wooden chair has none. Judge by what the item type would always contain, not just what is visible in the photo.',
   },
   {
     field: 'Photo quality', short: 'Photo', weight: 4, dbColumn: 'photo_quality', type: 'rating5', total: 0,
@@ -385,7 +369,7 @@ const FIELDS: Field[] = [
   },
   {
     field: 'Condition', short: 'Condition', weight: 3, dbColumn: 'condition', type: 'condition', total: 0,
-    intro: 'Based on what you can see, is this item working and undamaged, or is it clearly broken/damaged? Mark "Working" if it looks functional and undamaged. Mark "Damaged" if there is visible damage, breakage, or it obviously does not work. Use "Can\'t tell" if the photo quality makes it impossible to judge.',
+    intro: 'Is this item reusable or damaged? Mark "Reusable" if it looks functional and in acceptable secondhand condition — includes items described as new, good, or working. Mark "Damaged" if there is visible damage, breakage, missing parts, or it clearly does not work. Use "Can\'t tell" if the photo quality makes it impossible to judge.',
   },
   {
     field: 'Weight (kg)', short: 'Weight', weight: 3, dbColumn: 'weight_kg_min', type: 'bucket', buckets: WEIGHT_BUCKETS, total: 0,
@@ -398,10 +382,6 @@ const FIELDS: Field[] = [
   {
     field: 'Value band', short: 'Value', weight: 2, dbColumn: 'value_band_gbp', type: 'value_band', total: 0,
     intro: 'What is the realistic second-hand / rehoming value of this item in its apparent condition? Use the donation/resale market — not the original retail price. A working iPhone might be £100–500; a broken kettle is under £20.',
-  },
-  {
-    field: 'Brand', short: 'Brand', weight: 1, dbColumn: 'brand', type: 'brand_presence', total: 0,
-    intro: 'Is a brand name or logo clearly readable in this photo? Mark "Visible" only if you can actually read the brand from the image. Mark "Not visible" if no brand is discernible. Use "Can\'t tell" if the photo is too poor quality.',
   },
 ]
 
@@ -594,14 +574,14 @@ const skipItem = async () => {
 const handleKeydown = (e: KeyboardEvent) => {
   if (submitting.value || loading.value || !reviewerName.value) return
   const ft = currentFieldDef.value?.type
-  if (ft === 'binary' || ft === 'presence' || ft === 'condition' || ft === 'brand_presence') {
+  if (ft === 'binary' || ft === 'presence' || ft === 'condition') {
     if (e.key.toLowerCase() === 'y') {
       e.preventDefault()
-      const yesLabel = ft === 'binary' ? 'eee' : ft === 'presence' ? 'present' : ft === 'condition' ? 'reusable' : 'visible'
+      const yesLabel = ft === 'binary' ? 'eee' : ft === 'presence' ? 'present' : 'reusable'
       submitLabel(yesLabel)
     } else if (e.key.toLowerCase() === 'n') {
       e.preventDefault()
-      const noLabel = ft === 'binary' ? 'not_eee' : ft === 'presence' ? 'absent' : ft === 'condition' ? 'damaged' : 'not_visible'
+      const noLabel = ft === 'binary' ? 'not_eee' : ft === 'presence' ? 'absent' : 'damaged'
       submitLabel(noLabel)
     }
   }

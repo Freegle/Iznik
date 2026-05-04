@@ -11,7 +11,6 @@ const VALID_LABELS: Record<string, string[]> = {
   'Weight (kg)':             [...WEIGHT_BUCKET_KEYS, 'unsure'],
   'Size':                    [...SIZE_BUCKET_KEYS, 'unsure'],
   'Value band':              ['0-20', '20-100', '100-500', '500+', 'unsure'],
-  'Brand':                   ['visible', 'not_visible', 'unsure'],
 }
 
 const FIELD_NAMES = Object.keys(VALID_LABELS)
