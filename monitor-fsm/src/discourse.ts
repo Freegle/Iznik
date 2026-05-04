@@ -3,4 +3,4 @@
 
 export const DISCOURSE_BASE =
   process.env.DISCOURSE_URL?.replace(/\/$/, '') ??
-  'https://community.ilovefreegle.org'
+  'https://discourse.ilovefreegle.org'
