@@ -128,7 +128,7 @@
     <div class="mobile-volunteers">
       <p class="mobile-volunteers__label">
         Questions? Contact our
-        {{ group.mentored ? 'caretakers' : 'volunteers' }}:
+        {{ contactLabel }}:
       </p>
       <div class="mobile-volunteers__list">
         <ExternalLink v-if="!me" :href="'mailto:' + group.modsemail">
@@ -274,11 +274,11 @@
       <hr class="mt-2" />
       <h2 class="header--size5 mb-3">
         If you have questions, you can contact our lovely local
-        {{ group.mentored ? 'caretakers' : 'volunteers' }} here:
+        {{ contactLabel }} here:
       </h2>
       <ExternalLink v-if="!me" :href="'mailto:' + group.modsemail">
         <span class="btn btn-white mb-3">
-          Contact&nbsp;{{ group.mentored ? 'caretakers' : 'volunteers' }}
+          Contact&nbsp;{{ contactLabel }}
         </span>
         <div
           v-if="group.showmods && group.showmods.length"
@@ -295,7 +295,7 @@
       <div v-else>
         <ChatButton
           :groupid="group.id"
-          :title="group.mentored ? 'Contact Caretakers' : 'Contact Volunteers'"
+          :title="'Contact ' + contactLabel.charAt(0).toUpperCase() + contactLabel.slice(1)"
           chattype="User2Mod"
           variant="white"
         />
@@ -381,6 +381,11 @@ const myid = computed(() => authStore?.user?.id)
 // Computed properties
 const amAMember = computed(() => {
   return authStore?.member(props.group?.id)
+})
+
+const contactLabel = computed(() => {
+  // Normalize caretaker-type groups to display as 'volunteers'
+  return 'volunteers'
 })
 
 const description = computed(() => {
