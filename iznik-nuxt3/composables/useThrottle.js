@@ -25,7 +25,9 @@ export function checkThrottle(resolve) {
   if (fetching === 0) {
     resolve()
   } else {
-    setTimeout(checkThrottle, 100, resolve)
+    setTimeout(() => {
+      checkThrottle(resolve)
+    }, 100)
   }
 }
 
