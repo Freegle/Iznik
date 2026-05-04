@@ -72,8 +72,8 @@ echo "Cleaning up old backups (keeping last $RETENTION_DAYS days)..."
 CUTOFF_EPOCH=$(( $(date +%s) - RETENTION_DAYS * 86400 ))
 CUTOFF_DATE=$(date -d "@$CUTOFF_EPOCH" +%Y%m%d 2>/dev/null || date -r "$CUTOFF_EPOCH" +%Y%m%d)
 if [ -z "$CUTOFF_DATE" ]; then
-    echo "❌ Could not compute cutoff date — skipping cleanup"
-    exit 1
+    echo "⚠️  Could not compute cutoff date — skipping cleanup"
+    exit 0
 fi
 echo "Cutoff date: $CUTOFF_DATE"
 
