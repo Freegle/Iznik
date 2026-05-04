@@ -1897,7 +1897,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
             excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
             state: 'fix-queued', prNumber: topicPrRow.pr_number,
-            featureArea: c.featureArea ?? null, symptomTags, codeArea,
+            featureArea: c.featureArea ?? undefined, symptomTags, codeArea: codeArea ?? undefined,
           })
           out(`persist_classifications: topic ${c.topic}/${c.post} linked to existing PR #${topicPrRow.pr_number} (same topic)`)
           upserted++
@@ -1916,7 +1916,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
               excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
               state: 'duplicate',
               prNumber: tagDup.pr_number ?? undefined,
-              featureArea: c.featureArea ?? null, symptomTags, codeArea,
+              featureArea: c.featureArea ?? undefined, symptomTags, codeArea: codeArea ?? undefined,
               reason: `Duplicate of topic ${tagDup.topic}/${tagDup.post} (tag overlap)`,
             })
             out(`persist_classifications: topic ${c.topic}/${c.post} marked duplicate of ${tagDup.topic}/${tagDup.post} (tag similarity)`)
