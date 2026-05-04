@@ -1959,7 +1959,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
   {
     name: 'work_router_decide',
-    description: 'Phase B router logic. No LLM — branches on context.classifications and context.bugsFixed. Returns {_transition: "DISPATCH_ALL_BUGS" | "FIX_SENTRY_ISSUE" | "COVERAGE_GATE"}.',
+    description: 'Phase B router logic. No LLM — branches on context.classifications and context.bugsFixed. Returns {_transition: "DIAGNOSE_BUG" | "FIX_SENTRY_ISSUE" | "COVERAGE_GATE"}.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as any
@@ -2036,8 +2036,8 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           return at < bt ? -1 : at > bt ? 1 : 0
         })[0]
         return {
-          _transition: 'DISPATCH_ALL_BUGS',
-          reason: `${allPending.length} unfixed bug(s) queued — dispatching 1 (oldest: topic ${oneBug.topic}/${oneBug.post}); ${allPending.length - 1} deferred to next iteration`,
+          _transition: 'DIAGNOSE_BUG',
+          reason: `${allPending.length} unfixed bug(s) queued — beginning TDD pipeline for 1 (oldest: topic ${oneBug.topic}/${oneBug.post}); ${allPending.length - 1} deferred to next iteration`,
           dbOpenBugs: [oneBug].filter(b => !pendingBugs.some((p: any) => `${p.topic}.${p.post}` === `${b.topic}.${b.post}`)),
           singleBug: oneBug,
         }
