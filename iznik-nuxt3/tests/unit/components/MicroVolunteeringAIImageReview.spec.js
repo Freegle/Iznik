@@ -10,6 +10,14 @@ vi.mock('~/stores/microvolunteering', () => ({
   useMicroVolunteeringStore: () => mockMicroVolunteeringStore,
 }))
 
+const mockAIImagesAPI = {
+  regenerate: vi.fn(),
+}
+
+vi.mock('~/api/AIImagesAPI', () => ({
+  default: vi.fn().mockImplementation(() => mockAIImagesAPI),
+}))
+
 const testAIImage = {
   id: 42,
   name: 'Sofa',
@@ -204,6 +212,109 @@ describe('MicroVolunteeringAIImageReview', () => {
       spinButtons.forEach((btn) => {
         expect(btn.attributes('disabled')).toBeUndefined()
       })
+    })
+  })
+
+  // Regression tests for: "lost image after Regenerate — no undo available"
+  // The component must retain image history so moderators can recover a prior image
+  // when Regenerate produces something worse.  Accept and Regenerate must also be
+  // separated so accidental Accept clicks are harder.
+  describe('image regeneration history', () => {
+    const urlInitial = testAIImage.url
+    const urlA = 'https://images.ilovefreegle.org/ai-regen-first.jpg'
+    const urlB = 'https://images.ilovefreegle.org/ai-regen-second.jpg'
+
+    beforeEach(() => {
+      mockAIImagesAPI.regenerate
+        .mockResolvedValueOnce({ url: urlA })
+        .mockResolvedValueOnce({ url: urlB })
+    })
+
+    it('renders a Regenerate button in the action area', () => {
+      const wrapper = createWrapper()
+      const allButtons = wrapper.findAll('button')
+      const regenBtn = allButtons.find((b) => /regenerate/i.test(b.text()))
+      // FAILS today: the component has no Regenerate button
+      expect(regenBtn).toBeDefined()
+      expect(regenBtn.exists()).toBe(true)
+    })
+
+    it('updates the image src after two Regenerates and exposes a Previous/Undo control', async () => {
+      const wrapper = createWrapper()
+
+      expect(wrapper.find('.review-image').attributes('src')).toBe(urlInitial)
+
+      const regenBtn = wrapper
+        .findAll('button')
+        .find((b) => /regenerate/i.test(b.text()))
+      // FAILS today: no Regenerate button exists
+      expect(regenBtn).toBeDefined()
+
+      // first regenerate → urlA
+      await regenBtn.trigger('click')
+      await flushPromises()
+
+      // second regenerate → urlB
+      await regenBtn.trigger('click')
+      await flushPromises()
+
+      // image should show the most recently generated URL
+      expect(wrapper.find('.review-image').attributes('src')).toBe(urlB)
+
+      // a Previous / Undo control must now be visible so the prior image is recoverable
+      const prevBtn = wrapper
+        .findAll('button')
+        .find((b) => /previous|undo/i.test(b.text()))
+      // FAILS today: no image history is retained, no Previous/Undo control
+      expect(prevBtn).toBeDefined()
+      expect(prevBtn.exists()).toBe(true)
+    })
+
+    it('reverts the displayed image to the prior URL when Previous is clicked', async () => {
+      const wrapper = createWrapper()
+
+      const regenBtn = wrapper
+        .findAll('button')
+        .find((b) => /regenerate/i.test(b.text()))
+      // FAILS today: no Regenerate button exists
+      expect(regenBtn).toBeDefined()
+
+      // first regenerate → urlA
+      await regenBtn.trigger('click')
+      await flushPromises()
+
+      // second regenerate → urlB
+      await regenBtn.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.review-image').attributes('src')).toBe(urlB)
+
+      const prevBtn = wrapper
+        .findAll('button')
+        .find((b) => /previous|undo/i.test(b.text()))
+      // FAILS today: no Previous/Undo button
+      expect(prevBtn).toBeDefined()
+
+      await prevBtn.trigger('click')
+      await flushPromises()
+
+      // image must revert to the result of the first Regenerate
+      expect(wrapper.find('.review-image').attributes('src')).toBe(urlA)
+    })
+
+    it('does not place Accept immediately adjacent to Regenerate', () => {
+      const wrapper = createWrapper()
+      const buttons = wrapper.findAll('button')
+      const acceptIdx = buttons.findIndex((b) => /accept/i.test(b.text()))
+      const regenIdx = buttons.findIndex((b) => /regenerate/i.test(b.text()))
+
+      // Both buttons must be present before the layout assertion is meaningful
+      // FAILS today: neither Accept nor Regenerate exists in the current component
+      expect(acceptIdx).toBeGreaterThanOrEqual(0)
+      expect(regenIdx).toBeGreaterThanOrEqual(0)
+
+      // Buttons must not be directly adjacent in DOM order (|index diff| > 1)
+      expect(Math.abs(acceptIdx - regenIdx)).toBeGreaterThan(1)
     })
   })
 })
