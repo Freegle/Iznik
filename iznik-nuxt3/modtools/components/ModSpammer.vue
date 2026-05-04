@@ -1,5 +1,5 @@
 <template>
-  <div v-if="user">
+  <div v-if="user && user.spammer">
     <NoticeMessage :variant="variant" class="mb-1">
       <div>
         {{ user.displayname }} {{ collname }}: {{ user.spammer.reason }}

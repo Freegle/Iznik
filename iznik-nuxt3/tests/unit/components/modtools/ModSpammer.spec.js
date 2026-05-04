@@ -243,5 +243,64 @@ describe('ModSpammer', () => {
       expect(wrapper.text()).toContain('Minimal User')
       expect(wrapper.text()).toContain('Confirmed Spammer')
     })
+
+    it('handles user without spammer data when filtering by Approved+Banned', () => {
+      const user = {
+        id: 100,
+        displayname: 'User Without Spammer',
+        spammer: null,
+      }
+      const wrapper = mountComponent({ user })
+      // Component should not crash - it should either render nothing or render gracefully
+      expect(wrapper.exists()).toBe(true)
+      // Should not try to access undefined.reason
+      expect(() => wrapper.vm.$forceUpdate()).not.toThrow()
+    })
+
+    it('handles user with undefined spammer', () => {
+      const user = {
+        id: 101,
+        displayname: 'User With Undefined Spammer',
+      }
+      populateUserStore(user)
+      const wrapper = mount(ModSpammer, {
+        props: { userid: user.id },
+        global: {
+          mocks: {
+            timeago: vi.fn(() => '3 days ago'),
+          },
+          stubs: {
+            NoticeMessage: {
+              template:
+                '<div class="notice" :class="\'notice-\' + variant"><slot /></div>',
+              props: ['variant'],
+            },
+            'notice-message': {
+              template:
+                '<div class="notice" :class="\'notice-\' + variant"><slot /></div>',
+              props: ['variant'],
+            },
+            ExternalLink: {
+              template: '<a :href="href"><slot /></a>',
+              props: ['href'],
+            },
+            ModClipboard: {
+              template: '<span class="clipboard" />',
+              props: ['value'],
+            },
+            'nuxt-link': {
+              template: '<a :href="to"><slot /></a>',
+              props: ['to'],
+            },
+            'v-icon': {
+              template: '<span class="icon" />',
+              props: ['icon', 'scale'],
+            },
+          },
+        },
+      })
+      // Component should not crash
+      expect(wrapper.exists()).toBe(true)
+    })
   })
 })
