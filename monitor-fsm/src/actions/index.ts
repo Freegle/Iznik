@@ -2045,6 +2045,33 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
            WHERE pr_number IS NOT NULL AND state IN ('open', 'investigating', 'fix-queued')`
         ).all() as Array<{ topic: number }>).map((r: { topic: number }) => r.topic)
       )
+
+      // GitHub scan dedup: detect open PRs created outside the FSM flow whose branch
+      // names contain the topic-post pattern. Links them to the DB so we don't
+      // dispatch a second fix agent for the same bug.
+      try {
+        // _githubPrListOverride is used in tests to inject mock PR data without a real gh call.
+        const openPrs: Array<{ number: number; headRefName: string }> = ctx?._githubPrListOverride !== undefined
+          ? ctx._githubPrListOverride
+          : JSON.parse((await sh('gh', ['pr', 'list', '--state', 'open', '--json', 'number,headRefName', '--limit', '50', '--repo', 'Freegle/Iznik'])).stdout || '[]')
+        const allBugsToCheck = [...pendingBugs, ...extraBugs]
+        for (const bug of allBugsToCheck) {
+          if (topicsWithActivePr.has(Number(bug.topic))) continue
+          const pattern = `${bug.topic}-${bug.post}`
+          const match = openPrs.find(pr => pr.headRefName.includes(pattern))
+          if (match) {
+            db.prepare(
+              `UPDATE discourse_bug SET state = 'fix-queued', pr_number = ?, reason = ?
+               WHERE topic = ? AND post = ?`
+            ).run(match.number, `linked from GitHub scan (branch ${match.headRefName})`, bug.topic, bug.post)
+            topicsWithActivePr.add(Number(bug.topic))
+            outWarn(`work_router: linked PR #${match.number} (${match.headRefName}) to bug ${bug.topic}/${bug.post} via GitHub scan`)
+          }
+        }
+      } catch (scanErr: any) {
+        outWarn(`work_router: GitHub PR scan failed (non-fatal): ${scanErr.message ?? scanErr}`)
+      }
+
       const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
         .filter(b => !topicsWithActivePr.has(Number(b.topic)))
 
