@@ -1508,12 +1508,6 @@ services:
       - SENTRY_TRACES_SAMPLE_RATE=1.0
       # Migrations disabled for production
       - RUN_MIGRATIONS=false
-      # Rspamd HTTP API for the dormant outgoing-mail RspamdService.
-      # SPAM_CHECK_ENABLED=false keeps the SpamCheckListener inactive — the
-      # active spam path is the Postfix milter (see conf/postfix/main.cf).
-      - RSPAMD_HOST=rspamd
-      - RSPAMD_PORT=11334
-      - SPAM_CHECK_ENABLED=false
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/laravel-ready || exit 1"]
       interval: 10s

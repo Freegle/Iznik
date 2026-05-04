@@ -7,124 +7,37 @@
  *
  * Bug: Previously, selecting a different group during repost kept
  * reverting to the original group.
- *
- * Isolation: Creates a fresh message within the test (no pre-created
- * testEnv.rejected.offer) to avoid stale state between CI runs.
  */
 
 const { test, expect } = require('./fixtures')
-const { timeouts, environment } = require('./config')
+const { timeouts } = require('./config')
 const { loginViaHomepage } = require('./utils/user')
-
-const API_V2 = environment.apiV2BaseUrl
 
 test.describe('Repost Group Change', () => {
   test('changing group dropdown during repost of rejected message should persist', async ({
     page,
     testEnv,
-    postMessage,
   }) => {
     console.log('=== REPOST GROUP CHANGE TEST ===')
-    console.log(`Mod: ${testEnv.mod.email}`)
+    console.log(`User: ${testEnv.user.email}`)
     console.log(
       `Group1: ${testEnv.group.name} (${testEnv.group.id}), Group2: ${testEnv.group2.name} (${testEnv.group2.id})`
     )
+    console.log(`Rejected message ID: ${testEnv.rejected?.offer}`)
 
-    // Step 0: Get mod JWT and set testEnv.user to MODERATED so the fresh
-    // message goes to PENDING (and can be rejected via API).
-    const loginResp = await page.request.post(`${API_V2}/session`, {
-      data: { email: testEnv.mod.email, password: 'freegle' },
-    })
-    const loginData = await loginResp.json()
-    expect(loginData.jwt).toBeTruthy()
-    const modJwt = loginData.jwt
-
-    // Set testEnv.user's posting status to MODERATED in BOTH groups.
-    // The postMessage postcode should auto-select group1 (which has a polygon),
-    // but set MODERATED on both to handle any edge cases where group2 is selected.
-    // This ensures postMessage creates a PENDING message that can be rejected.
-    for (const gid of [testEnv.group.id, testEnv.group2.id]) {
-      const moderateResp = await page.request.patch(`${API_V2}/memberships`, {
-        data: {
-          userid: Number(testEnv.user.id),
-          groupid: Number(gid),
-          ourPostingStatus: 'MODERATED',
-        },
-        headers: { Authorization: modJwt },
-      })
-      console.log(`Set user MODERATED on group ${gid}: ${moderateResp.status()}`)
-      expect(moderateResp.ok()).toBeTruthy()
-    }
-
-    // Step 1: Login as testEnv.user before posting. testEnv.user is a
-    // pre-existing account; filling a registered email on whoami without being
-    // logged in fails to navigate to /myposts. Login also ensures both
-    // testEnv.group and testEnv.group2 appear in the whereami dropdown via
-    // myGroups (group2 has no polygon so only appears for logged-in members).
-    console.log('\n--- Step 1: Login as testEnv.user ---')
+    // Step 1: Log in as the test user who owns the rejected message.
     await loginViaHomepage(page, testEnv.user.email, 'freegle')
 
-    // Post a fresh offer as testEnv.user.
-    console.log('\n--- Step 1b: Post fresh offer as testEnv.user ---')
-    const posted = await postMessage({
-      type: 'OFFER',
-      item: `RepostTest ${Date.now()}`,
-      description: 'For repost group change test',
-      email: testEnv.user.email,
-    })
-    console.log(`Posted: id=${posted.id}, item=${posted.item}`)
-
-    // Step 1c: Get the actual group the message was posted to, then reject it.
-    console.log('\n--- Step 1c: Get message group and reject via API ---')
-
-    let msgData = null
-    await expect
-      .poll(
-        async () => {
-          const resp = await page.request.get(`${API_V2}/message/${posted.id}`, {
-            headers: { Authorization: modJwt },
-          })
-          msgData = await resp.json()
-          return msgData?.groups?.length > 0
-        },
-        {
-          message: 'Waiting for message to have groups populated',
-          timeout: timeouts.api.slowApi,
-          intervals: [500, 500, 1000, 1000, 2000],
-        }
-      )
-      .toBe(true)
-
-    const actualGroupId = msgData?.groups?.[0]?.groupid ?? testEnv.group.id
-    console.log(`Message actual groupid: ${actualGroupId}`)
-
-    // Reject with a subject so the message moves to collection='Rejected'
-    // (not deleted), enabling the "Edit & Resend" button on My Posts.
-    const rejectResp = await page.request.post(`${API_V2}/message`, {
-      data: {
-        action: 'Reject',
-        id: Number(posted.id),
-        groupid: Number(actualGroupId),
-        subject: 'Test rejection for repost group change test',
-      },
-      headers: { Authorization: modJwt },
-    })
-    console.log(`Reject status: ${rejectResp.status()}`)
-    expect(rejectResp.ok()).toBeTruthy()
-    console.log('Message rejected')
-
-    // Step 2: Navigate to My Posts. postMessage already left us here;
-    // reload to pick up the updated Rejected status.
-    console.log('\n--- Step 2: Reload My Posts and find rejected message ---')
-    await page.goto('/myposts', {
+    // Step 2: Navigate to My Posts.
+    await page.gotoAndVerify('/myposts', {
       timeout: timeouts.navigation.default,
-      waitUntil: 'domcontentloaded',
     })
 
     // Step 3: Wait for the specific rejected message card (by ID) and its
-    // "Edit & Resend" button.
+    // "Edit & Resend" button. Using data-message-id avoids picking up stale
+    // rejected messages from previous test runs.
     const messageCard = page.locator(
-      `.message-card[data-message-id="${posted.id}"]`
+      `.message-card[data-message-id="${testEnv.rejected.offer}"]`
     )
     const editResendBtn = messageCard
       .locator('button:has-text("Edit & Resend")')
@@ -164,12 +77,11 @@ test.describe('Repost Group Change', () => {
       `Group dropdown: ${optionCount} options, initial selection: ${initialGroupId}`
     )
 
-    // The repost should pre-select the message's original group (actualGroupId).
-    expect(initialGroupId).toBe(String(actualGroupId))
+    // The repost should pre-select the message's original group.
+    expect(initialGroupId).toBe(String(testEnv.group.id))
     console.log('Correct initial group pre-selected from rejected message')
 
-    // We need at least 2 groups to test changing. testEnv.user is a member
-    // of both testEnv groups, so both appear in the dropdown when logged in.
+    // We need at least 2 groups to test changing.
     expect(optionCount).toBeGreaterThanOrEqual(2)
 
     // Get all option values.

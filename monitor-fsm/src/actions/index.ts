@@ -20,7 +20,6 @@ import {
   upsertPr,
   findTagDuplicate,
   tagJaccard,
-  listExcludedTopicIds,
 } from '../db/index.js'
 import { renderAllViews } from '../db/views.js'
 import { getPhaseInfo } from '../phase.js'
@@ -734,20 +733,17 @@ print(json.dumps(topics))
       const db = getDb()
       const cursorRows = listTopicCursors(db) // {topic_id, last_post_number, title}
       const cursorMap = new Map(cursorRows.map(r => [r.topic_id, r.last_post_number]))
-      const excludedIds = listExcludedTopicIds(db)
 
-      const topics = rawTopics
-        .filter(t => !excludedIds.has(t.id))
-        .map(t => ({
-          id: t.id,
-          title: t.title,
-          postsCount: t.postsCount,
-          cursor: cursorMap.get(t.id) ?? 0,
-          hasNew: t.postsCount > (cursorMap.get(t.id) ?? 0),
-        }))
+      const topics = rawTopics.map(t => ({
+        id: t.id,
+        title: t.title,
+        postsCount: t.postsCount,
+        cursor: cursorMap.get(t.id) ?? 0,
+        hasNew: t.postsCount > (cursorMap.get(t.id) ?? 0),
+      }))
 
       const withNew = topics.filter(t => t.hasNew)
-      out(`discover_active_topics: ${withNew.length}/${topics.length} topics have new posts (${excludedIds.size} excluded)`)
+      out(`discover_active_topics: ${withNew.length}/${topics.length} topics have new posts`)
       return { topics }
     },
   },
@@ -1046,17 +1042,6 @@ print(urllib.request.urlopen(req).read().decode())
             pending.push({ context: name, state, url })
           }
         }
-        // Detect the gap between check-runner completing and build-and-test appearing.
-        // When check-runner passes but build-and-test hasn't registered yet, gh pr checks
-        // shows zero pending — misleadingly allGreen. Treat this as pending.
-        const checkNames = chk.stdout.split('\n').map(l => l.split('\t')[0]?.trim() ?? '')
-        const checkRunnerPassed = checkNames.some(n => /check.runner/i.test(n)) &&
-          !chk.stdout.split('\n').some(l => /check.runner/i.test(l.split('\t')[0] ?? '') && /^(pending|queued|in.?progress|running|fail)/i.test(l.split('\t')[1] ?? ''))
-        const hasBuildAndTest = checkNames.some(n => /build.and.test/i.test(n))
-        if (checkRunnerPassed && !hasBuildAndTest) {
-          pending.push({ context: 'ci/circleci: build-and-test', state: 'pending', url: '' })
-        }
-
         if (failed.length > 0) redPRs.push({ number: pr.number, title: pr.title, url: pr.url, failedChecks: failed })
         else if (pending.length > 0) pendingPRs.push({ number: pr.number, title: pr.title, url: pr.url, pendingChecks: pending })
       }
@@ -2045,53 +2030,16 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
            WHERE pr_number IS NOT NULL AND state IN ('open', 'investigating', 'fix-queued')`
         ).all() as Array<{ topic: number }>).map((r: { topic: number }) => r.topic)
       )
-
-      // GitHub scan dedup: detect open PRs created outside the FSM flow whose branch
-      // names contain the topic-post pattern. Links them to the DB so we don't
-      // dispatch a second fix agent for the same bug.
-      try {
-        // _githubPrListOverride is used in tests to inject mock PR data without a real gh call.
-        const openPrs: Array<{ number: number; headRefName: string }> = ctx?._githubPrListOverride !== undefined
-          ? ctx._githubPrListOverride
-          : JSON.parse((await sh('gh', ['pr', 'list', '--state', 'open', '--json', 'number,headRefName', '--limit', '50', '--repo', 'Freegle/Iznik'])).stdout || '[]')
-        const allBugsToCheck = [...pendingBugs, ...extraBugs]
-        for (const bug of allBugsToCheck) {
-          if (topicsWithActivePr.has(Number(bug.topic))) continue
-          const pattern = `${bug.topic}-${bug.post}`
-          const match = openPrs.find(pr => pr.headRefName.includes(pattern))
-          if (match) {
-            db.prepare(
-              `UPDATE discourse_bug SET state = 'fix-queued', pr_number = ?, reason = ?
-               WHERE topic = ? AND post = ?`
-            ).run(match.number, `linked from GitHub scan (branch ${match.headRefName})`, bug.topic, bug.post)
-            topicsWithActivePr.add(Number(bug.topic))
-            outWarn(`work_router: linked PR #${match.number} (${match.headRefName}) to bug ${bug.topic}/${bug.post} via GitHub scan`)
-          }
-        }
-      } catch (scanErr: any) {
-        outWarn(`work_router: GitHub PR scan failed (non-fatal): ${scanErr.message ?? scanErr}`)
-      }
-
       const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
         .filter(b => !topicsWithActivePr.has(Number(b.topic)))
 
       if (allPending.length > 0) {
-        // Dispatch ONE bug at a time. Sort by simplicity first, then age.
-        // Simple bugs (clear error messages, wrong text) are cheaper to diagnose
-        // and fix — prioritise them so they don't queue behind complex UI bugs.
-        const SIMPLE_TAGS = new Set(['error','500','undefined','null','missing','wrong','label','text','caretakers','volunteers','string','typo','crash','exception','traceback'])
-        const COMPLEX_TAGS = new Set(['layout','ui-layout','visual','button-proximity','no-undo','css','spacing','design','animation'])
-        function bugSimplicityScore(bug: any): number {
-          const tags: string[] = (() => {
-            try { return JSON.parse(bug.symptomTags ?? bug.symptom_tags ?? '[]') } catch { return [] }
-          })()
-          if (tags.some(t => COMPLEX_TAGS.has(t))) return 3
-          if (tags.some(t => SIMPLE_TAGS.has(t))) return 1
-          return 2
-        }
+        // Dispatch ONE bug at a time (oldest first_seen_at). With a single self-hosted
+        // CI runner, parallel bug dispatch creates a queue of N simultaneous CI jobs
+        // that all wait behind each other — zero benefit, high cost. One bug → one PR
+        // → drive it to green → then pick the next. This is the same principle as the
+        // focus PR logic in ci_router_decide.
         const oneBug = allPending.sort((a, b) => {
-          const sa = bugSimplicityScore(a), sb = bugSimplicityScore(b)
-          if (sa !== sb) return sa - sb
           const at = typeof a.first_seen_at === 'string' ? a.first_seen_at : '9999'
           const bt = typeof b.first_seen_at === 'string' ? b.first_seen_at : '9999'
           return at < bt ? -1 : at > bt ? 1 : 0

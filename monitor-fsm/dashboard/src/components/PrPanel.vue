@@ -18,8 +18,10 @@
       <template v-if="runnerStatus.running && runnerStatus.url">
         <span class="text-muted">Runner: </span>
         <a :href="runnerStatus.url" target="_blank" rel="noopener" class="text-decoration-none fw-semibold text-primary">
-          {{ runnerStatus.branch }}
+          <template v-if="(runnerStatus as any).prNumber">PR #{{ (runnerStatus as any).prNumber }}</template>
+          <template v-else>{{ runnerStatus.branch }}</template>
         </a>
+        <span v-if="(runnerStatus as any).prNumber" class="text-muted"> — {{ runnerStatus.branch }}</span>
         <span class="text-muted"> — {{ runnerStatus.workflowName }}</span>
         <span v-if="runnerStatus.queueDepth > 0" class="text-muted"> (+{{ runnerStatus.queueDepth }} queued)</span>
       </template>
@@ -101,7 +103,7 @@
 import { defineProps } from 'vue'
 import type { PrLive, CIRunnerStatus } from '../types'
 
-defineProps<{
+const props = defineProps<{
   prs: PrLive[]
   loading: boolean
   lastRefreshed: string | null
@@ -118,7 +120,7 @@ const emit = defineEmits<{
 type CombinedStatus = 'running' | 'queued' | 'failed' | 'needs-rebase' | 'needs-review' | 'needs-update' | 'ready'
 
 function isRunnerActive(pr: PrLive): boolean {
-  return pr.ciRunning || (runnerStatus?.running === true && runnerStatus.branch === pr.branch)
+  return pr.ciRunning || (props.runnerStatus?.running === true && props.runnerStatus.branch === pr.branch)
 }
 
 function combinedStatus(pr: PrLive): CombinedStatus {

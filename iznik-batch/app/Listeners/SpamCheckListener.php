@@ -2,7 +2,7 @@
 
 namespace App\Listeners;
 
-use App\Services\SpamCheck\RspamdService;
+use App\Services\SpamCheck\SpamCheckService;
 use Illuminate\Mail\Events\MessageSending;
 use Illuminate\Support\Facades\Log;
 
@@ -13,9 +13,9 @@ use Illuminate\Support\Facades\Log;
  */
 class SpamCheckListener
 {
-    private RspamdService $spamChecker;
+    private SpamCheckService $spamChecker;
 
-    public function __construct(RspamdService $spamChecker)
+    public function __construct(SpamCheckService $spamChecker)
     {
         $this->spamChecker = $spamChecker;
     }
@@ -25,7 +25,7 @@ class SpamCheckListener
      */
     public function handle(MessageSending $event): void
     {
-        if (!RspamdService::isEnabled()) {
+        if (!SpamCheckService::isEnabled()) {
             return;
         }
 

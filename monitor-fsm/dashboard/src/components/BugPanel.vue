@@ -78,6 +78,11 @@
                   @click="showDismissModal(bug)"
                 >✕</button>
                 <button
+                  class="btn btn-outline-warning btn-xs me-1"
+                  title="Reset — clear fix attempts and let FSM retry"
+                  @click="resetAttempts(bug)"
+                >↺</button>
+                <button
                   class="btn btn-outline-primary btn-xs"
                   title="Link a PR — marks bug as fix-queued"
                   @click="promptLinkPr(bug)"
@@ -204,6 +209,11 @@ async function confirmDismiss() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ state: 'off-topic', reason: 'Dismissed by human' }),
   })
+  emit('refresh')
+}
+
+async function resetAttempts(bug: BugRow) {
+  await fetch(`/api/bugs/${bug.topic}/${bug.post}/reset-attempts`, { method: 'POST' })
   emit('refresh')
 }
 

@@ -1832,7 +1832,36 @@ jobs:
             sudo chown -R $(id -u):$(id -g) . 2>/dev/null || true
             echo "Ownership fixed"
 
-      - checkout
+      - run:
+          name: Checkout code
+          no_output_timeout: 12m
+          command: |
+            # Force HTTPS — runner global git config rewrites to SSH which can silently hang
+            git config --global --unset-all url.ssh://git@github.com.insteadOf 2>/dev/null || true
+            git config --global url.https://github.com/.insteadOf git@github.com: 2>/dev/null || true
+
+            # Abort if transfer drops below 100 bytes/s for 60 seconds
+            git config --global http.lowSpeedLimit 100
+            git config --global http.lowSpeedTime 60
+
+            checkout_code() {
+              if [ -d .git ]; then
+                git fetch --prune origin
+                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+              else
+                git clone "$CIRCLE_REPOSITORY_URL" .
+                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+              fi
+            }
+
+            for attempt in 1 2 3; do
+              [ $attempt -gt 1 ] && echo "⚠️  Checkout attempt $attempt..." && sleep 15
+              checkout_code && echo "✅ Checkout complete" && exit 0
+              echo "Attempt $attempt failed"
+              rm -rf .git 2>/dev/null || true
+            done
+            echo "❌ Checkout failed after 3 attempts"
+            exit 1
 
       - run:
           name: Pre-create runtime directories
@@ -2223,7 +2252,7 @@ jobs:
             # Unified monitoring loop for all 4 tests
             echo "📊 Monitoring all tests..."
             start_time=$(date +%s)
-            timeout_duration=2700  # 45 minutes
+            timeout_duration=2400  # 40 minutes — keeps total job under 60 min
             TESTS_KILLED_EARLY=false
 
             while true; do
@@ -2232,7 +2261,7 @@ jobs:
               elapsed_min=$((elapsed / 60))
 
               if [ $elapsed -gt $timeout_duration ]; then
-                echo "⏰ Tests timed out after 45 minutes"
+                echo "⏰ Tests timed out after 40 minutes"
                 kill $LARAVEL_PID $GO_PID $PHPUNIT_PID $PLAYWRIGHT_PID 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
@@ -2431,7 +2460,7 @@ jobs:
               echo ""
               echo "⏰ =============================================="
               echo "⏰ TESTS TERMINATED BY WATCHDOG TIMEOUT"
-              echo "⏰ The overall job timeout (48 min) was reached."
+              echo "⏰ The overall job timeout (43 min) was reached."
               echo "⏰ This may indicate tests are hanging or too slow."
               echo "⏰ Artifacts will be collected for debugging."
               echo "⏰ =============================================="
@@ -2751,8 +2780,8 @@ jobs:
             # the runner's SSH deploy key rather than prompting for HTTPS credentials.
             git config --global --unset-all url.https://github.com/.insteadOf 2>/dev/null || true
             git remote set-url origin git@github.com:Freegle/Iznik.git
-            git fetch origin production:production
-            git checkout production
+            git fetch origin
+            git checkout -B production origin/production
             MASTER_COMMIT_MSG=$(git log master -1 --pretty=%B | head -n 1)
             if git merge master -m "Auto-merge master to production - $MASTER_COMMIT_MSG"; then
               git push origin production || { echo "Push failed"; exit 1; }
