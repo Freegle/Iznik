@@ -2897,6 +2897,72 @@ func TestGetRelatedMembersFiltersByGroup(t *testing.T) {
 	}
 }
 
+// TestGetRelatedMembersExcludesDeletedUser verifies that a soft-deleted user
+// (users.deleted IS NOT NULL) is not returned in the Related Members list, even
+// when the other user in the pair is still active.
+//
+// Regression for Discourse topic 9642: deleted accounts appeared in Related Members
+// more than two weeks after deletion because the read query's first UNION branch
+// only joined u1 (user1) against the users table for the deleted filter, leaving u2
+// unguarded. A pair where user1 < user2 and user2 is deleted still passed through
+// the first branch.
+//
+// This test FAILS on unfixed code (bug present) and passes once the query is fixed.
+func TestGetRelatedMembersExcludesDeletedUser(t *testing.T) {
+	prefix := uniquePrefix("mem_rel_del")
+	db := database.DBConn
+
+	// Moderator setup.
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Two regular users in the group with login history (so they pass the login filter).
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user1ID, prefix+"_u1_login")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user2ID, prefix+"_u2_login")
+	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u1_login", prefix+"_u2_login")
+
+	// Canonical ordering: user1 < user2.
+	u1, u2 := user1ID, user2ID
+	if u1 > u2 {
+		u1, u2 = u2, u1
+	}
+
+	// Seed the related pair.
+	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", u1, u2)
+	defer db.Exec("DELETE FROM users_related WHERE user1 = ? AND user2 = ?", u1, u2)
+
+	// Soft-delete u2 (the higher-ID user) more than 14 days ago.
+	// The cleanup contract says deleted users should not appear in Related Members.
+	// In the buggy code the first UNION branch only guards u1.deleted IS NULL and
+	// does not join u2 against the users table, so u2's deleted flag is invisible.
+	db.Exec("UPDATE users SET deleted = DATE_SUB(NOW(), INTERVAL 15 DAY) WHERE id = ?", u2)
+	defer db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", u2)
+
+	url := fmt.Sprintf("/api/memberships?collection=Related&groupid=%d&jwt=%s", groupID, modToken)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	// The pair must NOT appear — u2 is deleted.
+	for _, entry := range result {
+		entryU1 := uint64(entry["user1"].(float64))
+		entryU2 := uint64(entry["user2"].(float64))
+		assert.False(t,
+			entryU1 == u1 && entryU2 == u2,
+			"Deleted user (u2=%d) must not appear in Related Members list", u2)
+	}
+}
+
 func TestDeleteMembershipsModBansMember(t *testing.T) {
 	prefix := uniquePrefix("mem_ban")
 	db := database.DBConn
