@@ -50,10 +50,14 @@ ALTER TABLE messages_groups MODIFY COLUMN collection
 
 Rules:
 - Posts in `AutoReview` are **not** shown in the mod pending queue
-- Posts in `AutoReview` are **not** visible to other members
+- Posts in `AutoReview` are **not** visible to other members — **except** the post's own author, who sees their post immediately as if it were live
 - **No mod notifications** are triggered for `AutoReview` posts
 - Posts transition to `Approved` or `Pending` within ~5s under normal conditions
 - A sweeper job (Laravel scheduled command, runs every minute) moves any post that has been in `AutoReview` for > 60 seconds to `Pending` (service failure fallback)
+
+### Author visibility
+
+The Go API and Laravel message-fetch endpoints must include `AutoReview` posts when the requesting user is the post's author (`messages.fromuser = current user`). From the author's perspective the post is live — they can see it, share it, and receive replies. The collection state is an internal routing concept, not a user-facing status.
 
 ---
 
@@ -65,29 +69,46 @@ User submits post
       ▼
 Go backend (message.go) — fast, synchronous
       │
-      ├─ Check tier + group opt-in
-      │
       ├─ Trusted          → set Approved, done
       ├─ Moderated        → set Pending, notify mods, done
       ├─ Can't Post       → reject, done
       └─ Default + ai_review:true
               │
-              ├─ Set collection = AutoReview   ← returns to user immediately
-              └─ Fire-and-forget goroutine ──→ POST /review (no await)
-                                                      │
-                                              post-review service
-                                              (Node.js, ai-flower)
-                                                      │
-                                              FSM pipeline
-                                              (PII → Keyword → LLM)
-                                                      │
-                                              PATCH /api/internal/message/{id}/collection
-                                              → Approved | Pending
+              ├─ Set collection = AutoReview
+              ├─ Push job to beanstalkd (tube: post_review)
+              └─ Return to user immediately ← submission complete
+
+              ↓  (seconds later, async)
+
+Laravel batch worker (freegle-batch)
+      │  picks up post_review job
+      │
+      └─ POST /review → post-review service (awaits response)
+                              │
+                        Node.js, ai-flower FSM
+                        PII → Keyword → LLM
+                              │
+                        returns { verdict, reasons }
+                              │
+              Laravel batch updates messages_groups.collection
+              → Approved (silent) | Pending (triggers mod notification)
 ```
 
-The Go backend fires the HTTP request and immediately returns to the user without waiting for the verdict. The post-review service calls back via an internal API endpoint to update the collection.
+The Go backend sets `AutoReview` and enqueues a beanstalkd job **before returning to the user**, so no post can be stranded without a queued review job. The Laravel batch worker — which already has authenticated DB access — picks up the job, calls the post-review service synchronously, and writes the final collection state. No callback endpoint is needed.
 
-If the service is unavailable, the fire-and-forget call fails silently. The 60-second sweeper then catches the post and moves it to Pending.
+### Queue durability
+
+The operation order in Go is:
+
+1. Write `messages_groups.collection = AutoReview` (DB commit)
+2. Put job to beanstalkd (synchronous — beanstalkd acknowledges before `put` returns)
+3. Return HTTP response to user
+
+If step 2 fails (beanstalkd unavailable), the post sits in `AutoReview` and the 60-second sweeper moves it to `Pending`. This is the acceptable safety net — the post is never lost and eventually reaches a stable state.
+
+Beanstalkd is in-memory and does not persist jobs across restarts. A beanstalkd crash between steps 2 and 3 would lose the job; the sweeper again handles this. For production, beanstalkd persistence (`-b` flag with a binlog file) should be enabled to reduce the window where the sweeper is the sole safety net.
+
+If the batch worker cannot reach the post-review service it retries the job (beanstalkd `release` with delay). After a configurable number of retries it buries the job and the sweeper catches the post.
 
 ---
 
@@ -98,10 +119,11 @@ New Node.js container at `post-review/`, following the `monitor-fsm/` pattern.
 - **Runtime:** Node.js, ai-flower, Gemini Flash Lite adapter
 - **Storage:** SQLiteStorage (ai-flower built-in) — one FSM instance per post, full transition audit trail
 - **HTTP endpoints:**
-  - `POST /review` — accepts post content and group context, starts FSM instance (responds 202 immediately)
+  - `POST /review` — accepts post content and group context, runs FSM, returns verdict synchronously (called by Laravel batch)
   - `GET /health` — liveness check
 - **Network:** Internal Docker network only, not routed through Traefik
-- **Credentials:** `GEMINI_API_KEY` environment variable; internal callback URL via `INTERNAL_API_BASE`
+- **Credentials:** `GEMINI_API_KEY` environment variable
+- **LLM:** Gemini Flash Lite. together.io is out of scope for the prototype; the ai-flower adapter interface makes it a later drop-in.
 
 Request payload from Go:
 
@@ -347,39 +369,75 @@ A canonical JSON config file at `post-review/src/safety-triggers.json` holds the
 
 ## 11. Rspamd Milter Integration
 
-Rspamd is already running as `freegle-rspamd` with its web UI at `rspamd.localhost`, but is not wired into the mail pipeline. SpamAssassin is currently called programmatically from PHP (`SPAMD_HOST=spamassassin-app`).
-
-Rspamd is a superset of SpamAssassin: it can incorporate SpamAssassin scores alongside its own ML-based scoring, DMARC/DKIM checks, fuzzy hash matching, and greylisting. Wiring it in as a milter means spam is filtered at the SMTP layer before it reaches PHP, reducing load on the PHP processing pipeline.
-
 ### Current state
 
 ```
-Internet SMTP → [MTA] → PHP MailRouter → SpamAssassin (programmatic)
-                                       → iznik processing
-Rspamd running but connected to nothing in the mail path
+Internet SMTP → Postfix (conf/postfix/) → freegle-mail-handler (bash pipe)
+                                        → HTTP POST → batch-prod Laravel
+                                                    → IncomingMailService.php
+                                                    → SpamAssassin (programmatic, port 783)
+
+Rspamd container: running, web UI at rspamd.localhost — connected to nothing in the mail path
 ```
+
+**Confusing naming:** there are two classes both named `SpamCheckService` in different namespaces:
+- `App\Services\Mail\Incoming\SpamCheckService` — the one actually used for incoming mail (SpamAssassin only, called from `IncomingMailService.php` lines 2158 and 2703)
+- `App\Services\SpamCheck\SpamCheckService` — has `checkRspamd()` and `checkAll()`, but its only caller is `SpamCheckListener` which fires on outgoing mail and is gated by `SPAM_CHECK_ENABLED` (not set anywhere in docker-compose, so dormant)
+
+`RSPAMD_HOST` / `RSPAMD_PORT` are not set in docker-compose; the container happens to be named `rspamd` so the config defaults work, but this is incidental.
 
 ### Target state
 
 ```
-Internet SMTP → [MTA] → rspamd milter → PHP MailRouter → iznik processing
-                             ↑
-                     SpamAssassin via SPAMD_HOST
-                     (rspamd calls SpamAssassin as a plugin)
+Internet SMTP → Postfix → rspamd milter (port 11332) → freegle-mail-handler
+                                │                     → HTTP POST → batch-prod
+                         adds X-Rspamd-* headers
+                         rejects definite spam at SMTP level (5xx)
+                         milter_default_action = accept (rspamd down → mail flows normally)
 ```
 
-### Implementation
+Spam caught at milter level never enters the Postfix queue and never reaches Laravel. Borderline mail passes with rspamd score headers that Laravel can optionally read.
 
-1. Configure rspamd `worker-proxy.inc` (milter worker) in `conf/rspamd/local.d/` to listen on port 11332
-2. Configure the MTA to use rspamd as a milter on port 11332
-3. Configure rspamd to call SpamAssassin via the existing `spamassassin-app` container (rspamd has a built-in SpamAssassin plugin: `spamassassin { server = "spamassassin-app:783"; }`)
-4. Set rspamd action thresholds: `add_header` at score 5, `reject` at score 15 (conservative for Freegle's mix)
-5. Remove the direct `SPAMD_HOST` call from the PHP apiv1 environment (rspamd handles it now)
-6. Update docker-compose to expose rspamd milter port internally
+### Implementation steps
 
-### Scope note
+1. **Postfix `main.cf`** — add milter config to `conf/postfix/main.cf`:
+   ```
+   smtpd_milters = inet:rspamd:11332
+   non_smtpd_milters = inet:rspamd:11332
+   milter_default_action = accept
+   milter_protocol = 6
+   ```
 
-The exact MTA in production needs to be confirmed before implementing. In dev, mailpit already accepts rspamd headers but does not support milter protocol — dev testing uses rspamd's HTTP API (`/checkv2`) called from MailRouter.php in place of the direct SpamAssassin call.
+2. **Rspamd milter worker** — add `conf/rspamd/local.d/worker-proxy.inc`:
+   ```
+   bind_socket = "rspamd:11332";
+   ```
+
+3. **Rspamd → SpamAssassin** — add `conf/rspamd/local.d/spamassassin.conf`:
+   ```
+   server = "spamassassin-app:783";
+   ```
+   This lets rspamd incorporate SpamAssassin scores into its own decision, so we get both systems' coverage without calling SpamAssassin separately from Laravel.
+
+4. **Rspamd action thresholds** — add `conf/rspamd/local.d/actions.conf`:
+   ```
+   actions {
+     add_header = 5;
+     rewrite_subject = 8;
+     reject = 15;
+   }
+   ```
+   Conservative starting point for Freegle's mix; tunable after observing scores in production.
+
+5. **docker-compose** — add `RSPAMD_HOST=rspamd` and `RSPAMD_PORT=11334` to the `batch-prod` environment; expose port 11332 internally for Postfix. Set `SPAM_CHECK_ENABLED=false` explicitly to suppress the dormant outgoing listener.
+
+6. **Laravel** — the `App\Services\Mail\Incoming\SpamCheckService` SpamAssassin call can be retained alongside the milter initially (belt and braces). Once rspamd milter scores prove reliable, the redundant direct SpamAssassin call can be removed.
+
+7. **Resolve class naming confusion** — rename `App\Services\SpamCheck\SpamCheckService` to `App\Services\SpamCheck\RspamdService` to eliminate the ambiguity with the incoming-mail class.
+
+### Dev testing
+
+Mailpit does not support the milter protocol. In dev, rspamd's HTTP check API (`POST http://rspamd:11334/checkv2`) is used directly from a test helper rather than via the milter path. The milter configuration is exercised in CI against the Postfix container.
 
 ---
 
@@ -414,11 +472,11 @@ Groups that haven't opted in are unaffected. For the prototype, Freegle staff to
 
 | Scenario | Behaviour |
 |---|---|
-| post-review service unreachable | Post stays `AutoReview`; sweeper moves to `Pending` after 60s |
-| LLM API error or timeout | Immediately transition to `PENDING_END` in FSM |
-| LLM returns malformed JSON | Immediately transition to `PENDING_END` |
+| post-review service unreachable | Batch worker retries job; sweeper moves post to `Pending` after 60s |
+| LLM API error or timeout | FSM transitions to `PENDING_END`; batch marks collection `Pending` |
+| LLM returns malformed JSON | FSM transitions to `PENDING_END` |
 | Geocoding fails for a location mention | Skip out-of-area check for that mention; continue |
-| Callback to internal API fails | FSM logs error; sweeper catches via 60s timeout |
+| Beanstalkd job lost (restart) | Sweeper catches `AutoReview` posts > 60s old → moves to `Pending` |
 | Group rules JSON invalid | Treat as no group rules active; continue with system rules only |
 
 ---
@@ -460,6 +518,6 @@ Used for: threshold calibration, moderator trust-building, false-positive analys
 
 ## Open Questions
 
-- **Production MTA identity**: Needed before implementing rspamd milter wiring. What MTA handles inbound mail in production (Postfix? Exim?)?
-- **Internal callback auth**: The `PATCH /api/internal/message/{id}/collection` endpoint needs to be authenticated (shared secret or internal-network-only restriction).
-- **together.io fallback**: Gemini Flash Lite is the default. If cost or availability becomes an issue, the ai-flower LLM adapter is swappable. A together.io adapter needs writing (straightforward — OpenAI-compatible API).
+- **Beanstalkd persistence in production**: Enable `-b /var/lib/beanstalkd/binlog` in the production beanstalkd config to survive restarts. Confirm this is done before enabling `ai_review` on any group.
+- **together.io**: Out of scope for prototype. The ai-flower adapter interface makes it a later drop-in if Gemini cost or availability becomes a concern.
+- **Rspamd score tuning**: The initial thresholds (add_header=5, reject=15) are conservative guesses. After a few weeks of production traffic, review the score distribution in rspamd's web UI (`rspamd.localhost`) and adjust.
