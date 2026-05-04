@@ -579,4 +579,180 @@ describe('ModStdMessageModal', () => {
       expect(wrapper.vm.toEmail).toBe('member@test.com')
     })
   })
+
+  describe('Edit action - empty content handling', () => {
+    it('saves empty content without validation blocking it', async () => {
+      const originalMessage = createMessage({
+        id: 101,
+        subject: 'Offer: Test item (Location)',
+        textbody: 'Original message content that should not be restored',
+      })
+
+      const wrapper = mountComponent(
+        {},
+        {
+          message: originalMessage,
+          stdmsgData: createStdmsg({ action: 'Edit' }),
+        }
+      )
+
+      // Simulate fillin() being called to populate initial values
+      await wrapper.vm.fillin()
+      await wrapper.vm.$nextTick()
+
+      // At this point, body should contain the original message text
+      expect(wrapper.vm.body).toContain('Original message content')
+
+      // User edits the message to be empty (the bug: empty content gets reverted)
+      wrapper.vm.body = ''
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.body).toBe('')
+
+      // User clicks Save
+      await wrapper.vm.process()
+      await wrapper.vm.$nextTick()
+
+      // The component should have called patch() with the empty textbody
+      // If the bug exists, patch() may not be called, or may be called with original content
+      expect(mockMessageStore.patch).toHaveBeenCalled()
+      expect(mockMessageStore.patch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 101,
+          textbody: '', // Should send empty content to backend
+        })
+      )
+    })
+
+    it('does not revert body after successful edit with non-empty content', async () => {
+      const originalMessage = createMessage({
+        id: 102,
+        subject: 'Offer: Test item (Location)',
+        textbody: 'Original content here',
+      })
+
+      const wrapper = mountComponent(
+        {},
+        {
+          message: originalMessage,
+          stdmsgData: createStdmsg({ action: 'Edit' }),
+        }
+      )
+
+      await wrapper.vm.fillin()
+      await wrapper.vm.$nextTick()
+
+      const initialBody = wrapper.vm.body
+      expect(initialBody).toContain('Original content')
+
+      // User changes the text to something different
+      const newContent = 'Completely new content'
+      wrapper.vm.body = newContent
+      await wrapper.vm.$nextTick()
+
+      // Before save, body should be the new content
+      expect(wrapper.vm.body).toBe(newContent)
+
+      // User clicks Save
+      await wrapper.vm.process()
+      await wrapper.vm.$nextTick()
+
+      // After save, body should NOT revert to the original
+      // This test fails if body is reset to initialBody
+      expect(wrapper.vm.body).not.toBe(initialBody)
+      expect(wrapper.vm.body).toBe(newContent)
+    })
+
+    it('should allow and properly save empty content on edit', async () => {
+      // Test for bug: when editing an approved post and clearing content,
+      // the system should allow saving empty content, not revert to original
+      const message = createMessage({
+        id: 103,
+        subject: 'Offer: Items for free',
+        textbody: 'Available: 5 boxes, 10 bags',
+      })
+
+      const wrapper = mountComponent(
+        {},
+        {
+          message,
+          stdmsgData: createStdmsg({ action: 'Edit' }),
+        }
+      )
+
+      await wrapper.vm.fillin()
+      await wrapper.vm.$nextTick()
+
+      // At this point, body has the original message text
+      const bodyBeforeEdit = wrapper.vm.body
+      expect(bodyBeforeEdit).toEqual(expect.stringContaining('Available: 5 boxes'))
+
+      // User deletes all content (clears the textarea)
+      wrapper.vm.body = ''
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.vm.body).toBe('')
+
+      // User clicks Save with empty content
+      await wrapper.vm.process()
+      await wrapper.vm.$nextTick()
+
+      // KEY ASSERTION: patch() must be called with empty textbody
+      // If the bug exists, patch() will either:
+      // 1. Not be called at all (validation silently blocks it), OR
+      // 2. Be called with the original content instead of empty string
+      expect(mockMessageStore.patch).toHaveBeenCalled()
+      const patchCall = mockMessageStore.patch.mock.calls[0]
+      expect(patchCall[0]).toEqual(
+        expect.objectContaining({
+          id: 103,
+          textbody: '', // BUG: if this is not empty, the save is not working correctly
+        })
+      )
+    })
+
+    it('should not revert edited content when fillin is called after save', async () => {
+      // Bug scenario: If fillin() is called again after save (e.g., modal is reused
+      // or component reactivity triggers refresh), the body should not be overwritten
+      // with the original message content for Edit actions.
+      const message = createMessage({
+        id: 104,
+        subject: 'Offer: Test',
+        textbody: 'Original content that was edited',
+      })
+
+      const editStdmsg = createStdmsg({ action: 'Edit' })
+      const wrapper = mountComponent(
+        {},
+        {
+          message,
+          stdmsgData: editStdmsg,
+        }
+      )
+
+      // Initial fill-in
+      await wrapper.vm.fillin()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.body).toContain('Original content')
+
+      // User edits the body to be empty
+      wrapper.vm.body = ''
+      await wrapper.vm.$nextTick()
+
+      // Simulate a situation where fillin() is called again
+      // (this could happen if modal is reused, or if there's unexpected reactivity)
+      // After a successful save with empty content, if fillin() is called again,
+      // it should NOT reset body back to the original message text
+      // because for Edit actions, fillin() always populates body from message.textbody
+      // which creates the reversion bug
+      await wrapper.vm.fillin()
+      await wrapper.vm.$nextTick()
+
+      // BUG MANIFESTATION: body is reset to original message text
+      // This test will FAIL with the current code because fillin() always
+      // sets body to message.textbody for Edit actions
+      // The body should remain empty or be explicitly managed, not auto-reverted
+      expect(wrapper.vm.body).toBe('')
+    })
+  })
 })
