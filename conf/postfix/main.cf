@@ -62,3 +62,10 @@ bounce_queue_lifetime = 5d
 
 # Logging
 maillog_file = /dev/stdout
+
+# Rspamd milter — scores every incoming SMTP connection.
+# milter_default_action = accept means mail flows normally if rspamd is unreachable.
+smtpd_milters = inet:rspamd:11332
+non_smtpd_milters = inet:rspamd:11332
+milter_default_action = accept
+milter_protocol = 6
