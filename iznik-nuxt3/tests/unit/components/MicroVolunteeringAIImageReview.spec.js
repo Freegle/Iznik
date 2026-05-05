@@ -316,5 +316,62 @@ describe('MicroVolunteeringAIImageReview', () => {
       // Buttons must not be directly adjacent in DOM order (|index diff| > 1)
       expect(Math.abs(acceptIdx - regenIdx)).toBeGreaterThan(1)
     })
+
+    it('shows Next button after going to Previous and re-advances with Next click', async () => {
+      const wrapper = createWrapper()
+
+      const regenBtn = wrapper
+        .findAll('button')
+        .find((b) => /regenerate/i.test(b.text()))
+      expect(regenBtn).toBeDefined()
+
+      // regenerate once so there are two images in history
+      await regenBtn.trigger('click')
+      await flushPromises()
+
+      // image is now urlA; Previous button should appear
+      expect(wrapper.find('.review-image').attributes('src')).toBe(urlA)
+
+      const prevBtn = wrapper
+        .findAll('button')
+        .find((b) => /previous|undo/i.test(b.text()))
+      expect(prevBtn).toBeDefined()
+
+      // go back to the initial image
+      await prevBtn.trigger('click')
+      expect(wrapper.find('.review-image').attributes('src')).toBe(urlInitial)
+
+      // Next button should now appear since there is a newer image ahead
+      const nextBtn = wrapper
+        .findAll('button')
+        .find((b) => /^next$/i.test(b.text()))
+      expect(nextBtn).toBeDefined()
+      expect(nextBtn.exists()).toBe(true)
+
+      // clicking Next should advance back to urlA
+      await nextBtn.trigger('click')
+      expect(wrapper.find('.review-image').attributes('src')).toBe(urlA)
+    })
+  })
+
+  describe('broken image fallback', () => {
+    it('replaces broken image src with default profile picture on error event', async () => {
+      const wrapper = createWrapper()
+      const img = wrapper.find('.review-image')
+
+      await img.trigger('error')
+
+      // brokenImage sets event.target.src directly on the DOM element
+      expect(img.element.src).toContain('defaultprofile')
+    })
+
+    it('brokenImage handler sets fallback src on the event target', () => {
+      const wrapper = createWrapper()
+
+      const fakeTarget = { src: testAIImage.url }
+      wrapper.vm.brokenImage({ target: fakeTarget })
+
+      expect(fakeTarget.src).toBe('/defaultprofile.png')
+    })
   })
 })
