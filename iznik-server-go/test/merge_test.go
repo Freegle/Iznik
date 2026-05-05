@@ -198,6 +198,47 @@ func TestDeleteMerge(t *testing.T) {
 	assert.Equal(t, 1, notified)
 }
 
+// TestDeleteMergeGroupModDismissalClearsNotified reproduces the bug where a
+// group moderator (systemrole='User', membership role='Moderator') is blocked
+// by the IsSystemMod-only gate in DeleteMerge and receives 403, leaving the
+// related-members notification permanently stuck.
+//
+// The test MUST FAIL against unfixed master (403 returned) and PASS once the
+// fix adds IsModOfAnyGroup to the permission check.
+func TestDeleteMergeGroupModDismissalClearsNotified(t *testing.T) {
+	prefix := uniquePrefix("MergeDelGrpMod")
+	groupID := CreateTestGroup(t, prefix)
+
+	// Group mod has systemrole='User' — NOT a system mod.
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+
+	db := database.DBConn
+	db.Exec("INSERT IGNORE INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", user1ID, user2ID)
+
+	body := fmt.Sprintf(`{"user1":%d,"user2":%d}`, user1ID, user2ID)
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/merge?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+
+	// A group mod must be allowed to dismiss — expects 200, not 403.
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Verify the related-members row was marked notified.
+	var notified int
+	db.Raw("SELECT notified FROM users_related WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
+		user1ID, user2ID, user2ID, user1ID).Scan(&notified)
+	assert.Equal(t, 1, notified)
+}
+
 func TestGetMergeV2Path(t *testing.T) {
 	req := httptest.NewRequest("GET", "/apiv2/merge", nil)
 	resp, _ := getApp().Test(req)
