@@ -2897,6 +2897,80 @@ func TestGetRelatedMembersFiltersByGroup(t *testing.T) {
 	}
 }
 
+// TestRelatedMembersListCountParity verifies that the relatedmembers count in
+// GET /session and the number of pairs returned by GET /memberships?collection=Related
+// are always equal (symmetric).
+//
+// Regression from PR#365 (partial fix): the list UNION's sub-queries check only
+// ONE user's deletion status per sub-query, while the count query (session.go)
+// checks BOTH users in every sub-query. After a user is soft-deleted the count
+// drops to 0 (correct), but list sub-query 1 (joined via the non-deleted user1's
+// group membership) still returns the pair because it never JOINs on u2.deleted.
+// The result: badge=0 while list still shows the pair — count ≠ len(list).
+//
+// This test FAILS against unfixed code:
+//   afterCount     = 0  (count correctly excludes deleted user)
+//   len(afterList) = 1  (list incorrectly includes it via the other sub-query)
+func TestRelatedMembersListCountParity(t *testing.T) {
+	prefix := uniquePrefix("rel_parity")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user1ID, prefix+"_u1_login")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user2ID, prefix+"_u2_login")
+	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u1_login", prefix+"_u2_login")
+
+	u1, u2 := user1ID, user2ID
+	if u1 > u2 {
+		u1, u2 = u2, u1
+	}
+
+	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", u1, u2)
+	defer db.Exec("DELETE FROM users_related WHERE user1 = ? AND user2 = ?", u1, u2)
+
+	getList := func() []map[string]interface{} {
+		url := fmt.Sprintf("/api/memberships?collection=Related&jwt=%s", modToken)
+		req := httptest.NewRequest("GET", url, nil)
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		var result []map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&result)
+		return result
+	}
+
+	// Baseline: count and list must agree.
+	baseCount := getSessionWork(t, modToken)["relatedmembers"].(float64)
+	baseList := getList()
+	assert.GreaterOrEqual(t, int(baseCount), 1, "Baseline: session count must include the seeded pair")
+	assert.GreaterOrEqual(t, len(baseList), 1, "Baseline: list must include the seeded pair")
+	assert.Equal(t, int(baseCount), len(baseList), "Baseline: count must equal list length")
+
+	// Soft-delete user2. The count query checks u2.deleted IS NULL in both UNION
+	// sub-queries and correctly drops to 0. The list's sub-query 1 (joined via
+	// user1's group membership) only checks u1.deleted IS NULL — it never joins
+	// on user2 — so the pair still appears in the list result.
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", user2ID)
+	defer db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", user2ID)
+
+	afterCount := getSessionWork(t, modToken)["relatedmembers"].(float64)
+	afterList := getList()
+
+	// Both must agree: a pair with a soft-deleted user must appear in neither.
+	// On unfixed code: afterCount=0, len(afterList)=1 — UNION asymmetry.
+	assert.Equal(t, int(afterCount), len(afterList),
+		"After soft-deleting user2: count=%v but list has %d pair(s) — UNION sub-query asymmetry causes divergence",
+		afterCount, len(afterList))
+}
+
 func TestDeleteMembershipsModBansMember(t *testing.T) {
 	prefix := uniquePrefix("mem_ban")
 	db := database.DBConn
