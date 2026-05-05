@@ -34,11 +34,13 @@ async function waitForAuthPersistence(page) {
       null,
       { timeout: timeouts.ui.appearance }
     ),
-    new Promise((_, reject) =>
+    new Promise((_resolve, reject) =>
       setTimeout(
         () =>
           reject(
-            new Error('waitForAuthPersistence timed out (renderer unresponsive)')
+            new Error(
+              'waitForAuthPersistence timed out (renderer unresponsive)'
+            )
           ),
         timeouts.ui.appearance + 5000
       )
@@ -80,7 +82,11 @@ async function clearSessionData(page) {
       new Promise((resolve) => setTimeout(resolve, 5000)),
     ])
   } catch (e) {
-    if (!/closed|Target .* closed|Execution context was destroyed/i.test(e.message)) {
+    if (
+      !/closed|Target .* closed|Execution context was destroyed/i.test(
+        e.message
+      )
+    ) {
       throw e
     }
   }
@@ -198,9 +204,26 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
           timeout: timeouts.navigation.initial,
           waitUntil: 'domcontentloaded',
         })
-        console.log(`[logoutIfLoggedIn] Navigated to homepage (try block) url=${page.url()}`)
+        console.log(
+          `[logoutIfLoggedIn] Navigated to homepage (try block) url=${page.url()}`
+        )
       } catch (navErr) {
-        console.warn(`[logoutIfLoggedIn] Homepage navigation failed (non-fatal): ${navErr.message.substring(0, 200)}`)
+        // If the page itself was closed (e.g. by freeze-detection heartbeat), propagate
+        // as fatal so the test fails immediately rather than continuing with a dead page.
+        if (
+          page.isClosed() ||
+          navErr.message.includes(
+            'Target page, context or browser has been closed'
+          )
+        ) {
+          throw navErr
+        }
+        console.warn(
+          `[logoutIfLoggedIn] Homepage navigation failed (non-fatal): ${navErr.message.substring(
+            0,
+            200
+          )}`
+        )
       }
     }
 
@@ -213,7 +236,9 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
 
     return page
   } catch (error) {
-    console.error(`[logoutIfLoggedIn] TRY BLOCK FAILED: ${error.message.substring(0, 300)}`)
+    console.error(
+      `[logoutIfLoggedIn] TRY BLOCK FAILED: ${error.message.substring(0, 300)}`
+    )
     // Fall back to clearing cookies/storage
     await clearSessionData(page)
     if (navigateToHome) {
@@ -223,9 +248,16 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
           timeout: timeouts.navigation.initial,
           waitUntil: 'domcontentloaded',
         })
-        console.log(`[logoutIfLoggedIn] Navigated to homepage (catch block) url=${page.url()}`)
+        console.log(
+          `[logoutIfLoggedIn] Navigated to homepage (catch block) url=${page.url()}`
+        )
       } catch (navErr) {
-        console.warn(`[logoutIfLoggedIn] Homepage navigation failed in catch block (non-fatal): ${navErr.message.substring(0, 200)}`)
+        console.warn(
+          `[logoutIfLoggedIn] Homepage navigation failed in catch block (non-fatal): ${navErr.message.substring(
+            0,
+            200
+          )}`
+        )
       }
     }
     return page
@@ -1021,7 +1053,9 @@ async function loginViaHomepage(
     try {
       const button = allButtons[i]
       const text = await button.textContent().catch(() => 'NO_TEXT')
-      const isVisible = await button.isVisible({ timeout: 5000 }).catch(() => false)
+      const isVisible = await button
+        .isVisible({ timeout: 5000 })
+        .catch(() => false)
       const isDisabled = await button.isDisabled().catch(() => 'UNKNOWN')
       const classes = await button.getAttribute('class').catch(() => 'NO_CLASS')
       const type = await button.getAttribute('type').catch(() => 'NO_TYPE')
@@ -1036,7 +1070,9 @@ async function loginViaHomepage(
   // Debug: Check form state
   try {
     const modal = page.locator('#loginModal')
-    const modalVisible = await modal.isVisible({ timeout: 5000 }).catch(() => false)
+    const modalVisible = await modal
+      .isVisible({ timeout: 5000 })
+      .catch(() => false)
     console.log(`Login modal visible: ${modalVisible}`)
 
     if (modalVisible) {
@@ -1164,7 +1200,9 @@ async function loginViaHomepage(
         )
         for (let i = 0; i < allErrorElements.length; i++) {
           const element = allErrorElements[i]
-          const isVisible = await element.isVisible({ timeout: 5000 }).catch(() => false)
+          const isVisible = await element
+            .isVisible({ timeout: 5000 })
+            .catch(() => false)
           const text = await element.textContent().catch(() => '')
           console.log(`  ${i}: visible=${isVisible}, text="${text.trim()}"`)
         }
