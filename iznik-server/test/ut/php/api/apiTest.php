@@ -21,11 +21,14 @@ class apiTest extends IznikAPITestCase {
 
     public function testDuplicatePOST() {
         # We prevent duplicate posts within a short time.
-        # Use a unique IP per worker to avoid Redis key collisions in parallel test execution.
-        # The duplicate protection key is POST_DATA_$ip — all workers share Redis and the same
-        # default IP, so another worker's POST can overwrite the key between our two calls.
+        # Use a unique IP per test invocation to avoid Redis key collisions in parallel
+        # test execution. Using only TEST_TOKEN caused collisions when workers started
+        # at staggered times: after our sleep(), another worker could POST from the same
+        # IP, resetting the Redis key, so our third POST incorrectly got 999.
+        # Random last two octets make the probability of collision negligible.
         $token = $this->getTestToken();
-        $_SERVER['REMOTE_ADDR'] = '10.99.0.' . ($token !== '' ? $token : '1');
+        $uniqueSuffix = $token !== '' ? ('0.' . $token) : (rand(1, 254) . '.' . rand(1, 254));
+        $_SERVER['REMOTE_ADDR'] = '10.99.' . $uniqueSuffix;
 
         $this->log("POST - should work");
         $ret = $this->call('test?requestid=1', 'POST', []);
