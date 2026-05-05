@@ -25,10 +25,6 @@ services:
     ports:
       - ${PORT_SPAMASSASSIN:-783}:783
 
-  rspamd:
-    ports:
-      - "${PORT_RSPAMD:-11334}:11334"
-
   tusd:
     ports:
       - "${PORT_TUSD:-1080}:8080"
@@ -82,10 +78,6 @@ services:
   loki:
     ports:
       - "${PORT_LOKI:-3100}:3100"
-
-  postfix:
-    ports:
-      - "${PORT_POSTFIX_SMTP:-25}:25"
 
   mcp-query-sanitizer:
     ports:
