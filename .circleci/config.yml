@@ -92,8 +92,16 @@ jobs:
                 "https://runner.circleci.com/api/v3/runner?resource-class=freegle/circleci-docker-runner" 2>/dev/null) || true
 
               if [ -n "$RESPONSE" ]; then
-                ONLINE_COUNT=$(echo "$RESPONSE" | jq '[.items[] | select(.resource_class=="freegle/circleci-docker-runner")] | length' 2>/dev/null) || ONLINE_COUNT=0
-                echo "Found ${ONLINE_COUNT} runner(s)"
+                # Check for runners that were connected in the last 5 minutes
+                # A runner is only usable if it's recently connected (last_connected within 5 min)
+                FIVE_MIN_AGO=$(date -u -d '5 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")
+                if [ -n "$FIVE_MIN_AGO" ]; then
+                  ONLINE_COUNT=$(echo "$RESPONSE" | jq --arg cutoff "$FIVE_MIN_AGO" '[.items[] | select(.resource_class=="freegle/circleci-docker-runner" and (.last_connected > $cutoff))] | length' 2>/dev/null) || ONLINE_COUNT=0
+                else
+                  # Fallback if date command doesn't support -d (some systems)
+                  ONLINE_COUNT=$(echo "$RESPONSE" | jq '[.items[] | select(.resource_class=="freegle/circleci-docker-runner")] | length' 2>/dev/null) || ONLINE_COUNT=0
+                fi
+                echo "Found ${ONLINE_COUNT} recently-connected runner(s)"
                 if [ "$ONLINE_COUNT" -gt "0" ]; then
                   RUNNER_AVAILABLE=true
                 fi
