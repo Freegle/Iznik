@@ -176,11 +176,14 @@ class AutoRepostService
                 : null;
 
             // V1 WARNING: within 24h window before the next repost is due.
-            // Use autoreposts count so that message #N triggers warning before window N+1,
-            // not always before window 1.
+            // arrival is reset to NOW() on every repost, so hoursago measures time since
+            // the last repost (or original post for autoreposts=0). The interval-based
+            // window therefore applies as-is to every cycle — multiplying by
+            // (autoreposts + 1) here would push the window further out on each
+            // successive repost, breaking the cadence.
             // Warning emails are gated on $warningEmailEnabled; the repost itself is not.
-            if ($msg->hoursago <= ($msg->autoreposts + 1) * $interval * 24
-                && $msg->hoursago > (($msg->autoreposts + 1) * $interval - 1) * 24
+            if ($msg->hoursago <= $interval * 24
+                && $msg->hoursago > ($interval - 1) * 24
                 && (is_null($lastwarnago) || $lastwarnago > 24 * 60 * 60)
             ) {
                 if (!$msg->lastautopostwarning || ($lastwarnago > 24 * 60 * 60)) {
@@ -210,7 +213,7 @@ class AutoRepostService
                     }
                     $stats['warned']++;
                 }
-            } elseif ($msg->hoursago > ($msg->autoreposts + 1) * $interval * 24) {
+            } elseif ($msg->hoursago > $interval * 24) {
                 // V1 REPOST: message is past the next repost window.
                 if ($dryRun) {
                     Log::info("Dry run: would auto-repost message #{$msg->msgid} on group #{$group->id}");
