@@ -48,12 +48,6 @@ async function navigateToMobileDetails(page, flowType) {
     timeout: timeouts.navigation.default,
   })
 
-  // Wait for full load (not just domcontentloaded) so Vue has hydrated before we
-  // click Skip. Without this, the click can fire before the @click handler is
-  // registered, causing Vue Router to intercept the old href="#" (or leaving the
-  // button click unhandled), and the page never reaches the details route.
-  await page.waitForLoadState('load', { timeout: timeouts.navigation.default })
-
   console.log(`Navigated to mobile photos: ${page.url()}`)
 
   // Skip the photos step (no photos needed for these tests).
@@ -64,15 +58,15 @@ async function navigateToMobileDetails(page, flowType) {
     timeout: timeouts.ui.appearance,
   })
 
+  // Click Skip and wait for the details URL. If Vue hasn't hydrated yet the
+  // click is a no-op (the button has no href/default behaviour), so we retry
+  // via toPass until the navigation lands. This avoids waitForLoadState('load')
+  // which hangs in CI when external scripts (GA, ads) never fire the load event.
   console.log('Clicking Skip to proceed to details')
-  await skipLink.first().click()
-
-  // Wait until we're on the details page.
-  // Use domcontentloaded — the load event can be slow in CI on older hardware.
-  await page.waitForURL(`**${mobileDetailsPath}`, {
-    timeout: timeouts.navigation.default,
-    waitUntil: 'domcontentloaded',
-  })
+  await expect(async () => {
+    await skipLink.first().click()
+    await expect(page).toHaveURL(`**${mobileDetailsPath}`, { timeout: 3000 })
+  }).toPass({ timeout: timeouts.navigation.default })
   console.log(`Now on details page: ${page.url()}`)
 }
 
