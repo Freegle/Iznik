@@ -1766,6 +1766,73 @@ func TestWorkCountRelatedMembersNoLogins(t *testing.T) {
 	assert.Equal(t, beforeRelated+1, afterRelated, "Pair without login history must not be counted in relatedmembers badge")
 }
 
+// TestWorkCountRelatedMembersCountIsLive verifies that the relatedmembers count
+// in GET /session is computed from a live COUNT(*) of unresolved users_related rows,
+// not from a delta-maintained cache. The bug (Discourse topic 9631, regression after
+// PR#347) was reported as the counter remaining stuck at 1 after a related entry was
+// cleared by a path outside the askMerge/ignoreMerge handlers.
+//
+// This test simulates that scenario: a users_related row is created, counted, then
+// marked notified=1 directly in the DB (bypassing all handler paths). A fresh GET
+// /session must reflect the updated count. If the backend uses a delta-maintained
+// counter instead of COUNT(*), this test fails because the second fetch would still
+// return the pre-mutation count.
+func TestWorkCountRelatedMembersCountIsLive(t *testing.T) {
+	prefix := uniquePrefix("wc_rel_live")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user1ID, prefix+"_u1_login")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user2ID, prefix+"_u2_login")
+	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u1_login", prefix+"_u2_login")
+
+	u1, u2 := user1ID, user2ID
+	if u1 > u2 {
+		u1, u2 = u2, u1
+	}
+
+	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", u1, u2)
+	defer db.Exec("DELETE FROM users_related WHERE user1 = ? AND user2 = ?", u1, u2)
+
+	// Baseline: counter must include this unresolved pair.
+	beforeWork := getSessionWork(t, token)
+	beforeRelated := beforeWork["relatedmembers"].(float64)
+	assert.GreaterOrEqual(t, beforeRelated, float64(1),
+		"Baseline: counter must be ≥ 1 with one unresolved pair seeded")
+
+	// Simulate clearing the pair via a path other than askMerge/ignoreMerge —
+	// set notified=1 directly in the DB, the same effect any non-handler path would have.
+	db.Exec("UPDATE users_related SET notified = 1 WHERE user1 = ? AND user2 = ?", u1, u2)
+
+	// Live COUNT(*) from the database — this is the authoritative value.
+	var liveCount int64
+	db.Raw("SELECT COUNT(*) FROM users_related ur "+
+		"INNER JOIN memberships m ON m.userid = ur.user1 "+
+		"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
+		"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
+		"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid = ? "+
+		"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 "+
+		"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0",
+		groupID).Scan(&liveCount)
+
+	// Re-fetch via the API. If the counter is delta-maintained (bug), it stays at
+	// beforeRelated. If it is computed from COUNT(*) (correct), it matches liveCount.
+	afterWork := getSessionWork(t, token)
+	afterRelated := afterWork["relatedmembers"].(float64)
+
+	assert.Equal(t, float64(liveCount), afterRelated,
+		"Counter must match live DB COUNT(*) after row cleared outside askMerge/ignoreMerge; "+
+			"if delta-maintained the counter stays at %v instead of %v", beforeRelated, liveCount)
+}
+
 // ---------------------------------------------------------------------------
 // Work Counts: Pending Events
 // ---------------------------------------------------------------------------
