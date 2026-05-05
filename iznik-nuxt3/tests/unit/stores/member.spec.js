@@ -377,4 +377,83 @@ describe('member store', () => {
       expect(store.list[200]._syntheticRelated).toBe(true)
     })
   })
+
+  describe('clear', () => {
+    it('resets all state to initial values', () => {
+      const store = useMemberStore()
+      store.list = { 1: { id: 1 } }
+      store.context = 99
+      store.instance = 5
+      store.ratings = [{ id: 1 }]
+      store.rawindex = 10
+      store.filtercount = 20
+
+      store.clear()
+
+      expect(store.list).toEqual({})
+      expect(store.context).toBeNull()
+      expect(store.instance).toBe(1)
+      expect(store.ratings).toEqual([])
+      expect(store.rawindex).toBe(0)
+      expect(store.filtercount).toBeNull()
+    })
+  })
+
+  describe('reviewHeld', () => {
+    it('updates heldby on the matching member', () => {
+      const store = useMemberStore()
+      store.list[42] = { membershipid: 42, heldby: null }
+
+      store.reviewHeld({ membershipid: 42, heldby: { id: 5 } })
+
+      expect(store.list[42].heldby).toEqual({ id: 5 })
+    })
+
+    it('does not affect non-matching members', () => {
+      const store = useMemberStore()
+      store.list[42] = { membershipid: 42, heldby: null }
+      store.list[99] = { membershipid: 99, heldby: { id: 3 } }
+
+      store.reviewHeld({ membershipid: 42, heldby: { id: 5 } })
+
+      expect(store.list[99].heldby).toEqual({ id: 3 })
+    })
+  })
+
+  describe('getters', () => {
+    it('getByGroup returns members matching a groupid', () => {
+      const store = useMemberStore()
+      store.list[1] = { id: 1, groupid: 10 }
+      store.list[2] = { id: 2, groupid: 20 }
+      store.list[3] = { id: 3, groupid: 10 }
+
+      const result = store.getByGroup(10)
+
+      expect(result).toHaveLength(2)
+      expect(result.map((m) => m.id)).toContain(1)
+      expect(result.map((m) => m.id)).toContain(3)
+    })
+
+    it('get returns a member by id', () => {
+      const store = useMemberStore()
+      store.list[5] = { id: 5, userid: 100 }
+      store.list[6] = { id: 6, userid: 200 }
+
+      const result = store.get(5)
+
+      expect(result).toMatchObject({ id: 5, userid: 100 })
+    })
+
+    it('ratingById returns the matching rating', () => {
+      const store = useMemberStore()
+      store.ratings = [
+        { id: 1, value: 'Up' },
+        { id: 2, value: 'Down' },
+      ]
+
+      expect(store.ratingById(1)).toMatchObject({ id: 1, value: 'Up' })
+      expect(store.ratingById(2)).toMatchObject({ id: 2, value: 'Down' })
+      expect(store.ratingById(99)).toBeUndefined()
+    })
+  })
 })
