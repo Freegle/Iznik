@@ -129,6 +129,7 @@ class ChatNotificationService
             ->where('chat_rooms.chattype', $chatType)
             ->where('chat_messages.date', '>=', $startTime)
             ->where('chat_messages.date', '<=', $endTime)
+            ->where('chat_messages.deleted', 0)
             ->whereNull('users.deleted')
             ->select('chat_messages.*');
 
@@ -422,6 +423,7 @@ class ChatNotificationService
             ->where('id', '<', $currentMessage->id)
             ->where('date', '>=', now()->subDays(90))
             ->where('reviewrejected', 0)
+            ->where('deleted', 0)
             ->whereHas('user', function ($q) {
                 $q->whereNull('deleted');
             })

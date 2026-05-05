@@ -6334,6 +6334,46 @@ func TestPatchMessagePartnerNotOwner(t *testing.T) {
 	assert.Equal(t, 403, resp.StatusCode)
 }
 
+func TestPatchMessagePartnerLatLng(t *testing.T) {
+	prefix := uniquePrefix("msg_partlatlng")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77701, ownerID)
+
+	// Create message at original lat/lng.
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	key := insertTestPartnerKeyMsg(t, prefix, "test.com")
+
+	newLat := 56.953346
+	newLng := -2.188375
+
+	body := map[string]interface{}{
+		"id":  msgID,
+		"lat": newLat,
+		"lng": newLng,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?partner=%s&tnuserid=77701&email=%s@test.com", key, prefix)
+	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Verify lat/lng were written to messages table.
+	var lat, lng float64
+	db.Raw("SELECT lat, lng FROM messages WHERE id = ?", msgID).Row().Scan(&lat, &lng)
+	assert.InDelta(t, newLat, lat, 0.0001, "lat should be updated in messages table")
+	assert.InDelta(t, newLng, lng, 0.0001, "lng should be updated in messages table")
+}
+
 // --- Per-Group Moderation Tests ---
 
 func TestPostMessageHoldPerGroup(t *testing.T) {

@@ -62,10 +62,14 @@ async function navigateToMobileDetails(page, flowType) {
   // click is a no-op (the button has no href/default behaviour), so we retry
   // via toPass until the navigation lands. This avoids waitForLoadState('load')
   // which hangs in CI when external scripts (GA, ads) never fire the load event.
+  // Guard: if a prior iteration already navigated to details (toHaveURL timed out
+  // but navigation completed), return immediately instead of re-clicking on a page
+  // that has no Skip button.
   console.log('Clicking Skip to proceed to details')
   await expect(async () => {
+    if (page.url().includes(mobileDetailsPath)) return
     await skipLink.first().click()
-    await expect(page).toHaveURL(`**${mobileDetailsPath}`, { timeout: 3000 })
+    await expect(page).toHaveURL(`**${mobileDetailsPath}`, { timeout: 5000 })
   }).toPass({ timeout: timeouts.navigation.default })
   console.log(`Now on details page: ${page.url()}`)
 }

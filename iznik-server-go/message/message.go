@@ -743,17 +743,6 @@ func splitOnWordBoundary(text string) []string {
 	return re.Split(text, -1)
 }
 
-// sanitiseForEmail returns a lowercase alphanumeric version of a display name
-// suitable for the local part of an email address. Returns empty string if
-// the input yields no usable characters.
-func sanitiseForEmail(name string) string {
-	re := regexp.MustCompile(`[^a-zA-Z0-9]`)
-	result := strings.ToLower(re.ReplaceAllString(name, ""))
-	if len(result) > 16 {
-		result = result[:16]
-	}
-	return result
-}
 
 func GetMessagesForUser(c *fiber.Ctx) error {
 	db := database.DBConn
@@ -1022,8 +1011,10 @@ func Search(c *fiber.Ctx) error {
 		}
 	}
 
-	// If groupids contains 0 ("All my communities" in ModTools), replace with the
-	// user's actual group memberships to avoid returning messages from all groups.
+	// If groupids contains 0 ("All my communities" in ModTools), handle based on role:
+	// - Admin/Support: clear groupids so the search covers all groups (no filter).
+	// - Everyone else: replace with the user's actual memberships so they only see
+	//   messages from groups they belong to.
 	hasZero := false
 	for _, gid := range groupids {
 		if gid == 0 {
@@ -1032,10 +1023,14 @@ func Search(c *fiber.Ctx) error {
 		}
 	}
 	if hasZero && myid > 0 {
-		var userGroupIDs []uint64
-		db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Scan(&userGroupIDs)
-		if len(userGroupIDs) > 0 {
-			groupids = userGroupIDs
+		if auth.IsAdminOrSupport(myid) {
+			groupids = nil
+		} else {
+			var userGroupIDs []uint64
+			db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Scan(&userGroupIDs)
+			if len(userGroupIDs) > 0 {
+				groupids = userGroupIDs
+			}
 		}
 	}
 
@@ -2161,34 +2156,8 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", myid).Scan(&histFromname)
 	// V1 parity: submit() calls inventEmail() to get/create the user's @users.ilovefreegle.org
 	// proxy email, then sets messages.fromaddr to it. This address is checked by auto-repost,
-	// chase-up, and other cron jobs via Mail::ourDomain(). We look for an existing one first;
-	// if the user doesn't have one yet, we generate and insert one.
-	userDomain := os.Getenv("USER_DOMAIN")
-	if userDomain == "" {
-		userDomain = "users.ilovefreegle.org"
-	}
-
-	var fromaddr string
-	db.Raw("SELECT COALESCE(email, '') FROM users_emails WHERE userid = ? AND email LIKE ? ORDER BY id DESC LIMIT 1",
-		myid, "%@"+userDomain).Scan(&fromaddr)
-
-	if fromaddr == "" {
-		// No @users.ilovefreegle.org email exists yet — generate one (V1 parity: inventEmail()).
-		// Use a simple format: <userid>@<domain>. V1 tries to make it human-readable but the
-		// critical thing is that it's on our domain.
-		var displayname string
-		db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", myid).Scan(&displayname)
-
-		// Build a safe local part from the display name, falling back to the user ID.
-		local := sanitiseForEmail(displayname)
-		if local == "" {
-			local = fmt.Sprintf("freegler%d", myid)
-		}
-		fromaddr = fmt.Sprintf("%s-%d@%s", local, myid, userDomain)
-
-		db.Exec("INSERT IGNORE INTO users_emails (userid, email, preferred, added, validatetime) VALUES (?, ?, 0, NOW(), NOW())",
-			myid, fromaddr)
-	}
+	// chase-up, and other cron jobs via Mail::ourDomain().
+	fromaddr := user.GetOrCreateInternalEmail(db, myid)
 
 	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", fromaddr, req.ID)
 
@@ -2440,10 +2409,30 @@ func PatchMessage(c *fiber.Ctx) error {
 		setClauses = append(setClauses, "locationid = ?")
 		args = append(args, *req.Locationid)
 	}
+	if req.Lat != nil {
+		setClauses = append(setClauses, "lat = ?")
+		args = append(args, *req.Lat)
+	}
+	if req.Lng != nil {
+		setClauses = append(setClauses, "lng = ?")
+		args = append(args, *req.Lng)
+	}
 
 	if len(setClauses) > 0 {
 		args = append(args, req.ID)
 		db.Exec("UPDATE messages SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", args...)
+	}
+
+	// Update spatial index when lat/lng change so browse/search reflects the new location.
+	if req.Lat != nil && req.Lng != nil {
+		var msgType string
+		var groupid uint64
+		db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
+		groupid = getPrimaryGroupForMessage(db, req.ID)
+		if groupid > 0 {
+			db.Exec("INSERT INTO messages_spatial (msgid, point, successful, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), 1, ?, ?, NOW()) ON DUPLICATE KEY UPDATE point = VALUES(point)",
+				req.ID, *req.Lng, *req.Lat, groupid, msgType)
+		}
 	}
 
 	// PHP parity (message.php:371-372): when a groupid is supplied, persist it to

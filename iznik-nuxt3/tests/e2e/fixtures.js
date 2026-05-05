@@ -1136,7 +1136,7 @@ const testWithFixtures = test.extend({
         })
 
         // Skip the photo upload step
-        const skipLink = page.locator('a', { hasText: 'Skip' })
+        const skipLink = page.locator('button').filter({ hasText: /skip/i })
         await skipLink.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
         await skipLink.click()
 

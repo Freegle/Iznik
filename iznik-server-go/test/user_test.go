@@ -3903,3 +3903,101 @@ func TestGetUserEmailFieldPopulatedForFDEmail(t *testing.T) {
 	assert.NotEmpty(t, u.Email, "email field should be populated even when only FD email exists")
 	assert.Equal(t, fdEmail, u.Email, "email field should contain the FD email as fallback")
 }
+
+func partnerKey(t *testing.T, prefix string) string {
+	db := database.DBConn
+	key := prefix + "_pkey"
+	db.Exec("INSERT INTO partners_keys (partner, `key`, domain) VALUES (?, ?, ?)", prefix+"_partner", key, "trashnothingtest.com")
+	return key
+}
+
+// Partner sees an existing correctly-formatted internal email.
+func TestGetUserPartnerSeesExistingInternalEmail(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_existing")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	// Email already has the correct user ID embedded (suffix -<targetID>@...).
+	correctEmail := fmt.Sprintf("%s-%d@users.ilovefreegle.org", prefix, targetID)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", targetID, correctEmail)
+
+	key := partnerKey(t, prefix)
+	url := fmt.Sprintf("/api/user/%d?partner=%s", targetID, key)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Equal(t, correctEmail, result.Email, "existing correctly-formatted internal email should be returned")
+}
+
+// Partner causes a new internal email to be generated for a user with only external email.
+func TestGetUserPartnerGeneratesEmailWhenNoneExists(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_gen")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	// Only an external email — no @users.ilovefreegle.org address.
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", targetID, prefix+"@gmail.com")
+
+	key := partnerKey(t, prefix)
+	url := fmt.Sprintf("/api/user/%d?partner=%s", targetID, key)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Contains(t, result.Email, "@users.ilovefreegle.org", "generated internal email should be returned")
+	assert.Contains(t, result.Email, fmt.Sprintf("-%d@", targetID), "generated email should embed the correct user ID")
+
+	// Verify it was persisted.
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND email = ?", targetID, result.Email).Scan(&count)
+	assert.Equal(t, int64(1), count, "generated email should be stored in users_emails")
+}
+
+// Partner causes a new internal email when the existing one has a wrong (merged) user ID.
+func TestGetUserPartnerFixesWrongUserIDInEmail(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_wrongid")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	// Internal email with a DIFFERENT user ID (e.g. after a merge).
+	wrongEmail := fmt.Sprintf("%s-9999999@users.ilovefreegle.org", prefix)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", targetID, wrongEmail)
+
+	key := partnerKey(t, prefix)
+	url := fmt.Sprintf("/api/user/%d?partner=%s", targetID, key)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Contains(t, result.Email, fmt.Sprintf("-%d@", targetID), "email should embed the correct user ID, not the merged one")
+	assert.NotEqual(t, wrongEmail, result.Email, "wrong-ID email should not be returned")
+}
+
+// Invalid partner key returns no email.
+func TestGetUserInvalidPartnerSeesNoEmail(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_noemail")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", targetID, prefix+"@gmail.com")
+
+	url := fmt.Sprintf("/api/user/%d?partner=invalid_key_xyz", targetID)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Empty(t, result.Email, "invalid partner key should not expose any email")
+}
