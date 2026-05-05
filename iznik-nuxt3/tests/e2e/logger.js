@@ -147,6 +147,13 @@ function createLoggingProxy(target, targetName, visited = new Set()) {
     return target
   }
 
+  // Skip Playwright Page objects so that expect(page).toHaveURL() / toHaveTitle()
+  // continue to work. Those matchers use instanceof Page internally — wrapping in
+  // a Proxy breaks the check and throws "can be only used with Page object".
+  if (target.constructor.name === 'Page') {
+    return target
+  }
+
   // Skip Playwright Locators because their constructor.name must remain intact
   // to be able to use matchers like toHaveText(), toHaveValue(), etc.
   // This is because these methods check the receiver object's constructor.name:
