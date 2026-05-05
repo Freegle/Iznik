@@ -2440,10 +2440,30 @@ func PatchMessage(c *fiber.Ctx) error {
 		setClauses = append(setClauses, "locationid = ?")
 		args = append(args, *req.Locationid)
 	}
+	if req.Lat != nil {
+		setClauses = append(setClauses, "lat = ?")
+		args = append(args, *req.Lat)
+	}
+	if req.Lng != nil {
+		setClauses = append(setClauses, "lng = ?")
+		args = append(args, *req.Lng)
+	}
 
 	if len(setClauses) > 0 {
 		args = append(args, req.ID)
 		db.Exec("UPDATE messages SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", args...)
+	}
+
+	// Update spatial index when lat/lng change so browse/search reflects the new location.
+	if req.Lat != nil && req.Lng != nil {
+		var msgType string
+		var groupid uint64
+		db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
+		groupid = getPrimaryGroupForMessage(db, req.ID)
+		if groupid > 0 {
+			db.Exec("INSERT INTO messages_spatial (msgid, point, successful, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), 1, ?, ?, NOW()) ON DUPLICATE KEY UPDATE point = VALUES(point)",
+				req.ID, *req.Lng, *req.Lat, groupid, msgType)
+		}
 	}
 
 	// PHP parity (message.php:371-372): when a groupid is supplied, persist it to

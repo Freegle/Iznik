@@ -3903,3 +3903,48 @@ func TestGetUserEmailFieldPopulatedForFDEmail(t *testing.T) {
 	assert.NotEmpty(t, u.Email, "email field should be populated even when only FD email exists")
 	assert.Equal(t, fdEmail, u.Email, "email field should contain the FD email as fallback")
 }
+
+func TestGetUserPartnerSeesInternalEmail(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_email")
+
+	// Create a user whose only email is the internal @users.ilovefreegle.org address.
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	internalEmail := prefix + "-g12345@users.ilovefreegle.org"
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", targetID, internalEmail)
+
+	// Register a partner key.
+	partnerKey := prefix + "_partnerkey"
+	db.Exec("INSERT INTO partners_keys (partner, `key`, domain) VALUES (?, ?, ?)", prefix+"_partner", partnerKey, "trashnothingtest.com")
+
+	// Partner calls GET /user/{id}?partner=<key> — no JWT.
+	url := fmt.Sprintf("/api/user/%d?partner=%s", targetID, partnerKey)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Equal(t, internalEmail, result.Email, "partner should see the internal @users.ilovefreegle.org email")
+}
+
+func TestGetUserInvalidPartnerSeesNoEmail(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_noemail")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	internalEmail := prefix + "-g99999@users.ilovefreegle.org"
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", targetID, internalEmail)
+
+	// Call with a bogus partner key — should NOT see email.
+	url := fmt.Sprintf("/api/user/%d?partner=invalid_key_xyz", targetID)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Empty(t, result.Email, "invalid partner key should not expose the internal email")
+}

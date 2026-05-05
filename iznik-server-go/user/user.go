@@ -267,6 +267,22 @@ func GetUser(c *fiber.Ctx) error {
 			hideSensitiveFields(&user, myid)
 			enrichUserForModtools(&user, id, myid, modtools)
 
+			// Partners (e.g. Trash Nothing) can see the internal @users.ilovefreegle.org
+			// email for a user, so they can match their own user records to Freegle users.
+			// External emails are not returned to protect user privacy.
+			if user.Email == "" {
+				if partnerKey := c.Query("partner"); partnerKey != "" {
+					if _, _, _, err := ValidatePartnerKey(database.DBConn, partnerKey); err == nil {
+						for _, e := range getEmails(id) {
+							if utils.OurDomain(e.Email) == 1 {
+								user.Email = e.Email
+								break
+							}
+						}
+					}
+				}
+			}
+
 			return c.JSON(user)
 		}
 
