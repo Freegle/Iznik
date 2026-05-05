@@ -330,7 +330,7 @@ func DeleteMerge(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
 
-	if !auth.IsSystemMod(myid) {
+	if !auth.IsSystemMod(myid) && !auth.IsModOfAnyGroup(myid) {
 		return fiber.NewError(fiber.StatusForbidden, "Permission denied")
 	}
 
