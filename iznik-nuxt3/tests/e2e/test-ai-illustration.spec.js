@@ -58,41 +58,8 @@ async function navigateToMobileDetails(page, flowType) {
     timeout: timeouts.ui.appearance,
   })
 
-  // Debug: log all Skip links found and their attributes, to diagnose intermittent
-  // redirect-to-/ after click (seen in production CI, not reproducible on master).
-  const skipLinkCount = await skipLink.count()
-  console.log(`[DEBUG] Skip link count: ${skipLinkCount}`)
-  for (let i = 0; i < skipLinkCount; i++) {
-    const href = await skipLink
-      .nth(i)
-      .getAttribute('href')
-      .catch(() => 'error')
-    const text = await skipLink
-      .nth(i)
-      .innerText()
-      .catch(() => 'error')
-    const visible = await skipLink
-      .nth(i)
-      .isVisible()
-      .catch(() => false)
-    console.log(
-      `[DEBUG] Skip link[${i}]: href="${href}" text="${text}" visible=${visible}`
-    )
-  }
-
-  // Register a one-shot navigation listener to capture what URL the page
-  // goes to immediately after the click (helps diagnose redirect-to-/).
-  const navPromise = page.waitForNavigation({ timeout: 5000 }).catch(() => null)
-  console.log(`[DEBUG] Page URL before skip click: ${page.url()}`)
   console.log('Clicking Skip to proceed to details')
   await skipLink.first().click()
-  const firstNav = await navPromise
-  console.log(
-    `[DEBUG] First navigation after skip click: ${
-      firstNav ? firstNav.url() : 'none/timeout'
-    }`
-  )
-  console.log(`[DEBUG] Page URL after skip click: ${page.url()}`)
 
   // Wait until we're on the details page.
   // Use domcontentloaded — the load event can be slow in CI on older hardware.
