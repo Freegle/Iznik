@@ -48,12 +48,18 @@ async function navigateToMobileDetails(page, flowType) {
     timeout: timeouts.navigation.default,
   })
 
+  // Wait for full load (not just domcontentloaded) so Vue has hydrated before we
+  // click Skip. Without this, the click can fire before the @click handler is
+  // registered, causing Vue Router to intercept the old href="#" (or leaving the
+  // button click unhandled), and the page never reaches the details route.
+  await page.waitForLoadState('load', { timeout: timeouts.navigation.default })
+
   console.log(`Navigated to mobile photos: ${page.url()}`)
 
   // Skip the photos step (no photos needed for these tests).
   // The "Next" button only appears when photos are present; the Skip link is
   // always shown by PhotoUploader and calls goNext() via the @skip emit.
-  const skipLink = page.locator('a:has-text("Skip")')
+  const skipLink = page.locator('button:has-text("Skip"), a:has-text("Skip")')
   await expect(skipLink.first()).toBeVisible({
     timeout: timeouts.ui.appearance,
   })
