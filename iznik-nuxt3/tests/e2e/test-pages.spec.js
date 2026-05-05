@@ -23,6 +23,9 @@ const publicPages = [
   { path: '/shortlinks', title: 'Freegle' },
   { path: '/NationalReuseDay', title: 'National Reuse Day' },
   { path: '/unsubscribe/unsubscribed', title: 'Freegle' },
+  { path: '/security', title: 'Security Policy' },
+  { path: '/partnerships', title: 'Partnerships' },
+  { path: '/donated', title: 'Donate to Freegle' },
 ]
 
 test.describe('Public pages tests', () => {

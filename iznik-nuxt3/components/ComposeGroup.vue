@@ -138,11 +138,11 @@ onMounted(async () => {
 
   await authStore.fetchUser()
 
-  // Final guard: b-form-select may have reset composeStore.group during the
+  // Final guard: b-form-select may have cleared composeStore.group during the
   // async fetchUser wait (options re-evaluated while the saved group wasn't in
-  // groupsnear yet). Restore savedGroup if it is still valid — i.e. present in
-  // groupsnear or among the user's group memberships.
-  if (savedGroup && composeStore.group !== savedGroup) {
+  // groupsnear yet). Restore savedGroup only if the group was cleared — NOT if
+  // the user intentionally selected a different group.
+  if (savedGroup && !composeStore.group) {
     const groupsNear = postcode.value?.groupsnear || []
     const savedGroupValid =
       groupsNear.some((g) => parseInt(g.id) === parseInt(savedGroup)) ||

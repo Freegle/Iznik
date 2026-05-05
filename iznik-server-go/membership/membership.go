@@ -367,7 +367,7 @@ func GetMemberships(c *fiber.Ctx) error {
 	}
 
 	// Handle "Received mod mails" filter — returns members who have been sent mod mails,
-	// sorted by most recent mod mail descending.
+	// ordered by join date (m.added DESC) to match the default listing order.
 	if filter == 6 {
 		var members []GetMembershipsMember
 		db.Raw("SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
@@ -382,7 +382,7 @@ func GetMemberships(c *fiber.Ctx) error {
 			"INNER JOIN users_modmails um ON um.userid = m.userid AND um.groupid = m.groupid "+
 			"WHERE m.groupid = ? AND m.collection = ? "+
 			"GROUP BY m.userid "+
-			"ORDER BY lastmodmail DESC LIMIT ?",
+			"ORDER BY m.added DESC LIMIT ?",
 			groupid, collection, limit).Scan(&members)
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)
@@ -627,10 +627,12 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 		"SELECT users_related.id, user1, user2 FROM users_related "+
 		"INNER JOIN memberships ON users_related.user1 = memberships.userid "+
 		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
+		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL "+
 		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? "+
 		"UNION "+
 		"SELECT users_related.id, user1, user2 FROM users_related "+
 		"INNER JOIN memberships ON users_related.user2 = memberships.userid "+
+		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL "+
 		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
 		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? "+
 		") t ORDER BY id DESC LIMIT ?", modGroupIDs, modGroupIDs, limit).Scan(&rows)
