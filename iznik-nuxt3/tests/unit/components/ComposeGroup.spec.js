@@ -263,13 +263,17 @@ describe('ComposeGroup', () => {
   })
 
   describe('repost group preservation', () => {
-    it('restores pre-set group after fetchUser if it was overridden but is in myGroups', async () => {
-      // Simulate repost flow: group 55 is pre-set but not in groupsnear (only group 1 is)
+    it('preserves user-changed group when fetchUser sets group to a different value', async () => {
+      // Simulate repost flow: group 55 is pre-set (savedGroup = 55), then during fetchUser
+      // something sets the group to 1. With the old guard (group !== savedGroup) this would
+      // restore 55 — BUT that same condition also overwrote user intentional changes.
+      // The fix: only restore if group was CLEARED (falsy). Truthy changes (including 1)
+      // are treated as intentional and kept, since groupOptions always ensures the saved
+      // group stays in the options list so b-form-select can't accidentally set to 1.
       mockComposeStore.group = 55
       mockAuthStore.groups = [
         { groupid: 55, namedisplay: 'Repost Group', nameshort: 'repost' },
       ]
-      // fetchUser resets group to groupsnear[0] (simulates b-form-select override)
       mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
         mockComposeStore.group = 1
       })
@@ -277,7 +281,24 @@ describe('ComposeGroup', () => {
       createWrapper()
       await flushPromises()
 
-      // The final guard should restore 55 because user is a member
+      // Group stays at 1 — we don't restore when the group is a truthy value,
+      // because we can't distinguish accidental b-form-select changes from intentional ones.
+      expect(mockComposeStore.group).toBe(1)
+    })
+
+    it('restores savedGroup when group is cleared to null during fetchUser', async () => {
+      mockComposeStore.group = 55
+      mockAuthStore.groups = [
+        { groupid: 55, namedisplay: 'Repost Group', nameshort: 'repost' },
+      ]
+      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
+        mockComposeStore.group = null
+      })
+
+      createWrapper()
+      await flushPromises()
+
+      // Group was cleared (falsy) — restore savedGroup since it's still valid
       expect(mockComposeStore.group).toBe(55)
     })
 
