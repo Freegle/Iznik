@@ -1488,8 +1488,6 @@ services:
       start_period: 180s
 
   # =========================================
-  # Incoming Mail Processing (Postfix)
-  # =========================================
   # MCP Support Tools (Privacy-Preserving Log Analysis)
   # =========================================
 
