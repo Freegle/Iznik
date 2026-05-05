@@ -3,48 +3,49 @@ package message
 import (
 	"testing"
 
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/stretchr/testify/assert"
 )
 
-// ── sanitiseForEmail ──────────────────────────────────────────────────────────
+// ── user.SanitiseEmailLocal ───────────────────────────────────────────────────
 
 func TestSanitiseForEmailAlphanumeric(t *testing.T) {
-	assert.Equal(t, "alice", sanitiseForEmail("Alice"))
+	assert.Equal(t, "alice", user.SanitiseEmailLocal("Alice"))
 }
 
 func TestSanitiseForEmailStripsSpecialChars(t *testing.T) {
-	assert.Equal(t, "alicebob", sanitiseForEmail("alice.bob"))
+	assert.Equal(t, "alicebob", user.SanitiseEmailLocal("alice.bob"))
 }
 
 func TestSanitiseForEmailStripsDashes(t *testing.T) {
-	assert.Equal(t, "alicebob", sanitiseForEmail("alice-bob"))
+	assert.Equal(t, "alicebob", user.SanitiseEmailLocal("alice-bob"))
 }
 
 func TestSanitiseForEmailTruncatesAt16(t *testing.T) {
-	result := sanitiseForEmail("averylongnamethatexceedssixteencharacters")
+	result := user.SanitiseEmailLocal("averylongnamethatexceedssixteencharacters")
 	assert.Equal(t, 16, len(result))
 	assert.Equal(t, "averylongnameth", result[:15])
 }
 
 func TestSanitiseForEmailEmpty(t *testing.T) {
-	assert.Equal(t, "", sanitiseForEmail(""))
+	assert.Equal(t, "", user.SanitiseEmailLocal(""))
 }
 
 func TestSanitiseForEmailOnlySpecialChars(t *testing.T) {
-	assert.Equal(t, "", sanitiseForEmail("!@#$%^"))
+	assert.Equal(t, "", user.SanitiseEmailLocal("!@#$%^"))
 }
 
 func TestSanitiseForEmailLowercases(t *testing.T) {
-	assert.Equal(t, "testname", sanitiseForEmail("TestName"))
+	assert.Equal(t, "testname", user.SanitiseEmailLocal("TestName"))
 }
 
 func TestSanitiseForEmailPreservesDigits(t *testing.T) {
-	assert.Equal(t, "user123", sanitiseForEmail("user123"))
+	assert.Equal(t, "user123", user.SanitiseEmailLocal("user123"))
 }
 
 func TestSanitiseForEmailExactly16Chars(t *testing.T) {
 	// Exactly 16 alphanumeric chars must not be truncated.
-	result := sanitiseForEmail("abcdefghijklmnop")
+	result := user.SanitiseEmailLocal("abcdefghijklmnop")
 	assert.Equal(t, "abcdefghijklmnop", result)
 }
 
