@@ -3064,9 +3064,10 @@ func TestGetMembershipsFilterModmails(t *testing.T) {
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
 
-	// Create two regular members.
+	// Create two regular members; backdate member1 so member2 is unambiguously the newer joiner.
 	member1ID := CreateTestUser(t, prefix+"_m1", "User")
-	CreateTestMembership(t, member1ID, groupID, "Member")
+	m1ship := CreateTestMembership(t, member1ID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = DATE_SUB(NOW(), INTERVAL 2 HOUR) WHERE id = ?", m1ship)
 	member2ID := CreateTestUser(t, prefix+"_m2", "User")
 	CreateTestMembership(t, member2ID, groupID, "Member")
 	member3ID := CreateTestUser(t, prefix+"_m3", "User")
@@ -3089,13 +3090,85 @@ func TestGetMembershipsFilterModmails(t *testing.T) {
 	// Should contain only the two members who have modmails (not member3).
 	assert.Equal(t, 2, len(members), "filter=6 should return only members with modmails")
 
-	// First result should be member2 (more recent modmail).
-	assert.Equal(t, float64(member2ID), members[0]["userid"].(float64), "member2 should be first (most recent modmail)")
-	assert.Equal(t, float64(member1ID), members[1]["userid"].(float64), "member1 should be second (older modmail)")
+	// Results are ordered by join date DESC (newest joiner first).
+	// member2 joined more recently than member1 (member1 was backdated 2h).
+	assert.Equal(t, float64(member2ID), members[0]["userid"].(float64), "member2 should be first (most recently joined)")
+	assert.Equal(t, float64(member1ID), members[1]["userid"].(float64), "member1 should be second (older join date)")
 
 	// Both should have lastmodmail populated.
 	assert.NotNil(t, members[0]["lastmodmail"], "lastmodmail should be populated")
 	assert.NotNil(t, members[1]["lastmodmail"], "lastmodmail should be populated")
+}
+
+func TestGetMembershipsModmailFilterOrderAndLimit(t *testing.T) {
+	// Regression test for bug in topic 9518 post 239:
+	// filter=6 (Received mod mails) returns results ordered by mod-mail timestamp
+	// (lastmodmail DESC) instead of by join date (m.added DESC), and previously
+	// capped results at the caller's limit even when more members exist.
+	//
+	// Anti-correlation setup (25 members):
+	//   memberIDs[0]  joined 1h ago  (newest joiner) → modmail 25h ago (oldest mail)
+	//   memberIDs[24] joined 25h ago (oldest joiner)  → modmail  1h ago (newest mail)
+	//
+	// Correct result (by join date DESC): memberIDs[0] first, memberIDs[24] last.
+	// Buggy  result (by lastmodmail DESC): memberIDs[24] first, memberIDs[0] last.
+	prefix := uniquePrefix("mf_ord")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	const memberCount = 25
+	memberIDs := make([]uint64, memberCount)
+
+	for i := 0; i < memberCount; i++ {
+		uid := CreateTestUser(t, fmt.Sprintf("%s_m%d", prefix, i), "User")
+		memberIDs[i] = uid
+
+		// Back-date the membership so memberIDs[0] (i=0) joined most recently.
+		membershipID := CreateTestMembership(t, uid, groupID, "Member")
+		joinHoursAgo := i + 1
+		db.Exec("UPDATE memberships SET added = DATE_SUB(NOW(), INTERVAL ? HOUR) WHERE id = ?",
+			joinHoursAgo, membershipID)
+
+		// Anti-correlated modmail: oldest joiner (i=24) gets newest modmail (1h ago).
+		mailHoursAgo := memberCount - i
+		db.Exec(
+			"INSERT INTO users_modmails (userid, groupid, timestamp, logid) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL ? HOUR), ?)",
+			uid, groupID, mailHoursAgo, uid,
+		)
+	}
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&filter=6&limit=50&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var members []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&members)
+
+	// (a) All 25 members must be returned — limit=50 should not be overridden to 20.
+	assert.GreaterOrEqual(t, len(members), memberCount,
+		"filter=6 with limit=50 should return all %d members with modmails", memberCount)
+
+	// (b) Results must be ordered by join date (m.added) DESC — newest joiner first.
+	// With the bug the order is lastmodmail DESC, so memberIDs[24] (oldest joiner,
+	// newest modmail) appears first instead of memberIDs[0] (newest joiner, oldest modmail).
+	if len(members) >= 1 {
+		firstUserID := uint64(members[0]["userid"].(float64))
+		assert.Equal(t, memberIDs[0], firstUserID,
+			"first result should be the most-recently-joined member (join-date DESC order); "+
+				"got userid %d but expected %d — endpoint is sorting by mod-mail timestamp instead of join date",
+			firstUserID, memberIDs[0])
+	}
+	if len(members) >= memberCount {
+		lastUserID := uint64(members[memberCount-1]["userid"].(float64))
+		assert.Equal(t, memberIDs[memberCount-1], lastUserID,
+			"last result should be the oldest-joined member (join-date DESC order)")
+	}
 }
 
 // --- Partner auth tests ---
