@@ -158,6 +158,54 @@ describe('member store', () => {
       // The counter must reflect reality and reset to 0.
       expect(mockAuthWork.relatedmembers).toBe(0)
     })
+
+    it('fetchMembers for Related returning new pairs after counter was zeroed via askMerge/ignoreMerge → counter reflects new pair count (regression: no increment path)', async () => {
+      // Regression (Discourse topic 9631): after PR#347 the counter is only updated by
+      // decrementing in askMerge/ignoreMerge and resetting to 0 when fetchMembers returns
+      // an empty list.  There is no INCREMENT path: when fetchMembers returns new Related
+      // pairs after the counter has already been driven to 0, the counter stays at 0
+      // even though the store now contains 1 actionable pair.
+      //
+      // Scenario:
+      //   1. Start: 2 pairs, counter = 2
+      //   2. askMerge pair A → counter = 1, pair A removed
+      //   3. ignoreMerge pair B → counter = 0, pair B removed
+      //   4. fetchMembers returns new pair C → store has 1 pair, counter MUST become 1
+      //
+      // Expected: counter == 1 (derived from actual pair count in the store)
+      // Actual:   counter stays 0 because fetchMembers only resets-to-0, it never increments
+
+      const store = useMemberStore()
+      store.config = {}
+
+      // Step 1: 2 pairs, counter = 2
+      store.list[10] = { id: 10, user1: 100, user2: 200, collection: 'Related' }
+      store.list[11] = { id: 11, user1: 300, user2: 400, collection: 'Related' }
+      mockAuthWork.relatedmembers = 2
+
+      // Step 2: process pair A
+      await store.askMerge(10, { user1: 100, user2: 200 })
+      expect(mockAuthWork.relatedmembers).toBe(1)
+
+      // Step 3: process pair B
+      await store.ignoreMerge(11, { user1: 300, user2: 400 })
+      expect(mockAuthWork.relatedmembers).toBe(0)
+
+      // Step 4: fetch returns a fresh pair — the backend found a new related-member pair
+      mockFetchMembers.mockResolvedValue({
+        members: [{ id: 20, user1: 500, user2: 600 }],
+        context: null,
+        ratings: [],
+      })
+
+      await store.fetchMembers({ collection: 'Related', groupid: 0 })
+
+      // The store now holds 1 actionable Related pair; the counter must reflect that.
+      // This assertion FAILS on the current code because fetchMembers has no increment
+      // path — it only resets the counter to 0 when the list is empty, never updates it
+      // upward when new pairs arrive.
+      expect(mockAuthWork.relatedmembers).toBe(1)
+    })
   })
 
   describe('fetchMembers - pagination context', () => {
