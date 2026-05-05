@@ -133,6 +133,19 @@ export const useMemberStore = defineStore({
               }
             }
           })
+
+          // If the backend returned no actionable pairs, the work counter must
+          // reflect reality — the backend may have auto-resolved pairs without
+          // going through askMerge/ignoreMerge (e.g. one user had no login history).
+          const remainingPairs = Object.values(this.list).filter(
+            (m) => m.collection === 'Related' && !m._syntheticRelated
+          ).length
+          if (remainingPairs === 0) {
+            const authStore = useAuthStore()
+            if (authStore.work && typeof authStore.work.relatedmembers === 'number') {
+              authStore.work.relatedmembers = 0
+            }
+          }
         } else if (params.collection === 'Spam') {
           // V2 API returns one row per membership. V1 grouped by userid and
           // nested all memberships under one entry.  Replicate that here so

@@ -131,6 +131,33 @@ describe('member store', () => {
 
       expect(mockAuthWork.relatedmembers).toBe(0)
     })
+
+    it('fetchMembers for Related returns empty list → counter resets to 0 (regression: PR#347 only decremented on askMerge/ignoreMerge, not on auto-notified path)', async () => {
+      // Regression (Discourse topic 9631, post 16): the counter can reach 1 via checkWork()
+      // for a pair that the backend auto-notifies when the list endpoint is fetched (pair had
+      // one user with no login history). PR#347 added decrement hooks only on askMerge and
+      // ignoreMerge; it did not account for the path where the backend silently removes a pair
+      // from the actionable list and fetchMembers therefore returns 0 pairs.
+      //
+      // Expected: fetchMembers({collection:'Related'}) returning [] should reset relatedmembers
+      //           to 0 when the store holds no Related pairs afterward.
+      // Actual:   relatedmembers stays at 1 because only askMerge/ignoreMerge decrement it.
+      mockFetchMembers.mockResolvedValue({
+        members: [],
+        context: null,
+        ratings: [],
+      })
+      mockAuthWork.relatedmembers = 1
+
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.fetchMembers({ collection: 'Related', groupid: 0 })
+
+      // The Related list is now empty and the store holds no Related pairs.
+      // The counter must reflect reality and reset to 0.
+      expect(mockAuthWork.relatedmembers).toBe(0)
+    })
   })
 
   describe('fetchMembers - pagination context', () => {
