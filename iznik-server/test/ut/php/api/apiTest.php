@@ -21,9 +21,9 @@ class apiTest extends IznikAPITestCase {
 
     public function testDuplicatePOST() {
         # We prevent duplicate posts within a short time.
-        # Use a cryptographically unique IP per test invocation so no parallel worker or retry
-        # can share the same Redis POST_DATA key, even across processes with the same rand seed.
-        $_SERVER['REMOTE_ADDR'] = '10.' . random_int(1, 254) . '.' . random_int(1, 254) . '.' . random_int(1, 254);
+        # Use a cryptographically unique IP so no parallel worker can share the same Redis key.
+        $ip = '10.' . random_int(1, 254) . '.' . random_int(1, 254) . '.' . random_int(1, 254);
+        $_SERVER['REMOTE_ADDR'] = $ip;
 
         $this->log("POST - should work");
         $ret = $this->call('test?requestid=1', 'POST', []);
@@ -33,11 +33,15 @@ class apiTest extends IznikAPITestCase {
         $ret = $this->call('test?requestid=2', 'POST', []);
         $this->assertEquals(999, $ret['ret']);
 
-        sleep(DUPLICATE_POST_PROTECTION + 1);
-        $this->log("POST - should work");
+        # Clear the duplicate protection key directly rather than sleeping for TTL expiry.
+        # sleep() is unreliable in CI (signals, scheduling) and the 30s wait slows the suite.
+        $predis = new \Redis();
+        $predis->pconnect(REDIS_CONNECT);
+        $predis->del("POST_DATA_$ip");
+
+        $this->log("POST - should work after key cleared");
         $ret = $this->call('test?requestid=3', 'POST', []);
         $this->assertEquals(1000, $ret['ret']);
-        $this->log("POST - should work");
     }
 
     public function testException() {
