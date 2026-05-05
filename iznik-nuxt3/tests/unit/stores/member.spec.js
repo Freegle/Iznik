@@ -131,6 +131,49 @@ describe('member store', () => {
 
       expect(mockAuthWork.relatedmembers).toBe(0)
     })
+
+    it('fetchMembers for Related returns empty list → counter resets to 0 (regression: PR#347 only decremented on askMerge/ignoreMerge, not on auto-notified path)', async () => {
+      // Regression (Discourse topic 9631): the counter can reach 1 via checkWork()
+      // for a pair that the backend auto-notifies away when fetchMembers is called.
+      // PR#347 only decremented on askMerge/ignoreMerge; if the pair disappears from
+      // the list without user action (backend auto-notified), the counter stays stuck at 1.
+      mockFetchMembers.mockResolvedValue({
+        members: [],
+        context: null,
+        ratings: [],
+      })
+      // mockAuthWork.relatedmembers is already 1 from beforeEach
+
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.fetchMembers({ collection: 'Related', groupid: 0 })
+
+      // Backend returned 0 pairs — counter must reflect reality and reset to 0.
+      expect(mockAuthWork.relatedmembers).toBe(0)
+    })
+
+    it('fetchMembers for Related with N pairs → counter reflects actual pair count not stale value', async () => {
+      // Counter starts at 1 (from beforeEach). API returns 2 pairs.
+      // After fetch the counter should be updated to 2 (actual pair count),
+      // not left at the stale value of 1.
+      mockFetchMembers.mockResolvedValue({
+        members: [
+          { id: 10, user1: 100, user2: 200 },
+          { id: 11, user1: 300, user2: 400 },
+        ],
+        context: null,
+        ratings: [],
+      })
+
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.fetchMembers({ collection: 'Related', groupid: 0 })
+
+      // 2 real pairs → counter should be 2, not the stale 1.
+      expect(mockAuthWork.relatedmembers).toBe(2)
+    })
   })
 
   describe('fetchMembers - pagination context', () => {
