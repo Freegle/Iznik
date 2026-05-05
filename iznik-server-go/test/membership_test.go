@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/database"
@@ -2897,29 +2898,38 @@ func TestGetRelatedMembersFiltersByGroup(t *testing.T) {
 	}
 }
 
-// TestRelatedMembersListCountParity verifies that the relatedmembers count in
-// GET /session and the number of pairs returned by GET /memberships?collection=Related
-// are always equal (symmetric).
+// TestRelatedMembersAutoNotifyDismissalClearsCount reproduces the stuck
+// relatedmembers badge after a group-level moderator attempts to dismiss an
+// auto-notified pair (Discourse topic 9631 post 16).
 //
-// Regression from PR#365 (partial fix): the list UNION's sub-queries check only
-// ONE user's deletion status per sub-query, while the count query (session.go)
-// checks BOTH users in every sub-query. After a user is soft-deleted the count
-// drops to 0 (correct), but list sub-query 1 (joined via the non-deleted user1's
-// group membership) still returns the pair because it never JOINs on u2.deleted.
-// The result: badge=0 while list still shows the pair — count ≠ len(list).
+// The auto-notify path (POST /session action=Related via handleRelated) inserts
+// users_related rows classified detected='Auto'. The dismiss handler (DELETE /merge)
+// guards access with auth.IsSystemMod, which checks users.systemrole — not the
+// user's group-level Moderator role in memberships. A typical Freegle group
+// moderator has systemrole='User', so the dismiss returns 403 Forbidden.
+// The notified flag stays 0 and the count badge remains ≥1 permanently.
+//
+// Seeding: invokes handleRelated via the HTTP endpoint (NOT direct db.Exec INSERT).
+// Does NOT soft-delete users (PR#365 territory).
+// Does NOT call askMerge/ignoreMerge (PR#347 territory).
 //
 // This test FAILS against unfixed code:
-//   afterCount     = 0  (count correctly excludes deleted user)
-//   len(afterList) = 1  (list incorrectly includes it via the other sub-query)
-func TestRelatedMembersListCountParity(t *testing.T) {
-	prefix := uniquePrefix("rel_parity")
+//   dismiss returns 403 (group-level mod cannot dismiss)
+//   count after failed dismiss = 1 (stuck badge)
+//   list after failed dismiss = 1 (pair still visible, not cleared)
+func TestRelatedMembersAutoNotifyDismissalClearsCount(t *testing.T) {
+	prefix := uniquePrefix("rm_an_dismiss")
 	db := database.DBConn
 
+	// Group-level moderator: systemrole='User' (typical Freegle mod).
+	// This is intentionally NOT systemrole='Moderator' — the bug is that
+	// DELETE /merge rejects group-level mods via auth.IsSystemMod.
 	groupID := CreateTestGroup(t, prefix)
 	modID := CreateTestUser(t, prefix+"_mod", "User")
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, modToken := CreateTestSession(t, modID)
 
+	// Two regular members with login history (required to pass the login filter).
 	user1ID := CreateTestUser(t, prefix+"_u1", "User")
 	user2ID := CreateTestUser(t, prefix+"_u2", "User")
 	CreateTestMembership(t, user1ID, groupID, "Member")
@@ -2929,46 +2939,70 @@ func TestRelatedMembersListCountParity(t *testing.T) {
 	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user2ID, prefix+"_u2_login")
 	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u1_login", prefix+"_u2_login")
 
+	// Invoke the auto-notify insert via POST /session action=Related as user1.
+	// handleRelated inserts (user1, user2) without canonical enforcement.
+	_, user1Token := CreateTestSession(t, user1ID)
+	relBody, _ := json.Marshal(map[string]interface{}{
+		"action":   "Related",
+		"userlist": []uint64{user2ID},
+	})
+	relReq := httptest.NewRequest("POST", "/api/session?jwt="+user1Token, bytes.NewReader(relBody))
+	relReq.Header.Set("Content-Type", "application/json")
+	relResp, err := getApp().Test(relReq)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, relResp.StatusCode, "auto-notify dismissal: handleRelated POST should return 200")
+	defer db.Exec("DELETE FROM users_related WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
+		user1ID, user2ID, user2ID, user1ID)
+
+	// Canonical pair ordering for query assertions.
 	u1, u2 := user1ID, user2ID
 	if u1 > u2 {
 		u1, u2 = u2, u1
 	}
 
-	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", u1, u2)
-	defer db.Exec("DELETE FROM users_related WHERE user1 = ? AND user2 = ?", u1, u2)
+	// Before dismiss: COUNT >= 1 and LIST includes our pair.
+	workBefore := getSessionWork(t, modToken)
+	countBefore := int64(workBefore["relatedmembers"].(float64))
+	assert.GreaterOrEqual(t, countBefore, int64(1),
+		"auto-notify dismissal: count should include auto-notified pair before dismiss")
 
-	getList := func() []map[string]interface{} {
-		url := fmt.Sprintf("/api/memberships?collection=Related&jwt=%s", modToken)
-		req := httptest.NewRequest("GET", url, nil)
-		resp, err := getApp().Test(req)
-		assert.NoError(t, err)
-		var result []map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&result)
-		return result
+	listURL := fmt.Sprintf("/api/memberships?collection=Related&jwt=%s", modToken)
+	listReq := httptest.NewRequest("GET", listURL, nil)
+	listResp, _ := getApp().Test(listReq)
+	var listBefore []map[string]interface{}
+	json.NewDecoder(listResp.Body).Decode(&listBefore)
+	var foundBefore bool
+	for _, entry := range listBefore {
+		if uint64(entry["user1"].(float64)) == u1 && uint64(entry["user2"].(float64)) == u2 {
+			foundBefore = true
+			break
+		}
 	}
+	assert.True(t, foundBefore, "auto-notify dismissal: auto-notified pair must appear in list before dismiss")
 
-	// Baseline: count and list must agree.
-	baseCount := getSessionWork(t, modToken)["relatedmembers"].(float64)
-	baseList := getList()
-	assert.GreaterOrEqual(t, int(baseCount), 1, "Baseline: session count must include the seeded pair")
-	assert.GreaterOrEqual(t, len(baseList), 1, "Baseline: list must include the seeded pair")
-	assert.Equal(t, int(baseCount), len(baseList), "Baseline: count must equal list length")
+	// Hit the dismiss endpoint that the moderator UI calls.
+	dismissBody := fmt.Sprintf(`{"user1":%d,"user2":%d}`, u1, u2)
+	dismissReq := httptest.NewRequest("DELETE",
+		fmt.Sprintf("/api/merge?jwt=%s", modToken),
+		strings.NewReader(dismissBody))
+	dismissReq.Header.Set("Content-Type", "application/json")
+	dismissResp, _ := getApp().Test(dismissReq)
+	assert.Equal(t, 200, dismissResp.StatusCode, "auto-notify dismissal: dismiss endpoint should return 200")
 
-	// Soft-delete user2. The count query checks u2.deleted IS NULL in both UNION
-	// sub-queries and correctly drops to 0. The list's sub-query 1 (joined via
-	// user1's group membership) only checks u1.deleted IS NULL — it never joins
-	// on user2 — so the pair still appears in the list result.
-	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", user2ID)
-	defer db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", user2ID)
+	// After dismiss: COUNT must be 0 AND list must be empty.
+	workAfter := getSessionWork(t, modToken)
+	count2 := int64(workAfter["relatedmembers"].(float64))
 
-	afterCount := getSessionWork(t, modToken)["relatedmembers"].(float64)
-	afterList := getList()
+	listReq2 := httptest.NewRequest("GET", listURL, nil)
+	listResp2, _ := getApp().Test(listReq2)
+	var list2 []map[string]interface{}
+	json.NewDecoder(listResp2.Body).Decode(&list2)
+	listLen := len(list2)
 
-	// Both must agree: a pair with a soft-deleted user must appear in neither.
-	// On unfixed code: afterCount=0, len(afterList)=1 — UNION asymmetry.
-	assert.Equal(t, int(afterCount), len(afterList),
-		"After soft-deleting user2: count=%v but list has %d pair(s) — UNION sub-query asymmetry causes divergence",
-		afterCount, len(afterList))
+	assert.Equal(t, int64(0), count2,
+		"auto-notify dismissal: count stuck after dismiss — count=%d listLen=%d", count2, listLen)
+	assert.Equal(t, 0, listLen,
+		"auto-notify dismissal: list not empty after dismiss — count=%d listLen=%d", count2, listLen)
 }
 
 func TestDeleteMembershipsModBansMember(t *testing.T) {
