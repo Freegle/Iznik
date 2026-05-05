@@ -457,7 +457,7 @@ test.describe('Mobile post flow tests', () => {
     await page.waitForSelector('.photo-uploader, .app-give-photos', {
       timeout: timeouts.ui.appearance,
     })
-    const skipLink = page.locator('a').filter({ hasText: /skip/i })
+    const skipLink = page.locator('button').filter({ hasText: /skip/i })
     await skipLink.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
     await skipLink.click()
     console.log('Skipped photo upload')

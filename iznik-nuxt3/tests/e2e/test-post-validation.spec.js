@@ -23,7 +23,7 @@ test.describe('Post validation tests', () => {
       })
 
       // Skip adding a photo - click the skip link
-      const skipLink = page.locator('a').filter({
+      const skipLink = page.locator('button').filter({
         hasText: /skip/i,
       })
       await skipLink.waitFor({
@@ -77,7 +77,7 @@ test.describe('Post validation tests', () => {
       })
 
       // Skip adding a photo - click the skip link
-      const skipLink = page.locator('a').filter({
+      const skipLink = page.locator('button').filter({
         hasText: /skip/i,
       })
       await skipLink.waitFor({
@@ -218,7 +218,7 @@ test.describe('Post validation tests', () => {
       })
 
       // Skip adding a photo - click the skip link
-      const skipLink = page.locator('a').filter({
+      const skipLink = page.locator('button').filter({
         hasText: /skip/i,
       })
       await skipLink.waitFor({
@@ -287,7 +287,7 @@ test.describe('Post validation tests', () => {
       })
 
       // Skip adding a photo
-      const skipLink = page.locator('a').filter({
+      const skipLink = page.locator('button').filter({
         hasText: /skip/i,
       })
       await skipLink.waitFor({
