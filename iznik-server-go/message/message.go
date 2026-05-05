@@ -1022,8 +1022,10 @@ func Search(c *fiber.Ctx) error {
 		}
 	}
 
-	// If groupids contains 0 ("All my communities" in ModTools), replace with the
-	// user's actual group memberships to avoid returning messages from all groups.
+	// If groupids contains 0 ("All my communities" in ModTools), handle based on role:
+	// - Admin/Support: clear groupids so the search covers all groups (no filter).
+	// - Everyone else: replace with the user's actual memberships so they only see
+	//   messages from groups they belong to.
 	hasZero := false
 	for _, gid := range groupids {
 		if gid == 0 {
@@ -1032,10 +1034,14 @@ func Search(c *fiber.Ctx) error {
 		}
 	}
 	if hasZero && myid > 0 {
-		var userGroupIDs []uint64
-		db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Scan(&userGroupIDs)
-		if len(userGroupIDs) > 0 {
-			groupids = userGroupIDs
+		if auth.IsAdminOrSupport(myid) {
+			groupids = nil
+		} else {
+			var userGroupIDs []uint64
+			db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Scan(&userGroupIDs)
+			if len(userGroupIDs) > 0 {
+				groupids = userGroupIDs
+			}
 		}
 	}
 
