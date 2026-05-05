@@ -2945,6 +2945,55 @@ func TestGetRelatedMembersExcludesDeletedUser(t *testing.T) {
 	}
 }
 
+func TestGetRelatedMembersExcludesDeletedUser1(t *testing.T) {
+	prefix := uniquePrefix("mem_rel_del1")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user1ID, prefix+"_u1_login")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user2ID, prefix+"_u2_login")
+	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u1_login", prefix+"_u2_login")
+
+	u1, u2 := user1ID, user2ID
+	if u1 > u2 {
+		u1, u2 = u2, u1
+	}
+
+	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", u1, u2)
+	defer db.Exec("DELETE FROM users_related WHERE user1 = ? AND user2 = ?", u1, u2)
+
+	// Soft-delete u1 (the left-hand user) — exercises the NEW second-side join:
+	// INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", u1)
+	defer db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", u1)
+
+	url := fmt.Sprintf("/api/memberships?collection=Related&jwt=%s", modToken)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	for _, entry := range result {
+		entryU1 := uint64(entry["user1"].(float64))
+		entryU2 := uint64(entry["user2"].(float64))
+		assert.False(t,
+			entryU1 == u1 && entryU2 == u2,
+			"Should be false — Deleted user (u1=%d) must not appear in Related Members list", u1)
+	}
+}
+
 func TestDeleteMembershipsModBansMember(t *testing.T) {
 	prefix := uniquePrefix("mem_ban")
 	db := database.DBConn
