@@ -57,8 +57,10 @@ describe('NavbarDesktop', () => {
             props: ['fixed'],
           },
           'nuxt-link': {
-            template: '<a class="nuxt-link" :href="to"><slot /></a>',
+            template:
+              '<a class="nuxt-link" :href="to" @click="$emit(\'click\')"><slot /></a>',
             props: ['to', 'noPrefetch'],
+            emits: ['click'],
           },
           'b-button': {
             template:
