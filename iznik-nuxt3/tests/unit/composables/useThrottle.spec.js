@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { throttleFetches, checkThrottle, fetchOurOffers } from '~/composables/useThrottle'
+import {
+  throttleFetches,
+  checkThrottle,
+  fetchOurOffers,
+} from '~/composables/useThrottle'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
 
@@ -51,7 +55,7 @@ describe('useThrottle', () => {
       expect(result).toBeUndefined()
     })
 
-    it('should return a promise that waits when fetchingCount is 5', async () => {
+    it('should return a promise that waits when fetchingCount is 5', () => {
       mockMessageStore.fetchingCount = 5
 
       const promise = throttleFetches()
@@ -59,7 +63,7 @@ describe('useThrottle', () => {
       expect(promise).toBeInstanceOf(Promise)
     })
 
-    it('should return a promise that waits when fetchingCount exceeds 5', async () => {
+    it('should return a promise that waits when fetchingCount exceeds 5', () => {
       mockMessageStore.fetchingCount = 10
 
       const promise = throttleFetches()
@@ -236,9 +240,24 @@ describe('useThrottle', () => {
 
     it('should sort offers by arrival time (most recent first)', async () => {
       const offers = [
-        { id: 1, type: 'Offer', successful: false, arrival: '2026-01-01T10:00:00Z' },
-        { id: 2, type: 'Offer', successful: false, arrival: '2026-01-05T10:00:00Z' },
-        { id: 3, type: 'Offer', successful: false, arrival: '2026-01-03T10:00:00Z' },
+        {
+          id: 1,
+          type: 'Offer',
+          successful: false,
+          arrival: '2026-01-01T10:00:00Z',
+        },
+        {
+          id: 2,
+          type: 'Offer',
+          successful: false,
+          arrival: '2026-01-05T10:00:00Z',
+        },
+        {
+          id: 3,
+          type: 'Offer',
+          successful: false,
+          arrival: '2026-01-03T10:00:00Z',
+        },
       ]
       mockMessageStore.fetchByUser.mockResolvedValue(offers)
       mockMessageStore.byId.mockImplementation((id) =>
@@ -255,9 +274,19 @@ describe('useThrottle', () => {
 
     it('should handle offers with missing arrival date', async () => {
       const offers = [
-        { id: 1, type: 'Offer', successful: false, arrival: '2026-01-01T10:00:00Z' },
+        {
+          id: 1,
+          type: 'Offer',
+          successful: false,
+          arrival: '2026-01-01T10:00:00Z',
+        },
         { id: 2, type: 'Offer', successful: false },
-        { id: 3, type: 'Offer', successful: false, arrival: '2026-01-03T10:00:00Z' },
+        {
+          id: 3,
+          type: 'Offer',
+          successful: false,
+          arrival: '2026-01-03T10:00:00Z',
+        },
       ]
       mockMessageStore.fetchByUser.mockResolvedValue(offers)
       mockMessageStore.byId.mockImplementation((id) =>
