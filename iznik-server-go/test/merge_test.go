@@ -198,6 +198,41 @@ func TestDeleteMerge(t *testing.T) {
 	assert.Equal(t, 1, notified)
 }
 
+// TestDeleteMergeGroupModDismissalClearsNotified verifies that a regular Freegle group
+// moderator (systemrole='User' with Moderator membership — NOT a system mod) can dismiss
+// a related-members pair. Previously DeleteMerge gated on IsSystemMod only, returning 403
+// for typical group mods and leaving users_related.notified=0 so the counter never cleared.
+func TestDeleteMergeGroupModDismissalClearsNotified(t *testing.T) {
+	prefix := uniquePrefix("MergeGrpMod")
+	groupID := CreateTestGroup(t, prefix)
+	// systemrole='User' means IsSystemMod returns false — this is a real group mod.
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+
+	db := database.DBConn
+	db.Exec("INSERT IGNORE INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", user1ID, user2ID)
+
+	body := fmt.Sprintf(`{"user1":%d,"user2":%d}`, user1ID, user2ID)
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/merge?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode, "group mod should be allowed to dismiss (was returning 403)")
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// notified=1 means the pair is excluded from the related-members count on next fetch.
+	var notified int
+	db.Raw("SELECT notified FROM users_related WHERE (user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)",
+		user1ID, user2ID, user2ID, user1ID).Scan(&notified)
+	assert.Equal(t, 1, notified, "users_related.notified must be 1 after group mod dismissal")
+}
+
 func TestGetMergeV2Path(t *testing.T) {
 	req := httptest.NewRequest("GET", "/apiv2/merge", nil)
 	resp, _ := getApp().Test(req)
