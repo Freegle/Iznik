@@ -278,6 +278,93 @@ describe('member store', () => {
       })
     })
 
+    it('increments counter when new pairs are fetched after clearing (regression: counter not derived from array length)', async () => {
+      // Scenario: user clears all related-members work (counter = 0, list empty),
+      // then new pairs appear in the system. When fetchMembers is called with the
+      // new pairs, the counter should increment to match the actual pair count.
+      //
+      // Bug: counter stays at 0 because it's only updated when:
+      // 1. remainingPairs === 0 (sets to 0)
+      // 2. askMerge/ignoreMerge (decrements)
+      // There's no code path that increments when new pairs are fetched.
+      mockFetchMembers.mockResolvedValue({
+        members: [
+          { id: 10, user1: 100, user2: 200 },
+          { id: 11, user1: 300, user2: 400 },
+          { id: 12, user1: 500, user2: 600 },
+        ],
+        context: null,
+        ratings: [],
+      })
+
+      mockAuthWork.relatedmembers = 0
+      const store = useMemberStore()
+      store.config = {}
+
+      // Fetch 3 new pairs when counter is at 0
+      await store.fetchMembers({ collection: 'Related', groupid: 0 })
+
+      // Store has 3 pairs
+      const pairsInStore = Object.values(store.list).filter(
+        (m) => m.collection === 'Related' && !m._syntheticRelated
+      )
+      expect(pairsInStore).toHaveLength(3)
+
+      // Counter SHOULD be 3 to match the actual pair count
+      // This test will FAIL when counter is not derived from array length
+      expect(mockAuthWork.relatedmembers).toBe(3)
+    })
+
+    it('maintains correct counter after askMerge then fetchMembers with new pairs', async () => {
+      // Scenario: start with 3 pairs (counter = 3), remove 1 via askMerge
+      // (counter = 2), then new pairs arrive and are fetched.
+      // Counter should update to reflect all current pairs.
+      mockFetchMembers.mockResolvedValue({
+        members: [
+          { id: 10, user1: 100, user2: 200 },
+          { id: 11, user1: 300, user2: 400 },
+          { id: 12, user1: 500, user2: 600 },
+        ],
+        context: null,
+        ratings: [],
+      })
+
+      mockAuthWork.relatedmembers = 3
+      const store = useMemberStore()
+      store.config = {}
+
+      // Start with 3 pairs
+      store.list[10] = { id: 10, user1: 100, user2: 200, collection: 'Related' }
+      store.list[11] = { id: 11, user1: 300, user2: 400, collection: 'Related' }
+      store.list[12] = { id: 12, user1: 500, user2: 600, collection: 'Related' }
+
+      // Remove one via askMerge
+      await store.askMerge(10, { user1: 100, user2: 200 })
+      expect(mockAuthWork.relatedmembers).toBe(2)
+
+      // Now fetch 2 new pairs
+      mockFetchMembers.mockResolvedValueOnce({
+        members: [
+          { id: 20, user1: 700, user2: 800 },
+          { id: 21, user1: 900, user2: 1000 },
+        ],
+        context: null,
+        ratings: [],
+      })
+
+      await store.fetchMembers({ collection: 'Related', groupid: 0 })
+
+      // Store now has: 11, 12 (from original) + 20, 21 (newly fetched) = 4 pairs total
+      const pairsInStore = Object.values(store.list).filter(
+        (m) => m.collection === 'Related' && !m._syntheticRelated
+      )
+      expect(pairsInStore).toHaveLength(4)
+
+      // Counter SHOULD be 4 to match the actual pair count
+      // This test will FAIL when counter is not derived from array length
+      expect(mockAuthWork.relatedmembers).toBe(4)
+    })
+
     it('deduplicates by userid when searching across all groups', async () => {
       // User 456 is a member of two groups — API returns two rows.
       mockFetchMembers.mockResolvedValue({
