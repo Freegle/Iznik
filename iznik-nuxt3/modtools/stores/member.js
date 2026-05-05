@@ -134,17 +134,15 @@ export const useMemberStore = defineStore({
             }
           })
 
-          // If the backend returned no actionable pairs, the work counter must
-          // reflect reality — the backend may have auto-resolved pairs without
-          // going through askMerge/ignoreMerge (e.g. one user had no login history).
+          // Derive the counter from the actual number of remaining pairs. This
+          // ensures the counter always reflects reality whether pairs are removed
+          // via askMerge/ignoreMerge or auto-resolved by the backend.
           const remainingPairs = Object.values(this.list).filter(
             (m) => m.collection === 'Related' && !m._syntheticRelated
           ).length
-          if (remainingPairs === 0) {
-            const authStore = useAuthStore()
-            if (authStore.work && typeof authStore.work.relatedmembers === 'number') {
-              authStore.work.relatedmembers = 0
-            }
+          const authStore = useAuthStore()
+          if (authStore.work && typeof authStore.work.relatedmembers === 'number') {
+            authStore.work.relatedmembers = remainingPairs
           }
         } else if (params.collection === 'Spam') {
           // V2 API returns one row per membership. V1 grouped by userid and
