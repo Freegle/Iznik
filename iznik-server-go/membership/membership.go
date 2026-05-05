@@ -367,7 +367,7 @@ func GetMemberships(c *fiber.Ctx) error {
 	}
 
 	// Handle "Received mod mails" filter — returns members who have been sent mod mails,
-	// sorted by most recent mod mail descending.
+	// ordered by join date (m.added DESC) to match the default listing order.
 	if filter == 6 {
 		var members []GetMembershipsMember
 		db.Raw("SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
@@ -382,7 +382,7 @@ func GetMemberships(c *fiber.Ctx) error {
 			"INNER JOIN users_modmails um ON um.userid = m.userid AND um.groupid = m.groupid "+
 			"WHERE m.groupid = ? AND m.collection = ? "+
 			"GROUP BY m.userid "+
-			"ORDER BY lastmodmail DESC LIMIT ?",
+			"ORDER BY m.added DESC LIMIT ?",
 			groupid, collection, limit).Scan(&members)
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)

@@ -2967,9 +2967,10 @@ func TestGetMembershipsFilterModmails(t *testing.T) {
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
 
-	// Create two regular members.
+	// Create two regular members; backdate member1 so member2 is unambiguously the newer joiner.
 	member1ID := CreateTestUser(t, prefix+"_m1", "User")
-	CreateTestMembership(t, member1ID, groupID, "Member")
+	m1ship := CreateTestMembership(t, member1ID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = DATE_SUB(NOW(), INTERVAL 2 HOUR) WHERE id = ?", m1ship)
 	member2ID := CreateTestUser(t, prefix+"_m2", "User")
 	CreateTestMembership(t, member2ID, groupID, "Member")
 	member3ID := CreateTestUser(t, prefix+"_m3", "User")
@@ -2992,9 +2993,10 @@ func TestGetMembershipsFilterModmails(t *testing.T) {
 	// Should contain only the two members who have modmails (not member3).
 	assert.Equal(t, 2, len(members), "filter=6 should return only members with modmails")
 
-	// First result should be member2 (more recent modmail).
-	assert.Equal(t, float64(member2ID), members[0]["userid"].(float64), "member2 should be first (most recent modmail)")
-	assert.Equal(t, float64(member1ID), members[1]["userid"].(float64), "member1 should be second (older modmail)")
+	// Results are ordered by join date DESC (newest joiner first).
+	// member2 joined more recently than member1 (member1 was backdated 2h).
+	assert.Equal(t, float64(member2ID), members[0]["userid"].(float64), "member2 should be first (most recently joined)")
+	assert.Equal(t, float64(member1ID), members[1]["userid"].(float64), "member1 should be second (older join date)")
 
 	// Both should have lastmodmail populated.
 	assert.NotNil(t, members[0]["lastmodmail"], "lastmodmail should be populated")
