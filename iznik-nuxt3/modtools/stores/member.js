@@ -133,6 +133,20 @@ export const useMemberStore = defineStore({
               }
             }
           })
+
+          // Sync the nav badge to the actual Related pair count so the
+          // auto-notified path (backend removes pair before we fetch, topic
+          // 9631) resets the counter to 0 instead of leaving it stuck.
+          const authStore = useAuthStore()
+          if (
+            authStore.work &&
+            typeof authStore.work.relatedmembers === 'number'
+          ) {
+            const realPairs = Object.values(this.list).filter(
+              (item) => item.collection === 'Related' && !item._syntheticRelated
+            ).length
+            authStore.work.relatedmembers = realPairs
+          }
         } else if (params.collection === 'Spam') {
           // V2 API returns one row per membership. V1 grouped by userid and
           // nested all memberships under one entry.  Replicate that here so
