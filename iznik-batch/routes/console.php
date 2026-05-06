@@ -299,7 +299,7 @@ Schedule::command('users:update-support-roles')
 // Runs continuously with internal looping. Handles push notifications and emails.
 Schedule::command('queue:background-tasks --max-iterations=60 --spool')
     ->everyMinute()
-    ->sendOutputTo(cronLog('queue:background-tasks'))
+    ->appendOutputTo(cronLog('queue:background-tasks'))
     ->runInBackground();
 
 // Clean up old sent emails - run daily.
