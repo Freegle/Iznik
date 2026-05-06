@@ -64,9 +64,18 @@ gsutil cp "$BACKUP_FILE" "$GCS_BUCKET/"
 # Clean up local backup
 rm -f "$BACKUP_FILE"
 
-# Clean up old GCS backups (keep last N days)
+# Clean up old GCS backups (keep last N days).
+# Compute cutoff via epoch arithmetic — BusyBox `date` (Alpine) supports neither
+# `-d "X days ago"` (GNU) nor `-v-Xd` (BSD), but `date -d @<epoch>` works on
+# both BusyBox and GNU, and `date -r <epoch>` covers BSD.
 echo "Cleaning up old backups (keeping last $RETENTION_DAYS days)..."
-CUTOFF_DATE=$(date -d "$RETENTION_DAYS days ago" +%Y%m%d 2>/dev/null || date -v-${RETENTION_DAYS}d +%Y%m%d)
+CUTOFF_EPOCH=$(( $(date +%s) - RETENTION_DAYS * 86400 ))
+CUTOFF_DATE=$(date -d "@$CUTOFF_EPOCH" +%Y%m%d 2>/dev/null || date -r "$CUTOFF_EPOCH" +%Y%m%d)
+if [ -z "$CUTOFF_DATE" ]; then
+    echo "⚠️  Could not compute cutoff date — skipping cleanup"
+    exit 0
+fi
+echo "Cutoff date: $CUTOFF_DATE"
 
 gsutil ls "$GCS_BUCKET/" 2>/dev/null | while read backup; do
     # Extract date from filename (loki-backup-YYYYMMDD_HHMMSS.tar.gz)

@@ -7,8 +7,11 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * Service for checking emails against SpamAssassin and Rspamd.
+ *
+ * Renamed from SpamCheckService to RspamdService to disambiguate from the
+ * unrelated incoming-mail App\Services\Mail\Incoming\SpamCheckService.
  */
-class SpamCheckService
+class RspamdService
 {
     private string $spamassassinHost;
     private int $spamassassinPort;
