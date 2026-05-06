@@ -5,12 +5,18 @@ const mockReviewIgnore = vi.fn().mockResolvedValue()
 const mockFetchMembers = vi.fn()
 const mockMergeAsk = vi.fn().mockResolvedValue()
 const mockMergeIgnore = vi.fn().mockResolvedValue()
+const mockReviewRelease = vi.fn().mockResolvedValue()
+const mockReviewHold = vi.fn().mockResolvedValue()
+const mockDelete = vi.fn().mockResolvedValue()
 
 vi.mock('~/api', () => ({
   default: () => ({
     memberships: {
       reviewIgnore: mockReviewIgnore,
       fetchMembers: mockFetchMembers,
+      reviewRelease: mockReviewRelease,
+      reviewHold: mockReviewHold,
+      delete: mockDelete,
     },
     merge: {
       ask: mockMergeAsk,
@@ -36,6 +42,34 @@ describe('member store', () => {
     setActivePinia(createPinia())
     const mod = await import('~/modtools/stores/member')
     useMemberStore = mod.useMemberStore
+  })
+
+  describe('delete', () => {
+    it('removes membership by matching userid and groupid', async () => {
+      const store = useMemberStore()
+      store.config = {}
+      store.list[111] = {
+        id: 111,
+        userid: 456,
+        groupid: 789,
+      }
+      store.list[222] = {
+        id: 222,
+        userid: 999,
+        groupid: 111,
+      }
+
+      await store.delete({
+        id: 456,
+        groupid: 789,
+        subject: 'test',
+        stdmsgid: 1,
+        body: 'test body',
+      })
+
+      expect(store.list[111]).toBeUndefined()
+      expect(store.list[222]).toBeTruthy()
+    })
   })
 
   describe('spamignore', () => {
@@ -420,6 +454,30 @@ describe('member store', () => {
     })
   })
 
+  describe('reviewHold', () => {
+    it('updates heldby with current user on the matching member', async () => {
+      const store = useMemberStore()
+      store.config = {}
+      store.list[42] = { membershipid: 42, heldby: null }
+
+      await store.reviewHold({ userid: 123, groupid: 456, membershipid: 42 })
+
+      expect(store.list[42].heldby).toEqual({ id: 999 }) // 999 is the mocked user id
+    })
+  })
+
+  describe('reviewRelease', () => {
+    it('updates heldby to null on the matching member', async () => {
+      const store = useMemberStore()
+      store.config = {}
+      store.list[42] = { membershipid: 42, heldby: { id: 5 } }
+
+      await store.reviewRelease({ userid: 123, groupid: 456, membershipid: 42 })
+
+      expect(store.list[42].heldby).toBeNull()
+    })
+  })
+
   describe('getters', () => {
     it('getByGroup returns members matching a groupid', () => {
       const store = useMemberStore()
@@ -442,6 +500,15 @@ describe('member store', () => {
       const result = store.get(5)
 
       expect(result).toMatchObject({ id: 5, userid: 100 })
+    })
+
+    it('get returns undefined when member not found', () => {
+      const store = useMemberStore()
+      store.list[5] = { id: 5, userid: 100 }
+
+      const result = store.get(999)
+
+      expect(result).toBeUndefined()
     })
 
     it('ratingById returns the matching rating', () => {
