@@ -3415,3 +3415,65 @@ func TestPatchMembershipsConfigChange(t *testing.T) {
 		modID, groupID).Scan(&configID2)
 	assert.Equal(t, cfgID2, configID2)
 }
+
+func TestGetMembershipsBannedPaginationMissing(t *testing.T) {
+	// Regression: filter=5 (Banned members list) returns a raw JSON array with no
+	// pagination cursor. When a group has more banned members than the page limit, the
+	// excess members are permanently unreachable. The fix must return
+	// {"members":[...],"context":<cursor>} like other collections so the caller can
+	// iterate through all pages.
+	//
+	// This test FAILS on the current code because the filter=5 branch does
+	// `return c.JSON(members)` which emits a raw JSON array, not a paginated object.
+	prefix := uniquePrefix("mem_banned_nopaging")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, token := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	const totalBanned = 15
+	const pageLimit = 10
+
+	for i := 0; i < totalBanned; i++ {
+		bannedID := CreateTestUser(t, fmt.Sprintf("%s_b%02d", prefix, i), "User")
+		createBannedMember(t, bannedID, groupID)
+	}
+
+	// Confirm setup: 15 rows in users_banned for this group.
+	var dbCount int64
+	db.Raw("SELECT COUNT(*) FROM users_banned WHERE groupid = ?", groupID).Scan(&dbCount)
+	assert.Equal(t, int64(totalBanned), dbCount, "setup: expected %d banned rows in users_banned", totalBanned)
+
+	// Request page 1 with limit=10 (less than totalBanned so pagination is needed).
+	url := fmt.Sprintf("/api/memberships?groupid=%d&filter=5&limit=%d&jwt=%s", groupID, pageLimit, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// BUG: filter=5 currently returns a raw JSON array via c.JSON(members), not a
+	// paginated object {"members":[...],"context":<cursor>}. Decoding the raw array
+	// into a map[string]interface{} produces an unmarshal error — proving the response
+	// format is wrong and the caller has no cursor with which to fetch the next page.
+	var result map[string]interface{}
+	decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+	assert.NoError(t, decodeErr,
+		"Banned filter (filter=5) must return a JSON object with 'members' and 'context' keys, not a raw array")
+
+	// When the response IS a proper object, it must contain members and a context cursor.
+	members, hasMembersKey := result["members"]
+	assert.True(t, hasMembersKey, "response must have a 'members' key")
+	if hasMembersKey {
+		memberSlice, ok := members.([]interface{})
+		assert.True(t, ok)
+		assert.Len(t, memberSlice, pageLimit,
+			"first page should contain exactly %d members (limit param)", pageLimit)
+	}
+
+	ctx, hasContextKey := result["context"]
+	assert.True(t, hasContextKey, "response must have a 'context' key for pagination")
+	assert.NotNil(t, ctx,
+		"context must be non-nil when totalBanned (%d) > pageLimit (%d)", totalBanned, pageLimit)
+}
