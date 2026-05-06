@@ -1508,7 +1508,7 @@ services:
       - SENTRY_TRACES_SAMPLE_RATE=1.0
       # Migrations disabled for production
       - RUN_MIGRATIONS=false
-      # Rspamd HTTP API for the dormant outgoing-mail SpamCheckService.
+      # Rspamd HTTP API for the dormant outgoing-mail RspamdService.
       # SPAM_CHECK_ENABLED=false keeps the SpamCheckListener inactive — the
       # active spam path is the Postfix milter (see conf/postfix/main.cf).
       - RSPAMD_HOST=rspamd
