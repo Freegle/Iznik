@@ -277,16 +277,13 @@ func GetUser(c *fiber.Ctx) error {
 			// Mod-or-above callers (Moderator/Support/Admin systemrole) get
 			// tnuserid/ljuserid restored even when not a mod of a shared group
 			// with the target. authMiddleware sets c.Locals("userRole") only
-			// AFTER c.Next(), so we fetch the caller's systemrole directly.
-			if myid > 0 {
-				var callerRole string
-				database.DBConn.Raw("SELECT systemrole FROM users WHERE id = ?", myid).Scan(&callerRole)
-				if callerRole == utils.SYSTEMROLE_MODERATOR ||
-					callerRole == utils.SYSTEMROLE_SUPPORT ||
-					callerRole == utils.SYSTEMROLE_ADMIN {
-					user.Tnuserid = tnuserid
-					user.Ljuserid = ljuserid
-				}
+			// AFTER c.Next() (so it can overlap the auth query with the handler
+			// via goroutine), so we have to check the caller's role here.
+			// Skip the systemrole lookup when there's nothing to restore or
+			// when this is a self-fetch (hideSensitiveFields didn't strip).
+			if (tnuserid != nil || ljuserid != nil) && myid > 0 && myid != id && auth.IsSystemMod(myid) {
+				user.Tnuserid = tnuserid
+				user.Ljuserid = ljuserid
 			}
 
 			// Partners (e.g. Trash Nothing) can see the internal @users.ilovefreegle.org
