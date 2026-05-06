@@ -53,7 +53,7 @@ type User struct {
 	Added           time.Time   `json:"added"`
 	ExpectedReplies int         `json:"expectedreplies" gorm:"-"`
 	ExpectedChats   []uint64    `json:"expectedchats" gorm:"-"`
-	Ljuserid        *uint64     `json:"ljuserid"`
+	Ljuserid        *uint64     `json:"ljuserid,omitempty" gorm:"->"`
 	Deleted         *time.Time  `json:"deleted"`
 	Forgotten       *time.Time  `json:"forgotten"`
 	Lastlocation    *uint64          `json:"lastlocation"`
@@ -201,6 +201,7 @@ func hideSensitiveFields(user *User, myid uint64) {
 			user.Chatmodstatus = nil
 			user.Newsfeedmodstatus = nil
 			user.Tnuserid = nil
+			user.Ljuserid = nil
 		}
 	}
 }
@@ -264,18 +265,28 @@ func GetUser(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusNotFound, "User not found")
 			}
 
-			// Capture tnuserid before hideSensitiveFields strips it; partners and
-			// mod-or-above callers need it to match records to Freegle users.
+			// Capture tnuserid/ljuserid before hideSensitiveFields strips them;
+			// partners and mod-or-above callers need them to match records to
+			// Freegle users.
 			tnuserid := user.Tnuserid
+			ljuserid := user.Ljuserid
 
 			hideSensitiveFields(&user, myid)
 			enrichUserForModtools(&user, id, myid, modtools)
 
-			// Mod-or-above callers (Moderator/Support/Admin systemrole, set by
-			// authMiddleware) get tnuserid restored even when not a mod of a
-			// shared group with the target.
-			if c.Locals("userRole") != nil {
-				user.Tnuserid = tnuserid
+			// Mod-or-above callers (Moderator/Support/Admin systemrole) get
+			// tnuserid/ljuserid restored even when not a mod of a shared group
+			// with the target. authMiddleware sets c.Locals("userRole") only
+			// AFTER c.Next(), so we fetch the caller's systemrole directly.
+			if myid > 0 {
+				var callerRole string
+				database.DBConn.Raw("SELECT systemrole FROM users WHERE id = ?", myid).Scan(&callerRole)
+				if callerRole == utils.SYSTEMROLE_MODERATOR ||
+					callerRole == utils.SYSTEMROLE_SUPPORT ||
+					callerRole == utils.SYSTEMROLE_ADMIN {
+					user.Tnuserid = tnuserid
+					user.Ljuserid = ljuserid
+				}
 			}
 
 			// Partners (e.g. Trash Nothing) can see the internal @users.ilovefreegle.org
@@ -288,6 +299,7 @@ func GetUser(c *fiber.Ctx) error {
 				if _, _, _, err := ValidatePartnerKey(database.DBConn, partnerKey); err == nil {
 					user.Email = GetOrCreateInternalEmail(database.DBConn, id)
 					user.Tnuserid = tnuserid
+					user.Ljuserid = ljuserid
 				}
 			}
 
@@ -569,7 +581,7 @@ func GetUserById(id uint64, myid uint64) User {
 		}
 
 		err := db.Raw("SELECT users.id, firstname, lastname, fullname, lastaccess, users.added, systemrole, relevantallowed, newslettersallowed, marketingconsent, trustlevel, bouncing, deleted, forgotten, source, engagement, "+
-			"chatmodstatus, newsfeedmodstatus, tnuserid, "+settingsq+
+			"chatmodstatus, newsfeedmodstatus, tnuserid, ljuserid, "+settingsq+
 			"CASE WHEN systemrole IN (?, ?, ?) AND JSON_EXTRACT(users.settings, '$.showmod') IS NULL THEN 1 ELSE JSON_EXTRACT(users.settings, '$.showmod') END AS showmod "+
 			"FROM users "+
 			"WHERE users.id = ? ", utils.SYSTEMROLE_MODERATOR, utils.SYSTEMROLE_SUPPORT, utils.SYSTEMROLE_ADMIN, id).First(&user).Error
