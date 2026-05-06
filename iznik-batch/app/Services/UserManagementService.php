@@ -538,6 +538,12 @@ class UserManagementService
         // Remove from all groups.
         DB::table('memberships')->where('userid', $userId)->delete();
 
+        // Remove from Related Members — deleted users should not appear as related to anyone.
+        DB::table('users_related')
+            ->where('userid1', $userId)
+            ->orWhere('userid2', $userId)
+            ->delete();
+
         // Delete postal addresses.
         DB::table('users_addresses')->where('userid', $userId)->delete();
 
