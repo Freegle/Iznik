@@ -116,6 +116,13 @@ $dbhm->preExec(
     [510001, 'Down', '2026-04-29T23:58:00', 9001006]
 );
 
+// Seed two FD users with the same TN username prefix to trigger the duplicate-merge code path.
+// The email format is "{username}-g{tn_user_id}@user.trashnothing.com", so different tn_user_ids
+// produce different emails but REGEXP_REPLACE extracts the same username for both, causing the
+// dup-scan query to find them as duplicates and merge one into the other.
+upsertTNUser($dbhm, 510010, 820001, 'test_dup_user');
+upsertTNUser($dbhm, 510011, 820002, 'test_dup_user');
+
 echo 'Seed complete. Users seeded: ' . count($seedUsers) . "\n";
 echo "Running tn_sync.php...\n";
 
@@ -128,3 +135,111 @@ if ($exitCode !== 0) {
 }
 
 echo "tn_sync finished. Log: $logFile\n";
+
+// Assertions
+$failures = [];
+
+function assertQuery(string $label, $dbhr, string $sql, array $params, callable $check): void
+{
+    global $failures;
+    $rows = $dbhr->preQuery($sql, $params);
+    if (!$check($rows)) {
+        $failures[] = "$label: assertion failed. Rows: " . json_encode($rows);
+        echo "FAIL: $label\n";
+    } else {
+        echo "PASS: $label\n";
+    }
+}
+
+// --- forget flow ---
+// User 510004 (test_removed) had account_removed=true in the fixture.
+// After sync, forget() should have set forgotten=NOW() and fullname="Deleted User #510004".
+
+assertQuery(
+    'forgotten user 510004: users.forgotten is not null',
+    $dbhr,
+    'SELECT forgotten FROM users WHERE id = ?',
+    [510004],
+    fn($rows) => count($rows) === 1 && $rows[0]['forgotten'] !== null
+);
+
+assertQuery(
+    'forgotten user 510004: users.fullname is "Deleted User #510004"',
+    $dbhr,
+    'SELECT fullname FROM users WHERE id = ?',
+    [510004],
+    fn($rows) => count($rows) === 1 && $rows[0]['fullname'] === 'Deleted User #510004'
+);
+
+assertQuery(
+    'forgotten user 510004: users.tnuserid is null',
+    $dbhr,
+    'SELECT tnuserid FROM users WHERE id = ?',
+    [510004],
+    fn($rows) => count($rows) === 1 && $rows[0]['tnuserid'] === null
+);
+
+assertQuery(
+    'forgotten user 510004: trashnothing email removed',
+    $dbhr,
+    "SELECT COUNT(*) AS cnt FROM users_emails WHERE userid = ? AND email LIKE '%@user.trashnothing.com'",
+    [510004],
+    fn($rows) => count($rows) === 1 && (int) $rows[0]['cnt'] === 0
+);
+
+assertQuery(
+    'forgotten user 510004: users_logins deleted',
+    $dbhr,
+    'SELECT COUNT(*) AS cnt FROM users_logins WHERE userid = ?',
+    [510004],
+    fn($rows) => count($rows) === 1 && (int) $rows[0]['cnt'] === 0
+);
+
+// Sanity check: non-removed users are NOT forgotten.
+assertQuery(
+    'non-removed user 510001: users.forgotten remains null',
+    $dbhr,
+    'SELECT forgotten FROM users WHERE id = ?',
+    [510001],
+    fn($rows) => count($rows) === 1 && $rows[0]['forgotten'] === null
+);
+
+// --- merge flow ---
+// Users 510010 and 510011 share username prefix 'test_dup_user', triggering the dup-scan merge.
+// After merge: one user is deleted from users; the survivor owns both TN emails.
+
+assertQuery(
+    'merged dup users: exactly one of 510010/510011 survives in users',
+    $dbhr,
+    'SELECT COUNT(*) AS cnt FROM users WHERE id IN (510010, 510011)',
+    [],
+    fn($rows) => count($rows) === 1 && (int) $rows[0]['cnt'] === 1
+);
+
+assertQuery(
+    'merged dup users: both TN emails owned by the same surviving user',
+    $dbhr,
+    "SELECT COUNT(DISTINCT userid) AS distinct_owners FROM users_emails WHERE email LIKE 'test\\_dup\\_user-%@user.trashnothing.com'",
+    [],
+    fn($rows) => count($rows) === 1 && (int) $rows[0]['distinct_owners'] === 1
+);
+
+assertQuery(
+    'merged dup users: no remaining duplicate detected by dup-scan query',
+    $dbhr,
+    "SELECT COUNT(DISTINCT(userid)) AS cnt FROM users_emails WHERE REGEXP_REPLACE(email, '(.*)-g[0-9]+@user\\\\.trashnothing\\\\.com', '\$1') = 'test_dup_user' AND email LIKE '%@user.trashnothing.com'",
+    [],
+    fn($rows) => count($rows) === 1 && (int) $rows[0]['cnt'] === 1
+);
+
+// --- end assertions ---
+
+if (count($failures) > 0) {
+    fwrite(STDERR, "\n" . count($failures) . " assertion(s) failed:\n");
+    foreach ($failures as $f) {
+        fwrite(STDERR, "  - $f\n");
+    }
+    exit(1);
+}
+
+echo "\nAll assertions passed.\n";
