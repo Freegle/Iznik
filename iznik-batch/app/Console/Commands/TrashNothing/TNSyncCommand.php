@@ -180,7 +180,7 @@ class TNSyncCommand extends Command
         $page = 1;
         $count = 0;
         $maxDate = NULL;
-        $fixturesDir = base_path('../iznik-server/test/integration/tn_sync/fixtures');
+        $fixturesDir = base_path('tests/fixtures/tn_sync');
 
         do {
             // $response = Http::get("{$this->apiBaseUrl}/ratings", [
@@ -281,7 +281,7 @@ class TNSyncCommand extends Command
         $page = 1;
         $count = 0;
         $maxDate = null;
-        $fixturesDir = base_path('../iznik-server/test/integration/tn_sync/fixtures');
+        $fixturesDir = base_path('tests/fixtures/tn_sync');
 
         do {
             // $response = Http::get("{$this->apiBaseUrl}/user-changes", [

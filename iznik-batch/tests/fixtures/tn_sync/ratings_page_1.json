@@ -1,0 +1,52 @@
+{
+  "ratings": [
+    {
+      "rating_id": 9001001,
+      "ratee_tn_user_id": 710001,
+      "ratee_fd_user_id": 510001,
+      "ratee_username": "test_alex",
+      "rating": "Up",
+      "date": "2026-04-30T10:01:11"
+    },
+    {
+      "rating_id": 9001002,
+      "ratee_tn_user_id": 710002,
+      "ratee_fd_user_id": 510002,
+      "ratee_username": "test_blair",
+      "rating": "Down",
+      "date": "2026-04-30T09:58:03"
+    },
+    {
+      "rating_id": 9001003,
+      "ratee_tn_user_id": 710003,
+      "ratee_fd_user_id": 510003,
+      "ratee_username": "test_casey",
+      "rating": null,
+      "date": "2026-04-30T09:45:40"
+    },
+    {
+      "rating_id": 9001004,
+      "ratee_tn_user_id": 710004,
+      "ratee_fd_user_id": null,
+      "ratee_username": "test_no_fd_user",
+      "rating": "Up",
+      "date": "2026-04-30T09:33:05"
+    },
+    {
+      "rating_id": 9001005,
+      "ratee_tn_user_id": 710005,
+      "ratee_fd_user_id": 599999,
+      "ratee_username": "test_missing_user",
+      "rating": "Up",
+      "date": "2026-04-30T09:20:12"
+    },
+    {
+      "rating_id": 9001006,
+      "ratee_tn_user_id": 710006,
+      "ratee_fd_user_id": 510001,
+      "ratee_username": "test_alex",
+      "rating": "Up",
+      "date": "2026-04-30T09:05:27"
+    }
+  ]
+}
