@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Mail\Notification\ChaseUpMail;
+use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Notification;
 use App\Models\User;
@@ -13,6 +14,7 @@ use Illuminate\Support\Facades\Mail;
 
 class NotificationChaseUpService
 {
+    use AvatarResolver;
     use FeatureFlags;
 
     public const EMAIL_TYPE = 'NotificationChaseUp';
@@ -149,7 +151,7 @@ class NotificationChaseUpService
             Mail::to($email)->send(new ChaseUpMail($user, $notifData, $subject));
         }
 
-        return count($notifData);
+        return 1;
     }
 
     /**
@@ -262,9 +264,10 @@ class NotificationChaseUpService
             $fromUser = isset($fromUsers[$notif->fromuser]) ? $fromUsers[$notif->fromuser] : null;
 
             $result[] = [
-                'id'       => $notif->id,
-                'type'     => $notif->type,
-                'fromname' => $fromUser ? $fromUser->fullname : 'Someone',
+                'id'        => $notif->id,
+                'type'      => $notif->type,
+                'fromname'  => $fromUser ? $fromUser->fullname : 'Someone',
+                'fromimage' => $this->resolveAvatarUrl($fromUser),
                 'title'    => $notif->title,
                 'text'     => $notif->text,
                 'url'      => $notif->url,
@@ -344,6 +347,24 @@ class NotificationChaseUpService
                 case 'Exhort':
                     if (! $title) {
                         $title = $notif['title'] ?? '';
+                    }
+                    $count++;
+                    break;
+                case 'MembershipPending':
+                    if (! $title) {
+                        $title = "Your application to {$notif['url']} requires approval";
+                    }
+                    $count++;
+                    break;
+                case 'MembershipApproved':
+                    if (! $title) {
+                        $title = "Your application to {$notif['url']} has been approved!";
+                    }
+                    $count++;
+                    break;
+                case 'MembershipRejected':
+                    if (! $title) {
+                        $title = "Sorry, your application to {$notif['url']} was rejected";
                     }
                     $count++;
                     break;

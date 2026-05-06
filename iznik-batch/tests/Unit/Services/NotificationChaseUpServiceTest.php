@@ -459,6 +459,123 @@ class NotificationChaseUpServiceTest extends TestCase
         $this->assertStringContainsString('Tell us your story!', $subject);
     }
 
+    public function test_subject_for_loved_comment(): void
+    {
+        $subject = $this->service->getNotifTitle([[
+            'type'     => 'LovedComment',
+            'fromname' => 'Dave',
+            'newsfeed' => ['type' => 'Message', 'message' => 'Great comment'],
+            'title'    => null,
+            'seen'     => false,
+        ]]);
+
+        $this->assertStringContainsString('Dave', $subject);
+        $this->assertStringContainsString('loved', $subject);
+    }
+
+    public function test_subject_for_membership_pending(): void
+    {
+        $subject = $this->service->getNotifTitle([[
+            'type'     => 'MembershipPending',
+            'fromname' => '',
+            'newsfeed' => null,
+            'title'    => null,
+            'url'      => 'Freegle Bristol',
+            'seen'     => false,
+        ]]);
+
+        $this->assertStringContainsString('Freegle Bristol', $subject);
+        $this->assertStringContainsString('approval', $subject);
+    }
+
+    public function test_subject_for_membership_approved(): void
+    {
+        $subject = $this->service->getNotifTitle([[
+            'type'     => 'MembershipApproved',
+            'fromname' => '',
+            'newsfeed' => null,
+            'title'    => null,
+            'url'      => 'Freegle Bristol',
+            'seen'     => false,
+        ]]);
+
+        $this->assertStringContainsString('Freegle Bristol', $subject);
+        $this->assertStringContainsString('approved', $subject);
+    }
+
+    public function test_subject_for_membership_rejected(): void
+    {
+        $subject = $this->service->getNotifTitle([[
+            'type'     => 'MembershipRejected',
+            'fromname' => '',
+            'newsfeed' => null,
+            'title'    => null,
+            'url'      => 'Freegle Bristol',
+            'seen'     => false,
+        ]]);
+
+        $this->assertStringContainsString('Freegle Bristol', $subject);
+        $this->assertStringContainsString('rejected', $subject);
+    }
+
+    // -----------------------------------------------------------------------
+    // Membership notification types
+    // -----------------------------------------------------------------------
+
+    public function test_sends_email_for_membership_pending_notification(): void
+    {
+        $user   = $this->createTestUser(['lastaccess' => now()]);
+        $sender = $this->createTestUser();
+
+        $this->createNotification($user, $sender, [
+            'type' => 'MembershipPending',
+            'url'  => 'Freegle Bristol',
+        ]);
+
+        $count = $this->service->sendEmails();
+
+        $this->assertEquals(1, $count);
+        Mail::assertSent(ChaseUpMail::class, function ($mail) use ($user) {
+            return $mail->hasTo($user->email_preferred);
+        });
+    }
+
+    public function test_sends_email_for_membership_approved_notification(): void
+    {
+        $user   = $this->createTestUser(['lastaccess' => now()]);
+        $sender = $this->createTestUser();
+
+        $this->createNotification($user, $sender, [
+            'type' => 'MembershipApproved',
+            'url'  => 'Freegle Bristol',
+        ]);
+
+        $count = $this->service->sendEmails();
+
+        $this->assertEquals(1, $count);
+        Mail::assertSent(ChaseUpMail::class, function ($mail) use ($user) {
+            return $mail->hasTo($user->email_preferred);
+        });
+    }
+
+    public function test_sends_email_for_membership_rejected_notification(): void
+    {
+        $user   = $this->createTestUser(['lastaccess' => now()]);
+        $sender = $this->createTestUser();
+
+        $this->createNotification($user, $sender, [
+            'type' => 'MembershipRejected',
+            'url'  => 'Freegle Bristol',
+        ]);
+
+        $count = $this->service->sendEmails();
+
+        $this->assertEquals(1, $count);
+        Mail::assertSent(ChaseUpMail::class, function ($mail) use ($user) {
+            return $mail->hasTo($user->email_preferred);
+        });
+    }
+
     // -----------------------------------------------------------------------
     // User-specific filtering
     // -----------------------------------------------------------------------

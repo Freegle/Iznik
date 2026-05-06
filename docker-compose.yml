@@ -255,6 +255,27 @@ services:
 
   # MJML email template compilation server (used by batch for worker pool back pressure)
   # API: POST raw MJML text to / with Content-Type: text/plain, returns compiled HTML
+  avatar:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-avatar
+    build:
+      context: ./services/avatar-server
+    profiles:
+      - backend
+    networks:
+      - default
+    restart: "no"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.avatar.rule=Host(`avatar.localhost`)"
+      - "traefik.http.routers.avatar.entrypoints=web"
+      - "traefik.http.services.avatar.loadbalancer.server.port=3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   mjml:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-mjml
     profiles:
@@ -1380,6 +1401,7 @@ services:
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - MJML_URL=http://mjml/
+      - FREEGLE_AVATAR_SERVER_URL=http://avatar.localhost:${PORT_TRAEFIK_HTTP:-80}
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp
       # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.
       # Multiple supervisor workers bootstrapping Laravel simultaneously can corrupt services.php.
