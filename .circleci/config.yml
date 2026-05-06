@@ -107,6 +107,29 @@ jobs:
             echo "Runner available: ${RUNNER_AVAILABLE}"
             echo "{\"use_self_hosted\": ${RUNNER_AVAILABLE}}" > /tmp/pipeline-params.json
             cat /tmp/pipeline-params.json
+      - run:
+          name: Mark CI as running on PR
+          when: always
+          command: |
+            if [ -z "$CIRCLE_PULL_REQUEST" ] || [ -z "$GITHUB_TOKEN" ]; then
+              echo "Not a PR build or GITHUB_TOKEN not set — skipping label"
+              exit 0
+            fi
+            PR_NUMBER=$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$')
+            if [ -z "$PR_NUMBER" ]; then exit 0; fi
+            REPO="Freegle/Iznik"
+            # Remove old CI result labels
+            for lbl in "CI: Passed" "CI: Failed"; do
+              encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${lbl}'))")
+              curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+                "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/$encoded" 2>/dev/null || true
+            done
+            # Add CI: Running
+            curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"labels":["CI: Running"]}' \
+              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels" 2>/dev/null || true
+            echo "Labelled PR #$PR_NUMBER as CI: Running"
       - continuation/continue:
           configuration_path: .circleci/continue-config.yml
           parameters: /tmp/pipeline-params.json
