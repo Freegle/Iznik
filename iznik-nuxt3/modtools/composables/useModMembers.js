@@ -38,28 +38,19 @@ const members = computed(() => {
   }
   // We need to sort as otherwise new members may appear at the end.
   if (sort.value) {
-    if (filter.value === '6') {
-      // Sort by most recent mod mail descending (matching API order).
-      members.sort((a, b) => {
-        const aDate = a.lastmodmail ? new Date(a.lastmodmail).getTime() : 0
-        const bDate = b.lastmodmail ? new Date(b.lastmodmail).getTime() : 0
-        return bDate - aDate
-      })
-    } else {
-      members.sort((a, b) => {
-        if (a.groups && b.groups) {
-          return (
-            new Date(b.groups[0].arrival).getTime() -
-            new Date(a.groups[0].arrival).getTime()
-          )
-        } else {
-          return (
-            new Date(b.added || b.joined).getTime() -
-            new Date(a.added || a.joined).getTime()
-          )
-        }
-      })
-    }
+    members.sort((a, b) => {
+      if (a.groups && b.groups) {
+        return (
+          new Date(b.groups[0].arrival).getTime() -
+          new Date(a.groups[0].arrival).getTime()
+        )
+      } else {
+        return (
+          new Date(b.added || b.joined).getTime() -
+          new Date(a.added || a.joined).getTime()
+        )
+      }
+    })
   } else {
     members.sort((a, b) => {
       return a.rawindex - b.rawindex
@@ -89,9 +80,7 @@ const loadMore = async function ($state) {
     $state.loaded()
   } else {
     const membersstart = members.value.length
-    if (limit.value === distance.value) {
-      limit.value += distance.value
-    }
+    limit.value += distance.value
     // console.log('UMM actually loadMore show', show.value, 'groupid', groupid.value, 'members', members.value.length, 'limit', limit.value, 'search', search.value, 'filter', filter.value)
     const memberStore = useMemberStore()
     const params = {
