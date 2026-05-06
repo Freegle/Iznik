@@ -118,12 +118,11 @@ jobs:
             PR_NUMBER=$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$')
             if [ -z "$PR_NUMBER" ]; then exit 0; fi
             REPO="Freegle/Iznik"
-            # Remove old CI result labels
-            for lbl in "CI: Passed" "CI: Failed"; do
-              encoded=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${lbl}'))")
-              curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
-                "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/$encoded" 2>/dev/null || true
-            done
+            # Remove old CI result labels (URL-encoded: "CI: Passed" = CI%3A%20Passed)
+            curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Passed" 2>/dev/null || true
+            curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Failed" 2>/dev/null || true
             # Add CI: Running
             curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
               -H "Content-Type: application/json" \
