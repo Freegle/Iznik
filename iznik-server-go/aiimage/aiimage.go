@@ -239,43 +239,26 @@ var canonicalJobs = map[string]string{
 	"Workshop Technician":             "workshop bench",
 }
 
-// britishToUS translates common British English item names to US English equivalents.
-// The AI model (trained primarily on US English data) generates better images when given
-// the US term — e.g. "cot" in British English means a baby's bed, but the model interprets
-// it as a canvas camp cot. Translating to "baby crib" before the prompt fixes this.
-var britishToUS = map[string]string{
-	"cot":       "baby crib",
-	"nappy":     "diaper",
-	"nappies":   "diaper",
-	"pushchair": "stroller",
-	"pram":      "stroller",
-	"hoover":    "vacuum cleaner",
-}
-
 // subjectForName resolves the prompt subject for a given ai_images.name.
 // For canonical job titles, returns the iconic object (e.g. "Accountant" → "calculator").
-// For British English item names, translates to US English for better AI results.
 // For all other item names, returns the name unchanged.
 func subjectForName(name string) string {
 	if obj, ok := canonicalJobs[name]; ok {
 		return obj
-	}
-	if us, ok := britishToUS[strings.ToLower(name)]; ok {
-		return us
 	}
 	return name
 }
 
 // buildImagePrompt constructs the AI image generation prompt.
 // For job titles, subjectForName() maps them to their canonical object first.
-// For British English item names, subjectForName() translates to US English first.
 func buildImagePrompt(name string) string {
 	subject := subjectForName(name)
 	return "Product illustration: single isolated " + subject + " centered on plain dark green background. " +
 		"Style: friendly cartoon white line drawing, moderate shading, cute and quirky, UK audience. " +
 		"The object sits alone on a simple surface or floats in space. " +
 		"Simple illustration style, clean lines, single object only. " +
-		"This is a common UK household or everyday item."
+		"This is a common UK household or everyday item. " +
+		"Use American English terminology."
 }
 
 // CloudflareAPIBase is the base URL for the Cloudflare API. Overridable in tests.

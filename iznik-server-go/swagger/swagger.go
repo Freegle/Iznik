@@ -4194,3 +4194,107 @@ type aiImageRegenerateResponse struct {
 //	400: errorResponse
 //	401: errorResponse
 //	403: errorResponse
+
+// swagger:route POST /housekeeper/notify housekeeper notifyHousekeeper
+// Submit a housekeeper task result
+//
+// Receives housekeeping task results from the Chrome extension and queues a background task for Laravel.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	500: errorResponse
+
+// swagger:route GET /housekeeper/tasks housekeeper listHousekeeperTasks
+// List housekeeper tasks
+//
+// Returns all housekeeper tasks with their last run status and an overdue flag.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: housekeeperTasksResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:response housekeeperTasksResponse
+// swagger:model housekeeperTasksResponse
+
+// swagger:route POST /housekeeper/tasks/{key}/complete housekeeper completeHousekeeperTask
+// Mark a housekeeper task complete
+//
+// Records the completion of a housekeeper task by key.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: key
+//     in: path
+//     description: Task key
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /housekeeper/cronjobs housekeeper listHousekeeperCronJobs
+// List cron job statuses
+//
+// Returns the status of all tracked cron jobs.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /donations/bulk donations bulkUploadDonations
+// Bulk upload donations
+//
+// Imports a batch of donation records. Requires admin authentication.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /stripeipn donations stripeIPN
+// Handle Stripe IPN webhook
+//
+// Receives Stripe webhook events (payment confirmations, subscription updates, etc.).
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+
+// swagger:route POST /donateipn donations payPalIPN
+// Handle PayPal IPN webhook
+//
+// Receives PayPal Instant Payment Notification events.
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse

@@ -256,46 +256,20 @@ func TestBuildImagePrompt_CanonicalJobResolvesToObject(t *testing.T) {
 	assert.NotContains(t, prompt, "Accountant")
 }
 
-// Regression: AI was generating images of a coot (bird) for the item "cot"
-// (a baby's bed in British English). The model is trained on US English so
-// "cot" means a camp bed / canvas cot; the British baby-bed meaning is
-// unfamiliar. Translating to "baby crib" before the prompt fixes this.
-func TestSubjectForName_BritishCotTranslatesIntoCrib(t *testing.T) {
-	assert.Equal(t, "baby crib", subjectForName("cot"),
-		"'cot' (British English baby bed) should translate to 'baby crib' for the AI model")
-}
-
-func TestSubjectForName_NappyTranslatesToDiaper(t *testing.T) {
-	assert.Equal(t, "diaper", subjectForName("nappy"))
-	assert.Equal(t, "diaper", subjectForName("nappies"))
-}
-
-func TestSubjectForName_PushchairTranslatesToStroller(t *testing.T) {
-	assert.Equal(t, "stroller", subjectForName("pushchair"))
-	assert.Equal(t, "stroller", subjectForName("pram"))
-}
-
-func TestSubjectForName_HooverTranslatesToVacuumCleaner(t *testing.T) {
-	assert.Equal(t, "vacuum cleaner", subjectForName("hoover"))
-}
-
 func TestSubjectForName_UnknownItemPassesThrough(t *testing.T) {
-	// Items not in the translation map should pass through unchanged.
 	assert.Equal(t, "pressure washer", subjectForName("pressure washer"))
 	assert.Equal(t, "bicycle", subjectForName("bicycle"))
-}
-
-func TestBuildImagePrompt_TranslatedSubjectAppearsInPrompt(t *testing.T) {
-	// The translated US English term must appear in the prompt, not the British one.
-	prompt := buildImagePrompt("cot")
-	assert.Contains(t, prompt, "baby crib",
-		"translated US English term should appear in prompt so the model generates the right image")
-	assert.NotContains(t, prompt, " cot ",
-		"original British term should not appear as an isolated word in the prompt")
+	assert.Equal(t, "cot", subjectForName("cot"))
 }
 
 func TestBuildImagePrompt_HouseholdItemContext(t *testing.T) {
 	prompt := buildImagePrompt("pressure washer")
 	assert.Contains(t, prompt, "household",
 		"prompt must describe items as household objects to disambiguate compound names")
+}
+
+func TestBuildImagePrompt_UsesAmericanEnglish(t *testing.T) {
+	prompt := buildImagePrompt("cot")
+	assert.Contains(t, prompt, "American English",
+		"prompt must instruct the model to use American English terminology")
 }
