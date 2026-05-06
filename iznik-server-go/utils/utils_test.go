@@ -817,3 +817,132 @@ func TestTidyName_NumericAfterTrim(t *testing.T) {
 	// Name that becomes numeric after trimming spaces
 	assert.Equal(t, "123.", TidyName("  123  "))
 }
+
+// ---------------------------------------------------------------------------
+// StripEmailDomain
+// ---------------------------------------------------------------------------
+
+func TestStripEmailDomain_SimpleEmail(t *testing.T) {
+	result := StripEmailDomain("john@example.com")
+	assert.Equal(t, "john", result)
+}
+
+func TestStripEmailDomain_NoAtSign(t *testing.T) {
+	result := StripEmailDomain("plaintext")
+	assert.Equal(t, "plaintext", result)
+}
+
+func TestStripEmailDomain_MultipleAtSigns(t *testing.T) {
+	result := StripEmailDomain("user@domain@example.com")
+	assert.Equal(t, "user", result)
+}
+
+func TestStripEmailDomain_EmptyString(t *testing.T) {
+	result := StripEmailDomain("")
+	assert.Equal(t, "", result)
+}
+
+func TestStripEmailDomain_OnlyAtSign(t *testing.T) {
+	result := StripEmailDomain("@")
+	assert.Equal(t, "", result)
+}
+
+func TestStripEmailDomain_TrailingAtSign(t *testing.T) {
+	result := StripEmailDomain("user@")
+	assert.Equal(t, "user", result)
+}
+
+func TestStripEmailDomain_LeadingAtSign(t *testing.T) {
+	result := StripEmailDomain("@domain.com")
+	assert.Equal(t, "", result)
+}
+
+// ---------------------------------------------------------------------------
+// TruncateStringUtil
+// ---------------------------------------------------------------------------
+
+func TestTruncateStringUtil_WithinLimit(t *testing.T) {
+	result := TruncateStringUtil("Hello", 10)
+	assert.Equal(t, "Hello", result)
+}
+
+func TestTruncateStringUtil_ExactlyAtLimit(t *testing.T) {
+	result := TruncateStringUtil("Hello", 5)
+	assert.Equal(t, "Hello", result)
+}
+
+func TestTruncateStringUtil_ExceedsLimit(t *testing.T) {
+	result := TruncateStringUtil("HelloWorld", 5)
+	assert.Equal(t, "Hello...", result)
+}
+
+func TestTruncateStringUtil_EmptyString(t *testing.T) {
+	result := TruncateStringUtil("", 5)
+	assert.Equal(t, "", result)
+}
+
+func TestTruncateStringUtil_ZeroLimit(t *testing.T) {
+	result := TruncateStringUtil("Hello", 0)
+	assert.Equal(t, "...", result)
+}
+
+func TestTruncateStringUtil_NegativeLimit(t *testing.T) {
+	// Negative limit should treat as 0
+	result := TruncateStringUtil("Hello", -1)
+	assert.Equal(t, "...", result)
+}
+
+func TestTruncateStringUtil_LongString(t *testing.T) {
+	longString := "The quick brown fox jumps over the lazy dog"
+	result := TruncateStringUtil(longString, 10)
+	assert.Equal(t, "The quick ...", result)
+}
+
+func TestTruncateStringUtil_LimitOne(t *testing.T) {
+	result := TruncateStringUtil("ABC", 1)
+	assert.Equal(t, "A...", result)
+}
+
+// ---------------------------------------------------------------------------
+// IsValidEmailAddress
+// ---------------------------------------------------------------------------
+
+func TestIsValidEmailAddress_ValidEmail(t *testing.T) {
+	assert.True(t, IsValidEmailAddress("user@example.com"))
+}
+
+func TestIsValidEmailAddress_ValidEmailWithDot(t *testing.T) {
+	assert.True(t, IsValidEmailAddress("john.doe@example.co.uk"))
+}
+
+func TestIsValidEmailAddress_ValidEmailWithPlus(t *testing.T) {
+	assert.True(t, IsValidEmailAddress("user+tag@example.com"))
+}
+
+func TestIsValidEmailAddress_NoAtSign(t *testing.T) {
+	assert.False(t, IsValidEmailAddress("notanemail"))
+}
+
+func TestIsValidEmailAddress_EmptyString(t *testing.T) {
+	assert.False(t, IsValidEmailAddress(""))
+}
+
+func TestIsValidEmailAddress_OnlyAtSign(t *testing.T) {
+	assert.False(t, IsValidEmailAddress("@"))
+}
+
+func TestIsValidEmailAddress_NoLocalPart(t *testing.T) {
+	assert.False(t, IsValidEmailAddress("@example.com"))
+}
+
+func TestIsValidEmailAddress_NoDomain(t *testing.T) {
+	assert.False(t, IsValidEmailAddress("user@"))
+}
+
+func TestIsValidEmailAddress_NoDot(t *testing.T) {
+	assert.False(t, IsValidEmailAddress("user@domain"))
+}
+
+func TestIsValidEmailAddress_SpaceInEmail(t *testing.T) {
+	assert.False(t, IsValidEmailAddress("user name@example.com"))
+}
