@@ -460,7 +460,7 @@ class ChatNotificationService
         if ($this->spooler) {
             $this->spooler->spool($mailable, $sendingTo->email_preferred, 'chat');
         } else {
-            Mail::send($mailable);
+            Mail::to($sendingTo->email_preferred)->send($mailable);
         }
     }
 
