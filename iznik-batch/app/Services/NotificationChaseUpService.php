@@ -268,7 +268,9 @@ class NotificationChaseUpService
                 'title'    => $notif->title,
                 'text'     => $notif->text,
                 'url'      => $notif->url,
-                'timestamp' => $notif->timestamp,
+                'timestamp' => \Carbon\Carbon::parse($notif->timestamp, 'UTC')
+                                   ->setTimezone('Europe/London')
+                                   ->format('D, jS F g:ia'),
                 'seen'     => $notif->seen,
                 'newsfeed' => $newsfeed ? [
                     'id'      => $newsfeed->id,
