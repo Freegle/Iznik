@@ -2338,17 +2338,139 @@ func TestGetMembershipsFilterBanned(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var wrapper map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&wrapper)
+	members, _ := wrapper["members"].([]interface{})
 
 	found := false
-	for _, m := range members {
+	for _, raw := range members {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == bannedID {
 			found = true
 		}
 	}
 	assert.True(t, found, "banned member should appear with filter=5")
+}
+
+func TestGetMembershipsBannedPaginationMissing(t *testing.T) {
+	// Regression: filter=5 (Banned members list) returns a raw JSON array with no
+	// pagination cursor. When a group has more banned members than the page limit, the
+	// excess members are permanently unreachable. The fix must return
+	// {"members":[...],"context":<cursor>} like other collections so the caller can
+	// iterate through all pages.
+	//
+	// This test FAILS on the current code because the filter=5 branch does
+	// `return c.JSON(members)` which emits a raw JSON array, not a paginated object.
+	prefix := uniquePrefix("mem_banned_nopaging")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, token := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	const totalBanned = 15
+	const pageLimit = 10
+
+	for i := 0; i < totalBanned; i++ {
+		bannedID := CreateTestUser(t, fmt.Sprintf("%s_b%02d", prefix, i), "User")
+		createBannedMember(t, bannedID, groupID)
+	}
+
+	// Confirm setup: 15 rows in users_banned for this group.
+	var dbCount int64
+	db.Raw("SELECT COUNT(*) FROM users_banned WHERE groupid = ?", groupID).Scan(&dbCount)
+	assert.Equal(t, int64(totalBanned), dbCount, "setup: expected %d banned rows in users_banned", totalBanned)
+
+	// Request page 1 with limit=10 (less than totalBanned so pagination is needed).
+	url := fmt.Sprintf("/api/memberships?groupid=%d&filter=5&limit=%d&jwt=%s", groupID, pageLimit, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// BUG: filter=5 currently returns a raw JSON array via c.JSON(members), not a
+	// paginated object {"members":[...],"context":<cursor>}. Decoding the raw array
+	// into a map[string]interface{} produces an unmarshal error — proving the response
+	// format is wrong and the caller has no cursor with which to fetch the next page.
+	var result map[string]interface{}
+	decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+	assert.NoError(t, decodeErr,
+		"Banned filter (filter=5) must return a JSON object with 'members' and 'context' keys, not a raw array")
+
+	// When the response IS a proper object, it must contain members and a context cursor.
+	members, hasMembersKey := result["members"]
+	assert.True(t, hasMembersKey, "response must have a 'members' key")
+	if hasMembersKey {
+		memberSlice, ok := members.([]interface{})
+		assert.True(t, ok)
+		assert.Len(t, memberSlice, pageLimit,
+			"first page should contain exactly %d members (limit param)", pageLimit)
+	}
+
+	ctx, hasContextKey := result["context"]
+	assert.True(t, hasContextKey, "response must have a 'context' key for pagination")
+	assert.NotNil(t, ctx,
+		"context must be non-nil when totalBanned (%d) > pageLimit (%d)", totalBanned, pageLimit)
+}
+
+func TestGetMembershipsBannedPaginationPage2(t *testing.T) {
+	// Covers the contextID > 0 branch: when a caller passes &context=<cursor> the
+	// second page should return the remaining banned members and a nil context.
+	prefix := uniquePrefix("mem_banned_p2")
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, token := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	const totalBanned = 15
+	const pageLimit = 10
+
+	for i := 0; i < totalBanned; i++ {
+		bannedID := CreateTestUser(t, fmt.Sprintf("%s_b%02d", prefix, i), "User")
+		createBannedMember(t, bannedID, groupID)
+	}
+
+	// Page 1 — get the cursor from the last member returned.
+	url1 := fmt.Sprintf("/api/memberships?groupid=%d&filter=5&limit=%d&jwt=%s", groupID, pageLimit, token)
+	req1 := httptest.NewRequest("GET", url1, nil)
+	resp1, err := getApp().Test(req1, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp1.StatusCode)
+
+	var page1 map[string]interface{}
+	json.NewDecoder(resp1.Body).Decode(&page1)
+	ctx1 := page1["context"]
+	assert.NotNil(t, ctx1, "page 1 must return a non-nil context cursor")
+	cursor := uint64(ctx1.(float64))
+
+	// Page 2 — pass the cursor to exercise the contextID > 0 branch.
+	url2 := fmt.Sprintf("/api/memberships?groupid=%d&filter=5&limit=%d&context=%d&jwt=%s",
+		groupID, pageLimit, cursor, token)
+	req2 := httptest.NewRequest("GET", url2, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&page2)
+
+	members2, hasMembersKey := page2["members"]
+	assert.True(t, hasMembersKey, "page 2 response must have a 'members' key")
+	if hasMembersKey {
+		memberSlice, ok := members2.([]interface{})
+		assert.True(t, ok)
+		remaining := totalBanned - pageLimit
+		assert.Len(t, memberSlice, remaining,
+			"page 2 should contain the remaining %d banned members", remaining)
+	}
+
+	// When len(members) < limit the context must be nil (no further pages).
+	ctx2, hasCtx2 := page2["context"]
+	assert.True(t, hasCtx2, "page 2 response must have a 'context' key")
+	assert.Nil(t, ctx2, "page 2 context must be nil when all members have been returned")
 }
 
 // TestBannedListShowsV1StyleBan verifies that a V1-style ban (only in users_banned,
@@ -2373,11 +2495,13 @@ func TestBannedListShowsV1StyleBan(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var wrapper map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&wrapper)
+	members, _ := wrapper["members"].([]interface{})
 
 	found := false
-	for _, m := range members {
+	for _, raw := range members {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == bannedID {
 			found = true
@@ -2412,12 +2536,14 @@ func TestBannedListMultipleUsersHaveUniqueIDs(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var wrapper map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&wrapper)
+	membersRaw, _ := wrapper["members"].([]interface{})
 
 	// All 3 banned users should appear.
 	foundIDs := map[uint64]bool{}
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		foundIDs[uid] = true
 		// id should equal userid for banned members (no real membership row).
@@ -2454,10 +2580,12 @@ func TestBannedListIsolatedByGroup(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var wrapper map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&wrapper)
+	members, _ := wrapper["members"].([]interface{})
 
-	for _, m := range members {
+	for _, raw := range members {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		assert.NotEqual(t, bannedID, uid, "banned member from group A must not appear in group B's list")
 	}
@@ -2500,11 +2628,13 @@ func TestBanActionWritesUsersBanned(t *testing.T) {
 	url := fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&filter=5&jwt=%s", groupID, modToken)
 	req2 := httptest.NewRequest("GET", url, nil)
 	resp2, _ := getApp().Test(req2, -1)
-	var members []map[string]interface{}
-	json.NewDecoder(resp2.Body).Decode(&members)
+	var wrapper map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&wrapper)
+	members, _ := wrapper["members"].([]interface{})
 
 	found := false
-	for _, m := range members {
+	for _, raw := range members {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == targetID {
 			found = true
@@ -3038,10 +3168,12 @@ func TestDeleteMembershipsModBansMember(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, listResp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(listResp.Body).Decode(&members)
+	var listWrapper map[string]interface{}
+	json.NewDecoder(listResp.Body).Decode(&listWrapper)
+	bannedMembers, _ := listWrapper["members"].([]interface{})
 	found := false
-	for _, m := range members {
+	for _, raw := range bannedMembers {
+		m := raw.(map[string]interface{})
 		if uint64(m["userid"].(float64)) == memberID {
 			found = true
 		}
