@@ -38,26 +38,6 @@ jobs:
               "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels" 2>/dev/null || true
             echo "Labelled PR #$PR_NUMBER as CI: Passed"
 
-  mark-ci-failed:
-    docker:
-      - image: cimg/base:current
-    resource_class: small
-    steps:
-      - run:
-          name: Mark PR as CI failed
-          command: |
-            if [ -z "$CIRCLE_PULL_REQUEST" ] || [ -z "$GITHUB_TOKEN" ]; then exit 0; fi
-            PR_NUMBER=$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$')
-            if [ -z "$PR_NUMBER" ]; then exit 0; fi
-            REPO="Freegle/Iznik"
-            curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
-              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Running" 2>/dev/null || true
-            curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{"labels":["CI: Failed"]}' \
-              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels" 2>/dev/null || true
-            echo "Labelled PR #$PR_NUMBER as CI: Failed"
-
 workflows:
   version: 2
 
@@ -81,14 +61,6 @@ workflows:
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
-          filters:
-            branches:
-              ignore:
-                - modtools
-      - mark-ci-failed:
-          requires:
-            - freegle/build-and-test
-          when: on_fail
           filters:
             branches:
               ignore:
@@ -125,14 +97,6 @@ workflows:
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
-          filters:
-            branches:
-              ignore:
-                - modtools
-      - mark-ci-failed:
-          requires:
-            - freegle/build-and-test
-          when: on_fail
           filters:
             branches:
               ignore:
