@@ -229,6 +229,188 @@
         }
       }
     },
+    "/admin/ai-images/count": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Returns the count of AI images currently in the review queue.",
+        "tags": [
+          "ai-images"
+        ],
+        "summary": "Count AI images needing regeneration",
+        "operationId": "getAIImagesCount",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/aiImagesCountResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/admin/ai-images/review": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Returns AI images that have been flagged by microvolunteers and need moderator review.",
+        "tags": [
+          "ai-images"
+        ],
+        "summary": "List AI images needing review",
+        "operationId": "listAIImagesReview",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/aiImagesReviewResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/admin/ai-images/{id}/accept": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Replaces the current AI image with the pending regenerated image.",
+        "tags": [
+          "ai-images"
+        ],
+        "summary": "Accept a regenerated AI image",
+        "operationId": "acceptAIImage",
+        "parameters": [
+          {
+            "type": "integer",
+            "format": "int64",
+            "description": "AI image ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/admin/ai-images/{id}/keep": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Clears the pending review state without changing the image. Use when the current image\nis acceptable or when every regeneration attempt is worse than the original.",
+        "tags": [
+          "ai-images"
+        ],
+        "summary": "Keep the current AI image",
+        "operationId": "keepAIImage",
+        "parameters": [
+          {
+            "type": "integer",
+            "format": "int64",
+            "description": "AI image ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/admin/ai-images/{id}/regenerate": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Generates a new AI image for the given item, optionally using a description override.",
+        "tags": [
+          "ai-images"
+        ],
+        "summary": "Regenerate an AI image",
+        "operationId": "regenerateAIImage",
+        "parameters": [
+          {
+            "type": "integer",
+            "format": "int64",
+            "description": "AI image ID",
+            "name": "id",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/aiImageRegenerateResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
     "/amp/chat/{id}": {
       "get": {
         "description": "Returns the last 5 chat messages for the earlier conversation section in AMP emails",
@@ -5615,6 +5797,93 @@
       },
       "x-go-package": "github.com/freegle/iznik-server-go/microvolunteering"
     },
+    "AIImageReview": {
+      "type": "object",
+      "title": "AIImageReview is the data returned for each image needing regeneration.",
+      "properties": {
+        "approve_count": {
+          "type": "integer",
+          "format": "int64",
+          "x-go-name": "ApproveCount"
+        },
+        "externaluid": {
+          "type": "string",
+          "x-go-name": "Externaluid"
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "ID"
+        },
+        "image_url": {
+          "type": "string",
+          "x-go-name": "ImageURL"
+        },
+        "name": {
+          "type": "string",
+          "x-go-name": "Name"
+        },
+        "pending_externaluid": {
+          "type": "string",
+          "x-go-name": "PendingExternaluid"
+        },
+        "pending_image_url": {
+          "type": "string",
+          "x-go-name": "PendingImageURL"
+        },
+        "regeneration_notes": {
+          "type": "string",
+          "x-go-name": "RegenerationNotes"
+        },
+        "reject_count": {
+          "type": "integer",
+          "format": "int64",
+          "x-go-name": "RejectCount"
+        },
+        "status": {
+          "type": "string",
+          "x-go-name": "Status"
+        },
+        "votes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AIImageVote"
+          },
+          "x-go-name": "Votes"
+        }
+      },
+      "x-go-package": "github.com/freegle/iznik-server-go/aiimage"
+    },
+    "AIImageVote": {
+      "type": "object",
+      "title": "AIImageVote is a single volunteer vote for an AI image review.",
+      "properties": {
+        "containspeople": {
+          "type": "integer",
+          "format": "int64",
+          "x-go-name": "ContainsPeople"
+        },
+        "displayname": {
+          "type": "string",
+          "x-go-name": "Displayname"
+        },
+        "result": {
+          "type": "string",
+          "x-go-name": "Result"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "x-go-name": "Timestamp"
+        },
+        "userid": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "UserID"
+        }
+      },
+      "x-go-package": "github.com/freegle/iznik-server-go/aiimage"
+    },
     "AMPChatMessage": {
       "description": "These fields are populated by enriching the base chat messages with user info.",
       "type": "object",
@@ -8500,10 +8769,23 @@
           "format": "uint64",
           "x-go-name": "Groupid"
         },
+        "heldby": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "Heldby"
+        },
         "msgid": {
           "type": "integer",
           "format": "uint64",
           "x-go-name": "Msgid"
+        },
+        "spamreason": {
+          "type": "string",
+          "x-go-name": "Spamreason"
+        },
+        "spamtype": {
+          "type": "string",
+          "x-go-name": "Spamtype"
         }
       },
       "x-go-package": "iznik-server-go/message"
@@ -8524,6 +8806,11 @@
           "type": "integer",
           "format": "uint64",
           "x-go-name": "Groupid"
+        },
+        "heldby": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "Heldby"
         }
       },
       "x-go-package": "github.com/freegle/iznik-server-go/message"
@@ -9396,6 +9683,10 @@
     "Rating": {
       "type": "object",
       "properties": {
+        "comment": {
+          "type": "string",
+          "x-go-name": "Comment"
+        },
         "id": {
           "type": "integer",
           "format": "uint64",
@@ -9415,6 +9706,10 @@
           "type": "string",
           "x-go-name": "Rating"
         },
+        "reason": {
+          "type": "string",
+          "x-go-name": "Reason"
+        },
         "timestamp": {
           "type": "string",
           "x-go-name": "Timestamp"
@@ -9422,8 +9717,7 @@
         "tn_rating_id": {
           "type": "integer",
           "format": "uint64",
-          "x-go-name": "TnRatingID",
-          "x-nullable": true
+          "x-go-name": "TnRatingID"
         },
         "visible": {
           "type": "integer",
@@ -9965,6 +10259,7 @@
           "x-go-name": "Lat"
         },
         "ljuserid": {
+          "description": "No gorm:\"-\u003e\" — user/auth.go GetLoveJunkUser writes this column via\ndb.Create(\u0026ljuser) when first creating an LJ-linked user; making it\nread-only would silently drop the value and cause a fresh user to be\ncreated on every LJ call (TestCreateChatMessageLoveJunk regression).",
           "type": "integer",
           "format": "uint64",
           "x-go-name": "Ljuserid"
@@ -10032,7 +10327,6 @@
           "x-go-name": "Source"
         },
         "spammer": {
-          "type": "boolean",
           "x-go-name": "Spammer"
         },
         "supporter": {
@@ -10069,8 +10363,7 @@
         },
         "lastupdated": {
           "type": "string",
-          "x-go-name": "LastUpdated",
-          "x-nullable": true
+          "x-go-name": "LastUpdated"
         }
       },
       "x-go-package": "github.com/freegle/iznik-server-go/changes"
@@ -10709,6 +11002,40 @@
         "type": "array",
         "items": {
           "$ref": "#/definitions/Admin"
+        }
+      }
+    },
+    "aiImageRegenerateResponse": {
+      "description": "aiImageRegenerateResponse is the response after regenerating an AI image",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "preview_url": {
+            "type": "string",
+            "x-go-name": "PreviewURL"
+          }
+        }
+      }
+    },
+    "aiImagesCountResponse": {
+      "description": "aiImagesCountResponse returns the count of images pending review",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "x-go-name": "Count"
+          }
+        }
+      }
+    },
+    "aiImagesReviewResponse": {
+      "description": "aiImagesReviewResponse is the list of AI images pending review",
+      "schema": {
+        "type": "array",
+        "items": {
+          "$ref": "#/definitions/AIImageReview"
         }
       }
     },

@@ -36,6 +36,7 @@ package swagger
 import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
+	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/admin"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
@@ -4069,3 +4070,127 @@ type CreateWorryWordRequest struct {
 	// Type of worry word
 	Type string `json:"type"`
 }
+
+// swagger:route GET /admin/ai-images/review ai-images listAIImagesReview
+// List AI images needing review
+//
+// Returns AI images that have been flagged by microvolunteers and need moderator review.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: aiImagesReviewResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// aiImagesReviewResponse is the list of AI images pending review
+// swagger:response aiImagesReviewResponse
+type aiImagesReviewResponse struct {
+	// in:body
+	Body []aiimage.AIImageReview
+}
+
+// swagger:route GET /admin/ai-images/count ai-images getAIImagesCount
+// Count AI images needing regeneration
+//
+// Returns the count of AI images currently in the review queue.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: aiImagesCountResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// aiImagesCountResponse returns the count of images pending review
+// swagger:response aiImagesCountResponse
+type aiImagesCountResponse struct {
+	// in:body
+	Body struct {
+		Count int `json:"count"`
+	}
+}
+
+// swagger:route POST /admin/ai-images/{id}/regenerate ai-images regenerateAIImage
+// Regenerate an AI image
+//
+// Generates a new AI image for the given item, optionally using a description override.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: AI image ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: aiImageRegenerateResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// aiImageRegenerateResponse is the response after regenerating an AI image
+// swagger:response aiImageRegenerateResponse
+type aiImageRegenerateResponse struct {
+	// in:body
+	Body struct {
+		PreviewURL string `json:"preview_url"`
+	}
+}
+
+// swagger:route POST /admin/ai-images/{id}/accept ai-images acceptAIImage
+// Accept a regenerated AI image
+//
+// Replaces the current AI image with the pending regenerated image.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: AI image ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route POST /admin/ai-images/{id}/keep ai-images keepAIImage
+// Keep the current AI image
+//
+// Clears the pending review state without changing the image. Use when the current image
+// is acceptable or when every regeneration attempt is worse than the original.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: AI image ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse

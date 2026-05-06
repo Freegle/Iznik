@@ -18,4 +18,8 @@ export default class AIImagesAPI extends BaseAPI {
       pending_externaluid: pendingExternaluid,
     })
   }
+
+  keep(id) {
+    return this.$postv2(`/admin/ai-images/${id}/keep`, {})
+  }
 }

@@ -206,6 +206,7 @@ func SetupRoutes(app *fiber.App) {
 		rg.Get("/admin/ai-images/count", aiimage.Count)
 		rg.Post("/admin/ai-images/:id/regenerate", aiimage.Regenerate)
 		rg.Post("/admin/ai-images/:id/accept", aiimage.Accept)
+		rg.Post("/admin/ai-images/:id/keep", aiimage.KeepCurrent)
 
 		// Authority Search
 		// @Router /authority [get]
