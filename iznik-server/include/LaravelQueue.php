@@ -84,4 +84,79 @@ class LaravelQueue
 
         return FALSE;
     }
+
+    /**
+     * Wait for tn:sync completion data to be written into background_tasks.data JSON.
+     *
+     * Returns decoded data array when tn_sync_finished, tn_sync_status,
+     * tn_sync_finished_at, and tn_sync_exit_code are present.
+     * Returns NULL on timeout, failure, missing task, run_id mismatch, or query error.
+     */
+    public static function waitForTNSyncCompletionData(
+        int $taskId,
+        string $runId,
+        int $timeoutSeconds = 60,
+        int $pollIntervalMs = 1000
+    ): ?array {
+        global $dbhr;
+
+        if ($timeoutSeconds < 0) {
+            $timeoutSeconds = 0;
+        }
+
+        if ($pollIntervalMs < 1) {
+            $pollIntervalMs = 1;
+        }
+
+        $deadline = microtime(TRUE) + $timeoutSeconds;
+
+        do {
+            try {
+                $rows = $dbhr->preQuery(
+                    "SELECT failed_at, data FROM background_tasks WHERE id = ? LIMIT 1",
+                    [$taskId]
+                );
+            } catch (\Throwable $e) {
+                error_log("Failed waiting for tn_sync completion data for task {$taskId}: " . $e->getMessage());
+                return NULL;
+            }
+
+            if (empty($rows)) {
+                error_log("Failed waiting for tn_sync completion data for task {$taskId}: task not found");
+                return NULL;
+            }
+
+            $task = $rows[0];
+
+            if (!is_null($task['failed_at'])) {
+                return NULL;
+            }
+
+            $data = json_decode((string) ($task['data'] ?? ''), TRUE);
+
+            if (!is_array($data)) {
+                usleep($pollIntervalMs * 1000);
+                continue;
+            }
+
+            if (($data['run_id'] ?? NULL) !== $runId) {
+                error_log("Failed waiting for tn_sync completion data for task {$taskId}: run_id mismatch");
+                return NULL;
+            }
+
+            $hasCompletionData =
+                ($data['tn_sync_finished'] ?? FALSE) === TRUE
+                && isset($data['tn_sync_status'])
+                && isset($data['tn_sync_finished_at'])
+                && array_key_exists('tn_sync_exit_code', $data);
+
+            if ($hasCompletionData) {
+                return $data;
+            }
+
+            usleep($pollIntervalMs * 1000);
+        } while (microtime(TRUE) < $deadline);
+
+        return NULL;
+    }
 }
