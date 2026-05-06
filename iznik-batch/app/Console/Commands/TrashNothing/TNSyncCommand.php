@@ -380,11 +380,11 @@ class TNSyncCommand extends Command
             ->having('count', '>', 1)
             ->get();
 
-        if (empty($duplicates)) {
+        if ($duplicates->isEmpty()) {
             return 0;
         }
 
-        Log::info('Found ' . count($duplicates) . ' duplicate TN users');
+        Log::info('Found ' . $duplicates->count() . ' duplicate TN users');
         $merged = 0;
 
         foreach ($duplicates as $dup) {
