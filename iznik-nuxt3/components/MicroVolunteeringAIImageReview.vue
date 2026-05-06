@@ -45,7 +45,7 @@
         </div>
       </div>
 
-      <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="mb-3">
         <div class="d-flex gap-2">
           <button class="btn btn-outline-secondary" @click="regenerate">
             Regenerate
@@ -65,13 +65,6 @@
             Next
           </button>
         </div>
-        <SpinButton
-          variant="success"
-          icon-name="thumbs-up"
-          label="Accept - looks good"
-          :disabled="containsPeople === null"
-          @handle="approve"
-        />
       </div>
 
       <div class="question-block mb-3">
@@ -85,6 +78,13 @@
             label="No, not great"
             :disabled="containsPeople === null"
             @handle="reject"
+          />
+          <SpinButton
+            variant="success"
+            icon-name="thumbs-up"
+            label="Accept - looks good"
+            :disabled="containsPeople === null"
+            @handle="approve"
           />
         </div>
         <p v-if="containsPeople === null" class="help-hint mt-2">
