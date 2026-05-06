@@ -3983,6 +3983,75 @@ func TestGetUserPartnerFixesWrongUserIDInEmail(t *testing.T) {
 	assert.NotEqual(t, wrongEmail, result.Email, "wrong-ID email should not be returned")
 }
 
+// Mod-or-above caller (systemrole Moderator/Support/Admin) sees tnuserid even
+// when not a mod of a group shared with the target.
+func TestGetUserModSeesTnuserid(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mod_sees_tnuserid")
+
+	callerID := CreateTestUser(t, prefix+"_caller", "User")
+	db.Exec("UPDATE users SET systemrole = 'Moderator' WHERE id = ?", callerID)
+	_, token := CreateTestSession(t, callerID)
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	expectedTn := uint64(targetID + 3000000)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", expectedTn, targetID)
+
+	url := fmt.Sprintf("/api/user/%d?jwt=%s", targetID, token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	if assert.NotNil(t, result.Tnuserid, "tnuserid should be returned to mod-or-above callers") {
+		assert.Equal(t, expectedTn, *result.Tnuserid, "tnuserid value should match the DB")
+	}
+}
+
+// Partner sees the user's tnuserid so they can match their records to Freegle users.
+func TestGetUserPartnerSeesTnuserid(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_tnuserid")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	expectedTn := uint64(targetID + 1000000)
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", expectedTn, targetID)
+
+	key := partnerKey(t, prefix)
+	url := fmt.Sprintf("/api/user/%d?partner=%s", targetID, key)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	if assert.NotNil(t, result.Tnuserid, "tnuserid should be returned to partners") {
+		assert.Equal(t, expectedTn, *result.Tnuserid, "tnuserid value should match the DB")
+	}
+}
+
+// Invalid partner key does not expose tnuserid (it falls under hideSensitiveFields).
+func TestGetUserInvalidPartnerSeesNoTnuserid(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_no_tnuserid")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", uint64(targetID+2000000), targetID)
+
+	url := fmt.Sprintf("/api/user/%d?partner=invalid_key_xyz", targetID)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Nil(t, result.Tnuserid, "invalid partner key should not expose tnuserid")
+}
+
 // Invalid partner key returns no email.
 func TestGetUserInvalidPartnerSeesNoEmail(t *testing.T) {
 	db := database.DBConn

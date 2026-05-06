@@ -264,8 +264,19 @@ func GetUser(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusNotFound, "User not found")
 			}
 
+			// Capture tnuserid before hideSensitiveFields strips it; partners and
+			// mod-or-above callers need it to match records to Freegle users.
+			tnuserid := user.Tnuserid
+
 			hideSensitiveFields(&user, myid)
 			enrichUserForModtools(&user, id, myid, modtools)
+
+			// Mod-or-above callers (Moderator/Support/Admin systemrole, set by
+			// authMiddleware) get tnuserid restored even when not a mod of a
+			// shared group with the target.
+			if c.Locals("userRole") != nil {
+				user.Tnuserid = tnuserid
+			}
 
 			// Partners (e.g. Trash Nothing) can see the internal @users.ilovefreegle.org
 			// email for a user so they can match their records to Freegle users.
@@ -276,6 +287,7 @@ func GetUser(c *fiber.Ctx) error {
 			if partnerKey := c.Query("partner"); partnerKey != "" {
 				if _, _, _, err := ValidatePartnerKey(database.DBConn, partnerKey); err == nil {
 					user.Email = GetOrCreateInternalEmail(database.DBConn, id)
+					user.Tnuserid = tnuserid
 				}
 			}
 
