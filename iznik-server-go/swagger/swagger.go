@@ -4226,7 +4226,6 @@ type aiImageRegenerateResponse struct {
 //	403: errorResponse
 
 // swagger:response housekeeperTasksResponse
-// swagger:model housekeeperTasksResponse
 
 // swagger:route POST /housekeeper/tasks/{key}/complete housekeeper completeHousekeeperTask
 // Mark a housekeeper task complete

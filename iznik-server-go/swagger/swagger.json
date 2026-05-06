@@ -1673,6 +1673,24 @@
         }
       }
     },
+    "/donateipn": {
+      "post": {
+        "description": "Receives PayPal Instant Payment Notification events.",
+        "tags": [
+          "donations"
+        ],
+        "summary": "Handle PayPal IPN webhook",
+        "operationId": "payPalIPN",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
     "/donations": {
       "get": {
         "security": [
@@ -1724,6 +1742,37 @@
             "$ref": "#/responses/errorResponse"
           },
           "401": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/donations/bulk": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Imports a batch of donation records. Requires admin authentication.",
+        "tags": [
+          "donations"
+        ],
+        "summary": "Bulk upload donations",
+        "operationId": "bulkUploadDonations",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
             "$ref": "#/responses/errorResponse"
           }
         }
@@ -2117,6 +2166,136 @@
         "responses": {
           "200": {
             "$ref": "#/responses/messagesResponse"
+          }
+        }
+      }
+    },
+    "/housekeeper/cronjobs": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Returns the status of all tracked cron jobs.",
+        "tags": [
+          "housekeeper"
+        ],
+        "summary": "List cron job statuses",
+        "operationId": "listHousekeeperCronJobs",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/genericResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/housekeeper/notify": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Receives housekeeping task results from the Chrome extension and queues a background task for Laravel.",
+        "tags": [
+          "housekeeper"
+        ],
+        "summary": "Submit a housekeeper task result",
+        "operationId": "notifyHousekeeper",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "500": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/housekeeper/tasks": {
+      "get": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Returns all housekeeper tasks with their last run status and an overdue flag.",
+        "tags": [
+          "housekeeper"
+        ],
+        "summary": "List housekeeper tasks",
+        "operationId": "listHousekeeperTasks",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/housekeeperTasksResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/housekeeper/tasks/{key}/complete": {
+      "post": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Records the completion of a housekeeper task by key.",
+        "tags": [
+          "housekeeper"
+        ],
+        "summary": "Mark a housekeeper task complete",
+        "operationId": "completeHousekeeperTask",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "Task key",
+            "name": "key",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
           }
         }
       }
@@ -4930,6 +5109,24 @@
         "responses": {
           "200": {
             "$ref": "#/responses/genericResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
+    "/stripeipn": {
+      "post": {
+        "description": "Receives Stripe webhook events (payment confirmations, subscription updates, etc.).",
+        "tags": [
+          "donations"
+        ],
+        "summary": "Handle Stripe IPN webhook",
+        "operationId": "stripeIPN",
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
           },
           "400": {
             "$ref": "#/responses/errorResponse"
