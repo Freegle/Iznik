@@ -45,24 +45,33 @@
         </div>
       </div>
 
-      <div class="regen-group mb-3 d-flex gap-2">
-        <button class="btn btn-outline-secondary" @click="regenerate">
-          Regenerate
-        </button>
-        <button
-          v-if="currentIndex > 0"
-          class="btn btn-outline-secondary"
-          @click="previous"
-        >
-          Previous
-        </button>
-        <button
-          v-if="currentIndex < images.length - 1"
-          class="btn btn-outline-secondary"
-          @click="next"
-        >
-          Next
-        </button>
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary" @click="regenerate">
+            Regenerate
+          </button>
+          <button
+            v-show="currentIndex > 0"
+            class="btn btn-outline-secondary"
+            @click="previous"
+          >
+            Previous
+          </button>
+          <button
+            v-show="currentIndex < images.length - 1"
+            class="btn btn-outline-secondary"
+            @click="next"
+          >
+            Next
+          </button>
+        </div>
+        <SpinButton
+          variant="success"
+          icon-name="thumbs-up"
+          label="Accept - looks good"
+          :disabled="containsPeople === null"
+          @handle="approve"
+        />
       </div>
 
       <div class="question-block mb-3">
@@ -76,13 +85,6 @@
             label="No, not great"
             :disabled="containsPeople === null"
             @handle="reject"
-          />
-          <SpinButton
-            variant="success"
-            icon-name="thumbs-up"
-            label="Accept - looks good"
-            :disabled="containsPeople === null"
-            @handle="approve"
           />
         </div>
         <p v-if="containsPeople === null" class="help-hint mt-2">

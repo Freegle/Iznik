@@ -1998,14 +1998,9 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
             last_seen_at = datetime('now')
           WHERE topic = ? AND post = ?
         `).run(bug.prRejections, bug.topic, bug.post)
-        // Queue a Discourse reply so the human sees it in the dashboard.
-        queueDiscourseDraft(db, {
-          topic: bug.topic,
-          post: bug.post,
-          username: bug.reporter ?? 'you',
-          quote: (bug.excerpt ?? '').slice(0, 120),
-          body: `I've tried fixing this ${bug.prRejections} time(s) but my approaches have been rejected. I'm not confident I understand the root cause well enough to fix it correctly. Could you advise on the right direction?`,
-        })
+        // Escalated bugs are visible via the dashboard — no Discourse draft needed.
+        // Queuing an internal "I'm stuck" message to the reporter is wrong: the human
+        // operator sees deferred bugs through the FSM dashboard, not through Discourse.
         out(`work_router_decide: escalated ${bug.topic}/${bug.post} after ${bug.prRejections} rejected PRs`)
       }
 

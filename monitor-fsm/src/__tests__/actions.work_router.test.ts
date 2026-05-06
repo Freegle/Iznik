@@ -4,6 +4,7 @@ import {
   resetDbForTests,
   upsertDiscourseBug,
   getDiscourseBug,
+  listPendingDrafts,
 } from '../db/index.js'
 
 // Action handlers call getDb() internally. We initialise the singleton with
@@ -77,7 +78,7 @@ describe('work_router_decide action', () => {
     expect(result._transition).toBe('DIAGNOSE_BUG')
   })
 
-  it('escalates bugs with 1+ rejected PRs to deferred', async () => {
+  it('escalates bugs with 1+ rejected PRs to deferred without queuing a Discourse draft', async () => {
     upsertDiscourseBug(db, { topic: 107, post: 8, state: 'open' })
     db.prepare('UPDATE discourse_bug SET pr_rejections = 1 WHERE topic = 107 AND post = 8').run()
 
@@ -85,6 +86,10 @@ describe('work_router_decide action', () => {
 
     const bug = getDiscourseBug(db, 107, 8)
     expect(bug?.state).toBe('deferred')
+    // Escalated bugs must NOT queue a Discourse reply — the operator sees them via
+    // the dashboard, and an "I'm stuck" message to the reporter is wrong.
+    const drafts = listPendingDrafts(db).filter(d => d.topic === 107 && d.post === 8)
+    expect(drafts).toHaveLength(0)
   })
 
   it('does not escalate bugs with zero rejections', async () => {
