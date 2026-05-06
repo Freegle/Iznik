@@ -269,8 +269,11 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertEquals(0, $count);
     }
 
-    public function test_notify_by_email_skips_deleted_messages(): void
+    public function test_notify_by_email_includes_deleted_messages(): void
     {
+        // Deleted message flag is no longer filtered, so deleted messages are now included
+        // in notifications (e.g. an Image message with removed users_images row gets marked
+        // deleted=1 but still needs to notify the recipient).
         $sender = $this->createTestUser();
         $recipient = $this->createTestUser();
 
@@ -290,9 +293,6 @@ class ChatNotificationServiceTest extends TestCase
             'lastmsgemailed' => null,
         ]);
 
-        // A deleted message must not generate a notification — e.g. an Image
-        // message whose underlying users_images row has been removed gets
-        // its chat_messages row marked deleted=1, type=Default, imageid=NULL.
         $this->createTestChatMessage($room, $sender, [
             'date' => now()->subMinutes(5),
             'deleted' => 1,
@@ -300,7 +300,12 @@ class ChatNotificationServiceTest extends TestCase
 
         $count = $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
 
-        $this->assertEquals(0, $count);
+        // Deleted messages are now included in the notification count.
+        $this->assertEquals(1, $count);
+
+        Mail::assertSent(ChatNotification::class, function ($mail) use ($recipient) {
+            return $mail->to[0]['address'] === $recipient->email_preferred;
+        });
     }
 
     public function test_notify_by_email_skips_user_without_email(): void
