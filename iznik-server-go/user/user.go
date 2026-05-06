@@ -53,7 +53,11 @@ type User struct {
 	Added           time.Time   `json:"added"`
 	ExpectedReplies int         `json:"expectedreplies" gorm:"-"`
 	ExpectedChats   []uint64    `json:"expectedchats" gorm:"-"`
-	Ljuserid        *uint64     `json:"ljuserid,omitempty" gorm:"->"`
+	// No gorm:"->" — user/auth.go GetLoveJunkUser writes this column via
+	// db.Create(&ljuser) when first creating an LJ-linked user; making it
+	// read-only would silently drop the value and cause a fresh user to be
+	// created on every LJ call (TestCreateChatMessageLoveJunk regression).
+	Ljuserid        *uint64     `json:"ljuserid,omitempty"`
 	Deleted         *time.Time  `json:"deleted"`
 	Forgotten       *time.Time  `json:"forgotten"`
 	Lastlocation    *uint64          `json:"lastlocation"`
