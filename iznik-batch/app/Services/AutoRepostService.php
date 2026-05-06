@@ -177,14 +177,13 @@ class AutoRepostService
 
             // V1 WARNING: within 24h window before the next repost is due.
             // arrival is reset to NOW() on every repost, so hoursago measures time since
-            // the last repost (or original post for autoreposts=0).
-            // Warning window N is from autoreposts*interval*24 to (autoreposts+1)*interval*24 hours.
-            // This ensures the window shifts with each repost cycle.
+            // the last repost (or original post for autoreposts=0). The interval-based
+            // window therefore applies as-is to every cycle — multiplying by
+            // (autoreposts + 1) here would push the window further out on each
+            // successive repost, breaking the cadence.
             // Warning emails are gated on $warningEmailEnabled; the repost itself is not.
-            $warningStart = $msg->autoreposts * $interval * 24;
-            $warningEnd = ($msg->autoreposts + 1) * $interval * 24;
-            if ($msg->hoursago <= $warningEnd
-                && $msg->hoursago > $warningStart
+            if ($msg->hoursago <= $interval * 24
+                && $msg->hoursago > ($interval - 1) * 24
                 && (is_null($lastwarnago) || $lastwarnago > 24 * 60 * 60)
             ) {
                 if (!$msg->lastautopostwarning || ($lastwarnago > 24 * 60 * 60)) {

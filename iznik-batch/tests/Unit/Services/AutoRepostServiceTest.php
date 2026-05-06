@@ -638,17 +638,25 @@ class AutoRepostServiceTest extends TestCase
         $this->assertEquals(1, $mg->autoreposts, 'autoreposts counter must be incremented after catch-up');
     }
 
-    public function test_reposts_in_subsequent_cycle_with_new_window(): void
+    /**
+     * Regression: messages #119974515 and #116370696 (FifeFreegle, group 21313) had
+     * autoreposts=1 and arrival=108h ago, with offer interval=3d. They were skipped
+     * indefinitely because an earlier broken formula used (autoreposts + 1) * interval * 24 = 144h
+     * as the threshold instead of interval * 24 = 72h. arrival is reset to NOW() on
+     * every repost, so the same interval applies each cycle — the (autoreposts + 1)
+     * multiplier widened the gap on every successive repost until the message
+     * eventually exceeded maxAge and was dropped.
+     */
+    public function test_reposts_subsequent_cycle_after_first_repost(): void
     {
-        // With the new formula, window N+1 extends further out.
-        // For autoreposts=1, interval=3d (72h): window is (1+1)*72h = 144h.
-        // At 100h: not yet in the new window (100 < 144), so no repost yet.
-        // At 150h: past the new window (150 > 144), so repost triggers.
-        $data = $this->createRepostCandidate(hoursOld: 150, autoreposts: 1);
+        // Mirror the production data: 108h since last repost, autoreposts=1, offer.
+        // arrival is set to 108h ago (i.e. simulating the time since the last repost).
+        // With interval=3d=72h, hoursago=108 > 72 must trigger another repost.
+        $data = $this->createRepostCandidate(hoursOld: 108, autoreposts: 1);
 
         $stats = $this->service->process();
 
-        $this->assertEquals(1, $stats['reposted'], 'Message in window N+1 must repost');
+        $this->assertEquals(1, $stats['reposted'], 'Message past the interval since the last repost must repost again');
 
         $mg = DB::table('messages_groups')
             ->where('msgid', $data['message']->id)
@@ -657,17 +665,20 @@ class AutoRepostServiceTest extends TestCase
         $this->assertEquals(2, $mg->autoreposts, 'autoreposts counter must be incremented to 2');
     }
 
-    public function test_warns_in_subsequent_cycle_with_new_window(): void
+    /**
+     * Regression: warning window must apply per cycle (against time since last repost),
+     * not scale by autoreposts count. With offer interval=3d, the warning fires when
+     * hoursago is in (48h, 72h] regardless of how many reposts have happened.
+     */
+    public function test_warns_in_window_for_subsequent_cycle(): void
     {
-        // With the new formula, warning window N+1 is pushed further out.
-        // For autoreposts=1, interval=3d (72h): warning window is 72h-144h.
-        // At 80h: within (1+1)*72h=144h window, so warning triggers.
-        $data = $this->createRepostCandidate(hoursOld: 80, autoreposts: 1);
+        // 50h since last repost, autoreposts=2. Warning window is 48-72h.
+        $data = $this->createRepostCandidate(hoursOld: 50, autoreposts: 2);
 
         $stats = $this->service->process();
 
-        $this->assertEquals(1, $stats['warned'], 'Message in warning window N+1 must warn');
-        $this->assertEquals(0, $stats['reposted'], 'Message in warning window must not repost');
+        $this->assertEquals(1, $stats['warned']);
+        $this->assertEquals(0, $stats['reposted']);
     }
 
     public function test_warning_email_skipped_when_email_type_disabled(): void
