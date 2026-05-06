@@ -346,8 +346,17 @@ func GetMemberships(c *fiber.Ctx) error {
 
 	// Handle Banned filter separately — V1 stores bans in users_banned only (no memberships row).
 	// V1's getBanned() queries users_banned directly and synthesises 'Banned' as the collection.
+	// Cursor-based pagination uses b.userid (returned as id) so callers can page through all bans.
 	if filter == 5 {
 		var members []GetMembershipsMember
+		contextWhere := ""
+		bannedArgs := []interface{}{groupid}
+		if contextID > 0 {
+			contextWhere = " AND b.userid < ?"
+			bannedArgs = append(bannedArgs, contextID)
+		}
+		bannedArgs = append(bannedArgs, limit)
+
 		db.Raw("SELECT b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, "+
 			"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
 			"u.fullname, u.firstname, u.lastname, u.engagement, "+
@@ -356,14 +365,19 @@ func GetMemberships(c *fiber.Ctx) error {
 			"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason "+
 			"FROM users_banned b "+
 			"JOIN users u ON u.id = b.userid "+
-			"WHERE b.groupid = ? "+
-			"ORDER BY b.date DESC LIMIT ?",
-			groupid, limit).Scan(&members)
+			"WHERE b.groupid = ?"+contextWhere+
+			" ORDER BY b.userid DESC LIMIT ?",
+			bannedArgs...).Scan(&members)
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)
 		}
 		enrichMembers(members)
-		return c.JSON(members)
+
+		var nextContext interface{}
+		if len(members) == limit {
+			nextContext = members[len(members)-1].ID
+		}
+		return c.JSON(fiber.Map{"members": members, "context": nextContext})
 	}
 
 	// Handle "Received mod mails" filter — returns members who have been sent mod mails,
