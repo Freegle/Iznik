@@ -98,7 +98,8 @@ jobs:
                 if [ -n "$FIVE_MIN_AGO" ]; then
                   # Normalize timestamps by removing microseconds, then compare
                   # String comparison works for ISO 8601 when precision is uniform
-                  ONLINE_COUNT=$(echo "$RESPONSE" | jq --arg cutoff "$FIVE_MIN_AGO" '[.items[] | select(.resource_class=="freegle/circleci-docker-runner" and ((.last_connected | split(".")[0] + "Z") >= $cutoff))] | length' 2>/dev/null) || ONLINE_COUNT=0
+                  # Use try-catch to gracefully handle missing or malformed last_connected
+                  ONLINE_COUNT=$(echo "$RESPONSE" | jq --arg cutoff "$FIVE_MIN_AGO" '[.items[] | select(.resource_class=="freegle/circleci-docker-runner" and (try ((.last_connected | split(".")[0] + "Z") >= $cutoff) catch false))] | length' 2>/dev/null) || ONLINE_COUNT=0
                 else
                   # Fallback if date command doesn't support -d (some systems)
                   ONLINE_COUNT=$(echo "$RESPONSE" | jq '[.items[] | select(.resource_class=="freegle/circleci-docker-runner")] | length' 2>/dev/null) || ONLINE_COUNT=0
