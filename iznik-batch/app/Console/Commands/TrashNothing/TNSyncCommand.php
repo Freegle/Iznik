@@ -13,6 +13,7 @@ use App\Services\LokiService;
 use App\Traits\GracefulShutdown;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -24,7 +25,8 @@ class TNSyncCommand extends Command
 
     protected $signature = 'tn:sync
                             {--from= : Override sync start timestamp (ISO-8601)}
-                            {--to= : Override sync end timestamp (ISO-8601)}';
+                            {--to= : Override sync end timestamp (ISO-8601)}
+                            {--run-id= : Queue run identifier used to update background_tasks JSON completion state}';
 
     protected $description = 'Sync data from TrashNothing, including user data updates, user ratings, posts/messages, and chat messages.';
 
@@ -44,9 +46,12 @@ class TNSyncCommand extends Command
     public function handle(): int
     {
         $this->registerShutdownHandlers();
+        $exitCode = Command::FAILURE;
+        $errorMessage = null;
 
         if (!$this->acquireLock()) {
             $this->warn('TN sync is already running.');
+            $this->markQueueRunCompleted(Command::SUCCESS, 'lock already held');
             return Command::SUCCESS;
         }
 
@@ -55,7 +60,7 @@ class TNSyncCommand extends Command
         $this->dateFile = config('freegle.trashnothing.sync_date_file');
 
         try {
-            return $this->runWithLogging(function () {
+            $exitCode = $this->runWithLogging(function () {
                 $this->info('Starting TN sync...');
 
                 $from = $this->resolveFromDate();
@@ -105,12 +110,82 @@ class TNSyncCommand extends Command
 
                 return Command::SUCCESS;
             });
+
+            return $exitCode;
         } catch (\Exception $e) {
+            $errorMessage = $e->getMessage();
             $this->error('TN sync failed: ' . $e->getMessage());
             Log::error('TN sync failed', ['error' => $e->getMessage()]);
+            $exitCode = Command::FAILURE;
             return Command::FAILURE;
         } finally {
+            $this->markQueueRunCompleted($exitCode, $errorMessage);
             $this->releaseLock();
+        }
+    }
+
+    private function markQueueRunCompleted(int $exitCode, ?string $errorMessage = null): void
+    {
+        $runId = $this->option('run-id');
+
+        if (!is_string($runId) || $runId === '') {
+            return;
+        }
+
+        try {
+            $task = DB::table('background_tasks')
+                ->select('id', 'data')
+                ->where('task_type', 'tn_sync_command')
+                ->where('data->run_id', $runId)
+                ->orderByDesc('id')
+                ->first();
+
+            if (!$task) {
+                Log::warning('[QUEUE-WRITEBACK] background_tasks row not found for run_id', [
+                    'run_id' => $runId,
+                ]);
+                return;
+            }
+
+            $data = json_decode((string) $task->data, true);
+
+            if (!is_array($data)) {
+                $data = [];
+            }
+
+            $data['tn_sync_finished'] = true;
+            $data['tn_sync_status'] = $exitCode === Command::SUCCESS ? 'success' : 'failed';
+            $data['tn_sync_finished_at'] = gmdate('c');
+            $data['tn_sync_exit_code'] = $exitCode;
+
+            if ($errorMessage) {
+                $data['tn_sync_error'] = substr($errorMessage, 0, 2000);
+            }
+
+            $encodedData = json_encode($data, JSON_UNESCAPED_SLASHES);
+
+            if ($encodedData === false) {
+                Log::warning('[QUEUE-WRITEBACK] failed to encode completion payload', [
+                    'run_id' => $runId,
+                ]);
+                return;
+            }
+
+            DB::table('background_tasks')
+                ->where('id', $task->id)
+                ->update(['data' => $encodedData]);
+
+            Log::info('[QUEUE-WRITEBACK] marked run complete', [
+                'task_id' => $task->id,
+                'run_id' => $runId,
+                'status' => $data['tn_sync_status'],
+                'exit_code' => $exitCode,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('[QUEUE-WRITEBACK] exception writing completion payload', [
+                'run_id' => $runId,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 

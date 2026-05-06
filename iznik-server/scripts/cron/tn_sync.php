@@ -33,25 +33,37 @@ if (!$from) {
 }
 
 $to = Utils::ISODate('@' . time());
+$runId = uniqid('tnsync-', TRUE);
 
-error_log("TN-SYNC-TRACE [START] from=$from to=$to");
+error_log("TN-SYNC-TRACE [START] from=$from to=$to run_id=$runId");
 
 # Run the Laravel tn:sync command first with the exact same timing window, and wait for completion.
 $queuedTaskId = LaravelQueue::queueTask('tn_sync_command', [
     'from' => $from,
     'to' => $to,
+    'run_id' => $runId,
     'queued_by' => 'tn_sync.php'
 ]);
 
 if (is_null($queuedTaskId)) {
-    error_log('TN-SYNC-TRACE [QUEUE] failed to queue tn_sync_command task');
+    error_log("[QUEUE] failed to queue tn_sync_command task run_id=$runId");
 } else {
     $waitOk = LaravelQueue::waitForTaskProcessed($queuedTaskId, 300, 1000);
 
     if (!$waitOk) {
-        error_log("TN-SYNC-TRACE [QUEUE] task $queuedTaskId did not complete successfully before timeout");
+        error_log("[QUEUE] task $queuedTaskId did not complete successfully before timeout run_id=$runId");
     } else {
-        error_log("TN-SYNC-TRACE [QUEUE] task $queuedTaskId completed");
+        $completionData = LaravelQueue::waitForTNSyncCompletionData($queuedTaskId, $runId, 300, 1000);
+
+        if (is_null($completionData)) {
+            error_log("[QUEUE] task $queuedTaskId completed but tn_sync completion data was not populated before timeout run_id=$runId");
+        } else {
+            $status = Utils::presdef('tn_sync_status', $completionData, 'unknown');
+            $finishedAt = Utils::presdef('tn_sync_finished_at', $completionData, 'unknown');
+            $exitCode = Utils::presdef('tn_sync_exit_code', $completionData, 'unknown');
+
+            error_log("[QUEUE] task $queuedTaskId completion data ready run_id=$runId status=$status finished_at=$finishedAt exit_code=$exitCode");
+        }
     }
 }
 

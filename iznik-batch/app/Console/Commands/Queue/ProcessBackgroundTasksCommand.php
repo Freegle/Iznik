@@ -1425,12 +1425,17 @@ class ProcessBackgroundTasksCommand extends Command
             $args['--to'] = (string) $data['to'];
         }
 
+        if (!empty($data['run_id'])) {
+            $args['--run-id'] = (string) $data['run_id'];
+        }
+
         $exitCode = Artisan::call('tn:sync', $args);
 
         Log::info('Processed tn_sync_command task', [
             'exit_code' => $exitCode,
             'from' => $args['--from'] ?? null,
             'to' => $args['--to'] ?? null,
+            'run_id' => $args['--run-id'] ?? null,
         ]);
 
         if ($exitCode !== 0) {
