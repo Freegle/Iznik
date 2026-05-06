@@ -129,7 +129,6 @@ class ChatNotificationService
             ->where('chat_rooms.chattype', $chatType)
             ->where('chat_messages.date', '>=', $startTime)
             ->where('chat_messages.date', '<=', $endTime)
-            ->where('chat_messages.deleted', 0)
             ->whereNull('users.deleted')
             ->select('chat_messages.*');
 
