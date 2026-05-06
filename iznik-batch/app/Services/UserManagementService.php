@@ -540,8 +540,8 @@ class UserManagementService
 
         // Remove from Related Members — deleted users should not appear as related to anyone.
         DB::table('users_related')
-            ->where('userid1', $userId)
-            ->orWhere('userid2', $userId)
+            ->where('user1', $userId)
+            ->orWhere('user2', $userId)
             ->delete();
 
         // Delete postal addresses.

@@ -328,8 +328,8 @@ class UserManagementServiceTest extends TestCase
         $this->assertDatabaseMissing('memberships', ['userid' => $user->id]);
 
         // users_related entries should be removed so deleted users don't appear in Related Members.
-        $this->assertDatabaseMissing('users_related', ['userid1' => $user->id]);
-        $this->assertDatabaseMissing('users_related', ['userid2' => $user->id]);
+        $this->assertDatabaseMissing('users_related', ['user1' => $user->id]);
+        $this->assertDatabaseMissing('users_related', ['user2' => $user->id]);
 
         // Log entry should exist.
         $this->assertDatabaseHas('logs', [
