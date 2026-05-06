@@ -86,6 +86,21 @@ describe('useThrottle', () => {
       vi.advanceTimersByTime(100)
       expect(mockResolve).toHaveBeenCalledTimes(1)
     })
+
+    it('should resolve the throttleFetches promise when fetchingCount drops to 0', async () => {
+      mockMessageStore.fetchingCount = 5
+
+      const promise = throttleFetches()
+
+      // Still throttled — first timer fires but fetchingCount still 5
+      vi.advanceTimersByTime(100)
+
+      // Now clear the throttle and advance — timer resolves the promise
+      mockMessageStore.fetchingCount = 0
+      vi.advanceTimersByTime(100)
+
+      await promise
+    })
   })
 
   describe('checkThrottle', () => {
