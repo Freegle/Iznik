@@ -230,7 +230,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `user_exhort.php` | Every 1 min | Medium | User encouragement |
 | `lovejunk.php` | Every 1 min | Medium | LoveJunk integration |
 | `exports.php` | Every 1 min | Low | Data exports |
-| `notification_chaseup.php` | Every 5 min | Medium | Notification reminders |
+| ~~`notification_chaseup.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Notification reminders~~ — **Migrated: `mail:notifications:chaseup`** |
 | `previews.php` | Every 5 min | Medium | Link preview generation |
 | `check_cgas.php` | Every 5 min | Low | CGA checking |
 | `message_spatial.php` | Every 5 min | Medium | Spatial index updates |
