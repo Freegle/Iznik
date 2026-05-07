@@ -94,6 +94,13 @@ module.exports = defineConfig({
                     // error class we add drops coverage — Vitest unit tests
                     // cover it properly, so exclude from Playwright only.
                     !sourcePath.includes('useSuppressException') &&
+                    // Favourite-page composable: a trivial setter that fires
+                    // on every myposts page load. Its `if` branch coverage
+                    // varies with test execution order (first vs. subsequent
+                    // visits see different store state), making the percentage
+                    // volatile across CI runs. Fully covered by Vitest unit
+                    // tests; excluded from Playwright to stabilise coverage.
+                    !sourcePath.includes('useFavoritePage') &&
                     // Uppy retry-coalesce composable: its branches fire only
                     // on Uppy upload errors / state-corruption exceptions
                     // that Playwright e2e flows don't trigger. Unit-tested
