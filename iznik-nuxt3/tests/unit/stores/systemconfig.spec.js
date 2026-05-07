@@ -375,4 +375,5 @@ describe('systemconfig store', () => {
         { id: 1, keyword: 'keep', category: 'review' },
       ])
     })
+  })
 })
