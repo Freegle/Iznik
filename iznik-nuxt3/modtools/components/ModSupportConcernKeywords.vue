@@ -101,11 +101,11 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useSystemConfigStore } from '~/stores/systemconfig'
 
 const systemConfigStore = useSystemConfigStore()
-await systemConfigStore.fetchConcernKeywords()
+onMounted(() => systemConfigStore.fetchConcernKeywords())
 
 const newKeyword = ref('')
 const newCategory = ref('review')

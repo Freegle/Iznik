@@ -61,7 +61,7 @@ type ConcernKeyword struct {
 	MatchMode string  `json:"match_mode" gorm:"column:match_mode"`
 	Exclude   *string `json:"exclude"`
 	Scope     string  `json:"scope"`
-	GroupID   *uint64 `json:"group_id" gorm:"column:group_id"`
+	GroupID   uint64  `json:"group_id" gorm:"column:group_id"`
 	Action    string  `json:"action"`
 }
 
@@ -76,7 +76,7 @@ type CreateConcernKeywordRequest struct {
 	MatchMode string  `json:"match_mode"`
 	Exclude   *string `json:"exclude"`
 	Scope     string  `json:"scope"`
-	GroupID   *uint64 `json:"group_id"`
+	GroupID   uint64  `json:"group_id"`
 	Action    string  `json:"action"`
 }
 

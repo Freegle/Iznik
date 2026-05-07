@@ -32,8 +32,11 @@ class MigrateConcernKeywordsCommand extends Command
             return Command::SUCCESS;
         }
 
-        $wwCount  = $this->migrateWorrywords($dryRun);
-        $skCount  = $this->migrateSpamKeywords($dryRun);
+        // Track global keywords already inserted to detect cross-table conflicts.
+        $seen = [];
+
+        $wwCount  = $this->migrateWorrywords($dryRun, $seen);
+        $skCount  = $this->migrateSpamKeywords($dryRun, $seen);
         $grpCount = $this->migratePerGroupWords($dryRun);
 
         $mode = $dryRun ? '[DRY RUN] Would insert' : 'Inserted';
@@ -41,7 +44,7 @@ class MigrateConcernKeywordsCommand extends Command
         return Command::SUCCESS;
     }
 
-    private function migrateWorrywords(bool $dryRun): int
+    private function migrateWorrywords(bool $dryRun, array &$seen): int
     {
         $rows = DB::table('worrywords')->get();
         $count = 0;
@@ -58,7 +61,7 @@ class MigrateConcernKeywordsCommand extends Command
                 'match_mode' => $matchMode,
                 'action'     => $action,
                 'scope'      => 'global',
-                'group_id'   => null,
+                'group_id'   => 0,
                 'created_at' => now(),
                 'updated_at' => now(),
             ];
@@ -68,13 +71,14 @@ class MigrateConcernKeywordsCommand extends Command
             } else {
                 DB::table('concern_keywords')->insertOrIgnore($record);
             }
+            $seen[$ww->keyword] = "worrywords:{$ww->type}";
             $count++;
         }
 
         return $count;
     }
 
-    private function migrateSpamKeywords(bool $dryRun): int
+    private function migrateSpamKeywords(bool $dryRun, array &$seen): int
     {
         $rows = DB::table('spam_keywords')->get();
         $count = 0;
@@ -84,6 +88,11 @@ class MigrateConcernKeywordsCommand extends Command
             $matchMode = ($sk->type === 'Regex') ? 'regex' : 'literal';
             $action    = ($sk->action === 'Spam') ? 'block' : 'flag';
 
+            if (isset($seen[$sk->word])) {
+                $this->warn("  [sk] Skipping duplicate '{$sk->word}' (already migrated from {$seen[$sk->word]})");
+                continue;
+            }
+
             $record = [
                 'keyword'    => $sk->word,
                 'substance'  => null,
@@ -92,7 +101,7 @@ class MigrateConcernKeywordsCommand extends Command
                 'exclude'    => $sk->exclude ?? null,
                 'action'     => $action,
                 'scope'      => 'global',
-                'group_id'   => null,
+                'group_id'   => 0,
                 'created_at' => now(),
                 'updated_at' => now(),
             ];
@@ -102,6 +111,7 @@ class MigrateConcernKeywordsCommand extends Command
             } else {
                 DB::table('concern_keywords')->insertOrIgnore($record);
             }
+            $seen[$sk->word] = "spam_keywords:{$sk->type}";
             $count++;
         }
 

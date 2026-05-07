@@ -27,7 +27,7 @@ return new class extends Migration
             $table->enum('match_mode', ['fuzzy', 'literal', 'regex'])->default('literal');
             $table->text('exclude')->nullable();
             $table->enum('scope', ['global', 'group'])->default('global');
-            $table->unsignedInteger('group_id')->nullable();
+            $table->unsignedInteger('group_id')->default(0); // 0 = global; actual group ID for group scope
             $table->enum('action', ['block', 'flag'])->default('flag');
             $table->timestamp('created_at')->useCurrent();
             $table->timestamp('updated_at')->useCurrent()->useCurrentOnUpdate();

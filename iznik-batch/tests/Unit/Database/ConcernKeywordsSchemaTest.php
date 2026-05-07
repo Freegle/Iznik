@@ -23,20 +23,22 @@ class ConcernKeywordsSchemaTest extends TestCase
         }
     }
 
-    public function test_group_id_is_nullable(): void
+    public function test_global_entry_uses_group_id_zero(): void
     {
         $this->assertTrue(Schema::hasColumn('concern_keywords', 'group_id'));
 
+        $keyword = 'test-schema-global-' . uniqid();
         DB::table('concern_keywords')->insertOrIgnore([
-            'keyword'    => 'test-schema-global-' . uniqid(),
+            'keyword'    => $keyword,
             'category'   => 'review',
             'match_mode' => 'literal',
             'action'     => 'flag',
             'scope'      => 'global',
-            'group_id'   => null,
+            'group_id'   => 0,
         ]);
 
-        $this->assertDatabaseHas('concern_keywords', ['scope' => 'global', 'group_id' => null]);
+        $this->assertDatabaseHas('concern_keywords', ['keyword' => $keyword, 'scope' => 'global', 'group_id' => 0]);
+        DB::table('concern_keywords')->where('keyword', $keyword)->delete();
     }
 
     public function test_category_enum_values(): void
