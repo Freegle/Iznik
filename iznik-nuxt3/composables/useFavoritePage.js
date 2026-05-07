@@ -3,10 +3,13 @@ import { useMiscStore } from '~/stores/misc'
 export function useFavoritePage(pageName) {
   const miscStore = useMiscStore()
 
-  // Always set — miscStore.set() is a cheap in-memory write (no API call),
-  // so the former guard against redundant writes is unnecessary overhead.
-  miscStore.set({
-    key: 'lasthomepage',
-    value: pageName,
-  })
+  // save this page as the favorite one, so that the user is automatically redirected here the next time they load the app
+  const existingHomepage = miscStore.get('lasthomepage')
+
+  if (existingHomepage !== pageName) {
+    miscStore.set({
+      key: 'lasthomepage',
+      value: pageName,
+    })
+  }
 }
