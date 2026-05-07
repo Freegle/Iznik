@@ -140,12 +140,11 @@ Schedule::command('monitor:email-health')
 
 // Notification chaseup - send emails for unseen, unmailed site notifications.
 // V1: cron/notification_chaseup.php (every 5 minutes)
-// Disabled until parallel run verified. Enable by removing the comments.
-// Schedule::command('mail:notifications:chaseup')
-//     ->everyFiveMinutes()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('mail:notifications:chaseup'))
-//     ->runInBackground();
+Schedule::command('mail:notifications:chaseup')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:notifications:chaseup'))
+    ->runInBackground();
 
 // =============================================================================
 // DISABLED COMMANDS (to be enabled when ready)
