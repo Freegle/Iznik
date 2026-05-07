@@ -1220,6 +1220,12 @@ FORBIDDEN:
   - Creating a new PR when asked to fix an existing one (FIX_OPEN_PR_CI). Push a commit to the PR's branch instead.
   - Using port 38081 or any port other than 8081 for the test/status API.
 
+PUSH VERIFICATION — Required before any push marker:
+For PR_NUMBER=, DIRECT_PUSH=, or COMMIT_PUSHED=, you MUST first verify the push landed remotely:
+  git -C /home/edward/FreegleDockerWSL log origin/<branch> -1 --format=%H
+If the SHA matches what you pushed, emit on its own line: PUSH_VERIFIED=<sha>
+If they don't match: emit DELEGATE_FAILED=push not verified: local <local_sha> != remote <remote_sha>
+
 OUTPUT MARKERS — MANDATORY, MACHINE-PARSED:
 The parent FSM greps your stdout for these exact markers. Your prose does NOT count — "Fix pushed to PR #208" is invisible to the parser. You MUST emit exactly ONE of these on its own line at the very end:
   - Opened a NEW PR:                 PR_NUMBER=<n>
@@ -1499,6 +1505,12 @@ ${worktreeCreated ? `Your working directory is an ISOLATED git worktree at \`${w
 
 BRANCH RULES: always \`git fetch origin && git checkout -b branch-name origin/master\` for new branches. For existing PR branches: \`gh pr checkout <n> -R Freegle/Iznik\`.
 STAGING RULES: never \`git add -A\`. Always stage explicit paths.
+
+PUSH VERIFICATION — Required before any push marker:
+For PR_NUMBER=, DIRECT_PUSH=, or COMMIT_PUSHED=, you MUST first verify the push landed remotely:
+  git -C /home/edward/FreegleDockerWSL log origin/<branch> -1 --format=%H
+If the SHA matches what you pushed, emit on its own line: PUSH_VERIFIED=<sha>
+If they don't match: emit DELEGATE_FAILED=push not verified: local <local_sha> != remote <remote_sha>
 
 OUTPUT MARKERS — MANDATORY, MACHINE-PARSED (emit exactly one on its own line at the very end):
   - Opened a NEW PR:                 PR_NUMBER=<n>
