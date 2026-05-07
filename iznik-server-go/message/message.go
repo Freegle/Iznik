@@ -2686,17 +2686,7 @@ func PatchMessage(c *fiber.Ctx) error {
 	return applyPatchMessage(c, myid, req)
 }
 
-// PatchMessageByTN updates a message identified by its Trash Nothing post ID
-// (PATCH /message/tn/:tnpostid). Intended for partner integrations where the
-// Freegle message ID is not yet known (e.g. post held for moderation).
-//
-// @Summary Update a message by TN post ID
-// @Tags message
-// @Accept json
-// @Produce json
-// @Param tnpostid path string true "Trash Nothing post ID"
-// @Success 200 {object} map[string]interface{}
-// @Router /api/message/tn/{tnpostid} [patch]
+// PatchMessageByTN updates a message by TN post ID (PATCH /message/tn/:tnpostid).
 func PatchMessageByTN(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
