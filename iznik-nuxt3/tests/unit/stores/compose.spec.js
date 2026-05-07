@@ -428,7 +428,7 @@ describe('compose store', () => {
       )
     })
 
-    it('handles AI illustration attachments', async () => {
+    it('handles AI illustration attachments when no real photo present', async () => {
       const store = useComposeStore()
       store.init({ public: {} })
       store.postcode = { id: 123 }
@@ -439,10 +439,7 @@ describe('compose store', () => {
         {
           type: 'Offer',
           item: 'Test',
-          attachments: [
-            { ouruid: 'abc123', externalmods: { ai: true } },
-            { id: 5 },
-          ],
+          attachments: [{ ouruid: 'abc123', externalmods: { ai: true } }],
         },
         'test@example.com'
       )
@@ -452,7 +449,7 @@ describe('compose store', () => {
         externalmods: { ai: true },
       })
       expect(mockMessagePut).toHaveBeenCalledWith(
-        expect.objectContaining({ attachments: [77, 5] })
+        expect.objectContaining({ attachments: [77] })
       )
     })
 
@@ -689,6 +686,40 @@ describe('compose store', () => {
     it('returns true when no postcode', () => {
       const store = useComposeStore()
       expect(store.noGroups).toBe(true)
+    })
+  })
+
+  describe('AI image suppressed when user uploads own photo', () => {
+    it('excludes AI-generated image from submission when user has uploaded their own real photo', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      mockImagePost.mockResolvedValue({ id: 77 })
+      mockMessagePut.mockResolvedValue({ id: 99 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const errSpy = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+
+      await store.createDraft(
+        {
+          type: 'Offer',
+          item: 'Old sofa',
+          attachments: [
+            { ouruid: 'ai-uid-abc', externalmods: { ai: true } },
+            { id: 5 },
+          ],
+        },
+        'user@example.com'
+      )
+
+      const callArgs = mockMessagePut.mock.calls[0][0]
+      // CORRECT: only the user's real photo; AI image must be absent
+      expect(callArgs.attachments).not.toContain(77)
+      expect(callArgs.attachments).toEqual([5])
+
+      logSpy.mockRestore()
+      errSpy.mockRestore()
     })
   })
 })
