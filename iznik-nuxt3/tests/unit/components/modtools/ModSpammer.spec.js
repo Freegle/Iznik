@@ -243,5 +243,29 @@ describe('ModSpammer', () => {
       expect(wrapper.text()).toContain('Minimal User')
       expect(wrapper.text()).toContain('Confirmed Spammer')
     })
+
+    it('handles null spammer object without crashing', () => {
+      const user = {
+        id: 100,
+        displayname: 'User with Null Spammer',
+        spammer: null,
+      }
+      const wrapper = mountComponent({ user })
+      // Should not render the NoticeMessage when spammer is null
+      expect(wrapper.find('.notice').exists()).toBe(false)
+    })
+
+    it('handles boolean spammer (legacy userStore shape) without crashing', () => {
+      // userStore.byId can return a user with spammer:true (boolean) when the
+      // memberStore enrichment hasn't populated the rich object. The template
+      // must not try to read .reason off a boolean.
+      const user = {
+        id: 101,
+        displayname: 'User with Boolean Spammer',
+        spammer: true,
+      }
+      const wrapper = mountComponent({ user })
+      expect(wrapper.find('.notice').exists()).toBe(false)
+    })
   })
 })

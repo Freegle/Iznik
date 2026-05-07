@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/log"
 	user2 "github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/gofiber/fiber/v2"
@@ -459,7 +458,7 @@ func TestPostUserRateDown(t *testing.T) {
 
 	// Rate user down with reason and text.
 	rating := "Down"
-	reason := "Didn't show up"
+	reason := "NoShow"
 	text := "Was a no-show"
 	payload := map[string]interface{}{
 		"action": "Rate",
@@ -521,7 +520,7 @@ func TestPostUserRatingReviewed(t *testing.T) {
 	_, token := CreateTestSession(t, raterID)
 
 	// Insert a rating with reviewrequired.
-	db.Exec("INSERT INTO ratings (rater, ratee, rating, reason, text, timestamp, reviewrequired) VALUES (?, ?, 'Down', 'Test', 'Test', NOW(), 1)",
+	db.Exec("INSERT INTO ratings (rater, ratee, rating, reason, text, timestamp, reviewrequired) VALUES (?, ?, 'Down', 'Other', 'Test', NOW(), 1)",
 		raterID, rateeID)
 	var ratingID uint64
 	db.Raw("SELECT id FROM ratings WHERE rater = ? AND ratee = ? ORDER BY id DESC LIMIT 1", raterID, rateeID).Scan(&ratingID)
@@ -926,6 +925,79 @@ func TestPutUserDuplicateEmail(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(2), result["ret"])
 	assert.Contains(t, result["status"], "already in use")
+}
+
+// TestPutUserDuplicateEmailAuthenticated verifies that an authenticated user (e.g. a moderator
+// using Add Member in ModTools) receives the existing user's ID rather than a 409 conflict.
+// Regression test for https://discourse.ilovefreegle.org/t/9618/14.
+func TestPutUserDuplicateEmailAuthenticated(t *testing.T) {
+	prefix := uniquePrefix("putdupauth")
+	existingID := CreateTestUser(t, prefix+"_existing", "User")
+	db := database.DBConn
+
+	var existingEmail string
+	db.Raw("SELECT email FROM users_emails WHERE userid = ? LIMIT 1", existingID).Scan(&existingEmail)
+
+	// Caller is an authenticated moderator.
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	payload := map[string]interface{}{
+		"email": existingEmail,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PUT", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+	assert.Equal(t, float64(existingID), result["id"])
+}
+
+// TestPutUserDuplicateEmailCorrectPassword verifies that an unauthenticated caller
+// who provides the correct password for an existing account gets logged in (200 + JWT)
+// rather than a 409 conflict.  This is the "sign-up with existing email → login" path.
+func TestPutUserDuplicateEmailCorrectPassword(t *testing.T) {
+	prefix := uniquePrefix("putduppw")
+	password := "testpassword123"
+	email := fmt.Sprintf("%s@test.com", prefix)
+
+	// First call: create the user.
+	payload := map[string]interface{}{
+		"email":     email,
+		"firstname": "Dup",
+		"lastname":  "PwTest",
+		"password":  password,
+	}
+	s, _ := json.Marshal(payload)
+	req1 := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(s))
+	req1.Header.Set("Content-Type", "application/json")
+	resp1, err := getApp().Test(req1, 5000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp1.StatusCode)
+
+	var result1 map[string]interface{}
+	json.NewDecoder(resp1.Body).Decode(&result1)
+	existingID := uint64(result1["id"].(float64))
+	assert.NotZero(t, existingID)
+
+	// Second call with the same email and correct password: should log in, not conflict.
+	s2, _ := json.Marshal(payload)
+	req2 := httptest.NewRequest("PUT", "/api/user", bytes.NewBuffer(s2))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := getApp().Test(req2, 5000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp2.StatusCode)
+
+	var result2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&result2)
+	assert.Equal(t, float64(0), result2["ret"])
+	assert.Equal(t, float64(existingID), result2["id"])
+	assert.NotEmpty(t, result2["jwt"])
 }
 
 func TestPutUserWithGroup(t *testing.T) {
@@ -1552,15 +1624,8 @@ func TestLimboUserAdmin(t *testing.T) {
 	targetID := CreateTestUser(t, prefix+"_target", "User")
 	_, adminToken := CreateTestSession(t, adminID)
 
-	// Give the target a membership so we can verify it gets removed.
-	groupID := CreateTestGroup(t, prefix)
-	CreateTestMembership(t, targetID, groupID, "Member")
-
-	// Verify membership exists before delete.
-	var memBefore int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
-		targetID, groupID).Scan(&memBefore)
-	assert.Equal(t, int64(1), memBefore, "Membership should exist before delete")
+	// Clear any pre-existing background tasks for this user so the count is clean.
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", targetID)
 
 	payload := map[string]interface{}{
 		"id": targetID,
@@ -1576,22 +1641,41 @@ func TestLimboUserAdmin(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(0), result["ret"])
 
-	// Verify target user is marked as deleted.
+	// Admin purge should queue a user_forget background task, not just set deleted.
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", targetID).Scan(&taskCount)
+	assert.Equal(t, int64(1), taskCount, "Admin purge should queue a user_forget background task")
+
+	// The user's deleted column should NOT be touched — forgetUser() in Laravel handles all cleanup.
 	var deleted *string
 	db.Raw("SELECT deleted FROM users WHERE id = ?", targetID).Scan(&deleted)
-	assert.NotNil(t, deleted)
+	assert.Nil(t, deleted, "Admin purge should not set deleted; Laravel forgetUser() does all cleanup")
+}
 
-	// Verify approved memberships were removed.
-	var memAfter int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
-		targetID, groupID).Scan(&memAfter)
-	assert.Equal(t, int64(0), memAfter, "Approved memberships should be removed on delete")
+// TestLimboUserSelfDelete verifies that a user deleting themselves goes into limbo (soft-delete)
+// and does NOT queue a user_forget task — they get a 14-day grace period to recover.
+func TestLimboUserSelfDelete(t *testing.T) {
+	prefix := uniquePrefix("selfdel")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
 
-	// Verify log entry was created.
-	var logCount int64
-	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND user = ? AND byuser = ?",
-		log.LOG_TYPE_USER, log.LOG_SUBTYPE_DELETED, targetID, adminID).Scan(&logCount)
-	assert.Equal(t, int64(1), logCount, "Delete should create a User/Deleted log entry")
+	db.Exec("DELETE FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", userID)
+
+	// Self-delete: no id in payload, defaults to self.
+	request := httptest.NewRequest("DELETE", "/api/user?jwt="+token, nil)
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	// Self-delete must set deleted (limbo), not queue a forget task.
+	var deleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&deleted)
+	assert.NotNil(t, deleted, "Self-delete should put user in limbo (deleted set)")
+
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'user_forget' AND JSON_EXTRACT(data, '$.user_id') = ?", userID).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "Self-delete must not queue a forget task — user has 14-day grace period")
 }
 
 func TestLimboUserNotAdmin(t *testing.T) {
@@ -1609,6 +1693,32 @@ func TestLimboUserNotAdmin(t *testing.T) {
 	resp, err := getApp().Test(request)
 	assert.NoError(t, err)
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+// TestLimboUserAdminCannotDeleteModerator verifies that even admin/support cannot directly
+// delete a user who holds a moderator or owner role — they must demote first.
+func TestLimboUserAdminCannotDeleteModerator(t *testing.T) {
+	prefix := uniquePrefix("delmod")
+	db := database.DBConn
+
+	adminID := CreateTestUser(t, prefix+"_admin", "Admin")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	// Make the target user a moderator of some group.
+	groupID := CreateTestGroup(t, prefix+"_group")
+	db.Exec("INSERT INTO memberships (userid, groupid, role, added, collection) VALUES (?, ?, 'Moderator', NOW(), 'Approved') ON DUPLICATE KEY UPDATE role = 'Moderator'", modID, groupID)
+
+	payload := map[string]interface{}{"id": modID}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("DELETE", "/api/user?jwt="+adminToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+
+	// Clean up membership.
+	db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", modID, groupID)
 }
 
 // =============================================================================
@@ -2115,7 +2225,7 @@ func TestUserFetchMT_HidesModFieldsFromNonMod(t *testing.T) {
 	CreateTestMembership(t, targetID, groupID, "Member")
 	_, token := CreateTestSession(t, callerID)
 
-	db.Exec("UPDATE users SET chatmodstatus = 'Fully', newsfeedmodstatus = 'Suppressed' WHERE id = ?", targetID)
+	db.Exec("UPDATE users SET chatmodstatus = 'Fully', newsfeedmodstatus = 'Suppressed', ljuserid = 555555 WHERE id = ?", targetID)
 
 	// Non-mod fetching another user — mod-only fields should be hidden.
 	url := fmt.Sprintf("/api/user/%d?jwt=%s", targetID, token)
@@ -2127,6 +2237,7 @@ func TestUserFetchMT_HidesModFieldsFromNonMod(t *testing.T) {
 	assert.Nil(t, raw["chatmodstatus"], "chatmodstatus should be hidden from non-mods")
 	assert.Nil(t, raw["newsfeedmodstatus"], "newsfeedmodstatus should be hidden from non-mods")
 	assert.Nil(t, raw["tnuserid"], "tnuserid should be hidden from non-mods")
+	assert.Nil(t, raw["ljuserid"], "ljuserid should be hidden from non-mods")
 }
 
 func TestSupportEndpoints_AllReturn403ForNonMod(t *testing.T) {
@@ -3736,4 +3847,239 @@ func TestPatchUserTrustlevelModOnOther(t *testing.T) {
 	db.Raw("SELECT trustlevel FROM users WHERE id = ?", targetID).Scan(&after)
 	require.NotNil(t, after)
 	assert.Equal(t, "Advanced", *after, "moderator should be able to set elevated trustlevel")
+}
+
+// =============================================================================
+// GET /user/:id — email visibility for admin/support (bug: support can't see emails)
+// =============================================================================
+
+func TestGetUserEmailsVisibleToSupport(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("suppemail")
+
+	// Target user with a plain external email.
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	targetEmail := prefix + "_target@example.com"
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", targetID)
+	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", targetID, targetEmail)
+
+	// Support user — should be able to see target's emails via modtools.
+	supportID := CreateTestUser(t, prefix+"_support", "User")
+	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	_, supportToken := CreateTestSession(t, supportID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, supportToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	json2.NewDecoder(resp.Body).Decode(&u)
+	assert.NotEmpty(t, u.Emails, "support should see target user's emails via modtools")
+}
+
+func TestGetUserEmailFieldPopulatedForFDEmail(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("fdemail")
+
+	// Target user with ONLY an FD (users.ilovefreegle.org) email — no external address.
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	fdEmail := prefix + "_fd@users.ilovefreegle.org"
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", targetID)
+	db.Exec("INSERT INTO users_emails (userid, email) VALUES (?, ?)", targetID, fdEmail)
+
+	// Support user viewing the target.
+	supportID := CreateTestUser(t, prefix+"_support", "User")
+	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	_, supportToken := CreateTestSession(t, supportID)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetID, supportToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var u user2.User
+	json2.NewDecoder(resp.Body).Decode(&u)
+	assert.NotEmpty(t, u.Emails, "support should see FD email in emails list")
+	assert.NotEmpty(t, u.Email, "email field should be populated even when only FD email exists")
+	assert.Equal(t, fdEmail, u.Email, "email field should contain the FD email as fallback")
+}
+
+func partnerKey(t *testing.T, prefix string) string {
+	db := database.DBConn
+	key := prefix + "_pkey"
+	db.Exec("INSERT INTO partners_keys (partner, `key`, domain) VALUES (?, ?, ?)", prefix+"_partner", key, "trashnothingtest.com")
+	return key
+}
+
+// Partner sees an existing correctly-formatted internal email.
+func TestGetUserPartnerSeesExistingInternalEmail(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_existing")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	// Email already has the correct user ID embedded (suffix -<targetID>@...).
+	correctEmail := fmt.Sprintf("%s-%d@users.ilovefreegle.org", prefix, targetID)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", targetID, correctEmail)
+
+	key := partnerKey(t, prefix)
+	url := fmt.Sprintf("/api/user/%d?partner=%s", targetID, key)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Equal(t, correctEmail, result.Email, "existing correctly-formatted internal email should be returned")
+}
+
+// Partner causes a new internal email to be generated for a user with only external email.
+func TestGetUserPartnerGeneratesEmailWhenNoneExists(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_gen")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	// Only an external email — no @users.ilovefreegle.org address.
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", targetID, prefix+"@gmail.com")
+
+	key := partnerKey(t, prefix)
+	url := fmt.Sprintf("/api/user/%d?partner=%s", targetID, key)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Contains(t, result.Email, "@users.ilovefreegle.org", "generated internal email should be returned")
+	assert.Contains(t, result.Email, fmt.Sprintf("-%d@", targetID), "generated email should embed the correct user ID")
+
+	// Verify it was persisted.
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM users_emails WHERE userid = ? AND email = ?", targetID, result.Email).Scan(&count)
+	assert.Equal(t, int64(1), count, "generated email should be stored in users_emails")
+}
+
+// Partner causes a new internal email when the existing one has a wrong (merged) user ID.
+func TestGetUserPartnerFixesWrongUserIDInEmail(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_wrongid")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	// Internal email with a DIFFERENT user ID (e.g. after a merge).
+	wrongEmail := fmt.Sprintf("%s-9999999@users.ilovefreegle.org", prefix)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", targetID, wrongEmail)
+
+	key := partnerKey(t, prefix)
+	url := fmt.Sprintf("/api/user/%d?partner=%s", targetID, key)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Contains(t, result.Email, fmt.Sprintf("-%d@", targetID), "email should embed the correct user ID, not the merged one")
+	assert.NotEqual(t, wrongEmail, result.Email, "wrong-ID email should not be returned")
+}
+
+// Mod-or-above caller (systemrole Moderator/Support/Admin) sees tnuserid and
+// ljuserid even when not a mod of a group shared with the target.
+func TestGetUserModSeesTnuserid(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("mod_sees_tnuserid")
+
+	callerID := CreateTestUser(t, prefix+"_caller", "User")
+	db.Exec("UPDATE users SET systemrole = 'Moderator' WHERE id = ?", callerID)
+	_, token := CreateTestSession(t, callerID)
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	expectedTn := uint64(targetID + 3000000)
+	expectedLj := uint64(targetID + 4000000)
+	db.Exec("UPDATE users SET tnuserid = ?, ljuserid = ? WHERE id = ?", expectedTn, expectedLj, targetID)
+
+	url := fmt.Sprintf("/api/user/%d?jwt=%s", targetID, token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	if assert.NotNil(t, result.Tnuserid, "tnuserid should be returned to mod-or-above callers") {
+		assert.Equal(t, expectedTn, *result.Tnuserid, "tnuserid value should match the DB")
+	}
+	if assert.NotNil(t, result.Ljuserid, "ljuserid should be returned to mod-or-above callers") {
+		assert.Equal(t, expectedLj, *result.Ljuserid, "ljuserid value should match the DB")
+	}
+}
+
+// Partner sees the user's tnuserid and ljuserid so they can match their records
+// to Freegle users.
+func TestGetUserPartnerSeesTnuserid(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_tnuserid")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	expectedTn := uint64(targetID + 1000000)
+	expectedLj := uint64(targetID + 1500000)
+	db.Exec("UPDATE users SET tnuserid = ?, ljuserid = ? WHERE id = ?", expectedTn, expectedLj, targetID)
+
+	key := partnerKey(t, prefix)
+	url := fmt.Sprintf("/api/user/%d?partner=%s", targetID, key)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	if assert.NotNil(t, result.Tnuserid, "tnuserid should be returned to partners") {
+		assert.Equal(t, expectedTn, *result.Tnuserid, "tnuserid value should match the DB")
+	}
+	if assert.NotNil(t, result.Ljuserid, "ljuserid should be returned to partners") {
+		assert.Equal(t, expectedLj, *result.Ljuserid, "ljuserid value should match the DB")
+	}
+}
+
+// Invalid partner key does not expose tnuserid/ljuserid (they fall under
+// hideSensitiveFields).
+func TestGetUserInvalidPartnerSeesNoTnuserid(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_no_tnuserid")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	db.Exec("UPDATE users SET tnuserid = ?, ljuserid = ? WHERE id = ?",
+		uint64(targetID+2000000), uint64(targetID+2500000), targetID)
+
+	url := fmt.Sprintf("/api/user/%d?partner=invalid_key_xyz", targetID)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Nil(t, result.Tnuserid, "invalid partner key should not expose tnuserid")
+	assert.Nil(t, result.Ljuserid, "invalid partner key should not expose ljuserid")
+}
+
+// Invalid partner key returns no email.
+func TestGetUserInvalidPartnerSeesNoEmail(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("partner_noemail")
+
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", targetID, prefix+"@gmail.com")
+
+	url := fmt.Sprintf("/api/user/%d?partner=invalid_key_xyz", targetID)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user2.User
+	json2.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, targetID, result.ID)
+	assert.Empty(t, result.Email, "invalid partner key should not expose any email")
 }

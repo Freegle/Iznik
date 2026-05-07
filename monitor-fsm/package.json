@@ -9,6 +9,7 @@
     "start": "node --enable-source-maps dist/driver.js",
     "run-once": "tsc && node --enable-source-maps dist/driver.js",
     "smoke": "tsc && node --enable-source-maps dist/smoke.js",
+    "test": "vitest run",
     "test:db": "tsc && node --enable-source-maps dist/db/test.js",
     "dashboard": "tsc && node --enable-source-maps dist/dashboard-server.js"
   },
@@ -24,6 +25,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.0.0",
     "@types/uuid": "^10.0.0",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^1.0.0"
   }
 }

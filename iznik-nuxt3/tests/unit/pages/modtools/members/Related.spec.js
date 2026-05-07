@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import Related from '~/modtools/pages/members/related.vue'
 
 // Mock stores
@@ -9,47 +9,54 @@ const mockMemberStore = {
   clear: vi.fn(),
 }
 
-const mockUserStore = {
-  list: {},
-}
-
 // Mock modMembers composable return values
 const mockGroupid = ref(0)
 const mockBump = ref(0)
 const mockDistance = ref(100)
 const mockCollection = ref('')
+const mockContext = ref(null)
+const mockShow = ref(0)
 const mockLoadMore = vi.fn()
 
 vi.mock('~/stores/member', () => ({
   useMemberStore: () => mockMemberStore,
 }))
 
-vi.mock('~/stores/user', () => ({
-  useUserStore: () => mockUserStore,
-}))
-
 vi.mock('~/composables/useModMembers', () => ({
   setupModMembers: () => ({
     bump: mockBump,
     collection: mockCollection,
+    context: mockContext,
     distance: mockDistance,
     groupid: mockGroupid,
+    show: mockShow,
     loadMore: mockLoadMore,
   }),
 }))
 
 describe('Related Page', () => {
+  // Track mounted wrappers so watchers are torn down between tests.
+  // The composable uses module-level refs; if wrappers aren't unmounted their
+  // watchers keep firing on subsequent ref changes across tests.
+  const wrappers = []
+
   beforeEach(() => {
     vi.clearAllMocks()
     mockMemberStore.list = {}
-    mockUserStore.list = {}
     mockGroupid.value = 0
     mockBump.value = 0
     mockCollection.value = ''
+    mockContext.value = null
+    mockShow.value = 0
+  })
+
+  afterEach(() => {
+    wrappers.forEach((w) => w.unmount())
+    wrappers.length = 0
   })
 
   function mountComponent() {
-    return mount(Related, {
+    const wrapper = mount(Related, {
       global: {
         stubs: {
           'client-only': { template: '<div><slot /></div>' },
@@ -89,6 +96,8 @@ describe('Related Page', () => {
         },
       },
     })
+    wrappers.push(wrapper)
+    return wrapper
   }
 
   // Helper to set up pair entries (as created by the member store's Related handling)
@@ -152,23 +161,45 @@ describe('Related Page', () => {
     })
   })
 
-  describe('computed properties', () => {
-    it('returns empty array when memberStore is falsy', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.vm.members).toBeDefined()
-    })
-
-    it('converts member list to array of pairs only', () => {
+  describe('members computed', () => {
+    it('excludes synthetic per-user entries', () => {
       addPair(100, 1, 2)
       addPair(101, 3, 4)
       const wrapper = mountComponent()
       const members = wrapper.vm.members
 
-      // Should have 2 pairs, not the synthetic user entries
+      // Should have 2 pairs, not the 4 synthetic user entries
       expect(members).toHaveLength(2)
+      expect(members.every((m) => !m._syntheticRelated)).toBe(true)
     })
 
-    it('visibleMembers returns all members when groupid is 0', () => {
+    it('excludes entries from other collections', () => {
+      addPair(100, 1, 2)
+      // Add an Approved member to the store
+      mockMemberStore.list[200] = {
+        id: 200,
+        userid: 200,
+        collection: 'Approved',
+        rawindex: 0,
+      }
+      const wrapper = mountComponent()
+
+      expect(wrapper.vm.members).toHaveLength(1)
+      expect(wrapper.vm.members[0].id).toBe(100)
+    })
+
+    it('returns empty array when store is empty', () => {
+      const wrapper = mountComponent()
+      expect(wrapper.vm.members).toHaveLength(0)
+    })
+  })
+
+  describe('visibleMembers — no client-side groupid filter', () => {
+    // Bug fix regression: previously visibleMembers filtered by userStore memberships,
+    // which failed because Related pair users aren't in userStore.  Now it returns
+    // all loaded pairs and relies on the API to filter by groupid.
+
+    it('returns all pairs when groupid is 0 (all communities)', () => {
       addPair(100, 1, 2)
       addPair(101, 3, 4)
       mockGroupid.value = 0
@@ -177,45 +208,34 @@ describe('Related Page', () => {
       expect(wrapper.vm.visibleMembers).toHaveLength(2)
     })
 
-    it('visibleMembers returns all members when groupid is negative', () => {
-      addPair(100, 1, 2)
-      mockGroupid.value = -1
-      const wrapper = mountComponent()
-
-      expect(wrapper.vm.visibleMembers).toHaveLength(1)
-    })
-
-    it('visibleMembers filters by user1 groupid when groupid > 0', () => {
+    it('returns all loaded pairs even when a single community is selected', () => {
+      // The API (via loadMore with groupid param) provides the right subset;
+      // visibleMembers must not further filter by userStore.
       addPair(100, 1, 2)
       addPair(101, 3, 4)
-      // Only user 1 is in group 5
-      mockUserStore.list = {
-        1: { id: 1, memberships: [{ id: 5 }] },
-        2: { id: 2, memberships: [{ id: 6 }] },
-        3: { id: 3, memberships: [{ id: 7 }] },
-        4: { id: 4, memberships: [{ id: 8 }] },
-      }
       mockGroupid.value = 5
       const wrapper = mountComponent()
 
-      expect(wrapper.vm.visibleMembers).toHaveLength(1)
-      expect(wrapper.vm.visibleMembers[0].id).toBe(100)
-    })
-
-    it('visibleMembers filters by user2 groupid when groupid > 0', () => {
-      addPair(100, 1, 2)
-      addPair(101, 3, 4)
-      // User 2 is in group 5, user 4 is also in group 5
-      mockUserStore.list = {
-        1: { id: 1, memberships: [{ id: 6 }] },
-        2: { id: 2, memberships: [{ id: 5 }] },
-        3: { id: 3, memberships: [{ id: 7 }] },
-        4: { id: 4, memberships: [{ id: 5 }] },
-      }
-      mockGroupid.value = 5
-      const wrapper = mountComponent()
-
+      // Both pairs should be visible — they came from the API filtered for group 5.
       expect(wrapper.vm.visibleMembers).toHaveLength(2)
+    })
+
+    it('returns pairs even when users are absent from userStore', () => {
+      // Users are only stored as synthetics in memberStore, never in userStore.
+      // The fix must not depend on userStore for visibility.
+      addPair(100, 1, 2)
+      mockGroupid.value = 7
+      const wrapper = mountComponent()
+
+      expect(wrapper.vm.visibleMembers).toHaveLength(1)
+    })
+
+    it('visibleMembers equals members', () => {
+      addPair(100, 1, 2)
+      addPair(101, 3, 4)
+      const wrapper = mountComponent()
+
+      expect(wrapper.vm.visibleMembers).toEqual(wrapper.vm.members)
     })
   })
 
@@ -225,11 +245,76 @@ describe('Related Page', () => {
       expect(mockCollection.value).toBe('Related')
     })
 
-    it('clears member store on mount', async () => {
+    it('clears member store synchronously during setup (before first render)', () => {
+      // clear() must be called before mounting completes so stale data never renders.
+      let clearedBeforeRender = false
+      mockMemberStore.clear.mockImplementation(() => {
+        clearedBeforeRender = true
+      })
       mountComponent()
-      await flushPromises()
 
       expect(mockMemberStore.clear).toHaveBeenCalled()
+      expect(clearedBeforeRender).toBe(true)
+    })
+  })
+
+  describe('groupid watcher — reset on community change', () => {
+    // Bug fix regression: changing community must clear stale store data and
+    // re-trigger loadMore with the new groupid via bump increment.
+
+    it('clears the store when groupid changes', async () => {
+      mountComponent()
+      vi.clearAllMocks() // ignore the clear() call from setup
+
+      mockGroupid.value = 5
+      await nextTick()
+
+      expect(mockMemberStore.clear).toHaveBeenCalledTimes(1)
+    })
+
+    it('resets context when groupid changes', async () => {
+      mockContext.value = 99
+      mountComponent()
+
+      mockGroupid.value = 5
+      await nextTick()
+
+      expect(mockContext.value).toBeNull()
+    })
+
+    it('resets show when groupid changes', async () => {
+      mockShow.value = 20
+      mountComponent()
+
+      mockGroupid.value = 5
+      await nextTick()
+
+      expect(mockShow.value).toBe(0)
+    })
+
+    it('increments bump when groupid changes to trigger re-fetch', async () => {
+      mountComponent()
+      const bumpBefore = mockBump.value
+
+      mockGroupid.value = 5
+      await nextTick()
+
+      expect(mockBump.value).toBe(bumpBefore + 1)
+    })
+
+    it('resets state again on subsequent groupid change', async () => {
+      mountComponent()
+
+      mockGroupid.value = 5
+      await nextTick()
+      mockShow.value = 15
+      mockContext.value = 55
+
+      mockGroupid.value = 6
+      await nextTick()
+
+      expect(mockShow.value).toBe(0)
+      expect(mockContext.value).toBeNull()
     })
   })
 })

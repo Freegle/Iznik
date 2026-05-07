@@ -5,6 +5,7 @@ namespace App\Console\Commands\Deploy;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 class RefreshCommand extends Command
 {
@@ -176,6 +177,47 @@ class RefreshCommand extends Command
             $this->newLine();
             $this->line('  <info>✓</info> Recorded deployed version');
         }
+
+        // Read the deployed git commit SHA from the working-directory checkout.
+        // This is more reliable than BUILD_INFO (which isn't set in production deploys)
+        // and allows the Go API to query the DB to find out what Laravel commit is running.
+        $commit = $this->readGitHead(base_path());
+        if ($commit) {
+            DB::table('config')->upsert(
+                [['key' => 'deploy.laravel_commit', 'value' => $commit]],
+                ['key'],
+                ['value'],
+            );
+            $this->line("  <info>✓</info> Recorded Laravel deploy commit: {$commit}");
+        }
+    }
+
+    /**
+     * Read the HEAD commit SHA from a git working directory.
+     */
+    protected function readGitHead(string $dir): ?string
+    {
+        $headFile = $dir . '/.git/HEAD';
+        if (! file_exists($headFile)) {
+            return null;
+        }
+
+        $head = trim(file_get_contents($headFile));
+
+        // Detached HEAD: the file contains the SHA directly.
+        if (preg_match('/^[0-9a-f]{40}$/i', $head)) {
+            return $head;
+        }
+
+        // Symbolic ref: e.g. "ref: refs/heads/master"
+        if (str_starts_with($head, 'ref: ')) {
+            $refPath = $dir . '/.git/' . substr($head, 5);
+            if (file_exists($refPath)) {
+                return trim(file_get_contents($refPath));
+            }
+        }
+
+        return null;
     }
 
     /**

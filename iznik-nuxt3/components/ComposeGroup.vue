@@ -9,6 +9,7 @@
 import { computed, nextTick, onMounted } from 'vue'
 import { useComposeStore } from '~/stores/compose'
 import { useAuthStore } from '~/stores/auth'
+import { useGroupStore } from '~/stores/group'
 import api from '~/api'
 import { useRuntimeConfig } from '#app'
 
@@ -22,6 +23,7 @@ defineProps({
 
 const composeStore = useComposeStore()
 const authStore = useAuthStore()
+const groupStore = useGroupStore()
 const runtimeConfig = useRuntimeConfig()
 
 const postcode = computed(() => {
@@ -79,6 +81,19 @@ const groupOptions = computed(() => {
     }
   }
 
+  // Ensure the pre-selected group (e.g. from a repost flow) is always present,
+  // even before fetchUser() has populated myGroups. Without this, b-form-select
+  // resets its displayed value to the first available option because the current
+  // v-model value has no matching <option> element.
+  const currentGroup = composeStore.group
+  if (currentGroup && !ids[currentGroup]) {
+    const cached = groupStore.get(currentGroup)
+    ret.unshift({
+      value: currentGroup,
+      text: cached?.namedisplay || cached?.nameshort || String(currentGroup),
+    })
+  }
+
   return ret
 })
 
@@ -86,9 +101,12 @@ onMounted(async () => {
   // The postcode we have contains a list of groups. That list might contain groups which are no longer valid,
   // for example if they have been merged. So we want to refetch the postcode so that our store gets updated.
   // Preserve the currently selected group across the refetch so we don't overwrite a user's choice.
-  if (postcode.value) {
-    const savedGroup = composeStore.group
 
+  // Save the intended group at the very top, before ANY async work.
+  // This captures the pre-selected group (e.g. from a repost flow).
+  const savedGroup = composeStore.group
+
+  if (postcode.value) {
     let location
     try {
       location = await api(runtimeConfig).location.typeahead(postcode.value.name)
@@ -119,6 +137,21 @@ onMounted(async () => {
   }
 
   await authStore.fetchUser()
+
+  // Final guard: b-form-select may have cleared composeStore.group during the
+  // async fetchUser wait (options re-evaluated while the saved group wasn't in
+  // groupsnear yet). Restore savedGroup only if the group was cleared — NOT if
+  // the user intentionally selected a different group.
+  if (savedGroup && !composeStore.group) {
+    const groupsNear = postcode.value?.groupsnear || []
+    const savedGroupValid =
+      groupsNear.some((g) => parseInt(g.id) === parseInt(savedGroup)) ||
+      myGroups.value.some((g) => parseInt(g.groupid) === parseInt(savedGroup))
+
+    if (savedGroupValid) {
+      composeStore.group = savedGroup
+    }
+  }
 
   // If we have a postcode with groups but no group selected, auto-select the first one.
   if (postcode.value?.groupsnear?.length && !composeStore.group) {

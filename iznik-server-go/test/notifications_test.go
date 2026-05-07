@@ -44,7 +44,7 @@ func TestNotificationSeen(t *testing.T) {
 	_, token := CreateTestSession(t, userID)
 
 	// Create a notification
-	notifID := CreateTestNotification(t, userID, fromUserID, "Comment")
+	notifID := CreateTestNotification(t, userID, fromUserID, "CommentOnYourPost")
 
 	// Mark it as seen
 	body := fmt.Sprintf(`{"id": %d}`, notifID)
@@ -90,8 +90,8 @@ func TestNotificationAllSeen(t *testing.T) {
 	_, token := CreateTestSession(t, userID)
 
 	// Create multiple notifications
-	CreateTestNotification(t, userID, fromUserID, "Comment")
-	CreateTestNotification(t, userID, fromUserID, "Loved")
+	CreateTestNotification(t, userID, fromUserID, "CommentOnYourPost")
+	CreateTestNotification(t, userID, fromUserID, "LovedPost")
 
 	// Mark all as seen
 	req := httptest.NewRequest("POST", "/api/notification/allseen?jwt="+token, nil)

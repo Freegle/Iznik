@@ -73,9 +73,9 @@ func setupLocationTestData() {
 
 	// Create area location first (for areaname in ClosestPostcode query)
 	db.Exec(`INSERT INTO locations (id, osm_id, name, type, osm_place, gridid, postcodeid, areaid, canon, popularity, osm_amenity, osm_shop, maxdimension, lat, lng, timestamp, geometry)
-		VALUES (999999, '999999', 'Edinburgh', 'Area', 0, NULL, NULL, NULL, 'edinburgh', 0, 0, 0, '0.1', '55.957571', '-3.205333', '2016-08-23 06:01:25',
+		VALUES (999999, '999999', 'Edinburgh', 'Point', 0, NULL, NULL, NULL, 'edinburgh', 0, 0, 0, '0.1', '55.957571', '-3.205333', '2016-08-23 06:01:25',
 		ST_GeomFromText('POINT(-3.205333 55.957571)', 4326))
-		ON DUPLICATE KEY UPDATE name='Edinburgh', type='Area'`)
+		ON DUPLICATE KEY UPDATE name='Edinburgh', type='Point'`)
 
 	// Edinburgh postcode area for TestClosest, TestTypeahead, TestLatLng
 	// These are real UK postcodes needed for the location API tests

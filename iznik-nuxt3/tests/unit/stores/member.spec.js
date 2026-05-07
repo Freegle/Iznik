@@ -3,6 +3,8 @@ import { setActivePinia, createPinia } from 'pinia'
 
 const mockReviewIgnore = vi.fn().mockResolvedValue()
 const mockFetchMembers = vi.fn()
+const mockMergeAsk = vi.fn().mockResolvedValue()
+const mockMergeIgnore = vi.fn().mockResolvedValue()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -10,12 +12,19 @@ vi.mock('~/api', () => ({
       reviewIgnore: mockReviewIgnore,
       fetchMembers: mockFetchMembers,
     },
+    merge: {
+      ask: mockMergeAsk,
+      ignore: mockMergeIgnore,
+    },
   }),
 }))
+
+const mockAuthWork = { relatedmembers: 0 }
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({
     user: { id: 999 },
+    work: mockAuthWork,
   }),
 }))
 
@@ -65,6 +74,154 @@ describe('member store', () => {
       await store.spamignore({ userid: 456, groupid: 789 })
 
       expect(store.list[123]).toBeUndefined()
+    })
+  })
+
+  describe('askMerge / ignoreMerge — related-members counter (regression #9631)', () => {
+    // Regression: after PR #306 fixed the backend login-history query, the counter
+    // still showed 1 after a valid pair was processed because askMerge/ignoreMerge
+    // removed the pair from the store but did not decrement authStore.work.relatedmembers.
+    // The counter only updated on the next checkWork() cycle (up to 30 seconds later),
+    // leaving the nav badge stuck at 1 while the list was empty.
+
+    beforeEach(() => {
+      mockAuthWork.relatedmembers = 1
+    })
+
+    it('ignoreMerge decrements work.relatedmembers immediately', async () => {
+      const store = useMemberStore()
+      store.config = {}
+      store.list[10] = { id: 10, user1: 100, user2: 200, collection: 'Related' }
+
+      await store.ignoreMerge(10, { user1: 100, user2: 200 })
+
+      expect(mockAuthWork.relatedmembers).toBe(0)
+      expect(store.list[10]).toBeUndefined()
+    })
+
+    it('askMerge decrements work.relatedmembers immediately', async () => {
+      const store = useMemberStore()
+      store.config = {}
+      store.list[10] = { id: 10, user1: 100, user2: 200, collection: 'Related' }
+
+      await store.askMerge(10, { user1: 100, user2: 200 })
+
+      expect(mockAuthWork.relatedmembers).toBe(0)
+      expect(store.list[10]).toBeUndefined()
+    })
+
+    it('ignoreMerge does not decrement below zero', async () => {
+      mockAuthWork.relatedmembers = 0
+      const store = useMemberStore()
+      store.config = {}
+      store.list[10] = { id: 10, user1: 100, user2: 200, collection: 'Related' }
+
+      await store.ignoreMerge(10, { user1: 100, user2: 200 })
+
+      expect(mockAuthWork.relatedmembers).toBe(0)
+    })
+
+    it('askMerge does not decrement below zero', async () => {
+      mockAuthWork.relatedmembers = 0
+      const store = useMemberStore()
+      store.config = {}
+      store.list[10] = { id: 10, user1: 100, user2: 200, collection: 'Related' }
+
+      await store.askMerge(10, { user1: 100, user2: 200 })
+
+      expect(mockAuthWork.relatedmembers).toBe(0)
+    })
+
+    it('fetchMembers for Related returns empty list → counter resets to 0 (regression: PR#347 only decremented on askMerge/ignoreMerge, not on auto-notified path)', async () => {
+      // Regression (Discourse topic 9631, post 16): the counter can reach 1 via checkWork()
+      // for a pair that the backend auto-notifies when the list endpoint is fetched (pair had
+      // one user with no login history). PR#347 added decrement hooks only on askMerge and
+      // ignoreMerge; it did not account for the path where the backend silently removes a pair
+      // from the actionable list and fetchMembers therefore returns 0 pairs.
+      //
+      // Expected: fetchMembers({collection:'Related'}) returning [] should reset relatedmembers
+      //           to 0 when the store holds no Related pairs afterward.
+      // Actual:   relatedmembers stays at 1 because only askMerge/ignoreMerge decrement it.
+      mockFetchMembers.mockResolvedValue({
+        members: [],
+        context: null,
+        ratings: [],
+      })
+      mockAuthWork.relatedmembers = 1
+
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.fetchMembers({ collection: 'Related', groupid: 0 })
+
+      // The Related list is now empty and the store holds no Related pairs.
+      // The counter must reflect reality and reset to 0.
+      expect(mockAuthWork.relatedmembers).toBe(0)
+    })
+  })
+
+  describe('fetchMembers - pagination context', () => {
+    it('stores the integer context returned by the API', async () => {
+      mockFetchMembers.mockResolvedValue({
+        members: Array.from({ length: 20 }, (_, i) => ({
+          id: i + 1,
+          userid: i + 1,
+          groupid: 1,
+          collection: 'Approved',
+        })),
+        context: 456,
+        ratings: [],
+        filtercount: null,
+      })
+
+      const store = useMemberStore()
+      store.config = {}
+      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+
+      expect(store.context).toBe(456)
+    })
+
+    it('passes integer context to the API on the second page request', async () => {
+      mockFetchMembers.mockResolvedValue({
+        members: Array.from({ length: 20 }, (_, i) => ({
+          id: i + 1,
+          userid: i + 1,
+          groupid: 1,
+          collection: 'Approved',
+        })),
+        context: 456,
+        ratings: [],
+        filtercount: null,
+      })
+
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+      await store.fetchMembers({
+        collection: 'Approved',
+        groupid: 1,
+        limit: 20,
+        context: store.context,
+      })
+
+      const secondCallParams = mockFetchMembers.mock.calls[1][0]
+      expect(secondCallParams.context).toBe(456)
+    })
+
+    it('stores null context when API returns null (no more pages)', async () => {
+      mockFetchMembers.mockResolvedValue({
+        members: [{ id: 1, userid: 1, groupid: 1, collection: 'Approved' }],
+        context: null,
+        ratings: [],
+        filtercount: null,
+      })
+
+      const store = useMemberStore()
+      store.config = {}
+      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+
+      expect(store.context).toBeNull()
     })
   })
 

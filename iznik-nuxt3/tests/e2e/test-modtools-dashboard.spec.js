@@ -9,7 +9,7 @@ const { loginViaModTools } = require('./utils/user')
 
 const MODTOOLS_URL = environment.modtoolsBaseUrl
 
-// Helper: dismiss any overlay modals (cake modal, etc.) that block interaction.
+// Helper: dismiss any overlay modals that block interaction.
 async function dismissAllModals(page) {
   await page.evaluate(() => {
     document
@@ -54,8 +54,7 @@ test.describe('ModTools Dashboard', () => {
     })
 
     // The group dropdown should have at least one group option (value !== '0').
-    // Dismiss modals on each poll iteration — the cake modal can appear after
-    // initial page load and blocks checkWork from fetching groups.
+    // Dismiss modals on each poll iteration as they can appear after initial page load.
     await expect
       .poll(
         async () => {

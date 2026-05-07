@@ -43,13 +43,13 @@ func TestGetGroupWork_ActiveMod(t *testing.T) {
 	// Insert a pending message.
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, type, subject) VALUES (?, 'Offer', 'Test pending')", senderID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test pending', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID, groupID)
 
 	// Insert a spam message.
 	var spamMsgID uint64
-	db.Exec("INSERT INTO messages (fromuser, type, subject) VALUES (?, 'Offer', 'Test spam')", senderID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test spam', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&spamMsgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Spam', 0)", spamMsgID, groupID)
 
@@ -94,7 +94,7 @@ func TestGetGroupWork_BackupMod(t *testing.T) {
 	// Insert a pending message.
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, type, subject) VALUES (?, 'Offer', 'Test backup pending')", senderID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test backup pending', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID, groupID)
 
@@ -137,7 +137,7 @@ func TestGetGroupWork_HeldPending(t *testing.T) {
 	// Insert a held pending message.
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, type, subject, heldby) VALUES (?, 'Offer', 'Test held', ?)", senderID, holderID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, heldby) VALUES (?, 'Offer', 'Test held', 'Test body', 'Test body', ?)", senderID, holderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID, groupID)
 
@@ -196,6 +196,47 @@ func TestGetGroupWork_SpamMembers(t *testing.T) {
 	assert.GreaterOrEqual(t, found.Spammembers, int64(1), "Expected spammembers >= 1")
 }
 
+func TestGetGroupWork_SpamMembersReFlaggedAfterRecentReview(t *testing.T) {
+	// Regression: commit 4749246f6 changed the membership list query to use
+	// reviewrequestedat > reviewedat (member re-flagged after a recent review).
+	// The badge count query in groupWork.go must use the same condition so the
+	// count matches what the Member Review page actually shows.
+	db := database.DBConn
+	prefix := uniquePrefix("gwreflg")
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Create a member who was reviewed recently (within 31 days) but then
+	// re-flagged AFTER that review. The old 31-day window would not count
+	// this member; the correct reviewrequestedat > reviewedat condition does.
+	spamUserID := CreateTestUser(t, prefix+"_spam", "User")
+	db.Exec(`INSERT INTO memberships (userid, groupid, role, collection, reviewedat, reviewrequestedat)
+		VALUES (?, ?, 'Member', 'Approved',
+		DATE_SUB(NOW(), INTERVAL 5 DAY),
+		NOW())`,
+		spamUserID, groupID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group/work?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []group.GroupWork
+	json2.Unmarshal(rsp(resp), &result)
+
+	var found *group.GroupWork
+	for i := range result {
+		if result[i].Groupid == groupID {
+			found = &result[i]
+			break
+		}
+	}
+	assert.NotNil(t, found)
+	assert.GreaterOrEqual(t, found.Spammembers, int64(1),
+		"Re-flagged member (reviewrequestedat > reviewedat) must appear in spammembers count")
+}
+
 func TestGetGroupWork_MultipleGroups(t *testing.T) {
 	db := database.DBConn
 	prefix := uniquePrefix("gwmulti")
@@ -213,11 +254,11 @@ func TestGetGroupWork_MultipleGroups(t *testing.T) {
 	// Pending message in each group.
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	var msgID1, msgID2 uint64
-	db.Exec("INSERT INTO messages (fromuser, type, subject) VALUES (?, 'Offer', 'Test multi 1')", senderID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test multi 1', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID1)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID1, groupID1)
 
-	db.Exec("INSERT INTO messages (fromuser, type, subject) VALUES (?, 'Offer', 'Test multi 2')", senderID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test multi 2', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID2)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID2, groupID2)
 
@@ -340,7 +381,7 @@ func TestGetGroupWork_EditReview(t *testing.T) {
 	// Create a message with an edit needing review.
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, type, subject) VALUES (?, 'Offer', 'Test edit review')", senderID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message) VALUES (?, 'Offer', 'Test edit review', 'Test body', 'Test body')", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Approved', 0)", msgID, groupID)
 	db.Exec("INSERT INTO messages_edits (msgid, timestamp, reviewrequired, oldtext, newtext) VALUES (?, NOW(), 1, 'old', 'new')", msgID)
@@ -422,7 +463,7 @@ func TestGetGroupWork_PendingAdmins(t *testing.T) {
 	_, token := CreateTestSession(t, modID)
 
 	// Create a pending admin.
-	db.Exec("INSERT INTO admins (groupid, pending, created) VALUES (?, 1, NOW())", groupID)
+	db.Exec("INSERT INTO admins (groupid, subject, text, pending, created) VALUES (?, 'Test Admin', 'Test Admin Text', 1, NOW())", groupID)
 	var adminID uint64
 	db.Raw("SELECT id FROM admins WHERE groupid = ? ORDER BY id DESC LIMIT 1", groupID).Scan(&adminID)
 
@@ -461,7 +502,7 @@ func TestGetGroupWork_PendingAdmins_BackupGroupIgnored(t *testing.T) {
 	_, token := CreateTestSession(t, modID)
 
 	// Create a pending admin.
-	db.Exec("INSERT INTO admins (groupid, pending, created) VALUES (?, 1, NOW())", groupID)
+	db.Exec("INSERT INTO admins (groupid, subject, text, pending, created) VALUES (?, 'Test Admin', 'Test Admin Text', 1, NOW())", groupID)
 	var adminID uint64
 	db.Raw("SELECT id FROM admins WHERE groupid = ? ORDER BY id DESC LIMIT 1", groupID).Scan(&adminID)
 
@@ -499,7 +540,7 @@ func TestGetGroupWork_DeletedMessageNotCounted(t *testing.T) {
 
 	senderID := CreateTestUser(t, prefix+"_sender", "User")
 	var msgID uint64
-	db.Exec("INSERT INTO messages (fromuser, type, subject, deleted) VALUES (?, 'Offer', 'Test deleted pending', NOW())", senderID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, deleted) VALUES (?, 'Offer', 'Test deleted pending', 'Test body', 'Test body', NOW())", senderID)
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", senderID).Scan(&msgID)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, deleted) VALUES (?, ?, 'Pending', 0)", msgID, groupID)
 

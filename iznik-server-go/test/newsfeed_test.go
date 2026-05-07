@@ -1018,3 +1018,102 @@ func TestCreateNewsfeedEntryDuplicateProtection(t *testing.T) {
 	db.Exec("DELETE FROM communityevents WHERE id = ?", eventID)
 	db.Exec("DELETE FROM volunteering WHERE id = ?", volID)
 }
+
+// TestFeedEventFloodDoesNotDisplaceMessages is a regression test for Discourse topic 9624.
+// A burst of VolunteerOpportunity/CommunityEvent posts must be capped so they cannot fill
+// every slot in the 100-item feed window.  With the old single-bucket LIMIT 100, 25 events
+// all appeared; the fix caps them at NEWSFEED_EVENTS_PER_FEED (20).
+func TestFeedEventFloodDoesNotDisplaceMessages(t *testing.T) {
+	prefix := uniquePrefix("evflood")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	lat := 55.9533
+	lng := -3.1883
+
+	// 25 volunteer-opportunity posts — more than the NEWSFEED_EVENTS_PER_FEED cap of 20.
+	for i := 0; i < 25; i++ {
+		CreateTestNewsfeedWithType(t, userID, lat, lng,
+			fmt.Sprintf("Vol Op %d %s", i, prefix), "VolunteerOpportunity", 0)
+	}
+
+	// Use distance=anywhere so no geocoding is needed.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/newsfeed?distance=anywhere&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var feed []newsfeed2.NewsfeedSummary
+	json2.Unmarshal(rsp(resp), &feed)
+
+	// Count volunteer-op posts from this user that appear in the feed.
+	// No other test creates VolunteerOpportunity-type newsfeed entries, so any found
+	// with userid == userID belong to this test run.
+	db := database.DBConn
+	volunteerOpsInFeed := 0
+	for _, item := range feed {
+		if item.Userid == userID {
+			var nfType string
+			db.Raw("SELECT type FROM newsfeed WHERE id = ?", item.ID).Scan(&nfType)
+			if nfType == "VolunteerOpportunity" {
+				volunteerOpsInFeed++
+			}
+		}
+	}
+
+	assert.LessOrEqual(t, volunteerOpsInFeed, utils.NEWSFEED_EVENTS_PER_FEED,
+		"Feed must cap VolunteerOpportunity posts at NEWSFEED_EVENTS_PER_FEED; got %d", volunteerOpsInFeed)
+}
+
+// TestFeedEventsSortedByProximity verifies that when a user has a known location, the event
+// bucket selects the N closest events rather than the N most recent events.
+//
+// Setup: 20 close events (all within 1km of user, posted 10-29h ago) and 1 far event
+// (~50km away, posted "just now" — the newest). With a cap of NEWSFEED_EVENTS_PER_FEED=20:
+//   - Old behaviour (timestamp): newest 20 selected → far event INCLUDED (it's newest)
+//   - New behaviour (proximity):  closest 20 selected → far event EXCLUDED (20 closer events win)
+func TestFeedEventsSortedByProximity(t *testing.T) {
+	prefix := uniquePrefix("evprox")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	// User is near Edinburgh: lat=55.95, lng=-3.20
+	userLat := 55.95
+	userLng := -3.20
+	db.Exec("INSERT INTO locations (name, lat, lng, type) VALUES (?, ?, ?, 'Polygon')", "TestLocProx_"+prefix, userLat, userLng)
+	var locID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", "TestLocProx_"+prefix).Scan(&locID)
+	t.Cleanup(func() { db.Exec("DELETE FROM locations WHERE id = ?", locID) })
+	if locID == 0 {
+		t.Fatal("Failed to insert location for proximity test")
+	}
+	db.Exec("UPDATE users SET lastlocation = ? WHERE id = ?", locID, userID)
+
+	// 20 close events: ~100m from user, posted 10–29 hours ago (older than the far event).
+	closeLat := userLat + 0.001
+	closeLng := userLng + 0.001
+	for i := 0; i < utils.NEWSFEED_EVENTS_PER_FEED; i++ {
+		CreateTestNewsfeedWithType(t, userID, closeLat, closeLng,
+			fmt.Sprintf("Close event %d %s", i, prefix), "VolunteerOpportunity", 10+i)
+	}
+
+	// 1 far event: ~50km away, posted just now (newest of all events).
+	// Without proximity sort, this newest event would be included in the top-20.
+	// With proximity sort, the 20 closer events displace it.
+	farLat := 56.45
+	farLng := -4.0
+	farEventID := CreateTestNewsfeedWithType(t, userID, farLat, farLng, "Far event "+prefix, "VolunteerOpportunity", 0)
+
+	// Use distance=200000 (200km) so all 21 events fall within the bounding box.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/newsfeed?distance=200000&jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var feed []newsfeed2.NewsfeedSummary
+	json2.Unmarshal(rsp(resp), &feed)
+
+	// The far event must NOT appear — the 20 closer events should fill the cap.
+	for _, item := range feed {
+		assert.NotEqual(t, farEventID, item.ID,
+			"Far event (50km away) should be excluded: the 20 close events fill the proximity cap")
+	}
+}

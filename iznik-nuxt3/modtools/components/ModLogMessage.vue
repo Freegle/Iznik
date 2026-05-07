@@ -1,22 +1,16 @@
 <template>
   <span v-if="log && log.msgid">
-    <span v-if="message">
-      <a
-        :href="'https://www.ilovefreegle.org/message/' + log.msgid"
-        target="_blank"
-      >
-        <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{ log.msgid }}
-        <em>{{ messagesubject }}</em>
-      </a>
-      <span v-if="!notext && log.text && log.text.length > 0">
-        with <em>{{ log.text }} </em></span
-      >
-      <ModLogStdMsg v-if="!nostdmsg" :logid="logid" /> <ModLogGroup :logid="logid" :tag="tag" />
-    </span>
-    <span v-else>
+    <a
+      :href="'https://www.ilovefreegle.org/message/' + log.msgid"
+      target="_blank"
+    >
       <v-icon icon="hashtag" class="text-muted" scale="0.75" />{{ log.msgid }}
-      (no info available)
-    </span>
+      <em>{{ messagesubject }}</em>
+    </a>
+    <span v-if="!notext && log.text && log.text.length > 0">
+      with <em>{{ log.text }} </em></span
+    >
+    <ModLogStdMsg v-if="!nostdmsg" :logid="logid" /> <ModLogGroup :logid="logid" :tag="tag" />
   </span>
 </template>
 <script setup>
@@ -63,12 +57,14 @@ const message = computed(() => {
 })
 
 const messagesubject = computed(() => {
-  if (message.value) {
-    return message.value.subject
-      ? message.value.subject
-      : '(Blank subject line)'
-  } else {
-    return '(Message now deleted)'
+  // Prefer historical subject from API (msgsubject preserves the subject as it was at
+  // log time, not the current post-edit value — fixes retrospective rename bug).
+  if (log.value?.msgsubject) {
+    return log.value.msgsubject
   }
+  if (message.value?.subject) {
+    return message.value.subject
+  }
+  return message.value ? '(Blank subject line)' : '(Message now deleted)'
 })
 </script>

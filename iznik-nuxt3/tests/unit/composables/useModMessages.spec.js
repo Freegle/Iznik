@@ -36,8 +36,9 @@ vi.mock('~/stores/message', () => ({
   }),
 }))
 
+let mockAuthWork = null
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ work: null }),
+  useAuthStore: () => ({ work: mockAuthWork }),
 }))
 
 const mockMiscGet = vi.fn(() => undefined)
@@ -52,6 +53,7 @@ describe('useModMessages getMessages', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
+    mockAuthWork = null
     mockFetchMessagesMT.mockResolvedValue([1, 2, 3])
   })
 
@@ -132,6 +134,7 @@ describe('useModMessages sorting with getContextArrival', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
+    mockAuthWork = null
   })
 
   afterEach(() => {
@@ -223,5 +226,177 @@ describe('useModMessages sorting with getContextArrival', () => {
     const sorted = messages.value
     expect(sorted[0].id).toBe(2) // Jan 3 is newest
     expect(sorted[1].id).toBe(1) // Jan 1
+  })
+})
+
+describe('useModMessages vector search (listingIdOrder) sorting', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    mockAuthWork = null
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+  })
+
+  it('sorts messages by score order when listingIdOrder is set', async () => {
+    const msgA = { id: 1, arrival: '2026-01-05', groups: [] }
+    const msgB = { id: 2, arrival: '2026-01-04', groups: [] }
+    const msgC = { id: 3, arrival: '2026-01-03', groups: [] }
+
+    mockAll.value = [msgA, msgB, msgC]
+    mockFetchMessagesMT.mockResolvedValue([1, 2, 3])
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { getMessages, collection, messages, listingIdOrder } =
+      setupModMessages(true)
+    collection.value = 'Approved'
+    await getMessages()
+
+    // Simulate vector search results arriving in score order (best match first)
+    listingIdOrder.value = [3, 1, 2]
+
+    const sorted = messages.value
+    expect(sorted.map((m) => m.id)).toEqual([3, 1, 2])
+  })
+
+  it('assigns Infinity rank to messages absent from listingIdOrder so they sort last', async () => {
+    const msgA = { id: 1, arrival: '2026-01-05', groups: [] }
+    const msgB = { id: 2, arrival: '2026-01-04', groups: [] }
+    const msgC = { id: 99, arrival: '2026-01-03', groups: [] } // not in order
+
+    mockAll.value = [msgA, msgB, msgC]
+    mockFetchMessagesMT.mockResolvedValue([1, 2, 99])
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { getMessages, collection, messages, listingIdOrder } =
+      setupModMessages(true)
+    collection.value = 'Approved'
+    await getMessages()
+
+    // Only 1 and 2 have explicit scores; 99 is absent — should sort last
+    listingIdOrder.value = [2, 1]
+
+    const sorted = messages.value
+    expect(sorted[0].id).toBe(2)
+    expect(sorted[1].id).toBe(1)
+    expect(sorted[2].id).toBe(99)
+  })
+})
+
+describe('useModMessages visibleMessages computed', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    mockAuthWork = null
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+  })
+
+  it('returns empty array when show is 0', async () => {
+    mockAll.value = [
+      { id: 1, arrival: '2026-01-01', groups: [] },
+      { id: 2, arrival: '2026-01-02', groups: [] },
+    ]
+    mockFetchMessagesMT.mockResolvedValue([1, 2])
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { collection, show, visibleMessages } = setupModMessages(true)
+    collection.value = 'Pending'
+    // show defaults to 0 after reset — do NOT call getMessages()
+    expect(visibleMessages.value).toEqual([])
+  })
+
+  it('slices messages to show count', async () => {
+    mockAll.value = [
+      { id: 1, arrival: '2026-01-05', groups: [] },
+      { id: 2, arrival: '2026-01-04', groups: [] },
+      { id: 3, arrival: '2026-01-03', groups: [] },
+      { id: 4, arrival: '2026-01-02', groups: [] },
+      { id: 5, arrival: '2026-01-01', groups: [] },
+    ]
+    mockFetchMessagesMT.mockResolvedValue([1, 2, 3, 4, 5])
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { getMessages, collection, show, visibleMessages } =
+      setupModMessages(true)
+    collection.value = 'Pending'
+    await getMessages() // sets show to 5
+
+    show.value = 3
+    expect(visibleMessages.value).toHaveLength(3)
+    expect(visibleMessages.value.map((m) => m.id)).toEqual([1, 2, 3])
+  })
+})
+
+describe('useModMessages work computed', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    mockAuthWork = null
+    mockFetchMessagesMT.mockResolvedValue([])
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+  })
+
+  it('returns 0 when auth work is null', async () => {
+    mockAuthWork = null
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { work, workType } = setupModMessages(true)
+    workType.value = 'Pending'
+
+    expect(work.value).toBe(0)
+  })
+
+  it('returns 0 when workType is not set', async () => {
+    mockAuthWork = { Pending: 7 }
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { work } = setupModMessages(true)
+    // workType defaults to null after reset
+
+    expect(work.value).toBe(0)
+  })
+
+  it('returns single work count for a string workType', async () => {
+    mockAuthWork = { Pending: 12, PendingOther: 3 }
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { work, workType } = setupModMessages(true)
+    workType.value = 'Pending'
+
+    expect(work.value).toBe(12)
+  })
+
+  it('sums across multiple workTypes when workType is an array', async () => {
+    mockAuthWork = { Pending: 5, PendingOther: 8 }
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { work, workType } = setupModMessages(true)
+    workType.value = ['Pending', 'PendingOther']
+
+    expect(work.value).toBe(13)
   })
 })

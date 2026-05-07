@@ -7,6 +7,7 @@
     <table v-else class="table table-sm">
       <thead>
         <tr>
+          <th>ID</th>
           <th>Reporter</th>
           <th>Excerpt</th>
           <th>State</th>
@@ -18,18 +19,20 @@
       <tbody>
         <template v-for="(group, featureArea) in groupedBugs" :key="featureArea">
           <tr class="table-light">
-            <th :colspan="6" class="text-muted fst-italic">{{ featureArea }}</th>
+            <th :colspan="7" class="text-muted fst-italic">{{ featureArea }}</th>
           </tr>
           <tr v-for="bug in group" :key="`${bug.topic}-${bug.post}`">
-            <td>
+            <td class="id-cell text-muted font-monospace">
               <a
                 :href="`https://discourse.ilovefreegle.org/t/${bug.topic}/${bug.post}`"
                 target="_blank"
                 rel="noopener"
+                class="text-muted text-decoration-none"
               >
-                {{ bug.reporter || 'Unknown' }}
+                {{ bug.topic }}/{{ bug.post }}
               </a>
             </td>
+            <td>{{ bug.reporter || 'Unknown' }}</td>
             <td class="excerpt-cell">{{ truncate(bug.excerpt, 120) }}</td>
             <td>
               <StateBadge :state="bug.state" />
@@ -190,6 +193,10 @@ const setBugState = async (bug: BugRow, state: string) => {
 </script>
 
 <style scoped>
+.id-cell {
+  white-space: nowrap;
+  font-size: 0.8em;
+}
 .excerpt-cell {
   max-width: 300px;
   overflow: hidden;

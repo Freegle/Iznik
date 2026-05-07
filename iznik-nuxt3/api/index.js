@@ -10,6 +10,7 @@
 
 import AddressAPI from './AddressAPI.js'
 import AdminsAPI from './AdminsAPI.js'
+import AIImagesAPI from './AIImagesAPI.js'
 import AlertAPI from './AlertAPI.js'
 import AuthorityAPI from './AuthorityAPI.js'
 import BanditAPI from './BanditAPI.js'
@@ -58,6 +59,7 @@ export default (config) => {
   return {
     address: new AddressAPI(options),
     admins: new AdminsAPI(options),
+    aiimages: new AIImagesAPI(options),
     alert: new AlertAPI(options),
     authority: new AuthorityAPI(options),
     bandit: new BanditAPI(options),

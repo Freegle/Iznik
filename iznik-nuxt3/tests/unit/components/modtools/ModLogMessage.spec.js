@@ -120,12 +120,13 @@ describe('ModLogMessage', () => {
       expect(wrapper.find('a').exists()).toBe(true)
     })
 
-    it('renders msgid with "no info available" when message is null', () => {
+    it('renders msgid with "(Message now deleted)" when message is null', () => {
       const wrapper = createWrapper({
         log: { id: 1, msgid: 789, message: null },
       })
       expect(wrapper.text()).toContain('789')
-      expect(wrapper.text()).toContain('(no info available)')
+      expect(wrapper.find('a').exists()).toBe(true)
+      expect(wrapper.text()).toContain('(Message now deleted)')
     })
 
     it('renders link to ilovefreegle.org with msgid', () => {
@@ -339,6 +340,54 @@ describe('ModLogMessage', () => {
       })
       expect(wrapper.vm.messagesubject).toBe('(Message now deleted)')
     })
+
+    it('prefers log.msgsubject over message.subject when both present', () => {
+      // API returns historical subject; message store has current (post-edit) subject.
+      // The component must show the historical one to avoid retroactive rename bug.
+      const wrapper = createWrapper({
+        log: {
+          id: 1,
+          msgid: 904,
+          msgsubject: 'Wanted: Escooter',
+          message: { subject: 'Wanted: Cycle' },
+        },
+      })
+      expect(wrapper.vm.messagesubject).toBe('Wanted: Escooter')
+    })
+
+    it('uses log.msgsubject when message is null (deleted post still shows historical subject)', () => {
+      const wrapper = createWrapper({
+        log: {
+          id: 1,
+          msgid: 905,
+          msgsubject: 'Wanted: Escooter',
+          message: null,
+        },
+      })
+      expect(wrapper.vm.messagesubject).toBe('Wanted: Escooter')
+    })
+  })
+
+  describe('msgsubject historical subject display', () => {
+    it('shows link section when log has msgsubject but message is null', () => {
+      // When message is deleted but API returned historical msgsubject, show the link
+      // (not the "no info available" fallback).
+      const wrapper = createWrapper({
+        log: { id: 1, msgid: 2200, msgsubject: 'Wanted: Old Subject', message: null },
+      })
+      expect(wrapper.find('a').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('(no info available)')
+      expect(wrapper.find('em').text()).toBe('Wanted: Old Subject')
+    })
+
+    it('shows link with "(Message now deleted)" when neither message nor msgsubject is present', () => {
+      const wrapper = createWrapper({
+        log: { id: 1, msgid: 2300, message: null },
+      })
+      expect(wrapper.find('a').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('(no info available)')
+      expect(wrapper.find('em').text()).toBe('(Message now deleted)')
+    })
   })
 
   describe('props', () => {
@@ -480,20 +529,58 @@ describe('ModLogMessage', () => {
       expect(wrapper.text()).not.toContain('(no info available)')
     })
 
-    it('shows "no info" section when message is null', () => {
+    it('shows link with "(Message now deleted)" when message is null', () => {
       const wrapper = createWrapper({
         log: { id: 1, msgid: 2000, message: null },
       })
-      expect(wrapper.find('a').exists()).toBe(false)
-      expect(wrapper.text()).toContain('(no info available)')
+      expect(wrapper.find('a').exists()).toBe(true)
+      expect(wrapper.text()).not.toContain('(no info available)')
+      expect(wrapper.text()).toContain('(Message now deleted)')
     })
 
-    it('does not render child components when message is null', () => {
+    it('renders child components even when message is null', () => {
       const wrapper = createWrapper({
         log: { id: 1, msgid: 2100, message: null },
       })
-      expect(wrapper.find('.stub-stdmsg').exists()).toBe(false)
-      expect(wrapper.find('.stub-group').exists()).toBe(false)
+      expect(wrapper.find('.stub-stdmsg').exists()).toBe(true)
+      expect(wrapper.find('.stub-group').exists()).toBe(true)
+    })
+  })
+
+  describe('deleted message log row (Discourse #9622)', () => {
+    it('renders link and "(Message now deleted)" for hard-deleted message with no msgsubject', () => {
+      // Represents a Message/Deleted log entry where the message has been hard-deleted
+      // from the database: the Go API returns msgid but omits msgsubject (empty string
+      // excluded). The message store fetch fails silently. The row must show meaningful
+      // text rather than blank content.
+      mockMessageStore.byId.mockReturnValue(null)
+      const wrapper = createWrapper({
+        log: {
+          id: 1,
+          msgid: 12345,
+          // No msgsubject — API omitted it because message is hard-deleted
+        },
+      })
+      expect(wrapper.find('a').exists()).toBe(true)
+      expect(wrapper.find('a').attributes('href')).toBe(
+        'https://www.ilovefreegle.org/message/12345'
+      )
+      expect(wrapper.find('em').text()).toBe('(Message now deleted)')
+      expect(wrapper.text()).not.toContain('(no info available)')
+    })
+
+    it('renders link with historical subject when msgsubject is present but message is deleted', () => {
+      // API returns msgsubject snapshot even though the message row is gone from DB.
+      mockMessageStore.byId.mockReturnValue(null)
+      const wrapper = createWrapper({
+        log: {
+          id: 1,
+          msgid: 12345,
+          msgsubject: 'OFFER: Free sofa',
+        },
+      })
+      expect(wrapper.find('a').exists()).toBe(true)
+      expect(wrapper.find('em').text()).toBe('OFFER: Free sofa')
     })
   })
 })

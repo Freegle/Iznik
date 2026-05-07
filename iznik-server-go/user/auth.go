@@ -65,7 +65,7 @@ func GetLoveJunkUser(ljuserid uint64, partnerkey string, firstname *string, last
 
 					// Create avatar from LoveJunk profile URL if provided.
 					if profileurl != nil && *profileurl != "" {
-						db.Exec("INSERT INTO users_images (userid, url, `default`) VALUES (?, ?, 0)", myid, *profileurl)
+						db.Exec("INSERT INTO users_images (userid, url, contenttype, `default`) VALUES (?, ?, 'image/jpeg', 0)", myid, *profileurl)
 					}
 				}
 

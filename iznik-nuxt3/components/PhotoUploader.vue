@@ -101,7 +101,7 @@
         <v-icon icon="camera" /> Add Photos
       </b-button>
       <p class="skip-link">
-        <a href="#" @click.prevent="emit('skip')">Skip</a>
+        <button class="skip-link-btn" @click="emit('skip')">Skip</button>
       </p>
     </div>
 
@@ -1035,9 +1035,18 @@ onBeforeUnmount(() => {
   margin-top: 1rem;
   margin-bottom: 0;
 
-  a {
+  a,
+  .skip-link-btn {
     color: $color-gray--normal;
     text-decoration: none;
+  }
+
+  .skip-link-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font: inherit;
   }
 }
 

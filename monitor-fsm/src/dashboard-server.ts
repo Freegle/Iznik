@@ -11,8 +11,9 @@ import { fileURLToPath } from 'node:url'
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
 import https from 'node:https'
-import { getDb } from './db/index.js'
+import { getDb, kvGet } from './db/index.js'
 import { putStatusPost } from './db/discourse-status.js'
+import { DISCOURSE_BASE } from './discourse.js'
 import type { Database as DB } from 'better-sqlite3'
 
 const execAsync = promisify(exec)
@@ -45,12 +46,98 @@ function readBody(req: IncomingMessage): Promise<string> {
   })
 }
 
+function httpsGet(url: string, headers: Record<string, string> = {}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers }, res => {
+      const chunks: Buffer[] = []
+      res.on('data', c => chunks.push(c))
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    })
+    req.on('error', reject)
+  })
+}
+
 function getDiscourseApiKey(): string {
   try {
     const profile = JSON.parse(readFileSync('/home/edward/profile.json', 'utf8'))
     return profile.auth_pairs[0].user_api_key
   } catch {
     throw new Error('Cannot read Discourse API key from profile.json')
+  }
+}
+
+function getCircleCIToken(): string {
+  try {
+    const env = readFileSync('/home/edward/FreegleDockerWSL/.env', 'utf8')
+    const match = env.match(/^CIRCLECI_TOKEN=(.+)$/m)
+    return match ? match[1].trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+interface CIRunnerStatus {
+  running: boolean
+  branch: string | null
+  workflowName: string | null
+  url: string | null
+  pipelineNumber: number | null
+  queueDepth: number
+}
+
+let ciRunnerCache: { data: CIRunnerStatus; timestamp: number } | null = null
+const CI_RUNNER_CACHE_TTL = 15000 // 15 seconds
+
+async function fetchCIRunnerStatus(): Promise<CIRunnerStatus> {
+  if (ciRunnerCache && Date.now() - ciRunnerCache.timestamp < CI_RUNNER_CACHE_TTL) {
+    return ciRunnerCache.data
+  }
+
+  const token = getCircleCIToken()
+  if (!token) return { running: false, branch: null, workflowName: null, url: null, pipelineNumber: null, queueDepth: 0 }
+
+  try {
+    // Fetch enough pipelines to cover the full queue. With a single runner,
+    // the OLDEST running workflow is the one actually executing — newer ones are waiting.
+    const pipelinesRes = await httpsGet(
+      'https://circleci.com/api/v2/project/github/Freegle/Iznik/pipeline?limit=30',
+      { 'Circle-Token': token }
+    )
+    // API returns newest first; reverse so we process oldest first
+    const pipelines: any[] = (JSON.parse(pipelinesRes).items ?? []).reverse()
+
+    const runningWorkflows: Array<{ pipelineNumber: number; branch: string; workflowName: string; url: string }> = []
+
+    for (const pipeline of pipelines) {
+      const wfRes = await httpsGet(
+        `https://circleci.com/api/v2/pipeline/${pipeline.id}/workflow`,
+        { 'Circle-Token': token }
+      )
+      const workflows: any[] = JSON.parse(wfRes).items ?? []
+      for (const wf of workflows) {
+        if (wf.status === 'running') {
+          runningWorkflows.push({
+            pipelineNumber: pipeline.number,
+            branch: pipeline.vcs?.branch ?? '',
+            workflowName: wf.name,
+            url: `https://app.circleci.com/pipelines/github/Freegle/Iznik/${pipeline.number}/workflows/${wf.id}`,
+          })
+        }
+      }
+    }
+
+    // The oldest running workflow (lowest pipeline number, already sorted) is on the runner.
+    // Everything else is queued behind it.
+    const active = runningWorkflows[0] ?? null
+    const result: CIRunnerStatus = active
+      ? { running: true, branch: active.branch, workflowName: active.workflowName, url: active.url, pipelineNumber: active.pipelineNumber, queueDepth: runningWorkflows.length - 1 }
+      : { running: false, branch: null, workflowName: null, url: null, pipelineNumber: null, queueDepth: 0 }
+
+    ciRunnerCache = { data: result, timestamp: Date.now() }
+    return result
+  } catch (err) {
+    console.error('Failed to fetch CircleCI runner status:', err)
+    return { running: false, branch: null, workflowName: null, url: null, pipelineNumber: null, queueDepth: 0 }
   }
 }
 
@@ -80,6 +167,8 @@ async function fetchPrsLive(): Promise<any[]> {
 
           // Compute CI status
           let ciStatus = 'unknown'
+          let ciRunning = false
+          let ciUrl: string | null = null
           const failedChecks: string[] = []
 
           if (status.statusCheckRollup && Array.isArray(status.statusCheckRollup)) {
@@ -87,24 +176,37 @@ async function fetchPrsLive(): Promise<any[]> {
             // GitHub returns two check types:
             //   CheckRun   → uses c.conclusion (SUCCESS/FAILURE/NEUTRAL/SKIPPED/...)
             //   StatusContext → uses c.state (SUCCESS/FAILURE/PENDING/ERROR)
-            const isFailure = (c: any) => c.__typename === 'StatusContext'
+            // Ignore branch/up-to-date: it's a GitHub housekeeping check that shows
+            // FAILURE simply because the branch is behind master — not a real CI failure.
+            const isNoise = (c: any) => /branch.?up.?to.?date|pages.?changed|header rules|redirect rules/i.test(c.context ?? c.name ?? '')
+            const isFailure = (c: any) => !isNoise(c) && (c.__typename === 'StatusContext'
               ? (c.state === 'FAILURE' || c.state === 'ERROR')
-              : (c.conclusion === 'FAILURE' || c.conclusion === 'ERROR')
+              : (c.conclusion === 'FAILURE' || c.conclusion === 'ERROR'))
             const isPending = (c: any) => c.__typename === 'StatusContext'
               ? (c.state === 'PENDING' || c.state === 'EXPECTED')
               : (!c.status || c.status === 'IN_PROGRESS' || c.status === 'QUEUED' || c.status === 'WAITING')
+            const isRunning = (c: any) => c.__typename === 'CheckRun'
+              ? (c.status === 'IN_PROGRESS')
+              : (c.state === 'PENDING')
             // NEUTRAL/SKIPPED are informational — don't count toward pending
 
             const hasFailure = checks.some(isFailure)
             const hasPending = checks.some(isPending)
+            ciRunning = checks.some(isRunning)
 
             if (hasFailure) {
               ciStatus = 'red'
               failedChecks.push(...checks.filter(isFailure).map(c => c.name ?? c.context ?? '?'))
+              const failCheck = checks.find(isFailure)
+              ciUrl = failCheck?.detailsUrl ?? failCheck?.targetUrl ?? null
             } else if (hasPending) {
               ciStatus = 'pending'
+              const pendingCheck = checks.find(isRunning) ?? checks.find(isPending)
+              ciUrl = pendingCheck?.detailsUrl ?? pendingCheck?.targetUrl ?? null
             } else {
               ciStatus = 'green'
+              const anyCheck = checks.find(c => c.detailsUrl ?? c.targetUrl)
+              ciUrl = anyCheck?.detailsUrl ?? anyCheck?.targetUrl ?? null
             }
           }
 
@@ -118,6 +220,8 @@ async function fetchPrsLive(): Promise<any[]> {
             mergeable: pr.mergeable,
             mergeStateStatus: status.mergeStateStatus,
             ciStatus,
+            ciRunning,
+            ciUrl,
             failedChecks,
           }
         } catch (err) {
@@ -132,6 +236,8 @@ async function fetchPrsLive(): Promise<any[]> {
             mergeable: pr.mergeable,
             mergeStateStatus: 'UNKNOWN',
             ciStatus: 'unknown',
+            ciRunning: false,
+            ciUrl: null,
             failedChecks: [],
           }
         }
@@ -161,7 +267,7 @@ function postToDiscourse(topicId: number, raw: string): Promise<{ ok: boolean; e
     const body = JSON.stringify({ topic_id: topicId, raw })
 
     const options = {
-      hostname: 'discourse.ilovefreegle.org',
+      hostname: new URL(DISCOURSE_BASE).hostname,
       port: 443,
       path: '/posts.json',
       method: 'POST',
@@ -217,8 +323,10 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
       SELECT b.topic, b.post, b.topic_title, b.reporter, b.excerpt, b.state,
              b.pr_number, b.reason, b.first_seen_at, b.last_seen_at,
              b.fixed_at, b.deployed_at, b.feature_area, b.pr_rejections,
-             COALESCE(b.feature_area, 'Uncategorised') AS group_key
+             COALESCE(b.feature_area, 'Uncategorised') AS group_key,
+             p.deploy_state
       FROM discourse_bug b
+      LEFT JOIN pr p ON p.number = b.pr_number
       ORDER BY COALESCE(b.feature_area, 'Uncategorised'), b.topic, b.post
     `).all()
     json(res, 200, rows)
@@ -227,7 +335,12 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
 
   // GET /api/drafts
   if (req.method === 'GET' && path === '/api/drafts') {
-    const rows = db.prepare('SELECT * FROM discourse_draft ORDER BY queued_at').all()
+    const rows = db.prepare(`
+      SELECT d.*, p.deploy_state
+      FROM discourse_draft d
+      LEFT JOIN pr p ON p.number = d.pr_number
+      ORDER BY d.queued_at
+    `).all()
     json(res, 200, rows)
     return
   }
@@ -243,6 +356,32 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
   if (req.method === 'GET' && path === '/api/prs') {
     const rows = db.prepare('SELECT * FROM pr ORDER BY number DESC').all()
     json(res, 200, rows)
+    return
+  }
+
+  // GET /api/circleci/runner  — what's currently running on the self-hosted runner
+  if (req.method === 'GET' && path === '/api/circleci/runner') {
+    const status = await fetchCIRunnerStatus()
+    if (status.running && status.branch) {
+      const prRow = db.prepare('SELECT number, title FROM pr WHERE branch = ?').get(status.branch) as { number: number; title: string } | undefined
+      if (prRow) {
+        (status as any).prNumber = prRow.number
+        ;(status as any).prTitle = prRow.title
+      }
+    }
+    json(res, 200, status)
+    return
+  }
+
+  // GET /api/prs/exhausted  — PRs that hit the 3-attempt budget and need human review
+  if (req.method === 'GET' && path === '/api/prs/exhausted') {
+    const kvRows = db.prepare(`SELECT key, value FROM kv WHERE key LIKE 'pr_fix_attempts_%'`).all() as Array<{ key: string; value: string }>
+    const exhausted = kvRows
+      .map(r => ({ number: parseInt(r.key.replace('pr_fix_attempts_', ''), 10), attempts: parseInt(r.value, 10) }))
+      .filter(r => r.attempts >= 3)
+    const focusRaw = kvGet(db, 'focus_pr_number')
+    const focusPRNumber = focusRaw ? parseInt(focusRaw, 10) : null
+    json(res, 200, { exhausted, focusPRNumber })
     return
   }
 
@@ -327,6 +466,21 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     } catch (err: any) {
       json(res, 500, { error: String(err?.message ?? err) })
     }
+    return
+  }
+
+  // POST /api/bugs/:topic/:post/reset-attempts  — clear fix attempt counter and reopen
+  const bugReset = path.match(/^\/api\/bugs\/(\d+)\/(\d+)\/reset-attempts$/)
+  if (req.method === 'POST' && bugReset) {
+    const topic = Number(bugReset[1])
+    const post = Number(bugReset[2])
+    const bug = db.prepare('SELECT pr_number FROM discourse_bug WHERE topic = ? AND post = ?').get(topic, post) as { pr_number: number | null } | undefined
+    if (bug?.pr_number) {
+      db.prepare("DELETE FROM kv WHERE key = ?").run(`pr_fix_attempts_${bug.pr_number}`)
+    }
+    db.prepare("UPDATE discourse_bug SET state = 'open', reason = NULL WHERE topic = ? AND post = ?").run(topic, post)
+    const row = db.prepare('SELECT * FROM discourse_bug WHERE topic = ? AND post = ?').get(topic, post)
+    json(res, 200, row ?? { error: 'not found' })
     return
   }
 

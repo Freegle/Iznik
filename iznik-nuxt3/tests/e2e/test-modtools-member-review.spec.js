@@ -16,7 +16,7 @@ const { loginViaModTools } = require('./utils/user')
 
 const MODTOOLS_URL = environment.modtoolsBaseUrl
 
-// Helper: dismiss any overlay modals (cake modal, etc.) that block interaction.
+// Helper: dismiss any overlay modals  that block interaction.
 async function dismissAllModals(page) {
   await page.evaluate(() => {
     document

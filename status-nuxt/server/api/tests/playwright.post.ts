@@ -1,6 +1,7 @@
 import { spawn, execSync } from 'child_process'
 import path from 'path'
 import { getTestState, setTestState, appendTestLogs, isTestRunning } from '../../utils/testState'
+import { clearTestEnvCache } from '../../utils/testEnvCache'
 
 export default defineEventHandler(async (event) => {
   const query = getQuery(event)
@@ -181,12 +182,15 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
       appendTestLogs('playwright', 'Could not pre-count tests, will determine from output\n')
     }
 
-    const testCmd = `npx playwright test${testArgs}`
+    const testCmd = `export ENABLE_MONOCART_REPORTER=true && npx playwright test${testArgs}`
 
-    // Clear freeze-specs file before run so we only capture freezes from this run
+    // Clear freeze-specs file and stale test result files before run.
+    // Stale junit.xml / test-status.json from a previous run (possibly weeks old
+    // if the container is reused) would otherwise be collected as CI artifacts
+    // and reported as failures even when the current run passes.
     try {
       execSync(
-        `docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt"`,
+        `docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt /app/test-results/junit.xml /app/test-results/test-status.json"`,
         { encoding: 'utf8', timeout: 5000 }
       )
     } catch {}
@@ -195,6 +199,18 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     appendTestLogs('playwright', `Running: ${testCmd}\n`)
 
     const initialCode = await spawnPlaywrightProcess(testCmd, pfx)
+
+    // Preserve main-run coverage before any freeze retry can overwrite it.
+    // The retry only runs a subset of specs, so its coverage file has lower
+    // totals than the full run — restoring the main copy keeps Coveralls accurate.
+    const mainCoveragePath = '/app/monocart-report/coverage/lcov.info'
+    const backupCoveragePath = '/app/monocart-report/coverage/lcov.info.main'
+    try {
+      execSync(
+        `docker exec ${pfx}-playwright sh -c "test -f ${mainCoveragePath} && cp ${mainCoveragePath} ${backupCoveragePath} || true"`,
+        { encoding: 'utf8', timeout: 5000 }
+      )
+    } catch {}
 
     // Check whether any specs were recorded as frozen and re-run them in a
     // fresh Playwright process (fresh V8 state, no accumulated async contexts).
@@ -208,6 +224,12 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
     const mainRunFailed = stateAfterMain.progress.failed
     const mainRunTotal  = stateAfterMain.progress.total
 
+    // Accumulate all spec basenames that have ever been identified as frozen across
+    // all retry rounds.  A spec that froze in round 0 but passed in round 1 should
+    // not be flagged as an "unaccounted failure" in round 2 just because its failure
+    // line still appears in the cumulative log from the initial run.
+    const allEverFrozenBasenames = new Set<string>()
+
     for (let freezeRound = 0; freezeRound < 2; freezeRound++) {
       try {
         const freezeOutput = execSync(
@@ -220,9 +242,14 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
 
         if (freezeSpecs.length === 0) break  // no frozen specs — done
 
+        // Add newly-frozen specs to the cumulative frozen set.
+        for (const f of freezeSpecs) {
+          allEverFrozenBasenames.add(path.basename(f))
+        }
+
         // Determine which spec files have failures in the cumulative logs so far.
-        // If any failing spec is NOT in the frozen list it is a genuine failure
-        // that the retry cannot fix — leave finalCode non-zero and bail out.
+        // If any failing spec is NOT in ANY round's frozen list it is a genuine
+        // failure that the retry cannot fix — leave finalCode non-zero and bail out.
         const currentLogs = getTestState('playwright').logs || ''
         const failedSpecBasenames = new Set<string>()
         const failedLines = currentLogs.match(/[✘✗×]\s+\d+\s+\[chromium\][^\n]*/g) || []
@@ -230,22 +257,96 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           const m = line.match(/›\s+(tests\/e2e\/[^:\s]+\.spec\.js)/)
           if (m) failedSpecBasenames.add(path.basename(m[1]))
         }
-        const frozenBasenames = new Set(freezeSpecs.map((f) => path.basename(f)))
-        const unaccountedFailures = [...failedSpecBasenames].filter((f) => !frozenBasenames.has(f))
+        const unaccountedFailures = [...failedSpecBasenames].filter((f) => !allEverFrozenBasenames.has(f))
         if (unaccountedFailures.length > 0) {
           appendTestLogs('playwright', `[FREEZE-RETRY round ${freezeRound + 1}] Non-frozen failures present (${unaccountedFailures.join(', ')}) — not retrying\n`)
           break
         }
 
-        const retryFiles = [...frozenBasenames].join(' ')
-        appendTestLogs('playwright', `\n[FREEZE-RETRY round ${freezeRound + 1}] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process: ${retryFiles}\n`)
+        // Use full paths for Playwright to find the specs. freezeSpecs already contains
+        // full paths like /app/tests/e2e/foo.spec.js; strip /app prefix for Docker context
+        const retryFiles = freezeSpecs.map((f) => f.replace(/^\/app\//, '')).join(' ')
+        const retryMsg = `[Freeze-retry ${freezeRound + 1}/2] Re-running ${freezeSpecs.length} frozen spec(s) in fresh process`
+        appendTestLogs('playwright', `\n${retryMsg}: ${retryFiles}\n`)
+        setTestState('playwright', { message: retryMsg })
+
+        // Reset the test database before retry. Tests that ran in the main suite
+        // have already modified the iznik database (created posts, replies, users).
+        // Re-running those spec files against a dirty database causes failures unrelated
+        // to the actual code under test. Drop + recreate + migrate + testenv restores
+        // the same clean state that the main run started from.
+        appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Resetting test database to clean state...\n`)
+        try {
+          execSync(
+            `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
+            { encoding: 'utf8', timeout: 30000 }
+          )
+          execSync(
+            `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
+            { encoding: 'utf8', timeout: 120000 }
+          )
+          execSync(
+            `docker exec ${pfx}-apiv1 sh -c "rm -f /tmp/iznik.dbstatus.*.down && cd /var/www/iznik && php install/testenv.php"`,
+            { encoding: 'utf8', timeout: 60000 }
+          )
+          // The Go V2 API maintains a MySQL connection pool. Dropping and recreating
+          // the database invalidates those connections. Restart the container so it
+          // starts fresh — otherwise the location typeahead (used by postcode validation
+          // in the /give flow) returns empty results and Playwright tests time out.
+          execSync(`docker restart ${pfx}-apiv2`, { encoding: 'utf8', timeout: 30000 })
+          // Wait up to 60s for the Go API to be healthy before running tests.
+          const apiv2Start = Date.now()
+          let apiv2Ready = false
+          while (Date.now() - apiv2Start < 60000) {
+            try {
+              const health = execSync(
+                `docker inspect --format '{{.State.Health.Status}}' ${pfx}-apiv2`,
+                { encoding: 'utf8', timeout: 5000 }
+              ).trim()
+              if (health === 'healthy') { apiv2Ready = true; break }
+            } catch {}
+            await new Promise((r) => setTimeout(r, 2000))
+          }
+          if (!apiv2Ready) {
+            throw new Error(`${pfx}-apiv2 did not become healthy within 60s after restart`)
+          }
+          // Clear the in-memory testEnv cache so the retry receives fresh
+          // postcode/ID data from the reset DB. Without this, the cache serves
+          // stale data (e.g. postcode 'NR1 3JD') that no longer exists in the
+          // recreated DB (only 'EH3 6SS' is seeded by testenv.php), causing the
+          // location typeahead to return empty results and the validation-tick
+          // to never appear in postMessage flows.
+          clearTestEnvCache()
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test environment cache cleared\n`)
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Test database reset complete (apiv2 healthy)\n`)
+        } catch (dbResetError: any) {
+          // Database reset failure means the retry would run against dirty data — any
+          // result would be unreliable. Fail the run so the root cause can be investigated.
+          appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Database reset FAILED: ${(dbResetError as Error).message}\n`)
+          finalCode = 1
+          break
+        }
 
         // Clear freeze file before retry so the next round picks up only NEW freezes.
         try {
           execSync(`docker exec ${pfx}-playwright sh -c "rm -f /tmp/playwright-freeze-specs.txt"`, { encoding: 'utf8', timeout: 5000 })
         } catch {}
 
-        const retryCode = await spawnPlaywrightProcess(`npx playwright test ${retryFiles}`, pfx)
+        // Run retry without monocart so the main-run coverage (full suite) is not
+        // overwritten by partial coverage from just the re-run frozen specs.
+        // --last-failed: only re-run the specific tests that failed, not the whole
+        // spec file. Without this, a spec with tests 3.1/3.2/3.3 would re-execute
+        // 3.1 and 3.2, re-accumulating V8 async context so that 3.3 hits the same
+        // freeze threshold again.
+        const retryCode = await spawnPlaywrightProcess(`export ENABLE_MONOCART_REPORTER=false && npx playwright test ${retryFiles} --last-failed`, pfx)
+
+        // Restore full-suite coverage — the retry covered fewer tests than the main run.
+        try {
+          execSync(
+            `docker exec ${pfx}-playwright sh -c "test -f ${backupCoveragePath} && cp ${backupCoveragePath} ${mainCoveragePath} || true"`,
+            { encoding: 'utf8', timeout: 5000 }
+          )
+        } catch {}
 
         if (retryCode === 0) {
           // All frozen specs passed in the fresh process — overall run is a success.
@@ -338,10 +439,13 @@ function parsePlaywrightOutput(text: string) {
   if (listPassedMatch) state.progress.passed = parseInt(listPassedMatch[1])
   if (listFailedMatch) state.progress.failed = parseInt(listFailedMatch[1])
 
-  // Look for test start markers and extract total count
+  // Look for test start markers and extract total count.
+  // Preserve any "[Freeze-retry N/2]" prefix already set so the status bar
+  // stays informative during the retry process.
   const testMatch = text.match(/Running (\d+) tests? using \d+ workers?/)
   if (testMatch) {
-    state.message = testMatch[0]
+    const retryPrefix = state.message?.match(/^\[Freeze-retry \d+\/\d+\][^|]*/)?.[0]
+    state.message = retryPrefix ? `${retryPrefix.trim()} | ${testMatch[0]}` : testMatch[0]
     state.progress.total = parseInt(testMatch[1])
   }
 

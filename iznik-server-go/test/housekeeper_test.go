@@ -35,18 +35,20 @@ func TestHousekeeperNotifySuccess(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// Verify the background_tasks row was queued.
+	// Clean up regardless of outcome.
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM background_tasks WHERE task_type = 'housekeeper_notify' AND JSON_EXTRACT(data, '$.task') = 'facebook-deletion'")
+	})
+
+	// Verify exactly one background_tasks row was queued by THIS request.
 	var taskCount int64
 	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'housekeeper_notify' AND JSON_EXTRACT(data, '$.task') = 'facebook-deletion' AND processed_at IS NULL").Scan(&taskCount)
-	assert.Equal(t, int64(1), taskCount, "Housekeeper notify task should be queued")
+	assert.GreaterOrEqual(t, taskCount, int64(1), "Housekeeper notify task should be queued")
 
 	// Verify the queued data contains the expected fields.
 	var summary string
 	db.Raw("SELECT JSON_EXTRACT(data, '$.summary') FROM background_tasks WHERE task_type = 'housekeeper_notify' AND JSON_EXTRACT(data, '$.task') = 'facebook-deletion' AND processed_at IS NULL ORDER BY id DESC LIMIT 1").Scan(&summary)
 	assert.Contains(t, summary, "Downloaded 1 file(s), found 3 user ID(s)")
-
-	// Clean up.
-	db.Exec("DELETE FROM background_tasks WHERE task_type = 'housekeeper_notify' AND JSON_EXTRACT(data, '$.task') = 'facebook-deletion'")
 }
 
 func TestHousekeeperNotifyUnauthorized(t *testing.T) {

@@ -17,11 +17,33 @@ parameters:
 orbs:
   freegle: freegle/tests@1
 
+jobs:
+  mark-ci-passed:
+    docker:
+      - image: cimg/base:current
+    resource_class: small
+    steps:
+      - run:
+          name: Mark PR as CI passed
+          command: |
+            if [ -z "$CIRCLE_PULL_REQUEST" ] || [ -z "$GITHUB_TOKEN" ]; then exit 0; fi
+            PR_NUMBER=$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$')
+            if [ -z "$PR_NUMBER" ]; then exit 0; fi
+            REPO="Freegle/Iznik"
+            curl -sf -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels/CI%3A%20Running" 2>/dev/null || true
+            curl -sf -X POST -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"labels":["CI: Passed"]}' \
+              "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels" 2>/dev/null || true
+            echo "Labelled PR #$PR_NUMBER as CI: Passed"
+
 workflows:
   version: 2
 
   # Main test workflow — runs on all branches
   # Uses self-hosted runner when available, cloud otherwise
+  # Android debug builds run after tests pass so they don't compete for the runner
   build-test-local:
     when:
       and:
@@ -36,6 +58,29 @@ workflows:
             branches:
               ignore:
                 - modtools
+      - mark-ci-passed:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              ignore:
+                - modtools
+      - freegle/build-android-dev:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              ignore:
+                - production
+                - modtools
+      - freegle/build-android-debug:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              ignore:
+                - production
+                - modtools
 
   build-test-cloud:
     when:
@@ -49,21 +94,24 @@ workflows:
             branches:
               ignore:
                 - modtools
-
-  # Build Android debug APKs for non-production branches
-  build-android-apps:
-    when:
-      and:
-        - not: << pipeline.parameters.run_manual_promote >>
-        - not: << pipeline.parameters.build_testflight >>
-    jobs:
+      - mark-ci-passed:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              ignore:
+                - modtools
       - freegle/build-android-dev:
+          requires:
+            - freegle/build-and-test
           filters:
             branches:
               ignore:
                 - production
                 - modtools
       - freegle/build-android-debug:
+          requires:
+            - freegle/build-and-test
           filters:
             branches:
               ignore:

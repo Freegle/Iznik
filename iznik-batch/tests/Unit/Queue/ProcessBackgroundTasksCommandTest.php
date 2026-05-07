@@ -113,6 +113,43 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertNotNull($task->processed_at);
     }
 
+    public function test_email_chitchat_report_falls_back_when_user_name_blank(): void
+    {
+        // Users without a fullname (or whose fullname is blank) used to fail
+        // the report with "email_chitchat_report requires user_name". The report
+        // should still send — id + email identify the reporter; the name is cosmetic.
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chitchat_report',
+            'data' => json_encode([
+                'user_id' => 42076407,
+                'user_name' => '',
+                'user_email' => 'mail@mattbloomfield.co.uk',
+                'newsfeed_id' => 604243,
+                'reason' => 'This is a bot or AI post.',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        Mail::assertSent(ChitchatReportMail::class, function (ChitchatReportMail $mail) {
+            return $mail->reporterName === 'A Freegle user'
+                && $mail->reporterId === 42076407
+                && $mail->reporterEmail === 'mail@mattbloomfield.co.uk';
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+        $this->assertNull($task->failed_at);
+    }
+
     public function test_skips_already_processed_tasks(): void
     {
         DB::table('background_tasks')->insert([
@@ -2062,6 +2099,46 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             'file' => '/app/Service.php',
             'line' => 99,
         ]);
+    }
+
+    public function test_user_forget_task_forgets_user(): void
+    {
+        $user = $this->createTestUser();
+
+        $taskId = DB::table('background_tasks')->insertGetId([
+            'task_type'  => 'user_forget',
+            'data'       => json_encode(['user_id' => $user->id, 'reason' => 'Support purge']),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1]);
+
+        // Task should be marked processed.
+        $task = DB::table('background_tasks')->find($taskId);
+        $this->assertNotNull($task->processed_at, 'Task should be marked as processed');
+        $this->assertNull($task->failed_at, 'Task should not be marked as failed');
+
+        // User personal data should be wiped.
+        $updated = DB::table('users')->where('id', $user->id)->first();
+        $this->assertNull($updated->firstname);
+        $this->assertEquals("Deleted User #{$user->id}", $updated->fullname);
+        $this->assertNotNull($updated->forgotten);
+    }
+
+    public function test_user_forget_task_records_error_without_user_id(): void
+    {
+        $taskId = DB::table('background_tasks')->insertGetId([
+            'task_type'  => 'user_forget',
+            'data'       => json_encode(['reason' => 'Support purge']),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1]);
+
+        $task = DB::table('background_tasks')->find($taskId);
+        $this->assertNull($task->processed_at, 'Task with missing user_id should not be processed successfully');
+        $this->assertNotNull($task->error_message, 'Task with missing user_id should record an error message');
+        $this->assertStringContainsString('user_id', $task->error_message);
     }
 
     /**

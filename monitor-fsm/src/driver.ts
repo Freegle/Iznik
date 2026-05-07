@@ -24,7 +24,8 @@
 // behaviour. Must be set BEFORE the adapter import.
 if (!process.env.CLAUDECODE) process.env.CLAUDECODE = '1'
 
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile, unlink } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
@@ -284,7 +285,37 @@ function logInstance(i: WorkflowInstance, note: string) {
   dbg(`${note} state=${i.currentState} status=${i.status} history=${i.history.length}`)
 }
 
+const DRIVER_LOCK_PATH = '/tmp/freegle-monitor-driver.lock'
+
+async function acquireDriverLock(): Promise<() => Promise<void>> {
+  if (existsSync(DRIVER_LOCK_PATH)) {
+    const pidStr = await readFile(DRIVER_LOCK_PATH, 'utf8').catch(() => '')
+    const pid = parseInt(pidStr.trim(), 10)
+    if (pid) {
+      // Check if the PID is actually still running
+      try {
+        process.kill(pid, 0) // signal 0 = existence check only
+        outWarn(`driver lock held by PID ${pid} — another iteration is still running, exiting`)
+        process.exit(0)
+      } catch {
+        // PID not running — stale lock, safe to overwrite
+        outWarn(`removing stale driver lock (PID ${pid} not running)`)
+      }
+    }
+  }
+  await writeFile(DRIVER_LOCK_PATH, String(process.pid), 'utf8')
+  const release = async () => { await unlink(DRIVER_LOCK_PATH).catch(() => {}) }
+  // Release on process exit (normal or signal)
+  process.once('exit', () => { try { require('node:fs').unlinkSync(DRIVER_LOCK_PATH) } catch {} })
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(sig, async () => { await release(); process.exit(0) })
+  }
+  return release
+}
+
 async function main() {
+  const releaseLock = await acquireDriverLock()
+
   const definition = JSON.parse(await readFile(WORKFLOW_PATH, 'utf8')) as WorkflowDefinition
 
   const storage = new JSONFileStorage(INSTANCE_STORE)
@@ -401,6 +432,7 @@ async function main() {
   // After 2 entries with no commit, we force-add an "effective" openPRFixAttempt
   // record that ROUTER's rule skips (distinct number already in openPRFixAttempts).
   const openPRFixEntries = new Map<number, number>()
+  let consecutiveCoverageFailures = 0
 
   let step = 0
   while (step < MAX_STEPS) {
@@ -518,6 +550,23 @@ async function main() {
       if (Object.keys(toClear).length > 0) {
         dbg(`clearing stale action keys on PICK_DISCOURSE_BUG entry: ${Object.keys(toClear).join(', ')}`)
         await engine.updateContext(instance.id, toClear)
+      }
+    }
+
+    // ─── DIAGNOSE_BUG re-entry clearing ───
+    // DIAGNOSE_BUG uses a two-phase pattern: Phase 1 calls search_code and
+    // check_existing_prs, Phase 2 reads those results and produces the brief.
+    // When REVIEW_REPRODUCTION sends us back here (mismatch), the previous
+    // search results are stale — clear them so Phase 1 runs again with a
+    // potentially refined query, incorporating the mismatch reason.
+    if (current.currentState === 'DIAGNOSE_BUG') {
+      const ctxNow: any = current.context ?? {}
+      if (ctxNow.diagnosisMismatchReason && (ctxNow._action_search_code || ctxNow._action_check_existing_prs)) {
+        dbg(`clearing stale search results on DIAGNOSE_BUG re-entry (mismatch: ${ctxNow.diagnosisMismatchReason})`)
+        await engine.updateContext(instance.id, {
+          _action_search_code: null,
+          _action_check_existing_prs: null,
+        })
       }
     }
 
@@ -699,6 +748,7 @@ async function main() {
           dbg('red-pr: no open PRs I authored have red CI')
         }
       }
+      consecutiveCoverageFailures = 0
     } catch (err: any) {
       outWarn(`step ${step} error: ${err.message ?? err}`)
       // Claude subscription quota exhausted — retrying will produce the same
@@ -709,17 +759,19 @@ async function main() {
         break
       }
       // Safety net: if the LLM produced invalid JSON across all retries, don't
-      // leave the instance stuck mid-workflow. Force-transition to
-      // COVERAGE_GATE so the iteration wraps up cleanly (WRAP_UP → SEND_EMAIL
-      // → SCHEDULE_NEXT). A genuine stuck-loop exits via MAX_STEPS instead.
+      // leave the instance stuck mid-workflow. After 2 consecutive coverage
+      // failures force-transition to WRAP_UP (avoids COVERAGE_GATE → WRITE_COVERAGE
+      // → fail → COVERAGE_GATE infinite loop). First failure still tries COVERAGE_GATE
+      // so a transient LLM hiccup doesn't silently skip coverage entirely.
       if (err.message?.includes('failed validation after')) {
-        outWarn('LLM produced invalid JSON after retries — skipping to COVERAGE_GATE')
+        consecutiveCoverageFailures++
+        const target = consecutiveCoverageFailures >= 2 ? 'WRAP_UP' : 'COVERAGE_GATE'
+        const reason = consecutiveCoverageFailures >= 2
+          ? `LLM coverage JSON failed ${consecutiveCoverageFailures}× in a row — skipping to WRAP_UP`
+          : 'LLM JSON-validation failure after retries — skipping to COVERAGE_GATE'
+        outWarn(reason)
         try {
-          await engine.forceTransition(
-            instance.id,
-            'COVERAGE_GATE',
-            'LLM JSON-validation failure after retries; skip to COVERAGE_GATE to end iteration.',
-          )
+          await engine.forceTransition(instance.id, target, reason)
         } catch (forceErr: any) {
           outWarn(`force-transition failed: ${forceErr.message ?? forceErr}`)
           break
@@ -769,6 +821,8 @@ async function main() {
       outWarn(`putStatusPost threw: ${err}`)
     }
   }
+
+  await releaseLock()
 }
 
 main().catch(err => {

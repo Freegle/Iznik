@@ -7,6 +7,7 @@ use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\PushNotificationService;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
@@ -244,5 +245,53 @@ class PushNotificationServiceTest extends TestCase
         $count = $this->service->getBadgeCount($mod->id);
 
         $this->assertEquals(0, $count, 'Inactive group pending messages must not inflate badge count');
+    }
+
+    public function test_pending_volunteering_ops_count_towards_badge(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Create a pending volunteering op linked to this group.
+        $volunteeringId = DB::table('volunteering')->insertGetId([
+            'pending' => 1,
+            'deleted' => 0,
+            'expired' => 0,
+            'title' => 'Test volunteer op',
+            'userid' => $mod->id,
+        ]);
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volunteeringId,
+            'groupid' => $group->id,
+        ]);
+
+        $count = $this->service->getBadgeCount($mod->id);
+
+        $this->assertEquals(1, $count, 'Pending volunteering op must count towards badge');
+    }
+
+    public function test_non_pending_volunteering_ops_do_not_count(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Approved (non-pending) volunteering op — should not inflate badge.
+        $volunteeringId = DB::table('volunteering')->insertGetId([
+            'pending' => 0,
+            'deleted' => 0,
+            'expired' => 0,
+            'title' => 'Approved op',
+            'userid' => $mod->id,
+        ]);
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volunteeringId,
+            'groupid' => $group->id,
+        ]);
+
+        $count = $this->service->getBadgeCount($mod->id);
+
+        $this->assertEquals(0, $count, 'Non-pending volunteering op must not count towards badge');
     }
 }

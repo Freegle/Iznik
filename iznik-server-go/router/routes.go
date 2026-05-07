@@ -25,6 +25,7 @@ import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
 	"github.com/freegle/iznik-server-go/admin"
+	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
 	"github.com/freegle/iznik-server-go/authority"
@@ -199,6 +200,13 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/modtools/admin", admin.PostAdmin)
 		rg.Patch("/modtools/admin", admin.PatchAdmin)
 		rg.Delete("/modtools/admin", admin.DeleteAdmin)
+
+		// AI Image regeneration (support/admin only)
+		rg.Get("/admin/ai-images/review", aiimage.ListReview)
+		rg.Get("/admin/ai-images/count", aiimage.Count)
+		rg.Post("/admin/ai-images/:id/regenerate", aiimage.Regenerate)
+		rg.Post("/admin/ai-images/:id/accept", aiimage.Accept)
+		rg.Post("/admin/ai-images/:id/keep", aiimage.KeepCurrent)
 
 		// Authority Search
 		// @Router /authority [get]
@@ -895,6 +903,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} map[string]interface{}
 		rg.Post("/message", message.PostMessage)
 		rg.Patch("/message", message.PatchMessage)
+
+		// @Router /message/tn/{tnpostid} [patch]
+		// @Summary Update a message by TN post ID
+		// @Description Edit a message using its Trash Nothing post ID. For partner integrations when the Freegle message ID is unknown.
+		// @Tags message
+		// @Accept json
+		// @Produce json
+		// @Param tnpostid path string true "Trash Nothing post ID"
+		// @Success 200 {object} map[string]interface{}
+		rg.Patch("/message/tn/:tnpostid", message.PatchMessageByTN)
 		rg.Put("/message", message.PutMessage)
 		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
 

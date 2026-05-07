@@ -2,6 +2,7 @@ package test
 
 import (
 	json2 "encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -19,8 +20,14 @@ import (
 func createTestTrackingRecordWithType(t *testing.T, emailType string, sentAt time.Time, opened bool, clicked bool) uint64 {
 	db := database.DBConn
 
+	// varchar(32) limit — keep tracking_id short: "s" + last-12-digits-of-nano + "-" + type
+	nano := fmt.Sprintf("%d", time.Now().UnixNano())
+	shortID := "s" + nano[len(nano)-12:] + "-" + emailType
+	if len(shortID) > 32 {
+		shortID = shortID[:32]
+	}
 	tracking := &emailtracking.EmailTracking{
-		TrackingID:     uniquePrefix("stats") + "-" + emailType,
+		TrackingID:     shortID,
 		EmailType:      emailType,
 		RecipientEmail: "stats@example.com",
 		SentAt:         &sentAt,

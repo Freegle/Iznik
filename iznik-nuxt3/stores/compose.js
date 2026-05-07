@@ -348,7 +348,7 @@ export const useComposeStore = defineStore({
             message.repostof,
             this.email,
             message,
-            this.messages[message.id].attachments
+            message.attachments
           )
 
           let result
@@ -420,7 +420,7 @@ export const useComposeStore = defineStore({
           results.push(result)
 
           const me = useAuthStore().user
-          this.markSubmitted(message.id, me)
+          this.markSubmitted(parseInt(id), me)
         }
       }
 

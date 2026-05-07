@@ -27,6 +27,16 @@ fi
 
 # Skip commands that are just reading/checking data (not executing tests).
 IS_DATA_COMMAND=false
+
+# Allow running tests inside monitor-fsm/ — it's a standalone package with
+# its own vitest setup, not covered by the status container API.
+# Also allow when CWD is inside monitor-fsm (hook sees the real CWD).
+if echo "$COMMAND" | grep -qE 'monitor-fsm'; then
+  IS_DATA_COMMAND=true
+fi
+if echo "$PWD" | grep -qE 'monitor-fsm'; then
+  IS_DATA_COMMAND=true
+fi
 if echo "$COMMAND" | grep -qE '\bcurl\b.*localhost:8081/api/tests.*/status'; then
   IS_DATA_COMMAND=true
 fi
