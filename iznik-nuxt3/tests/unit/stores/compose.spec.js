@@ -428,7 +428,7 @@ describe('compose store', () => {
       )
     })
 
-    it('handles AI illustration attachments', async () => {
+    it('handles AI illustration attachments when no real photo present', async () => {
       const store = useComposeStore()
       store.init({ public: {} })
       store.postcode = { id: 123 }
@@ -439,10 +439,7 @@ describe('compose store', () => {
         {
           type: 'Offer',
           item: 'Test',
-          attachments: [
-            { ouruid: 'abc123', externalmods: { ai: true } },
-            { id: 5 },
-          ],
+          attachments: [{ ouruid: 'abc123', externalmods: { ai: true } }],
         },
         'test@example.com'
       )
@@ -452,7 +449,7 @@ describe('compose store', () => {
         externalmods: { ai: true },
       })
       expect(mockMessagePut).toHaveBeenCalledWith(
-        expect.objectContaining({ attachments: [77, 5] })
+        expect.objectContaining({ attachments: [77] })
       )
     })
 
@@ -692,48 +689,7 @@ describe('compose store', () => {
     })
   })
 
-  // AssertFlip: reproduces bug where AI image is included in submission even when
-  // user has uploaded their own real photo. Step 1 asserts the BUGGY behaviour
-  // (both images submitted); Step 2 (below) inverts the assertion so the test
-  // fails on buggy code and will pass once the bug is fixed.
   describe('AI image suppressed when user uploads own photo', () => {
-    // STEP 1 — documents the bug: both AI image and user photo survive to submit.
-    // This test PASSES on the current (buggy) code.
-    it('BUGGY: includes AI-generated image in submission even when user has uploaded their own real photo', async () => {
-      const store = useComposeStore()
-      store.init({ public: {} })
-      store.postcode = { id: 123 }
-      mockImagePost.mockResolvedValue({ id: 77 })
-      mockMessagePut.mockResolvedValue({ id: 99 })
-      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-      const errSpy = vi
-        .spyOn(console, 'error')
-        .mockImplementation(() => {})
-
-      await store.createDraft(
-        {
-          type: 'Offer',
-          item: 'Old sofa',
-          attachments: [
-            { ouruid: 'ai-uid-abc', externalmods: { ai: true } },
-            { id: 5 },
-          ],
-        },
-        'user@example.com'
-      )
-
-      const callArgs = mockMessagePut.mock.calls[0][0]
-      // BUG: AI image (id 77) is present alongside user's real photo (id 5)
-      expect(callArgs.attachments).toContain(77)
-      expect(callArgs.attachments).toContain(5)
-      expect(callArgs.attachments).toHaveLength(2)
-
-      logSpy.mockRestore()
-      errSpy.mockRestore()
-    })
-
-    // STEP 2 — inverted assertion: AI image must NOT appear when user has a real photo.
-    // This test FAILS on the current (buggy) code and will PASS once the bug is fixed.
     it('excludes AI-generated image from submission when user has uploaded their own real photo', async () => {
       const store = useComposeStore()
       store.init({ public: {} })
