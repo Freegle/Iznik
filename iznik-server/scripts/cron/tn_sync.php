@@ -163,7 +163,7 @@ do {
                                 if ($loc) {
                                     #error_log("...found postcode {$loc['id']} {$loc['name']}");
 
-                                    if ($loc['id'] !== $u->getPrivate('locationid')) {
+                                    if ($loc['id'] !== $u->getPrivate('lastlocation')) {
                                         error_log("FD #{$change['fd_user_id']} TN lat/lng $lat,$lng has changed {$u->getPrivate('locationid')} => {$loc['id']} {$loc['name']}");
                                         $u->setPrivate('lastlocation', $loc['id']);
                                     }

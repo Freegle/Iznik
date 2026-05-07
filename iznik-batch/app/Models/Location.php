@@ -55,7 +55,7 @@ class Location extends Model
                 ->first();
 
             if ($result) {
-                $ret = (array) $result;
+                $ret = $result->toArray();
 
                 if ($ret['areaid']) {
                     $area = self::find($ret['areaid']);
