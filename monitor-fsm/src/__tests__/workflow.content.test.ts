@@ -171,6 +171,65 @@ describe('driver.ts — DIAGNOSE_BUG re-entry stale clearing', () => {
   })
 })
 
+// ── IMPLEMENT_FIX: git history check + scope constraint ──────────────────
+
+describe('IMPLEMENT_FIX prompt — git history check and single-PR scope', () => {
+  const prompt: string = workflow.states.IMPLEMENT_FIX.prompt
+
+  it('includes GIT HISTORY CHECK step before the diagnosis brief', () => {
+    expect(prompt).toContain('GIT HISTORY CHECK')
+    expect(prompt).toContain('GIT_HISTORY=')
+    const historyIdx = prompt.indexOf('GIT HISTORY CHECK')
+    const briefIdx = prompt.indexOf('DIAGNOSIS BRIEF')
+    expect(historyIdx).toBeLessThan(briefIdx)
+  })
+
+  it('instructs delegate to run git log for recent changes', () => {
+    expect(prompt).toContain('git log --oneline --since=')
+    expect(prompt).toContain('90 days ago')
+  })
+
+  it('includes SCOPE CONSTRAINT — ONE BRANCH, ONE PR', () => {
+    expect(prompt).toContain('SCOPE CONSTRAINT')
+    expect(prompt).toContain('ONE PR')
+  })
+
+  it('tells delegate to close extra PRs before returning', () => {
+    expect(prompt).toContain('gh pr close')
+    expect(prompt).toContain('outside scope')
+  })
+
+  it('scope constraint appears before BRANCH AND PR section', () => {
+    const scopeIdx = prompt.indexOf('SCOPE CONSTRAINT')
+    const branchIdx = prompt.indexOf('BRANCH AND PR')
+    expect(scopeIdx).toBeGreaterThan(0)
+    expect(scopeIdx).toBeLessThan(branchIdx)
+  })
+})
+
+// ── VERIFY_DISCOURSE_BATCH: close_extra_prs ───────────────────────────────
+
+describe('VERIFY_DISCOURSE_BATCH — close_extra_prs', () => {
+  const state = workflow.states.VERIFY_DISCOURSE_BATCH
+  const prompt: string = state.prompt
+
+  it('lists close_extra_prs in writeActions', () => {
+    expect(state.writeActions).toContain('close_extra_prs')
+  })
+
+  it('calls close_extra_prs with expectedPrNumber and iterationStartTs', () => {
+    expect(prompt).toContain('close_extra_prs')
+    expect(prompt).toContain('expectedPrNumber')
+    expect(prompt).toContain('iterationStartTs')
+  })
+
+  it('calls close_extra_prs before adversarial_review_pr', () => {
+    const closeIdx = prompt.indexOf('close_extra_prs')
+    const reviewIdx = prompt.indexOf('adversarial_review_pr')
+    expect(closeIdx).toBeLessThan(reviewIdx)
+  })
+})
+
 // ── delegate boilerplate: PUSH_VERIFIED requirement ───────────────────────
 
 describe('delegate_to_coder boilerplate — PUSH_VERIFIED marker', () => {
