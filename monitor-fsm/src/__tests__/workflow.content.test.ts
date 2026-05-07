@@ -56,12 +56,69 @@ describe('REPRODUCE_BUG prompt — AssertFlip strategy', () => {
   })
 })
 
+// ── DIAGNOSE_BUG: two-phase gather/diagnose pattern ──────────────────────
+
+describe('DIAGNOSE_BUG prompt — two-phase structure', () => {
+  const prompt: string = workflow.states.DIAGNOSE_BUG.prompt
+
+  it('has a PHASE 1 (GATHER) section gated on _action_search_code absent', () => {
+    expect(prompt).toContain('PHASE 1')
+    expect(prompt).toContain('_action_search_code is NOT set')
+  })
+
+  it('has a PHASE 2 (DIAGNOSE) section gated on _action_search_code present', () => {
+    expect(prompt).toContain('PHASE 2')
+    expect(prompt).toContain('_action_search_code IS set')
+  })
+
+  it('Phase 1 calls check_existing_prs action', () => {
+    const phase1 = prompt.split('PHASE 2')[0]
+    expect(phase1).toContain('check_existing_prs')
+  })
+
+  it('Phase 1 calls search_code action', () => {
+    const phase1 = prompt.split('PHASE 2')[0]
+    expect(phase1).toContain('search_code')
+  })
+
+  it('Phase 1 sets proposedTransition to null to stay in the state', () => {
+    const phase1 = prompt.split('PHASE 2')[0]
+    expect(phase1).toContain('"proposedTransition": null')
+  })
+
+  it('Phase 2 reads _action_search_code results from context', () => {
+    const phase2 = prompt.split('PHASE 2')[1]
+    expect(phase2).toContain('_action_search_code')
+  })
+
+  it('Phase 2 reads _action_check_existing_prs results from context', () => {
+    const phase2 = prompt.split('PHASE 2')[1]
+    expect(phase2).toContain('_action_check_existing_prs')
+  })
+
+  it('Phase 2 sets proposedTransition to REPRODUCE_BUG', () => {
+    const phase2 = prompt.split('PHASE 2')[1]
+    expect(phase2).toContain('"proposedTransition": "REPRODUCE_BUG"')
+  })
+
+  it('Phase 2 has empty actions (no tool calls in final output)', () => {
+    const phase2 = prompt.split('PHASE 2')[1]
+    expect(phase2).toContain('"actions": []')
+  })
+
+  it('PHASE 1 appears before PHASE 2 in the prompt', () => {
+    const p1Idx = prompt.indexOf('PHASE 1')
+    const p2Idx = prompt.indexOf('PHASE 2')
+    expect(p1Idx).toBeLessThan(p2Idx)
+  })
+})
+
 // ── DIAGNOSE_BUG: symbol-level localization ───────────────────────────────
 
 describe('DIAGNOSE_BUG prompt — symbol-level localization', () => {
   const prompt: string = workflow.states.DIAGNOSE_BUG.prompt
 
-  it('includes SYMBOL-LEVEL LOCALIZATION heading in step 3', () => {
+  it('includes SYMBOL-LEVEL LOCALIZATION heading', () => {
     expect(prompt).toContain('SYMBOL-LEVEL LOCALIZATION')
   })
 
@@ -77,12 +134,40 @@ describe('DIAGNOSE_BUG prompt — symbol-level localization', () => {
     expect(afIdx).toBeLessThan(evIdx)
   })
 
-  it('still requires check_existing_prs call in step 2', () => {
+  it('still requires check_existing_prs', () => {
     expect(prompt).toContain('check_existing_prs')
   })
 
   it('still requires multi-hypothesis step', () => {
     expect(prompt).toContain('MULTI-HYPOTHESIS STEP')
+  })
+})
+
+// ── driver.ts: DIAGNOSE_BUG re-entry clears stale search results ──────────
+
+describe('driver.ts — DIAGNOSE_BUG re-entry stale clearing', () => {
+  const driverTs = readFileSync(join(__dirname, '../driver.ts'), 'utf8')
+
+  it('has a DIAGNOSE_BUG re-entry clearing block', () => {
+    expect(driverTs).toContain("current.currentState === 'DIAGNOSE_BUG'")
+  })
+
+  it('checks diagnosisMismatchReason before clearing', () => {
+    const idx = driverTs.indexOf("current.currentState === 'DIAGNOSE_BUG'")
+    const block = driverTs.slice(idx, idx + 600)
+    expect(block).toContain('diagnosisMismatchReason')
+  })
+
+  it('clears _action_search_code on mismatch re-entry', () => {
+    const idx = driverTs.indexOf("current.currentState === 'DIAGNOSE_BUG'")
+    const block = driverTs.slice(idx, idx + 600)
+    expect(block).toContain('_action_search_code: null')
+  })
+
+  it('clears _action_check_existing_prs on mismatch re-entry', () => {
+    const idx = driverTs.indexOf("current.currentState === 'DIAGNOSE_BUG'")
+    const block = driverTs.slice(idx, idx + 600)
+    expect(block).toContain('_action_check_existing_prs: null')
   })
 })
 
