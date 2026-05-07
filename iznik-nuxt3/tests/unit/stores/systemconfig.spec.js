@@ -6,6 +6,9 @@ const mockAddWorrywordv2 = vi.fn()
 const mockDeleteWorrywordv2 = vi.fn()
 const mockAddSpamKeywordv2 = vi.fn()
 const mockDeleteSpamKeywordv2 = vi.fn()
+const mockFetchConcernKeywordsv2 = vi.fn()
+const mockAddConcernKeywordv2 = vi.fn()
+const mockDeleteConcernKeywordv2 = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
@@ -15,6 +18,9 @@ vi.mock('~/api', () => ({
       deleteWorrywordv2: mockDeleteWorrywordv2,
       addSpamKeywordv2: mockAddSpamKeywordv2,
       deleteSpamKeywordv2: mockDeleteSpamKeywordv2,
+      fetchConcernKeywordsv2: mockFetchConcernKeywordsv2,
+      addConcernKeywordv2: mockAddConcernKeywordv2,
+      deleteConcernKeywordv2: mockDeleteConcernKeywordv2,
     },
   }),
 }))
@@ -294,5 +300,79 @@ describe('systemconfig store', () => {
       ]
       expect(store.getSpamKeywordWords).toEqual(['buy', 'click'])
     })
+
+    it('getConcernKeywords returns concern_keywords', () => {
+      const store = useSystemConfigStore()
+      store.concern_keywords = [{ id: 1, keyword: 'test', category: 'review' }]
+      expect(store.getConcernKeywords).toEqual([
+        { id: 1, keyword: 'test', category: 'review' },
+      ])
+    })
   })
+
+  describe('concern keywords', () => {
+    it('fetchConcernKeywords stores results', async () => {
+      const store = useSystemConfigStore()
+      store.init({})
+      const keywords = [
+        { id: 1, keyword: 'knife', category: 'substance_regulated', scope: 'global' },
+      ]
+      mockFetchConcernKeywordsv2.mockResolvedValue(keywords)
+      await store.fetchConcernKeywords()
+      expect(mockFetchConcernKeywordsv2).toHaveBeenCalledWith({})
+      expect(store.concern_keywords).toEqual(keywords)
+    })
+
+    it('fetchConcernKeywords sets empty array on error', async () => {
+      const store = useSystemConfigStore()
+      store.init({})
+      mockFetchConcernKeywordsv2.mockRejectedValue(new Error('network'))
+      await store.fetchConcernKeywords()
+      expect(store.concern_keywords).toEqual([])
+      expect(store.hasError).toBe(true)
+    })
+
+    it('addConcernKeyword calls API and re-fetches', async () => {
+      const store = useSystemConfigStore()
+      store.init({})
+      mockAddConcernKeywordv2.mockResolvedValue({})
+      mockFetchConcernKeywordsv2.mockResolvedValue([])
+      await store.addConcernKeyword({
+        keyword: 'test',
+        category: 'review',
+        match_mode: 'literal',
+        action: 'flag',
+        scope: 'global',
+      })
+      expect(mockAddConcernKeywordv2).toHaveBeenCalledWith({
+        keyword: 'test',
+        category: 'review',
+        match_mode: 'literal',
+        action: 'flag',
+        scope: 'global',
+      })
+      expect(mockFetchConcernKeywordsv2).toHaveBeenCalled()
+    })
+
+    it('addConcernKeyword ignores empty keyword', async () => {
+      const store = useSystemConfigStore()
+      store.init({})
+      await store.addConcernKeyword({ keyword: '  ' })
+      expect(mockAddConcernKeywordv2).not.toHaveBeenCalled()
+    })
+
+    it('deleteConcernKeyword removes from local state', async () => {
+      const store = useSystemConfigStore()
+      store.init({})
+      store.concern_keywords = [
+        { id: 1, keyword: 'keep', category: 'review' },
+        { id: 2, keyword: 'remove', category: 'scam' },
+      ]
+      mockDeleteConcernKeywordv2.mockResolvedValue({})
+      await store.deleteConcernKeyword(2)
+      expect(mockDeleteConcernKeywordv2).toHaveBeenCalledWith(2)
+      expect(store.concern_keywords).toEqual([
+        { id: 1, keyword: 'keep', category: 'review' },
+      ])
+    })
 })

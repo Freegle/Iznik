@@ -31,4 +31,18 @@ export default class ConfigAPI extends BaseAPI {
   deleteSpamKeywordv2(id) {
     return this.$requestv2('DELETE', `/config/admin/spam_keywords/${id}`, {})
   }
+
+  // Concern keywords management
+  fetchConcernKeywordsv2(params = {}) {
+    const query = new URLSearchParams(params).toString()
+    return this.$getv2('/config/admin/concern_keywords' + (query ? '?' + query : ''))
+  }
+
+  addConcernKeywordv2(data) {
+    return this.$postv2('/config/admin/concern_keywords', data)
+  }
+
+  deleteConcernKeywordv2(id) {
+    return this.$requestv2('DELETE', `/config/admin/concern_keywords/${id}`, {})
+  }
 }

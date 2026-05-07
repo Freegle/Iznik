@@ -53,6 +53,33 @@ type CreateWorryWordRequest struct {
 	Type      string `json:"type"`
 }
 
+type ConcernKeyword struct {
+	ID        uint64  `json:"id" gorm:"primary_key"`
+	Keyword   string  `json:"keyword"`
+	Substance *string `json:"substance"`
+	Category  string  `json:"category"`
+	MatchMode string  `json:"match_mode" gorm:"column:match_mode"`
+	Exclude   *string `json:"exclude"`
+	Scope     string  `json:"scope"`
+	GroupID   *uint64 `json:"group_id" gorm:"column:group_id"`
+	Action    string  `json:"action"`
+}
+
+func (ConcernKeyword) TableName() string {
+	return "concern_keywords"
+}
+
+type CreateConcernKeywordRequest struct {
+	Keyword   string  `json:"keyword" validate:"required"`
+	Substance *string `json:"substance"`
+	Category  string  `json:"category" validate:"required"`
+	MatchMode string  `json:"match_mode"`
+	Exclude   *string `json:"exclude"`
+	Scope     string  `json:"scope"`
+	GroupID   *uint64 `json:"group_id"`
+	Action    string  `json:"action"`
+}
+
 // RequireSupportOrAdminMiddleware creates middleware that checks for Support/Admin role
 func RequireSupportOrAdminMiddleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -275,6 +302,96 @@ func DeleteWorryWord(c *fiber.Ctx) error {
 
 	if result.RowsAffected == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Worry word not found")
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"success": true})
+}
+
+// Concern Keywords endpoints
+
+func ListConcernKeywords(c *fiber.Ctx) error {
+	db := database.DBConn
+
+	query := db.Order("keyword ASC")
+
+	scope := c.Query("scope")
+	if scope != "" {
+		query = query.Where("scope = ?", scope)
+	}
+
+	groupID := c.Query("group_id")
+	if groupID != "" {
+		query = query.Where("group_id = ?", groupID)
+	}
+
+	var keywords []ConcernKeyword
+	query.Find(&keywords)
+
+	if keywords == nil {
+		keywords = make([]ConcernKeyword, 0)
+	}
+
+	return c.JSON(keywords)
+}
+
+func CreateConcernKeyword(c *fiber.Ctx) error {
+	var req CreateConcernKeywordRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if strings.TrimSpace(req.Keyword) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Keyword is required")
+	}
+	if req.Category == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Category is required")
+	}
+
+	matchMode := req.MatchMode
+	if matchMode == "" {
+		matchMode = "literal"
+	}
+	scope := req.Scope
+	if scope == "" {
+		scope = "global"
+	}
+	action := req.Action
+	if action == "" {
+		action = "flag"
+	}
+
+	kw := ConcernKeyword{
+		Keyword:   strings.TrimSpace(req.Keyword),
+		Substance: req.Substance,
+		Category:  req.Category,
+		MatchMode: matchMode,
+		Exclude:   req.Exclude,
+		Scope:     scope,
+		GroupID:   req.GroupID,
+		Action:    action,
+	}
+
+	result := database.DBConn.Create(&kw)
+	if result.Error != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create concern keyword")
+	}
+
+	return c.Status(fiber.StatusOK).JSON(kw)
+}
+
+func DeleteConcernKeyword(c *fiber.Ctx) error {
+	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid ID")
+	}
+
+	result := database.DBConn.Delete(&ConcernKeyword{}, id)
+	if result.Error != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to delete concern keyword")
+	}
+
+	if result.RowsAffected == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Concern keyword not found")
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"success": true})
