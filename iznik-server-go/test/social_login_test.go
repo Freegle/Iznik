@@ -521,3 +521,223 @@ func TestSocialMatchOrCreateTNUser(t *testing.T) {
 	db.Exec("DELETE FROM sessions WHERE userid = ?", userID)
 	db.Exec("DELETE FROM users WHERE id = ?", userID)
 }
+
+// =============================================================================
+// Profile Picture Tests
+// =============================================================================
+
+func newFacebookMockServerWithPicture(id, email, firstName, lastName, name, pictureURL string, isSilhouette bool) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		type pictureInner struct {
+			URL          string `json:"url"`
+			IsSilhouette bool   `json:"is_silhouette"`
+			Width        int    `json:"width"`
+			Height       int    `json:"height"`
+		}
+		type pictureOuter struct {
+			Data pictureInner `json:"data"`
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"id":         id,
+			"email":      email,
+			"first_name": firstName,
+			"last_name":  lastName,
+			"name":       name,
+			"picture": pictureOuter{Data: pictureInner{
+				URL:          pictureURL,
+				IsSilhouette: isSilhouette,
+				Width:        50,
+				Height:       50,
+			}},
+		})
+	}))
+}
+
+func newGoogleMockServerWithPicture(sub, email, givenName, familyName, name, aud, pictureURL string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"sub":         sub,
+			"email":       email,
+			"given_name":  givenName,
+			"family_name": familyName,
+			"name":        name,
+			"aud":         aud,
+			"picture":     pictureURL,
+		})
+	}))
+}
+
+func TestFacebookLoginSavesProfilePicture(t *testing.T) {
+	prefix := uniquePrefix("fb-pic")
+	email := fmt.Sprintf("%s@facebook.com", prefix)
+	fbID := "fb-uid-" + prefix
+	pictureURL := "https://example.com/" + prefix + ".jpg"
+
+	server := newFacebookMockServerWithPicture(fbID, email, "FB", "User", "FB User", pictureURL, false)
+	defer server.Close()
+
+	os.Setenv("FACEBOOK_GRAPH_URL", server.URL)
+	defer os.Unsetenv("FACEBOOK_GRAPH_URL")
+
+	body := `{"fblogin":1,"fbaccesstoken":"fake-access-token"}`
+	resp := postSession(body)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	db := database.DBConn
+	var userID uint64
+	db.Raw("SELECT userid FROM users_logins WHERE type = 'Facebook' AND uid = ?", fbID).Scan(&userID)
+	assert.NotEqual(t, uint64(0), userID)
+
+	// Profile picture should be saved.
+	var imageURL string
+	db.Raw("SELECT url FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&imageURL)
+	assert.Equal(t, pictureURL, imageURL)
+
+	// Cleanup.
+	db.Exec("DELETE FROM users_images WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users_logins WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", userID)
+	db.Exec("DELETE FROM sessions WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users WHERE id = ?", userID)
+}
+
+func TestFacebookLoginSilhouetteNotSaved(t *testing.T) {
+	prefix := uniquePrefix("fb-sil")
+	email := fmt.Sprintf("%s@facebook.com", prefix)
+	fbID := "fb-uid-" + prefix
+
+	// Silhouette = default placeholder, not a real picture.
+	server := newFacebookMockServerWithPicture(fbID, email, "FB", "User", "FB User", "https://example.com/silhouette.jpg", true)
+	defer server.Close()
+
+	os.Setenv("FACEBOOK_GRAPH_URL", server.URL)
+	defer os.Unsetenv("FACEBOOK_GRAPH_URL")
+
+	body := `{"fblogin":1,"fbaccesstoken":"fake-access-token"}`
+	resp := postSession(body)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	db := database.DBConn
+	var userID uint64
+	db.Raw("SELECT userid FROM users_logins WHERE type = 'Facebook' AND uid = ?", fbID).Scan(&userID)
+	assert.NotEqual(t, uint64(0), userID)
+
+	// Silhouette should NOT be saved.
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM users_images WHERE userid = ?", userID).Scan(&count)
+	assert.Equal(t, int64(0), count)
+
+	// Cleanup.
+	db.Exec("DELETE FROM users_logins WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", userID)
+	db.Exec("DELETE FROM sessions WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users WHERE id = ?", userID)
+}
+
+func TestFacebookLimitedLoginSavesProfilePicture(t *testing.T) {
+	prefix := uniquePrefix("fb-lim-pic")
+	email := fmt.Sprintf("%s@facebook.com", prefix)
+	fbSub := "fb-limited-uid-" + prefix
+	pictureURL := "https://example.com/" + prefix + "-limited.jpg"
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	assert.NoError(t, err)
+
+	kid := "test-kid-pic"
+
+	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nBytes := privateKey.PublicKey.N.Bytes()
+		eBytes := big.NewInt(int64(privateKey.PublicKey.E)).Bytes()
+		jwks := map[string]interface{}{
+			"keys": []map[string]string{
+				{
+					"kty": "RSA",
+					"kid": kid,
+					"use": "sig",
+					"alg": "RS256",
+					"n":   base64.RawURLEncoding.EncodeToString(nBytes),
+					"e":   base64.RawURLEncoding.EncodeToString(eBytes),
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(jwks)
+	}))
+	defer jwksServer.Close()
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+		"sub":         fbSub,
+		"email":       email,
+		"given_name":  "FB",
+		"family_name": "Limited",
+		"name":        "FB Limited",
+		"picture":     pictureURL,
+		"iat":         time.Now().Unix(),
+		"exp":         time.Now().Add(time.Hour).Unix(),
+	})
+	token.Header["kid"] = kid
+	signedToken, err := token.SignedString(privateKey)
+	assert.NoError(t, err)
+
+	os.Setenv("FACEBOOK_JWKS_URL", jwksServer.URL)
+	defer os.Unsetenv("FACEBOOK_JWKS_URL")
+
+	body := fmt.Sprintf(`{"fblogin":1,"fbaccesstoken":"%s","fblimited":1}`, signedToken)
+	resp := postSession(body)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	db := database.DBConn
+	var userID uint64
+	db.Raw("SELECT userid FROM users_logins WHERE type = 'Facebook' AND uid = ?", fbSub).Scan(&userID)
+	assert.NotEqual(t, uint64(0), userID)
+
+	// Profile picture from JWT claim should be saved.
+	var imageURL string
+	db.Raw("SELECT url FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&imageURL)
+	assert.Equal(t, pictureURL, imageURL)
+
+	// Cleanup.
+	db.Exec("DELETE FROM users_images WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users_logins WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", userID)
+	db.Exec("DELETE FROM sessions WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users WHERE id = ?", userID)
+}
+
+func TestGoogleLoginSavesProfilePicture(t *testing.T) {
+	prefix := uniquePrefix("google-pic")
+	email := fmt.Sprintf("%s@gmail.com", prefix)
+	clientID := "test-google-pic-client-id"
+	pictureURL := "https://lh3.googleusercontent.com/" + prefix + ".jpg"
+
+	server := newGoogleMockServerWithPicture("google-uid-"+prefix, email, "Google", "User", "Google User", clientID, pictureURL)
+	defer server.Close()
+
+	os.Setenv("GOOGLE_TOKENINFO_URL", server.URL)
+	os.Setenv("GOOGLE_CLIENT_ID", clientID)
+	defer os.Unsetenv("GOOGLE_TOKENINFO_URL")
+	defer os.Unsetenv("GOOGLE_CLIENT_ID")
+
+	body := `{"googlelogin":true,"googlejwt":"fake-jwt-token"}`
+	resp := postSession(body)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	db := database.DBConn
+	var userID uint64
+	db.Raw("SELECT userid FROM users_logins WHERE type = 'Google' AND uid = ?", "google-uid-"+prefix).Scan(&userID)
+	assert.NotEqual(t, uint64(0), userID)
+
+	// Profile picture should be saved.
+	var imageURL string
+	db.Raw("SELECT url FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&imageURL)
+	assert.Equal(t, pictureURL, imageURL)
+
+	// Cleanup.
+	db.Exec("DELETE FROM users_images WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users_logins WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", userID)
+	db.Exec("DELETE FROM sessions WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users WHERE id = ?", userID)
+}
