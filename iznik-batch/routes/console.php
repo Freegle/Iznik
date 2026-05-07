@@ -449,6 +449,14 @@ Schedule::command('users:remap-locations')
     ->sendOutputTo(cronLog('users:remap-locations'))
     ->runInBackground();
 
+// Update message subjects when associated location names have changed.
+// V1: cron/messages_remap.php (every 5 minutes)
+Schedule::command('messages:remap-subjects')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:remap-subjects'))
+    ->runInBackground();
+
 // =============================================================================
 // AI IMAGE REVIEW
 // =============================================================================
