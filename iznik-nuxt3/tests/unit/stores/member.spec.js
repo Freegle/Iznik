@@ -160,6 +160,58 @@ describe('member store', () => {
     })
   })
 
+  describe('fetchMembers — stale-entry counter bug (regression #9631 posts 19-20)', () => {
+    // Bug confirmed still spreading (Susan post 20) after PR #369 was closed without merging.
+    // The existing fix (commit 2604e75) resets relatedmembers when remainingPairs === 0, but
+    // it computes remainingPairs from this.list, which is never cleared between page navigations.
+    // Any stale Related pair entry left over from a previous visit makes remainingPairs > 0,
+    // preventing the reset — so the nav badge stays stuck at 1 even though the server returned
+    // no actionable pairs.
+
+    it('counter resets to 0 when API returns empty — even with stale Related pair in store', async () => {
+      // Simulate: user visited Related page, pair was fetched, user navigated away without
+      // store.clear() being called.  Server auto-resolved the pair, so the next visit returns [].
+      // Bug: remainingPairs = 1 (stale entry) → reset does NOT fire → counter stuck at 1.
+      mockFetchMembers.mockResolvedValue({ members: [], context: null, ratings: [] })
+      mockAuthWork.relatedmembers = 1
+
+      const store = useMemberStore()
+      store.config = {}
+      store.list[10] = { id: 10, user1: 100, user2: 200, collection: 'Related' }
+
+      await store.fetchMembers({ collection: 'Related', groupid: 0 })
+
+      expect(mockAuthWork.relatedmembers).toBe(0)
+    })
+
+    it('non-synthetic Related member entry is not double-counted in the pair tally (N pairs → count equals N)', async () => {
+      // When the store holds a stale Related pair from a previous page visit alongside N
+      // newly-returned pairs, remainingPairs = N + stale.  For N=1 this means the stale entry
+      // inflates the tally to 2.  The tally should equal the number of pairs the API actually
+      // returned (1), not the accumulated total across navigations.
+      mockFetchMembers.mockResolvedValue({
+        members: [{ id: 10, user1: 100, user2: 200 }],
+        context: null,
+        ratings: [],
+      })
+      mockAuthWork.relatedmembers = 1
+
+      const store = useMemberStore()
+      store.config = {}
+      // Stale pair 99 (processed on a previous visit; store was not cleared on navigation).
+      store.list[99] = { id: 99, user1: 500, user2: 600, collection: 'Related' }
+
+      await store.fetchMembers({ collection: 'Related', groupid: 0 })
+
+      // After fetchMembers the store should hold exactly N=1 non-synthetic Related pair.
+      // Bug: remainingPairs = 2 (stale pair 99 + new pair 10) → count is off by one.
+      const pairCount = Object.values(store.list).filter(
+        (m) => m.collection === 'Related' && !m._syntheticRelated
+      ).length
+      expect(pairCount).toBe(1)
+    })
+  })
+
   describe('fetchMembers - pagination context', () => {
     it('stores the integer context returned by the API', async () => {
       mockFetchMembers.mockResolvedValue({
