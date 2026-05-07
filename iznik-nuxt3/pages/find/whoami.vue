@@ -114,7 +114,7 @@ import PostLoggedInEmail from '~/components/PostLoggedInEmail.vue'
 import { useComposeStore } from '~/stores/compose'
 import { useUserStore } from '~/stores/user'
 import { useAuthStore } from '~/stores/auth'
-import { setup, freegleIt } from '~/composables/useCompose'
+import { setup, freegleIt, makeCanSubmit } from '~/composables/useCompose'
 import { buildHead } from '~/composables/useBuildHead'
 import { useMe } from '~/composables/useMe'
 
@@ -144,6 +144,7 @@ const emailBelongsToSomeoneElse = ref(false)
 
 // Get setup data from composable
 const {
+  messageValid,
   loggedIn,
   emailIsntOurs,
   submitting,
@@ -152,12 +153,11 @@ const {
   wentWrong,
 } = await setup('Wanted')
 
-// Can submit if logged in, or email is valid and not belonging to someone else
-const canSubmit = computed(() => {
-  if (loggedIn.value) {
-    return true
-  }
-  return emailValid.value && !emailBelongsToSomeoneElse.value
+const canSubmit = makeCanSubmit({
+  messageValid,
+  loggedIn,
+  emailValid,
+  emailBelongsToSomeoneElse,
 })
 
 // Reset email belongs to someone else flag when email changes

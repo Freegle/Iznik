@@ -124,6 +124,7 @@ import {
   postcodeSelect,
   postcodeClear,
   freegleIt,
+  makeCanSubmit,
 } from '~/composables/useCompose'
 
 const router = useRouter()
@@ -145,6 +146,7 @@ const emailBelongsToSomeoneElse = ref(false)
 // Get setup data from composable
 const {
   initialPostcode,
+  messageValid,
   postcodeValid,
   noGroups,
   closed,
@@ -156,15 +158,15 @@ const {
   wentWrong,
 } = await setup('Offer')
 
-// Can submit if postcode is valid, group not closed, no group issues, and either logged in or email is valid
-const canSubmit = computed(() => {
-  if (!postcodeValid.value || closed.value || noGroups.value) {
-    return false
-  }
-  if (loggedIn.value) {
-    return true
-  }
-  return emailValid.value && !emailBelongsToSomeoneElse.value
+const canSubmit = makeCanSubmit({
+  messageValid,
+  loggedIn,
+  emailValid,
+  emailBelongsToSomeoneElse,
+  postcodeValid,
+  closed,
+  noGroups,
+  requirePostcode: true,
 })
 
 // Reset email belongs to someone else flag when email changes
