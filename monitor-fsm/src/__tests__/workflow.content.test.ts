@@ -43,8 +43,14 @@ describe('REPRODUCE_BUG prompt — AssertFlip strategy', () => {
     expect(prompt).toContain('TEST_COMMAND=')
   })
 
-  it('still requires ANALYSIS_COMPLETE=reproduction done', () => {
-    expect(prompt).toContain('ANALYSIS_COMPLETE=reproduction done')
+  it('instructs delegate to push test branch and emit COMMIT_PUSHED — no separate PR', () => {
+    expect(prompt).toContain('COMMIT_PUSHED=<sha>')
+    expect(prompt).toContain('Do NOT open a PR')
+  })
+
+  it('uses same branch naming as IMPLEMENT_FIX so it can be found', () => {
+    expect(prompt).toContain('fix/<featureArea-slug')
+    expect(prompt).toContain('IMPLEMENT_FIX')
   })
 
   it('passes affected_function from diagnosisBrief into the task', () => {
@@ -175,6 +181,12 @@ describe('driver.ts — DIAGNOSE_BUG re-entry stale clearing', () => {
 
 describe('IMPLEMENT_FIX prompt — git history check and single-PR scope', () => {
   const prompt: string = workflow.states.IMPLEMENT_FIX.prompt
+
+  it('tells IMPLEMENT_FIX to check out existing reproduce branch, not create new', () => {
+    expect(prompt).toContain('already pushed the failing test to this branch')
+    expect(prompt).toContain('git checkout fix/')
+    expect(prompt).toContain('Do NOT use -b')
+  })
 
   it('includes GIT HISTORY CHECK step before the diagnosis brief', () => {
     expect(prompt).toContain('GIT HISTORY CHECK')
