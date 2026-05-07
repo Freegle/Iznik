@@ -137,6 +137,9 @@ describe('support/[[id]].vue page', () => {
             template: '<div class="mod-support-spam-keywords" />',
             methods: { fetchSpamKeywords: vi.fn() },
           },
+          ModSupportConcernKeywords: {
+            template: '<div class="mod-support-concern-keywords" />',
+          },
           NoticeMessage: {
             template: '<div class="notice-message"><slot /></div>',
             props: ['variant'],

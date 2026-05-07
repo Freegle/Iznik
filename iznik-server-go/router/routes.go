@@ -590,6 +590,43 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 404 {object} fiber.Error "Worry word not found"
 		adminConfig.Delete("/worry_words/:id", config.DeleteWorryWord)
 
+		// @Router /config/admin/concern_keywords [get]
+		// @Summary List concern keywords
+		// @Tags config
+		// @Produce json
+		// @Security BearerAuth
+		// @Param scope query string false "Filter by scope (global/group)"
+		// @Param group_id query string false "Filter by group ID (when scope=group)"
+		// @Success 200 {array} config.ConcernKeyword
+		// @Failure 401 {object} fiber.Error "Authentication required"
+		// @Failure 403 {object} fiber.Error "Support or Admin role required"
+		adminConfig.Get("/concern_keywords", config.ListConcernKeywords)
+
+		// @Router /config/admin/concern_keywords [post]
+		// @Summary Create a concern keyword
+		// @Tags config
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Param body body config.CreateConcernKeywordRequest true "Concern keyword to create"
+		// @Success 200 {object} config.ConcernKeyword
+		// @Failure 400 {object} fiber.Error "Invalid request"
+		// @Failure 401 {object} fiber.Error "Authentication required"
+		// @Failure 403 {object} fiber.Error "Support or Admin role required"
+		adminConfig.Post("/concern_keywords", config.CreateConcernKeyword)
+
+		// @Router /config/admin/concern_keywords/{id} [delete]
+		// @Summary Delete a concern keyword
+		// @Tags config
+		// @Produce json
+		// @Security BearerAuth
+		// @Param id path int true "Concern keyword ID"
+		// @Success 200 {object} map[string]bool
+		// @Failure 401 {object} fiber.Error "Authentication required"
+		// @Failure 403 {object} fiber.Error "Support or Admin role required"
+		// @Failure 404 {object} fiber.Error "Concern keyword not found"
+		adminConfig.Delete("/concern_keywords/:id", config.DeleteConcernKeyword)
+
 		// Admin Config Patch
 		// @Router /config/admin [patch]
 		// @Summary Update admin config keys
