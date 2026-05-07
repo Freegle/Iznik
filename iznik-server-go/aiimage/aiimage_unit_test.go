@@ -255,3 +255,21 @@ func TestBuildImagePrompt_CanonicalJobResolvesToObject(t *testing.T) {
 	assert.Contains(t, prompt, "calculator")
 	assert.NotContains(t, prompt, "Accountant")
 }
+
+func TestSubjectForName_UnknownItemPassesThrough(t *testing.T) {
+	assert.Equal(t, "pressure washer", subjectForName("pressure washer"))
+	assert.Equal(t, "bicycle", subjectForName("bicycle"))
+	assert.Equal(t, "cot", subjectForName("cot"))
+}
+
+func TestBuildImagePrompt_HouseholdItemContext(t *testing.T) {
+	prompt := buildImagePrompt("pressure washer")
+	assert.Contains(t, prompt, "household",
+		"prompt must describe items as household objects to disambiguate compound names")
+}
+
+func TestBuildImagePrompt_UsesAmericanEnglish(t *testing.T) {
+	prompt := buildImagePrompt("cot")
+	assert.Contains(t, prompt, "American English",
+		"prompt must instruct the model to use American English terminology")
+}

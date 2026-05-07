@@ -241,7 +241,7 @@ var canonicalJobs = map[string]string{
 
 // subjectForName resolves the prompt subject for a given ai_images.name.
 // For canonical job titles, returns the iconic object (e.g. "Accountant" → "calculator").
-// For item names, returns the name unchanged.
+// For all other item names, returns the name unchanged.
 func subjectForName(name string) string {
 	if obj, ok := canonicalJobs[name]; ok {
 		return obj
@@ -250,14 +250,15 @@ func subjectForName(name string) string {
 }
 
 // buildImagePrompt constructs the AI image generation prompt.
-// Matches the Pollinations prompt template used for both items and jobs.
 // For job titles, subjectForName() maps them to their canonical object first.
 func buildImagePrompt(name string) string {
 	subject := subjectForName(name)
 	return "Product illustration: single isolated " + subject + " centered on plain dark green background. " +
 		"Style: friendly cartoon white line drawing, moderate shading, cute and quirky, UK audience. " +
 		"The object sits alone on a simple surface or floats in space. " +
-		"Simple illustration style, clean lines, single object only."
+		"Simple illustration style, clean lines, single object only. " +
+		"This is a common UK household or everyday item. " +
+		"Use American English terminology."
 }
 
 // CloudflareAPIBase is the base URL for the Cloudflare API. Overridable in tests.
@@ -734,6 +735,39 @@ func Accept(c *fiber.Ctx) error {
 	if oldUID != "" && oldUID != newUID {
 		db.Exec(`UPDATE messages_attachments SET externaluid = ? WHERE externaluid = ?`, newUID, oldUID)
 	}
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// KeepCurrent clears the pending review state without changing the image.
+// Used when the current image is acceptable or when every regeneration attempt is worse.
+//
+// @Summary Keep the current AI image
+// @Tags ai-images
+// @Produce json
+// @Security BearerAuth
+// @Param id path int true "AI image ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /admin/ai-images/{id}/keep [post]
+func KeepCurrent(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+	if !user.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Must be Support or Admin")
+	}
+
+	id, err := strconv.ParseUint(c.Params("id"), 10, 64)
+	if err != nil || id == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid image ID")
+	}
+
+	db := database.DBConn
+
+	// Clear pending state and votes so this image stops appearing in the review queue.
+	db.Exec(`UPDATE ai_images SET pending_externaluid = NULL, regeneration_notes = NULL, status = 'active' WHERE id = ?`, id)
+	db.Exec(`DELETE FROM microactions WHERE aiimageid = ? AND actiontype = 'AIImageReview'`, id)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }

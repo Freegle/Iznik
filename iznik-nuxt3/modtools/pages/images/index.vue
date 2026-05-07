@@ -5,6 +5,35 @@
       Images flagged by volunteers as needing regeneration. Review and replace where needed.
     </p>
 
+    <b-alert variant="info" dismissible class="mb-3">
+      <strong>Tips for better AI images</strong>
+      <ul class="mb-0 mt-1">
+        <li>
+          The AI is trained on US English. Common British terms are translated automatically
+          ("cot" → "baby crib", "nappy" → "diaper", "pushchair" → "stroller", "hoover" →
+          "vacuum cleaner") but for other British terms, type the US English equivalent in the
+          description box if the image looks wrong.
+        </li>
+        <li>
+          Two-word names like "pressure washer" or "steam mop" sometimes confuse the AI — a
+          more descriptive override usually fixes it.
+        </li>
+        <li>
+          The image is generated from the item title only, not the post body. Post descriptions
+          often contain collection arrangements and other text that would confuse the AI. If the
+          title alone is too vague, add a clearer description below (e.g. "child's blue bicycle
+          with stabilisers").
+        </li>
+        <li>
+          If you don't know what the item is or looks like, skip it.
+        </li>
+        <li>
+          Some items genuinely can't have a good AI image — if every attempt is wrong, it is fine
+          to leave the current image and move on.
+        </li>
+      </ul>
+    </b-alert>
+
     <div v-if="loading" class="text-center py-4">
       <b-spinner />
     </div>
@@ -100,32 +129,46 @@
               class="mb-2"
             />
 
-            <!-- Action buttons -->
-            <div class="d-flex gap-2 align-items-center flex-wrap">
-              <b-button
-                v-if="previewFor(img)"
-                data-testid="accept-btn"
-                variant="primary"
-                :disabled="accepting[img.id]"
-                @click="handleAccept(img)"
-              >
-                <b-spinner v-if="accepting[img.id]" small class="me-1" />
-                Accept New Image
-              </b-button>
+            <!-- Action buttons: Regenerate left, Keep/Accept far right -->
+            <div class="w-100 d-flex justify-content-between align-items-center">
+              <div class="d-flex gap-2 align-items-center">
+                <b-button
+                  data-testid="regenerate-btn"
+                  variant="white"
+                  :disabled="regenerating[img.id]"
+                  @click="handleRegenerate(img)"
+                >
+                  <b-spinner v-if="regenerating[img.id]" small class="me-1" />
+                  {{ previewFor(img) ? 'Try Again' : 'Regenerate' }}
+                </b-button>
 
-              <b-button
-                data-testid="regenerate-btn"
-                variant="white"
-                :disabled="regenerating[img.id]"
-                @click="handleRegenerate(img)"
-              >
-                <b-spinner v-if="regenerating[img.id]" small class="me-1" />
-                {{ previewFor(img) ? 'Try Again' : 'Regenerate' }}
-              </b-button>
+                <span v-if="errors[img.id]" class="text-danger small">
+                  {{ errors[img.id] }}
+                </span>
+              </div>
 
-              <span v-if="errors[img.id]" class="text-danger small">
-                {{ errors[img.id] }}
-              </span>
+              <div class="d-flex gap-2">
+                <b-button
+                  data-testid="keep-btn"
+                  variant="secondary"
+                  :disabled="keeping[img.id]"
+                  @click="handleKeep(img)"
+                >
+                  <b-spinner v-if="keeping[img.id]" small class="me-1" />
+                  Keep Current
+                </b-button>
+
+                <b-button
+                  v-if="previewFor(img)"
+                  data-testid="accept-btn"
+                  variant="primary"
+                  :disabled="accepting[img.id]"
+                  @click="handleAccept(img)"
+                >
+                  <b-spinner v-if="accepting[img.id]" small class="me-1" />
+                  Accept New Image
+                </b-button>
+              </div>
             </div>
           </div>
         </div>
@@ -140,13 +183,14 @@ import { useAIImages } from '~/modtools/composables/useAIImages'
 
 definePageMeta({ layout: 'default' })
 
-const { images, loading, fetchReview, regenerate, accept } = useAIImages()
+const { images, loading, fetchReview, regenerate, accept, keep } = useAIImages()
 
 const localImages = ref([])
 const notes = ref({})
 const localPreviews = ref({}) // set after clicking Regenerate
 const regenerating = ref({})
 const accepting = ref({})
+const keeping = ref({})
 const errors = ref({})
 
 onMounted(async () => {
@@ -191,6 +235,20 @@ async function handleAccept(img) {
     errors.value[img.id] = 'Failed to accept image. Please try again.'
   } finally {
     accepting.value[img.id] = false
+  }
+}
+
+async function handleKeep(img) {
+  keeping.value[img.id] = true
+  errors.value[img.id] = null
+
+  try {
+    await keep(img.id)
+    localImages.value = localImages.value.filter((i) => i.id !== img.id)
+  } catch (e) {
+    errors.value[img.id] = 'Failed to keep current image. Please try again.'
+  } finally {
+    keeping.value[img.id] = false
   }
 }
 </script>
