@@ -433,6 +433,22 @@ Schedule::command('messages:index-unindexed')
     ->sendOutputTo(cronLog('messages:index-unindexed'))
     ->runInBackground();
 
+// Score microvolunteering actions and promote accurate users to Moderate trust.
+// V1: cron/microactions_score.php (daily at 23:00)
+Schedule::command('microvolunteering:score')
+    ->dailyAt('23:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('microvolunteering:score'))
+    ->runInBackground();
+
+// Update cached location names in user settings when the canonical name has changed.
+// V1: cron/users_remap.php (daily at 05:00)
+Schedule::command('users:remap-locations')
+    ->dailyAt('05:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:remap-locations'))
+    ->runInBackground();
+
 // =============================================================================
 // AI IMAGE REVIEW
 // =============================================================================
