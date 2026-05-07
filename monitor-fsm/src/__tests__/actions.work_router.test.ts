@@ -186,4 +186,32 @@ describe('work_router_decide action', () => {
     expect(result._transition).toBe('DIAGNOSE_BUG')
     expect(result.reason).toContain('2 unfixed bug(s)')
   })
+
+  it('skips a retest post when Edward also posted in the same topic this iteration', async () => {
+    // Scenario: user says "still broken" (retest) but Edward also posted (mine) —
+    // Edward is already engaged (e.g. waiting for a retest of a fix he just deployed).
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [
+        { topic: 9631, post: 19, type: 'retest', user: 'Matty' },
+        { topic: 9631, post: 17, type: 'mine',   user: 'Edward_Hibbert' },
+      ],
+      bugsFixed: [],
+    })
+    expect(result._transition).toBe('COVERAGE_GATE')
+  })
+
+  it('still dispatches a retest from a different topic even when Edward posted in another', async () => {
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [
+        { topic: 9631, post: 19, type: 'retest', user: 'Matty' },
+        { topic: 9631, post: 17, type: 'mine',   user: 'Edward_Hibbert' },
+        { topic: 9999, post: 1,  type: 'bug',    user: 'otheruser' },
+      ],
+      bugsFixed: [],
+    })
+    expect(result._transition).toBe('DIAGNOSE_BUG')
+    expect(result.singleBug?.topic).toBe(9999)
+  })
 })

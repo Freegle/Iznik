@@ -43,8 +43,14 @@ describe('REPRODUCE_BUG prompt — AssertFlip strategy', () => {
     expect(prompt).toContain('TEST_COMMAND=')
   })
 
-  it('still requires ANALYSIS_COMPLETE=reproduction done', () => {
-    expect(prompt).toContain('ANALYSIS_COMPLETE=reproduction done')
+  it('instructs delegate to push test branch and emit COMMIT_PUSHED — no separate PR', () => {
+    expect(prompt).toContain('COMMIT_PUSHED=<sha>')
+    expect(prompt).toContain('Do NOT open a PR')
+  })
+
+  it('uses same branch naming as IMPLEMENT_FIX so it can be found', () => {
+    expect(prompt).toContain('fix/<featureArea-slug')
+    expect(prompt).toContain('IMPLEMENT_FIX')
   })
 
   it('passes affected_function from diagnosisBrief into the task', () => {
@@ -168,6 +174,71 @@ describe('driver.ts — DIAGNOSE_BUG re-entry stale clearing', () => {
     const idx = driverTs.indexOf("current.currentState === 'DIAGNOSE_BUG'")
     const block = driverTs.slice(idx, idx + 600)
     expect(block).toContain('_action_check_existing_prs: null')
+  })
+})
+
+// ── IMPLEMENT_FIX: git history check + scope constraint ──────────────────
+
+describe('IMPLEMENT_FIX prompt — git history check and single-PR scope', () => {
+  const prompt: string = workflow.states.IMPLEMENT_FIX.prompt
+
+  it('tells IMPLEMENT_FIX to check out existing reproduce branch, not create new', () => {
+    expect(prompt).toContain('already pushed the failing test to this branch')
+    expect(prompt).toContain('git checkout fix/')
+    expect(prompt).toContain('Do NOT use -b')
+  })
+
+  it('includes GIT HISTORY CHECK step before the diagnosis brief', () => {
+    expect(prompt).toContain('GIT HISTORY CHECK')
+    expect(prompt).toContain('GIT_HISTORY=')
+    const historyIdx = prompt.indexOf('GIT HISTORY CHECK')
+    const briefIdx = prompt.indexOf('DIAGNOSIS BRIEF')
+    expect(historyIdx).toBeLessThan(briefIdx)
+  })
+
+  it('instructs delegate to run git log for recent changes', () => {
+    expect(prompt).toContain('git log --oneline --since=')
+    expect(prompt).toContain('90 days ago')
+  })
+
+  it('includes SCOPE CONSTRAINT — ONE BRANCH, ONE PR', () => {
+    expect(prompt).toContain('SCOPE CONSTRAINT')
+    expect(prompt).toContain('ONE PR')
+  })
+
+  it('tells delegate to close extra PRs before returning', () => {
+    expect(prompt).toContain('gh pr close')
+    expect(prompt).toContain('outside scope')
+  })
+
+  it('scope constraint appears before BRANCH AND PR section', () => {
+    const scopeIdx = prompt.indexOf('SCOPE CONSTRAINT')
+    const branchIdx = prompt.indexOf('BRANCH AND PR')
+    expect(scopeIdx).toBeGreaterThan(0)
+    expect(scopeIdx).toBeLessThan(branchIdx)
+  })
+})
+
+// ── VERIFY_DISCOURSE_BATCH: close_extra_prs ───────────────────────────────
+
+describe('VERIFY_DISCOURSE_BATCH — close_extra_prs', () => {
+  const state = workflow.states.VERIFY_DISCOURSE_BATCH
+  const prompt: string = state.prompt
+
+  it('lists close_extra_prs in writeActions', () => {
+    expect(state.writeActions).toContain('close_extra_prs')
+  })
+
+  it('calls close_extra_prs with expectedPrNumber and iterationStartTs', () => {
+    expect(prompt).toContain('close_extra_prs')
+    expect(prompt).toContain('expectedPrNumber')
+    expect(prompt).toContain('iterationStartTs')
+  })
+
+  it('calls close_extra_prs before adversarial_review_pr', () => {
+    const closeIdx = prompt.indexOf('close_extra_prs')
+    const reviewIdx = prompt.indexOf('adversarial_review_pr')
+    expect(closeIdx).toBeLessThan(reviewIdx)
   })
 })
 
