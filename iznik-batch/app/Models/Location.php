@@ -58,7 +58,7 @@ class Location extends Model implements Auditable
                 ->first();
 
             if ($result) {
-                $ret = (array) $result;
+                $ret = $result->toArray();
 
                 if ($ret['areaid']) {
                     $area = self::find($ret['areaid']);
