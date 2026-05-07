@@ -441,6 +441,14 @@ Schedule::command('microvolunteering:score')
     ->sendOutputTo(cronLog('microvolunteering:score'))
     ->runInBackground();
 
+// Track recent mod mail actions (rejected/deleted/replied) per user for rate-limiting.
+// V1: cron/users_modmails.php (every 5 minutes)
+Schedule::command('users:update-modmails')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-modmails'))
+    ->runInBackground();
+
 // Update cached location names in user settings when the canonical name has changed.
 // V1: cron/users_remap.php (daily at 05:00)
 Schedule::command('users:remap-locations')
@@ -455,6 +463,15 @@ Schedule::command('messages:remap-subjects')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('messages:remap-subjects'))
+    ->runInBackground();
+
+// Update messages_spatial with recent messages, outcomes, and remove stale entries.
+// V1: cron/message_spatial.php (every 5 minutes)
+// Note: V1 also pushed freebie-alert jobs to Pheanstalk — that mechanism is retired in the new stack.
+Schedule::command('messages:update-spatial-index')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:update-spatial-index'))
     ->runInBackground();
 
 // =============================================================================
