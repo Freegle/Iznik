@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Helpers\MailHelper;
+use App\Models\Message;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Traits\ChunkedProcessing;
@@ -755,10 +756,9 @@ class UserManagementService
     /**
      * Validate recently-added non-bouncing emails and delete invalid ones.
      *
-     * Uses the same regex as iznik-server Message::EMAIL_REGEXP. Scoped to the
-     * last 30 days because the regex is purely a function of the address — once
-     * a row passes it can never become invalid retroactively, so a full-table
-     * sweep would be wasted work.
+     * Uses Message::EMAIL_REGEXP. Scoped to the last 30 days because the regex
+     * is purely a function of the address — once a row passes it can never
+     * become invalid retroactively, so a full-table sweep would be wasted work.
      *
      */
     public function validateEmails(bool $dryRun = false): array
@@ -780,7 +780,7 @@ class UserManagementService
                 foreach ($emails as $email) {
                     $stats['total']++;
 
-                    if (!preg_match('/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i', $email->email)) {
+                    if (!preg_match(Message::EMAIL_REGEXP, $email->email)) {
                         if (!$dryRun) {
                             DB::table('users_emails')->where('id', $email->id)->delete();
                             Log::info("Deleted invalid email: {$email->email} for user #{$email->userid}");

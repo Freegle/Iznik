@@ -3919,6 +3919,72 @@ class IncomingMailServiceTest extends TestCase
         $this->assertFalse($added, 'System addresses should not be added to user profile');
     }
 
+    public function test_addEmailToUser_skips_envelope_from_without_at_sign(): void
+    {
+        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
+        $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        $replierEmail = $replier->emails->first()->email;
+
+        $email = $this->createMinimalEmail([
+            'From' => $replierEmail,
+            'To' => "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: ' . $message->subject,
+        ], 'Is this still available?');
+
+        // Bounce notifiers commonly use a bare daemon name in envelope-from.
+        $parsed = $this->parser->parse(
+            $email,
+            'MAILER-DAEMON',
+            "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org"
+        );
+
+        $this->service->route($parsed);
+
+        $added = DB::table('users_emails')
+            ->where('userid', $replier->id)
+            ->where('email', 'MAILER-DAEMON')
+            ->exists();
+
+        $this->assertFalse($added, 'Non-email envelope-from values should not be added');
+    }
+
+    public function test_addEmailToUser_skips_whitespace_only_envelope_from(): void
+    {
+        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
+        $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        $replierEmail = $replier->emails->first()->email;
+
+        $email = $this->createMinimalEmail([
+            'From' => $replierEmail,
+            'To' => "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: ' . $message->subject,
+        ], 'Is this still available?');
+
+        // PHP's empty(' ') returns false, so guard against trim-to-empty too.
+        $parsed = $this->parser->parse(
+            $email,
+            '   ',
+            "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org"
+        );
+
+        $this->service->route($parsed);
+
+        $emptyAdded = DB::table('users_emails')
+            ->where('userid', $replier->id)
+            ->where('email', '')
+            ->exists();
+
+        $this->assertFalse($emptyAdded, 'Whitespace-only envelope-from must not insert an empty row');
+    }
+
     // ========================================
     // Fix #7: hasOutcome / mailedLastForUser
     // ========================================
