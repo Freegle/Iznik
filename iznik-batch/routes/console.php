@@ -475,6 +475,26 @@ Schedule::command('messages:update-spatial-index')
     ->runInBackground();
 
 // =============================================================================
+// AI IMAGE GENERATION
+// =============================================================================
+
+// Generate AI illustrations for messages with no photos.
+// V1: cron/messages_illustrations.php (every 1 minute)
+Schedule::command('messages:generate-illustrations')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:generate-illustrations'))
+    ->runInBackground();
+
+// Generate AI illustrations for canonical job categories (pre-caching).
+// V1: cron/jobs_illustrations.php (every 30 minutes)
+Schedule::command('jobs:generate-illustrations')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('jobs:generate-illustrations'))
+    ->runInBackground();
+
+// =============================================================================
 // AI IMAGE REVIEW
 // =============================================================================
 
