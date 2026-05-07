@@ -2057,6 +2057,76 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
   },
 
   {
+    name: 'check_existing_prs',
+    description: 'Search open PRs on Freegle/Iznik by keywords extracted from a bug description. Returns {existingPRs, keywords, searchedAt}. Used by DIAGNOSE_BUG to surface related open PRs before dispatching a fix.',
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        bugDescription: { type: 'string', description: 'Bug symptom/summary text to extract keywords from.' },
+        extraKeywords: { type: 'array', items: { type: 'string' }, description: 'Optional extra keywords (e.g. from featureArea or codeArea).' },
+      },
+      required: ['bugDescription'],
+    },
+    handler: async (params) => {
+      const bugDescription = (params.bugDescription as string) ?? ''
+      const extraKeywords = (params.extraKeywords as string[]) ?? []
+
+      const stopWords = new Set([
+        'the', 'a', 'an', 'is', 'in', 'on', 'at', 'to', 'of', 'and', 'or',
+        'not', 'with', 'for', 'from', 'that', 'this', 'it', 'its',
+        'when', 'after', 'before', 'if', 'then', 'are', 'was', 'be',
+        'does', 'do', 'have', 'has', 'had', 'can', 'cannot', 'could', 'should',
+        'will', 'would', 'fix', 'bug', 'issue', 'error', 'problem',
+      ])
+
+      // Extract meaningful keywords from description
+      const descTokens = bugDescription
+        .toLowerCase()
+        .replace(/[^\w\s]/g, ' ')
+        .split(/\s+/)
+        .filter(t => t.length > 3 && !stopWords.has(t))
+      const descKeywords = [...new Set(descTokens)]
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 4)
+
+      // Merge with any explicitly supplied extras (e.g. codeArea component name)
+      const keywords = [...new Set([...descKeywords, ...extraKeywords.map(k => k.toLowerCase())])]
+
+      try {
+        const { stdout } = await exec('gh', [
+          'pr', 'list',
+          '--repo', 'Freegle/Iznik',
+          '--state', 'open',
+          '--limit', '50',
+          '--json', 'number,title,url,state,createdAt',
+        ], { maxBuffer: 5 * 1024 * 1024 })
+
+        let allPRs: Array<{ number: number; title: string; url: string }> = []
+        try {
+          const parsed = JSON.parse(stdout.trim())
+          if (Array.isArray(parsed)) {
+            allPRs = parsed.map((p: any) => ({
+              number: p.number ?? 0,
+              title: p.title ?? '',
+              url: p.url ?? '',
+            }))
+          }
+        } catch { /* ignore JSON parse errors — return empty */ }
+
+        const lowerKeywords = keywords.map(k => k.toLowerCase())
+        const existingPRs = allPRs.filter(pr =>
+          lowerKeywords.some(kw => pr.title.toLowerCase().includes(kw))
+        )
+
+        return { existingPRs, keywords, searchedAt: new Date().toISOString() }
+      } catch (err: any) {
+        outWarn(`[check_existing_prs] gh pr list failed: ${err.message}`)
+        return { existingPRs: [], keywords, searchedAt: new Date().toISOString(), error: err.message }
+      }
+    },
+  },
+
+  {
     name: 'adversarial_review_pr',
     description: 'Review a PR using Opus model for correctness and unintended changes. Params: {prNumber, repo}. Returns {passed, issues: [{category, description, severity}], summary}.',
     paramsSchema: {
@@ -2088,32 +2158,55 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         const phaseInfo = getPhaseInfo()
         const reviewModel = modelForAdversarialReview(phaseInfo)
 
-        const prompt = `You are a code review expert. Review this PR diff for:
-1. Correctness - does the fix actually solve the problem?
-2. Unintended changes - are there any unnecessary or harmful changes?
-3. Test coverage - are there tests for the fix?
-4. Code quality - does it follow the codebase patterns?
+        const prompt = `You are an adversarial code reviewer. Your job is to find problems, not to validate the author's work.
 
-Return ONLY a JSON object with:
+Review this PR diff using the following structured rubric. Classify each finding as CRITICAL, WARNING, or INFO.
+
+CRITICAL (passed = false, must fix before merge):
+- Partial implementation: the fix addresses the symptom but not the root cause
+- Test proves nothing: test was written after the fix to confirm it doesn't crash, not to prove the bug existed first
+- Security regression: SQL injection, path traversal, nil/null dereference, auth bypass, unvalidated user input reaching a write path
+- Known regression: the diff removes or weakens an existing test that was passing
+- Incomplete diff: the PR description claims to fix X but the diff doesn't touch the relevant code path
+- Duplicate implementation: the fix reimplements logic that already exists as a helper elsewhere in the same codebase (look for similar function names or patterns in the diff context)
+
+WARNING (passed = true, should be noted in PR):
+- Other call sites with the same bug: the pattern fixed here appears to exist in adjacent files or sibling handlers — list the paths
+- Dead code: unused variables, commented-out blocks, unreachable branches left over from the fix
+- Naming/style inconsistency with the surrounding code
+- TODO/FIXME in the changed lines (unfinished work in shipped code is a bug)
+
+INFO (passed = true, note only):
+- Minor style deviation that doesn't affect correctness
+- Opportunities for simplification that are out of scope for a bug fix
+
+COVERAGE CHECK (specific to bug-fix PRs):
+- Does the test cover the exact trigger path described in the bug report?
+- Does the test FAIL before the fix and PASS after? (A test that was green before the diff is not a reproduction test.)
+- Is the failure assertion meaningful, or does it just check that the function doesn't throw?
+
+Return ONLY a JSON object with exactly these keys:
 {
   "passed": boolean,
   "blockers": [{"category": string, "description": string}],
   "warnings": [{"category": string, "description": string}],
+  "info": [{"category": string, "description": string}],
   "summary": string
 }
 
-If blockers exist, passed = false. Warnings do not block but should be noted.
+passed = false if and only if blockers is non-empty.
+Be specific: "the test on line 47 only asserts status 200, not that the bug condition is absent" is useful; "tests could be improved" is not.
 
 DIFF:
 \`\`\`
 ${diff.slice(0, 20000)}
 \`\`\`
-${diff.length > 20000 ? '\n(diff truncated for length)' : ''}`
+${diff.length > 20000 ? '\n(diff truncated — only the first 20 000 chars shown)' : ''}`
 
         const response = await (global as any).__ai_flower_adapter.query(
           reviewModel,
           [{ role: 'user', content: prompt }],
-          { max_tokens: 1000 }
+          { max_tokens: 1500 }
         )
 
         let review: any
@@ -2130,6 +2223,7 @@ ${diff.length > 20000 ? '\n(diff truncated for length)' : ''}`
         const issues = [
           ...(Array.isArray(review.blockers) ? review.blockers.map((b: any) => ({ ...b, severity: 'error' })) : []),
           ...(Array.isArray(review.warnings) ? review.warnings.map((w: any) => ({ ...w, severity: 'warning' })) : []),
+          ...(Array.isArray(review.info) ? review.info.map((i: any) => ({ ...i, severity: 'info' })) : []),
         ]
 
         return {
