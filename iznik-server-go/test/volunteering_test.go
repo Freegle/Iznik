@@ -85,7 +85,7 @@ func TestVolunteering_PendingList(t *testing.T) {
 	creatorID := CreateTestUser(t, prefix+"_creator", "User")
 	CreateTestMembership(t, creatorID, groupID, "Member")
 
-	db.Exec("INSERT INTO volunteering (userid, title, description, pending, deleted, expired) VALUES (?, 'Pending Vol', 'Pending desc', 1, 0, 0)", creatorID)
+	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'Pending Vol', 'Pending desc', '', 1, 0, 0)", creatorID)
 	var pendingID uint64
 	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND pending = 1 ORDER BY id DESC LIMIT 1", creatorID).Scan(&pendingID)
 	assert.Greater(t, pendingID, uint64(0))
@@ -130,7 +130,7 @@ func TestVolunteering_PendingListAdmin(t *testing.T) {
 	// Create a pending volunteering
 	creatorID := CreateTestUser(t, prefix+"_creator", "User")
 	CreateTestMembership(t, creatorID, groupID, "Member")
-	db.Exec("INSERT INTO volunteering (userid, title, description, pending, deleted, expired) VALUES (?, 'Admin Pending Vol', 'Admin test', 1, 0, 0)", creatorID)
+	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'Admin Pending Vol', 'Admin test', '', 1, 0, 0)", creatorID)
 	var pendingID uint64
 	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND pending = 1 ORDER BY id DESC LIMIT 1", creatorID).Scan(&pendingID)
 	db.Exec("INSERT INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", pendingID, groupID)
@@ -160,13 +160,13 @@ func TestVolunteering_PendingListNationalPermission(t *testing.T) {
 	// Create a per-group pending op that the mod would see anyway.
 	creatorID := CreateTestUser(t, prefix+"_creator", "User")
 	CreateTestMembership(t, creatorID, groupID, "Member")
-	db.Exec("INSERT INTO volunteering (userid, title, description, pending, deleted, expired) VALUES (?, 'Group Pending Vol', 'group desc', 1, 0, 0)", creatorID)
+	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'Group Pending Vol', 'group desc', '', 1, 0, 0)", creatorID)
 	var groupPendingID uint64
 	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND pending = 1 ORDER BY id DESC LIMIT 1", creatorID).Scan(&groupPendingID)
 	db.Exec("INSERT INTO volunteering_groups (volunteeringid, groupid) VALUES (?, ?)", groupPendingID, groupID)
 
 	// Create a NATIONAL pending op — no volunteering_groups row at all.
-	db.Exec("INSERT INTO volunteering (userid, title, description, pending, deleted, expired) VALUES (?, 'National Pending Vol', 'national desc', 1, 0, 0)", creatorID)
+	db.Exec("INSERT INTO volunteering (userid, title, description, location, pending, deleted, expired) VALUES (?, 'National Pending Vol', 'national desc', '', 1, 0, 0)", creatorID)
 	var nationalPendingID uint64
 	db.Raw("SELECT id FROM volunteering WHERE userid = ? AND pending = 1 AND title = 'National Pending Vol' ORDER BY id DESC LIMIT 1", creatorID).Scan(&nationalPendingID)
 	assert.Greater(t, nationalPendingID, uint64(0))

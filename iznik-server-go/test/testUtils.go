@@ -429,8 +429,8 @@ func CreateTestChatMessage(t *testing.T, chatID uint64, userID uint64, message s
 func CreateTestVolunteering(t *testing.T, userID uint64, groupID uint64) uint64 {
 	db := database.DBConn
 
-	result := db.Exec("INSERT INTO volunteering (userid, title, description, pending, deleted) "+
-		"VALUES (?, 'Test Volunteering', 'Test volunteering opportunity', 0, 0)",
+	result := db.Exec("INSERT INTO volunteering (userid, title, location, description, pending, deleted) "+
+		"VALUES (?, 'Test Volunteering', 'Test Location', 'Test volunteering opportunity', 0, 0)",
 		userID)
 
 	if result.Error != nil {
@@ -467,8 +467,8 @@ func CreateTestVolunteering(t *testing.T, userID uint64, groupID uint64) uint64 
 func CreateTestCommunityEvent(t *testing.T, userID uint64, groupID uint64) uint64 {
 	db := database.DBConn
 
-	result := db.Exec("INSERT INTO communityevents (userid, title, description, pending, deleted) "+
-		"VALUES (?, 'Test Event', 'Test community event', 0, 0)",
+	result := db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) "+
+		"VALUES (?, 'Test Event', 'Test Location', 'Test community event', 0, 0)",
 		userID)
 
 	if result.Error != nil {
@@ -508,8 +508,8 @@ func CreateTestMessage(t *testing.T, userID uint64, groupID uint64, subject stri
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Offer', ?, NOW())",
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, NOW())",
 		userID, subject, locationID)
 
 	if result.Error != nil {
@@ -600,6 +600,39 @@ func CreateTestNewsfeed(t *testing.T, userID uint64, lat float64, lng float64, m
 	return newsfeedID
 }
 
+// CreateTestNewsfeedWithType creates a newsfeed entry with a specific type and optional age.
+// hoursAgo > 0 back-dates the entry; hoursAgo == 0 uses NOW().
+func CreateTestNewsfeedWithType(t *testing.T, userID uint64, lat float64, lng float64, message string, nfType string, hoursAgo int) uint64 {
+	db := database.DBConn
+
+	ts := "NOW()"
+	if hoursAgo > 0 {
+		ts = fmt.Sprintf("DATE_SUB(NOW(), INTERVAL %d HOUR)", hoursAgo)
+	}
+
+	result := db.Exec(fmt.Sprintf("INSERT INTO newsfeed (userid, message, type, timestamp, deleted, reviewrequired, position, hidden, pinned) "+
+		"VALUES (?, ?, ?, %s, NULL, 0, ST_GeomFromText(?, %d), NULL, 0)", ts, utils.SRID),
+		userID, message, nfType, fmt.Sprintf("POINT(%f %f)", lng, lat))
+
+	if result.Error != nil {
+		t.Fatalf("ERROR: Failed to create newsfeed with type: %v", result.Error)
+	}
+
+	var newsfeedID uint64
+	db.Raw("SELECT id FROM newsfeed WHERE userid = ? AND message = ? ORDER BY id DESC LIMIT 1",
+		userID, message).Scan(&newsfeedID)
+
+	if newsfeedID == 0 {
+		t.Fatalf("ERROR: Newsfeed with type was created but ID not found")
+	}
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM newsfeed WHERE id = ?", newsfeedID)
+	})
+
+	return newsfeedID
+}
+
 // CreateTestItem creates an item in the items table
 func CreateTestItem(t *testing.T, name string) uint64 {
 	db := database.DBConn
@@ -660,8 +693,8 @@ func CreateTestMessageWithArrival(t *testing.T, userID uint64, groupID uint64, s
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL ? DAY))",
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, DATE_SUB(NOW(), INTERVAL ? DAY))",
 		userID, subject, locationID, daysAgo)
 
 	if result.Error != nil {
@@ -803,8 +836,8 @@ func CreateTestMessageWithoutGroup(t *testing.T, userID uint64, subject string) 
 	var locationID uint64
 	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
 
-	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, type, locationid, arrival) "+
-		"VALUES (?, ?, 'Test message body', 'Offer', ?, NOW())",
+	result := db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, ?, 'Test message body', 'Test message body', 'Offer', ?, NOW())",
 		userID, subject, locationID)
 
 	if result.Error != nil {

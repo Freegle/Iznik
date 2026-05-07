@@ -215,7 +215,18 @@ class PushNotificationService
             $spamParams
         );
 
-        return ($pending->cnt ?? 0) + ($spam->cnt ?? 0);
+        // Pending volunteering ops in active groups (mirrors session.go pendingvolunteering query).
+        $volunteering = DB::selectOne(
+            "SELECT COUNT(DISTINCT v.id) AS cnt FROM volunteering v
+             INNER JOIN volunteering_groups vg ON vg.volunteeringid = v.id
+             LEFT JOIN volunteering_dates vd ON vd.volunteeringid = v.id
+             WHERE vg.groupid IN ({$placeholders})
+             AND v.pending = 1 AND v.deleted = 0 AND v.expired = 0
+             AND (vd.end IS NULL OR vd.end >= NOW())",
+            $activeGroupIds
+        );
+
+        return ($pending->cnt ?? 0) + ($spam->cnt ?? 0) + ($volunteering->cnt ?? 0);
     }
 
     /**
@@ -290,7 +301,9 @@ class PushNotificationService
             'modtools' => '1',
             'sound' => 'default',
             'route' => '/modtools/messages/pending',
-            'notId' => (string) floor(microtime(TRUE)),
+            // Fixed notId per user so each new notification replaces the previous one
+            // on Android instead of stacking multiple "N pending" badges.
+            'notId' => (string) $userId,
         ];
     }
 

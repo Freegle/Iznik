@@ -132,6 +132,9 @@ const mockNuxtApp = {
 // Mock defineNuxtPlugin (auto-imported by Nuxt, returns the plugin function as-is)
 ;(globalThis as Record<string, unknown>).defineNuxtPlugin = (plugin: unknown) => plugin
 
+// Mock definePageMeta (Nuxt compiler macro, no-op in tests)
+;(globalThis as Record<string, unknown>).definePageMeta = () => {}
+
 // Mock useCookie
 ;(globalThis as Record<string, unknown>).useCookie = () => ref(null)
 

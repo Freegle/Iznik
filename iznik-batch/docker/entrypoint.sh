@@ -7,6 +7,11 @@ echo "=== Laravel Batch Container Starting ==="
 # No .env file is needed - APP_KEY and all other config is passed via environment
 echo "Using environment variables for configuration (no .env file needed)"
 
+# Always clear service/package manifests before any composer/artisan bootstrap.
+# These files can be stale across environments and reference dev-only providers.
+rm -f /var/www/html/bootstrap/cache/services.php
+rm -f /var/www/html/bootstrap/cache/packages.php
+
 # Install PHP dependencies (host mount may not have vendor directory)
 if [ ! -f "/var/www/html/vendor/autoload.php" ]; then
     echo "Installing PHP dependencies..."
@@ -73,7 +78,7 @@ chmod -R 777 /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || 
 
 # Clear environment-specific bootstrap cache files.
 # These contain resolved paths/env values that differ between environments.
-# services.php and packages.php are committed to git and should not be cleared.
+# services.php and packages.php are handled at startup before bootstrap.
 echo "Cleaning environment-specific bootstrap cache..."
 rm -f /var/www/html/bootstrap/cache/config.php
 rm -f /var/www/html/bootstrap/cache/routes-v7.php

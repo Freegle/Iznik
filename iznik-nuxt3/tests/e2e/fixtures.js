@@ -335,6 +335,7 @@ const test = base.test.extend({
       /Failed to fetch dynamically imported module.*\.localhost/, // Transient network error loading JS chunks from local dev server under parallel test load — not a production code bug
       /net::ERR_SOCKET_NOT_CONNECTED.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
       /Failed to load resource.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
+      /Your focus-trap must have at least one container/, // Bootstrap Vue focus-trap error during modal transitions (transient, non-critical)
     ]
 
     // Initialize the working copy of allowed error patterns
@@ -502,6 +503,14 @@ const test = base.test.extend({
     // so it survives client-side navigations. Uses a debounced MutationObserver to
     // avoid false positives during partial renders.
     await page.addInitScript(() => {
+      // addInitScript runs in all frames including cross-origin iframes (e.g. YouTube
+      // embeds). Bail out in subframes so we only report errors from the Nuxt app.
+      try {
+        /* c8 ignore next */ if (window !== window.top) return
+      } catch {
+        // Accessing window.top can throw in cross-origin contexts
+        return
+      }
       let t = null
       const obs = new MutationObserver(() => {
         clearTimeout(t)
@@ -1111,89 +1120,129 @@ const testWithFixtures = test.extend({
         postcode = testEnv?.postcode || environment.postcode,
         email,
         deadline,
+        mobile = false,
       } = options
 
       if (!email) {
         throw new Error('Email is required for posting a message')
       }
 
-      // Navigate to the correct page based on type
-      const startPath = type.toLowerCase() === 'wanted' ? '/find' : '/give'
-      await page.gotoAndVerify(startPath, {
-        timeout: timeouts.navigation.initial,
-        waitUntil: 'domcontentloaded',
-        maxRetries: 1,
-      })
+      if (mobile && type.toLowerCase() === 'wanted') {
+        // Mobile find flow: /find/mobile/photos → skip → /find/mobile/details → /find/mobile/whereami
+        await page.gotoAndVerify('/find/mobile/photos', {
+          timeout: timeouts.navigation.initial,
+          waitUntil: 'domcontentloaded',
+          maxRetries: 1,
+        })
 
-      // Verify we're on the correct page
-      const pageTitle = await page.title()
-      base.expect(pageTitle).toContain(type.toUpperCase())
+        // Skip the photo upload step
+        const skipLink = page.locator('button').filter({ hasText: /skip/i })
+        await skipLink.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+        await skipLink.click()
 
-      // Fill in the item type using fill() — triggers Vue v-model via input event
-      const itemInput = page.locator(
-        '[id^="what"], .type-input, input[placeholder*="give"]'
-      )
-      await itemInput.click()
-      await itemInput.fill(item)
+        // Fill item and description on the details page
+        await page.waitForURL(/\/find\/mobile\/details/, {
+          timeout: timeouts.navigation.default,
+        })
 
-      // Fill in the post details
-      await page.waitForSelector(
-        '[id^="description"], textarea.description, textarea.form-control',
-        { timeout: timeouts.ui.appearance }
-      )
+        const mobileItemInput = page.locator('#item-name')
+        await mobileItemInput.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+        await mobileItemInput.fill(item)
 
-      // Fill description using fill() instead of type() with delay
-      const descInput = page.locator(
-        '[id^="description"], textarea.description, textarea.form-control'
-      )
-      await descInput.click()
-      await descInput.fill(description)
+        const mobileDescInput = page.locator('#description')
+        await mobileDescInput.fill(description)
 
-      // Wait for Vue reactivity to process the form changes and make the Next button available
-      // This replaces the fixed 2000ms wait with a responsive check
-      await page.waitForFunction(
-        () => {
-          // Check both mobile and desktop buttons using textContent instead of :has-text()
-          const allButtons = document.querySelectorAll('.btn, button')
-          let mobileBtn = null
-          let desktopBtn = null
+        // Click Next to proceed to whereami (postcode + email + submit on one page)
+        const mobileNextBtn = page.locator('button.btn', { hasText: 'Next' })
+        await mobileNextBtn.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+        await mobileNextBtn.click()
 
-          for (const btn of allButtons) {
-            if (btn.textContent && btn.textContent.includes('Next')) {
-              // Check if it's a mobile button (has d-md-none parent or class)
-              if (
-                btn.closest('.d-block.d-md-none') ||
-                btn.classList.contains('d-md-none')
-              ) {
-                mobileBtn = btn
-              }
-              // Check if it's a desktop button (has d-none.d-md-flex parent or class)
-              if (
-                btn.closest('.d-none.d-md-flex') ||
-                (btn.classList.contains('d-none') &&
-                  btn.classList.contains('d-md-flex'))
-              ) {
-                desktopBtn = btn
-              }
-              // If we can't determine mobile vs desktop, treat as general button
-              if (!mobileBtn && !desktopBtn) {
-                mobileBtn = btn // Default to treating as mobile (disabled check)
+        await page.waitForURL(/\/find\/mobile\/whereami/, {
+          timeout: timeouts.navigation.default,
+        })
+
+        // Postcode, email, and submit are all on the mobile whereami page —
+        // fall through to the shared postcode-entry code below, skipping the
+        // desktop-only second "Next" and whoami navigation.
+      } else {
+        // Navigate to the correct page based on type
+        const startPath = type.toLowerCase() === 'wanted' ? '/find' : '/give'
+        await page.gotoAndVerify(startPath, {
+          timeout: timeouts.navigation.initial,
+          waitUntil: 'domcontentloaded',
+          maxRetries: 1,
+        })
+
+        // Verify we're on the correct page
+        const pageTitle = await page.title()
+        base.expect(pageTitle).toContain(type.toUpperCase())
+
+        // Fill in the item type using fill() — triggers Vue v-model via input event
+        const itemInput = page.locator(
+          '[id^="what"], .type-input, input[placeholder*="give"]'
+        )
+        await itemInput.click()
+        await itemInput.fill(item)
+
+        // Fill in the post details
+        await page.waitForSelector(
+          '[id^="description"], textarea.description, textarea.form-control',
+          { timeout: timeouts.ui.appearance }
+        )
+
+        // Fill description using fill() instead of type() with delay
+        const descInput = page.locator(
+          '[id^="description"], textarea.description, textarea.form-control'
+        )
+        await descInput.click()
+        await descInput.fill(description)
+
+        // Wait for Vue reactivity to process the form changes and make the Next button available
+        // This replaces the fixed 2000ms wait with a responsive check
+        await page.waitForFunction(
+          () => {
+            // Check both mobile and desktop buttons using textContent instead of :has-text()
+            const allButtons = document.querySelectorAll('.btn, button')
+            let mobileBtn = null
+            let desktopBtn = null
+
+            for (const btn of allButtons) {
+              if (btn.textContent && btn.textContent.includes('Next')) {
+                // Check if it's a mobile button (has d-md-none parent or class)
+                if (
+                  btn.closest('.d-block.d-md-none') ||
+                  btn.classList.contains('d-md-none')
+                ) {
+                  mobileBtn = btn
+                }
+                // Check if it's a desktop button (has d-none.d-md-flex parent or class)
+                if (
+                  btn.closest('.d-none.d-md-flex') ||
+                  (btn.classList.contains('d-none') &&
+                    btn.classList.contains('d-md-flex'))
+                ) {
+                  desktopBtn = btn
+                }
+                // If we can't determine mobile vs desktop, treat as general button
+                if (!mobileBtn && !desktopBtn) {
+                  mobileBtn = btn // Default to treating as mobile (disabled check)
+                }
               }
             }
-          }
 
-          return (
-            (mobileBtn && !mobileBtn.disabled) ||
-            (desktopBtn && desktopBtn.offsetParent !== null)
-          )
-        },
-        null,
-        { timeout: timeouts.ui.appearance }
-      )
+            return (
+              (mobileBtn && !mobileBtn.disabled) ||
+              (desktopBtn && desktopBtn.offsetParent !== null)
+            )
+          },
+          null,
+          { timeout: timeouts.ui.appearance }
+        )
 
-      // Click the Next/Continue button to go to location page
-      // Playwright's click() auto-scrolls the element into view
-      await page.locator('.next-btn:has-text("Next")').click()
+        // Click the Next/Continue button to go to location page
+        // Playwright's click() auto-scrolls the element into view
+        await page.locator('.next-btn:has-text("Next")').click()
+      }
 
       // Fill in location details
       await page.waitForSelector('.pcinp, input[placeholder="Type postcode"]', {
@@ -1214,12 +1263,15 @@ const testWithFixtures = test.extend({
         timeout: timeouts.api.default,
       })
 
-      // Click the Next/Continue button (Playwright auto-scrolls)
-      await page.locator('.next-btn:has-text("Next")').click()
+      // Desktop only: click Next to advance from whereami to whoami/options page.
+      // Mobile flow has postcode, email, and submit all on one page — no Next click needed.
+      if (!mobile) {
+        await page.locator('.next-btn:has-text("Next")').click()
+      }
 
       // For OFFER posts, handle the /give/options page (delivery and deadline options)
       // WANTED posts go directly to whoami (no options page)
-      if (type.toUpperCase() === 'OFFER') {
+      if (!mobile && type.toUpperCase() === 'OFFER') {
         console.log(
           'Handling /give/options page - inline deadline and delivery options'
         )

@@ -13,7 +13,7 @@ import (
 
 func createTestStdMsg(t *testing.T, configID uint64, title string) uint64 {
 	db := database.DBConn
-	result := db.Exec("INSERT INTO mod_stdmsgs (configid, title) VALUES (?, ?)", configID, title)
+	result := db.Exec("INSERT INTO mod_stdmsgs (configid, title, subjpref, subjsuff, body) VALUES (?, ?, '', '', '')", configID, title)
 	assert.NoError(t, result.Error)
 
 	var id uint64
@@ -128,8 +128,75 @@ func TestPostStdMsgMissingTitle(t *testing.T) {
 	assert.Equal(t, float64(3), result["ret"])
 }
 
+func TestDeleteStdMsgUnauthorized(t *testing.T) {
+	prefix := uniquePrefix("StdMsgDelUnauth")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	otherModID := CreateTestUser(t, prefix+"_other", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	_, otherToken := CreateTestSession(t, otherModID)
+
+	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
+	msgID := createTestStdMsg(t, cfgID, prefix+"_msg")
+
+	// Protect the config so only the creator can modify it
+	db := database.DBConn
+	db.Exec("UPDATE mod_configs SET protected = 1 WHERE id = ?", cfgID)
+
+	// Try to delete with different moderator (should fail)
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/stdmsg?id=%d&jwt=%s", msgID, otherToken), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 403, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(4), result["ret"])
+}
+
+func TestDeleteStdMsgNotFound(t *testing.T) {
+	prefix := uniquePrefix("StdMsgDelNotFound")
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Try to delete with invalid ID
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/stdmsg?id=999999&jwt=%s", token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 404, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(2), result["ret"])
+}
+
 func TestGetStdMsgV2Path(t *testing.T) {
 	req := httptest.NewRequest("GET", "/apiv2/modtools/stdmsg?id=0", nil)
 	resp, _ := getApp().Test(req)
 	assert.Equal(t, 404, resp.StatusCode)
+}
+
+func TestDeleteStdMsgWithJSONBody(t *testing.T) {
+	prefix := uniquePrefix("StdMsgDelJSON")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	_, token := CreateTestSession(t, modID)
+
+	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
+	msgID := createTestStdMsg(t, cfgID, prefix+"_msg")
+
+	// Test DELETE with id in JSON body (the way frontend API sends it)
+	body := fmt.Sprintf(`{"id":%d}`, msgID)
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/modtools/stdmsg?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	db := database.DBConn
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM mod_stdmsgs WHERE id = ?", msgID).Scan(&count)
+	assert.Equal(t, int64(0), count)
 }

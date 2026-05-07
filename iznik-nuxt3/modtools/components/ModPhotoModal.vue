@@ -22,10 +22,37 @@
       <b-button variant="white" @click="hide"> Close </b-button>
     </template>
   </b-modal>
+
+  <b-modal
+    ref="aiDeleteModal"
+    title="Remove AI Image"
+    no-stacking
+  >
+    <template #default>
+      <p>This is an AI-generated image. Why are you removing it?</p>
+      <b-button
+        variant="outline-secondary"
+        class="d-block w-100 mb-2"
+        @click="confirmRemove(false)"
+      >
+        Not relevant to this post
+      </b-button>
+      <b-button
+        variant="outline-danger"
+        class="d-block w-100"
+        @click="confirmRemove(true)"
+      >
+        Bad AI image for any post of this item
+      </b-button>
+    </template>
+    <template #footer>
+      <b-button variant="white" @click="hideAiDeleteModal">Cancel</b-button>
+    </template>
+  </b-modal>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, computed } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useOurModal } from '~/composables/useOurModal'
 
@@ -42,6 +69,8 @@ const props = defineProps({
 
 const { modal, show, hide } = useOurModal()
 const messageStore = useMessageStore()
+const aiDeleteModal = ref(null)
+const pendingRemoveId = ref(null)
 
 const message = computed(() => messageStore.byId(props.messageid))
 
@@ -67,7 +96,29 @@ async function updatedPhoto() {
   await messageStore.patch({ id: props.messageid })
 }
 
+function hideAiDeleteModal() {
+  aiDeleteModal.value?.hide()
+  pendingRemoveId.value = null
+}
+
 async function removePhoto(id) {
+  if (externalmods.value?.ai) {
+    pendingRemoveId.value = id
+    aiDeleteModal.value?.show()
+    return
+  }
+
+  await doRemove(id, false)
+}
+
+async function confirmRemove(isBadForAnyPost) {
+  const id = pendingRemoveId.value
+  aiDeleteModal.value?.hide()
+  pendingRemoveId.value = null
+  await doRemove(id, isBadForAnyPost)
+}
+
+async function doRemove(id, isBadForAnyPost) {
   const attachments = []
 
   message.value?.attachments?.forEach((a) => {
@@ -76,10 +127,15 @@ async function removePhoto(id) {
     }
   })
 
-  await messageStore.patch({ id: props.messageid, attachments })
+  const patch = { id: props.messageid, attachments }
+  if (isBadForAnyPost) {
+    patch.badAIImages = [id]
+  }
+
+  await messageStore.patch(patch)
 }
 
-defineExpose({ show, hide })
+defineExpose({ show, hide, doRemove, confirmRemove, pendingRemoveId })
 </script>
 
 <style scoped>

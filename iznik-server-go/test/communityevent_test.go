@@ -86,7 +86,7 @@ func TestCommunityEvent_PendingList(t *testing.T) {
 	CreateTestMembership(t, creatorID, groupID, "Member")
 
 	// Create a pending event directly (not using helper which creates non-pending)
-	db.Exec("INSERT INTO communityevents (userid, title, description, pending, deleted) VALUES (?, 'Pending Event', 'Pending description', 1, 0)", creatorID)
+	db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) VALUES (?, 'Pending Event', 'Test Location', 'Pending description', 1, 0)", creatorID)
 	var pendingID uint64
 	db.Raw("SELECT id FROM communityevents WHERE userid = ? AND pending = 1 ORDER BY id DESC LIMIT 1", creatorID).Scan(&pendingID)
 	assert.Greater(t, pendingID, uint64(0))
@@ -132,7 +132,7 @@ func TestCommunityEvent_PendingListAdmin(t *testing.T) {
 	// Create a pending event on groupID.
 	creatorID := CreateTestUser(t, prefix+"_creator", "User")
 	CreateTestMembership(t, creatorID, groupID, "Member")
-	db.Exec("INSERT INTO communityevents (userid, title, description, pending, deleted) VALUES (?, 'Admin Pending Event', 'Admin test', 1, 0)", creatorID)
+	db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) VALUES (?, 'Admin Pending Event', 'Test Location', 'Admin test', 1, 0)", creatorID)
 	var pendingID uint64
 	db.Raw("SELECT id FROM communityevents WHERE userid = ? AND pending = 1 ORDER BY id DESC LIMIT 1", creatorID).Scan(&pendingID)
 	db.Exec("INSERT INTO communityevents_groups (eventid, groupid) VALUES (?, ?)", pendingID, groupID)
@@ -159,7 +159,7 @@ func TestCommunityEvent_PendingListAdminNotOnGroup(t *testing.T) {
 	// Create a pending event on groupID.
 	creatorID := CreateTestUser(t, prefix+"_creator", "User")
 	CreateTestMembership(t, creatorID, groupID, "Member")
-	db.Exec("INSERT INTO communityevents (userid, title, description, pending, deleted) VALUES (?, 'Other Group Event', 'Test', 1, 0)", creatorID)
+	db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) VALUES (?, 'Other Group Event', 'Test Location', 'Test', 1, 0)", creatorID)
 	var pendingID uint64
 	db.Raw("SELECT id FROM communityevents WHERE userid = ? AND pending = 1 ORDER BY id DESC LIMIT 1", creatorID).Scan(&pendingID)
 	db.Exec("INSERT INTO communityevents_groups (eventid, groupid) VALUES (?, ?)", pendingID, groupID)
@@ -187,7 +187,7 @@ func TestCommunityEvent_PendingListExcludesExpired(t *testing.T) {
 	CreateTestMembership(t, creatorID, groupID, "Member")
 
 	// Create a pending event with a PAST end date.
-	db.Exec("INSERT INTO communityevents (userid, title, description, pending, deleted) VALUES (?, 'Expired Event', 'Past', 1, 0)", creatorID)
+	db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) VALUES (?, 'Expired Event', 'Test Location', 'Past', 1, 0)", creatorID)
 	var expiredID uint64
 	db.Raw("SELECT id FROM communityevents WHERE userid = ? AND title = 'Expired Event' ORDER BY id DESC LIMIT 1", creatorID).Scan(&expiredID)
 	assert.Greater(t, expiredID, uint64(0))
@@ -195,7 +195,7 @@ func TestCommunityEvent_PendingListExcludesExpired(t *testing.T) {
 	db.Exec("INSERT INTO communityevents_dates (eventid, `start`, `end`) VALUES (?, DATE_SUB(NOW(), INTERVAL 2 DAY), DATE_SUB(NOW(), INTERVAL 1 DAY))", expiredID)
 
 	// Create a pending event with a FUTURE end date.
-	db.Exec("INSERT INTO communityevents (userid, title, description, pending, deleted) VALUES (?, 'Future Event', 'Upcoming', 1, 0)", creatorID)
+	db.Exec("INSERT INTO communityevents (userid, title, location, description, pending, deleted) VALUES (?, 'Future Event', 'Test Location', 'Upcoming', 1, 0)", creatorID)
 	var futureID uint64
 	db.Raw("SELECT id FROM communityevents WHERE userid = ? AND title = 'Future Event' ORDER BY id DESC LIMIT 1", creatorID).Scan(&futureID)
 	assert.Greater(t, futureID, uint64(0))

@@ -46,7 +46,8 @@ func TestDiscourseSSO_ValidFlow(t *testing.T) {
 	sessionID, _ := CreateTestSession(t, userID)
 
 	// Get session details for cookie.
-	var series uint64
+	// series is scanned as string to match the API's JSON encoding (session.go returns it as a string).
+	var series string
 	var token string
 	db.Raw("SELECT series, token FROM sessions WHERE id = ?", sessionID).Row().Scan(&series, &token)
 

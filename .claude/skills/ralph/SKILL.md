@@ -5,13 +5,13 @@ description: "MUST use for any non-trivial development task in FreegleDocker - i
 
 # Ralph Iterative Development Approach
 
-## 1. Session Log (in CLAUDE.md)
+## 1. Session Log (in .claude-session.md)
 
-On start: Read CLAUDE.md session log. If it references an active plan file, READ THAT PLAN FILE. Resume from where you left off.
+On start: Read `.claude-session.md` (gitignored local file, NOT CLAUDE.md) for the session log. If it references an active plan file, READ THAT PLAN FILE. Resume from where you left off.
 
-During work: Update session log after significant progress with date, status, completed items, next steps, blockers.
+During work: Update `.claude-session.md` after significant progress with date, status, completed items, next steps, blockers. Never write session log entries to CLAUDE.md — that file is committed to git and updating it makes open PRs go BEHIND.
 
-Before context compaction: Update with current state, uncommitted changes, running commands, exact next steps.
+Before context compaction: Update `.claude-session.md` with current state, uncommitted changes, running commands, exact next steps.
 
 ## 2. Break Down & Track
 

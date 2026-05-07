@@ -57,6 +57,7 @@ const mockChatStore = {
   fetchChats: vi.fn().mockResolvedValue([]),
   fetchChat: vi.fn().mockResolvedValue({}),
   markRead: vi.fn().mockResolvedValue({}),
+  markAllRead: vi.fn().mockResolvedValue(),
   byChatId: vi.fn().mockReturnValue(null),
   clear: vi.fn(),
   unseenCount: 0,
@@ -254,5 +255,18 @@ describe('chats/[[id]].vue loadMore', () => {
     page.vm.loadMore(mockState)
 
     expect(mockState.complete).toHaveBeenCalled()
+  })
+
+  it('markAllRead calls chatStore.markAllRead and then fetchChats', async () => {
+    const wrapper = mountComponent()
+    await flushPromises()
+    await nextTick()
+    const page = wrapper.findComponent(ChatsPage)
+
+    await page.vm.markAllRead()
+
+    expect(mockChatStore.markAllRead).toHaveBeenCalledOnce()
+    expect(mockChatStore.fetchChats).toHaveBeenCalled()
+    expect(mockChatStore.markRead).not.toHaveBeenCalled()
   })
 })

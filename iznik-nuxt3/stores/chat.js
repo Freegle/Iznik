@@ -284,6 +284,16 @@ export const useChatStore = defineStore({
 
       return messages
     },
+    async markAllReadMT() {
+      await api(this.config).chat.allSeen()
+      this.currentCountMT = 0
+    },
+    async markAllRead() {
+      await api(this.config).chat.allSeen()
+      Object.keys(this.listByChatId).forEach((id) => {
+        this.listByChatId[id].unseen = 0
+      })
+    },
     async markRead(id) {
       const chat = this.listByChatId[id]
 

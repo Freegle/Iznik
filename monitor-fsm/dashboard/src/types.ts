@@ -12,6 +12,7 @@ export interface BugRow {
   last_seen_at: string
   fixed_at: string | null
   pr_rejections: number
+  deploy_state: string | null  // 'deployed' | 'pending_deploy' | null
 }
 
 export interface DraftRow {
@@ -24,6 +25,7 @@ export interface DraftRow {
   pr_number: number | null
   pr_url: string | null
   pr_state: string | null
+  deploy_state: string | null   // 'deployed' | 'pending_deploy' | null
   queued_at: string
   approved_at: string | null
   posted_at: string | null
@@ -41,6 +43,15 @@ export interface IterRow {
   note: string | null
 }
 
+export interface CIRunnerStatus {
+  running: boolean
+  branch: string | null
+  workflowName: string | null
+  url: string | null
+  pipelineNumber: number | null
+  queueDepth: number
+}
+
 export interface PrLive {
   number: number
   title: string
@@ -51,6 +62,8 @@ export interface PrLive {
   mergeable: boolean
   mergeStateStatus: string
   ciStatus: 'green' | 'red' | 'pending' | 'unknown'
+  ciRunning: boolean
+  ciUrl: string | null
   failedChecks: string[]
   bug?: { topic: number; post: number; reporter: string | null; excerpt: string | null }
 }

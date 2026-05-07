@@ -82,6 +82,7 @@ $knownPrefixes = [
     'mtchatreply'             => 21,
     'mtspammers'              => 22,
     'repostgroupchange'       => 23,
+    'mtmemberreview'          => 24,
 ];
 
 if (isset($knownPrefixes[$prefix])) {
@@ -395,6 +396,16 @@ retryOnTransientDbError(function () use ($r, $cm, $userUid, $gid, $prefix, &$u2m
     $cm->create($u2mRid, $userUid, "PW test message from user to group in $prefix");
 });
 error_log("User2Mod chat (ID: $u2mRid)");
+
+# Member review test env: put the regular user in the review queue so
+# ModMemberReviewActions.vue is mounted and its code paths are exercised.
+if ($prefix === 'mtmemberreview') {
+    $dbhm->preExec(
+        "UPDATE memberships SET reviewrequestedat = DATE_SUB(NOW(), INTERVAL 1 DAY), reviewedat = NULL WHERE userid = ? AND groupid = ?",
+        [$userUid, $gid]
+    );
+    error_log("Set reviewrequestedat on user $userUid in group $gid for member review test");
+}
 
 # Spammer test env: grant mod SpamAdmin permission and create PendingAdd spam entries.
 $spamUserIds = [];

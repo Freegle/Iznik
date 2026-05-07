@@ -290,7 +290,16 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				db.Raw("SELECT id, msgid, archived, externaluid, externalmods FROM messages_attachments WHERE msgid = ? ORDER BY `primary` DESC, id ASC", id).Scan(&messageAttachments)
+				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
+			// that is no longer active, return an empty externaluid so the frontend shows
+			// a placeholder instead of the rejected illustration.
+			db.Raw(`SELECT ma.id, ma.msgid, ma.archived,
+				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
+				ma.externalmods
+				FROM messages_attachments ma
+				LEFT JOIN ai_images ai ON ai.externaluid = ma.externaluid AND ai.status IN ('rejected', 'regenerating')
+				WHERE ma.msgid = ?
+				ORDER BY ma.`+"`primary`"+` DESC, ma.id ASC`, id).Scan(&messageAttachments)
 			}()
 
 			var messageReply []MessageReply
@@ -364,21 +373,21 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 
 			wg.Wait()
 
-			// Fetch postings after wg.Wait so we can use messageGroups for the mod check.
+			// isGroupMod is used for edit access and location disclosure.
 			isGroupMod := isMod
 			if !isGroupMod {
 				idNum, _ := strconv.ParseUint(id, 10, 64)
 				isGroupMod = isModForMessage(db, myid, idNum)
 			}
 
+			// Postings (history of which groups this message was on) are public information,
+			// returned to all callers — matching V1 behaviour.
 			var messagePostings []MessagePosting
-			if isGroupMod {
-				db.Raw("SELECT mp.msgid, mp.groupid, mp.date, mp.repost, mp.autorepost, "+
-					"COALESCE(g.namefull, g.nameshort) AS namedisplay "+
-					"FROM messages_postings mp "+
-					"INNER JOIN `groups` g ON mp.groupid = g.id "+
-					"WHERE mp.msgid = ? ORDER BY mp.date ASC", id).Scan(&messagePostings)
-			}
+			db.Raw("SELECT mp.msgid, mp.groupid, mp.date, mp.repost, mp.autorepost, "+
+				"COALESCE(g.namefull, g.nameshort) AS namedisplay "+
+				"FROM messages_postings mp "+
+				"INNER JOIN `groups` g ON mp.groupid = g.id "+
+				"WHERE mp.msgid = ? ORDER BY mp.date ASC", id).Scan(&messagePostings)
 
 			message.MessageGroups = messageGroups
 			message.Expiresat = computeExpiresat(db, message.Type, messageGroups)
@@ -389,7 +398,7 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 			if isMod && len(messageEdits) > 0 {
 				message.Edits = messageEdits
 			}
-			if isGroupMod && len(messagePostings) > 0 {
+			if len(messagePostings) > 0 {
 				message.Postings = messagePostings
 			}
 
@@ -734,17 +743,6 @@ func splitOnWordBoundary(text string) []string {
 	return re.Split(text, -1)
 }
 
-// sanitiseForEmail returns a lowercase alphanumeric version of a display name
-// suitable for the local part of an email address. Returns empty string if
-// the input yields no usable characters.
-func sanitiseForEmail(name string) string {
-	re := regexp.MustCompile(`[^a-zA-Z0-9]`)
-	result := strings.ToLower(re.ReplaceAllString(name, ""))
-	if len(result) > 16 {
-		result = result[:16]
-	}
-	return result
-}
 
 func GetMessagesForUser(c *fiber.Ctx) error {
 	db := database.DBConn
@@ -1013,8 +1011,10 @@ func Search(c *fiber.Ctx) error {
 		}
 	}
 
-	// If groupids contains 0 ("All my communities" in ModTools), replace with the
-	// user's actual group memberships to avoid returning messages from all groups.
+	// If groupids contains 0 ("All my communities" in ModTools), handle based on role:
+	// - Admin/Support: clear groupids so the search covers all groups (no filter).
+	// - Everyone else: replace with the user's actual memberships so they only see
+	//   messages from groups they belong to.
 	hasZero := false
 	for _, gid := range groupids {
 		if gid == 0 {
@@ -1023,10 +1023,14 @@ func Search(c *fiber.Ctx) error {
 		}
 	}
 	if hasZero && myid > 0 {
-		var userGroupIDs []uint64
-		db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Scan(&userGroupIDs)
-		if len(userGroupIDs) > 0 {
-			groupids = userGroupIDs
+		if auth.IsAdminOrSupport(myid) {
+			groupids = nil
+		} else {
+			var userGroupIDs []uint64
+			db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED).Scan(&userGroupIDs)
+			if len(userGroupIDs) > 0 {
+				groupids = userGroupIDs
+			}
 		}
 	}
 
@@ -2066,8 +2070,10 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	}
 
 	// Check if user is banned from this group.
+	// V1 parity: a ban deletes the memberships row and inserts into users_banned —
+	// there is no memberships.collection='Banned' row, so the check must hit users_banned.
 	var bannedCount int64
-	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?", myid, groupid, utils.COLLECTION_BANNED).Scan(&bannedCount)
+	db.Raw("SELECT COUNT(*) FROM users_banned WHERE userid = ? AND groupid = ?", myid, groupid).Scan(&bannedCount)
 	if bannedCount > 0 {
 		return fiber.NewError(fiber.StatusForbidden, "You are banned from this group")
 	}
@@ -2150,34 +2156,8 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", myid).Scan(&histFromname)
 	// V1 parity: submit() calls inventEmail() to get/create the user's @users.ilovefreegle.org
 	// proxy email, then sets messages.fromaddr to it. This address is checked by auto-repost,
-	// chase-up, and other cron jobs via Mail::ourDomain(). We look for an existing one first;
-	// if the user doesn't have one yet, we generate and insert one.
-	userDomain := os.Getenv("USER_DOMAIN")
-	if userDomain == "" {
-		userDomain = "users.ilovefreegle.org"
-	}
-
-	var fromaddr string
-	db.Raw("SELECT COALESCE(email, '') FROM users_emails WHERE userid = ? AND email LIKE ? ORDER BY id DESC LIMIT 1",
-		myid, "%@"+userDomain).Scan(&fromaddr)
-
-	if fromaddr == "" {
-		// No @users.ilovefreegle.org email exists yet — generate one (V1 parity: inventEmail()).
-		// Use a simple format: <userid>@<domain>. V1 tries to make it human-readable but the
-		// critical thing is that it's on our domain.
-		var displayname string
-		db.Raw("SELECT COALESCE(fullname, '') FROM users WHERE id = ?", myid).Scan(&displayname)
-
-		// Build a safe local part from the display name, falling back to the user ID.
-		local := sanitiseForEmail(displayname)
-		if local == "" {
-			local = fmt.Sprintf("freegler%d", myid)
-		}
-		fromaddr = fmt.Sprintf("%s-%d@%s", local, myid, userDomain)
-
-		db.Exec("INSERT IGNORE INTO users_emails (userid, email, preferred, added, validatetime) VALUES (?, ?, 0, NOW(), NOW())",
-			myid, fromaddr)
-	}
+	// chase-up, and other cron jobs via Mail::ourDomain().
+	fromaddr := user.GetOrCreateInternalEmail(db, myid)
 
 	db.Exec("UPDATE messages SET fromaddr = ? WHERE id = ?", fromaddr, req.ID)
 
@@ -2246,90 +2226,60 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	return c.JSON(resp)
 }
 
-// PatchMessage updates a message (PATCH /message).
-//
-// @Summary Update a message
-// @Tags message
-// @Accept json
-// @Produce json
-// @Success 200 {object} map[string]interface{}
-// @Router /api/message [patch]
-func PatchMessage(c *fiber.Ctx) error {
-	myid := user.WhoAmI(c)
+// patchMessageRequest is the body for PATCH /message and PATCH /message/tn/:tnpostid.
+type patchMessageRequest struct {
+	ID           uint64   `json:"id"`
+	Subject      *string  `json:"subject"`
+	Textbody     *string  `json:"textbody"`
+	Type         *string  `json:"type"`
+	Msgtype      *string  `json:"msgtype"`
+	Messagetype  *string  `json:"messagetype"`
+	Item         *string  `json:"item"`
+	Availablenow *int     `json:"availablenow"`
+	Lat          *float64 `json:"lat"`
+	Lng          *float64 `json:"lng"`
+	Location     *string  `json:"location"`
+	Locationid   *uint64  `json:"locationid"`
+	Groupid      *uint64  `json:"groupid"`
+	Attachments  []uint64 `json:"attachments"`
+	BadAIImages  []uint64 `json:"badAIImages"`
+	Deadline     *string  `json:"deadline"`
+}
 
-	// Partner auth: if partner query param is present, authenticate via partner key
-	// instead of JWT. The partner acts on behalf of the identified user.
-	partnerKey := c.Query("partner")
-	if partnerKey != "" {
-		db := database.DBConn
-		_, _, domain, err := user.ValidatePartnerKey(db, partnerKey)
-		if err != nil {
-			return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
-		}
+// resolvePartnerAuth reads a ?partner= query param and resolves the acting user ID.
+// Returns the resolved user ID (0 on failure) and an error to return to the client.
+func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
+	db := database.DBConn
+	_, _, domain, err := user.ValidatePartnerKey(db, c.Query("partner"))
+	if err != nil {
+		return 0, fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
+	}
 
-		email := c.Query("email")
-		tnuseridStr := c.Query("tnuserid")
-		var tnuserid uint64
-		if tnuseridStr != "" {
-			if v, err := strconv.ParseUint(tnuseridStr, 10, 64); err == nil {
-				tnuserid = v
-			}
-		}
-
-		// Validate email domain matches partner domain.
-		if email != "" {
-			parts := strings.SplitN(email, "@", 2)
-			if len(parts) != 2 || parts[1] != domain {
-				return fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
-			}
-		}
-
-		myid = user.FindByTNIdOrEmail(db, tnuserid, email)
-		if myid == 0 {
-			return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+	email := c.Query("email")
+	tnuseridStr := c.Query("tnuserid")
+	var tnuserid uint64
+	if tnuseridStr != "" {
+		if v, err := strconv.ParseUint(tnuseridStr, 10, 64); err == nil {
+			tnuserid = v
 		}
 	}
 
+	if email != "" {
+		parts := strings.SplitN(email, "@", 2)
+		if len(parts) != 2 || parts[1] != domain {
+			return 0, fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
+		}
+	}
+
+	myid := user.FindByTNIdOrEmail(db, tnuserid, email)
 	if myid == 0 {
-		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+		return 0, fiber.NewError(fiber.StatusForbidden, "User not found for partner")
 	}
+	return myid, nil
+}
 
-	type PatchMessageRequest struct {
-		ID           uint64   `json:"id"`
-		Subject      *string  `json:"subject"`
-		Textbody     *string  `json:"textbody"`
-		Type         *string  `json:"type"`
-		Msgtype      *string  `json:"msgtype"`
-		Messagetype  *string  `json:"messagetype"`
-		Item         *string  `json:"item"`
-		Availablenow *int     `json:"availablenow"`
-		Lat          *float64 `json:"lat"`
-		Lng          *float64 `json:"lng"`
-		Location     *string  `json:"location"`
-		Locationid   *uint64  `json:"locationid"`
-		Groupid      *uint64  `json:"groupid"`
-		Attachments  []uint64 `json:"attachments"`
-		Deadline     *string  `json:"deadline"`
-	}
-
-	var req PatchMessageRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
-	}
-
-	// Frontend sends "msgtype" (ModMessage.vue) or "messagetype" (compose store),
-	// accept all three aliases.
-	if req.Type == nil && req.Msgtype != nil {
-		req.Type = req.Msgtype
-	}
-	if req.Type == nil && req.Messagetype != nil {
-		req.Type = req.Messagetype
-	}
-
-	if req.ID == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "id is required")
-	}
-
+// applyPatchMessage performs the edit on a message after auth and ID are resolved.
+func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
 	db := database.DBConn
 
 	// Check ownership or mod permission.
@@ -2428,10 +2378,43 @@ func PatchMessage(c *fiber.Ctx) error {
 		setClauses = append(setClauses, "locationid = ?")
 		args = append(args, *req.Locationid)
 	}
+	if req.Lat != nil {
+		setClauses = append(setClauses, "lat = ?")
+		args = append(args, *req.Lat)
+	}
+	if req.Lng != nil {
+		setClauses = append(setClauses, "lng = ?")
+		args = append(args, *req.Lng)
+	}
 
 	if len(setClauses) > 0 {
 		args = append(args, req.ID)
 		db.Exec("UPDATE messages SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", args...)
+	}
+
+	// Update spatial index when lat/lng change so browse/search reflects the new location.
+	if req.Lat != nil && req.Lng != nil {
+		var msgType string
+		var groupid uint64
+		db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
+		groupid = getPrimaryGroupForMessage(db, req.ID)
+		if groupid > 0 {
+			db.Exec("INSERT INTO messages_spatial (msgid, point, successful, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), 1, ?, ?, NOW()) ON DUPLICATE KEY UPDATE point = VALUES(point)",
+				req.ID, *req.Lng, *req.Lat, groupid, msgType)
+		}
+	}
+
+	// PHP parity (message.php:371-372): when a groupid is supplied, persist it to
+	// messages_drafts so the subsequent JoinAndPost reads the user's chosen group
+	// rather than the original one from RejectToDraft.  Without this, the group
+	// change is silently dropped and the message is reposted to the wrong community.
+	// The UPDATE is a no-op when the message is not in draft state (0 rows affected).
+	if req.Groupid != nil && *req.Groupid > 0 {
+		var groupExists int64
+		db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", *req.Groupid).Scan(&groupExists)
+		if groupExists > 0 {
+			db.Exec("UPDATE messages_drafts SET groupid = ? WHERE msgid = ?", *req.Groupid, req.ID)
+		}
 	}
 
 	// If the user is setting a future deadline, clear any Expired outcome so the post
@@ -2511,7 +2494,7 @@ func PatchMessage(c *fiber.Ctx) error {
 	// req.Attachments is nil when the field is absent from JSON (don't touch).
 	// req.Attachments is [] (empty, non-nil) when all attachments are removed (#338).
 	if req.Attachments != nil {
-		recordAIDeletions(db, myid, req.ID, req.Attachments)
+		recordAIDeletions(db, myid, req.ID, req.Attachments, req.BadAIImages)
 
 		if len(req.Attachments) > 0 {
 			for i, attid := range req.Attachments {
@@ -2659,6 +2642,92 @@ func PatchMessage(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// PatchMessage updates a message (PATCH /message).
+//
+// @Summary Update a message
+// @Tags message
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/message [patch]
+func PatchMessage(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+
+	if c.Query("partner") != "" {
+		var err error
+		myid, err = resolvePartnerAuth(c)
+		if err != nil {
+			return err
+		}
+	}
+
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	var req patchMessageRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.Type == nil && req.Msgtype != nil {
+		req.Type = req.Msgtype
+	}
+	if req.Type == nil && req.Messagetype != nil {
+		req.Type = req.Messagetype
+	}
+
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	return applyPatchMessage(c, myid, req)
+}
+
+// PatchMessageByTN updates a message by TN post ID (PATCH /message/tn/:tnpostid).
+func PatchMessageByTN(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+
+	if c.Query("partner") != "" {
+		var err error
+		myid, err = resolvePartnerAuth(c)
+		if err != nil {
+			return err
+		}
+	}
+
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	tnpostid := c.Params("tnpostid")
+	if tnpostid == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "tnpostid is required")
+	}
+
+	db := database.DBConn
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE tnpostid = ? LIMIT 1", tnpostid).Scan(&msgID)
+	if msgID == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Message not found for that TN post ID")
+	}
+
+	var req patchMessageRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.Type == nil && req.Msgtype != nil {
+		req.Type = req.Msgtype
+	}
+	if req.Type == nil && req.Messagetype != nil {
+		req.Type = req.Messagetype
+	}
+
+	req.ID = msgID
+	return applyPatchMessage(c, myid, req)
 }
 
 // DeleteMessageEndpoint handles DELETE /message/:id.
@@ -2898,8 +2967,8 @@ func PutMessage(c *fiber.Ctx) error {
 	if req.Groupid > 0 {
 		messageid = fmt.Sprintf("%s-%d", messageid, req.Groupid)
 	}
-	result := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
-		myid, req.Type, req.Subject, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
+	result := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
+		myid, req.Type, req.Subject, req.Textbody, req.Textbody, availInit, availNow, req.Locationid, fromip, messageid)
 
 	if result.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
@@ -3023,11 +3092,45 @@ type PostMessageRequest struct {
 	Deadline         *string `json:"deadline"`
 	Deliverypossible *bool   `json:"deliverypossible"`
 	ForcePending     *bool   `json:"forcepending"`
+	Tnpostid         *string `json:"tnpostid"`
 }
 
 // PostMessage dispatches POST /message actions.
 func PostMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
+
+	// Partner auth: if partner query param is present, authenticate via partner key
+	// instead of JWT. The partner acts on behalf of the identified user.
+	partnerKey := c.Query("partner")
+	if partnerKey != "" {
+		db := database.DBConn
+		_, _, domain, err := user.ValidatePartnerKey(db, partnerKey)
+		if err != nil {
+			return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
+		}
+
+		email := c.Query("email")
+		tnuseridStr := c.Query("tnuserid")
+		var tnuserid uint64
+		if tnuseridStr != "" {
+			if v, err := strconv.ParseUint(tnuseridStr, 10, 64); err == nil {
+				tnuserid = v
+			}
+		}
+
+		if email != "" {
+			parts := strings.SplitN(email, "@", 2)
+			if len(parts) != 2 || parts[1] != domain {
+				return fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
+			}
+		}
+
+		myid = user.FindByTNIdOrEmail(db, tnuserid, email)
+		if myid == 0 {
+			return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+		}
+	}
+
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
@@ -3035,6 +3138,12 @@ func PostMessage(c *fiber.Ctx) error {
 	var req PostMessageRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	// Resolve message ID from tnpostid when id is absent.
+	if req.ID == 0 && req.Tnpostid != nil && *req.Tnpostid != "" {
+		db := database.DBConn
+		db.Raw("SELECT id FROM messages WHERE tnpostid = ? LIMIT 1", *req.Tnpostid).Scan(&req.ID)
 	}
 
 	if req.ID == 0 {
@@ -3532,10 +3641,12 @@ func stringPtrEqual(a, b *string) bool {
 
 // recordAIDeletions checks which attachments on msgID will be removed by the new keepList,
 // and for each AI-generated attachment being removed, records a Reject microaction.
-func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint64) {
+// Attachments whose IDs appear in badAttachmentIDs are force-rejected immediately,
+// bypassing quorum — used when a moderator marks the image as bad for any post.
+func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint64, badAttachmentIDs []uint64) {
 	type aiCandidate struct {
-		ID          uint64
-		Externaluid string
+		ID           uint64
+		Externaluid  string
 		Externalmods json.RawMessage
 	}
 
@@ -3553,9 +3664,22 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 		var aiImageID uint64
 		db.Raw("SELECT id FROM ai_images WHERE externaluid = ? LIMIT 1", att.Externaluid).Scan(&aiImageID)
 		if aiImageID > 0 {
-			microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
+			if containsUint64(badAttachmentIDs, att.ID) {
+				microvolunteering.ForceRejectAIImage(db, userID, aiImageID)
+			} else {
+				microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
+			}
 		}
 	}
+}
+
+func containsUint64(slice []uint64, val uint64) bool {
+	for _, v := range slice {
+		if v == val {
+			return true
+		}
+	}
+	return false
 }
 
 // isAIAttachment returns true if the externalmods JSON contains {"ai": true}.

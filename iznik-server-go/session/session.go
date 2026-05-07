@@ -572,7 +572,8 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", myid)
 
 	// GDPR erasure: blank personal data from all messages posted by this user (V1 parity).
-	db.Exec("UPDATE messages SET fromip = NULL, message = NULL, envelopefrom = NULL, fromname = NULL, fromaddr = NULL, messageid = NULL, textbody = NULL, htmlbody = NULL, deleted = NOW() WHERE fromuser = ?", myid)
+	// message is NOT NULL with no default, so use '' not NULL; all other blanked columns are nullable.
+	db.Exec("UPDATE messages SET fromip = NULL, message = '', envelopefrom = NULL, fromname = NULL, fromaddr = NULL, messageid = NULL, textbody = NULL, htmlbody = NULL, deleted = NOW() WHERE fromuser = ?", myid)
 	db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid IN (SELECT id FROM messages WHERE fromuser = ?)", myid)
 
 	// Destroy session so the user is logged out.
@@ -914,16 +915,18 @@ func GetSession(c *fiber.Ctx) error {
 			defer wg2.Done()
 			if len(activeGroupIDs) > 0 {
 				// Unheld spam members in active groups → spammembers (red).
+				// Condition matches getSpamMembers list: flag set and either never reviewed
+				// or re-flagged after the last review action.
 				db.Raw("SELECT COUNT(*) FROM memberships "+
-					"WHERE groupid IN ? AND (reviewrequestedat IS NOT NULL AND "+
-					"(reviewedat IS NULL OR DATE(reviewedat) < DATE_SUB(NOW(), INTERVAL 31 DAY))) "+
+					"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
+					"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
 					"AND heldby IS NULL",
 					activeGroupIDs).Scan(&spammembers)
 				// Held spam members in active groups → spammembersother (blue).
 				var heldActive int64
 				db.Raw("SELECT COUNT(*) FROM memberships "+
-					"WHERE groupid IN ? AND (reviewrequestedat IS NOT NULL AND "+
-					"(reviewedat IS NULL OR DATE(reviewedat) < DATE_SUB(NOW(), INTERVAL 31 DAY))) "+
+					"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
+					"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat) "+
 					"AND heldby IS NOT NULL",
 					activeGroupIDs).Scan(&heldActive)
 				spammembersother += heldActive
@@ -932,8 +935,8 @@ func GetSession(c *fiber.Ctx) error {
 				// All spam members in inactive groups → spammembersother (blue).
 				var inact int64
 				db.Raw("SELECT COUNT(*) FROM memberships "+
-					"WHERE groupid IN ? AND (reviewrequestedat IS NOT NULL AND "+
-					"(reviewedat IS NULL OR DATE(reviewedat) < DATE_SUB(NOW(), INTERVAL 31 DAY)))",
+					"WHERE groupid IN ? AND reviewrequestedat IS NOT NULL "+
+					"AND (reviewedat IS NULL OR reviewrequestedat > reviewedat)",
 					inactiveGroupIDs).Scan(&inact)
 				spammembersother += inact
 			}
@@ -1166,12 +1169,16 @@ func GetSession(c *fiber.Ctx) error {
 					"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? "+
 					"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? "+
 					"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? "+
+					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 "+
+					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0 "+
 					"UNION "+
 					"SELECT ur.user1 FROM users_related ur "+
 					"INNER JOIN memberships m ON m.userid = ur.user2 "+
 					"INNER JOIN users u1 ON ur.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = ? "+
 					"INNER JOIN users u2 ON ur.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = ? "+
 					"WHERE ur.user1 < ur.user2 AND ur.notified = 0 AND m.groupid IN ? "+
+					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user1) > 0 "+
+					"AND (SELECT COUNT(*) FROM users_logins WHERE userid = ur.user2) > 0 "+
 					") t", utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs, utils.SYSTEMROLE_USER, utils.SYSTEMROLE_USER, activeGroupIDs).Scan(&relatedmembers)
 			}
 		}()

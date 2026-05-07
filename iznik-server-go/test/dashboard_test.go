@@ -306,8 +306,8 @@ func TestGetDashboardMessageBreakdown(t *testing.T) {
 
 	// Insert a stats row for MessageBreakdown.
 	today := time.Now().Format("2006-01-02")
-	db.Exec("INSERT INTO stats (type, groupid, date, count, breakdown) VALUES ('MessageBreakdown', ?, ?, 1, ?)",
-		groupID, today, `{"Offer":3,"Wanted":1}`)
+	db.Exec("INSERT INTO stats (type, groupid, date, end, count, breakdown) VALUES ('MessageBreakdown', ?, ?, ?, 1, ?)",
+		groupID, today, today, `{"Offer":3,"Wanted":1}`)
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM stats WHERE type = 'MessageBreakdown' AND groupid = ?", groupID)
 	})
@@ -330,8 +330,8 @@ func TestGetDashboardDonations(t *testing.T) {
 	groupID, userID, token := createModDashboardFixtures(t, prefix)
 
 	// Insert a test donation.
-	db.Exec("INSERT INTO users_donations (userid, Payer, GrossAmount, timestamp, TransactionID) VALUES (?, ?, 5.00, NOW(), ?)",
-		userID, prefix+"@test.com", prefix+"_txn")
+	db.Exec("INSERT INTO users_donations (userid, Payer, PayerDisplayName, GrossAmount, timestamp, TransactionID) VALUES (?, ?, ?, 5.00, NOW(), ?)",
+		userID, prefix+"@test.com", prefix+" Donor", prefix+"_txn")
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", prefix+"_txn")
 	})
@@ -354,8 +354,8 @@ func TestGetDashboardDonationsSystemwide(t *testing.T) {
 	_, userID, token := createModDashboardFixtures(t, prefix)
 
 	// Insert a donation for systemwide query using the test user (FK constraint).
-	db.Exec("INSERT INTO users_donations (userid, Payer, GrossAmount, timestamp, TransactionID) VALUES (?, ?, 10.00, NOW(), ?)",
-		userID, prefix+"@test.com", prefix+"_txn_sw")
+	db.Exec("INSERT INTO users_donations (userid, Payer, PayerDisplayName, GrossAmount, timestamp, TransactionID) VALUES (?, ?, ?, 10.00, NOW(), ?)",
+		userID, prefix+"@test.com", prefix+" Donor", prefix+"_txn_sw")
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM users_donations WHERE TransactionID = ?", prefix+"_txn_sw")
 	})
@@ -439,8 +439,8 @@ func TestGetDashboardMultipleTimeSeriesComponents(t *testing.T) {
 	// Insert stats rows for several time series types.
 	today := time.Now().Format("2006-01-02")
 	for _, stype := range []string{"Activity", "Replies", "Weight", "Outcomes"} {
-		db.Exec("INSERT INTO stats (type, groupid, date, count) VALUES (?, ?, ?, 5)",
-			stype, groupID, today)
+		db.Exec("INSERT INTO stats (type, groupid, date, end, count) VALUES (?, ?, ?, ?, 5)",
+			stype, groupID, today, today)
 	}
 	t.Cleanup(func() {
 		db.Exec("DELETE FROM stats WHERE groupid = ?", groupID)

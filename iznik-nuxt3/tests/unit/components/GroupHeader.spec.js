@@ -406,4 +406,16 @@ describe('GroupHeader', () => {
       expect(component.vm.description).not.toContain('<p><br></p>')
     })
   })
+
+  describe('contact button label normalization', () => {
+    it('normalizes caretaker groups to show volunteers label', () => {
+      // This is the bug being fixed: caretaker groups incorrectly show 'caretakers'
+      const wrapper = createWrapper({
+        group: { ...mockGroup, mentored: true },
+      })
+      const html = wrapper.html()
+      expect(html).not.toContain('contact our lovely local caretakers')
+      expect(html).toContain('contact our lovely local volunteers')
+    })
+  })
 })

@@ -240,8 +240,7 @@ func PostMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 
 	case "ReviewIgnore":
-		// Marks this group membership as reviewed and clears the review flag.
-		// Per-group: mods on adjacent communities make independent decisions.
+		// Per-group: mods on adjacent communities make independent decisions (Discourse 9618 #8).
 		db.Exec("UPDATE memberships SET reviewedat = NOW(), reviewrequestedat = NULL "+
 			"WHERE userid = ? AND groupid = ?",
 			req.Userid, req.Groupid)
@@ -341,13 +340,23 @@ func GetMemberships(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
 	}
 	filter := c.QueryInt("filter", 0)
+	contextID := uint64(c.QueryInt("context", 0))
 
 	db := database.DBConn
 
 	// Handle Banned filter separately — V1 stores bans in users_banned only (no memberships row).
 	// V1's getBanned() queries users_banned directly and synthesises 'Banned' as the collection.
+	// Cursor-based pagination uses b.userid (returned as id) so callers can page through all bans.
 	if filter == 5 {
 		var members []GetMembershipsMember
+		contextWhere := ""
+		bannedArgs := []interface{}{groupid}
+		if contextID > 0 {
+			contextWhere = " AND b.userid < ?"
+			bannedArgs = append(bannedArgs, contextID)
+		}
+		bannedArgs = append(bannedArgs, limit)
+
 		db.Raw("SELECT b.userid, b.groupid, 'Member' AS role, 'Banned' AS collection, "+
 			"b.date AS added, b.date AS bandate, b.byuser AS bannedby, "+
 			"u.fullname, u.firstname, u.lastname, u.engagement, "+
@@ -356,18 +365,23 @@ func GetMemberships(c *fiber.Ctx) error {
 			"NULL AS reviewrequestedat, NULL AS reviewedat, NULL AS reviewreason "+
 			"FROM users_banned b "+
 			"JOIN users u ON u.id = b.userid "+
-			"WHERE b.groupid = ? "+
-			"ORDER BY b.date DESC LIMIT ?",
-			groupid, limit).Scan(&members)
+			"WHERE b.groupid = ?"+contextWhere+
+			" ORDER BY b.userid DESC LIMIT ?",
+			bannedArgs...).Scan(&members)
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)
 		}
 		enrichMembers(members)
-		return c.JSON(members)
+
+		var nextContext interface{}
+		if len(members) == limit {
+			nextContext = members[len(members)-1].ID
+		}
+		return c.JSON(fiber.Map{"members": members, "context": nextContext})
 	}
 
 	// Handle "Received mod mails" filter — returns members who have been sent mod mails,
-	// sorted by most recent mod mail descending.
+	// ordered by join date (m.added DESC) to match the default listing order.
 	if filter == 6 {
 		var members []GetMembershipsMember
 		db.Raw("SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
@@ -382,7 +396,7 @@ func GetMemberships(c *fiber.Ctx) error {
 			"INNER JOIN users_modmails um ON um.userid = m.userid AND um.groupid = m.groupid "+
 			"WHERE m.groupid = ? AND m.collection = ? "+
 			"GROUP BY m.userid "+
-			"ORDER BY lastmodmail DESC LIMIT ?",
+			"ORDER BY m.added DESC LIMIT ?",
 			groupid, collection, limit).Scan(&members)
 		if members == nil {
 			members = make([]GetMembershipsMember, 0)
@@ -446,11 +460,21 @@ func GetMemberships(c *fiber.Ctx) error {
 				groupArg, collection, searchPattern, searchPattern, limit).Scan(&members)
 		}
 	} else {
+		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).
+		// ORDER BY m.id DESC for deterministic per-page slicing consistent with the cursor.
+		contextWhere := ""
+		queryArgs := []interface{}{groupid, collection}
+		if contextID > 0 {
+			contextWhere = " AND m.id < ?"
+			queryArgs = append(queryArgs, contextID)
+		}
+		queryArgs = append(queryArgs, limit)
+
 		result := db.Raw("SELECT "+selectCols+" "+
 			fromClause+filterJoin+" "+
-			"WHERE m.groupid = ? AND m.collection = ?"+filterWhere+
-			" ORDER BY m.added DESC LIMIT ?",
-			groupid, collection, limit).Scan(&members)
+			"WHERE m.groupid = ? AND m.collection = ?"+filterWhere+contextWhere+
+			" ORDER BY m.id DESC LIMIT ?",
+			queryArgs...).Scan(&members)
 		if result.Error != nil {
 			stdlog.Printf("Failed to query memberships group %d collection %s: %v", groupid, collection, result.Error)
 		}
@@ -461,6 +485,12 @@ func GetMemberships(c *fiber.Ctx) error {
 	}
 
 	enrichMembers(members)
+
+	// Return pagination context = last member's ID when a full page was returned (cursor for next page).
+	var nextContext interface{}
+	if len(members) == limit {
+		nextContext = members[len(members)-1].ID
+	}
 
 	// When a filter is active, include the total matching count so the UI can display it.
 	if filter > 0 && groupid > 0 {
@@ -474,10 +504,14 @@ func GetMemberships(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"members":     members,
 			"filtercount": filterCount,
+			"context":     nextContext,
 		})
 	}
 
-	return c.JSON(members)
+	return c.JSON(fiber.Map{
+		"members": members,
+		"context": nextContext,
+	})
 }
 
 // enrichMembers computes displayname from name fields, resolves posting status, and parses settings JSON.
@@ -607,10 +641,12 @@ func getRelatedMembers(c *fiber.Ctx, myid uint64, groupid uint64, limit int) err
 		"SELECT users_related.id, user1, user2 FROM users_related "+
 		"INNER JOIN memberships ON users_related.user1 = memberships.userid "+
 		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL AND u1.systemrole = 'User' "+
+		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL "+
 		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? "+
 		"UNION "+
 		"SELECT users_related.id, user1, user2 FROM users_related "+
 		"INNER JOIN memberships ON users_related.user2 = memberships.userid "+
+		"INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL "+
 		"INNER JOIN users u2 ON users_related.user2 = u2.id AND u2.deleted IS NULL AND u2.systemrole = 'User' "+
 		"WHERE user1 < user2 AND notified = 0 AND memberships.groupid IN ? "+
 		") t ORDER BY id DESC LIMIT ?", modGroupIDs, modGroupIDs, limit).Scan(&rows)
@@ -1291,6 +1327,7 @@ type PatchMembershipsRequest struct {
 	Groupid             uint64           `json:"groupid"`
 	Role                *string          `json:"role"`
 	Settings            *json.RawMessage `json:"settings"`
+	Configid            *uint64          `json:"configid"`
 	Emailfrequency      *utils.FlexInt   `json:"emailfrequency"`
 	Eventsallowed       *utils.FlexInt   `json:"eventsallowed"`
 	Volunteeringallowed *utils.FlexInt   `json:"volunteeringallowed"`
@@ -1365,6 +1402,24 @@ func PatchMemberships(c *fiber.Ctx) error {
 		// Save the membership settings JSON (active, configid, showmessages, etc.).
 		db.Exec("UPDATE memberships SET settings = ? WHERE userid = ? AND groupid = ?",
 			string(*req.Settings), userid, req.Groupid)
+	}
+
+	if req.Configid != nil {
+		// Update the mod config used for this membership.
+		// Must be mod/owner of the group to change the config.
+		if !isModOfGroup(myid, req.Groupid) {
+			return fiber.NewError(fiber.StatusForbidden, "Only moderators can change the config")
+		}
+		// Verify the config exists.
+		var configID uint64
+		db.Raw("SELECT id FROM mod_configs WHERE id = ?", *req.Configid).Scan(&configID)
+		if configID == 0 {
+			return fiber.NewError(fiber.StatusNotFound, "Config not found")
+		}
+		db.Exec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid = ?",
+			*req.Configid, userid, req.Groupid)
+		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_CONFIG_CHANGE, req.Groupid, userid, myid,
+			fmt.Sprintf("configid=%d", *req.Configid))
 	}
 
 	if req.OurPostingStatus != nil {

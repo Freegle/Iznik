@@ -98,6 +98,9 @@
                 <em>{{ logMessage.envelopeto }}</em>
               </span>
             </span>
+            <span v-else>
+              Received <ModLogMessage :logid="logid" notext tag="to" />
+            </span>
           </span>
           <span v-else-if="log.subtype === 'Autoreposted'">
             Autoreposted <ModLogMessage :logid="logid" /> repost

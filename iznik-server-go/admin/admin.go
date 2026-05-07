@@ -216,6 +216,22 @@ func PostAdmin(c *fiber.Ctx) error {
 			template = *req.Template
 		}
 
+		// Normalise sendafter: accept ISO 8601 (e.g. "2006-01-02T15:04:05Z") and
+		// convert to MySQL DATETIME format ("2006-01-02 15:04:05") which strict mode requires.
+		var sendAfter interface{}
+		if req.SendAfter != nil && *req.SendAfter != "" {
+			for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
+				if t, err := time.Parse(layout, *req.SendAfter); err == nil {
+					s := t.UTC().Format("2006-01-02 15:04:05")
+					sendAfter = s
+					break
+				}
+			}
+			if sendAfter == nil {
+				sendAfter = *req.SendAfter
+			}
+		}
+
 		// Use the underlying sql.DB to get LastInsertId() directly from the MySQL protocol
 		// response — never issue a separate SELECT LAST_INSERT_ID() as it's unsafe under
 		// parallel load (GORM's connection pool may assign a different connection).
@@ -224,7 +240,7 @@ func PostAdmin(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusInternalServerError, "Database error")
 		}
 		sqlResult, err := sqlDB.Exec("INSERT INTO admins (createdby, groupid, subject, text, ctatext, ctalink, essential, template, editprotected, sendafter, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())",
-			myid, utils.NilIfZero(req.GroupID), req.Subject, req.Text, req.CTA_Text, req.CTA_Link, essential, template, req.Editprotected != nil && *req.Editprotected, req.SendAfter)
+			myid, utils.NilIfZero(req.GroupID), req.Subject, req.Text, req.CTA_Text, req.CTA_Link, essential, template, req.Editprotected != nil && *req.Editprotected, sendAfter)
 
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create admin")
