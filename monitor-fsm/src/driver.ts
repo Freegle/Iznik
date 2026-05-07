@@ -553,6 +553,23 @@ async function main() {
       }
     }
 
+    // ─── DIAGNOSE_BUG re-entry clearing ───
+    // DIAGNOSE_BUG uses a two-phase pattern: Phase 1 calls search_code and
+    // check_existing_prs, Phase 2 reads those results and produces the brief.
+    // When REVIEW_REPRODUCTION sends us back here (mismatch), the previous
+    // search results are stale — clear them so Phase 1 runs again with a
+    // potentially refined query, incorporating the mismatch reason.
+    if (current.currentState === 'DIAGNOSE_BUG') {
+      const ctxNow: any = current.context ?? {}
+      if (ctxNow.diagnosisMismatchReason && (ctxNow._action_search_code || ctxNow._action_check_existing_prs)) {
+        dbg(`clearing stale search results on DIAGNOSE_BUG re-entry (mismatch: ${ctxNow.diagnosisMismatchReason})`)
+        await engine.updateContext(instance.id, {
+          _action_search_code: null,
+          _action_check_existing_prs: null,
+        })
+      }
+    }
+
     // ─── FIX_OPEN_PR_CI loop-breaker ───
     // Cap re-entries per PR. ROUTER's rule "keep trying if no new commit yet"
     // will otherwise loop forever on a subagent that can't push. After 2
