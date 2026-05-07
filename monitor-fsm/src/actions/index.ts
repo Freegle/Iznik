@@ -2037,8 +2037,14 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
            WHERE pr_number IS NOT NULL AND state IN ('open', 'investigating', 'fix-queued')`
         ).all() as Array<{ topic: number }>).map((r: { topic: number }) => r.topic)
       )
+      // Skip topics where Edward posted this iteration (type='mine'): he's actively
+      // engaged (e.g. waiting for a retest) and the FSM should not duplicate that work.
+      const topicsWithMinePost = new Set(
+        classifications.filter(c => c.type === 'mine').map(c => Number(c.topic))
+      )
       const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
         .filter(b => !topicsWithActivePr.has(Number(b.topic)))
+        .filter(b => !topicsWithMinePost.has(Number(b.topic)))
 
       if (allPending.length > 0) {
         // Dispatch ONE bug at a time (oldest first_seen_at). With a single self-hosted
