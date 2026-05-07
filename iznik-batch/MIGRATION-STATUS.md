@@ -169,7 +169,7 @@ These have code implemented but the scheduler entry is commented out in `routes/
 |-----------------|-----------------|-------------------|-------|
 | `digest.php` | `mail:digest` | - | Message digests (per-group, legacy) |
 | `digest.php` | `mail:digest:unified` | UnifiedDigest | Unified Freegle digests (user-centric) |
-| `user_askdonation.php` | `mail:donations:ask` | - | Donation ask emails (V1: daily at 17:00, checks 7-day interval) |
+| `donations_email.php` | `mail:donations:ask` | - | Donation reminders |
 | `donations_thank.php` | `mail:donations:thank` | - | Donation thank-you emails |
 | `bounce.php` + `bounce_users.php` | `mail:bounced` | - | Bounced email handling + user suspension (PR #390) |
 | `messages_expired.php` | `messages:process-expired` | - | Deadline expiry handling |
@@ -179,7 +179,7 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | `purge_messages.php` | `purge:messages` | - | Message purging |
 | `purge_chats.php` | `purge:chats` | - | Chat purging |
 | `users_kudos.php` | `users:update-kudos` | - | User kudos |
-| `users_retention.php` | `users:cleanup` | - | GDPR forgets + hard deletes (combines V1 userRetention() + processForgets()) |
+| `users_retention.php` | `users:retention-stats` | - | User retention stats |
 | `membercounts.php` | `groups:update-counts` | - | Group member/mod counts |
 | `chat_latestmessage.php` | `chats:update-counts` | - | Chat message counts + reopen closed User2Mod |
 | `lastaccess.php` | `users:update-lastaccess` | - | Fallback lastaccess update |
@@ -303,7 +303,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `nearby.php` | 14:05 | Medium | Nearby items |
 | `chat_review.php` | 11:00 | Medium | Chat review queue |
 | `engage.php` | 16:00 | Medium | User engagement emails |
-| ~~`user_askdonation.php`~~ | ~~17:00~~ | ~~Medium~~ | ~~Donation requests~~ — **Migrated: `mail:donations:ask`** |
+| `user_askdonation.php` | 17:00 | Medium | Donation requests |
 | `facebook_chaseup.php` | 18:00 | Low | Facebook chase-up |
 | `whatjobs.php` | Hourly 08:00-22:00 | Low | WhatJobs |
 | `microactions_score.php` | 23:00 | Low | Microactions scoring |
