@@ -401,6 +401,38 @@ Schedule::command('mail:admin:chase')
     ->sendOutputTo(cronLog('mail:admin:chase'))
     ->runInBackground();
 
+// Delete spammy WhatJobs postings (same bodyhash posted > 50 times across UK).
+// V1: cron/whatjobs_spam.php
+Schedule::command('cleanup:whatjobs-spam')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('cleanup:whatjobs-spam'))
+    ->runInBackground();
+
+// Update common email domains table (domains used by > 1000 users).
+// V1: cron/domains_common.php (weekly, Friday 07:00)
+Schedule::command('domains:update-common')
+    ->weeklyOn(5, '07:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('domains:update-common'))
+    ->runInBackground();
+
+// Remove search index entries for messages older than 30 days.
+// V1: cron/message_deindex.php (daily at 01:00)
+Schedule::command('messages:deindex')
+    ->dailyAt('01:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:deindex'))
+    ->runInBackground();
+
+// Add search index entries for recent messages that aren't indexed yet.
+// V1: cron/message_unindexed.php (every 30 min)
+Schedule::command('messages:index-unindexed')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:index-unindexed'))
+    ->runInBackground();
+
 // =============================================================================
 // AI IMAGE REVIEW
 // =============================================================================
