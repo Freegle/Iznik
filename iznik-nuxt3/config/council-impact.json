@@ -1,0 +1,16 @@
+{
+  "_comment": "Per-authority testimonials and photo URL for impact infographic pages. Key is the authority ID as a string.",
+  "example": {
+    "testimonials": [
+      {
+        "quote": "I like the feeling that someone else is going to get the benefit of my item and that they are making someone else's life happier.",
+        "attribution": null
+      },
+      {
+        "quote": "Stretching the budget can be very difficult sometimes. If you can help someone along the way, then why not?!",
+        "attribution": "Potteries Freegle"
+      }
+    ],
+    "photoUrl": null
+  }
+}
