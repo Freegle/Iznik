@@ -25,6 +25,7 @@ import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
 	"github.com/freegle/iznik-server-go/admin"
+	"github.com/freegle/iznik-server-go/avatar"
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
@@ -1718,6 +1719,18 @@ func SetupRoutes(app *fiber.App) {
 	// @Param name query string false "Shortlink name"
 	// @Success 302
 	app.Get("/shortlink", shortlink.RedirectShortlink)
+
+	// Avatar image — generates a deterministic geometric PNG from a name string.
+	// Identical algorithm to the frontend GeneratedAvatar.client.vue component,
+	// replacing the Node.js avatar-server container.
+	// @Router /avatar/{name} [get]
+	// @Summary Generate avatar PNG
+	// @Tags avatar
+	// @Param name path string true "User name (append .png for explicit PNG extension)"
+	// @Param size query integer false "Pixel size, max 256 (default 48)"
+	// @Produce image/png
+	// @Success 200
+	app.Get("/avatar/:name", avatar.GetAvatar)
 
 	// PayPal IPN — called by PayPal when donations are received.
 	// V1 equivalent: http/donateipn.php
