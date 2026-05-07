@@ -4,6 +4,7 @@ namespace App\Mail\Chat;
 
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
+use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
 use App\Models\ChatMessage;
@@ -20,6 +21,7 @@ use Symfony\Component\Mime\Email;
 
 class ChatNotification extends MjmlMailable
 {
+    use AvatarResolver;
     use TrackableEmail;
     use LoggableEmail;
     use AmpEmail;
@@ -919,26 +921,16 @@ class ChatNotification extends MjmlMailable
         // Check both for a user ID and that the user exists in the database.
         // Mock/test users may have IDs but exists=false.
         if (!$user || !$user->id || !$user->exists) {
-            return $this->getDefaultProfileUrl($width);
+            return $this->resolveAvatarUrl(null, $width);
         }
 
         // Get the user's profile image URL from their users_images record.
         $sourceUrl = $user->getProfileImageUrl(TRUE);
 
         if (!$sourceUrl) {
-            return $this->getDefaultProfileUrl($width);
+            return $this->resolveAvatarUrl($user, $width);
         }
 
-        return $this->getDeliveryUrl($sourceUrl, $width);
-    }
-
-    /**
-     * Get default profile image URL via delivery service.
-     */
-    protected function getDefaultProfileUrl(int $width = 40): string
-    {
-        $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
-        $sourceUrl = $imagesDomain . '/defaultprofile.png';
         return $this->getDeliveryUrl($sourceUrl, $width);
     }
 
@@ -954,7 +946,10 @@ class ChatNotification extends MjmlMailable
         $group = $this->chatRoom->group;
 
         if (!$group || !$group->profile) {
-            return $this->getDefaultProfileUrl($width);
+            // No group image — generate a boring-avatar using the group name.
+            $name    = $group?->nameshort ?? 'group';
+            $baseUrl = rtrim(config('freegle.avatar_server_url', ''), '/');
+            return $baseUrl . '/' . rawurlencode($name) . '.png' . ($width !== 48 ? "?size={$width}" : '');
         }
 
         $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');

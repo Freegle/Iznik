@@ -2482,6 +2482,7 @@ func TestPutMessageNotMemberDraft(t *testing.T) {
 	body := map[string]interface{}{
 		"groupid":  groupID,
 		"type":     "Offer",
+		"item":     "Test item",
 		"subject":  "Draft by non-member",
 		"textbody": "Should succeed as draft",
 	}
@@ -2504,6 +2505,7 @@ func TestPutMessageNotMemberNonDraft(t *testing.T) {
 	body := map[string]interface{}{
 		"groupid":    groupID,
 		"type":       "Offer",
+		"item":       "Test item",
 		"subject":    "Should fail",
 		"textbody":   "Not a member",
 		"collection": "Pending",
@@ -2529,6 +2531,30 @@ func TestPutMessageInvalidType(t *testing.T) {
 		"type":     "Invalid",
 		"subject":  "Bad type",
 		"textbody": "Invalid type",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode)
+}
+
+// TestPutMessageEmptyItemRejected verifies that PUT /message rejects requests
+// with an empty item, matching PHP behaviour ("Item is required").
+func TestPutMessageEmptyItemRejected(t *testing.T) {
+	prefix := uniquePrefix("msgmod_noitem")
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	body := map[string]interface{}{
+		"groupid":  groupID,
+		"type":     "Offer",
+		"textbody": "A message body",
+		// item and subject intentionally omitted
 	}
 	bodyBytes, _ := json.Marshal(body)
 	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bodyBytes))
