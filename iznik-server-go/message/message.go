@@ -2226,91 +2226,60 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	return c.JSON(resp)
 }
 
-// PatchMessage updates a message (PATCH /message).
-//
-// @Summary Update a message
-// @Tags message
-// @Accept json
-// @Produce json
-// @Success 200 {object} map[string]interface{}
-// @Router /api/message [patch]
-func PatchMessage(c *fiber.Ctx) error {
-	myid := user.WhoAmI(c)
+// patchMessageRequest is the body for PATCH /message and PATCH /message/tn/:tnpostid.
+type patchMessageRequest struct {
+	ID           uint64   `json:"id"`
+	Subject      *string  `json:"subject"`
+	Textbody     *string  `json:"textbody"`
+	Type         *string  `json:"type"`
+	Msgtype      *string  `json:"msgtype"`
+	Messagetype  *string  `json:"messagetype"`
+	Item         *string  `json:"item"`
+	Availablenow *int     `json:"availablenow"`
+	Lat          *float64 `json:"lat"`
+	Lng          *float64 `json:"lng"`
+	Location     *string  `json:"location"`
+	Locationid   *uint64  `json:"locationid"`
+	Groupid      *uint64  `json:"groupid"`
+	Attachments  []uint64 `json:"attachments"`
+	BadAIImages  []uint64 `json:"badAIImages"`
+	Deadline     *string  `json:"deadline"`
+}
 
-	// Partner auth: if partner query param is present, authenticate via partner key
-	// instead of JWT. The partner acts on behalf of the identified user.
-	partnerKey := c.Query("partner")
-	if partnerKey != "" {
-		db := database.DBConn
-		_, _, domain, err := user.ValidatePartnerKey(db, partnerKey)
-		if err != nil {
-			return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
-		}
+// resolvePartnerAuth reads a ?partner= query param and resolves the acting user ID.
+// Returns the resolved user ID (0 on failure) and an error to return to the client.
+func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
+	db := database.DBConn
+	_, _, domain, err := user.ValidatePartnerKey(db, c.Query("partner"))
+	if err != nil {
+		return 0, fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
+	}
 
-		email := c.Query("email")
-		tnuseridStr := c.Query("tnuserid")
-		var tnuserid uint64
-		if tnuseridStr != "" {
-			if v, err := strconv.ParseUint(tnuseridStr, 10, 64); err == nil {
-				tnuserid = v
-			}
-		}
-
-		// Validate email domain matches partner domain.
-		if email != "" {
-			parts := strings.SplitN(email, "@", 2)
-			if len(parts) != 2 || parts[1] != domain {
-				return fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
-			}
-		}
-
-		myid = user.FindByTNIdOrEmail(db, tnuserid, email)
-		if myid == 0 {
-			return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+	email := c.Query("email")
+	tnuseridStr := c.Query("tnuserid")
+	var tnuserid uint64
+	if tnuseridStr != "" {
+		if v, err := strconv.ParseUint(tnuseridStr, 10, 64); err == nil {
+			tnuserid = v
 		}
 	}
 
+	if email != "" {
+		parts := strings.SplitN(email, "@", 2)
+		if len(parts) != 2 || parts[1] != domain {
+			return 0, fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
+		}
+	}
+
+	myid := user.FindByTNIdOrEmail(db, tnuserid, email)
 	if myid == 0 {
-		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+		return 0, fiber.NewError(fiber.StatusForbidden, "User not found for partner")
 	}
+	return myid, nil
+}
 
-	type PatchMessageRequest struct {
-		ID           uint64   `json:"id"`
-		Subject      *string  `json:"subject"`
-		Textbody     *string  `json:"textbody"`
-		Type         *string  `json:"type"`
-		Msgtype      *string  `json:"msgtype"`
-		Messagetype  *string  `json:"messagetype"`
-		Item         *string  `json:"item"`
-		Availablenow *int     `json:"availablenow"`
-		Lat          *float64 `json:"lat"`
-		Lng          *float64 `json:"lng"`
-		Location     *string  `json:"location"`
-		Locationid   *uint64  `json:"locationid"`
-		Groupid      *uint64  `json:"groupid"`
-		Attachments  []uint64 `json:"attachments"`
-		BadAIImages  []uint64 `json:"badAIImages"`
-		Deadline     *string  `json:"deadline"`
-	}
-
-	var req PatchMessageRequest
-	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
-	}
-
-	// Frontend sends "msgtype" (ModMessage.vue) or "messagetype" (compose store),
-	// accept all three aliases.
-	if req.Type == nil && req.Msgtype != nil {
-		req.Type = req.Msgtype
-	}
-	if req.Type == nil && req.Messagetype != nil {
-		req.Type = req.Messagetype
-	}
-
-	if req.ID == 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "id is required")
-	}
-
+// applyPatchMessage performs the edit on a message after auth and ID are resolved.
+func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
 	db := database.DBConn
 
 	// Check ownership or mod permission.
@@ -2675,6 +2644,102 @@ func PatchMessage(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// PatchMessage updates a message (PATCH /message).
+//
+// @Summary Update a message
+// @Tags message
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]interface{}
+// @Router /api/message [patch]
+func PatchMessage(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+
+	if c.Query("partner") != "" {
+		var err error
+		myid, err = resolvePartnerAuth(c)
+		if err != nil {
+			return err
+		}
+	}
+
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	var req patchMessageRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.Type == nil && req.Msgtype != nil {
+		req.Type = req.Msgtype
+	}
+	if req.Type == nil && req.Messagetype != nil {
+		req.Type = req.Messagetype
+	}
+
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	return applyPatchMessage(c, myid, req)
+}
+
+// PatchMessageByTN updates a message identified by its Trash Nothing post ID
+// (PATCH /message/tn/:tnpostid). Intended for partner integrations where the
+// Freegle message ID is not yet known (e.g. post held for moderation).
+//
+// @Summary Update a message by TN post ID
+// @Tags message
+// @Accept json
+// @Produce json
+// @Param tnpostid path string true "Trash Nothing post ID"
+// @Success 200 {object} map[string]interface{}
+// @Router /api/message/tn/{tnpostid} [patch]
+func PatchMessageByTN(c *fiber.Ctx) error {
+	myid := user.WhoAmI(c)
+
+	if c.Query("partner") != "" {
+		var err error
+		myid, err = resolvePartnerAuth(c)
+		if err != nil {
+			return err
+		}
+	}
+
+	if myid == 0 {
+		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
+	}
+
+	tnpostid := c.Params("tnpostid")
+	if tnpostid == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "tnpostid is required")
+	}
+
+	db := database.DBConn
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE tnpostid = ? LIMIT 1", tnpostid).Scan(&msgID)
+	if msgID == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Message not found for that TN post ID")
+	}
+
+	var req patchMessageRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	if req.Type == nil && req.Msgtype != nil {
+		req.Type = req.Msgtype
+	}
+	if req.Type == nil && req.Messagetype != nil {
+		req.Type = req.Messagetype
+	}
+
+	req.ID = msgID
+	return applyPatchMessage(c, myid, req)
+}
+
 // DeleteMessageEndpoint handles DELETE /message/:id.
 //
 // @Summary Delete a message
@@ -3037,11 +3102,45 @@ type PostMessageRequest struct {
 	Deadline         *string `json:"deadline"`
 	Deliverypossible *bool   `json:"deliverypossible"`
 	ForcePending     *bool   `json:"forcepending"`
+	Tnpostid         *string `json:"tnpostid"`
 }
 
 // PostMessage dispatches POST /message actions.
 func PostMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
+
+	// Partner auth: if partner query param is present, authenticate via partner key
+	// instead of JWT. The partner acts on behalf of the identified user.
+	partnerKey := c.Query("partner")
+	if partnerKey != "" {
+		db := database.DBConn
+		_, _, domain, err := user.ValidatePartnerKey(db, partnerKey)
+		if err != nil {
+			return fiber.NewError(fiber.StatusForbidden, "Invalid partner key")
+		}
+
+		email := c.Query("email")
+		tnuseridStr := c.Query("tnuserid")
+		var tnuserid uint64
+		if tnuseridStr != "" {
+			if v, err := strconv.ParseUint(tnuseridStr, 10, 64); err == nil {
+				tnuserid = v
+			}
+		}
+
+		if email != "" {
+			parts := strings.SplitN(email, "@", 2)
+			if len(parts) != 2 || parts[1] != domain {
+				return fiber.NewError(fiber.StatusForbidden, "Email domain does not match partner domain")
+			}
+		}
+
+		myid = user.FindByTNIdOrEmail(db, tnuserid, email)
+		if myid == 0 {
+			return fiber.NewError(fiber.StatusForbidden, "User not found for partner")
+		}
+	}
+
 	if myid == 0 {
 		return fiber.NewError(fiber.StatusUnauthorized, "Not logged in")
 	}
@@ -3049,6 +3148,12 @@ func PostMessage(c *fiber.Ctx) error {
 	var req PostMessageRequest
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+	}
+
+	// Resolve message ID from tnpostid when id is absent.
+	if req.ID == 0 && req.Tnpostid != nil && *req.Tnpostid != "" {
+		db := database.DBConn
+		db.Raw("SELECT id FROM messages WHERE tnpostid = ? LIMIT 1", *req.Tnpostid).Scan(&req.ID)
 	}
 
 	if req.ID == 0 {
