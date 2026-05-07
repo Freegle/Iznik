@@ -104,7 +104,7 @@ type WorryMatch struct {
 	Worryword WorryWord `json:"worryword"`
 }
 
-// WorryWord represents a row from the worrywords table.
+// WorryWord represents a keyword match entry from concern_keywords.
 type WorryWord struct {
 	ID      uint64 `json:"id"`
 	Keyword string `json:"keyword"`
@@ -597,14 +597,14 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 }
 
 // checkWorryWords checks message subjects and textbodies against global and
-// group-specific worry words.  Matches are stored in Message.Worry.
+// group-specific concern keywords.  Matches are stored in Message.Worry.
 func checkWorryWords(db *gorm.DB, messages []Message) {
-	// Load global worry words from the worrywords table.
+	// Load global keywords from concern_keywords; category aliased to type for WorryWord.
 	var globalWords []WorryWord
-	db.Raw("SELECT id, keyword, type FROM worrywords").Scan(&globalWords)
+	db.Raw("SELECT id, keyword, category AS type FROM concern_keywords WHERE scope='global' AND group_id=0").Scan(&globalWords)
 
 	// Collect unique group IDs from all messages so we can load group-specific
-	// worry words in one pass.
+	// keywords in one pass.
 	groupIDs := map[uint64]bool{}
 	for _, msg := range messages {
 		for _, mg := range msg.MessageGroups {
@@ -612,22 +612,13 @@ func checkWorryWords(db *gorm.DB, messages []Message) {
 		}
 	}
 
-	// Load group-specific worry words from groups.settings->'$.spammers.worrywords'.
+	// Load group-specific keywords from concern_keywords.
 	groupWords := map[uint64][]WorryWord{}
 	for gid := range groupIDs {
-		var raw *string
-		db.Raw("SELECT JSON_UNQUOTE(JSON_EXTRACT(settings, '$.spammers.worrywords')) FROM `groups` WHERE id = ?", gid).Scan(&raw)
-		if raw != nil && *raw != "" && *raw != "null" {
-			parts := strings.Split(*raw, ",")
-			for _, p := range parts {
-				w := strings.TrimSpace(p)
-				if w != "" {
-					groupWords[gid] = append(groupWords[gid], WorryWord{
-						Keyword: strings.ToLower(w),
-						Type:    "Review",
-					})
-				}
-			}
+		var words []WorryWord
+		db.Raw("SELECT id, keyword, category AS type FROM concern_keywords WHERE scope='group' AND group_id=?", gid).Scan(&words)
+		if len(words) > 0 {
+			groupWords[gid] = words
 		}
 	}
 
@@ -666,7 +657,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 			if !found["\u00a3"] {
 				matches = append(matches, WorryMatch{
 					Word: "\u00a3",
-					Worryword: WorryWord{Keyword: "\u00a3", Type: "Review"},
+					Worryword: WorryWord{Keyword: "\u00a3", Type: "review"},
 				})
 				found["\u00a3"] = true
 			}
@@ -675,7 +666,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 		// Remove Allowed words before checking.
 		cleaned := scan
 		for _, w := range words {
-			if w.Type == "Allowed" {
+			if w.Type == "allowed" {
 				cleaned = removeWordBoundary(cleaned, strings.ToLower(w.Keyword))
 			}
 		}
@@ -683,7 +674,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 		// Check phrases (keywords containing a space) via case-insensitive contains.
 		for _, w := range words {
 			kw := strings.ToLower(w.Keyword)
-			if w.Type == "Allowed" || !strings.Contains(kw, " ") {
+			if w.Type == "allowed" || !strings.Contains(kw, " ") {
 				continue
 			}
 			if found[kw] {
@@ -707,7 +698,7 @@ func matchWorryWords(subject, textbody string, words []WorryWord) []WorryMatch {
 			}
 			for _, w := range words {
 				kw := strings.ToLower(w.Keyword)
-				if w.Type == "Allowed" || found[kw] || len(kw) == 0 {
+				if w.Type == "allowed" || found[kw] || len(kw) == 0 {
 					continue
 				}
 				// V1: ratio 0.75-1.25 and levenshtein < 1 (exact match).

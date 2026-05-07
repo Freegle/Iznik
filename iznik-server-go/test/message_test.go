@@ -5476,11 +5476,10 @@ func TestGetMessageWorryWords(t *testing.T) {
 	CreateTestMembership(t, otherID, groupID, "Member")
 	_, otherToken := CreateTestSession(t, otherID)
 
-	// Insert a global worry word (use a simple word without special chars,
-	// matching real worry words like "cocaine", "heroin" etc.).
+	// Insert a global concern keyword (substance_regulated → fuzzy/block).
 	worryKeyword := "dangertest" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Regulated')", worryKeyword)
-	defer db.Exec("DELETE FROM worrywords WHERE keyword = ?", worryKeyword)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, action, scope, group_id) VALUES (?, 'substance_regulated', 'fuzzy', 'block', 'global', 0)", worryKeyword)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword = ? AND scope='global'", worryKeyword)
 
 	// Create a message whose subject contains the worry word.
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: "+worryKeyword+" near town", 52.5, -1.8)
@@ -5502,7 +5501,7 @@ func TestGetMessageWorryWords(t *testing.T) {
 	assert.Equal(t, worryKeyword, wm["word"])
 	ww := wm["worryword"].(map[string]interface{})
 	assert.Equal(t, worryKeyword, ww["keyword"])
-	assert.Equal(t, "Regulated", ww["type"])
+	assert.Equal(t, "substance_regulated", ww["type"])
 
 	// 2. Fetch as non-mod — should NOT see worry.
 	resp2, _ := getApp().Test(httptest.NewRequest("GET",
@@ -5517,8 +5516,8 @@ func TestGetMessageWorryWords(t *testing.T) {
 
 	// 3. Test worry word in textbody (not subject).
 	worryKeyword2 := "bodytest" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Medicine')", worryKeyword2)
-	defer db.Exec("DELETE FROM worrywords WHERE keyword = ?", worryKeyword2)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, action, scope, group_id) VALUES (?, 'substance_medicine', 'fuzzy', 'flag', 'global', 0)", worryKeyword2)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword = ? AND scope='global'", worryKeyword2)
 
 	// Create message with clean subject but worry word in body.
 	msgID2 := CreateTestMessage(t, posterID, groupID, "OFFER: harmless item", 52.5, -1.8)
@@ -5539,13 +5538,12 @@ func TestGetMessageWorryWords(t *testing.T) {
 	wm3 := worryList3[0].(map[string]interface{})
 	assert.Equal(t, worryKeyword2, wm3["word"])
 	ww3 := wm3["worryword"].(map[string]interface{})
-	assert.Equal(t, "Medicine", ww3["type"])
+	assert.Equal(t, "substance_medicine", ww3["type"])
 
-	// 4. Test group-specific worry words via group settings.
+	// 4. Test group-specific concern keywords.
 	groupWorry := "grouptest" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), '$.spammers', JSON_OBJECT('worrywords', ?)) WHERE id = ?",
-		groupWorry, groupID)
-	defer db.Exec("UPDATE `groups` SET settings = JSON_REMOVE(settings, '$.spammers') WHERE id = ?", groupID)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, action, scope, group_id) VALUES (?, 'review', 'literal', 'flag', 'group', ?)", groupWorry, groupID)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword = ? AND scope='group' AND group_id = ?", groupWorry, groupID)
 
 	msgID3 := CreateTestMessage(t, posterID, groupID, "OFFER: "+groupWorry+" here", 52.5, -1.8)
 
@@ -5563,13 +5561,13 @@ func TestGetMessageWorryWords(t *testing.T) {
 	wm4 := worryList4[0].(map[string]interface{})
 	assert.Equal(t, strings.ToLower(groupWorry), wm4["word"])
 	ww4 := wm4["worryword"].(map[string]interface{})
-	assert.Equal(t, "Review", ww4["type"])
+	assert.Equal(t, "review", ww4["type"])
 
-	// 5. Test Allowed words are excluded.
+	// 5. Test allowed-category keywords act as whitelist.
 	allowedWord := "allowtest" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Allowed')", allowedWord)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Regulated')", allowedWord+"x")
-	defer db.Exec("DELETE FROM worrywords WHERE keyword IN (?, ?)", allowedWord, allowedWord+"x")
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, action, scope, group_id) VALUES (?, 'allowed', 'literal', 'flag', 'global', 0)", allowedWord)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, action, scope, group_id) VALUES (?, 'substance_regulated', 'fuzzy', 'block', 'global', 0)", allowedWord+"x")
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword IN (?, ?) AND scope='global'", allowedWord, allowedWord+"x")
 
 	// Create message with just the allowed word — should NOT trigger worry.
 	msgID4 := CreateTestMessage(t, posterID, groupID, "OFFER: "+allowedWord+" only", 52.5, -1.8)
@@ -5668,10 +5666,10 @@ func TestGetMessageWorryWordsGroupMod(t *testing.T) {
 	CreateTestMembership(t, groupModID, groupID, "Moderator")
 	_, groupModToken := CreateTestSession(t, groupModID)
 
-	// Insert a unique worry word.
+	// Insert a unique concern keyword.
 	worryKeyword := "grpmodworry" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Regulated')", worryKeyword)
-	defer db.Exec("DELETE FROM worrywords WHERE keyword = ?", worryKeyword)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, action, scope, group_id) VALUES (?, 'substance_regulated', 'fuzzy', 'block', 'global', 0)", worryKeyword)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword = ? AND scope='global'", worryKeyword)
 
 	// Create message containing the worry word.
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: "+worryKeyword+" near here", 52.5, -1.8)
@@ -5693,7 +5691,7 @@ func TestGetMessageWorryWordsGroupMod(t *testing.T) {
 	assert.Equal(t, worryKeyword, wm["word"])
 	ww := wm["worryword"].(map[string]interface{})
 	assert.Equal(t, worryKeyword, ww["keyword"])
-	assert.Equal(t, "Regulated", ww["type"])
+	assert.Equal(t, "substance_regulated", ww["type"])
 }
 
 // TestMessagePostWritesHistory verifies that the JoinAndPost submit path writes a messages_history row.
