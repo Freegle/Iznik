@@ -903,6 +903,16 @@ func SetupRoutes(app *fiber.App) {
 		// @Success 200 {object} map[string]interface{}
 		rg.Post("/message", message.PostMessage)
 		rg.Patch("/message", message.PatchMessage)
+
+		// @Router /message/tn/{tnpostid} [patch]
+		// @Summary Update a message by TN post ID
+		// @Description Edit a message using its Trash Nothing post ID. For partner integrations when the Freegle message ID is unknown.
+		// @Tags message
+		// @Accept json
+		// @Produce json
+		// @Param tnpostid path string true "Trash Nothing post ID"
+		// @Success 200 {object} map[string]interface{}
+		rg.Patch("/message/tn/:tnpostid", message.PatchMessageByTN)
 		rg.Put("/message", message.PutMessage)
 		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
 
