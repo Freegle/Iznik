@@ -1,5 +1,5 @@
 <template>
-  <div v-if="user" class="bg-white rounded border border-info p-2">
+  <div v-if="userid" class="bg-white rounded border border-info p-2">
     <div>
       {{ tag }}<strong>{{ user ? user.displayname : '#' + userid }}</strong>
       <span class="small">
@@ -31,9 +31,9 @@
       />
     </div>
     <ModCommentAddModal
-      v-if="showAddCommentModal && groupid"
+      v-if="showAddCommentModal"
       :userid="userid"
-      :groupid="groupid"
+      :groupid="groupid || null"
       @added="updateComments"
       @hidden="showAddCommentModal = false"
     />

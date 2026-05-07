@@ -1,39 +1,35 @@
 <template>
   <div v-if="user">
-    <NoticeMessage :variant="variant" class="mb-1">
-      <div>
-        {{ user.displayname }} {{ collname }}: {{ user.spammer.reason }}
-      </div>
+    <NoticeMessage v-if="spammer" :variant="variant" class="mb-1">
+      <div>{{ user.displayname }} {{ collname }}: {{ spammer.reason }}</div>
       <div class="small">
-        <span v-if="user.spammer.collection === 'PendingAdd'">
-          Reported by
-        </span>
+        <span v-if="spammer.collection === 'PendingAdd'"> Reported by </span>
         <span v-else> Added by </span>
-        <span v-if="user.spammer.byuser">
-          {{ user.spammer.byuser.displayname }}
+        <span v-if="spammer.byuser">
+          {{ spammer.byuser.displayname }}
           <span
             v-if="
-              user.spammer.collection === 'PendingAdd' && hasPermissionSpamAdmin
+              spammer.collection === 'PendingAdd' && hasPermissionSpamAdmin
             "
           >
             (<ExternalLink
               :href="
                 'mailto:' +
-                user.spammer.byuser.email +
+                spammer.byuser.email +
                 '?cc=spammerlist@ilovefreegle.org'
               "
-              >{{ user.spammer.byuser.email }}</ExternalLink
+              >{{ spammer.byuser.email }}</ExternalLink
             >)
           </span>
           <span v-else>
-            (<ExternalLink :href="'mailto:' + user.spammer.byuser.email">{{
-              user.spammer.byuser.email
+            (<ExternalLink :href="'mailto:' + spammer.byuser.email">{{
+              spammer.byuser.email
             }}</ExternalLink
             >)
           </span>
-          <ModClipboard class="ms-1" :value="user.spammer.byuser.email" />
+          <ModClipboard class="ms-1" :value="spammer.byuser.email" />
         </span>
-        #{{ user.spammer.byuserid }} {{ timeago(user.spammer.added) }}
+        #{{ spammer.byuserid }} {{ timeago(spammer.added) }}
       </div>
     </NoticeMessage>
     <notice-message v-if="sameip && sameip.length" variant="warning">
@@ -97,9 +93,17 @@ watch(
 
 const { hasPermissionSpamAdmin } = useModMe()
 
+// user.spammer can be a rich object (memberStore enrichment) OR a boolean
+// (legacy userStore shape) OR missing entirely. Only the object form has the
+// fields the template reads — guard everything against the boolean/nil cases.
+const spammer = computed(() => {
+  const s = user.value?.spammer
+  return s && typeof s === 'object' ? s : null
+})
+
 const variant = computed(() => {
-  if (!user.value?.spammer) return 'warning'
-  switch (user.value.spammer.collection) {
+  if (!spammer.value) return 'warning'
+  switch (spammer.value.collection) {
     case 'Spammer': {
       return 'danger'
     }
@@ -113,8 +117,8 @@ const variant = computed(() => {
 })
 
 const collname = computed(() => {
-  if (!user.value?.spammer) return ''
-  switch (user.value.spammer.collection) {
+  if (!spammer.value) return ''
+  switch (spammer.value.collection) {
     case 'Spammer': {
       return 'Confirmed Spammer'
     }
@@ -128,7 +132,7 @@ const collname = computed(() => {
       return 'Disputed Spammer'
     }
     default:
-      return user.value.spammer.collection
+      return spammer.value.collection
   }
 })
 </script>

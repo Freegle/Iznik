@@ -143,6 +143,12 @@ export function useMessageDisplay(messageId) {
     return timeagoMedium(timestamp)
   })
 
+  const timeAgoExpandedDisplay = computed(() => {
+    // Full display string: "2 hours ago", or "just now" (not "just now ago")
+    const t = timeAgoExpanded.value
+    return t === 'just now' ? t : t ? `${t} ago` : ''
+  })
+
   const distanceText = computed(() => {
     if (!me.value?.lat || !message.value?.lat) {
       return message.value?.area || null
@@ -235,6 +241,7 @@ export function useMessageDisplay(messageId) {
     attachmentCount,
     timeAgo,
     timeAgoExpanded,
+    timeAgoExpandedDisplay,
     fullTimeAgo,
     distanceText,
     distanceTextExpanded,

@@ -9,6 +9,7 @@ import { writeFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { Database as DB } from 'better-sqlite3'
 import { listOpenDiscourseBugs, listPendingDrafts, listTopicCursors, kvGet } from './index.js'
+import { DISCOURSE_BASE } from '../discourse.js'
 
 export const FS_DIR = '/tmp/freegle-monitor'
 export const SUMMARY_PATH = `${FS_DIR}/summary.md`
@@ -49,7 +50,7 @@ export async function renderDraftsMd(db: DB, path = DRAFTS_PATH): Promise<void> 
       : `@${d.username} ${d.body}`
     lines.push(
       `## ${d.topic}.${d.post} — @${d.username}${prRef}`,
-      `*Queued ${d.queued_at} — https://discourse.ilovefreegle.org/t/${d.topic}/${d.post}*`,
+      `*Queued ${d.queued_at} — ${DISCOURSE_BASE}/t/${d.topic}/${d.post}*`,
       '',
       `[quote="${d.username}, post:${d.post}, topic:${d.topic}"]`,
       d.quote,
@@ -86,7 +87,7 @@ export async function renderSummaryMd(db: DB, path = SUMMARY_PATH): Promise<void
     for (const b of openBugs) {
       const excerpt = (b.excerpt ?? '').replace(/\|/g, '\\|').slice(0, 120)
       lines.push(
-        `| [${b.topic}.${b.post}](https://discourse.ilovefreegle.org/t/${b.topic}/${b.post}) | ${b.reporter ?? '—'} | ${excerpt} | ${b.state} | ${(b.reason ?? '').slice(0, 100)} |`,
+        `| [${b.topic}.${b.post}](${DISCOURSE_BASE}/t/${b.topic}/${b.post}) | ${b.reporter ?? '—'} | ${excerpt} | ${b.state} | ${(b.reason ?? '').slice(0, 100)} |`,
       )
     }
     lines.push('')

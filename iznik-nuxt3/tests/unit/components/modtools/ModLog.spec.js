@@ -730,4 +730,87 @@ describe('ModLog', () => {
       expect(wrapperWithoutByuser.text()).toContain('User left platform')
     })
   })
+
+  describe('Discourse #9622 post 12 — historical blank entries and auto-approved label', () => {
+    it('renders ModLogMessage for Message/Received when logMessage is null (deleted message)', () => {
+      // Bug (a): Message/Received had no v-else fallback when logMessage is null
+      // (message hard-deleted from DB). The inner v-if and v-else-if both require
+      // logMessage to be truthy, so a deleted message produced a completely blank row.
+      mockMessageStore.byId.mockReturnValue(null)
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Received',
+        msgid: 99,
+        // No message property → logMessage = null
+      })
+      // After fix: ModLogMessage stub must be present so the row is not blank
+      expect(wrapper.find('.mod-log-message').exists()).toBe(true)
+    })
+
+    it('labels Message/Autoapproved as "Auto-approved"', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Autoapproved',
+        msgid: 123,
+      })
+      expect(wrapper.text()).toContain('Auto-approved')
+      expect(wrapper.text()).not.toContain('Auto-approved message')
+    })
+
+    it('labels Group/Autoapproved as "Auto-approved"', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Group',
+        subtype: 'Autoapproved',
+        msgid: 456,
+      })
+      expect(wrapper.text()).toContain('Auto-approved')
+      expect(wrapper.text()).not.toContain('Auto-approved message')
+    })
+  })
+
+  describe('Message subtypes — logUser "from" attribution', () => {
+    // These tests cover the v-if="logUser" true branches for Message subtypes.
+    // Previously all Message subtype tests omitted the user field, leaving the
+    // "from <user>" spans uncovered.
+
+    it.each([
+      ['Autoreposted', { text: '2' }, 'from'],
+      ['Repost', {}, 'by'],
+      ['Approved', {}, 'from'],
+      ['ClassifiedSpam', {}, 'from'],
+      ['Rejected', {}, 'from'],
+      ['Deleted', {}, 'from'],
+      ['Hold', {}, 'from'],
+      ['Release', {}, 'from'],
+      ['Outcome', { text: 'TAKEN' }, 'from'],
+    ])(
+      'Message/%s with logUser renders attribution',
+      (subtype, extra, expectedAttr) => {
+        const wrapper = createWrapper({
+          id: 1,
+          type: 'Message',
+          subtype,
+          user: { id: 42, displayname: 'Poster' },
+          ...extra,
+        })
+        expect(wrapper.find('.mod-log-user').exists()).toBe(true)
+        expect(wrapper.text()).toContain(expectedAttr)
+      }
+    )
+
+    it('Message/Edit with logUser shows "from" attribution', () => {
+      const wrapper = createWrapper({
+        id: 1,
+        type: 'Message',
+        subtype: 'Edit',
+        user: { id: 42, displayname: 'Poster' },
+        text: 'Subject changed',
+      })
+      expect(wrapper.text()).toContain('from')
+      expect(wrapper.find('.mod-log-user').exists()).toBe(true)
+    })
+  })
 })

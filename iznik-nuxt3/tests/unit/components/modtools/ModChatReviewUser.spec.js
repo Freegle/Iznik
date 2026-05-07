@@ -70,6 +70,31 @@ describe('ModChatReviewUser', () => {
   })
 
   describe('rendering', () => {
+    it('renders the box when userid is provided but user data not yet in store', () => {
+      // Symptom 1 (Carol1 #219): box was gated by v-if="user" — hidden entirely until
+      // the user API fetch completed, causing member info to be missing on initial render.
+      // Fix: v-if="userid" renders the box immediately, showing '#<id>' as fallback.
+      mockUserStore.byId.mockReturnValue(null) // user not yet fetched
+      const wrapper = mount(ModChatReviewUser, {
+        props: { userid: 123, groupid: 456 },
+        global: {
+          stubs: {
+            'b-button': { template: '<button><slot /></button>' },
+            'v-icon': { template: '<span />', props: ['icon', 'scale'] },
+            ExternalLink: { template: '<a><slot /></a>', props: ['href'] },
+            ModClipboard: { template: '<span />', props: ['value'] },
+            ModComment: { template: '<div />', props: ['commentid', 'userid'] },
+            ModCommentAddModal: {
+              template: '<div class="add-modal" />',
+              props: ['userid', 'groupid'],
+            },
+          },
+        },
+      })
+      expect(wrapper.find('.bg-white.rounded').exists()).toBe(true)
+      expect(wrapper.text()).toContain('#123')
+    })
+
     it('renders user id', () => {
       const wrapper = mountComponent()
       expect(wrapper.text()).toContain('123')
@@ -193,12 +218,25 @@ describe('ModChatReviewUser', () => {
       expect(wrapper.vm.showAddCommentModal).toBe(true)
     })
 
-    it('does not render modal when groupid is 0', async () => {
+    it('renders modal when Add note clicked even when groupid is 0 (iOS Chat Review regression: topic 9518/234)', async () => {
+      // Bug: v-if="showAddCommentModal && groupid" blocked the modal when groupid=0.
+      // Normal Chat Review can have groupid=0 (no group context for that user);
+      // QCR always has a non-zero group so it appeared to work. Fix: remove the groupid guard.
+      const wrapper = mountComponent({ groupid: 0 })
+      await wrapper.find('button').trigger('click')
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.showAddCommentModal).toBe(true)
+      expect(wrapper.find('.add-modal').exists()).toBe(true)
+    })
+
+    it('passes null groupid to modal when component groupid is 0', async () => {
       const wrapper = mountComponent({ groupid: 0 })
       wrapper.vm.addAComment()
       await wrapper.vm.$nextTick()
-      expect(wrapper.vm.showAddCommentModal).toBe(true)
-      expect(wrapper.find('.add-modal').exists()).toBe(false)
+      const modal = wrapper.findComponent({ name: 'ModCommentAddModal' })
+      if (modal.exists()) {
+        expect(modal.props('groupid')).toBeNull()
+      }
     })
 
     it('renders modal when groupid is non-zero', async () => {

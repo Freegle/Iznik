@@ -135,3 +135,60 @@ func TestAPISearch_V2Path(t *testing.T) {
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/apiv2/message/search/chair", nil), 60000)
 	assert.Equal(t, 200, resp.StatusCode)
 }
+
+// TestAPISearch_SupportUserSearchesAllGroups verifies that a support/admin user
+// searching with groupids=0 ("All communities") sees messages from groups they
+// are NOT a member of. Regular users should still be restricted to their groups.
+func TestAPISearch_SupportUserSearchesAllGroups(t *testing.T) {
+	prefix := uniquePrefix("srch_support")
+	db := database.DBConn
+
+	// Group A: the message lives here; the support user is NOT a member.
+	groupA := CreateTestGroup(t, prefix+"_a")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+
+	// A unique word that won't appear in other test data.
+	uniqueWord := prefix + "zygote"
+	CreateTestMessage(t, posterID, groupA, "Offer "+uniqueWord+" widget", 55.9533, -3.1883)
+
+	// Group B: the support user belongs to this group (not group A).
+	groupB := CreateTestGroup(t, prefix+"_b")
+	supportID := CreateTestUser(t, prefix+"_support", "User")
+	db.Exec("UPDATE users SET systemrole = 'Support' WHERE id = ?", supportID)
+	CreateTestMembership(t, supportID, groupB, "Member")
+	_, supportToken := CreateTestSession(t, supportID)
+
+	// Support user searches with groupids=0 (All communities).
+	url := fmt.Sprintf("/api/message/search/%s?groupids=0&jwt=%s", uniqueWord, supportToken)
+	resp, _ := getApp().Test(httptest.NewRequest("GET", url, nil), 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var results []message.SearchResult
+	json2.Unmarshal(rsp(resp), &results)
+	found := false
+	for _, r := range results {
+		if r.Msgid != 0 {
+			found = true
+		}
+	}
+	assert.True(t, found, "support user should find messages from groups they are not a member of")
+
+	// Regular mod in group B searching with groupids=0 should NOT see group A messages.
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	url = fmt.Sprintf("/api/message/search/%s?groupids=0&jwt=%s", uniqueWord, modToken)
+	resp, _ = getApp().Test(httptest.NewRequest("GET", url, nil), 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	json2.Unmarshal(rsp(resp), &results)
+	foundAsMod := false
+	for _, r := range results {
+		if r.Msgid != 0 {
+			foundAsMod = true
+		}
+	}
+	assert.False(t, foundAsMod, "regular mod should NOT see messages from groups they are not a member of")
+}

@@ -269,6 +269,40 @@ class ChatNotificationServiceTest extends TestCase
         $this->assertEquals(0, $count);
     }
 
+    public function test_notify_by_email_skips_deleted_messages(): void
+    {
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+
+        $room = $this->createTestChatRoom($sender, $recipient, [
+            'latestmessage' => now(),
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $sender->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        ChatRoster::create([
+            'chatid' => $room->id,
+            'userid' => $recipient->id,
+            'lastmsgemailed' => null,
+        ]);
+
+        // A deleted message must not generate a notification — e.g. an Image
+        // message whose underlying users_images row has been removed gets
+        // its chat_messages row marked deleted=1, type=Default, imageid=NULL.
+        $this->createTestChatMessage($room, $sender, [
+            'date' => now()->subMinutes(5),
+            'deleted' => 1,
+        ]);
+
+        $count = $this->service->notifyByEmail(ChatRoom::TYPE_USER2USER, $room->id);
+
+        $this->assertEquals(0, $count);
+    }
+
     public function test_notify_by_email_skips_user_without_email(): void
     {
         $sender = $this->createTestUser();

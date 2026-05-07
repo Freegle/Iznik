@@ -43,11 +43,16 @@ const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
 function getOrCreateMessageId() {
   const myid = authStore.user?.id
 
-  // Check if we have an existing message for this type in composeStore.all
-  // Note: composeStore.all may return synthetic default messages, so we must
-  // call setType() to ensure the message actually exists in state.messages
+  // Find a real (non-synthetic) Offer message in the store.
+  // composeStore.all returns synthetic defaults for missing types; synthetic
+  // messages have ids that don't exist in composeStore.messages, so using them
+  // creates a sparse array ([empty, {id:1}]) that crashes on submit after
+  // Pinia's JSON round-trip compacts it.
   const existingMessages = composeStore.all.filter(
-    (m) => m.type === 'Offer' && (!m.savedBy || m.savedBy === myid)
+    (m) =>
+      m.type === 'Offer' &&
+      (!m.savedBy || m.savedBy === myid) &&
+      composeStore.messages[m.id]
   )
 
   const id =

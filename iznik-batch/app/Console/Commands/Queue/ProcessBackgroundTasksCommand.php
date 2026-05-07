@@ -17,6 +17,7 @@ use App\Models\User;
 use App\Services\EmailSpoolerService;
 use App\Services\HousekeeperService;
 use App\Services\PostcodeRemapService;
+use App\Services\UserManagementService;
 use App\Services\PushNotificationService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
@@ -231,6 +232,7 @@ class ProcessBackgroundTasksCommand extends Command
             'freebie_alerts_remove' => $this->handleFreebieAlertsRemove($data),
             'housekeeper_notify' => $this->handleHousekeeperNotify($data),
             'remap_postcodes' => $this->handleRemapPostcodes($data),
+            'user_forget' => $this->handleUserForget($data),
             default => throw new \RuntimeException("Unknown task type: {$taskType}"),
         };
     }
@@ -258,15 +260,18 @@ class ProcessBackgroundTasksCommand extends Command
         EmailSpoolerService $spooler,
         bool $shouldSpool
     ): void {
-        $required = ['user_id', 'user_name', 'user_email', 'newsfeed_id', 'reason'];
+        $required = ['user_id', 'user_email', 'newsfeed_id', 'reason'];
         foreach ($required as $field) {
             if (empty($data[$field])) {
                 throw new \RuntimeException("email_chitchat_report requires {$field}");
             }
         }
 
+        // user_name is cosmetic — reporters identified by id+email; fall back if blank.
+        $reporterName = !empty($data['user_name']) ? $data['user_name'] : 'A Freegle user';
+
         $mail = new ChitchatReportMail(
-            reporterName: $data['user_name'],
+            reporterName: $reporterName,
             reporterId: (int) $data['user_id'],
             reporterEmail: $data['user_email'],
             newsfeedId: (int) $data['newsfeed_id'],
@@ -1408,6 +1413,24 @@ class ProcessBackgroundTasksCommand extends Command
         Log::info('Remapped postcodes', [
             'location_id' => $locationId,
             'updated' => $updated,
+        ]);
+    }
+
+    protected function handleUserForget(array $data): void
+    {
+        $userId = isset($data['user_id']) ? (int) $data['user_id'] : NULL;
+        $reason = $data['reason'] ?? 'Support purge';
+
+        if (! $userId) {
+            throw new \RuntimeException('user_forget requires user_id');
+        }
+
+        $service = app(UserManagementService::class);
+        $service->forgetUser($userId, $reason);
+
+        Log::info('User forgotten via background task', [
+            'user_id' => $userId,
+            'reason'  => $reason,
         ]);
     }
 }

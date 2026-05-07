@@ -2,7 +2,7 @@
  * ModTools Edits Flow Test
  *
  * Tests the full edit review lifecycle through the UI only:
- * 1. Post a message as a new user (auto-joins test group)
+ * 1. Post a message as testEnv.user (member of both test groups)
  * 2. Edit the message text on My Posts page
  * 3. Log in as a mod via ModTools, see the edit on the edits page
  * 4. Approve the edit via the UI, verify it disappears
@@ -10,7 +10,7 @@
 
 const { test, expect } = require('./fixtures')
 const { timeouts, environment } = require('./config')
-const { loginViaModTools, clearSessionData } = require('./utils/user')
+const { loginViaModTools, clearSessionData, loginViaHomepage } = require('./utils/user')
 
 const MODTOOLS_URL = environment.modtoolsBaseUrl
 const API_V2 = environment.apiV2BaseUrl
@@ -34,32 +34,42 @@ test.describe('ModTools Edits Flow', () => {
   test('post message, edit it, mod sees edit on edits page, approve clears it', async ({
     page,
     testEnv,
-    testEmail,
     postMessage,
   }) => {
     const modEmail = testEnv.mod.email
 
     console.log('=== EDITS FLOW TEST ===')
-    console.log(`New user: ${testEmail}, Mod: ${modEmail}`)
+    console.log(`User: ${testEnv.user.email}, Mod: ${modEmail}`)
     console.log(
       `Test group: ${testEnv.group.name}, postcode: ${testEnv.postcode}`
     )
 
-    // Step 1: Post a message as a new user.
-    console.log('\n--- Step 1: Post message as new user ---')
+    // Step 1: Log in as testEnv.user before posting. The user is a pre-existing
+    // account (member of testEnv groups), so the browser context must be
+    // authenticated before calling postMessage — otherwise filling the existing
+    // email on the whoami page hits the "already registered" path and fails to
+    // navigate to /myposts.
+    console.log('\n--- Step 1: Login as testEnv.user ---')
+    await loginViaHomepage(page, testEnv.user.email, 'freegle')
+
+    // Post a message as testEnv.user. Using a pre-existing user (member
+    // of testEnv groups) ensures the message always goes to a group the mod
+    // moderates, avoiding the isolation issue where a fresh user's post could
+    // go to a real production group invisible to the test mod.
+    console.log('\n--- Step 1b: Post message as testEnv.user ---')
     const posted = await postMessage({
       type: 'OFFER',
       item: `EditTest ${Date.now()}`,
       description: 'Original description for edit test',
-      email: testEmail,
+      email: testEnv.user.email,
     })
     console.log(`Posted: id=${posted.id}, item=${posted.item}`)
 
-    // Step 1b: Approve the message and set user as moderated so the edit
+    // Step 1c: Approve the message and set user as moderated so the edit
     // creates a review record. Edit reviews are only created when:
     // (a) the message is Approved, and (b) the editor's posting status is Moderated.
     // Use Playwright's request API (not page.evaluate fetch) to avoid CORS issues.
-    console.log('\n--- Step 1b: Approve message via API ---')
+    console.log('\n--- Step 1c: Approve message via API ---')
 
     // Login as mod to get JWT via V2 API
     const loginResp = await page.request.post(
@@ -78,13 +88,25 @@ test.describe('ModTools Edits Flow', () => {
     // (e.g. postMessage() picks a group from the postcode area, not necessarily the
     // test group). Using the wrong groupid in the approve call silently updates 0 rows,
     // leaving collection='Pending', which prevents edit review creation.
-    const msgResp = await page.request.get(
-      `${API_V2}/message/${posted.id}`,
-      {
-        headers: { Authorization: modJwt },
-      }
-    )
-    const msgData = await msgResp.json()
+    // Poll until groups is populated — a freshly posted message may still be
+    // in an intermediate state where groups is empty on the first GET.
+    let msgData = null
+    await expect
+      .poll(
+        async () => {
+          const resp = await page.request.get(`${API_V2}/message/${posted.id}`, {
+            headers: { Authorization: modJwt },
+          })
+          msgData = await resp.json()
+          return msgData?.groups?.length > 0
+        },
+        {
+          message: 'Waiting for message to have groups populated',
+          timeout: timeouts.api.slowApi,
+          intervals: [500, 500, 1000, 1000, 2000],
+        }
+      )
+      .toBe(true)
     const fromUserId = msgData?.fromuser
     const actualGroupId = msgData?.groups?.[0]?.groupid ?? testEnv.group.id
     console.log(`Message fromuser: ${fromUserId}, actual groupid: ${actualGroupId}`)
@@ -177,16 +199,16 @@ test.describe('ModTools Edits Flow', () => {
     })
     await dismissAllModals(page)
 
-    // Select the test group explicitly — edits work counts may not appear
-    // in the dropdown, so we can't rely on selecting groups with "(N)".
-    const testGroupName = testEnv.group.name
+    // Select the group where the edit was created (by actualGroupId value).
+    // This is more robust than matching by name — the mod may moderate multiple
+    // groups and we need to look at the one where the edit actually lives.
     let selectedGroup = false
     const options = await groupSelect.locator('option').all()
     for (const option of options) {
-      const text = await option.textContent()
       const value = await option.getAttribute('value')
-      if (value && value !== '0' && text.includes(testGroupName)) {
-        console.log(`Selecting test group: ${text} (value=${value})`)
+      if (value && value === String(actualGroupId)) {
+        const text = await option.textContent()
+        console.log(`Selecting group: ${text} (value=${value})`)
         await groupSelect.selectOption(value)
         selectedGroup = true
         break
@@ -194,7 +216,7 @@ test.describe('ModTools Edits Flow', () => {
     }
     if (!selectedGroup) {
       console.log(
-        `Test group "${testGroupName}" not found in dropdown, using All Communities`
+        `Group ${actualGroupId} not found in dropdown, using All Communities`
       )
     }
 
@@ -219,7 +241,7 @@ test.describe('ModTools Edits Flow', () => {
           return !hasNoMessages
         },
         {
-          message: `Waiting for edit to appear on edits page (group: ${testGroupName})`,
+          message: `Waiting for edit to appear on edits page (group: ${actualGroupId})`,
           timeout: timeouts.navigation.slowPage,
         }
       )

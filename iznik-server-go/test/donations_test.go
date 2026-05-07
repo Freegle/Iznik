@@ -75,7 +75,7 @@ func TestGetDonationsInvalidGroupID(t *testing.T) {
 
 func TestAddDonationExternal(t *testing.T) {
 	prefix := uniquePrefix("AddDonation")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
@@ -83,7 +83,7 @@ func TestAddDonationExternal(t *testing.T) {
 	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", userID)
 
 	// Create the target user who receives the donation.
-	targetUserID := CreateTestUser(t, prefix+"Target", "Member")
+	targetUserID := CreateTestUser(t, prefix+"Target", "User")
 
 	body := fmt.Sprintf(`{"userid":%d,"amount":10.00,"date":"2026-01-15 12:00:00"}`, targetUserID)
 	req := httptest.NewRequest("PUT", "/api/donations?jwt="+token, strings.NewReader(body))
@@ -121,11 +121,11 @@ func TestAddDonationExternal(t *testing.T) {
 
 func TestAddDonationZeroAmount(t *testing.T) {
 	prefix := uniquePrefix("AddDonZero")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 
 	// No GiftAid permission needed for zero amount.
-	targetUserID := CreateTestUser(t, prefix+"Target", "Member")
+	targetUserID := CreateTestUser(t, prefix+"Target", "User")
 
 	body := fmt.Sprintf(`{"userid":%d,"amount":0,"date":"2026-01-15 12:00:00"}`, targetUserID)
 	req := httptest.NewRequest("PUT", "/api/donations?jwt="+token, strings.NewReader(body))
@@ -149,10 +149,10 @@ func TestAddDonationZeroAmount(t *testing.T) {
 
 func TestAddDonationNoPermission(t *testing.T) {
 	prefix := uniquePrefix("AddDonNoPerm")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 
-	targetUserID := CreateTestUser(t, prefix+"Target", "Member")
+	targetUserID := CreateTestUser(t, prefix+"Target", "User")
 
 	// Non-zero amount without GiftAid permission should be denied.
 	body := fmt.Sprintf(`{"userid":%d,"amount":25.00,"date":"2026-01-15 12:00:00"}`, targetUserID)
@@ -174,7 +174,7 @@ func TestAddDonationUnauthorized(t *testing.T) {
 
 func TestAddDonationMissingUserID(t *testing.T) {
 	prefix := uniquePrefix("AddDonNoUID")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"amount":10.00,"date":"2026-01-15 12:00:00"}`
@@ -187,7 +187,7 @@ func TestAddDonationMissingUserID(t *testing.T) {
 
 func TestAddDonationInvalidUserID(t *testing.T) {
 	prefix := uniquePrefix("AddDonBadUID")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
@@ -203,7 +203,7 @@ func TestAddDonationInvalidUserID(t *testing.T) {
 
 func TestBulkUploadDonations(t *testing.T) {
 	prefix := uniquePrefix("BulkDon")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
@@ -260,7 +260,7 @@ func TestBulkUploadDonations(t *testing.T) {
 
 func TestBulkUploadDonationsSkipsInvalid(t *testing.T) {
 	prefix := uniquePrefix("BulkDonSkip")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
@@ -288,7 +288,7 @@ func TestBulkUploadDonationsSkipsInvalid(t *testing.T) {
 
 func TestBulkUploadDonationsRequiresAdmin(t *testing.T) {
 	prefix := uniquePrefix("BulkDonAuth")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 
 	body := `{"donations":[]}`
@@ -310,13 +310,13 @@ func TestBulkUploadDonationsUnauthorized(t *testing.T) {
 
 func TestAddDonationSkipsGiftAidNotifWhenExisting(t *testing.T) {
 	prefix := uniquePrefix("AddDonGAExist")
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
 	db := database.DBConn
 
 	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", userID)
 
-	targetUserID := CreateTestUser(t, prefix+"Target", "Member")
+	targetUserID := CreateTestUser(t, prefix+"Target", "User")
 
 	// Create a pre-existing giftaid record with period != 'This'.
 	db.Exec("INSERT INTO giftaid (userid, period, fullname, homeaddress) VALUES (?, 'Declined', 'Test', 'Test')", targetUserID)

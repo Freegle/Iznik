@@ -13,7 +13,7 @@ import (
 func TestImageRateRecognise(t *testing.T) {
 	prefix := uniquePrefix("img_rr")
 	groupID := CreateTestGroup(t, prefix)
-	userID := CreateTestUser(t, prefix, "Member")
+	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 
 	// Create a message and attachment

@@ -32,12 +32,20 @@ const mockApi = {
   },
 }
 
+const mockGroupStore = {
+  get: vi.fn().mockReturnValue(null),
+}
+
 vi.mock('~/stores/compose', () => ({
   useComposeStore: () => mockComposeStore,
 }))
 
 vi.mock('~/stores/auth', () => ({
   useAuthStore: () => mockAuthStore,
+}))
+
+vi.mock('~/stores/group', () => ({
+  useGroupStore: () => mockGroupStore,
 }))
 
 vi.mock('~/api', () => ({
@@ -63,6 +71,7 @@ describe('ComposeGroup', () => {
     mockAuthStore.groups = [
       { groupid: 3, namedisplay: 'My Group', nameshort: 'my-group' },
     ]
+    mockGroupStore.get.mockReturnValue(null)
   })
 
   function createWrapper(props = {}) {
@@ -156,6 +165,40 @@ describe('ComposeGroup', () => {
       const wrapper = createWrapper()
       expect(wrapper.findAll('option')).toHaveLength(0)
     })
+
+    it('includes current group as first option when not in groupsnear or myGroups', () => {
+      mockComposeStore.group = 55
+      mockAuthStore.groups = []
+      mockComposeStore.postcode = {
+        name: 'SW1A 1AA',
+        groupsnear: [
+          { id: 1, namedisplay: 'London Central', nameshort: 'london-central' },
+        ],
+      }
+      const wrapper = createWrapper()
+      const options = wrapper.findAll('option')
+      // Group 55 should be prepended even though it's not in groupsnear or myGroups
+      expect(options[0].element.value).toBe('55')
+    })
+
+    it('uses cached group name when group store has it', () => {
+      mockComposeStore.group = 55
+      mockAuthStore.groups = []
+      mockComposeStore.postcode = {
+        name: 'SW1A 1AA',
+        groupsnear: [
+          { id: 1, namedisplay: 'London Central', nameshort: 'london-central' },
+        ],
+      }
+      mockGroupStore.get.mockReturnValue({
+        namedisplay: 'Repost Group',
+        nameshort: 'repost',
+      })
+      const wrapper = createWrapper()
+      const options = wrapper.findAll('option')
+      expect(options[0].element.value).toBe('55')
+      expect(options[0].text()).toBe('Repost Group')
+    })
   })
 
   describe('group computed (v-model)', () => {
@@ -216,6 +259,62 @@ describe('ComposeGroup', () => {
       createWrapper()
       await flushPromises()
       expect(mockApi.location.typeahead).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('repost group preservation', () => {
+    it('preserves user-changed group when fetchUser sets group to a different value', async () => {
+      // Simulate repost flow: group 55 is pre-set (savedGroup = 55), then during fetchUser
+      // something sets the group to 1. With the old guard (group !== savedGroup) this would
+      // restore 55 — BUT that same condition also overwrote user intentional changes.
+      // The fix: only restore if group was CLEARED (falsy). Truthy changes (including 1)
+      // are treated as intentional and kept, since groupOptions always ensures the saved
+      // group stays in the options list so b-form-select can't accidentally set to 1.
+      mockComposeStore.group = 55
+      mockAuthStore.groups = [
+        { groupid: 55, namedisplay: 'Repost Group', nameshort: 'repost' },
+      ]
+      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
+        mockComposeStore.group = 1
+      })
+
+      createWrapper()
+      await flushPromises()
+
+      // Group stays at 1 — we don't restore when the group is a truthy value,
+      // because we can't distinguish accidental b-form-select changes from intentional ones.
+      expect(mockComposeStore.group).toBe(1)
+    })
+
+    it('restores savedGroup when group is cleared to null during fetchUser', async () => {
+      mockComposeStore.group = 55
+      mockAuthStore.groups = [
+        { groupid: 55, namedisplay: 'Repost Group', nameshort: 'repost' },
+      ]
+      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
+        mockComposeStore.group = null
+      })
+
+      createWrapper()
+      await flushPromises()
+
+      // Group was cleared (falsy) — restore savedGroup since it's still valid
+      expect(mockComposeStore.group).toBe(55)
+    })
+
+    it('does not restore savedGroup if it is not valid (not in groupsnear or myGroups)', async () => {
+      // Group 99 is pre-set but user is no longer a member and it is not nearby
+      mockComposeStore.group = 99
+      mockAuthStore.groups = []
+      mockAuthStore.fetchUser = vi.fn().mockImplementation(async () => {
+        mockComposeStore.group = 1
+      })
+
+      createWrapper()
+      await flushPromises()
+
+      // Group 99 is invalid, so the override (1) should stand
+      expect(mockComposeStore.group).toBe(1)
     })
   })
 

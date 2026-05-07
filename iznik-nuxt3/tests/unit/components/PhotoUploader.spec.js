@@ -612,7 +612,7 @@ describe('PhotoUploader', () => {
   describe('skip action', () => {
     it('emits skip when skip link clicked', async () => {
       createWrapper()
-      await wrapper.find('.skip-link a').trigger('click')
+      await wrapper.find('.skip-link-btn').trigger('click')
       expect(wrapper.emitted('skip')).toBeTruthy()
     })
   })

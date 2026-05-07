@@ -14,7 +14,7 @@ import (
 
 func createTestModConfig(t *testing.T, name string, createdby uint64) uint64 {
 	db := database.DBConn
-	result := db.Exec("INSERT INTO mod_configs (name, createdby) VALUES (?, ?)", name, createdby)
+	result := db.Exec("INSERT INTO mod_configs (name, createdby, ccrejectaddr, ccfollowupaddr, ccrejmembaddr, ccfollmembaddr, network) VALUES (?, ?, '', '', '', '', '')", name, createdby)
 	assert.NoError(t, result.Error)
 
 	var id uint64
@@ -294,6 +294,64 @@ func TestPostModConfigCopyBulkops(t *testing.T) {
 	// Verify the source bulkops are still there (not moved).
 	db.Raw("SELECT COUNT(*) FROM mod_bulkops WHERE configid = ?", srcCfgID).Scan(&srcBulkCount)
 	assert.Equal(t, int64(2), srcBulkCount, "Source config should still have 2 bulkops")
+}
+
+func TestPostModConfigCopyPreservesSubjregAndFromname(t *testing.T) {
+	prefix := uniquePrefix("ModCfgCopyFields")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	_, token := CreateTestSession(t, modID)
+
+	srcCfgID := createTestModConfig(t, prefix+"_src", modID)
+	db := database.DBConn
+
+	// Set custom subjreg, fromname, and messageorder on the source.
+	customSubjreg := `^(OFFER|WANTED).*`
+	db.Exec("UPDATE mod_configs SET subjreg = ?, fromname = 'Groupname Moderator', messageorder = 'date' WHERE id = ?", customSubjreg, srcCfgID)
+
+	body := fmt.Sprintf(`{"name":"%s_copy","id":%d}`, prefix, srcCfgID)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/modconfig?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	newID := uint64(result["id"].(float64))
+	assert.Greater(t, newID, uint64(0))
+
+	var copiedSubjreg, copiedFromname, copiedMessageorder string
+	db.Raw("SELECT subjreg, fromname, COALESCE(messageorder,'') FROM mod_configs WHERE id = ?", newID).Row().Scan(&copiedSubjreg, &copiedFromname, &copiedMessageorder)
+	assert.Equal(t, customSubjreg, copiedSubjreg, "subjreg should be copied from source")
+	assert.Equal(t, "Groupname Moderator", copiedFromname, "fromname should be copied from source")
+	assert.Equal(t, "date", copiedMessageorder, "messageorder should be copied from source")
+}
+
+func TestPostModConfigSimpleCreateReturnsValidID(t *testing.T) {
+	prefix := uniquePrefix("ModCfgIDRace")
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Owner")
+	_, token := CreateTestSession(t, modID)
+
+	body := fmt.Sprintf(`{"name":"%s_cfg"}`, prefix)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/modtools/modconfig?jwt=%s", token), strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+	id := result["id"].(float64)
+	assert.Greater(t, id, float64(0), "returned ID must be the actual inserted row ID, not a query guess")
+
+	// Verify the ID resolves to the named config.
+	db := database.DBConn
+	var name string
+	db.Raw("SELECT name FROM mod_configs WHERE id = ?", uint64(id)).Scan(&name)
+	assert.Equal(t, fmt.Sprintf("%s_cfg", prefix), name, "returned ID should resolve to the correct config name")
 }
 
 func TestGetModConfigV2Path(t *testing.T) {

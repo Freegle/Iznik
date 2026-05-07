@@ -16,6 +16,7 @@ const mockTyping = vi.fn().mockResolvedValue()
 const mockOpenChat = vi.fn().mockResolvedValue({ id: 42 })
 const mockSendMT = vi.fn().mockResolvedValue()
 const mockUnseenCountMT = vi.fn().mockResolvedValue(0)
+const mockAllSeen = vi.fn().mockResolvedValue()
 const mockRsvp = vi.fn().mockResolvedValue()
 const mockFetchReviewChatsMT = vi
   .fn()
@@ -39,6 +40,7 @@ vi.mock('~/api', () => ({
       openChat: mockOpenChat,
       sendMT: mockSendMT,
       unseenCountMT: mockUnseenCountMT,
+      allSeen: mockAllSeen,
       fetchReviewChatsMT: mockFetchReviewChatsMT,
       rsvp: mockRsvp,
     },
@@ -152,6 +154,66 @@ describe('chat store', () => {
       store.config = {}
 
       await store.markRead(5)
+
+      expect(mockMarkRead).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('markAllReadMT', () => {
+    it('calls allSeen API and resets currentCountMT to 0', async () => {
+      const store = useChatStore()
+      store.config = {}
+      store.currentCountMT = 7
+
+      await store.markAllReadMT()
+
+      expect(mockAllSeen).toHaveBeenCalledOnce()
+      expect(store.currentCountMT).toBe(0)
+    })
+
+    it('resets badge even when currentCountMT was already 0', async () => {
+      const store = useChatStore()
+      store.config = {}
+      store.currentCountMT = 0
+
+      await store.markAllReadMT()
+
+      expect(mockAllSeen).toHaveBeenCalledOnce()
+      expect(store.currentCountMT).toBe(0)
+    })
+  })
+
+  describe('markAllRead', () => {
+    it('calls allSeen API', async () => {
+      const store = useChatStore()
+      store.config = {}
+      store.listByChatId[1] = { id: 1, unseen: 3, status: 'Online' }
+
+      await store.markAllRead()
+
+      expect(mockAllSeen).toHaveBeenCalledOnce()
+    })
+
+    it('resets unseen to 0 for all chats in listByChatId', async () => {
+      const store = useChatStore()
+      store.config = {}
+      store.listByChatId[1] = { id: 1, unseen: 3, status: 'Online' }
+      store.listByChatId[2] = { id: 2, unseen: 5, status: 'Online' }
+      store.listByChatId[3] = { id: 3, unseen: 2, status: 'Closed' }
+
+      await store.markAllRead()
+
+      expect(store.listByChatId[1].unseen).toBe(0)
+      expect(store.listByChatId[2].unseen).toBe(0)
+      expect(store.listByChatId[3].unseen).toBe(0)
+    })
+
+    it('does not call per-chat markRead', async () => {
+      const store = useChatStore()
+      store.config = {}
+      store.listByChatId[1] = { id: 1, unseen: 3, status: 'Online' }
+
+      await store.markAllRead()
 
       expect(mockMarkRead).not.toHaveBeenCalled()
     })

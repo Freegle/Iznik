@@ -271,6 +271,7 @@ func TestWorryWords_Delete(t *testing.T) {
 	// Create a test word
 	word := config.WorryWord{
 		Keyword: "testdeleteworry",
+		Type:    "Review",
 	}
 	db.Create(&word)
 

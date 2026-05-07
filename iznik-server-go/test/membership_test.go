@@ -1633,15 +1633,17 @@ func TestGetMemberships(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
 	// Should have at least 3 members (mod + 2 regular members).
-	assert.GreaterOrEqual(t, len(members), 3)
+	assert.GreaterOrEqual(t, len(membersRaw), 3)
 
 	// Check that member IDs are present.
 	foundMember1 := false
 	foundMember2 := false
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == member1ID {
 			foundMember1 = true
@@ -1696,13 +1698,15 @@ func TestGetMembershipsSearch(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
-	assert.GreaterOrEqual(t, len(members), 1)
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+	assert.GreaterOrEqual(t, len(membersRaw), 1)
 
 	// The target should be in the results.
 	found := false
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == targetID {
 			found = true
@@ -1730,12 +1734,14 @@ func TestGetMembershipsPendingCollection(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
-	assert.GreaterOrEqual(t, len(members), 1)
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+	assert.GreaterOrEqual(t, len(membersRaw), 1)
 
 	found := false
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == targetID {
 			found = true
@@ -1757,6 +1763,64 @@ func TestGetMembershipsMissingGroupid(t *testing.T) {
 	assert.NoError(t, err)
 	// Without groupid, GET returns empty list (graceful degradation).
 	assert.Equal(t, 200, resp.StatusCode)
+}
+
+func TestGetMembershipsPagination(t *testing.T) {
+	prefix := uniquePrefix("mod_page")
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Create 5 members so we can paginate with limit=3.
+	memberIDs := make([]uint64, 5)
+	for i := 0; i < 5; i++ {
+		memberIDs[i] = CreateTestUser(t, fmt.Sprintf("%s_m%d", prefix, i), "User")
+		CreateTestMembership(t, memberIDs[i], groupID, "Member")
+	}
+
+	// Fetch first page (limit=3).
+	url := fmt.Sprintf("/api/memberships?groupid=%d&limit=3&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var page1 map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&page1)
+	page1Members, _ := page1["members"].([]interface{})
+	assert.Equal(t, 3, len(page1Members), "first page should return exactly limit members")
+
+	// Context should be set (cursor for second page).
+	cursor, hasCursor := page1["context"]
+	assert.True(t, hasCursor, "response should include context cursor")
+	assert.NotNil(t, cursor, "context should not be nil when a full page is returned")
+
+	// Fetch second page using the cursor.
+	cursorID := uint64(cursor.(float64))
+	url2 := fmt.Sprintf("/api/memberships?groupid=%d&limit=3&context=%d&jwt=%s", groupID, cursorID, token)
+	req2 := httptest.NewRequest("GET", url2, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&page2)
+	page2Members, _ := page2["members"].([]interface{})
+	assert.GreaterOrEqual(t, len(page2Members), 1, "second page should return at least one member")
+
+	// No member should appear on both pages.
+	page1IDs := map[uint64]bool{}
+	for _, raw := range page1Members {
+		m := raw.(map[string]interface{})
+		page1IDs[uint64(m["id"].(float64))] = true
+	}
+	for _, raw := range page2Members {
+		m := raw.(map[string]interface{})
+		id := uint64(m["id"].(float64))
+		assert.False(t, page1IDs[id], "member id %d should not appear on both pages", id)
+	}
 }
 
 // --- GET /memberships?collection=Happiness ---
@@ -2274,17 +2338,139 @@ func TestGetMembershipsFilterBanned(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var wrapper map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&wrapper)
+	members, _ := wrapper["members"].([]interface{})
 
 	found := false
-	for _, m := range members {
+	for _, raw := range members {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == bannedID {
 			found = true
 		}
 	}
 	assert.True(t, found, "banned member should appear with filter=5")
+}
+
+func TestGetMembershipsBannedPaginationMissing(t *testing.T) {
+	// Regression: filter=5 (Banned members list) returns a raw JSON array with no
+	// pagination cursor. When a group has more banned members than the page limit, the
+	// excess members are permanently unreachable. The fix must return
+	// {"members":[...],"context":<cursor>} like other collections so the caller can
+	// iterate through all pages.
+	//
+	// This test FAILS on the current code because the filter=5 branch does
+	// `return c.JSON(members)` which emits a raw JSON array, not a paginated object.
+	prefix := uniquePrefix("mem_banned_nopaging")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, token := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	const totalBanned = 15
+	const pageLimit = 10
+
+	for i := 0; i < totalBanned; i++ {
+		bannedID := CreateTestUser(t, fmt.Sprintf("%s_b%02d", prefix, i), "User")
+		createBannedMember(t, bannedID, groupID)
+	}
+
+	// Confirm setup: 15 rows in users_banned for this group.
+	var dbCount int64
+	db.Raw("SELECT COUNT(*) FROM users_banned WHERE groupid = ?", groupID).Scan(&dbCount)
+	assert.Equal(t, int64(totalBanned), dbCount, "setup: expected %d banned rows in users_banned", totalBanned)
+
+	// Request page 1 with limit=10 (less than totalBanned so pagination is needed).
+	url := fmt.Sprintf("/api/memberships?groupid=%d&filter=5&limit=%d&jwt=%s", groupID, pageLimit, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// BUG: filter=5 currently returns a raw JSON array via c.JSON(members), not a
+	// paginated object {"members":[...],"context":<cursor>}. Decoding the raw array
+	// into a map[string]interface{} produces an unmarshal error — proving the response
+	// format is wrong and the caller has no cursor with which to fetch the next page.
+	var result map[string]interface{}
+	decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+	assert.NoError(t, decodeErr,
+		"Banned filter (filter=5) must return a JSON object with 'members' and 'context' keys, not a raw array")
+
+	// When the response IS a proper object, it must contain members and a context cursor.
+	members, hasMembersKey := result["members"]
+	assert.True(t, hasMembersKey, "response must have a 'members' key")
+	if hasMembersKey {
+		memberSlice, ok := members.([]interface{})
+		assert.True(t, ok)
+		assert.Len(t, memberSlice, pageLimit,
+			"first page should contain exactly %d members (limit param)", pageLimit)
+	}
+
+	ctx, hasContextKey := result["context"]
+	assert.True(t, hasContextKey, "response must have a 'context' key for pagination")
+	assert.NotNil(t, ctx,
+		"context must be non-nil when totalBanned (%d) > pageLimit (%d)", totalBanned, pageLimit)
+}
+
+func TestGetMembershipsBannedPaginationPage2(t *testing.T) {
+	// Covers the contextID > 0 branch: when a caller passes &context=<cursor> the
+	// second page should return the remaining banned members and a nil context.
+	prefix := uniquePrefix("mem_banned_p2")
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, token := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	const totalBanned = 15
+	const pageLimit = 10
+
+	for i := 0; i < totalBanned; i++ {
+		bannedID := CreateTestUser(t, fmt.Sprintf("%s_b%02d", prefix, i), "User")
+		createBannedMember(t, bannedID, groupID)
+	}
+
+	// Page 1 — get the cursor from the last member returned.
+	url1 := fmt.Sprintf("/api/memberships?groupid=%d&filter=5&limit=%d&jwt=%s", groupID, pageLimit, token)
+	req1 := httptest.NewRequest("GET", url1, nil)
+	resp1, err := getApp().Test(req1, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp1.StatusCode)
+
+	var page1 map[string]interface{}
+	json.NewDecoder(resp1.Body).Decode(&page1)
+	ctx1 := page1["context"]
+	assert.NotNil(t, ctx1, "page 1 must return a non-nil context cursor")
+	cursor := uint64(ctx1.(float64))
+
+	// Page 2 — pass the cursor to exercise the contextID > 0 branch.
+	url2 := fmt.Sprintf("/api/memberships?groupid=%d&filter=5&limit=%d&context=%d&jwt=%s",
+		groupID, pageLimit, cursor, token)
+	req2 := httptest.NewRequest("GET", url2, nil)
+	resp2, err := getApp().Test(req2, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&page2)
+
+	members2, hasMembersKey := page2["members"]
+	assert.True(t, hasMembersKey, "page 2 response must have a 'members' key")
+	if hasMembersKey {
+		memberSlice, ok := members2.([]interface{})
+		assert.True(t, ok)
+		remaining := totalBanned - pageLimit
+		assert.Len(t, memberSlice, remaining,
+			"page 2 should contain the remaining %d banned members", remaining)
+	}
+
+	// When len(members) < limit the context must be nil (no further pages).
+	ctx2, hasCtx2 := page2["context"]
+	assert.True(t, hasCtx2, "page 2 response must have a 'context' key")
+	assert.Nil(t, ctx2, "page 2 context must be nil when all members have been returned")
 }
 
 // TestBannedListShowsV1StyleBan verifies that a V1-style ban (only in users_banned,
@@ -2309,11 +2495,13 @@ func TestBannedListShowsV1StyleBan(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var wrapper map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&wrapper)
+	members, _ := wrapper["members"].([]interface{})
 
 	found := false
-	for _, m := range members {
+	for _, raw := range members {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == bannedID {
 			found = true
@@ -2348,12 +2536,14 @@ func TestBannedListMultipleUsersHaveUniqueIDs(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var wrapper map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&wrapper)
+	membersRaw, _ := wrapper["members"].([]interface{})
 
 	// All 3 banned users should appear.
 	foundIDs := map[uint64]bool{}
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		foundIDs[uid] = true
 		// id should equal userid for banned members (no real membership row).
@@ -2390,10 +2580,12 @@ func TestBannedListIsolatedByGroup(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var wrapper map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&wrapper)
+	members, _ := wrapper["members"].([]interface{})
 
-	for _, m := range members {
+	for _, raw := range members {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		assert.NotEqual(t, bannedID, uid, "banned member from group A must not appear in group B's list")
 	}
@@ -2436,11 +2628,13 @@ func TestBanActionWritesUsersBanned(t *testing.T) {
 	url := fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&filter=5&jwt=%s", groupID, modToken)
 	req2 := httptest.NewRequest("GET", url, nil)
 	resp2, _ := getApp().Test(req2, -1)
-	var members []map[string]interface{}
-	json.NewDecoder(resp2.Body).Decode(&members)
+	var wrapper map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&wrapper)
+	members, _ := wrapper["members"].([]interface{})
 
 	found := false
-	for _, m := range members {
+	for _, raw := range members {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == targetID {
 			found = true
@@ -2633,12 +2827,14 @@ func TestMemberSearchWithoutGroup(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
-	assert.GreaterOrEqual(t, len(members), 1, "Should find at least one member")
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
+	assert.GreaterOrEqual(t, len(membersRaw), 1, "Should find at least one member")
 
 	found := false
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == targetID {
 			found = true
@@ -2670,11 +2866,13 @@ func TestGetMembershipsReturnsEngagement(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&members)
+	var response map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&response)
+	membersRaw, _ := response["members"].([]interface{})
 
 	found := false
-	for _, m := range members {
+	for _, raw := range membersRaw {
+		m := raw.(map[string]interface{})
 		uid := uint64(m["userid"].(float64))
 		if uid == memberID {
 			found = true
@@ -2829,6 +3027,103 @@ func TestGetRelatedMembersFiltersByGroup(t *testing.T) {
 	}
 }
 
+func TestGetRelatedMembersExcludesDeletedUser(t *testing.T) {
+	prefix := uniquePrefix("mem_rel_del")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user1ID, prefix+"_u1_login")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user2ID, prefix+"_u2_login")
+	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u1_login", prefix+"_u2_login")
+
+	u1, u2 := user1ID, user2ID
+	if u1 > u2 {
+		u1, u2 = u2, u1
+	}
+
+	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", u1, u2)
+	defer db.Exec("DELETE FROM users_related WHERE user1 = ? AND user2 = ?", u1, u2)
+
+	// Soft-delete u2 — simulates the user being deleted but still in users_related.
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", u2)
+	defer db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", u2)
+
+	url := fmt.Sprintf("/api/memberships?collection=Related&jwt=%s", modToken)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	for _, entry := range result {
+		entryU1 := uint64(entry["user1"].(float64))
+		entryU2 := uint64(entry["user2"].(float64))
+		assert.False(t,
+			entryU1 == u1 && entryU2 == u2,
+			"Should be false — Deleted user (u2=%d) must not appear in Related Members list", u2)
+	}
+}
+
+func TestGetRelatedMembersExcludesDeletedUser1(t *testing.T) {
+	prefix := uniquePrefix("mem_rel_del1")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	user1ID := CreateTestUser(t, prefix+"_u1", "User")
+	user2ID := CreateTestUser(t, prefix+"_u2", "User")
+	CreateTestMembership(t, user1ID, groupID, "Member")
+	CreateTestMembership(t, user2ID, groupID, "Member")
+
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user1ID, prefix+"_u1_login")
+	db.Exec("INSERT INTO users_logins (userid, type, uid) VALUES (?, 'Native', ?)", user2ID, prefix+"_u2_login")
+	defer db.Exec("DELETE FROM users_logins WHERE uid IN (?, ?)", prefix+"_u1_login", prefix+"_u2_login")
+
+	u1, u2 := user1ID, user2ID
+	if u1 > u2 {
+		u1, u2 = u2, u1
+	}
+
+	db.Exec("INSERT INTO users_related (user1, user2, notified) VALUES (?, ?, 0)", u1, u2)
+	defer db.Exec("DELETE FROM users_related WHERE user1 = ? AND user2 = ?", u1, u2)
+
+	// Soft-delete u1 (the left-hand user) — exercises the NEW second-side join:
+	// INNER JOIN users u1 ON users_related.user1 = u1.id AND u1.deleted IS NULL
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", u1)
+	defer db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", u1)
+
+	url := fmt.Sprintf("/api/memberships?collection=Related&jwt=%s", modToken)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	for _, entry := range result {
+		entryU1 := uint64(entry["user1"].(float64))
+		entryU2 := uint64(entry["user2"].(float64))
+		assert.False(t,
+			entryU1 == u1 && entryU2 == u2,
+			"Should be false — Deleted user (u1=%d) must not appear in Related Members list", u1)
+	}
+}
+
 func TestDeleteMembershipsModBansMember(t *testing.T) {
 	prefix := uniquePrefix("mem_ban")
 	db := database.DBConn
@@ -2873,10 +3168,12 @@ func TestDeleteMembershipsModBansMember(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, listResp.StatusCode)
 
-	var members []map[string]interface{}
-	json.NewDecoder(listResp.Body).Decode(&members)
+	var listWrapper map[string]interface{}
+	json.NewDecoder(listResp.Body).Decode(&listWrapper)
+	bannedMembers, _ := listWrapper["members"].([]interface{})
 	found := false
-	for _, m := range members {
+	for _, raw := range bannedMembers {
+		m := raw.(map[string]interface{})
 		if uint64(m["userid"].(float64)) == memberID {
 			found = true
 		}
@@ -2899,9 +3196,10 @@ func TestGetMembershipsFilterModmails(t *testing.T) {
 	CreateTestMembership(t, modID, groupID, "Moderator")
 	_, token := CreateTestSession(t, modID)
 
-	// Create two regular members.
+	// Create two regular members; backdate member1 so member2 is unambiguously the newer joiner.
 	member1ID := CreateTestUser(t, prefix+"_m1", "User")
-	CreateTestMembership(t, member1ID, groupID, "Member")
+	m1ship := CreateTestMembership(t, member1ID, groupID, "Member")
+	db.Exec("UPDATE memberships SET added = DATE_SUB(NOW(), INTERVAL 2 HOUR) WHERE id = ?", m1ship)
 	member2ID := CreateTestUser(t, prefix+"_m2", "User")
 	CreateTestMembership(t, member2ID, groupID, "Member")
 	member3ID := CreateTestUser(t, prefix+"_m3", "User")
@@ -2924,13 +3222,85 @@ func TestGetMembershipsFilterModmails(t *testing.T) {
 	// Should contain only the two members who have modmails (not member3).
 	assert.Equal(t, 2, len(members), "filter=6 should return only members with modmails")
 
-	// First result should be member2 (more recent modmail).
-	assert.Equal(t, float64(member2ID), members[0]["userid"].(float64), "member2 should be first (most recent modmail)")
-	assert.Equal(t, float64(member1ID), members[1]["userid"].(float64), "member1 should be second (older modmail)")
+	// Results are ordered by join date DESC (newest joiner first).
+	// member2 joined more recently than member1 (member1 was backdated 2h).
+	assert.Equal(t, float64(member2ID), members[0]["userid"].(float64), "member2 should be first (most recently joined)")
+	assert.Equal(t, float64(member1ID), members[1]["userid"].(float64), "member1 should be second (older join date)")
 
 	// Both should have lastmodmail populated.
 	assert.NotNil(t, members[0]["lastmodmail"], "lastmodmail should be populated")
 	assert.NotNil(t, members[1]["lastmodmail"], "lastmodmail should be populated")
+}
+
+func TestGetMembershipsModmailFilterOrderAndLimit(t *testing.T) {
+	// Regression test for bug in topic 9518 post 239:
+	// filter=6 (Received mod mails) returns results ordered by mod-mail timestamp
+	// (lastmodmail DESC) instead of by join date (m.added DESC), and previously
+	// capped results at the caller's limit even when more members exist.
+	//
+	// Anti-correlation setup (25 members):
+	//   memberIDs[0]  joined 1h ago  (newest joiner) → modmail 25h ago (oldest mail)
+	//   memberIDs[24] joined 25h ago (oldest joiner)  → modmail  1h ago (newest mail)
+	//
+	// Correct result (by join date DESC): memberIDs[0] first, memberIDs[24] last.
+	// Buggy  result (by lastmodmail DESC): memberIDs[24] first, memberIDs[0] last.
+	prefix := uniquePrefix("mf_ord")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	const memberCount = 25
+	memberIDs := make([]uint64, memberCount)
+
+	for i := 0; i < memberCount; i++ {
+		uid := CreateTestUser(t, fmt.Sprintf("%s_m%d", prefix, i), "User")
+		memberIDs[i] = uid
+
+		// Back-date the membership so memberIDs[0] (i=0) joined most recently.
+		membershipID := CreateTestMembership(t, uid, groupID, "Member")
+		joinHoursAgo := i + 1
+		db.Exec("UPDATE memberships SET added = DATE_SUB(NOW(), INTERVAL ? HOUR) WHERE id = ?",
+			joinHoursAgo, membershipID)
+
+		// Anti-correlated modmail: oldest joiner (i=24) gets newest modmail (1h ago).
+		mailHoursAgo := memberCount - i
+		db.Exec(
+			"INSERT INTO users_modmails (userid, groupid, timestamp, logid) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL ? HOUR), ?)",
+			uid, groupID, mailHoursAgo, uid,
+		)
+	}
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&filter=6&limit=50&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var members []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&members)
+
+	// (a) All 25 members must be returned — limit=50 should not be overridden to 20.
+	assert.GreaterOrEqual(t, len(members), memberCount,
+		"filter=6 with limit=50 should return all %d members with modmails", memberCount)
+
+	// (b) Results must be ordered by join date (m.added) DESC — newest joiner first.
+	// With the bug the order is lastmodmail DESC, so memberIDs[24] (oldest joiner,
+	// newest modmail) appears first instead of memberIDs[0] (newest joiner, oldest modmail).
+	if len(members) >= 1 {
+		firstUserID := uint64(members[0]["userid"].(float64))
+		assert.Equal(t, memberIDs[0], firstUserID,
+			"first result should be the most-recently-joined member (join-date DESC order); "+
+				"got userid %d but expected %d — endpoint is sorting by mod-mail timestamp instead of join date",
+			firstUserID, memberIDs[0])
+	}
+	if len(members) >= memberCount {
+		lastUserID := uint64(members[memberCount-1]["userid"].(float64))
+		assert.Equal(t, memberIDs[memberCount-1], lastUserID,
+			"last result should be the oldest-joined member (join-date DESC order)")
+	}
 }
 
 // --- Partner auth tests ---
@@ -3125,4 +3495,55 @@ func TestPutMembershipsModAddsMember(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
 		memberID, groupID).Scan(&count)
 	assert.Equal(t, int64(1), count)
+}
+
+func TestPatchMembershipsConfigChange(t *testing.T) {
+	prefix := uniquePrefix("mem_configchange")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, modToken := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Owner")
+
+	// Create two configs
+	cfgID1 := createTestModConfig(t, prefix+"_cfg1", modID)
+	cfgID2 := createTestModConfig(t, prefix+"_cfg2", modID)
+
+	// Update membership to use first config
+	body := map[string]interface{}{
+		"groupid":  groupID,
+		"configid": cfgID1,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/memberships?jwt=%s", modToken)
+	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Verify first config is set
+	var configID1 uint64
+	db.Raw("SELECT configid FROM memberships WHERE userid = ? AND groupid = ?",
+		modID, groupID).Scan(&configID1)
+	assert.Equal(t, cfgID1, configID1)
+
+	// Change to second config
+	body = map[string]interface{}{
+		"groupid":  groupID,
+		"configid": cfgID2,
+	}
+	bodyBytes, _ = json.Marshal(body)
+	req = httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Verify second config is now set (persistence check)
+	var configID2 uint64
+	db.Raw("SELECT configid FROM memberships WHERE userid = ? AND groupid = ?",
+		modID, groupID).Scan(&configID2)
+	assert.Equal(t, cfgID2, configID2)
 }

@@ -227,7 +227,7 @@ func TestTeamGetMembersUsersImage(t *testing.T) {
 	db.Raw("SELECT id FROM teams WHERE name = ?", teamName).Scan(&teamID)
 
 	db.Exec("INSERT INTO teams_members (userid, teamid) VALUES (?, ?)", userID, teamID)
-	db.Exec("INSERT INTO users_images (userid, url) VALUES (?, 'https://example.test/u.jpg')", userID)
+	db.Exec("INSERT INTO users_images (userid, url, contenttype) VALUES (?, 'https://example.test/u.jpg', 'image/jpeg')", userID)
 
 	resp, _ := getApp().Test(httptest.NewRequest("GET",
 		fmt.Sprintf("/api/team?id=%d", teamID), nil))

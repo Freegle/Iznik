@@ -53,19 +53,24 @@ async function navigateToMobileDetails(page, flowType) {
   // Skip the photos step (no photos needed for these tests).
   // The "Next" button only appears when photos are present; the Skip link is
   // always shown by PhotoUploader and calls goNext() via the @skip emit.
-  const skipLink = page.locator('a:has-text("Skip")')
+  const skipLink = page.locator('button:has-text("Skip"), a:has-text("Skip")')
   await expect(skipLink.first()).toBeVisible({
     timeout: timeouts.ui.appearance,
   })
-  console.log('Clicking Skip to proceed to details')
-  await skipLink.first().click()
 
-  // Wait until we're on the details page.
-  // Use domcontentloaded — the load event can be slow in CI on older hardware.
-  await page.waitForURL(`**${mobileDetailsPath}`, {
-    timeout: timeouts.navigation.default,
-    waitUntil: 'domcontentloaded',
-  })
+  // Click Skip and wait for the details URL. If Vue hasn't hydrated yet the
+  // click is a no-op (the button has no href/default behaviour), so we retry
+  // via toPass until the navigation lands. This avoids waitForLoadState('load')
+  // which hangs in CI when external scripts (GA, ads) never fire the load event.
+  // Guard: if a prior iteration already navigated to details (toHaveURL timed out
+  // but navigation completed), return immediately instead of re-clicking on a page
+  // that has no Skip button.
+  console.log('Clicking Skip to proceed to details')
+  await expect(async () => {
+    if (page.url().includes(mobileDetailsPath)) return
+    await skipLink.first().click()
+    await expect(page).toHaveURL(`**${mobileDetailsPath}`, { timeout: 5000 })
+  }).toPass({ timeout: timeouts.navigation.default })
   console.log(`Now on details page: ${page.url()}`)
 }
 
