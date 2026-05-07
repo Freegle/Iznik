@@ -3327,6 +3327,67 @@
         }
       }
     },
+    "/message/tn/{tnpostid}": {
+      "patch": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Updates a message using its Trash Nothing post ID. For partner integrations\nwhere the Freegle message ID is not yet known (e.g. post held for moderation).",
+        "tags": [
+          "message"
+        ],
+        "summary": "Update message by TN post ID",
+        "operationId": "patchMessageByTN",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "Trash Nothing post ID",
+            "name": "tnpostid",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "Partner API key (alternative to JWT auth)",
+            "name": "partner",
+            "in": "query"
+          },
+          {
+            "type": "integer",
+            "description": "Trash Nothing user ID (partner auth only)",
+            "name": "tnuserid",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "User email (partner auth only, domain must match partner domain)",
+            "name": "email",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
     "/message/{ids}": {
       "get": {
         "description": "Returns messages by ID (comma separated)",
