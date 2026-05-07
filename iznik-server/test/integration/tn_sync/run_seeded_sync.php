@@ -123,6 +123,23 @@ $dbhm->preExec(
 upsertTNUser($dbhm, 510010, 820001, 'test_dup_user');
 upsertTNUser($dbhm, 510011, 820002, 'test_dup_user');
 
+// Seed a test postcode near user 510001's fixture coordinates (lat=51.5074, lng=-0.1278).
+// This lets closestPostcode() return a result so the [LOCATION] trace fires during the sync.
+// User 510001 is inserted with lastlocation=NULL, so any returned loc triggers the update.
+$srid = $dbhm->SRID();
+$locLat = 51.5074;
+$locLng = -0.1278;
+$locName = 'EC1A 1BB';
+$dbhm->preExec(
+    "INSERT INTO locations (name, type, lat, lng, geometry) VALUES (?, 'Postcode', ?, ?, ST_GeomFromText(?, $srid));",
+    [$locName, $locLat, $locLng, "POINT($locLng $locLat)"]
+);
+$testLocId = $dbhm->lastInsertId();
+$dbhm->preExec(
+    "INSERT INTO locations_spatial (locationid, geometry) VALUES (?, ST_GeomFromText(?, $srid));",
+    [$testLocId, "POINT($locLng $locLat)"]
+);
+
 echo 'Seed complete. Users seeded: ' . count($seedUsers) . "\n";
 echo "Running tn_sync.php...\n";
 
@@ -230,6 +247,19 @@ assertQuery(
     "SELECT COUNT(DISTINCT(userid)) AS cnt FROM users_emails WHERE REGEXP_REPLACE(email, '(.*)-g[0-9]+@user\\\\.trashnothing\\\\.com', '\$1') = 'test_dup_user' AND email LIKE '%@user.trashnothing.com'",
     [],
     fn($rows) => count($rows) === 1 && (int) $rows[0]['cnt'] === 1
+);
+
+// --- location flow ---
+// User 510001 has lat/lng in the user_changes fixture and lastlocation=NULL before the sync.
+// The seeded EC1A 1BB postcode sits at the same coordinates, so closestPostcode() returns it
+// and setPrivate('lastlocation', ...) updates the users row.
+
+assertQuery(
+    'location updated user 510001: lastlocation is not null',
+    $dbhr,
+    'SELECT lastlocation FROM users WHERE id = ?',
+    [510001],
+    fn($rows) => count($rows) === 1 && $rows[0]['lastlocation'] !== null
 );
 
 // --- end assertions ---
