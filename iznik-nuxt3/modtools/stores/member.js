@@ -112,6 +112,16 @@ export const useMemberStore = defineStore({
         received += members.length
 
         if (params.collection === 'Related') {
+          // Clear stale Related entries from a previous page visit before processing
+          // the current API response. Without this, remainingPairs is inflated by
+          // entries that were never cleared via store.clear() on navigation, causing
+          // the counter to stay stuck at 1 even when the server returns no pairs.
+          Object.keys(this.list).forEach((key) => {
+            if (this.list[key].collection === 'Related') {
+              delete this.list[key]
+            }
+          })
+
           // V2 API returns {id, user1, user2} pairs.  Store each pair keyed
           // by its id, and create synthetic member entries for each user so
           // that ModMember can look them up.
