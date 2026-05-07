@@ -2966,6 +2966,67 @@
         }
       }
     },
+    "/message/tn/{tnpostid}": {
+      "patch": {
+        "security": [
+          {
+            "BearerAuth": [
+              "[]"
+            ]
+          }
+        ],
+        "description": "Updates a message using its Trash Nothing post ID. For partner integrations\nwhere the Freegle message ID is not yet known (e.g. post held for moderation).",
+        "tags": [
+          "message"
+        ],
+        "summary": "Update message by TN post ID",
+        "operationId": "patchMessageByTN",
+        "parameters": [
+          {
+            "type": "string",
+            "description": "Trash Nothing post ID",
+            "name": "tnpostid",
+            "in": "path",
+            "required": true
+          },
+          {
+            "type": "string",
+            "description": "Partner API key (alternative to JWT auth)",
+            "name": "partner",
+            "in": "query"
+          },
+          {
+            "type": "integer",
+            "description": "Trash Nothing user ID (partner auth only)",
+            "name": "tnuserid",
+            "in": "query"
+          },
+          {
+            "type": "string",
+            "description": "User email (partner auth only, domain must match partner domain)",
+            "name": "email",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/responses/successResponse"
+          },
+          "400": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "401": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "403": {
+            "$ref": "#/responses/errorResponse"
+          },
+          "404": {
+            "$ref": "#/responses/errorResponse"
+          }
+        }
+      }
+    },
     "/message/{ids}": {
       "get": {
         "description": "Returns messages by ID (comma separated)",
@@ -8500,10 +8561,23 @@
           "format": "uint64",
           "x-go-name": "Groupid"
         },
+        "heldby": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "Heldby"
+        },
         "msgid": {
           "type": "integer",
           "format": "uint64",
           "x-go-name": "Msgid"
+        },
+        "spamreason": {
+          "type": "string",
+          "x-go-name": "Spamreason"
+        },
+        "spamtype": {
+          "type": "string",
+          "x-go-name": "Spamtype"
         }
       },
       "x-go-package": "iznik-server-go/message"
@@ -8524,6 +8598,11 @@
           "type": "integer",
           "format": "uint64",
           "x-go-name": "Groupid"
+        },
+        "heldby": {
+          "type": "integer",
+          "format": "uint64",
+          "x-go-name": "Heldby"
         }
       },
       "x-go-package": "github.com/freegle/iznik-server-go/message"
@@ -9396,6 +9475,10 @@
     "Rating": {
       "type": "object",
       "properties": {
+        "comment": {
+          "type": "string",
+          "x-go-name": "Comment"
+        },
         "id": {
           "type": "integer",
           "format": "uint64",
@@ -9415,6 +9498,10 @@
           "type": "string",
           "x-go-name": "Rating"
         },
+        "reason": {
+          "type": "string",
+          "x-go-name": "Reason"
+        },
         "timestamp": {
           "type": "string",
           "x-go-name": "Timestamp"
@@ -9422,8 +9509,7 @@
         "tn_rating_id": {
           "type": "integer",
           "format": "uint64",
-          "x-go-name": "TnRatingID",
-          "x-nullable": true
+          "x-go-name": "TnRatingID"
         },
         "visible": {
           "type": "integer",
@@ -9965,6 +10051,7 @@
           "x-go-name": "Lat"
         },
         "ljuserid": {
+          "description": "No gorm:\"-\u003e\" — user/auth.go GetLoveJunkUser writes this column via\ndb.Create(\u0026ljuser) when first creating an LJ-linked user; making it\nread-only would silently drop the value and cause a fresh user to be\ncreated on every LJ call (TestCreateChatMessageLoveJunk regression).",
           "type": "integer",
           "format": "uint64",
           "x-go-name": "Ljuserid"
@@ -10032,7 +10119,6 @@
           "x-go-name": "Source"
         },
         "spammer": {
-          "type": "boolean",
           "x-go-name": "Spammer"
         },
         "supporter": {
@@ -10069,8 +10155,7 @@
         },
         "lastupdated": {
           "type": "string",
-          "x-go-name": "LastUpdated",
-          "x-nullable": true
+          "x-go-name": "LastUpdated"
         }
       },
       "x-go-package": "github.com/freegle/iznik-server-go/changes"

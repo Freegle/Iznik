@@ -2542,6 +2542,45 @@ type messagesResponse struct {
 //	401: errorResponse
 //	403: errorResponse
 
+// swagger:route PATCH /message/tn/{tnpostid} message patchMessageByTN
+// Update message by TN post ID
+//
+// Updates a message using its Trash Nothing post ID. For partner integrations
+// where the Freegle message ID is not yet known (e.g. post held for moderation).
+//
+// Parameters:
+//   + name: tnpostid
+//     in: path
+//     description: Trash Nothing post ID
+//     required: true
+//     type: string
+//   + name: partner
+//     in: query
+//     description: Partner API key (alternative to JWT auth)
+//     required: false
+//     type: string
+//   + name: tnuserid
+//     in: query
+//     description: Trash Nothing user ID (partner auth only)
+//     required: false
+//     type: integer
+//   + name: email
+//     in: query
+//     description: User email (partner auth only, domain must match partner domain)
+//     required: false
+//     type: string
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
 // swagger:route PUT /message message putMessage
 // Create message
 //
