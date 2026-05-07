@@ -65,6 +65,14 @@ Schedule::command('mail:chat:user2mod --max-iterations=60 --spool')
     ->sendOutputTo(cronLog('mail:chat:user2mod'))
     ->runInBackground();
 
+// Fetch app versions from iOS App Store and Google Play - runs every 6 hours.
+// V1: cron/get_app_release_versions.php
+Schedule::command('data:fetch-app-versions')
+    ->everySixHours()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('data:fetch-app-versions'))
+    ->runInBackground();
+
 // Fetch UK CPI inflation data from ONS - runs monthly.
 // Used to inflation-adjust the "benefit of reuse" value from the 2011 WRAP report.
 // Sends alert email to GeekAlerts if fetch fails.
