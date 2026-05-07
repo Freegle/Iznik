@@ -207,7 +207,7 @@ func TestMatchWorryWordsPoundSign(t *testing.T) {
 	matches := matchWorryWords("sell for £20", "asking £20", []WorryWord{})
 	assert.Len(t, matches, 1)
 	assert.Equal(t, "£", matches[0].Word)
-	assert.Equal(t, "Review", matches[0].Worryword.Type)
+	assert.Equal(t, "review", matches[0].Worryword.Type)
 }
 
 func TestMatchWorryWordsPoundSignDeduped(t *testing.T) {
