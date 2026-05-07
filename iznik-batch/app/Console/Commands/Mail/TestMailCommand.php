@@ -41,7 +41,6 @@ class TestMailCommand extends Command
                             {--all-types : Send test emails for all chat message types}
                             {--amp= : Override AMP email setting (on/off, default uses config)}
                             {--as= : For User2Mod chats: "member" or "mod" perspective (default: member)}
-                            {--mode= : Digest mode: immediate (single post) or daily (all recent posts, default)}
                             {--dry-run : Preview email content without sending}
                             {--list : List available email types}';
 
@@ -729,11 +728,7 @@ class TestMailCommand extends Command
 
         $this->info("After deduplication: {$deduplicatedPosts->count()} unique posts");
 
-        $mode = $this->option('mode') === 'immediate' ? UnifiedDigestService::MODE_IMMEDIATE : UnifiedDigestService::MODE_DAILY;
-        if ($mode === UnifiedDigestService::MODE_IMMEDIATE) {
-            $deduplicatedPosts = $deduplicatedPosts->take(1);
-        }
-        return new UnifiedDigest($user, $deduplicatedPosts, $mode);
+        return new UnifiedDigest($user, $deduplicatedPosts, UnifiedDigestService::MODE_DAILY);
     }
 
     /**
