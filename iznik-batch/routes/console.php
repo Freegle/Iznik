@@ -438,6 +438,162 @@ Schedule::command('embeddings:generate')
     ->runInBackground();
 
 // =============================================================================
+// NOT YET ENABLED - pending review / sign-off
+// =============================================================================
+
+// Deindex old messages from search.
+// V1: cron/message_deindex.php
+// Schedule::command('messages:deindex')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('messages:deindex'))
+//     ->runInBackground();
+
+// Index unindexed messages for search.
+// V1: cron/message_unindexed.php
+// Schedule::command('messages:update-index')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('messages:update-index'))
+//     ->runInBackground();
+
+// Score microvolunteering tasks.
+// V1: cron/microvolunteering.php
+// Schedule::command('microvolunteering:score')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('microvolunteering:score'))
+//     ->runInBackground();
+
+// Update user modmails counts.
+// V1: cron/users_modmails.php
+// Schedule::command('users:update-modmails')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:update-modmails'))
+//     ->runInBackground();
+
+// Remap user locations.
+// V1: cron/users_remap_locations.php
+// Schedule::command('users:remap-locations')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:remap-locations'))
+//     ->runInBackground();
+
+// Remap message subjects.
+// V1: cron/messages_remap_subjects.php
+// Schedule::command('messages:remap-subjects')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('messages:remap-subjects'))
+//     ->runInBackground();
+
+// Update spatial index for messages.
+// V1: cron/message_spatial.php
+// Schedule::command('messages:update-spatial-index')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('messages:update-spatial-index'))
+//     ->runInBackground();
+
+// Clean up whatjobs spam.
+// V1: cron/whatjobs_spam.php
+// Schedule::command('cleanup:whatjobs-spam')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('cleanup:whatjobs-spam'))
+//     ->runInBackground();
+
+// Update common email domains table (domains used by > 1000 users).
+// V1: cron/domains_common.php (weekly, Friday 07:00)
+// Schedule::command('domains:update-common')
+//     ->weeklyOn(5, '07:00')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('domains:update-common'))
+//     ->runInBackground();
+
+// Generate AI illustrations for messages with no photos.
+// V1: cron/messages_illustrations.php (every 1 minute)
+// Schedule::command('messages:generate-illustrations')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('messages:generate-illustrations'))
+//     ->runInBackground();
+
+// Generate AI illustrations for canonical job categories (pre-caching).
+// V1: cron/jobs_illustrations.php (every 30 minutes)
+// Schedule::command('jobs:generate-illustrations')
+//     ->everyThirtyMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('jobs:generate-illustrations'))
+//     ->runInBackground();
+
+// Fetch app versions from iOS App Store and Google Play - runs every 6 hours.
+// V1: cron/get_app_release_versions.php
+// Schedule::command('data:fetch-app-versions')
+//     ->everySixHours()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('data:fetch-app-versions'))
+//     ->runInBackground();
+
+// Sync Freegle offers with LoveJunk - runs every minute.
+// V1: cron/lovejunk.php
+// Schedule::command('integrations:sync-lovejunk')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('integrations:sync-lovejunk'))
+//     ->runInBackground();
+
+// Update expected reply tracking for User2User chats.
+// V1: cron/chat_expected.php (every 5 minutes)
+// Schedule::command('chats:update-expected')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:update-expected'))
+//     ->runInBackground();
+
+// Update group stats: fix repost settings, polyindex, activity/funding, mod counts, stats_outcomes.
+// V1: cron/group_stats.php (daily at 02:00)
+// Schedule::command('groups:update-stats')
+//     ->dailyAt('02:00')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('groups:update-stats'))
+//     ->runInBackground();
+
+// Remove confirmed spammers from groups.
+// V1: cron/check_spammers.php
+// Schedule::command('users:remove-spammers')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:remove-spammers'))
+//     ->runInBackground();
+
+// Process chat spam messages.
+// V1: cron/chat_spam.php
+// Schedule::command('chats:process-spam')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:process-spam'))
+//     ->runInBackground();
+
+// Send mod notifications.
+// V1: cron/mod_notifs.php
+// Schedule::command('mail:mod-notifs')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('mail:mod-notifs'))
+//     ->runInBackground();
+
+// Update GiftAid donations.
+// V1: cron/donations_giftaid.php
+// Schedule::command('donations:update-giftaid')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('donations:update-giftaid'))
+//     ->runInBackground();
+
+// =============================================================================
 // GIT SUMMARY
 // =============================================================================
 

@@ -118,7 +118,7 @@ class PurgeService
     /**
      * Purge old messages_history (spam checking data).
      */
-    public function purgeOldMessagesHistory(int $daysOld = 90, bool $dryRun = false): int
+    public function purgeOldMessagesHistory(int $daysOld = 31, bool $dryRun = false): int
     {
         $cutoff = now()->subDays($daysOld);
 
