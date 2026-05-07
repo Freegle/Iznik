@@ -36,6 +36,7 @@ package swagger
 import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
+	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/admin"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
@@ -4069,3 +4070,230 @@ type CreateWorryWordRequest struct {
 	// Type of worry word
 	Type string `json:"type"`
 }
+
+// swagger:route GET /admin/ai-images/review ai-images listAIImagesReview
+// List AI images needing review
+//
+// Returns AI images that have been flagged by microvolunteers and need moderator review.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: aiImagesReviewResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// aiImagesReviewResponse is the list of AI images pending review
+// swagger:response aiImagesReviewResponse
+type aiImagesReviewResponse struct {
+	// in:body
+	Body []aiimage.AIImageReview
+}
+
+// swagger:route GET /admin/ai-images/count ai-images getAIImagesCount
+// Count AI images needing regeneration
+//
+// Returns the count of AI images currently in the review queue.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: aiImagesCountResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// aiImagesCountResponse returns the count of images pending review
+// swagger:response aiImagesCountResponse
+type aiImagesCountResponse struct {
+	// in:body
+	Body struct {
+		Count int `json:"count"`
+	}
+}
+
+// swagger:route POST /admin/ai-images/{id}/regenerate ai-images regenerateAIImage
+// Regenerate an AI image
+//
+// Generates a new AI image for the given item, optionally using a description override.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: AI image ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: aiImageRegenerateResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// aiImageRegenerateResponse is the response after regenerating an AI image
+// swagger:response aiImageRegenerateResponse
+type aiImageRegenerateResponse struct {
+	// in:body
+	Body struct {
+		PreviewURL string `json:"preview_url"`
+	}
+}
+
+// swagger:route POST /admin/ai-images/{id}/accept ai-images acceptAIImage
+// Accept a regenerated AI image
+//
+// Replaces the current AI image with the pending regenerated image.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: AI image ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	404: errorResponse
+
+// swagger:route POST /admin/ai-images/{id}/keep ai-images keepAIImage
+// Keep the current AI image
+//
+// Clears the pending review state without changing the image. Use when the current image
+// is acceptable or when every regeneration attempt is worse than the original.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: id
+//     in: path
+//     description: AI image ID
+//     required: true
+//     type: integer
+//     format: int64
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /housekeeper/notify housekeeper notifyHousekeeper
+// Submit a housekeeper task result
+//
+// Receives housekeeping task results from the Chrome extension and queues a background task for Laravel.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+//	500: errorResponse
+
+// swagger:route GET /housekeeper/tasks housekeeper listHousekeeperTasks
+// List housekeeper tasks
+//
+// Returns all housekeeper tasks with their last run status and an overdue flag.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: housekeeperTasksResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:response housekeeperTasksResponse
+
+// swagger:route POST /housekeeper/tasks/{key}/complete housekeeper completeHousekeeperTask
+// Mark a housekeeper task complete
+//
+// Records the completion of a housekeeper task by key.
+//
+// security:
+// - BearerAuth: []
+//
+// Parameters:
+//   + name: key
+//     in: path
+//     description: Task key
+//     required: true
+//     type: string
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route GET /housekeeper/cronjobs housekeeper listHousekeeperCronJobs
+// List cron job statuses
+//
+// Returns the status of all tracked cron jobs.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: genericResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /donations/bulk donations bulkUploadDonations
+// Bulk upload donations
+//
+// Imports a batch of donation records. Requires admin authentication.
+//
+// security:
+// - BearerAuth: []
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+//	401: errorResponse
+//	403: errorResponse
+
+// swagger:route POST /stripeipn donations stripeIPN
+// Handle Stripe IPN webhook
+//
+// Receives Stripe webhook events (payment confirmations, subscription updates, etc.).
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse
+
+// swagger:route POST /donateipn donations payPalIPN
+// Handle PayPal IPN webhook
+//
+// Receives PayPal Instant Payment Notification events.
+//
+// Responses:
+//
+//	200: successResponse
+//	400: errorResponse

@@ -37,6 +37,10 @@ export function useAIImages() {
     return $api.aiimages.accept(id, pendingExternaluid)
   }
 
+  async function keep(id) {
+    return $api.aiimages.keep(id)
+  }
+
   return {
     count: readonly(count),
     images: readonly(images),
@@ -45,5 +49,6 @@ export function useAIImages() {
     fetchReview,
     regenerate,
     accept,
+    keep,
   }
 }
