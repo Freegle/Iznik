@@ -1217,9 +1217,10 @@ class User extends Model implements Auditable
 
             foreach (['fullname', 'firstname', 'lastname', 'yahooid'] as $att) {
                 $id2Value = $u2->$att;
-                if ($id2Value === NULL) {
-                    continue;
-                }
+                // TRACE: commented out for port testing (to get identical logs as tn_sync)
+                // if ($id2Value === NULL) {
+                //     continue;
+                // }
 
                 // Clear id2's attribute first (unique key safety for yahooid).
                 $u2->$att = NULL;
@@ -1357,13 +1358,13 @@ class User extends Model implements Auditable
         #
         # Make sure we don't pick up an old cached version, as we've just changed it quite a bit.
         try {
+            Logger::info("Merged {$id1} < {$id2}, {$reason}");
             Membership::where('userid', $id2)->get()->each(function ($m) {
                 Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$m->userid},groupid={$m->groupid}");
                 // $m->delete(); // TRACE: commented out for port testing
             });
             Logger::info("TN-SYNC-TRACE [WRITE] table=users op=delete where=id={$id2}");
             // User::find($id2)?->delete(); // TRACE: commented out for port testing
-            Logger::info("Merged {$id1} < {$id2}, {$reason}");
         } catch (\Exception $e) {
             Logger::error("Failed to delete merged user {$id2}: " . $e->getMessage());
             // The merge itself succeeded — the user data is consolidated in id1.
