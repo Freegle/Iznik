@@ -45,6 +45,15 @@
         </div>
       </div>
 
+      <div class="question-block mb-3">
+        <p class="question-label">
+          Is this a good image for &ldquo;{{ aiimage.name }}&rdquo;?
+        </p>
+        <p v-if="containsPeople === null" class="help-hint">
+          Please answer the question above first
+        </p>
+      </div>
+
       <div class="d-flex justify-content-between align-items-center mb-3">
         <div class="d-flex gap-2">
           <button class="btn btn-outline-secondary" @click="regenerate">
@@ -65,19 +74,6 @@
             Next
           </button>
         </div>
-        <SpinButton
-          variant="success"
-          icon-name="thumbs-up"
-          label="Accept - looks good"
-          :disabled="containsPeople === null"
-          @handle="approve"
-        />
-      </div>
-
-      <div class="question-block mb-3">
-        <p class="question-label">
-          Is this a good image for &ldquo;{{ aiimage.name }}&rdquo;?
-        </p>
         <div class="d-flex gap-2">
           <SpinButton
             variant="danger"
@@ -86,10 +82,14 @@
             :disabled="containsPeople === null"
             @handle="reject"
           />
+          <SpinButton
+            variant="success"
+            icon-name="thumbs-up"
+            label="Accept - looks good"
+            :disabled="containsPeople === null"
+            @handle="approve"
+          />
         </div>
-        <p v-if="containsPeople === null" class="help-hint mt-2">
-          Please answer the question above first
-        </p>
       </div>
 
       <div class="question-block mb-3">
