@@ -167,7 +167,6 @@ export default defineConfig({
         // Files excluded from Playwright should also be excluded from the
         // Vitest denominator so that per-flag Coveralls percentages stay
         // stable and comparable across CI runs.
-        '**/useFavoritePage.js',
         '**/useUppyRetryCoalesce.js',
         '**/useSuppressException.js',
         '**/ChatMobileNavbar.vue',
