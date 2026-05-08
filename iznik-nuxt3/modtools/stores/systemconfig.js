@@ -7,6 +7,7 @@ export const useSystemConfigStore = defineStore({
     // System-level configuration items
     worrywords: [],
     spam_keywords: [],
+    concern_keywords: [],
 
     // For tracking fetch state
     loading: false,
@@ -130,6 +131,48 @@ export const useSystemConfigStore = defineStore({
       }
     },
 
+    // Concern keywords management
+    async fetchConcernKeywords(params = {}) {
+      this.loading = true
+      this.error = null
+      try {
+        const response = await api(this.config).config.fetchConcernKeywordsv2(params)
+        this.concern_keywords = response || []
+      } catch (error) {
+        this.error = error.message
+        this.concern_keywords = []
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async addConcernKeyword(data) {
+      if (!data.keyword || !data.keyword.trim()) return
+      this.loading = true
+      this.error = null
+      try {
+        await api(this.config).config.addConcernKeywordv2(data)
+        await this.fetchConcernKeywords()
+      } catch (error) {
+        this.error = error.message
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async deleteConcernKeyword(id) {
+      this.loading = true
+      this.error = null
+      try {
+        await api(this.config).config.deleteConcernKeywordv2(id)
+        this.concern_keywords = this.concern_keywords.filter((k) => k.id !== id)
+      } catch (error) {
+        this.error = error.message
+      } finally {
+        this.loading = false
+      }
+    },
+
     // Combined fetch for initialization
     async fetchAll() {
       await Promise.all([this.fetchWorrywords(), this.fetchSpamKeywords()])
@@ -138,6 +181,7 @@ export const useSystemConfigStore = defineStore({
   getters: {
     getWorrywords: (state) => state.worrywords,
     getSpamKeywords: (state) => state.spam_keywords,
+    getConcernKeywords: (state) => state.concern_keywords,
     isLoading: (state) => state.loading,
     hasError: (state) => !!state.error,
     getError: (state) => state.error,

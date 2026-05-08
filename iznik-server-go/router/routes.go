@@ -25,6 +25,7 @@ import (
 	"github.com/freegle/iznik-server-go/abtest"
 	"github.com/freegle/iznik-server-go/address"
 	"github.com/freegle/iznik-server-go/admin"
+	"github.com/freegle/iznik-server-go/avatar"
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/alert"
 	"github.com/freegle/iznik-server-go/amp"
@@ -589,6 +590,43 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 403 {object} fiber.Error "Support or Admin role required"
 		// @Failure 404 {object} fiber.Error "Worry word not found"
 		adminConfig.Delete("/worry_words/:id", config.DeleteWorryWord)
+
+		// @Router /config/admin/concern_keywords [get]
+		// @Summary List concern keywords
+		// @Tags config
+		// @Produce json
+		// @Security BearerAuth
+		// @Param scope query string false "Filter by scope (global/group)"
+		// @Param group_id query string false "Filter by group ID (when scope=group)"
+		// @Success 200 {array} config.ConcernKeyword
+		// @Failure 401 {object} fiber.Error "Authentication required"
+		// @Failure 403 {object} fiber.Error "Support or Admin role required"
+		adminConfig.Get("/concern_keywords", config.ListConcernKeywords)
+
+		// @Router /config/admin/concern_keywords [post]
+		// @Summary Create a concern keyword
+		// @Tags config
+		// @Accept json
+		// @Produce json
+		// @Security BearerAuth
+		// @Param body body config.CreateConcernKeywordRequest true "Concern keyword to create"
+		// @Success 200 {object} config.ConcernKeyword
+		// @Failure 400 {object} fiber.Error "Invalid request"
+		// @Failure 401 {object} fiber.Error "Authentication required"
+		// @Failure 403 {object} fiber.Error "Support or Admin role required"
+		adminConfig.Post("/concern_keywords", config.CreateConcernKeyword)
+
+		// @Router /config/admin/concern_keywords/{id} [delete]
+		// @Summary Delete a concern keyword
+		// @Tags config
+		// @Produce json
+		// @Security BearerAuth
+		// @Param id path int true "Concern keyword ID"
+		// @Success 200 {object} map[string]bool
+		// @Failure 401 {object} fiber.Error "Authentication required"
+		// @Failure 403 {object} fiber.Error "Support or Admin role required"
+		// @Failure 404 {object} fiber.Error "Concern keyword not found"
+		adminConfig.Delete("/concern_keywords/:id", config.DeleteConcernKeyword)
 
 		// Admin Config Patch
 		// @Router /config/admin [patch]
@@ -1729,6 +1767,18 @@ func SetupRoutes(app *fiber.App) {
 	// @Param name query string false "Shortlink name"
 	// @Success 302
 	app.Get("/shortlink", shortlink.RedirectShortlink)
+
+	// Avatar image — generates a deterministic geometric PNG from a name string.
+	// Identical algorithm to the frontend GeneratedAvatar.client.vue component,
+	// replacing the Node.js avatar-server container.
+	// @Router /avatar/{name} [get]
+	// @Summary Generate avatar PNG
+	// @Tags avatar
+	// @Param name path string true "User name (append .png for explicit PNG extension)"
+	// @Param size query integer false "Pixel size, max 256 (default 48)"
+	// @Produce image/png
+	// @Success 200
+	app.Get("/avatar/:name", avatar.GetAvatar)
 
 	// PayPal IPN — called by PayPal when donations are received.
 	// V1 equivalent: http/donateipn.php

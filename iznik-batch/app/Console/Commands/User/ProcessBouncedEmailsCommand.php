@@ -2,44 +2,54 @@
 
 namespace App\Console\Commands\User;
 
+use App\Console\Concerns\PreventsOverlapping;
+use App\Services\Mail\Incoming\BounceService;
 use App\Services\UserManagementService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
 class ProcessBouncedEmailsCommand extends Command
 {
-    /**
-     * The name and signature of the console command.
-     */
+    use PreventsOverlapping;
+
     protected $signature = 'mail:bounced {--dry-run : Show what would be processed without making changes}';
 
-    /**
-     * The console command description.
-     */
     protected $description = 'Process bounced emails and mark them as invalid';
 
-    /**
-     * Execute the console command.
-     */
-    public function handle(UserManagementService $userService): int
+    public function handle(UserManagementService $userService, BounceService $bounceService): int
     {
-        $dryRun = $this->option('dry-run');
+        if (! $this->acquireLock()) {
+            $this->info('Already running, exiting.');
 
-        if ($dryRun) {
-            $this->info('DRY RUN — no changes will be made.');
+            return Command::SUCCESS;
         }
 
-        Log::info('Starting bounced email processing');
-        $this->info('Processing bounced emails...');
+        try {
+            $dryRun = $this->option('dry-run');
 
-        $stats = $userService->processBouncedEmails($dryRun);
+            if ($dryRun) {
+                $this->info('DRY RUN — no changes will be made.');
 
-        $prefix = $dryRun ? '[DRY RUN] ' : '';
-        $this->info("{$prefix}Processed: {$stats['processed']}");
-        $this->info("{$prefix}Marked invalid: {$stats['marked_invalid']}");
+                return Command::SUCCESS;
+            }
 
-        Log::info('Bounced email processing complete', $stats);
+            Log::info('Starting bounced email processing');
+            $this->info('Processing bounced emails...');
 
-        return Command::SUCCESS;
+            $stats = $userService->processBouncedEmails(false);
+
+            $this->info("Processed: {$stats['processed']}");
+            $this->info("Marked invalid: {$stats['marked_invalid']}");
+
+            Log::info('Bounced email processing complete', $stats);
+
+            $this->info('Suspending users with excessive bounces...');
+            $suspended = $bounceService->suspendBouncingUsers();
+            $this->info("Suspended: {$suspended}");
+
+            return Command::SUCCESS;
+        } finally {
+            $this->releaseLock();
+        }
     }
 }

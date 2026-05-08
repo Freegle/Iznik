@@ -48,10 +48,14 @@ class AutoApproveService
 
         // V1 query: SELECT msgid, groupid, TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) AS ago
         // FROM messages_groups INNER JOIN messages ON messages.id = messages_groups.msgid
-        // WHERE collection = 'Pending' AND heldby IS NULL HAVING ago > 48
+        // WHERE collection = 'Pending' AND messages_groups.heldby IS NULL HAVING ago > 48
         //
         // Returns one row per (msgid, groupid). We group by msgid to match V1's pattern:
         // check logs once per message, then process all groups in the inner loop.
+        //
+        // The deleted filters (messages.deleted IS NULL, messages_groups.deleted = 0)
+        // were absent from V1, which caused soft-deleted messages to be auto-approved
+        // (mods don't see them in the queue, but the cron picked them up after 48h).
         $candidates = DB::table('messages_groups')
             ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
             ->select(
@@ -63,7 +67,9 @@ class AutoApproveService
                 DB::raw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) AS hours_pending')
             )
             ->where('messages_groups.collection', MessageGroup::COLLECTION_PENDING)
-            ->whereNull('messages.heldby')
+            ->whereNull('messages_groups.heldby')
+            ->where('messages_groups.deleted', 0)
+            ->whereNull('messages.deleted')
             ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) > ?', [self::PENDING_HOURS])
             ->get()
             ->groupBy('msgid');

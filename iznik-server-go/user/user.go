@@ -493,53 +493,63 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 	return history
 }
 
-// applySettingsDefaults applies V1-parity defaults for settings fields that may
-// be absent from the JSON stored in the database. V1 (User.php) applies these
-// defaults on read: notificationmails=true, engagement=true, modnotifs=4,
-// backupmodnotifs=12.
-func applySettingsDefaults(user *User) {
-	if user.Settings == nil || len(user.Settings) == 0 {
-		return
+// ApplySettingsDefaultsToJSON applies V1-parity defaults to a raw settings JSON
+// blob and returns the updated blob.  It is safe to call on any GET response path
+// because it never persists to the database.  Callers outside this package (e.g.
+// GetSession) use this to avoid the V1/V2 parity gap where absent keys render as
+// undefined in the frontend rather than their implicit true/4/12 defaults.
+func ApplySettingsDefaultsToJSON(settings json.RawMessage, systemrole string) json.RawMessage {
+	if len(settings) == 0 {
+		return settings
 	}
 
-	var settings map[string]interface{}
-	if err := json.Unmarshal(user.Settings, &settings); err != nil {
-		return
+	var m map[string]interface{}
+	if err := json.Unmarshal(settings, &m); err != nil {
+		return settings
 	}
 
 	changed := false
 
-	if _, ok := settings["notificationmails"]; !ok {
-		settings["notificationmails"] = true
+	if _, ok := m["notificationmails"]; !ok {
+		m["notificationmails"] = true
 		changed = true
 	}
-	if _, ok := settings["engagement"]; !ok {
-		settings["engagement"] = true
+	if _, ok := m["engagement"]; !ok {
+		m["engagement"] = true
 		changed = true
 	}
 
 	// Mod-specific defaults only for users with a moderator+ systemrole.
 	// Injecting these for regular users caused settings contamination when
 	// the frontend echoed the full settings blob back via PATCH.
-	isMod := user.Systemrole == utils.SYSTEMROLE_MODERATOR ||
-		user.Systemrole == utils.SYSTEMROLE_SUPPORT ||
-		user.Systemrole == utils.SYSTEMROLE_ADMIN
+	isMod := systemrole == utils.SYSTEMROLE_MODERATOR ||
+		systemrole == utils.SYSTEMROLE_SUPPORT ||
+		systemrole == utils.SYSTEMROLE_ADMIN
 	if isMod {
-		if _, ok := settings["modnotifs"]; !ok {
-			settings["modnotifs"] = 4
+		if _, ok := m["modnotifs"]; !ok {
+			m["modnotifs"] = 4
 			changed = true
 		}
-		if _, ok := settings["backupmodnotifs"]; !ok {
-			settings["backupmodnotifs"] = 12
+		if _, ok := m["backupmodnotifs"]; !ok {
+			m["backupmodnotifs"] = 12
 			changed = true
 		}
 	}
 
 	if changed {
-		if b, err := json.Marshal(settings); err == nil {
-			user.Settings = b
+		if b, err := json.Marshal(m); err == nil {
+			return b
 		}
 	}
+	return settings
+}
+
+// applySettingsDefaults applies V1-parity defaults for settings fields that may
+// be absent from the JSON stored in the database. V1 (User.php) applies these
+// defaults on read: notificationmails=true, engagement=true, modnotifs=4,
+// backupmodnotifs=12.
+func applySettingsDefaults(user *User) {
+	user.Settings = ApplySettingsDefaultsToJSON(user.Settings, user.Systemrole)
 }
 
 func GetUserById(id uint64, myid uint64) User {

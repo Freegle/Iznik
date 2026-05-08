@@ -1380,7 +1380,8 @@ services:
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - MJML_URL=http://mjml/
-      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry
+      - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp
       # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.
       # Multiple supervisor workers bootstrapping Laravel simultaneously can corrupt services.php.
       - CI=${CI:-false}
@@ -1470,7 +1471,7 @@ services:
       # Freegle Mail Configuration
       - FREEGLE_NOREPLY_ADDR=noreply@ilovefreegle.org
       - FREEGLE_USER_DOMAIN=users.ilovefreegle.org
-      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest
+      - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Admin,ChaseUp,AutoRepost,MessageExpiry,AIImageReviewDigest,NotificationChaseUp
       # Freegle Images
       - FREEGLE_IMAGES_DOMAIN=https://images.ilovefreegle.org
       - FREEGLE_DELIVERY_URL=https://delivery.ilovefreegle.org
@@ -1489,6 +1490,8 @@ services:
       - LOKI_JSON_PATH=/var/log/freegle
       # MJML (local container)
       - MJML_URL=http://mjml/
+      # Avatar generation (Go API)
+      - FREEGLE_AVATAR_SERVER_URL=https://api.ilovefreegle.org/avatar
       # AMP Email
       - AMP_EMAIL_ENABLED=true
       # AMP_SECRET comes from env_file

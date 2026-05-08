@@ -4,6 +4,7 @@ namespace App\Console\Commands\Mail;
 
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\AdminMail;
+use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Group;
 use App\Models\User;
@@ -16,6 +17,7 @@ use Illuminate\Support\Facades\Mail;
 
 class SendAdminCommand extends Command
 {
+    use AvatarResolver;
     use FeatureFlags;
     use GracefulShutdown;
     use PreventsOverlapping;
@@ -169,9 +171,8 @@ class SendAdminCommand extends Command
      */
     public static function getLocalVolunteers(int $groupId): array
     {
-        $oneYearAgo = now()->subYear();
-        $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
-        $defaultProfileUrl = $imagesDomain . '/defaultprofile.png';
+        $oneYearAgo  = now()->subYear();
+        $avatarBase  = rtrim(config('freegle.avatar_server_url', ''), '/');
 
         $mods = User::select('users.id', 'users.fullname')
             ->join('memberships', 'memberships.userid', '=', 'users.id')
@@ -188,11 +189,13 @@ class SendAdminCommand extends Command
         foreach ($mods as $mod) {
             $firstName = explode(' ', $mod->fullname ?? '')[0];
             if ($firstName) {
+                $profileUrl = $mod->getProfileImageUrl()
+                    ?? ($avatarBase . '/' . rawurlencode($mod->fullname ?: 'user') . '.png');
                 $volunteers[] = [
                     'id' => $mod->id,
                     'displayname' => $mod->fullname,
                     'firstname' => $firstName,
-                    'profileurl' => $mod->getProfileImageUrl() ?? $defaultProfileUrl,
+                    'profileurl' => $profileUrl,
                 ];
             }
         }

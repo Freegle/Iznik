@@ -340,8 +340,38 @@ class AutoApproveServiceTest extends TestCase
 
         $message = $this->createTestMessage($user, $group);
 
-        // Mark as held by the user.
-        DB::table('messages')->where('id', $message->id)->update(['heldby' => $user->id]);
+        // V1 checks messages_groups.heldby (per-group hold), not messages.heldby.
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->update([
+                'collection' => MessageGroup::COLLECTION_PENDING,
+                'arrival' => now()->subHours(49),
+                'heldby' => $user->id,
+            ]);
+
+        $this->service->process();
+
+        // Message should still be pending (held by a mod).
+        $this->assertDatabaseHas('messages_groups', [
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+        ]);
+    }
+
+    public function test_skips_soft_deleted_message(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, [
+            'added' => now()->subHours(72),
+        ]);
+
+        $message = $this->createTestMessage($user, $group);
+
+        // User soft-deleted their message shortly after posting.
+        DB::table('messages')->where('id', $message->id)->update(['deleted' => now()->subHours(47)]);
 
         DB::table('messages_groups')
             ->where('msgid', $message->id)
@@ -353,11 +383,45 @@ class AutoApproveServiceTest extends TestCase
 
         $this->service->process();
 
-        // Message should still be pending (held by a mod).
+        // Soft-deleted messages must not be auto-approved — mods don't see them
+        // in the queue, so an Autoapproved log would appear with no visible review.
         $this->assertDatabaseHas('messages_groups', [
             'msgid' => $message->id,
             'groupid' => $group->id,
             'collection' => MessageGroup::COLLECTION_PENDING,
+        ]);
+        $this->assertDatabaseMissing('logs', [
+            'msgid' => $message->id,
+            'type' => 'Message',
+            'subtype' => 'Autoapproved',
+        ]);
+    }
+
+    public function test_skips_messages_groups_deleted(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, [
+            'added' => now()->subHours(72),
+        ]);
+
+        $message = $this->createTestMessage($user, $group);
+
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->where('groupid', $group->id)
+            ->update([
+                'collection' => MessageGroup::COLLECTION_PENDING,
+                'arrival' => now()->subHours(49),
+                'deleted' => 1,
+            ]);
+
+        $this->service->process();
+
+        $this->assertDatabaseMissing('logs', [
+            'msgid' => $message->id,
+            'type' => 'Message',
+            'subtype' => 'Autoapproved',
         ]);
     }
 

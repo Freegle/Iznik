@@ -226,6 +226,30 @@ export function setup(type) {
   }
 }
 
+// makeCanSubmit returns a computed that gates the submit button on message validity.
+// Pass the page's own refs so it can be tested without mounting the full component.
+// requirePostcode adds the whereami-style postcode/group checks.
+export function makeCanSubmit({
+  messageValid,
+  loggedIn,
+  emailValid,
+  emailBelongsToSomeoneElse,
+  postcodeValid,
+  closed,
+  noGroups,
+  requirePostcode = false,
+}) {
+  return computed(() => {
+    if (!messageValid.value) return false
+    if (requirePostcode) {
+      if (!postcodeValid.value || closed.value || noGroups.value) return false
+    }
+    if (loggedIn.value) return true
+    if (!emailValid) return false
+    return emailValid.value && !emailBelongsToSomeoneElse.value
+  })
+}
+
 export async function deleteItem(id) {
   const composeStore = useComposeStore()
 

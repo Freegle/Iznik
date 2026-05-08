@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Helpers\MailHelper;
+use App\Models\Message;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Traits\ChunkedProcessing;
@@ -643,6 +644,7 @@ class UserManagementService
         ");
 
         $stats['candidates'] = count($users);
+        $processed = 0;
 
         foreach ($users as $user) {
             // Find the latest activity timestamp from chat messages or memberships.
@@ -671,8 +673,10 @@ class UserManagementService
                 }
             }
 
-            if (($stats['candidates']) % 1000 === 0) {
-                Log::info("Processed {$stats['candidates']} lastaccess candidates");
+            $processed++;
+
+            if ($processed % 1000 === 0) {
+                Log::info("Processed {$processed} / {$stats['candidates']} lastaccess candidates");
             }
         }
 
@@ -750,9 +754,11 @@ class UserManagementService
     }
 
     /**
-     * Validate all non-bouncing emails and delete invalid ones.
+     * Validate recently-added non-bouncing emails and delete invalid ones.
      *
-     * Uses the same regex as iznik-server Message::EMAIL_REGEXP.
+     * Uses Message::EMAIL_REGEXP. Scoped to the last 30 days because the regex
+     * is purely a function of the address — once a row passes it can never
+     * become invalid retroactively, so a full-table sweep would be wasted work.
      *
      */
     public function validateEmails(bool $dryRun = false): array
@@ -762,27 +768,32 @@ class UserManagementService
             'invalid' => 0,
         ];
 
-        $emails = DB::table('users_emails')
+        $since = now()->subDays(30);
+
+        DB::table('users_emails')
             ->join('users', 'users.id', '=', 'users_emails.userid')
+            ->where('users.bouncing', 0)
             ->whereNull('users_emails.bounced')
+            ->where('users_emails.added', '>=', $since)
             ->select('users_emails.id', 'users_emails.email', 'users_emails.userid')
-            ->get();
+            ->orderBy('users_emails.id')
+            ->chunkById(5000, function ($emails) use (&$stats, $dryRun) {
+                foreach ($emails as $email) {
+                    $stats['total']++;
 
-        $stats['total'] = $emails->count();
+                    if (!preg_match(Message::EMAIL_REGEXP, $email->email)) {
+                        if (!$dryRun) {
+                            DB::table('users_emails')->where('id', $email->id)->delete();
+                            Log::info("Deleted invalid email: {$email->email} for user #{$email->userid}");
+                        }
+                        $stats['invalid']++;
+                    }
 
-        foreach ($emails as $email) {
-            if (!preg_match('/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i', $email->email)) {
-                if (!$dryRun) {
-                    DB::table('users_emails')->where('id', $email->id)->delete();
-                    Log::info("Deleted invalid email: {$email->email} for user #{$email->userid}");
+                    if ($stats['total'] % 1000 === 0) {
+                        Log::info("Validated {$stats['total']} emails so far, {$stats['invalid']} invalid");
+                    }
                 }
-                $stats['invalid']++;
-            }
-
-            if ($stats['total'] > 0 && ($stats['invalid'] + ($stats['total'] - $stats['invalid'])) % 1000 === 0) {
-                Log::info("Validated {$stats['total']} emails so far, {$stats['invalid']} invalid");
-            }
-        }
+            }, 'users_emails.id', 'id');
 
         return $stats;
     }

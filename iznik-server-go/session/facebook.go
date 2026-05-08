@@ -36,17 +36,27 @@ func getFacebookJWKSURL() string {
 
 // facebookGraphResponse represents the response from Facebook's Graph API /me endpoint.
 type facebookGraphResponse struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Email     string `json:"email"`
+	ID        string               `json:"id"`
+	Name      string               `json:"name"`
+	FirstName string               `json:"first_name"`
+	LastName  string               `json:"last_name"`
+	Email     string               `json:"email"`
+	Picture   *facebookPicture     `json:"picture,omitempty"`
+}
+
+type facebookPicture struct {
+	Data facebookPictureData `json:"data"`
+}
+
+type facebookPictureData struct {
+	URL          string `json:"url"`
+	IsSilhouette bool   `json:"is_silhouette"`
 }
 
 // handleFacebookLogin verifies a Facebook access token via the Graph API and logs the user in.
 func handleFacebookLogin(c *fiber.Ctx, accessToken string) error {
 	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(getFacebookGraphURL() + "/me?fields=id,name,first_name,last_name,email&access_token=" + accessToken)
+	resp, err := client.Get(getFacebookGraphURL() + "/me?fields=id,name,first_name,last_name,email,picture&access_token=" + accessToken)
 	if err != nil {
 		stdlog.Printf("Facebook Graph API request failed: %v", err)
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
@@ -87,7 +97,13 @@ func handleFacebookLogin(c *fiber.Ctx, accessToken string) error {
 		})
 	}
 
-	return completeFacebookLogin(c, fbResp.ID, fbResp.Email, fbResp.FirstName, fbResp.LastName, fbResp.Name)
+	// Extract picture URL; skip silhouette (Facebook's default placeholder).
+	pictureURL := ""
+	if fbResp.Picture != nil && !fbResp.Picture.Data.IsSilhouette {
+		pictureURL = fbResp.Picture.Data.URL
+	}
+
+	return completeFacebookLogin(c, fbResp.ID, fbResp.Email, fbResp.FirstName, fbResp.LastName, fbResp.Name, pictureURL)
 }
 
 // handleFacebookLimitedLogin handles Facebook Limited Login by verifying a JWT
@@ -172,11 +188,14 @@ func handleFacebookLimitedLogin(c *fiber.Ctx, jwtToken string) error {
 		})
 	}
 
-	return completeFacebookLogin(c, sub, email, givenName, familyName, name)
+	// Extract picture URL from JWT claims if present.
+	pictureURL, _ := claims["picture"].(string)
+
+	return completeFacebookLogin(c, sub, email, givenName, familyName, name, pictureURL)
 }
 
 // completeFacebookLogin is shared by both regular and limited Facebook login flows.
-func completeFacebookLogin(c *fiber.Ctx, fbID, email, firstName, lastName, fullName string) error {
+func completeFacebookLogin(c *fiber.Ctx, fbID, email, firstName, lastName, fullName, pictureURL string) error {
 	userID, err := socialMatchOrCreate(
 		utils.LOGIN_TYPE_FACEBOOK,
 		fbID,
@@ -192,6 +211,8 @@ func completeFacebookLogin(c *fiber.Ctx, fbID, email, firstName, lastName, fullN
 			"status": fmt.Sprintf("Login failed: %v", err),
 		})
 	}
+
+	saveProfileImage(userID, pictureURL)
 
 	persistent, jwtString, err := auth.CreateSessionAndJWT(userID)
 	if err != nil {
