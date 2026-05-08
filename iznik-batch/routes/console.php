@@ -380,22 +380,20 @@ Schedule::command('mail:admin:chase')
 // Process pending chat messages (processingrequired=1): spam check, roster update, reopen closed chats.
 // V1: cron/chat_process.php (continuous daemon, restarted by cron every 2 minutes)
 // IncomingMailService creates messages with processingrequired=1; this makes them visible to notifications.
-// — disabled pending sign-off
-// Schedule::command('chats:process-incoming')
-//     ->everyMinute()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('chats:process-incoming'))
-//     ->runInBackground();
+Schedule::command('chats:process-incoming')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:process-incoming'))
+    ->runInBackground();
 
 // Process pending membership history entries: send per-group welcome emails, flag reviewed members.
 // V1: cron/memberships_processing.php (every 1 minute)
 // Go API creates memberships_history with processingrequired=1; this sends welcome emails + review flags.
-// — disabled pending sign-off
-// Schedule::command('memberships:process')
-//     ->everyMinute()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('memberships:process'))
-//     ->runInBackground();
+Schedule::command('memberships:process')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('memberships:process'))
+    ->runInBackground();
 
 // Process pending GDPR data export requests and purge old completed data.
 // V1: cron/exports.php (every 1 minute)

@@ -331,6 +331,8 @@ var cronJobs = []CronJob{
 	{Command: "groups:update-stats", Name: "Group Stats", Description: "Daily group stats: repost settings, polyindex, activity/funding, mod counts, stats_outcomes", Schedule: "Daily at 2am", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
 	{Command: "chats:update-counts", Name: "Chat Counts", Description: "Hourly chat-room message count refresh + reopens closed User2Mod chats with unseen mod replies", Schedule: "Hourly", IntervalMinutes: 60, Category: "Groups & Chats", Active: true},
 	{Command: "chats:update-expected", Name: "Chat Reply Expected", Description: "Updates chat reply-expectation tracking and per-user reply-time metrics", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Groups & Chats", Active: true},
+	{Command: "chats:process-incoming", Name: "Process Incoming Chats", Description: "Processes pending chat messages (processingrequired=1) — spam checks, roster update, reopen closed chats", Schedule: "Every minute", IntervalMinutes: 1, Category: "Groups & Chats", Active: true},
+	{Command: "memberships:process", Name: "Process Memberships", Description: "Processes pending membership history entries — sends per-group welcome emails, flags reviewed members", Schedule: "Every minute", IntervalMinutes: 1, Category: "Groups & Chats", Active: true},
 
 	// Locations
 	{Command: "locations:fix-skewed", Name: "Fix Skewed Locations", Description: "Fixes locations where latitude and longitude are swapped (and updates referenced messages)", Schedule: "Daily at 5am", IntervalMinutes: 1440, Category: "Locations", Active: true},
