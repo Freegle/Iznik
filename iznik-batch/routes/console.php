@@ -387,6 +387,16 @@ Schedule::command('mail:admin:chase')
 //     ->sendOutputTo(cronLog('chats:process-incoming'))
 //     ->runInBackground();
 
+// Process pending membership history entries: send per-group welcome emails, flag reviewed members.
+// V1: cron/memberships_processing.php (every 1 minute)
+// Go API creates memberships_history with processingrequired=1; this sends welcome emails + review flags.
+// — disabled pending sign-off
+// Schedule::command('memberships:process')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('memberships:process'))
+//     ->runInBackground();
+
 // Process pending GDPR data export requests and purge old completed data.
 // V1: cron/exports.php (every 1 minute)
 // — disabled pending sign-off
