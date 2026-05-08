@@ -122,6 +122,14 @@ Schedule::command('cleanup:sessions')
     ->sendOutputTo(cronLog('cleanup:sessions'))
     ->runInBackground();
 
+// Remove spam members from groups and clean up their content.
+// V1: cron/check_spammers.php
+Schedule::command('users:remove-spammers')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:remove-spammers'))
+    ->runInBackground();
+
 // Process bounced emails — mark as invalid.
 // V1: cron/bounce.php + bounce_users.php
 Schedule::command('mail:bounced')
