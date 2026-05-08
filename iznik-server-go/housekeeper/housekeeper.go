@@ -258,6 +258,10 @@ type cronJobStatus struct {
 }
 
 // cronJobs is the static registry of all Laravel scheduled commands.
+//
+// To keep this in sync with the live scheduler, run:
+//   docker exec freegledocker-batch-prod php artisan schedule:list
+// and update the entries below to match.
 var cronJobs = []CronJob{
 	// System
 	{Command: "deploy:watch", Name: "Deployment Watcher", Description: "Detects code updates and auto-refreshes application", Schedule: "Every minute", IntervalMinutes: 1, Category: "System", Active: false},
@@ -270,37 +274,78 @@ var cronJobs = []CronJob{
 
 	// Email — Member Engagement
 	{Command: "mail:welcome:send", Name: "Welcome Emails", Description: "Sends welcome emails to new members", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Engagement", Active: true},
+	{Command: "mail:notifications:chaseup", Name: "Notification Chase-up", Description: "Sends emails for unseen, unmailed site notifications", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Email — Engagement", Active: true},
 
 	// Email — Admin
 	{Command: "mail:admin:copy", Name: "Admin Copy", Description: "Creates per-group copies of suggested admin emails for moderator approval", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Admin", Active: true},
 	{Command: "mail:admin:send", Name: "Admin Send", Description: "Sends approved admin emails to group members", Schedule: "Every minute", IntervalMinutes: 1, Category: "Email — Admin", Active: true},
 	{Command: "mail:admin:chase", Name: "Admin Chase", Description: "Reminds moderators about pending suggested admin emails (after 48h)", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Admin", Active: true},
 
-	// Messages
-	{Command: "messages:auto-approve", Name: "Auto-Approve", Description: "Auto-approves pending messages after 48 hours", Schedule: "Hourly", IntervalMinutes: 60, Category: "Messages", Active: true},
-	{Command: "messages:auto-repost", Name: "Auto-Repost", Description: "Reposts messages based on group repost settings", Schedule: "Hourly", IntervalMinutes: 60, Category: "Messages", Active: true},
-	{Command: "messages:chase-up", Name: "Chase Up", Description: "Chases up messages with replies but no outcome", Schedule: "Hourly", IntervalMinutes: 60, Category: "Messages", Active: true},
-
 	// Email — Bounces
 	{Command: "mail:bounced", Name: "Bounce Processing", Description: "Processes bounced emails and marks addresses as invalid", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Bounces", Active: true},
 
-	// Data & Cleanup
-	{Command: "mail:spool:process --cleanup", Name: "Spool Cleanup", Description: "Cleans up sent emails older than 7 days from spool directory", Schedule: "Daily at 4am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+	// Messages — Lifecycle
+	{Command: "messages:auto-approve", Name: "Auto-Approve", Description: "Auto-approves pending messages after 48 hours", Schedule: "Hourly", IntervalMinutes: 60, Category: "Messages — Lifecycle", Active: true},
+	{Command: "messages:auto-repost", Name: "Auto-Repost", Description: "Reposts messages based on group repost settings", Schedule: "Hourly", IntervalMinutes: 60, Category: "Messages — Lifecycle", Active: true},
+	{Command: "messages:chase-up", Name: "Chase Up", Description: "Chases up messages with replies but no outcome", Schedule: "Hourly", IntervalMinutes: 60, Category: "Messages — Lifecycle", Active: true},
+	{Command: "messages:process-expired --spatial", Name: "Process Expired", Description: "Marks deadline-expired messages as expired and cleans up the spatial index entries for already-expired messages", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Messages — Lifecycle", Active: true},
+	{Command: "messages:remap-subjects", Name: "Remap Subjects", Description: "Updates message subjects when associated location names have changed", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Lifecycle", Active: true},
+
+	// Messages — Index & Search
+	{Command: "messages:update-index", Name: "Index Unindexed", Description: "Adds search index entries for recent approved messages that aren't indexed yet", Schedule: "Every 30 minutes", IntervalMinutes: 30, Category: "Messages — Index", Active: true},
+	{Command: "messages:deindex", Name: "Deindex Old", Description: "Removes search index entries for messages older than 30 days", Schedule: "Daily at 1am", IntervalMinutes: 1440, Category: "Messages — Index", Active: true},
+	{Command: "messages:update-spatial-index", Name: "Spatial Index", Description: "Updates messages_spatial: upserts recent messages, applies outcomes, removes deleted/old/non-approved entries", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Index", Active: true},
+	{Command: "embeddings:generate", Name: "Vector Embeddings", Description: "Generates vector embeddings for new messages (semantic search)", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Index", Active: true},
+
+	// Cleanup & Purges
+	{Command: "mail:spool:process --cleanup --cleanup-days=7", Name: "Spool Cleanup", Description: "Cleans up sent emails older than 7 days from spool directory", Schedule: "Daily at 4am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
 	{Command: "mail:cleanup-archive", Name: "Email Archive Cleanup", Description: "Removes incoming email archives older than 48 hours", Schedule: "Hourly", IntervalMinutes: 60, Category: "Cleanup", Active: true},
-	{Command: "cleanup:search-duplicates", Name: "Search Dedup", Description: "Deduplicates searches", Schedule: "Hourly", IntervalMinutes: 60, Category: "Cleanup", Active: true},
-	{Command: "cleanup:chat-duplicates", Name: "Chat Dedup", Description: "Deduplicates chat messages", Schedule: "Every 2 hours", IntervalMinutes: 120, Category: "Cleanup", Active: true},
-	{Command: "cleanup:sessions", Name: "Session Cleanup", Description: "Cleans up old sessions", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+	{Command: "cleanup:search-duplicates", Name: "Search Dedup", Description: "Deduplicates consecutive searches", Schedule: "Hourly", IntervalMinutes: 60, Category: "Cleanup", Active: true},
+	{Command: "cleanup:chat-duplicates", Name: "Chat Dedup", Description: "Deduplicates consecutive chat messages", Schedule: "Every 2 hours", IntervalMinutes: 120, Category: "Cleanup", Active: true},
+	{Command: "cleanup:sessions", Name: "Session Cleanup", Description: "Cleans up old sessions and login links", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+	{Command: "cleanup:whatjobs-spam", Name: "WhatJobs Spam", Description: "Deletes spammy WhatJobs postings (same body hash > 50 occurrences)", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Cleanup", Active: true},
+	{Command: "purge:chats", Name: "Purge Chats", Description: "Daily purge of spam chat messages, empty rooms, orphaned chat images", Schedule: "Daily at 2am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+	{Command: "purge:logs", Name: "Purge Logs", Description: "Daily log/bounce/likes purge across 16 log tables", Schedule: "Daily at 3:30am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+	{Command: "purge:messages", Name: "Purge Messages", Description: "Purges messages_history, pending/draft/non-Freegle/deleted/stranded messages, HTML body, message source, orphans", Schedule: "Daily at 2:30am", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+
+	// Data & Integrations
 	{Command: "data:update-cpi", Name: "CPI Data Update", Description: "Fetches UK CPI inflation data from ONS for reuse benefit calculations", Schedule: "Monthly", IntervalMinutes: 43200, Category: "Data", Active: true},
+	{Command: "data:fetch-app-versions", Name: "App Versions Fetch", Description: "Fetches latest iOS and Android app versions from app stores", Schedule: "Every 6 hours", IntervalMinutes: 360, Category: "Data", Active: true},
+	{Command: "domains:update-common", Name: "Common Domains", Description: "Updates domains_common table with email domains used by > 1000 users", Schedule: "Weekly (Fri 7am)", IntervalMinutes: 10080, Category: "Data", Active: true},
+	{Command: "integrations:sync-lovejunk", Name: "LoveJunk Sync", Description: "Syncs Freegle Offer messages with the LoveJunk partner API", Schedule: "Every minute", IntervalMinutes: 1, Category: "Data", Active: true},
+	{Command: "donations:update-ads-target", Name: "Ads-off Target", Description: "Updates the ads-off donation target based on recent donations", Schedule: "Every minute", IntervalMinutes: 1, Category: "Data", Active: true},
 
 	// Monitoring
 	{Command: "monitor:email-health", Name: "Email Health", Description: "Alerts if incoming/outgoing email flow drops below thresholds", Schedule: "Every 15 minutes", IntervalMinutes: 15, Category: "Monitoring", Active: true},
+	{Command: "emails:validate", Name: "Validate Emails", Description: "Daily syntactic email validation for newly-added addresses (last 30 days)", Schedule: "Daily at 4:30am", IntervalMinutes: 1440, Category: "Monitoring", Active: true},
 
 	// AI & Analytics
 	{Command: "ai:usage-counts:update", Name: "AI Usage Counts", Description: "Updates usage counts for AI-generated images across posts", Schedule: "Hourly", IntervalMinutes: 60, Category: "AI & Analytics", Active: true},
-	{Command: "mail:ai-image-review:digest", Name: "AI Image Review Digest", Description: "Sends daily digest of AI image review verdicts to geeks", Schedule: "Daily at 12pm", IntervalMinutes: 1440, Category: "AI & Analytics", Active: true},
+	{Command: "messages:generate-illustrations", Name: "AI Illustrations: Messages", Description: "Generates AI illustrations for messages with no photos (via pollinations.ai)", Schedule: "Every minute", IntervalMinutes: 1, Category: "AI & Analytics", Active: true},
+	{Command: "jobs:generate-illustrations", Name: "AI Illustrations: Jobs", Description: "Generates AI illustrations for canonical job categories (pre-caching)", Schedule: "Every 30 minutes", IntervalMinutes: 30, Category: "AI & Analytics", Active: true},
+	{Command: "microvolunteering:score", Name: "Microvolunteering Score", Description: "Scores microvolunteering actions by quorum verdict and promotes accurate users from Basic to Moderate trust", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "AI & Analytics", Active: true},
 	{Command: "data:git-summary", Name: "Git Summary", Description: "Sends AI-powered summary of weekly code changes to Discourse", Schedule: "Weekly (Wed 6pm)", IntervalMinutes: 10080, Category: "AI & Analytics", Active: true},
 
-	// User Cleanup (disabled — dry-run first before enabling)
+	// Groups & Chats
+	{Command: "groups:update-counts", Name: "Group Member Counts", Description: "Hourly group member/mod count refresh", Schedule: "Hourly", IntervalMinutes: 60, Category: "Groups & Chats", Active: true},
+	{Command: "groups:update-stats", Name: "Group Stats", Description: "Daily group stats: repost settings, polyindex, activity/funding, mod counts, stats_outcomes", Schedule: "Daily at 2am", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
+	{Command: "chats:update-counts", Name: "Chat Counts", Description: "Hourly chat-room message count refresh + reopens closed User2Mod chats with unseen mod replies", Schedule: "Hourly", IntervalMinutes: 60, Category: "Groups & Chats", Active: true},
+	{Command: "chats:update-expected", Name: "Chat Reply Expected", Description: "Updates chat reply-expectation tracking and per-user reply-time metrics", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Groups & Chats", Active: true},
+	{Command: "chats:process-incoming", Name: "Process Incoming Chats", Description: "Processes pending chat messages (processingrequired=1) — spam checks, roster update, reopen closed chats", Schedule: "Every minute", IntervalMinutes: 1, Category: "Groups & Chats", Active: true},
+	{Command: "memberships:process", Name: "Process Memberships", Description: "Processes pending membership history entries — sends per-group welcome emails, flags reviewed members", Schedule: "Every minute", IntervalMinutes: 1, Category: "Groups & Chats", Active: true},
+
+	// Locations
+	{Command: "locations:fix-skewed", Name: "Fix Skewed Locations", Description: "Fixes locations where latitude and longitude are swapped (and updates referenced messages)", Schedule: "Daily at 5am", IntervalMinutes: 1440, Category: "Locations", Active: true},
+
+	// User Management
+	{Command: "users:update-ratings", Name: "Rating Visibility", Description: "Updates rating visibility based on whether the rater and ratee actually had chat interaction", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "User Management", Active: true},
+	{Command: "users:update-support-roles", Name: "Support Roles", Description: "Grants or removes Support Tools access based on team membership (never downgrades Admin users)", Schedule: "Hourly", IntervalMinutes: 60, Category: "User Management", Active: true},
+	{Command: "users:update-kudos", Name: "User Kudos", Description: "Daily kudos recalculation for users active in the last 2 days", Schedule: "Daily at 4am", IntervalMinutes: 1440, Category: "User Management", Active: true},
+	{Command: "users:update-lastaccess", Name: "Last Access", Description: "Hourly fallback users.lastaccess update from chat / membership activity", Schedule: "Hourly", IntervalMinutes: 60, Category: "User Management", Active: true},
+	{Command: "users:update-modmails", Name: "Mod Mails Sync", Description: "Syncs recent mod actions into users_modmails (rejected/deleted/replied) and prunes old entries", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "User Management", Active: true},
+	{Command: "users:remap-locations", Name: "Remap Locations", Description: "Updates cached location names in user settings when the canonical name has changed", Schedule: "Daily at 5am", IntervalMinutes: 1440, Category: "User Management", Active: true},
+	{Command: "users:process-exports", Name: "GDPR Exports", Description: "Processes pending GDPR data export requests; purges export data older than 7 days", Schedule: "Every minute", IntervalMinutes: 1, Category: "User Management", Active: true},
+	{Command: "users:update-engagement", Name: "Engagement Classification", Description: "Updates user engagement classifications (New / Occasional / Frequent / Obsessed / Inactive / Dormant) based on recent activity", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "User Management", Active: true},
 	{Command: "users:cleanup", Name: "User Cleanup", Description: "Cleans up Yahoo Groups users, inactive users, GDPR forgets, and fully forgotten users", Schedule: "Weekly (Sun 6am)", IntervalMinutes: 10080, Category: "User Management", Active: false},
 }
 

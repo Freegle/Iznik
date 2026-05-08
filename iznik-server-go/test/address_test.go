@@ -344,3 +344,58 @@ func TestAddressUpdateWithLat(t *testing.T) {
 	assert.InDelta(t, 51.5074, addr.Lat, 0.001)
 	assert.InDelta(t, -0.1278, addr.Lng, 0.001)
 }
+
+func TestAddressCreateWithoutLatLngUsesPostcodeCoordinates(t *testing.T) {
+	// Regression: when frontend posts only {pafid, instructions} (no lat/lng),
+	// the stored lat/lng must be NULL — not 0.0 — so COALESCE falls back to the
+	// postcode coordinates and the address doesn't resolve to Null Island (0,0).
+	prefix := uniquePrefix("addr_coords")
+	userID, token := CreateFullTestUser(t, prefix)
+
+	db := database.DBConn
+	db.Exec("INSERT IGNORE INTO paf_addresses (id, postcodeid, udprn) VALUES (102367697, 1687412, 50464673)")
+
+	var existingPafID uint64
+	db.Raw("SELECT pafid FROM users_addresses WHERE userid = ? LIMIT 1", userID).Scan(&existingPafID)
+
+	var newPafID uint64
+	db.Raw("SELECT id FROM paf_addresses WHERE id != ? LIMIT 1", existingPafID).Scan(&newPafID)
+	assert.NotZero(t, newPafID, "Need a different PAF address for test")
+
+	// Verify test data: the postcode must have non-zero coordinates
+	type LatLng struct{ Lat, Lng float64 }
+	var postcode LatLng
+	db.Raw("SELECT l.lat, l.lng FROM paf_addresses p INNER JOIN locations l ON l.id = p.postcodeid WHERE p.id = ?", newPafID).Scan(&postcode)
+	assert.NotZero(t, postcode.Lat, "test PAF address must have non-zero postcode lat")
+
+	// Create address as the front end does from the chat flow: pafid + instructions only, no lat/lng.
+	body, _ := json2.Marshal(map[string]interface{}{
+		"pafid":        newPafID,
+		"instructions": "Leave at door",
+	})
+	req := httptest.NewRequest("PUT", "/api/address?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	newID := uint64(result["id"].(float64))
+
+	// DB must store NULL, not 0.0 — otherwise COALESCE won't fall back to the postcode.
+	var nullLatCount int64
+	db.Raw("SELECT COUNT(*) FROM users_addresses WHERE id = ? AND lat IS NULL", newID).Scan(&nullLatCount)
+	assert.Equal(t, int64(1), nullLatCount, "lat must be NULL in DB when not provided (not 0)")
+
+	// API read-back must return postcode coordinates, not 0,0 (Null Island).
+	idstr := strconv.FormatUint(newID, 10)
+	resp, _ = getApp().Test(httptest.NewRequest("GET", "/api/address/"+idstr+"?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var addr address2.Address
+	json2.Unmarshal(rsp(resp), &addr)
+	assert.NotZero(t, addr.Lat, "lat must be postcode coordinates, not 0 (Null Island)")
+	assert.NotZero(t, addr.Lng, "lng must be postcode coordinates, not 0 (Null Island)")
+	assert.InDelta(t, postcode.Lat, addr.Lat, 0.001, "should use postcode lat from locations table")
+	assert.InDelta(t, postcode.Lng, addr.Lng, 0.001, "should use postcode lng from locations table")
+}

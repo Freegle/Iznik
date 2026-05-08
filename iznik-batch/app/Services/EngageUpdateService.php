@@ -20,85 +20,142 @@ class EngageUpdateService
     private const OBSESSED_LOOKBACK_DAYS = 31;
 
     /**
+     * Run a WHERE-driven bulk UPDATE against `users` safely under Galera.
+     *
+     * Step 1: plucks every matching ID up front (read-only, releases when done).
+     * Step 2: updates each row by primary key (narrow PK lock, no gap-lock scan).
+     *
+     * Matches the per-row pattern used elsewhere in the codebase. Avoids the
+     * gap-lock deadlock a full-table-scan UPDATE causes when concurrent
+     * writes on `users` overlap with the WHERE column.
+     *
+     * @param  callable  $applyWhere  receives the query builder, applies WHERE clauses
+     * @param  array     $update      column => value to set
+     * @return int                    total rows affected
+     */
+    private function bulkUpdate(callable $applyWhere, array $update): int
+    {
+        $query = DB::table('users');
+        $applyWhere($query);
+        $ids = $query->orderBy('id')->pluck('id');
+
+        $total = 0;
+        foreach ($ids as $id) {
+            DB::table('users')->where('id', $id)->update($update);
+            $total++;
+        }
+
+        return $total;
+    }
+
+    /**
      * Update engagement classifications for all users.
      * Mirrors V1 Engage::updateEngagement().
      *
      * @return int Number of users updated.
      */
-    public function updateEngagement(): int
+    public function updateEngagement(bool $dryRun = false): array
     {
-        $count = 0;
+        $stats = [
+            'null_to_new' => $this->setNewForRecentNulls($dryRun),
+            'null_to_inactive' => $this->setInactiveForRemainingNulls($dryRun),
+            'new_or_occasional_to_inactive' => $this->setInactiveForStaleNewOrOccasional($dryRun),
+            'to_dormant' => $this->setDormantForLongInactive($dryRun),
+            'to_occasional' => $this->setOccasionalForRecentlyActive($dryRun),
+            'occasional_to_frequent' => $this->setFrequentForActiveOccasional($dryRun),
+            'frequent_to_obsessed' => $this->setObsessedForVeryActiveFrequent($dryRun),
+            'obsessed_to_frequent' => $this->setFrequentForDroppedObsessed($dryRun),
+        ];
+        $stats['total'] = array_sum($stats);
 
-        $count += $this->setNewForRecentNulls();
-        $count += $this->setInactiveForRemainingNulls();
-        $count += $this->setInactiveForStaleNewOrOccasional();
-        $count += $this->setDormantForLongInactive();
-        $count += $this->setOccasionalForRecentlyActive();
-        $count += $this->setFrequentForActiveOccasional();
-        $count += $this->setObsessedForVeryActiveFrequent();
-        $count += $this->setFrequentForDroppedObsessed();
+        Log::info('EngageUpdate: ' . ($dryRun ? 'would update ' : 'updated ') . "{$stats['total']} users", $stats);
 
-        Log::info("EngageUpdate: updated {$count} users");
-
-        return $count;
+        return $stats;
     }
 
-    private function setNewForRecentNulls(): int
+    private function setNewForRecentNulls(bool $dryRun = false): int
     {
         $cutoff = now()->subDays(self::LOOKBACK_DAYS)->startOfDay()->toDateString();
 
-        $affected = DB::table('users')
-            ->whereNull('engagement')
-            ->where('added', '>=', $cutoff)
-            ->update(['engagement' => 'New']);
+        $where = function ($q) use ($cutoff) {
+            $q->whereNull('engagement')->where('added', '>=', $cutoff);
+        };
 
+        if ($dryRun) {
+            $count = DB::table('users')->where($where)->count();
+            Log::info("EngageUpdate: NULL => New: would-{$count}");
+            return $count;
+        }
+
+        $affected = $this->bulkUpdate($where, ['engagement' => 'New']);
         Log::info("EngageUpdate: NULL => New: {$affected}");
         return $affected;
     }
 
-    private function setInactiveForRemainingNulls(): int
+    private function setInactiveForRemainingNulls(bool $dryRun = false): int
     {
-        $affected = DB::table('users')
-            ->whereNull('engagement')
-            ->update(['engagement' => 'Inactive']);
+        $where = function ($q) {
+            $q->whereNull('engagement');
+        };
 
+        if ($dryRun) {
+            $count = DB::table('users')->where($where)->count();
+            Log::info("EngageUpdate: NULL => Inactive: would-{$count}");
+            return $count;
+        }
+
+        $affected = $this->bulkUpdate($where, ['engagement' => 'Inactive']);
         Log::info("EngageUpdate: NULL => Inactive: {$affected}");
         return $affected;
     }
 
-    private function setInactiveForStaleNewOrOccasional(): int
+    private function setInactiveForStaleNewOrOccasional(bool $dryRun = false): int
     {
         $cutoff = now()->subDays(self::RECENT_ACCESS_DAYS)->startOfDay()->toDateString();
 
-        $affected = DB::table('users')
-            ->whereIn('engagement', ['New', 'Occasional'])
-            ->where(function ($q) use ($cutoff) {
-                $q->whereNull('lastaccess')
-                    ->orWhere('lastaccess', '<', $cutoff);
-            })
-            ->update(['engagement' => 'Inactive']);
+        $where = function ($q) use ($cutoff) {
+            $q->whereIn('engagement', ['New', 'Occasional'])
+                ->where(function ($qq) use ($cutoff) {
+                    $qq->whereNull('lastaccess')
+                        ->orWhere('lastaccess', '<', $cutoff);
+                });
+        };
 
+        if ($dryRun) {
+            $count = DB::table('users')->where($where)->count();
+            Log::info("EngageUpdate: New/Occasional => Inactive: would-{$count}");
+            return $count;
+        }
+
+        $affected = $this->bulkUpdate($where, ['engagement' => 'Inactive']);
         Log::info("EngageUpdate: New/Occasional => Inactive: {$affected}");
         return $affected;
     }
 
-    private function setDormantForLongInactive(): int
+    private function setDormantForLongInactive(bool $dryRun = false): int
     {
         $cutoff = now()->subDays(self::USER_INACTIVE_DAYS)->startOfDay()->toDateString();
 
-        $affected = DB::table('users')
-            ->where('engagement', '!=', 'Dormant')
-            ->where(function ($q) use ($cutoff) {
-                $q->whereNull('lastaccess')
-                    ->orWhere('lastaccess', '<', $cutoff);
-            })
-            ->update(['engagement' => 'Dormant']);
+        $where = function ($q) use ($cutoff) {
+            $q->where('engagement', '!=', 'Dormant')
+                ->where(function ($qq) use ($cutoff) {
+                    $qq->whereNull('lastaccess')
+                        ->orWhere('lastaccess', '<', $cutoff);
+                });
+        };
 
+        if ($dryRun) {
+            $count = DB::table('users')->where($where)->count();
+            Log::info("EngageUpdate: * => Dormant: would-{$count}");
+            return $count;
+        }
+
+        $affected = $this->bulkUpdate($where, ['engagement' => 'Dormant']);
         Log::info("EngageUpdate: * => Dormant: {$affected}");
         return $affected;
     }
 
-    private function setOccasionalForRecentlyActive(): int
+    private function setOccasionalForRecentlyActive(bool $dryRun = false): int
     {
         $recentCutoff = now()->subDays(self::RECENT_ACCESS_DAYS)->startOfDay()->toDateString();
         $recentTimestamp = now()->subDays(self::RECENT_ACCESS_DAYS)->timestamp;
@@ -114,16 +171,18 @@ class EngageUpdateService
             $lastActivity = $this->lastPostOrReply($userId);
 
             if ($lastActivity && strtotime($lastActivity) > $recentTimestamp) {
-                DB::table('users')->where('id', $userId)->update(['engagement' => 'Occasional']);
+                if (!$dryRun) {
+                    DB::table('users')->where('id', $userId)->update(['engagement' => 'Occasional']);
+                }
                 $updated++;
             }
         }
 
-        Log::info("EngageUpdate: New/Inactive/Dormant => Occasional: {$updated}");
+        Log::info('EngageUpdate: New/Inactive/Dormant => Occasional: ' . ($dryRun ? "would-{$updated}" : $updated));
         return $updated;
     }
 
-    private function setFrequentForActiveOccasional(): int
+    private function setFrequentForActiveOccasional(bool $dryRun = false): int
     {
         $cutoff = now()->subDays(self::FREQUENT_LOOKBACK_DAYS)->toDateString();
 
@@ -134,16 +193,18 @@ class EngageUpdateService
         $updated = 0;
         foreach ($occasional as $userId) {
             if ($this->postsSince($userId, $cutoff) > self::OCCASIONAL_TO_FREQUENT_POSTS) {
-                DB::table('users')->where('id', $userId)->update(['engagement' => 'Frequent']);
+                if (!$dryRun) {
+                    DB::table('users')->where('id', $userId)->update(['engagement' => 'Frequent']);
+                }
                 $updated++;
             }
         }
 
-        Log::info("EngageUpdate: Occasional => Frequent: {$updated}");
+        Log::info('EngageUpdate: Occasional => Frequent: ' . ($dryRun ? "would-{$updated}" : $updated));
         return $updated;
     }
 
-    private function setObsessedForVeryActiveFrequent(): int
+    private function setObsessedForVeryActiveFrequent(bool $dryRun = false): int
     {
         $cutoff = now()->subDays(self::OBSESSED_LOOKBACK_DAYS)->toDateString();
 
@@ -154,16 +215,18 @@ class EngageUpdateService
         $updated = 0;
         foreach ($frequent as $userId) {
             if ($this->postsSince($userId, $cutoff) >= self::FREQUENT_TO_OBSESSED_POSTS) {
-                DB::table('users')->where('id', $userId)->update(['engagement' => 'Obsessed']);
+                if (!$dryRun) {
+                    DB::table('users')->where('id', $userId)->update(['engagement' => 'Obsessed']);
+                }
                 $updated++;
             }
         }
 
-        Log::info("EngageUpdate: Frequent => Obsessed: {$updated}");
+        Log::info('EngageUpdate: Frequent => Obsessed: ' . ($dryRun ? "would-{$updated}" : $updated));
         return $updated;
     }
 
-    private function setFrequentForDroppedObsessed(): int
+    private function setFrequentForDroppedObsessed(bool $dryRun = false): int
     {
         $cutoff = now()->subDays(self::FREQUENT_LOOKBACK_DAYS)->toDateString();
 
@@ -174,12 +237,14 @@ class EngageUpdateService
         $updated = 0;
         foreach ($obsessed as $userId) {
             if ($this->postsSince($userId, $cutoff) <= self::OCCASIONAL_TO_FREQUENT_POSTS) {
-                DB::table('users')->where('id', $userId)->update(['engagement' => 'Frequent']);
+                if (!$dryRun) {
+                    DB::table('users')->where('id', $userId)->update(['engagement' => 'Frequent']);
+                }
                 $updated++;
             }
         }
 
-        Log::info("EngageUpdate: Obsessed => Frequent: {$updated}");
+        Log::info('EngageUpdate: Obsessed => Frequent: ' . ($dryRun ? "would-{$updated}" : $updated));
         return $updated;
     }
 

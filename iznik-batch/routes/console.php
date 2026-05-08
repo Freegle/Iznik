@@ -377,22 +377,39 @@ Schedule::command('mail:admin:chase')
 // NOT YET ENABLED — enable individually after testing
 // =============================================================================
 
+// Process pending chat messages (processingrequired=1): spam check, roster update, reopen closed chats.
+// V1: cron/chat_process.php (continuous daemon, restarted by cron every 2 minutes)
+// IncomingMailService creates messages with processingrequired=1; this makes them visible to notifications.
+Schedule::command('chats:process-incoming')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:process-incoming'))
+    ->runInBackground();
+
+// Process pending membership history entries: send per-group welcome emails, flag reviewed members.
+// V1: cron/memberships_processing.php (every 1 minute)
+// Go API creates memberships_history with processingrequired=1; this sends welcome emails + review flags.
+Schedule::command('memberships:process')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('memberships:process'))
+    ->runInBackground();
+
 // Process pending GDPR data export requests and purge old completed data.
 // V1: cron/exports.php (every 1 minute)
-// — disabled pending sign-off
-// Schedule::command('users:process-exports')
-//     ->everyMinute()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('users:process-exports'))
-//     ->runInBackground();
+Schedule::command('users:process-exports')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:process-exports'))
+    ->runInBackground();
 
 // Update user engagement classifications based on activity.
 // V1: cron/engage_update.php (daily at 03:00)
-// Schedule::command('users:update-engagement')
-//     ->dailyAt('03:00')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('users:update-engagement'))
-//     ->runInBackground();
+Schedule::command('users:update-engagement')
+    ->dailyAt('03:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-engagement'))
+    ->runInBackground();
 
 // Remove search index entries for messages older than 30 days.
 // V1: cron/message_deindex.php (daily at 01:00)
