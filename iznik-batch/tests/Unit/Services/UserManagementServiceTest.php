@@ -711,7 +711,7 @@ class UserManagementServiceTest extends TestCase
         $user = $this->createTestUser();
 
         // Insert an invalid but bouncing email — should be skipped.
-        $bouncingId = DB::table('users_emails')->insertGetId([
+        DB::table('users_emails')->insert([
             'email' => 'not-valid',
             'userid' => $user->id,
             'added' => now(),
@@ -721,7 +721,10 @@ class UserManagementServiceTest extends TestCase
         $this->service->validateEmails();
 
         // Still exists because bouncing emails are skipped.
-        $this->assertDatabaseHas('users_emails', ['id' => $bouncingId]);
+        $this->assertDatabaseHas('users_emails', [
+            'userid' => $user->id,
+            'email' => 'not-valid',
+        ]);
     }
 
     public function test_validate_emails_returns_stats(): void
