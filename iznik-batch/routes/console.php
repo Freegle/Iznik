@@ -130,6 +130,15 @@ Schedule::command('mail:bounced')
     ->sendOutputTo(cronLog('mail:bounced'))
     ->runInBackground();
 
+// Moderator work notifications — tells mods about pending messages, events, etc.
+// Only runs 08:00–21:00; deduplicates against last sent summary.
+// V1: cron/mod_notifs.php
+Schedule::command('mail:mod-notifs')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:mod-notifs'))
+    ->runInBackground();
+
 // Email health monitor — alerts if incoming or outgoing email flow drops below
 // configurable thresholds during daytime hours.
 Schedule::command('monitor:email-health')
