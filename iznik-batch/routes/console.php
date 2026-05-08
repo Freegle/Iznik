@@ -236,6 +236,14 @@ Schedule::command('chats:update-expected')
     ->sendOutputTo(cronLog('chats:update-expected'))
     ->runInBackground();
 
+// Warn innocent users who chatted with spammers; auto-mark spam chat messages.
+// V1: cron/chat_spam.php
+Schedule::command('chats:process-spam')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:process-spam'))
+    ->runInBackground();
+
 // =============================================================================
 // DISABLED COMMANDS (to be enabled when ready)
 // =============================================================================
