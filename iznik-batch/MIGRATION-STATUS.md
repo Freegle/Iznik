@@ -268,7 +268,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`visualise.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~Data visualisation~~ — **Migrated: `messages:update-visualise`** |
 | ~~`microvolunteering.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~Micro-volunteering~~ — **Migrated: `microvolunteering:score`** |
 | ~~`newsfeed_link_previews.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Newsfeed link previews~~ — **Covered: `newsfeed:generate-link-previews` (PR #405)** |
-| `tn_sync.php` | Every 1 min | Medium | Trash Nothing sync |
+| ~~`tn_sync.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Trash Nothing sync~~ — **Migrated: `integrations:sync-trashnothing`** |
 
 ## Medium Frequency Scripts (Every 10-60 min) - Not Started
 
