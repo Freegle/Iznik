@@ -1847,9 +1847,17 @@ jobs:
             checkout_code() {
               if [ -d .git ]; then
                 git fetch --prune origin
+                git reset --hard HEAD
+                git clean -fd
                 git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
               else
-                git clone "$CIRCLE_REPOSITORY_URL" .
+                # git clone fails when the directory isn't empty (leftover files from
+                # a previous build). Use git init + fetch instead, which works either way.
+                # git clean removes untracked files that would block git checkout.
+                git init
+                git remote add origin "$CIRCLE_REPOSITORY_URL" 2>/dev/null || git remote set-url origin "$CIRCLE_REPOSITORY_URL"
+                git fetch --prune origin
+                git clean -fd
                 git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
               fi
             }

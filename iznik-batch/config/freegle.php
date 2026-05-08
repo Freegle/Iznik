@@ -83,6 +83,10 @@ return [
         'credentials_path' => env('FIREBASE_CREDENTIALS_PATH', '/etc/firebase.json'),
     ],
 
+    // Avatar server — generates boring-avatars PNGs matching the frontend's GeneratedAvatar component.
+    // In production this must be a publicly accessible URL so email clients can fetch the images.
+    'avatar_server_url' => env('FREEGLE_AVATAR_SERVER_URL', 'https://www.ilovefreegle.org/api/avatar'),
+
     'images' => [
         // Image domain for user profile images
         'domain' => env('FREEGLE_IMAGES_DOMAIN', 'https://images.ilovefreegle.org'),
@@ -309,5 +313,10 @@ return [
         // the code without changing existing Trash Nothing behaviour.
         // --dry-run still works regardless (it only reads).
         'tn_enabled' => env('TN_DEDUP_ENABLED', false),
+    ],
+
+    'lovejunk' => [
+        'api' => env('LOVE_JUNK_API', 'https://elmer.api-lovejunk.com/elmer/v1'),
+        'secret' => env('LOVE_JUNK_SECRET', ''),
     ],
 ];

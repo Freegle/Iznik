@@ -3604,11 +3604,17 @@ class IncomingMailService
      */
     private function addEmailToUser(int $userId, ?string $email): void
     {
-        if (empty($email)) {
+        $email = trim((string) $email);
+
+        if ($email === '') {
             return;
         }
 
-        $email = trim($email);
+        // Reject anything that isn't a syntactically valid address — bounce
+        // envelope-froms like `MAILER-DAEMON` or `<>` reach this code path.
+        if (!preg_match(Message::EMAIL_REGEXP, $email)) {
+            return;
+        }
 
         // Don't add system addresses
         $groupDomain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');

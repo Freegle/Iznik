@@ -8,6 +8,19 @@ import (
 	"github.com/freegle/iznik-server-go/user"
 )
 
+// saveProfileImage inserts a profile picture URL for a user.
+// GetProfileRecord uses ORDER BY id DESC LIMIT 1, so the latest INSERT is always shown.
+// Only called when a real (non-silhouette) picture URL is available.
+func saveProfileImage(userID uint64, pictureURL string) {
+	if pictureURL == "" {
+		return
+	}
+	database.DBConn.Exec(
+		"INSERT INTO users_images (userid, url, `default`, contenttype) VALUES (?, ?, 0, 'image/jpeg')",
+		userID, pictureURL,
+	)
+}
+
 // socialMatchOrCreate finds an existing user by email or social login UID,
 // creates a new one if needed, and returns the user ID.
 // loginType should be utils.LOGIN_TYPE_GOOGLE or utils.LOGIN_TYPE_FACEBOOK.

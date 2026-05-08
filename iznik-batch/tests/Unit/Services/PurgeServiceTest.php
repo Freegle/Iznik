@@ -137,6 +137,18 @@ class PurgeServiceTest extends TestCase
         $this->assertEquals(1, $count);
     }
 
+    public function test_purge_old_messages_history_default_is_31_days(): void
+    {
+        // V1 uses MessageCollection::RECENTPOSTS = "Midnight 31 days ago".
+        $oldId = DB::table('messages_history')->insertGetId(['arrival' => now()->subDays(32)]);
+        $recentId = DB::table('messages_history')->insertGetId(['arrival' => now()->subDays(30)]);
+
+        $this->service->purgeOldMessagesHistory();
+
+        $this->assertDatabaseMissing('messages_history', ['id' => $oldId]);
+        $this->assertDatabaseHas('messages_history', ['id' => $recentId]);
+    }
+
     public function test_purge_pending_messages(): void
     {
         $user = $this->createTestUser();

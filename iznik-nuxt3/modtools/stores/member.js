@@ -140,9 +140,12 @@ export const useMemberStore = defineStore({
           const remainingPairs = Object.values(this.list).filter(
             (m) => m.collection === 'Related' && !m._syntheticRelated
           ).length
-          if (remainingPairs === 0) {
+          if (remainingPairs === 0 && !params.groupid) {
             const authStore = useAuthStore()
-            if (authStore.work && typeof authStore.work.relatedmembers === 'number') {
+            if (
+              authStore.work &&
+              typeof authStore.work.relatedmembers === 'number'
+            ) {
               authStore.work.relatedmembers = 0
             }
           }

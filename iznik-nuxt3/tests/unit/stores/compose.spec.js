@@ -428,7 +428,7 @@ describe('compose store', () => {
       )
     })
 
-    it('handles AI illustration attachments', async () => {
+    it('handles AI illustration attachments when no real photo present', async () => {
       const store = useComposeStore()
       store.init({ public: {} })
       store.postcode = { id: 123 }
@@ -439,10 +439,7 @@ describe('compose store', () => {
         {
           type: 'Offer',
           item: 'Test',
-          attachments: [
-            { ouruid: 'abc123', externalmods: { ai: true } },
-            { id: 5 },
-          ],
+          attachments: [{ ouruid: 'abc123', externalmods: { ai: true } }],
         },
         'test@example.com'
       )
@@ -452,7 +449,7 @@ describe('compose store', () => {
         externalmods: { ai: true },
       })
       expect(mockMessagePut).toHaveBeenCalledWith(
-        expect.objectContaining({ attachments: [77, 5] })
+        expect.objectContaining({ attachments: [77] })
       )
     })
 
@@ -689,6 +686,87 @@ describe('compose store', () => {
     it('returns true when no postcode', () => {
       const store = useComposeStore()
       expect(store.noGroups).toBe(true)
+    })
+  })
+
+  describe('AI image suppressed when user uploads own photo', () => {
+    it('excludes AI-generated image from submission when user has uploaded their own real photo', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      mockImagePost.mockResolvedValue({ id: 77 })
+      mockMessagePut.mockResolvedValue({ id: 99 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const errSpy = vi
+        .spyOn(console, 'error')
+        .mockImplementation(() => {})
+
+      await store.createDraft(
+        {
+          type: 'Offer',
+          item: 'Old sofa',
+          attachments: [
+            { ouruid: 'ai-uid-abc', externalmods: { ai: true } },
+            { id: 5 },
+          ],
+        },
+        'user@example.com'
+      )
+
+      const callArgs = mockMessagePut.mock.calls[0][0]
+      // CORRECT: only the user's real photo; AI image must be absent
+      expect(callArgs.attachments).not.toContain(77)
+      expect(callArgs.attachments).toEqual([5])
+
+      logSpy.mockRestore()
+      errSpy.mockRestore()
+    })
+  })
+
+  describe('AI image suppressed when user uploads own photo (repost path)', () => {
+    it('excludes AI-generated image from repost update payload when user has uploaded their own real photo', async () => {
+      // Bug: the submit() repost path (message.repostof set) blindly pushes all
+      // attachment .id values into attids without the hasRealPhoto suppression
+      // logic that createDraft() has. An AI attachment stored with id 'ai-abc'
+      // (string) ends up in the PATCH payload alongside the real photo id.
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Old sofa',
+          submitted: false,
+          repostof: 99,
+          attachments: [
+            {
+              id: 'ai-abc',
+              ouruid: 'ai-uid-xyz',
+              externalmods: { ai: true },
+              isAiIllustration: true,
+            },
+            { id: 5 },
+          ],
+        },
+      ]
+
+      mockMessageUpdate.mockResolvedValue({})
+      mockMessagePatch.mockResolvedValue({})
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      const patchArgs = mockMessagePatch.mock.calls[0][0]
+      // CORRECT: only real photo id 5; AI string id must be absent
+      expect(patchArgs.attachments).not.toContain('ai-abc')
+      expect(patchArgs.attachments).toEqual([5])
+
+      logSpy.mockRestore()
     })
   })
 })

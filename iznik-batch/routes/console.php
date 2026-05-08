@@ -65,6 +65,7 @@ Schedule::command('mail:chat:user2mod --max-iterations=60 --spool')
     ->sendOutputTo(cronLog('mail:chat:user2mod'))
     ->runInBackground();
 
+
 // Fetch UK CPI inflation data from ONS - runs monthly.
 // Used to inflation-adjust the "benefit of reuse" value from the 2011 WRAP report.
 // Sends alert email to GeekAlerts if fetch fails.
@@ -122,6 +123,14 @@ Schedule::command('cleanup:sessions')
     ->sendOutputTo(cronLog('cleanup:sessions'))
     ->runInBackground();
 
+// Remove spam members from groups and clean up their content.
+// V1: cron/check_spammers.php — disabled pending sign-off
+// Schedule::command('users:remove-spammers')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:remove-spammers'))
+//     ->runInBackground();
+
 // Process bounced emails — mark as invalid.
 // V1: cron/bounce.php + bounce_users.php
 Schedule::command('mail:bounced')
@@ -130,6 +139,15 @@ Schedule::command('mail:bounced')
     ->sendOutputTo(cronLog('mail:bounced'))
     ->runInBackground();
 
+// Moderator work notifications — tells mods about pending messages, events, etc.
+// Only runs 08:00–21:00; deduplicates against last sent summary.
+// V1: cron/mod_notifs.php — disabled pending sign-off
+// Schedule::command('mail:mod-notifs')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('mail:mod-notifs'))
+//     ->runInBackground();
+
 // Email health monitor — alerts if incoming or outgoing email flow drops below
 // configurable thresholds during daytime hours.
 Schedule::command('monitor:email-health')
@@ -137,6 +155,95 @@ Schedule::command('monitor:email-health')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('monitor:email-health'))
     ->runInBackground();
+
+// Notification chaseup - send emails for unseen, unmailed site notifications.
+// V1: cron/notification_chaseup.php (every 5 minutes)
+Schedule::command('mail:notifications:chaseup')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:notifications:chaseup'))
+    ->runInBackground();
+
+// Daily purge of spam chat messages, empty rooms, orphaned chat images.
+// V1: cron/purge_chats.php
+Schedule::command('purge:chats')
+    ->dailyAt('02:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('purge:chats'))
+    ->runInBackground();
+
+// Daily log/bounce/likes purge.
+// V1: cron/purge_logs.php
+Schedule::command('purge:logs')
+    ->dailyAt('03:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('purge:logs'))
+    ->runInBackground();
+
+// Daily syntactic email validation (last 30 days only).
+// V1: cron/email_validate.php
+Schedule::command('emails:validate')
+    ->dailyAt('04:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('emails:validate'))
+    ->runInBackground();
+
+// Daily kudos recalculation for users active in last 2 days.
+// V1: cron/users_kudos.php
+Schedule::command('users:update-kudos')
+    ->dailyAt('04:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-kudos'))
+    ->runInBackground();
+
+// Hourly group member/mod count refresh.
+// V1: cron/membercounts.php
+Schedule::command('groups:update-counts')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:update-counts'))
+    ->runInBackground();
+
+// Hourly chat-room message count refresh + reopen User2Mod chats with mod
+// replies that the user closed before seeing.
+// V1: cron/chat_latestmessage.php
+Schedule::command('chats:update-counts')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:update-counts'))
+    ->runInBackground();
+
+// Sync recent mod actions into users_modmails and prune old entries.
+// V1: cron/users_modmails.php (every 5 minutes)
+Schedule::command('users:update-modmails')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-modmails'))
+    ->runInBackground();
+
+// Hourly fallback users.lastaccess update from chat / membership activity.
+// V1: cron/lastaccess.php
+Schedule::command('users:update-lastaccess')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-lastaccess'))
+    ->runInBackground();
+
+// Update chat reply-expectation tracking and per-user reply-time metrics.
+// V1: cron/chat_expected.php (every 5 minutes)
+Schedule::command('chats:update-expected')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:update-expected'))
+    ->runInBackground();
+
+// Warn innocent users who chatted with spammers; auto-mark spam chat messages.
+// V1: cron/chat_spam.php — disabled pending sign-off
+// Schedule::command('chats:process-spam')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:process-spam'))
+//     ->runInBackground();
 
 // Sync data from TrashNothing.
 // This command can be called more frequently if the "kick" API is called by TN,
@@ -187,43 +294,6 @@ Schedule::command('mail:digest 24')
     ->dailyAt('08:00')
     ->withoutOverlapping()
     ->runInBackground();
-
-// Message expiry - run daily.
-Schedule::command('messages:process-expired --spatial')
-    ->dailyAt('03:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Purge operations - run daily at off-peak hours.
-Schedule::command('purge:chats')
-    ->dailyAt('02:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-
-Schedule::command('purge:messages')
-    ->dailyAt('02:30')
-    ->withoutOverlapping()
-    ->runInBackground();
-
-Schedule::command('purge:logs')
-    ->dailyAt('04:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-Schedule::command('emails:validate')
-    ->dailyAt('04:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-
-Schedule::command('locations:fix-skewed')
-    ->dailyAt('05:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-
-Schedule::command('users:update-ratings')
-    ->everyTenMinutes()
-    ->withoutOverlapping()
-    ->runInBackground();
-
 // Unified digest - replaces per-group digests.
 // Daily mode - sends one digest per user with posts from all their communities.
 Schedule::command('mail:digest:unified --mode=daily')
@@ -249,45 +319,11 @@ Schedule::command('mail:donations:ask')
     ->runInBackground();
 
 // User management commands.
-Schedule::command('users:update-kudos')
-    ->dailyAt('04:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-
+// (users:update-kudos enabled above.)
 Schedule::command('users:cleanup')
     ->weekly()
     ->sundays()
     ->at('06:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Group maintenance.
-Schedule::command('groups:update-counts')
-    ->hourly()
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Chat maintenance - update message counts and reopen closed User2Mod chats.
-Schedule::command('chats:update-counts')
-    ->hourly()
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Fallback lastaccess update from chat messages and memberships.
-Schedule::command('users:update-lastaccess')
-    ->hourly()
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Donation ad targeting - update ads-off target based on recent donations.
-Schedule::command('donations:update-ads-target')
-    ->everyMinute()
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Support tools role management based on team membership.
-Schedule::command('users:update-support-roles')
-    ->hourly()
     ->withoutOverlapping()
     ->runInBackground();
 
@@ -345,6 +381,200 @@ Schedule::command('mail:admin:chase')
     ->sendOutputTo(cronLog('mail:admin:chase'))
     ->runInBackground();
 
+
+// =============================================================================
+// NOT YET ENABLED — enable individually after testing
+// =============================================================================
+
+// Process pending chat messages (processingrequired=1): spam check, roster update, reopen closed chats.
+// V1: cron/chat_process.php (continuous daemon, restarted by cron every 2 minutes)
+// IncomingMailService creates messages with processingrequired=1; this makes them visible to notifications.
+Schedule::command('chats:process-incoming')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:process-incoming'))
+    ->runInBackground();
+
+// Process pending membership history entries: send per-group welcome emails, flag reviewed members.
+// V1: cron/memberships_processing.php (every 1 minute)
+// Go API creates memberships_history with processingrequired=1; this sends welcome emails + review flags.
+Schedule::command('memberships:process')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('memberships:process'))
+    ->runInBackground();
+
+// Process pending GDPR data export requests and purge old completed data.
+// V1: cron/exports.php (every 1 minute)
+Schedule::command('users:process-exports')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:process-exports'))
+    ->runInBackground();
+
+// Update user engagement classifications based on activity.
+// V1: cron/engage_update.php (daily at 03:00)
+Schedule::command('users:update-engagement')
+    ->dailyAt('03:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-engagement'))
+    ->runInBackground();
+
+// Remove search index entries for messages older than 30 days.
+// V1: cron/message_deindex.php (daily at 01:00)
+Schedule::command('messages:deindex')
+    ->dailyAt('01:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:deindex'))
+    ->runInBackground();
+
+// Score microvolunteering actions and promote accurate users to Moderate trust.
+// V1: cron/microactions_score.php (daily at 23:00)
+// Note: Laravel uses correct SUM() aggregation in promote() — V1 had a longstanding aggregation
+// bug (bare score_positive/_negative under GROUP BY userid) that masked promotions. First Laravel
+// run after migration may bulk-promote backlog (catch-up).
+Schedule::command('microvolunteering:score')
+    ->dailyAt('23:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('microvolunteering:score'))
+    ->runInBackground();
+
+// Update cached location names in user settings when the canonical name has changed.
+// V1: cron/users_remap.php (daily at 05:00)
+Schedule::command('users:remap-locations')
+    ->dailyAt('05:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:remap-locations'))
+    ->runInBackground();
+
+// Update message subjects when associated location names have changed.
+// V1: cron/messages_remap.php (every 5 minutes)
+Schedule::command('messages:remap-subjects')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:remap-subjects'))
+    ->runInBackground();
+
+// Update messages_spatial with recent messages, outcomes, and remove stale entries.
+// V1: cron/message_spatial.php (every 5 minutes)
+// Note: V1 also pushed freebie-alert jobs to Pheanstalk — that mechanism is retired in the new stack.
+Schedule::command('messages:update-spatial-index')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:update-spatial-index'))
+    ->runInBackground();
+
+// Delete spammy WhatJobs postings (same bodyhash posted > 50 times across UK).
+// V1: cron/whatjobs_spam.php (every 10 minutes)
+Schedule::command('cleanup:whatjobs-spam')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('cleanup:whatjobs-spam'))
+    ->runInBackground();
+
+// Update common email domains table (domains used by > 1000 users).
+// V1: cron/domains_common.php (weekly, Friday 07:00)
+Schedule::command('domains:update-common')
+    ->weeklyOn(5, '07:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('domains:update-common'))
+    ->runInBackground();
+
+// Generate AI illustrations for messages with no photos.
+// V1: cron/messages_illustrations.php (every 1 minute) — V1 cron already disabled on bulk3.
+Schedule::command('messages:generate-illustrations')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:generate-illustrations'))
+    ->runInBackground();
+
+// Generate AI illustrations for canonical job categories (pre-caching).
+// V1: cron/jobs_illustrations.php (every 30 minutes) — V1 cron already disabled on bulk3.
+Schedule::command('jobs:generate-illustrations')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('jobs:generate-illustrations'))
+    ->runInBackground();
+
+// Fetch app versions from iOS App Store and Google Play - runs every 6 hours.
+// V1: cron/get_app_release_versions.php
+Schedule::command('data:fetch-app-versions')
+    ->everySixHours()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('data:fetch-app-versions'))
+    ->runInBackground();
+
+// Sync Freegle offers with LoveJunk - runs every minute.
+// V1: cron/lovejunk.php
+Schedule::command('integrations:sync-lovejunk')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('integrations:sync-lovejunk'))
+    ->runInBackground();
+
+// Message expiry - process deadline-expired messages and spatial index expiry.
+// V1: cron/messages_expired.php (was hourly; daily is sufficient since deadline < CURDATE() only changes daily).
+// Fixed: clears messages_outcomes_intended before creating outcome (matches V1 mark()).
+// Spatial pass mirrors V1 Message::processExpiry(): only acts on messages already marked OUTCOME_EXPIRED.
+Schedule::command('messages:process-expired --spatial')
+    ->dailyAt('03:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:process-expired'))
+    ->runInBackground();
+
+// V1: cron/purge_messages.php
+// Fixed: messages_history default corrected to 31 days (matches V1 MessageCollection::RECENTPOSTS).
+Schedule::command('purge:messages')
+    ->dailyAt('02:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('purge:messages'))
+    ->runInBackground();
+
+// V1: cron/locations_skewwhiff.php
+Schedule::command('locations:fix-skewed')
+    ->dailyAt('05:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('locations:fix-skewed'))
+    ->runInBackground();
+
+// V1: cron/user_ratings.php
+Schedule::command('users:update-ratings')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-ratings'))
+    ->runInBackground();
+
+// V1: cron/supporttools.php
+// Note: safer than V1 — never downgrades Admin users, only Support.
+Schedule::command('users:update-support-roles')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-support-roles'))
+    ->runInBackground();
+
+// Update group stats: fix repost settings, polyindex, activity/funding, mod counts, stats_outcomes.
+// V1: cron/group_stats.php (daily at 02:00)
+// Note: V1 also generates per-group stats (Stats::generate) and syncs TrashNothing groups — those parts are not migrated here.
+Schedule::command('groups:update-stats')
+    ->dailyAt('02:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:update-stats'))
+    ->runInBackground();
+
+// V1: cron/donations_thank.php
+// Schedule::command('mail:donations:thank')
+//     ->dailyAt('09:00')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('mail:donations:thank'))
+//     ->runInBackground();
+
+// V1: cron/donations_ads_target.php
+Schedule::command('donations:update-ads-target')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('donations:update-ads-target'))
+    ->runInBackground();
+
 // =============================================================================
 // AI IMAGE REVIEW
 // =============================================================================
@@ -358,6 +588,19 @@ Schedule::command('ai:usage-counts:update')
 
 
 // =============================================================================
+// GIFT AID
+// =============================================================================
+
+// Update gift aid data: identify postcodes, houses, consented donations.
+// Also sends one-off chase-up emails to eligible donors (2-30 days ago, PayPal/Stripe).
+// V1: cron/donations_giftaid.php — disabled pending sign-off
+// Schedule::command('donations:update-giftaid')
+//     ->everyTenMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('donations:update-giftaid'))
+//     ->runInBackground();
+
+// =============================================================================
 // VECTOR SEARCH EMBEDDINGS
 // =============================================================================
 
@@ -367,6 +610,47 @@ Schedule::command('embeddings:generate')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('embeddings:generate'))
     ->runInBackground();
+
+// =============================================================================
+// NOT YET ENABLED - pending review / sign-off
+// Index unindexed messages for search.
+// V1: cron/message_unindexed.php (every 30 min)
+Schedule::command('messages:update-index')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:update-index'))
+    ->runInBackground();
+// Remove confirmed spammers from groups.
+// V1: cron/check_spammers.php
+// Schedule::command('users:remove-spammers')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:remove-spammers'))
+//     ->runInBackground();
+
+// Process chat spam messages.
+// V1: cron/chat_spam.php
+// Schedule::command('chats:process-spam')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:process-spam'))
+//     ->runInBackground();
+
+// Send mod notifications.
+// V1: cron/mod_notifs.php
+// Schedule::command('mail:mod-notifs')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('mail:mod-notifs'))
+//     ->runInBackground();
+
+// Update GiftAid donations.
+// V1: cron/donations_giftaid.php
+// Schedule::command('donations:update-giftaid')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('donations:update-giftaid'))
+//     ->runInBackground();
 
 // =============================================================================
 // GIT SUMMARY
