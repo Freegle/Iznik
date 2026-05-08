@@ -2,25 +2,45 @@
 
 namespace App\Console\Commands\Message;
 
+use App\Console\Concerns\PreventsOverlapping;
 use App\Services\MessageRemapSubjectsService;
+use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
 class RemapSubjectsCommand extends Command
 {
-    protected $signature = 'messages:remap-subjects';
+    use PreventsOverlapping;
+    use GracefulShutdown;
+
+    protected $signature = 'messages:remap-subjects
+                            {--dry-run : Show what would be remapped without making changes}';
 
     protected $description = 'Update message subjects when associated location names have changed';
 
     public function handle(MessageRemapSubjectsService $service): int
     {
-        Log::info('Starting message subject remap');
+        if (!$this->acquireLock()) {
+            $this->info('Already running, exiting.');
+            return Command::SUCCESS;
+        }
 
-        $result = $service->remapSubjects();
+        try {
+            if ($this->option('dry-run')) {
+                $this->info('Dry run — no changes made.');
+                return Command::SUCCESS;
+            }
 
-        $this->info("Remapped {$result['changed']} message subjects.");
-        Log::info('Message subject remap complete', $result);
+            Log::info('Starting message subject remap');
 
-        return Command::SUCCESS;
+            $result = $service->remapSubjects();
+
+            $this->info("Remapped {$result['changed']} message subjects.");
+            Log::info('Message subject remap complete', $result);
+
+            return Command::SUCCESS;
+        } finally {
+            $this->releaseLock();
+        }
     }
 }

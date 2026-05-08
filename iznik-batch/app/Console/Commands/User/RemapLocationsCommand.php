@@ -2,25 +2,45 @@
 
 namespace App\Console\Commands\User;
 
+use App\Console\Concerns\PreventsOverlapping;
 use App\Services\UserLocationRemapService;
+use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
 class RemapLocationsCommand extends Command
 {
-    protected $signature = 'users:remap-locations';
+    use PreventsOverlapping;
+    use GracefulShutdown;
+
+    protected $signature = 'users:remap-locations
+                            {--dry-run : Show what would be remapped without making changes}';
 
     protected $description = 'Update cached location names in user settings when the canonical name has changed';
 
     public function handle(UserLocationRemapService $service): int
     {
-        Log::info('Starting user location remap');
+        if (!$this->acquireLock()) {
+            $this->info('Already running, exiting.');
+            return Command::SUCCESS;
+        }
 
-        $result = $service->remapLocations();
+        try {
+            if ($this->option('dry-run')) {
+                $this->info('Dry run — no changes made.');
+                return Command::SUCCESS;
+            }
 
-        $this->info("Updated {$result['changed']} users' location data.");
-        Log::info('User location remap complete', $result);
+            Log::info('Starting user location remap');
 
-        return Command::SUCCESS;
+            $result = $service->remapLocations();
+
+            $this->info("Updated {$result['changed']} users' location data.");
+            Log::info('User location remap complete', $result);
+
+            return Command::SUCCESS;
+        } finally {
+            $this->releaseLock();
+        }
     }
 }

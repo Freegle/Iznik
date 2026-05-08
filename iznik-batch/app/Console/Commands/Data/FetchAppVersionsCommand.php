@@ -8,12 +8,18 @@ use Illuminate\Support\Facades\Log;
 
 class FetchAppVersionsCommand extends Command
 {
-    protected $signature = 'data:fetch-app-versions';
+    protected $signature = 'data:fetch-app-versions
+                            {--dry-run : Show what would be fetched without making changes}';
 
     protected $description = 'Fetch latest iOS and Android app versions from app stores and store in config';
 
     public function handle(AppVersionFetcherService $service): int
     {
+        if ($this->option('dry-run')) {
+            $this->info('Dry run — no changes made.');
+            return Command::SUCCESS;
+        }
+
         Log::info('FetchAppVersions: Starting');
 
         $result = $service->fetchAll();
