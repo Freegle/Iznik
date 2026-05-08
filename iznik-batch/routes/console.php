@@ -73,6 +73,14 @@ Schedule::command('data:fetch-app-versions')
     ->sendOutputTo(cronLog('data:fetch-app-versions'))
     ->runInBackground();
 
+// Sync Freegle offers with LoveJunk - runs every minute.
+// V1: cron/lovejunk.php
+Schedule::command('integrations:sync-lovejunk')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('integrations:sync-lovejunk'))
+    ->runInBackground();
+
 // Fetch UK CPI inflation data from ONS - runs monthly.
 // Used to inflation-adjust the "benefit of reuse" value from the 2011 WRAP report.
 // Sends alert email to GeekAlerts if fetch fails.
