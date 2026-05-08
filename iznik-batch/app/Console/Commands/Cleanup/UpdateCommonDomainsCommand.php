@@ -4,6 +4,7 @@ namespace App\Console\Commands\Cleanup;
 
 use App\Services\CommonDomainsService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class UpdateCommonDomainsCommand extends Command
@@ -15,17 +16,43 @@ class UpdateCommonDomainsCommand extends Command
 
     public function handle(CommonDomainsService $service): int
     {
-        if ($this->option('dry-run')) {
-            $this->info('Dry run — no changes made.');
-            return Command::SUCCESS;
+        $dryRun = (bool) $this->option('dry-run');
+
+        if ($dryRun) {
+            $this->info('Dry run — scanning emails but not writing to domains_common.');
+        } else {
+            Log::info('Starting common domains update');
         }
 
-        Log::info('Starting common domains update');
+        $result = $service->updateCommonDomains($dryRun);
 
-        $result = $service->updateCommonDomains();
+        $this->info("Scanned {$result['emails_scanned']} emails, found {$result['distinct_domains']} distinct domains.");
+        $this->info(($dryRun ? 'Would insert/update ' : 'Inserted/updated ') . "{$result['domains_inserted']} common domains (>1000 users).");
 
-        $this->info("Inserted/updated {$result['domains_inserted']} common domains.");
-        Log::info('Common domains update complete', $result);
+        if (!empty($result['writes'])) {
+            $current = DB::table('domains_common')
+                ->whereIn('domain', array_keys($result['writes']))
+                ->pluck('count', 'domain')
+                ->all();
+            arsort($result['writes']);
+            $this->line($dryRun ? 'Top would-write entries:' : 'Top wrote entries:');
+            $shown = 0;
+            foreach ($result['writes'] as $domain => $cnt) {
+                $old = $current[$domain] ?? '(new)';
+                $this->line(sprintf('  %-40s  %s → %d', $domain, (string) $old, $cnt));
+                if (++$shown >= 20) {
+                    $remaining = count($result['writes']) - $shown;
+                    if ($remaining > 0) {
+                        $this->line(sprintf('  ... and %d more', $remaining));
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (!$dryRun) {
+            Log::info('Common domains update complete', ['emails_scanned' => $result['emails_scanned'], 'domains_inserted' => $result['domains_inserted']]);
+        }
 
         return Command::SUCCESS;
     }

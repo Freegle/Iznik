@@ -15,19 +15,22 @@ class UpdateModMailsCommand extends Command
 
     public function handle(UserModMailsService $service): int
     {
-        $dryRun = $this->option('dry-run');
+        $dryRun = (bool) $this->option('dry-run');
 
         if ($dryRun) {
-            $this->info('Dry run — no changes made.');
-
-            return Command::SUCCESS;
+            $this->info('Dry run — counting changes but not writing.');
         }
 
-        $inserted = $service->updateModMails();
-        $deleted = $service->pruneOldEntries();
+        $inserted = $service->updateModMails($dryRun);
+        $deleted = $service->pruneOldEntries($dryRun);
 
-        $this->info("users:update-modmails complete — inserted: {$inserted}, pruned: {$deleted}");
-        Log::info('users:update-modmails complete', ['inserted' => $inserted, 'pruned' => $deleted]);
+        $verb = $dryRun ? 'would insert' : 'inserted';
+        $verb2 = $dryRun ? 'would prune' : 'pruned';
+        $this->info("users:update-modmails — {$verb}: {$inserted}, {$verb2}: {$deleted}");
+
+        if (!$dryRun) {
+            Log::info('users:update-modmails complete', ['inserted' => $inserted, 'pruned' => $deleted]);
+        }
 
         return Command::SUCCESS;
     }

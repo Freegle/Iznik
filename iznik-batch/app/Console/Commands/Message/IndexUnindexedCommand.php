@@ -15,17 +15,21 @@ class IndexUnindexedCommand extends Command
 
     public function handle(MessageSearchService $service): int
     {
-        if ($this->option('dry-run')) {
-            $this->info('DRY RUN — no changes will be made.');
-            return Command::SUCCESS;
+        $dryRun = (bool) $this->option('dry-run');
+
+        if ($dryRun) {
+            $this->info('DRY RUN — counting unindexed messages but not indexing.');
+        } else {
+            Log::info('Starting messages:update-index');
         }
 
-        Log::info('Starting messages:update-index');
+        $count = $service->indexUnindexedMessages($dryRun);
 
-        $count = $service->indexUnindexedMessages();
+        $this->info(($dryRun ? 'would index: ' : 'indexed: ') . $count);
 
-        $this->info("indexed: {$count}");
-        Log::info('messages:update-index complete', ['indexed' => $count]);
+        if (!$dryRun) {
+            Log::info('messages:update-index complete', ['indexed' => $count]);
+        }
 
         return Command::SUCCESS;
     }

@@ -26,17 +26,22 @@ class MicroVolunteeringScoreCommand extends Command
         }
 
         try {
-            if ($this->option('dry-run')) {
-                $this->info('Dry run — no changes made.');
-                return Command::SUCCESS;
+            $dryRun = (bool) $this->option('dry-run');
+
+            if ($dryRun) {
+                $this->info('Dry run — counting changes but not writing.');
+            } else {
+                Log::info('Starting microvolunteering score and promote');
             }
 
-            Log::info('Starting microvolunteering score and promote');
+            $result = $service->scoreAndPromote('48 hours ago', $dryRun);
 
-            $result = $service->scoreAndPromote();
+            $verb = $dryRun ? 'would' : '';
+            $this->info("{$verb}Scored: {$result['scored']} actions, {$verb}promoted: {$result['promoted']} users to Moderate.");
 
-            $this->info("Promoted {$result['promoted']} users to Moderate trust level.");
-            Log::info('Microvolunteering score complete', $result);
+            if (!$dryRun) {
+                Log::info('Microvolunteering score complete', $result);
+            }
 
             return Command::SUCCESS;
         } finally {

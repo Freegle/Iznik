@@ -12,15 +12,15 @@ class MicroVolunteeringScoreService
     private const PROMOTE_THRESHOLD = 90;
     private const PROMOTE_DAYS = 7;
 
-    public function scoreAndPromote(string $since = '48 hours ago'): array
+    public function scoreAndPromote(string $since = '48 hours ago', bool $dryRun = false): array
     {
-        $this->score($since);
-        $promoted = $this->promote();
+        $scored = $this->score($since, $dryRun);
+        $promoted = $this->promote($dryRun);
 
-        return ['promoted' => $promoted];
+        return ['scored' => $scored, 'promoted' => $promoted];
     }
 
-    private function score(string $since): void
+    private function score(string $since, bool $dryRun = false): int
     {
         $cutoff = date('Y-m-d', strtotime($since));
 
@@ -30,6 +30,8 @@ class MicroVolunteeringScoreService
             ->pluck('userid');
 
         Log::info("MicroVolunteeringScore: scoring {$users->count()} users");
+
+        $scored = 0;
 
         foreach ($users as $userId) {
             $actions = DB::table('microactions')
@@ -61,25 +63,39 @@ class MicroVolunteeringScoreService
                 $scorePositive = ($majority === $action->result) ? 1 : 0;
                 $scoreNegative = ($majority !== $action->result) ? 1 : 0;
 
+                $changed = false;
+
                 // Only update if changed and not manually overridden by a mod.
                 if ($scorePositive != $action->score_positive) {
-                    DB::table('microactions')
-                        ->where('id', $action->id)
-                        ->whereNull('modfeedback')
-                        ->update(['score_positive' => $scorePositive]);
+                    if (!$dryRun) {
+                        DB::table('microactions')
+                            ->where('id', $action->id)
+                            ->whereNull('modfeedback')
+                            ->update(['score_positive' => $scorePositive]);
+                    }
+                    $changed = true;
                 }
 
                 if ($scoreNegative != $action->score_negative) {
-                    DB::table('microactions')
-                        ->where('id', $action->id)
-                        ->whereNull('modfeedback')
-                        ->update(['score_negative' => $scoreNegative]);
+                    if (!$dryRun) {
+                        DB::table('microactions')
+                            ->where('id', $action->id)
+                            ->whereNull('modfeedback')
+                            ->update(['score_negative' => $scoreNegative]);
+                    }
+                    $changed = true;
+                }
+
+                if ($changed) {
+                    $scored++;
                 }
             }
         }
+
+        return $scored;
     }
 
-    private function promote(): int
+    private function promote(bool $dryRun = false): int
     {
         $count = 0;
 
@@ -98,11 +114,13 @@ class MicroVolunteeringScoreService
                 ->value('diff');
 
             if ($duration >= self::PROMOTE_DAYS) {
-                DB::table('users')
-                    ->where('id', $userId)
-                    ->update(['trustlevel' => self::TRUST_MODERATE]);
+                if (!$dryRun) {
+                    DB::table('users')
+                        ->where('id', $userId)
+                        ->update(['trustlevel' => self::TRUST_MODERATE]);
+                    Log::info("MicroVolunteeringScore: promoted user {$userId} to Moderate");
+                }
                 $count++;
-                Log::info("MicroVolunteeringScore: promoted user {$userId} to Moderate");
             }
         }
 

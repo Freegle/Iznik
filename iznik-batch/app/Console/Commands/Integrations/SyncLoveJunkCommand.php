@@ -26,24 +26,28 @@ class SyncLoveJunkCommand extends Command
         }
 
         try {
-            if ($this->option('dry-run')) {
-                $this->info('Dry run — no changes made.');
-                return Command::SUCCESS;
+            $dryRun = (bool) $this->option('dry-run');
+
+            if ($dryRun) {
+                $this->info('Dry run — counting work but not calling LoveJunk API or writing.');
+            } else {
+                Log::info('LoveJunk: Starting sync');
             }
 
-            Log::info('LoveJunk: Starting sync');
+            $result = $service->sync($dryRun);
 
-            $result = $service->sync();
-
+            $verb = $dryRun ? 'Would' : '';
             $this->info(sprintf(
-                'Sent: %d, Edited: %d, Completed/Deleted: %d, Failed: %d',
-                $result['sent'],
-                $result['edited'],
-                $result['completed_or_deleted'],
+                '%sSent: %d, %sEdited: %d, %sCompleted/Deleted: %d, Failed: %d',
+                $verb, $result['sent'],
+                $verb, $result['edited'],
+                $verb, $result['completed_or_deleted'],
                 $result['failed']
             ));
 
-            Log::info('LoveJunk: Done', $result);
+            if (!$dryRun) {
+                Log::info('LoveJunk: Done', $result);
+            }
 
             return Command::SUCCESS;
         } finally {

@@ -15,17 +15,21 @@ class DeindexCommand extends Command
 
     public function handle(MessageSearchService $service): int
     {
-        if ($this->option('dry-run')) {
-            $this->info('DRY RUN — no changes will be made.');
-            return Command::SUCCESS;
+        $dryRun = (bool) $this->option('dry-run');
+
+        if ($dryRun) {
+            $this->info('DRY RUN — counting old messages but not deleting.');
+        } else {
+            Log::info('Starting message deindex');
         }
 
-        Log::info('Starting message deindex');
+        $count = $service->deindexOldMessages($dryRun);
 
-        $count = $service->deindexOldMessages();
+        $this->info(($dryRun ? 'would delete: ' : 'deleted: ') . $count);
 
-        $this->info("deleted: {$count}");
-        Log::info('Message deindex complete', ['deleted' => $count]);
+        if (!$dryRun) {
+            Log::info('Message deindex complete', ['deleted' => $count]);
+        }
 
         return Command::SUCCESS;
     }
