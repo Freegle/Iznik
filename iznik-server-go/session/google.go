@@ -35,6 +35,7 @@ type googleTokenInfoResponse struct {
 	FamilyName string `json:"family_name"`
 	Name       string `json:"name"`
 	Aud        string `json:"aud"`
+	Picture    string `json:"picture"`
 }
 
 // handleGoogleLogin verifies a Google ID token and logs the user in.
@@ -116,6 +117,8 @@ func handleGoogleLogin(c *fiber.Ctx, jwtToken string) error {
 			"status": fmt.Sprintf("Login failed: %v", err),
 		})
 	}
+
+	saveProfileImage(userID, tokenInfo.Picture)
 
 	persistent, jwtString, err := auth.CreateSessionAndJWT(userID)
 	if err != nil {

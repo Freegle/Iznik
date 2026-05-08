@@ -773,6 +773,7 @@ class UserManagementService
         DB::table('users_emails')
             ->join('users', 'users.id', '=', 'users_emails.userid')
             ->where('users.bouncing', 0)
+            ->whereNull('users_emails.bounced')
             ->where('users_emails.added', '>=', $since)
             ->select('users_emails.id', 'users_emails.email', 'users_emails.userid')
             ->orderBy('users_emails.id')
