@@ -228,6 +228,14 @@ Schedule::command('users:update-lastaccess')
     ->sendOutputTo(cronLog('users:update-lastaccess'))
     ->runInBackground();
 
+// Update chat reply-expectation tracking and per-user reply-time metrics.
+// V1: cron/chat_expected.php
+Schedule::command('chats:update-expected')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:update-expected'))
+    ->runInBackground();
+
 // =============================================================================
 // DISABLED COMMANDS (to be enabled when ready)
 // =============================================================================
