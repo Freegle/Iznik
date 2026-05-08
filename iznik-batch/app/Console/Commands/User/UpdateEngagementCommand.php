@@ -1,24 +1,24 @@
 <?php
 
-namespace App\Console\Commands\Chat;
+namespace App\Console\Commands\User;
 
 use App\Console\Concerns\PreventsOverlapping;
-use App\Services\ChatExpectedService;
+use App\Services\EngageUpdateService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
-class UpdateExpectedCommand extends Command
+class UpdateEngagementCommand extends Command
 {
     use PreventsOverlapping;
     use GracefulShutdown;
 
-    protected $signature = 'chats:update-expected
+    protected $signature = 'users:update-engagement
                             {--dry-run : Show what would be updated without making changes}';
 
-    protected $description = 'Update expected reply tracking for recent chats';
+    protected $description = 'Update user engagement classifications based on recent activity';
 
-    public function handle(ChatExpectedService $service): int
+    public function handle(EngageUpdateService $service): int
     {
         if (!$this->acquireLock()) {
             $this->info('Already running, exiting.');
@@ -31,12 +31,12 @@ class UpdateExpectedCommand extends Command
                 return Command::SUCCESS;
             }
 
-            Log::info('Starting chat expected update');
+            Log::info('Starting user engagement update');
 
-            $result = $service->updateChatExpected();
+            $count = $service->updateEngagement();
 
-            $this->info("Chat expected: {$result['received']} received, {$result['waiting']} waiting, {$result['tidied']} tidied.");
-            Log::info('Chat expected update complete', $result);
+            $this->info("{$count} user(s) updated");
+            Log::info('User engagement update complete', ['count' => $count]);
 
             return Command::SUCCESS;
         } finally {

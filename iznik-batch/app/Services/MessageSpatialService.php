@@ -13,22 +13,25 @@ class MessageSpatialService
     private const RECENT_DAYS = 31;
     private const SRID = 3857;
 
-    public function updateSpatialIndex(): int
+    public function updateSpatialIndex(bool $dryRun = false): array
     {
-        $count = 0;
+        $stats = [
+            'upserted_recent' => $this->upsertRecentMessages($dryRun),
+            'outcomes_updated' => $this->updateOutcomesAndPromises($dryRun),
+            'removed_deleted' => $this->removeDeletedMessages($dryRun),
+            'removed_old' => $this->removeOldMessages($dryRun),
+            'removed_non_approved' => $this->removeNonApprovedMessages($dryRun),
+        ];
 
-        $count += $this->upsertRecentMessages();
-        $count += $this->updateOutcomesAndPromises();
-        $count += $this->removeDeletedMessages();
-        $count += $this->removeOldMessages();
-        $count += $this->removeNonApprovedMessages();
+        $total = array_sum($stats);
+        $stats['total'] = $total;
 
-        Log::info("MessageSpatialIndex: updated {$count} entries");
+        Log::info("MessageSpatialIndex: " . ($dryRun ? 'would update ' : 'updated ') . "{$total} entries", $stats);
 
-        return $count;
+        return $stats;
     }
 
-    private function upsertRecentMessages(): int
+    private function upsertRecentMessages(bool $dryRun = false): int
     {
         $cutoff = date('Y-m-d', strtotime('Midnight ' . self::RECENT_DAYS . ' days ago'));
 
@@ -69,28 +72,30 @@ class MessageSpatialService
 
         $count = 0;
         foreach ($msgs as $msg) {
-            // Coordinates come from DB, not user input — safe to embed in WKT.
-            $wkt = "POINT({$msg->lng} {$msg->lat})";
-            $srid = self::SRID;
+            if (!$dryRun) {
+                // Coordinates come from DB, not user input — safe to embed in WKT.
+                $wkt = "POINT({$msg->lng} {$msg->lat})";
+                $srid = self::SRID;
 
-            DB::statement(
-                "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
-                 VALUES (?, ST_GeomFromText('$wkt', $srid), ?, ?, ?)
-                 ON DUPLICATE KEY UPDATE
-                   point = ST_GeomFromText('$wkt', $srid),
-                   groupid = ?,
-                   msgtype = ?,
-                   arrival = ?",
-                [$msg->id, $msg->groupid, $msg->msgtype, $msg->arrival,
-                 $msg->groupid, $msg->msgtype, $msg->arrival]
-            );
+                DB::statement(
+                    "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+                     VALUES (?, ST_GeomFromText('$wkt', $srid), ?, ?, ?)
+                     ON DUPLICATE KEY UPDATE
+                       point = ST_GeomFromText('$wkt', $srid),
+                       groupid = ?,
+                       msgtype = ?,
+                       arrival = ?",
+                    [$msg->id, $msg->groupid, $msg->msgtype, $msg->arrival,
+                     $msg->groupid, $msg->msgtype, $msg->arrival]
+                );
+            }
             $count++;
         }
 
         return $count;
     }
 
-    private function updateOutcomesAndPromises(): int
+    private function updateOutcomesAndPromises(bool $dryRun = false): int
     {
         $msgs = DB::table('messages_spatial')
             ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages_spatial.msgid')
@@ -109,23 +114,33 @@ class MessageSpatialService
         $count = 0;
         foreach ($msgs as $msg) {
             if ($msg->outcome === Message::OUTCOME_WITHDRAWN || $msg->outcome === Message::OUTCOME_EXPIRED) {
-                DB::table('messages_spatial')->where('id', $msg->id)->delete();
+                if (!$dryRun) {
+                    DB::table('messages_spatial')->where('id', $msg->id)->delete();
+                }
                 $count++;
             } elseif ($msg->outcome === Message::OUTCOME_TAKEN || $msg->outcome === Message::OUTCOME_RECEIVED) {
                 if (!$msg->successful) {
-                    DB::table('messages_spatial')->where('id', $msg->id)->update(['successful' => 1]);
+                    if (!$dryRun) {
+                        DB::table('messages_spatial')->where('id', $msg->id)->update(['successful' => 1]);
+                    }
                     $count++;
                 }
             } elseif ($msg->successful) {
-                DB::table('messages_spatial')->where('id', $msg->id)->update(['successful' => 0]);
+                if (!$dryRun) {
+                    DB::table('messages_spatial')->where('id', $msg->id)->update(['successful' => 0]);
+                }
                 $count++;
             }
 
             if ($msg->promised && !$msg->promisedat) {
-                DB::table('messages_spatial')->where('id', $msg->id)->update(['promised' => 0]);
+                if (!$dryRun) {
+                    DB::table('messages_spatial')->where('id', $msg->id)->update(['promised' => 0]);
+                }
                 $count++;
             } elseif (!$msg->promised && $msg->promisedat) {
-                DB::table('messages_spatial')->where('id', $msg->id)->update(['promised' => 1]);
+                if (!$dryRun) {
+                    DB::table('messages_spatial')->where('id', $msg->id)->update(['promised' => 1]);
+                }
                 $count++;
             }
         }
@@ -133,7 +148,7 @@ class MessageSpatialService
         return $count;
     }
 
-    private function removeDeletedMessages(): int
+    private function removeDeletedMessages(bool $dryRun = false): int
     {
         $ids = DB::table('messages_spatial')
             ->join('messages', 'messages_spatial.msgid', '=', 'messages.id')
@@ -149,12 +164,14 @@ class MessageSpatialService
             return 0;
         }
 
-        DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+        if (!$dryRun) {
+            DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+        }
 
         return $ids->count();
     }
 
-    private function removeOldMessages(): int
+    private function removeOldMessages(bool $dryRun = false): int
     {
         $cutoff = date('Y-m-d', strtotime('Midnight ' . self::RECENT_DAYS . ' days ago'));
 
@@ -167,12 +184,14 @@ class MessageSpatialService
             return 0;
         }
 
-        DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+        if (!$dryRun) {
+            DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+        }
 
         return $ids->count();
     }
 
-    private function removeNonApprovedMessages(): int
+    private function removeNonApprovedMessages(bool $dryRun = false): int
     {
         $ids = DB::table('messages_spatial')
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_spatial.msgid')
@@ -183,7 +202,9 @@ class MessageSpatialService
             return 0;
         }
 
-        DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+        if (!$dryRun) {
+            DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+        }
 
         return $ids->count();
     }

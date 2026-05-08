@@ -23,18 +23,23 @@ class AppVersionFetcherService
         'mt' => 'us',
     ];
 
-    public function fetchAll(): array
+    public function fetchAll(bool $dryRun = false): array
     {
         $fetched = [];
         $failed = [];
+        $writes = [];
 
         foreach (self::IOS_BUNDLES as $app => $bundleId) {
             $key = "ios_{$app}";
             $region = self::IOS_STORE_REGION[$app];
             $result = $this->fetchIosVersion($bundleId, $region);
             if ($result) {
-                $this->storeConfig("app_{$app}_version_ios_latest", $result['version']);
-                $this->storeConfig("app_{$app}_version_ios_date", $result['date']);
+                $writes["app_{$app}_version_ios_latest"] = $result['version'];
+                $writes["app_{$app}_version_ios_date"] = $result['date'];
+                if (!$dryRun) {
+                    $this->storeConfig("app_{$app}_version_ios_latest", $result['version']);
+                    $this->storeConfig("app_{$app}_version_ios_date", $result['date']);
+                }
                 $fetched[] = $key;
                 Log::info("AppVersionFetcher: iOS {$app} = {$result['version']} ({$result['date']})");
             } else {
@@ -47,8 +52,12 @@ class AppVersionFetcherService
             $key = "android_{$app}";
             $result = $this->fetchAndroidVersion($packageId);
             if ($result) {
-                $this->storeConfig("app_{$app}_version_android_latest", $result['version']);
-                $this->storeConfig("app_{$app}_version_android_date", $result['date']);
+                $writes["app_{$app}_version_android_latest"] = $result['version'];
+                $writes["app_{$app}_version_android_date"] = $result['date'];
+                if (!$dryRun) {
+                    $this->storeConfig("app_{$app}_version_android_latest", $result['version']);
+                    $this->storeConfig("app_{$app}_version_android_date", $result['date']);
+                }
                 $fetched[] = $key;
                 Log::info("AppVersionFetcher: Android {$app} = {$result['version']} ({$result['date']})");
             } else {
@@ -57,7 +66,7 @@ class AppVersionFetcherService
             }
         }
 
-        return ['fetched' => $fetched, 'failed' => $failed];
+        return ['fetched' => $fetched, 'failed' => $failed, 'writes' => $writes];
     }
 
     private function fetchIosVersion(string $bundleId, string $region = 'us'): ?array

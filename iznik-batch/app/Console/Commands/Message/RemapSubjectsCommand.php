@@ -26,17 +26,31 @@ class RemapSubjectsCommand extends Command
         }
 
         try {
-            if ($this->option('dry-run')) {
-                $this->info('Dry run — no changes made.');
-                return Command::SUCCESS;
+            $dryRun = (bool) $this->option('dry-run');
+
+            if ($dryRun) {
+                $this->info('Dry run — counting changes but not writing.');
+            } else {
+                Log::info('Starting message subject remap');
             }
 
-            Log::info('Starting message subject remap');
+            $result = $service->remapSubjects($dryRun);
 
-            $result = $service->remapSubjects();
+            $verb = $dryRun ? 'Would remap' : 'Remapped';
+            $this->info("{$verb} {$result['changed']} of {$result['checked']} message subjects.");
 
-            $this->info("Remapped {$result['changed']} message subjects.");
-            Log::info('Message subject remap complete', $result);
+            if (!empty($result['samples'])) {
+                $this->line('Sample changes (up to 20):');
+                foreach ($result['samples'] as $c) {
+                    $this->line(sprintf('  #%d', $c['id']));
+                    $this->line(sprintf('    OLD: %s', $c['old']));
+                    $this->line(sprintf('    NEW: %s', $c['new']));
+                }
+            }
+
+            if (!$dryRun) {
+                Log::info('Message subject remap complete', ['changed' => $result['changed'], 'checked' => $result['checked']]);
+            }
 
             return Command::SUCCESS;
         } finally {

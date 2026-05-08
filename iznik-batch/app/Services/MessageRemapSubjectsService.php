@@ -10,7 +10,7 @@ class MessageRemapSubjectsService
     // V1: Message::EXPIRE_TIME = 90 days
     private const EXPIRE_DAYS = 90;
 
-    public function remapSubjects(): array
+    public function remapSubjects(bool $dryRun = false): array
     {
         $locationChangeCutoff = now()->subHours(24)->format('Y-m-d H:i:s');
         $earliestMessage = now()->subDays(self::EXPIRE_DAYS)->format('Y-m-d');
@@ -40,6 +40,7 @@ class MessageRemapSubjectsService
         Log::info("MessageRemapSubjects: checking {$messages->count()} messages");
 
         $changed = 0;
+        $changes = [];
 
         foreach ($messages as $msg) {
             if (!$msg->item_name) {
@@ -63,17 +64,27 @@ class MessageRemapSubjectsService
             if (strcasecmp($oldLoc, $newLoc) !== 0) {
                 Log::info("MessageRemapSubjects: message #{$msg->id} {$oldLoc} => {$newLoc}");
 
-                DB::table('messages')
-                    ->where('id', $msg->id)
-                    ->update(['subject' => $newSubject]);
+                if (!$dryRun) {
+                    DB::table('messages')
+                        ->where('id', $msg->id)
+                        ->update(['subject' => $newSubject]);
+                }
+
+                if (count($changes) < 20) {
+                    $changes[] = [
+                        'id' => $msg->id,
+                        'old' => $msg->subject,
+                        'new' => $newSubject,
+                    ];
+                }
 
                 $changed++;
             }
         }
 
-        Log::info("MessageRemapSubjects: changed {$changed} of {$messages->count()}");
+        Log::info("MessageRemapSubjects: " . ($dryRun ? 'would change ' : 'changed ') . "{$changed} of {$messages->count()}");
 
-        return ['changed' => $changed];
+        return ['changed' => $changed, 'checked' => $messages->count(), 'samples' => $changes];
     }
 
     private function buildLocation(object $msg): string

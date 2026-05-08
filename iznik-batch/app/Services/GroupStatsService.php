@@ -15,26 +15,30 @@ class GroupStatsService
     private const ACTIVE_DAYS = 30;
     private const OUTCOMES_MONTHS = 13;
 
-    public function updateGroupStats(): array
+    public function updateGroupStats(bool $dryRun = false): array
     {
-        $repostsFixed = $this->fixRepostSettings();
-        $polyindexFixed = $this->fixPolyindex();
-        $this->updateActivityAndFunding();
-        $this->updateLastModerated();
-        $this->updateLastAutoApprove();
-        $this->updateActiveOwnerModCounts();
-        $statsOutcomesUpdated = $this->updateStatsOutcomes();
+        $repostsFixed = $this->fixRepostSettings($dryRun);
+        $polyindexFixed = $this->fixPolyindex($dryRun);
+        $activityUpdated = $this->updateActivityAndFunding($dryRun);
+        $lastModeratedUpdated = $this->updateLastModerated($dryRun);
+        $lastAutoApproveUpdated = $this->updateLastAutoApprove($dryRun);
+        $modCountsUpdated = $this->updateActiveOwnerModCounts($dryRun);
+        $statsOutcomesUpdated = $this->updateStatsOutcomes($dryRun);
 
         Log::info("GroupStats: reposts={$repostsFixed}, polyindex={$polyindexFixed}, outcomes={$statsOutcomesUpdated}");
 
         return [
             'reposts_fixed' => $repostsFixed,
             'polyindex_fixed' => $polyindexFixed,
+            'activity_updated' => $activityUpdated,
+            'last_moderated_updated' => $lastModeratedUpdated,
+            'last_autoapprove_updated' => $lastAutoApproveUpdated,
+            'mod_counts_updated' => $modCountsUpdated,
             'stats_outcomes_updated' => $statsOutcomesUpdated,
         ];
     }
 
-    private function fixRepostSettings(): int
+    private function fixRepostSettings(bool $dryRun = false): int
     {
         $groups = DB::table('groups')->select('id', 'nameshort', 'settings')->get();
         $count = 0;
@@ -58,7 +62,9 @@ class GroupStatsService
             }
 
             if ($changed) {
-                DB::table('groups')->where('id', $group->id)->update(['settings' => json_encode($settings)]);
+                if (!$dryRun) {
+                    DB::table('groups')->where('id', $group->id)->update(['settings' => json_encode($settings)]);
+                }
                 $count++;
             }
         }
@@ -66,7 +72,7 @@ class GroupStatsService
         return $count;
     }
 
-    private function fixPolyindex(): int
+    private function fixPolyindex(bool $dryRun = false): int
     {
         $count = 0;
 
@@ -79,10 +85,12 @@ class GroupStatsService
             );
 
             if ($row && $row->current !== $row->geomtext) {
-                DB::statement(
-                    "UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
-                    [$row->geomtext, self::SRID, $group->id]
-                );
+                if (!$dryRun) {
+                    DB::statement(
+                        "UPDATE `groups` SET polyindex = ST_GeomFromText(?, ?) WHERE id = ?",
+                        [$row->geomtext, self::SRID, $group->id]
+                    );
+                }
                 $count++;
             }
         }
@@ -90,7 +98,7 @@ class GroupStatsService
         return $count;
     }
 
-    private function updateActivityAndFunding(): void
+    private function updateActivityAndFunding(bool $dryRun = false): int
     {
         $cutoff = date('Y-m-d', strtotime(self::ACTIVE_DAYS . ' days ago'));
 
@@ -104,7 +112,7 @@ class GroupStatsService
             ->sum('stats.count');
 
         if (!$totalResult) {
-            return;
+            return 0;
         }
 
         $groups = DB::table('groups')
@@ -114,6 +122,7 @@ class GroupStatsService
             ->orderByRaw('LOWER(nameshort) ASC')
             ->pluck('id');
 
+        $count = 0;
         foreach ($groups as $groupId) {
             $groupCount = DB::table('stats')
                 ->where('type', self::STATS_TYPE_APPROVED_MESSAGE_COUNT)
@@ -126,16 +135,22 @@ class GroupStatsService
             $portion = (int) ceil($pc * self::DONATION_TARGET / 100) * 10;
             $portion = max(50, $portion);
 
-            DB::table('groups')->where('id', $groupId)->update([
-                'activitypercent' => $pc,
-                'fundingtarget' => $portion,
-            ]);
+            if (!$dryRun) {
+                DB::table('groups')->where('id', $groupId)->update([
+                    'activitypercent' => $pc,
+                    'fundingtarget' => $portion,
+                ]);
+            }
+            $count++;
         }
+
+        return $count;
     }
 
-    private function updateLastModerated(): void
+    private function updateLastModerated(bool $dryRun = false): int
     {
         $groups = DB::table('groups')->pluck('id');
+        $count = 0;
 
         foreach ($groups as $groupId) {
             $max = DB::table('messages_groups')
@@ -143,19 +158,21 @@ class GroupStatsService
                 ->whereNotNull('approvedby')
                 ->max('approvedat');
 
-            DB::table('groups')->where('id', $groupId)->update(['lastmoderated' => $max]);
+            if (!$dryRun) {
+                DB::table('groups')->where('id', $groupId)->update(['lastmoderated' => $max]);
+            }
+            $count++;
         }
+
+        return $count;
     }
 
-    private function updateLastAutoApprove(): void
+    private function updateLastAutoApprove(bool $dryRun = false): int
     {
         $groups = DB::table('groups')->select('id', 'lastautoapprove')->get();
+        $count = 0;
 
         foreach ($groups as $group) {
-            $timeq = $group->lastautoapprove
-                ? ["AND timestamp >= ?", [$group->lastautoapprove]]
-                : ["", []];
-
             $max = DB::table('logs')
                 ->where('groupid', $group->id)
                 ->where('type', 'Message')
@@ -164,20 +181,26 @@ class GroupStatsService
                 ->max('timestamp');
 
             if ($max) {
-                DB::table('groups')
-                    ->where('id', $group->id)
-                    ->where(function ($q) use ($max) {
-                        $q->whereNull('lastautoapprove')->orWhere('lastautoapprove', '<', $max);
-                    })
-                    ->update(['lastautoapprove' => $max]);
+                if (!$dryRun) {
+                    DB::table('groups')
+                        ->where('id', $group->id)
+                        ->where(function ($q) use ($max) {
+                            $q->whereNull('lastautoapprove')->orWhere('lastautoapprove', '<', $max);
+                        })
+                        ->update(['lastautoapprove' => $max]);
+                }
+                $count++;
             }
         }
+
+        return $count;
     }
 
-    private function updateActiveOwnerModCounts(): void
+    private function updateActiveOwnerModCounts(bool $dryRun = false): int
     {
         $start = date('Y-m-d', strtotime(self::ACTIVE_DAYS . ' days ago'));
         $groups = DB::table('groups')->pluck('id');
+        $count = 0;
 
         foreach ($groups as $groupId) {
             $ownerCount = DB::table('users')
@@ -225,16 +248,21 @@ class GroupStatsService
                 ->distinct('userid')
                 ->count('userid');
 
-            DB::table('groups')->where('id', $groupId)->update([
-                'activeownercount' => $ownerCount,
-                'activemodcount' => $modCount,
-                'backupownersactive' => $backupOwners,
-                'backupmodsactive' => $backupMods,
-            ]);
+            if (!$dryRun) {
+                DB::table('groups')->where('id', $groupId)->update([
+                    'activeownercount' => $ownerCount,
+                    'activemodcount' => $modCount,
+                    'backupownersactive' => $backupOwners,
+                    'backupmodsactive' => $backupMods,
+                ]);
+            }
+            $count++;
         }
+
+        return $count;
     }
 
-    private function updateStatsOutcomes(): int
+    private function updateStatsOutcomes(bool $dryRun = false): int
     {
         $cutoff = date('Y-m-01', strtotime(self::OUTCOMES_MONTHS . ' months ago'));
 
@@ -248,11 +276,13 @@ class GroupStatsService
         $count = 0;
         foreach ($stats as $stat) {
             if ($stat->count) {
-                DB::table('stats_outcomes')->upsert(
-                    ['groupid' => $stat->groupid, 'count' => $stat->count, 'date' => $stat->month_date],
-                    ['groupid', 'date'],
-                    ['count']
-                );
+                if (!$dryRun) {
+                    DB::table('stats_outcomes')->upsert(
+                        ['groupid' => $stat->groupid, 'count' => $stat->count, 'date' => $stat->month_date],
+                        ['groupid', 'date'],
+                        ['count']
+                    );
+                }
                 $count++;
             }
         }

@@ -8,16 +8,22 @@ use Tests\TestCase;
 
 class UpdateModMailsCommandTest extends TestCase
 {
-    public function test_dry_run_does_not_update(): void
+    public function test_dry_run_calls_service_without_writing(): void
     {
         $service = $this->createMock(UserModMailsService::class);
-        $service->expects($this->never())
-            ->method('updateModMails');
+        $service->expects($this->once())
+            ->method('updateModMails')
+            ->with(true)
+            ->willReturn(0);
+        $service->expects($this->once())
+            ->method('pruneOldEntries')
+            ->with(true)
+            ->willReturn(0);
 
         $this->app->instance(UserModMailsService::class, $service);
 
         $this->artisan('users:update-modmails --dry-run')
-            ->expectsOutputToContain('Dry run — no changes made.')
+            ->expectsOutputToContain('Dry run')
             ->assertExitCode(Command::SUCCESS);
     }
 }

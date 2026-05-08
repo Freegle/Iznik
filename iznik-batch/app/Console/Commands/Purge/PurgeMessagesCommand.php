@@ -41,15 +41,14 @@ class PurgeMessagesCommand extends Command
         try {
             $this->registerShutdownHandlers();
 
-            $dryRun = $this->option('dry-run');
+            $dryRun = (bool) $this->option('dry-run');
 
             if ($dryRun) {
-                $this->info('DRY RUN — no changes will be made.');
-                return Command::SUCCESS;
+                $this->info('DRY RUN — counting purges but not deleting.');
+            } else {
+                Log::info('Starting message purge', ['dry_run' => $dryRun]);
+                $this->info('Purging message data...');
             }
-
-            Log::info('Starting message purge', ['dry_run' => $dryRun]);
-            $this->info('Purging message data...');
 
             $results = [];
 
@@ -131,7 +130,7 @@ class PurgeMessagesCommand extends Command
 
             // Purge orphaned isochrones.
             $this->line('Purging orphaned isochrones...');
-            $results['orphaned_isochrones'] = $purgeService->purgeOrphanedIsochrones();
+            $results['orphaned_isochrones'] = $purgeService->purgeOrphanedIsochrones($dryRun);
             $this->info("  Purged {$results['orphaned_isochrones']} orphaned isochrones");
 
             if ($this->shouldAbort()) {
@@ -140,7 +139,7 @@ class PurgeMessagesCommand extends Command
 
             // Purge completed admins.
             $this->line('Purging completed admins...');
-            $results['completed_admins'] = $purgeService->purgeCompletedAdmins();
+            $results['completed_admins'] = $purgeService->purgeCompletedAdmins(90, $dryRun);
             $this->info("  Purged {$results['completed_admins']} completed admin records");
 
             if ($this->shouldAbort()) {
@@ -149,7 +148,7 @@ class PurgeMessagesCommand extends Command
 
             // Purge old users_nearby data.
             $this->line('Purging old users_nearby data...');
-            $results['users_nearby'] = $purgeService->purgeUsersNearby();
+            $results['users_nearby'] = $purgeService->purgeUsersNearby(90, $dryRun);
             $this->info("  Purged {$results['users_nearby']} users_nearby records");
 
             if ($this->shouldAbort()) {
@@ -158,7 +157,7 @@ class PurgeMessagesCommand extends Command
 
             // Purge unvalidated email addresses.
             $this->line('Purging unvalidated email addresses...');
-            $results['unvalidated_emails'] = $purgeService->purgeUnvalidatedEmails();
+            $results['unvalidated_emails'] = $purgeService->purgeUnvalidatedEmails(7, $dryRun);
             $this->info("  Purged {$results['unvalidated_emails']} unvalidated emails");
 
             $this->displayResults($results);

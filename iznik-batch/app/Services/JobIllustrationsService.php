@@ -201,9 +201,10 @@ class JobIllustrationsService
      *
      * @return array{processed: int, remaining: int}
      */
-    public function processIllustrations(): array
+    public function processIllustrations(bool $dryRun = false): array
     {
         $processed = 0;
+        $wouldFetch = 0;
 
         while (true) {
             $allNames = array_keys(self::CANONICAL_JOBS);
@@ -238,6 +239,15 @@ class JobIllustrationsService
             }
 
             if (empty($batchItems)) {
+                break;
+            }
+
+            if ($dryRun) {
+                // Don't call pollinations.ai (costs $); count and stop after reporting batch.
+                $wouldFetch += count($batchItems);
+                foreach ($batchItems as $item) {
+                    Log::info("JobIllustrations dry-run: would fetch '{$item['name']}'");
+                }
                 break;
             }
 
@@ -277,6 +287,6 @@ class JobIllustrationsService
             DB::table('ai_images')->whereIn('name', array_keys(self::CANONICAL_JOBS))->pluck('name')->toArray()
         ));
 
-        return ['processed' => $processed, 'remaining' => $remaining];
+        return ['processed' => $processed, 'remaining' => $remaining, 'would_fetch' => $wouldFetch];
     }
 }

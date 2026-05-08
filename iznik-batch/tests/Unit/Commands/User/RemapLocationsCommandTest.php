@@ -8,16 +8,18 @@ use Tests\TestCase;
 
 class RemapLocationsCommandTest extends TestCase
 {
-    public function test_dry_run_does_not_remap(): void
+    public function test_dry_run_calls_service_without_writing(): void
     {
         $service = $this->createMock(UserLocationRemapService::class);
-        $service->expects($this->never())
-            ->method('remapLocations');
+        $service->expects($this->once())
+            ->method('remapLocations')
+            ->with(true)
+            ->willReturn(['changed' => 0, 'checked' => 0, 'samples' => []]);
 
         $this->app->instance(UserLocationRemapService::class, $service);
 
         $this->artisan('users:remap-locations --dry-run')
-            ->expectsOutputToContain('Dry run — no changes made.')
+            ->expectsOutputToContain('Dry run')
             ->assertExitCode(Command::SUCCESS);
     }
 }

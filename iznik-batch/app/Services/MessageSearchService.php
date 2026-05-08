@@ -28,7 +28,7 @@ class MessageSearchService
      *
      * @return int Number of messages deindexed.
      */
-    public function deindexOldMessages(): int
+    public function deindexOldMessages(bool $dryRun = false): int
     {
         $date = now()->subDays(30)->format('Y-m-d');
 
@@ -39,14 +39,19 @@ class MessageSearchService
             ->distinct()
             ->pluck('messages_groups.msgid');
 
-        Log::info("MessageSearch: deindexing {$msgids->count()} messages");
+        $total = $msgids->count();
+        Log::info("MessageSearch: " . ($dryRun ? "would deindex " : "deindexing ") . "{$total} messages");
+
+        if ($dryRun) {
+            return $total;
+        }
 
         $done = 0;
 
         foreach ($msgids->chunk(500) as $chunk) {
             DB::table('messages_index')->whereIn('msgid', $chunk)->delete();
             $done += count($chunk);
-            Log::info("MessageSearch: deindex ...{$done} / {$msgids->count()}");
+            Log::info("MessageSearch: deindex ...{$done} / {$total}");
         }
 
         DB::table('words_cache')->delete();
@@ -60,7 +65,7 @@ class MessageSearchService
      *
      * @return int Number of messages indexed.
      */
-    public function indexUnindexedMessages(): int
+    public function indexUnindexedMessages(bool $dryRun = false): int
     {
         $cutoff = now()->subDays(31)->startOfDay()->format('Y-m-d');
 
@@ -76,10 +81,14 @@ class MessageSearchService
             ->select('messages_groups.msgid', 'messages.subject', 'messages_groups.arrival', 'messages_groups.groupid')
             ->get();
 
-        Log::info("MessageSearch: indexing {$msgs->count()} messages");
+        $total = $msgs->count();
+        Log::info("MessageSearch: " . ($dryRun ? "would index " : "indexing ") . "{$total} messages");
+
+        if ($dryRun) {
+            return $total;
+        }
 
         $count = 0;
-        $total = $msgs->count();
 
         foreach ($msgs as $msg) {
             $toadd = $msg->subject;

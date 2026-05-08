@@ -26,17 +26,22 @@ class GenerateIllustrationsCommand extends Command
         }
 
         try {
-            if ($this->option('dry-run')) {
-                $this->info('Dry run — no changes made.');
-                return Command::SUCCESS;
+            $dryRun = (bool) $this->option('dry-run');
+
+            if ($dryRun) {
+                $this->info('Dry run — counting work but not calling pollinations.ai.');
+            } else {
+                Log::info('Starting job illustrations generation');
             }
 
-            Log::info('Starting job illustrations generation');
+            $result = $service->processIllustrations($dryRun);
 
-            $result = $service->processIllustrations();
-
-            $this->info("Job illustrations: {$result['processed']} processed, {$result['remaining']} remaining.");
-            Log::info('Job illustrations complete', $result);
+            if ($dryRun) {
+                $this->info("Job illustrations: {$result['remaining']} missing canonical jobs, would-fetch {$result['would_fetch']} this batch (skipped — costs \$).");
+            } else {
+                $this->info("Job illustrations: {$result['processed']} processed, {$result['remaining']} remaining.");
+                Log::info('Job illustrations complete', $result);
+            }
 
             return Command::SUCCESS;
         } finally {

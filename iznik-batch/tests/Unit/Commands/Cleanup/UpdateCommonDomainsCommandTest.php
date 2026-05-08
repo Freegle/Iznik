@@ -8,16 +8,18 @@ use Tests\TestCase;
 
 class UpdateCommonDomainsCommandTest extends TestCase
 {
-    public function test_dry_run_does_not_update(): void
+    public function test_dry_run_calls_service_without_writing(): void
     {
         $service = $this->createMock(CommonDomainsService::class);
-        $service->expects($this->never())
-            ->method('updateCommonDomains');
+        $service->expects($this->once())
+            ->method('updateCommonDomains')
+            ->with(true)
+            ->willReturn(['emails_scanned' => 0, 'distinct_domains' => 0, 'domains_inserted' => 0, 'writes' => []]);
 
         $this->app->instance(CommonDomainsService::class, $service);
 
         $this->artisan('domains:update-common --dry-run')
-            ->expectsOutputToContain('Dry run — no changes made.')
+            ->expectsOutputToContain('Dry run')
             ->assertExitCode(Command::SUCCESS);
     }
 }

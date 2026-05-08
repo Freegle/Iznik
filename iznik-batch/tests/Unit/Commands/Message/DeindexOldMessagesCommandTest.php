@@ -7,10 +7,10 @@ use Tests\TestCase;
 
 class DeindexOldMessagesCommandTest extends TestCase
 {
-    public function test_dry_run_returns_success_without_changes(): void
+    public function test_dry_run_calls_service_without_deleting(): void
     {
         $service = $this->createMock(MessageSearchService::class);
-        $service->expects($this->never())->method('deindexOldMessages');
+        $service->expects($this->once())->method('deindexOldMessages')->with(true)->willReturn(0);
         $this->app->instance(MessageSearchService::class, $service);
 
         $this->artisan('messages:deindex', ['--dry-run' => true])

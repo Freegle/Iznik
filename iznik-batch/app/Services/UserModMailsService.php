@@ -29,7 +29,7 @@ class UserModMailsService
      *
      * @return int Number of new entries inserted
      */
-    public function updateModMails(): int
+    public function updateModMails(bool $dryRun = false): int
     {
         $since = now()->subMinutes(self::SCAN_MINUTES);
         $inserted = 0;
@@ -50,6 +50,14 @@ class UserModMailsService
             ->get();
 
         foreach ($logs as $log) {
+            if ($dryRun) {
+                $exists = DB::table('users_modmails')->where('logid', $log->id)->exists();
+                if (!$exists) {
+                    $inserted++;
+                }
+                continue;
+            }
+
             $affected = DB::table('users_modmails')->insertOrIgnore([
                 'userid' => $log->user,
                 'logid' => $log->id,
@@ -62,7 +70,7 @@ class UserModMailsService
             }
         }
 
-        Log::info('users_modmails updated', ['inserted' => $inserted, 'logs_scanned' => count($logs)]);
+        Log::info('users_modmails ' . ($dryRun ? 'would update' : 'updated'), ['inserted' => $inserted, 'logs_scanned' => count($logs)]);
 
         return $inserted;
     }
@@ -72,9 +80,15 @@ class UserModMailsService
      *
      * @return int Number of entries deleted
      */
-    public function pruneOldEntries(): int
+    public function pruneOldEntries(bool $dryRun = false): int
     {
         $cutoff = now()->subDays(self::PRUNE_DAYS)->startOfDay();
+
+        if ($dryRun) {
+            return DB::table('users_modmails')
+                ->where('timestamp', '<', $cutoff)
+                ->count();
+        }
 
         $deleted = DB::table('users_modmails')
             ->where('timestamp', '<', $cutoff)
