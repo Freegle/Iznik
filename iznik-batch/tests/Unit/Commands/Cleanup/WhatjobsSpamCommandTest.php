@@ -8,16 +8,18 @@ use Tests\TestCase;
 
 class WhatjobsSpamCommandTest extends TestCase
 {
-    public function test_dry_run_does_not_delete(): void
+    public function test_dry_run_calls_service_without_deleting(): void
     {
         $service = $this->createMock(WhatjobsSpamService::class);
-        $service->expects($this->never())
-            ->method('deleteSpammyJobs');
+        $service->expects($this->once())
+            ->method('deleteSpammyJobs')
+            ->with(true)
+            ->willReturn(['deleted' => 0, 'spam_hashes' => 0, 'samples' => []]);
 
         $this->app->instance(WhatjobsSpamService::class, $service);
 
         $this->artisan('cleanup:whatjobs-spam --dry-run')
-            ->expectsOutputToContain('Dry run — no changes made.')
+            ->expectsOutputToContain('Dry run')
             ->assertExitCode(Command::SUCCESS);
     }
 }

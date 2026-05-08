@@ -125,28 +125,36 @@ class MessageExpiryService
     {
         $count = 0;
 
-        // Match V1: only target messages_spatial entries that ALREADY have OUTCOME_EXPIRED.
-        // V1 Message::processExpiry() is a no-op for messages without an EXPIRED outcome.
         $msgids = DB::table('messages_spatial')
-            ->join('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages_spatial.msgid')
-            ->where('messages_spatial.successful', 0)
-            ->where('messages_outcomes.outcome', MessageOutcome::OUTCOME_EXPIRED)
+            ->where('successful', 0)
             ->distinct()
-            ->pluck('messages_spatial.msgid');
+            ->pluck('msgid');
 
         foreach ($msgids as $msgid) {
             try {
                 $message = Message::find($msgid);
-                if ($message) {
-                    if ($dryRun) {
-                        Log::info("Dry run: would auto-withdraw spatial message #{$msgid}");
-                        $count++;
-                        continue;
-                    }
-
-                    $this->processMessageExpiry($message);
-                    $count++;
+                if (!$message) {
+                    continue;
                 }
+
+                if ($dryRun) {
+                    Log::info("Dry run: would auto-withdraw spatial message #{$msgid}");
+                    $count++;
+                    continue;
+                }
+
+                $hasAnyOutcome = MessageOutcome::where('msgid', $msgid)->exists();
+                if (!$hasAnyOutcome) {
+                    DB::table('messages_outcomes_intended')->where('msgid', $msgid)->delete();
+                    MessageOutcome::create([
+                        'msgid' => $msgid,
+                        'outcome' => MessageOutcome::OUTCOME_EXPIRED,
+                        'timestamp' => now(),
+                    ]);
+                }
+
+                DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+                $count++;
             } catch (\Exception $e) {
                 Log::error("Error processing spatial index expiry for {$msgid}: " . $e->getMessage());
             }

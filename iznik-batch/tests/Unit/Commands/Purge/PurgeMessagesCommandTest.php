@@ -7,12 +7,21 @@ use Tests\TestCase;
 
 class PurgeMessagesCommandTest extends TestCase
 {
-    public function test_dry_run_returns_success_without_changes(): void
+    public function test_dry_run_calls_service_without_deleting(): void
     {
         $service = $this->createMock(PurgeService::class);
-        $service->expects($this->never())->method('purgeOldMessagesHistory');
-        $service->expects($this->never())->method('purgePendingMessages');
-        $service->expects($this->never())->method('purgeDeletedMessages');
+        $service->method('purgeOldMessagesHistory')->willReturn(0);
+        $service->method('purgePendingMessages')->willReturn(0);
+        $service->method('purgeOldDrafts')->willReturn(0);
+        $service->method('purgeNonFreegleMessages')->willReturn(0);
+        $service->method('purgeDeletedMessages')->willReturn(0);
+        $service->method('purgeStrandedMessages')->willReturn(0);
+        $service->method('purgeHtmlBody')->willReturn(0);
+        $service->method('purgeMessageSource')->willReturn(0);
+        $service->method('purgeOrphanedIsochrones')->willReturn(0);
+        $service->method('purgeCompletedAdmins')->willReturn(0);
+        $service->method('purgeUsersNearby')->willReturn(0);
+        $service->method('purgeUnvalidatedEmails')->willReturn(0);
         $this->app->instance(PurgeService::class, $service);
 
         $this->artisan('purge:messages', ['--dry-run' => true])

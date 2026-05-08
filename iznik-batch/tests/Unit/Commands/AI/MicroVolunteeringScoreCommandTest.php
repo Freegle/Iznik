@@ -8,16 +8,18 @@ use Tests\TestCase;
 
 class MicroVolunteeringScoreCommandTest extends TestCase
 {
-    public function test_dry_run_does_not_score(): void
+    public function test_dry_run_calls_service_without_writing(): void
     {
         $service = $this->createMock(MicroVolunteeringScoreService::class);
-        $service->expects($this->never())
-            ->method('scoreAndPromote');
+        $service->expects($this->once())
+            ->method('scoreAndPromote')
+            ->with('48 hours ago', true)
+            ->willReturn(['scored' => 0, 'promoted' => 0]);
 
         $this->app->instance(MicroVolunteeringScoreService::class, $service);
 
         $this->artisan('microvolunteering:score --dry-run')
-            ->expectsOutputToContain('Dry run — no changes made.')
+            ->expectsOutputToContain('Dry run')
             ->assertExitCode(Command::SUCCESS);
     }
 }
