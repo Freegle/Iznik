@@ -204,6 +204,14 @@ Schedule::command('chats:update-counts')
     ->sendOutputTo(cronLog('chats:update-counts'))
     ->runInBackground();
 
+// Sync recent mod actions into users_modmails and prune old entries.
+// V1: cron/users_modmails.php
+Schedule::command('users:update-modmails')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-modmails'))
+    ->runInBackground();
+
 // Hourly fallback users.lastaccess update from chat / membership activity.
 // V1: cron/lastaccess.php
 Schedule::command('users:update-lastaccess')
