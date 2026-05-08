@@ -240,7 +240,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 
 | Original Script | Artisan Command | Notes |
 |-----------------|-----------------|-------|
-| `get_app_release_versions.php` | - | Needs migration - fetches app versions for dashboard display |
+| ~~`get_app_release_versions.php`~~ | ~~`data:fetch-app-versions`~~ | ~~Migrated, scheduled every 6 hours~~ |
 
 ---
 
