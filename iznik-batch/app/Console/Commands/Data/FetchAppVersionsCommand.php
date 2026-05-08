@@ -4,6 +4,7 @@ namespace App\Console\Commands\Data;
 
 use App\Services\AppVersionFetcherService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class FetchAppVersionsCommand extends Command
@@ -15,14 +16,15 @@ class FetchAppVersionsCommand extends Command
 
     public function handle(AppVersionFetcherService $service): int
     {
-        if ($this->option('dry-run')) {
-            $this->info('Dry run — no changes made.');
-            return Command::SUCCESS;
+        $dryRun = (bool) $this->option('dry-run');
+
+        if ($dryRun) {
+            $this->info('Dry run — fetching versions but not writing to config.');
+        } else {
+            Log::info('FetchAppVersions: Starting');
         }
 
-        Log::info('FetchAppVersions: Starting');
-
-        $result = $service->fetchAll();
+        $result = $service->fetchAll($dryRun);
 
         $this->info('Fetched: ' . implode(', ', $result['fetched']));
 
@@ -30,7 +32,23 @@ class FetchAppVersionsCommand extends Command
             $this->warn('Failed: ' . implode(', ', $result['failed']));
         }
 
-        Log::info('FetchAppVersions: Done', $result);
+        if (!empty($result['writes'])) {
+            $current = DB::table('config')
+                ->whereIn('key', array_keys($result['writes']))
+                ->pluck('value', 'key')
+                ->all();
+
+            $this->line($dryRun ? 'Would write:' : 'Wrote:');
+            foreach ($result['writes'] as $key => $value) {
+                $old = $current[$key] ?? '(unset)';
+                $marker = ($old === $value) ? '=' : '→';
+                $this->line(sprintf('  %s  %-40s  %s %s %s', $marker, $key, $old, $marker === '=' ? '==' : '→', $value));
+            }
+        }
+
+        if (!$dryRun) {
+            Log::info('FetchAppVersions: Done', $result);
+        }
 
         return Command::SUCCESS;
     }

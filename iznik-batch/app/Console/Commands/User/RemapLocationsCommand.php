@@ -26,17 +26,29 @@ class RemapLocationsCommand extends Command
         }
 
         try {
-            if ($this->option('dry-run')) {
-                $this->info('Dry run — no changes made.');
-                return Command::SUCCESS;
+            $dryRun = (bool) $this->option('dry-run');
+
+            if ($dryRun) {
+                $this->info('Dry run — counting changes but not writing.');
+            } else {
+                Log::info('Starting user location remap');
             }
 
-            Log::info('Starting user location remap');
+            $result = $service->remapLocations($dryRun);
 
-            $result = $service->remapLocations();
+            $verb = $dryRun ? 'Would update' : 'Updated';
+            $this->info("{$verb} {$result['changed']} of {$result['checked']} users' location data.");
 
-            $this->info("Updated {$result['changed']} users' location data.");
-            Log::info('User location remap complete', $result);
+            if (!empty($result['samples'])) {
+                $this->line('Sample changes (up to 10):');
+                foreach ($result['samples'] as $s) {
+                    $this->line(sprintf('  user #%d: %s → %s', $s['userid'], $s['old'] ?? '(unset)', $s['new']));
+                }
+            }
+
+            if (!$dryRun) {
+                Log::info('User location remap complete', ['changed' => $result['changed'], 'checked' => $result['checked']]);
+            }
 
             return Command::SUCCESS;
         } finally {

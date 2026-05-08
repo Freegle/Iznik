@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Log;
 
 class UserLocationRemapService
 {
-    public function remapLocations(): array
+    public function remapLocations(bool $dryRun = false): array
     {
         $cutoff = now()->subHours(48)->format('Y-m-d H:i:s');
 
@@ -20,6 +20,7 @@ class UserLocationRemapService
         Log::info("UserLocationRemap: checking {$users->count()} recently-active users");
 
         $changed = 0;
+        $samples = [];
 
         foreach ($users as $user) {
             $settings = json_decode($user->settings, true);
@@ -48,15 +49,21 @@ class UserLocationRemapService
 
             $settings['mylocation'] = (array) $location;
 
-            DB::table('users')
-                ->where('id', $user->id)
-                ->update(['settings' => json_encode($settings)]);
+            if (!$dryRun) {
+                DB::table('users')
+                    ->where('id', $user->id)
+                    ->update(['settings' => json_encode($settings)]);
+            }
+
+            if (count($samples) < 10) {
+                $samples[] = ['userid' => $user->id, 'old' => $cachedName, 'new' => $location->name];
+            }
 
             $changed++;
         }
 
-        Log::info("UserLocationRemap: changed {$changed} of {$users->count()}");
+        Log::info("UserLocationRemap: " . ($dryRun ? 'would change ' : 'changed ') . "{$changed} of {$users->count()}");
 
-        return ['changed' => $changed];
+        return ['changed' => $changed, 'checked' => $users->count(), 'samples' => $samples];
     }
 }

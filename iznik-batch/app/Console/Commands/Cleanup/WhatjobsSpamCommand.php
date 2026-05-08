@@ -15,17 +15,29 @@ class WhatjobsSpamCommand extends Command
 
     public function handle(WhatjobsSpamService $service): int
     {
-        if ($this->option('dry-run')) {
-            $this->info('Dry run — no changes made.');
-            return Command::SUCCESS;
+        $dryRun = (bool) $this->option('dry-run');
+
+        if ($dryRun) {
+            $this->info('Dry run — counting spam without deleting.');
+        } else {
+            Log::info('Starting WhatJobs spam cleanup');
         }
 
-        Log::info('Starting WhatJobs spam cleanup');
+        $result = $service->deleteSpammyJobs($dryRun);
 
-        $result = $service->deleteSpammyJobs();
+        $verb = $dryRun ? 'Would delete' : 'Deleted';
+        $this->info("{$verb} {$result['deleted']} jobs across {$result['spam_hashes']} spam hashes.");
 
-        $this->info("Deleted {$result['deleted']} jobs across {$result['spam_hashes']} spam hashes.");
-        Log::info('WhatJobs spam cleanup complete', $result);
+        if (!empty($result['samples'])) {
+            $this->line('Sample spam hashes (up to 10):');
+            foreach ($result['samples'] as $s) {
+                $this->line(sprintf('  %s %s × %d', $s['bodyhash'], $s['title'], $s['count']));
+            }
+        }
+
+        if (!$dryRun) {
+            Log::info('WhatJobs spam cleanup complete', ['deleted' => $result['deleted'], 'spam_hashes' => $result['spam_hashes']]);
+        }
 
         return Command::SUCCESS;
     }

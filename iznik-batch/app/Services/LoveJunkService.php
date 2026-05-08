@@ -17,7 +17,7 @@ class LoveJunkService
         $this->secret = config('freegle.lovejunk.secret', '');
     }
 
-    public function sync(): array
+    public function sync(bool $dryRun = false): array
     {
         $result = ['sent' => 0, 'edited' => 0, 'completed_or_deleted' => 0, 'failed' => 0];
         $since = now()->subDay()->toDateString();
@@ -40,7 +40,9 @@ class LoveJunkService
         foreach ($edited as $msg) {
             $lj = json_decode($msg->status, true);
             if ($lj && isset($lj['draftId'])) {
-                $this->editMessage($msg->id, $lj['draftId']);
+                if (!$dryRun) {
+                    $this->editMessage($msg->id, $lj['draftId']);
+                }
                 $result['edited']++;
             }
         }
@@ -60,6 +62,12 @@ class LoveJunkService
         ", [$since]);
 
         foreach ($newMsgs as $msg) {
+            if ($dryRun) {
+                // Don't call LoveJunk API or write to lovejunk table.
+                $result['sent']++;
+                continue;
+            }
+
             if ($this->sendMessage($msg->id)) {
                 $result['sent']++;
             } else {
@@ -84,7 +92,9 @@ class LoveJunkService
         ", [$since]);
 
         foreach ($withOutcomes as $msg) {
-            $this->completeOrDelete($msg->id);
+            if (!$dryRun) {
+                $this->completeOrDelete($msg->id);
+            }
             $result['completed_or_deleted']++;
         }
 

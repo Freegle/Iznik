@@ -26,17 +26,22 @@ class GenerateIllustrationsCommand extends Command
         }
 
         try {
-            if ($this->option('dry-run')) {
-                $this->info('Dry run — no changes made.');
-                return Command::SUCCESS;
+            $dryRun = (bool) $this->option('dry-run');
+
+            if ($dryRun) {
+                $this->info('Dry run — counting work but not calling pollinations.ai or writing.');
+            } else {
+                Log::info('Starting message illustrations generation');
             }
 
-            Log::info('Starting message illustrations generation');
+            $result = $service->processIllustrations($dryRun);
 
-            $result = $service->processIllustrations();
-
-            $this->info("Illustrations: {$result['processed']} processed, {$result['cleaned']} cleaned up.");
-            Log::info('Message illustrations complete', $result);
+            if ($dryRun) {
+                $this->info("Illustrations: would clean {$result['cleaned']}, cache-hits {$result['cached_hits']}, would-fetch {$result['would_fetch']} (skipped — costs \$).");
+            } else {
+                $this->info("Illustrations: {$result['processed']} processed, {$result['cleaned']} cleaned up.");
+                Log::info('Message illustrations complete', $result);
+            }
 
             return Command::SUCCESS;
         } finally {

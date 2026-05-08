@@ -15,17 +15,29 @@ class UpdateStatsCommand extends Command
 
     public function handle(GroupStatsService $service): int
     {
-        if ($this->option('dry-run')) {
-            $this->info('Dry run — no changes made.');
-            return Command::SUCCESS;
+        $dryRun = (bool) $this->option('dry-run');
+
+        if ($dryRun) {
+            $this->info('Dry run — scanning groups but not writing.');
+        } else {
+            Log::info('Starting group stats update');
         }
 
-        Log::info('Starting group stats update');
+        $result = $service->updateGroupStats($dryRun);
 
-        $result = $service->updateGroupStats();
+        $verb = $dryRun ? 'Would update' : 'Updated';
+        $this->info("{$verb}:");
+        $this->line(sprintf('  reposts_fixed:            %d', $result['reposts_fixed']));
+        $this->line(sprintf('  polyindex_fixed:          %d', $result['polyindex_fixed']));
+        $this->line(sprintf('  activity_updated:         %d (groups)', $result['activity_updated']));
+        $this->line(sprintf('  last_moderated_updated:   %d (groups)', $result['last_moderated_updated']));
+        $this->line(sprintf('  last_autoapprove_updated: %d (groups, only those with logs)', $result['last_autoapprove_updated']));
+        $this->line(sprintf('  mod_counts_updated:       %d (groups)', $result['mod_counts_updated']));
+        $this->line(sprintf('  stats_outcomes_updated:   %d', $result['stats_outcomes_updated']));
 
-        $this->info("Group stats: {$result['reposts_fixed']} reposts fixed, {$result['polyindex_fixed']} polyindices fixed, {$result['stats_outcomes_updated']} outcomes updated.");
-        Log::info('Group stats update complete', $result);
+        if (!$dryRun) {
+            Log::info('Group stats update complete', $result);
+        }
 
         return Command::SUCCESS;
     }

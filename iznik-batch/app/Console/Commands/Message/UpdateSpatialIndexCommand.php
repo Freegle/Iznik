@@ -26,17 +26,27 @@ class UpdateSpatialIndexCommand extends Command
         }
 
         try {
-            if ($this->option('dry-run')) {
-                $this->info('Dry run — no changes made.');
-                return Command::SUCCESS;
+            $dryRun = (bool) $this->option('dry-run');
+
+            if ($dryRun) {
+                $this->info('Dry run — counting changes but not writing.');
+            } else {
+                Log::info('Starting message spatial index update');
             }
 
-            Log::info('Starting message spatial index update');
+            $stats = $service->updateSpatialIndex($dryRun);
 
-            $count = $service->updateSpatialIndex();
+            $verb = $dryRun ? 'would update' : 'updated';
+            $this->info("{$verb} {$stats['total']} entries:");
+            $this->line(sprintf('  upserted_recent:      %d', $stats['upserted_recent']));
+            $this->line(sprintf('  outcomes_updated:     %d', $stats['outcomes_updated']));
+            $this->line(sprintf('  removed_deleted:      %d', $stats['removed_deleted']));
+            $this->line(sprintf('  removed_old:          %d', $stats['removed_old']));
+            $this->line(sprintf('  removed_non_approved: %d', $stats['removed_non_approved']));
 
-            $this->info("{$count} row(s) processed");
-            Log::info('Message spatial index update complete', ['count' => $count]);
+            if (!$dryRun) {
+                Log::info('Message spatial index update complete', $stats);
+            }
 
             return Command::SUCCESS;
         } finally {

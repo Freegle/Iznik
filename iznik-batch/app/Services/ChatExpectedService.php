@@ -32,11 +32,11 @@ class ChatExpectedService
      *
      * @return array{deleted_cleared: int, spam_cleared: int, waiting: int, received: int}
      */
-    public function updateChatExpected(): array
+    public function updateChatExpected(bool $dryRun = false): array
     {
-        $deleted = $this->tidyDeletedUsersReplies();
-        $spam = $this->tidySpamUsersReplies();
-        $stats = $this->updateExpected();
+        $deleted = $this->tidyDeletedUsersReplies($dryRun);
+        $spam = $this->tidySpamUsersReplies($dryRun);
+        $stats = $this->updateExpected($dryRun);
 
         return array_merge(['deleted_cleared' => $deleted, 'spam_cleared' => $spam], $stats);
     }
@@ -47,9 +47,19 @@ class ChatExpectedService
      *
      * @return int Number of messages cleared.
      */
-    public function tidyDeletedUsersReplies(): int
+    public function tidyDeletedUsersReplies(bool $dryRun = false): int
     {
         $since = now()->subDay()->toDateTimeString();
+
+        if ($dryRun) {
+            return DB::table('chat_messages')
+                ->where('replyexpected', 1)
+                ->where('replyreceived', 0)
+                ->whereIn('userid', function ($q) use ($since) {
+                    $q->select('id')->from('users')->whereNotNull('deleted')->where('deleted', '>=', $since);
+                })
+                ->count();
+        }
 
         return DB::update(
             "UPDATE chat_messages
@@ -69,8 +79,18 @@ class ChatExpectedService
      *
      * @return int Number of messages cleared.
      */
-    public function tidySpamUsersReplies(): int
+    public function tidySpamUsersReplies(bool $dryRun = false): int
     {
+        if ($dryRun) {
+            return DB::table('chat_messages')
+                ->where('replyexpected', 1)
+                ->where('replyreceived', 0)
+                ->whereIn('userid', function ($q) {
+                    $q->select('userid')->from('spam_users')->where('collection', 'Spammer');
+                })
+                ->count();
+        }
+
         return DB::update(
             "UPDATE chat_messages
              SET replyexpected = 0
@@ -93,7 +113,7 @@ class ChatExpectedService
      *
      * @return array{waiting: int, received: int}
      */
-    public function updateExpected(): array
+    public function updateExpected(bool $dryRun = false): array
     {
         $oldest = now()->subDays(self::LOOKBACK_DAYS)->startOfDay()->toDateTimeString();
 
@@ -122,23 +142,27 @@ class ChatExpectedService
                 ->count();
 
             if ($replyCount > 0) {
-                DB::update('UPDATE chat_messages SET replyreceived = 1 WHERE id = ?', [$msg->id]);
+                if (!$dryRun) {
+                    DB::update('UPDATE chat_messages SET replyreceived = 1 WHERE id = ?', [$msg->id]);
 
-                DB::statement(
-                    'INSERT IGNORE INTO users_expected (expecter, expectee, chatmsgid, value)
-                     VALUES (?, ?, ?, 1)
-                     ON DUPLICATE KEY UPDATE value = 1',
-                    [$msg->userid, $other, $msg->id]
-                );
+                    DB::statement(
+                        'INSERT IGNORE INTO users_expected (expecter, expectee, chatmsgid, value)
+                         VALUES (?, ?, ?, 1)
+                         ON DUPLICATE KEY UPDATE value = 1',
+                        [$msg->userid, $other, $msg->id]
+                    );
+                }
 
                 $received++;
             } else {
-                DB::statement(
-                    'INSERT IGNORE INTO users_expected (expecter, expectee, chatmsgid, value)
-                     VALUES (?, ?, ?, -1)
-                     ON DUPLICATE KEY UPDATE value = -1',
-                    [$msg->userid, $other, $msg->id]
-                );
+                if (!$dryRun) {
+                    DB::statement(
+                        'INSERT IGNORE INTO users_expected (expecter, expectee, chatmsgid, value)
+                         VALUES (?, ?, ?, -1)
+                         ON DUPLICATE KEY UPDATE value = -1',
+                        [$msg->userid, $other, $msg->id]
+                    );
+                }
 
                 $waiting++;
             }

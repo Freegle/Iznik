@@ -15,20 +15,20 @@ class MessageIllustrationsService
     /**
      * Generate AI illustrations for messages that have no attachments.
      *
-     * @return array{cleaned: int, processed: int}
+     * @return array{cleaned: int, processed: int, would_fetch: int, cached_hits: int}
      */
-    public function processIllustrations(): array
+    public function processIllustrations(bool $dryRun = false): array
     {
-        $cleaned = $this->cleanupDuplicates();
-        $processed = $this->processBatches();
+        $cleaned = $this->cleanupDuplicates($dryRun);
+        $batchStats = $this->processBatches($dryRun);
 
-        return ['cleaned' => $cleaned, 'processed' => $processed];
+        return ['cleaned' => $cleaned] + $batchStats;
     }
 
     /**
      * Remove AI illustrations from messages where the user has since added their own photo.
      */
-    private function cleanupDuplicates(): int
+    private function cleanupDuplicates(bool $dryRun = false): int
     {
         $duplicates = DB::select("
             SELECT DISTINCT ma_ai.id, ma_ai.msgid
@@ -44,29 +44,33 @@ class MessageIllustrationsService
 
         $count = 0;
         foreach ($duplicates as $dup) {
-            DB::table('messages_attachments')->where('id', $dup->id)->delete();
-            $count++;
+            if (!$dryRun) {
+                DB::table('messages_attachments')->where('id', $dup->id)->delete();
 
-            $hasPrimary = DB::table('messages_attachments')
-                ->where('msgid', $dup->msgid)
-                ->where('primary', 1)
-                ->exists();
+                $hasPrimary = DB::table('messages_attachments')
+                    ->where('msgid', $dup->msgid)
+                    ->where('primary', 1)
+                    ->exists();
 
-            if (! $hasPrimary) {
-                DB::statement(
-                    'UPDATE messages_attachments SET `primary` = 1 WHERE msgid = ? ORDER BY id ASC LIMIT 1',
-                    [$dup->msgid]
-                );
+                if (! $hasPrimary) {
+                    DB::statement(
+                        'UPDATE messages_attachments SET `primary` = 1 WHERE msgid = ? ORDER BY id ASC LIMIT 1',
+                        [$dup->msgid]
+                    );
+                }
             }
+            $count++;
         }
 
         return $count;
     }
 
-    private function processBatches(): int
+    private function processBatches(bool $dryRun = false): array
     {
         $lastArrival = $this->getLastArrival();
         $processed = 0;
+        $wouldFetch = 0;
+        $cachedHits = 0;
 
         while (true) {
             $msgs = DB::select("
@@ -125,18 +129,31 @@ class MessageIllustrationsService
             foreach ($cachedMessages as $cached) {
                 $hasAttachment = DB::table('messages_attachments')->where('msgid', $cached['msgid'])->exists();
                 if (! $hasAttachment) {
-                    DB::table('messages_attachments')->insert([
-                        'msgid' => $cached['msgid'],
-                        'externaluid' => $cached['uid'],
-                        'externalmods' => json_encode(['ai' => true]),
-                        'contenttype' => 'image/jpeg',
-                    ]);
-                    $processed++;
-                    Log::info("MessageIllustrations: used cached illustration for message {$cached['msgid']}: {$cached['itemName']}");
+                    if (!$dryRun) {
+                        DB::table('messages_attachments')->insert([
+                            'msgid' => $cached['msgid'],
+                            'externaluid' => $cached['uid'],
+                            'externalmods' => json_encode(['ai' => true]),
+                            'contenttype' => 'image/jpeg',
+                        ]);
+                        $processed++;
+                        Log::info("MessageIllustrations: used cached illustration for message {$cached['msgid']}: {$cached['itemName']}");
+                    }
+                    $cachedHits++;
                 }
             }
 
             if (! empty($newMessages)) {
+                if ($dryRun) {
+                    // Don't call pollinations.ai (costs $) on dry-run; just count.
+                    $wouldFetch += count($newMessages);
+                    foreach ($newMessages as $msg) {
+                        Log::info("MessageIllustrations dry-run: would fetch '{$msg['itemName']}' for message {$msg['msgid']}");
+                    }
+                    // Stop after one batch in dry-run; we have enough info.
+                    break;
+                }
+
                 $batchItems = [];
                 foreach ($newMessages as $msg) {
                     $batchItems[] = [
@@ -189,7 +206,9 @@ class MessageIllustrationsService
 
             if ($maxArrival > $lastArrival) {
                 $lastArrival = $maxArrival;
-                $this->setLastArrival($lastArrival);
+                if (!$dryRun) {
+                    $this->setLastArrival($lastArrival);
+                }
             }
 
             if (empty($newMessages) && empty($cachedMessages)) {
@@ -197,7 +216,11 @@ class MessageIllustrationsService
             }
         }
 
-        return $processed;
+        return [
+            'processed' => $processed,
+            'cached_hits' => $cachedHits,
+            'would_fetch' => $wouldFetch,
+        ];
     }
 
     private function extractItemName(string $subject): string
