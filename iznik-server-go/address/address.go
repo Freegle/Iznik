@@ -9,10 +9,10 @@ import (
 )
 
 type CreateRequest struct {
-	PafID        uint64  `json:"pafid"`
-	Instructions string  `json:"instructions"`
-	Lat          float64 `json:"lat"`
-	Lng          float64 `json:"lng"`
+	PafID        uint64   `json:"pafid"`
+	Instructions string   `json:"instructions"`
+	Lat          *float64 `json:"lat,omitempty"`
+	Lng          *float64 `json:"lng,omitempty"`
 }
 
 type UpdateRequest struct {
