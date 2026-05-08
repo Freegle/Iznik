@@ -44,6 +44,7 @@ import (
 	"github.com/freegle/iznik-server-go/group"
 	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
+	"github.com/freegle/iznik-server-go/impact"
 	"github.com/freegle/iznik-server-go/isochrone"
 	"github.com/freegle/iznik-server-go/job"
 	"github.com/freegle/iznik-server-go/location"
@@ -238,6 +239,12 @@ func SetupRoutes(app *fiber.App) {
 		// @Param id path integer true "Authority ID"
 		// @Success 200 {array} authority.Message
 		rg.Get("/authority/:id/message", authority.Messages)
+
+		// Impact — national aggregate stats
+		rg.Get("/impact/national", impact.GetNational)
+
+		// Impact — top communities by weight reused
+		rg.Get("/impact/top", impact.GetTop)
 
 		// Chats
 		// @Router /chat [get]
