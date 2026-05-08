@@ -63,6 +63,8 @@ All email-related commands use the `mail:` prefix. Other batch commands use desc
 | `emails:validate` | Validate emails and delete invalid ones |
 | `locations:fix-skewed` | Fix swapped lat/lng coordinates |
 | `users:update-ratings` | Update rating visibility based on chat interactions |
+| `memberships:process` | Process membership history entries (send welcome emails, flag mod comments) |
+| `users:process-exports` | Process GDPR data export requests + purge old export data |
 
 ## Testing Emails (mail:test)
 
@@ -201,6 +203,8 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | `message_spatial.php` | `messages:update-spatial-index` | - | Spatial index updates (PR #398) |
 | `message_unindexed.php` | `messages:update-index` | - | Index missing messages (PR #393) |
 | `message_deindex.php` | `messages:deindex` | - | De-index old messages (PR #393) |
+| `memberships_processing.php` | `memberships:process` | - | Membership processing: welcome emails, flag mod comments |
+| `exports.php` | `users:process-exports` | - | GDPR data export processing + purge old export data |
 
 ## Code Written - Running via CircleCI (Not Scheduler)
 
@@ -234,11 +238,11 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `chat_process.php` | Every 1 min | High | Chat message processing |
 | `admins.php` | Every 1 min | Medium | Admin notifications |
 | `tryst.php` | Every 1 min | Medium | Meeting coordination |
-| `memberships_processing.php` | Every 1 min | Medium | Membership processing |
+| ~~`memberships_processing.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Membership processing~~ — **Migrated: `memberships:process`** |
 | ~~`donations_ads_target.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Donation ad targeting~~ — **Migrated: `donations:update-ads-target`** |
 | `user_exhort.php` | Every 1 min | Medium | User encouragement |
 | `lovejunk.php` | Every 1 min | Medium | LoveJunk integration |
-| `exports.php` | Every 1 min | Low | Data exports |
+| ~~`exports.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Data exports~~ — **Migrated: `users:process-exports`** |
 | ~~`notification_chaseup.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Notification reminders~~ — **Migrated: `mail:notifications:chaseup`** |
 | `previews.php` | Every 5 min | Medium | Link preview generation |
 | `check_cgas.php` | Every 5 min | Low | CGA checking |

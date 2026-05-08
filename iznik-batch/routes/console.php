@@ -415,6 +415,15 @@ Schedule::command('mail:admin:chase')
 // NOT YET ENABLED — enable individually after testing
 // =============================================================================
 
+// Process pending GDPR data export requests and purge old completed data.
+// V1: cron/exports.php (every 1 minute)
+// — disabled pending sign-off
+// Schedule::command('users:process-exports')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:process-exports'))
+//     ->runInBackground();
+
 // Remove search index entries for messages older than 30 days.
 // V1: cron/message_deindex.php (daily at 01:00)
 // Schedule::command('messages:deindex')
