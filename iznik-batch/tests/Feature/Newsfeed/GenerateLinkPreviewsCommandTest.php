@@ -153,6 +153,40 @@ class GenerateLinkPreviewsCommandTest extends TestCase
         $this->assertEquals(0, DB::table('link_previews')->count());
     }
 
+    public function test_dry_run_does_not_fetch_or_write(): void
+    {
+        Http::fake();
+
+        $this->insertNewsfeed(['message' => 'Check this https://dryrun.example.com/page']);
+
+        $this->artisan('newsfeed:generate-link-previews', ['--dry-run' => true])
+            ->expectsOutputToContain('DRY RUN')
+            ->assertExitCode(0);
+
+        Http::assertNothingSent();
+        $this->assertEquals(0, DB::table('link_previews')->count());
+    }
+
+    public function test_dry_run_skips_cached_urls(): void
+    {
+        Http::fake();
+
+        DB::table('link_previews')->insert([
+            'url'       => 'https://cached.com/',
+            'title'     => 'Cached',
+            'retrieved' => now()->subDays(2),
+            'invalid'   => 0,
+        ]);
+
+        $this->insertNewsfeed(['message' => 'Check https://cached.com/']);
+
+        $this->artisan('newsfeed:generate-link-previews', ['--dry-run' => true])
+            ->expectsOutputToContain('Would fetch 0 link preview(s)')
+            ->assertExitCode(0);
+
+        Http::assertNothingSent();
+    }
+
     public function test_upgrades_http_urls_to_https(): void
     {
         $html = '<html><head><meta property="og:title" content="HTTPS Test"></head><body></body></html>';

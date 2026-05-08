@@ -13,7 +13,7 @@ class NewsfeedLinkPreviewService
     // Matches http(s):// URLs from message text
     const URL_PATTERN = '#https?://[^\s<>"\'`{|}\\\\\^\[\]]+#i';
 
-    public function generatePreviews(): int
+    public function generatePreviews(bool $dryRun = false): int
     {
         $recent = DB::select(
             "SELECT id, message FROM newsfeed WHERE DATEDIFF(NOW(), `timestamp`) < 2"
@@ -33,6 +33,19 @@ class NewsfeedLinkPreviewService
                         continue;
                     }
                     $urlsSeen[$url] = true;
+
+                    if ($dryRun) {
+                        $cached = DB::select(
+                            "SELECT id FROM link_previews WHERE url = ? AND DATEDIFF(NOW(), retrieved) < 7",
+                            [$url]
+                        );
+                        $status = $cached ? 'cached' : 'would fetch';
+                        Log::debug("Dry run: $url — $status");
+                        if (!$cached) {
+                            $count++;
+                        }
+                        continue;
+                    }
 
                     $id = $this->getOrCreate($url);
                     Log::debug("Url $url has preview $id");
