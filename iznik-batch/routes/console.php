@@ -398,6 +398,19 @@ Schedule::command('ai:usage-counts:update')
 
 
 // =============================================================================
+// GIFT AID
+// =============================================================================
+
+// Update gift aid data: identify postcodes, houses, consented donations.
+// Also sends one-off chase-up emails to eligible donors (2-30 days ago, PayPal/Stripe).
+// V1: cron/donations_giftaid.php
+Schedule::command('donations:update-giftaid')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('donations:update-giftaid'))
+    ->runInBackground();
+
+// =============================================================================
 // VECTOR SEARCH EMBEDDINGS
 // =============================================================================
 
