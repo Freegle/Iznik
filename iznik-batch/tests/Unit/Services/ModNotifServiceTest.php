@@ -310,4 +310,129 @@ class ModNotifServiceTest extends TestCase
 
         $this->assertEquals(-1, $settings['minage']);
     }
+
+    // ===================================================================
+    // getChatReviewCount
+    // ===================================================================
+
+    public function test_get_chat_review_count_returns_count_of_pending_review_messages(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $this->createTestChatMessage($room, $user1, [
+            'reviewrequired' => 1,
+            'reviewedby' => null,
+            'date' => now()->subHours(10),
+        ]);
+
+        $count = $this->service->getChatReviewCount($user1->id, 0);
+
+        $this->assertGreaterThanOrEqual(1, $count);
+    }
+
+    public function test_get_chat_review_count_excludes_already_reviewed_messages(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $reviewer = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $this->createTestChatMessage($room, $user1, [
+            'reviewrequired' => 1,
+            'reviewedby' => $reviewer->id,
+            'date' => now()->subHours(10),
+        ]);
+
+        $beforeCount = $this->service->getChatReviewCount($user1->id, 0);
+
+        $this->createTestChatMessage($room, $user2, [
+            'reviewrequired' => 1,
+            'reviewedby' => null,
+            'date' => now()->subHours(10),
+        ]);
+
+        $afterCount = $this->service->getChatReviewCount($user2->id, 0);
+
+        // Already-reviewed message should not have inflated the count
+        $this->assertEquals(1, $afterCount - $beforeCount);
+    }
+
+    public function test_get_chat_review_count_respects_minage_filter(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        // Message only 1 hour old, minage = 4 → should not count
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'reviewrequired' => 1,
+            'reviewedby' => null,
+            'date' => now()->subHours(1),
+        ]);
+
+        $count = $this->service->getChatReviewCount($user1->id, 4);
+
+        // The message is too recent; count should not include it
+        $this->assertEquals(0, DB::table('chat_messages')
+            ->join('chat_rooms', 'chat_rooms.id', '=', 'chat_messages.chatid')
+            ->where('chat_messages.id', $msg->id)
+            ->where('chat_messages.reviewrequired', 1)
+            ->whereNull('chat_messages.reviewedby')
+            ->where('chat_messages.date', '<', now()->subHours(4))
+            ->count());
+    }
+
+    // ===================================================================
+    // buildHtmlSummary
+    // ===================================================================
+
+    public function test_build_html_summary_includes_group_work(): void
+    {
+        $groupWork = [
+            'TestGroup' => ['Pending Messages' => 3, 'Members to Review' => 1],
+        ];
+
+        $html = $this->service->buildHtmlSummary($groupWork, 0);
+
+        $this->assertStringContainsString('TestGroup', $html);
+        $this->assertStringContainsString('Pending Messages', $html);
+        $this->assertStringContainsString('<b>3</b>', $html);
+    }
+
+    public function test_build_html_summary_includes_chat_review(): void
+    {
+        $html = $this->service->buildHtmlSummary([], 5);
+
+        $this->assertStringContainsString('5', $html);
+        $this->assertStringContainsString('chat message', $html);
+    }
+
+    public function test_build_html_summary_is_empty_with_no_work(): void
+    {
+        $html = $this->service->buildHtmlSummary([], 0);
+
+        $this->assertSame('', $html);
+    }
+
+    // ===================================================================
+    // isModRecentlyActive (additional edge cases)
+    // ===================================================================
+
+    public function test_mod_recently_active_returns_false_for_activity_over_90_days_ago(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $author = $this->createTestUser();
+
+        $message = $this->createTestMessage($author, $group);
+        MessageGroup::where('msgid', $message->id)->update([
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'approvedby' => $mod->id,
+            'arrival' => now()->subDays(91),
+        ]);
+
+        $this->assertFalse($this->service->isModRecentlyActive($mod->id));
+    }
 }
