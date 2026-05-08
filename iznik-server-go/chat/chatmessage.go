@@ -1281,22 +1281,26 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 		return reason
 	}
 
-	// Step 1: Check spam_keywords (matches both Spam and Review actions).
+	// Step 1: Check concern_keywords (global, non-whitelist entries).
 	type spamWord struct {
-		Word    string  `gorm:"column:word"`
-		Type    string  `gorm:"column:type"`
-		Action  string  `gorm:"column:action"`
-		Exclude *string `gorm:"column:exclude"`
+		Word      string  `gorm:"column:word"`
+		MatchMode string  `gorm:"column:match_mode"`
+		Exclude   *string `gorm:"column:exclude"`
 	}
 	var keywords []spamWord
-	db.Raw("SELECT word, type, action, exclude FROM spam_keywords WHERE action IN ('Spam', 'Review') AND LENGTH(TRIM(word)) > 0").Scan(&keywords)
+	db.Raw("SELECT keyword AS word, match_mode, exclude FROM concern_keywords WHERE scope='global' AND group_id=0 AND category != 'allowed' AND LENGTH(TRIM(keyword)) > 0").Scan(&keywords)
 
 	for _, kw := range keywords {
 		word := strings.TrimSpace(kw.Word)
 		if len(word) == 0 {
 			continue
 		}
-		pattern := `(?i)\b` + regexp.QuoteMeta(word) + `\b`
+		var pattern string
+		if kw.MatchMode == "regex" {
+			pattern = `(?i)` + word
+		} else {
+			pattern = `(?i)\b` + regexp.QuoteMeta(word) + `\b`
+		}
 		re, err := regexp.Compile(pattern)
 		if err != nil {
 			continue

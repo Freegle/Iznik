@@ -290,10 +290,13 @@ class SpamCheckServiceTest extends TestCase
 
     public function test_spam_keyword_detected(): void
     {
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'Western Union',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
             'exclude' => null,
         ]);
 
@@ -308,10 +311,13 @@ class SpamCheckServiceTest extends TestCase
 
     public function test_review_keyword_detected(): void
     {
-        DB::table('spam_keywords')->insert([
-            'word' => 'earn money',
-            'action' => 'Review',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'earn money',
+            'action' => 'flag',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
             'exclude' => null,
         ]);
 
@@ -325,10 +331,13 @@ class SpamCheckServiceTest extends TestCase
 
     public function test_keyword_with_exclude_pattern_not_flagged(): void
     {
-        DB::table('spam_keywords')->insert([
-            'word' => 'free',
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'free',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
             'exclude' => 'freegle',
         ]);
 
@@ -343,10 +352,13 @@ class SpamCheckServiceTest extends TestCase
 
     public function test_keyword_not_matching_action_not_flagged(): void
     {
-        DB::table('spam_keywords')->insert([
-            'word' => 'suspicious',
-            'action' => 'Review',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'suspicious',
+            'action' => 'flag',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
             'exclude' => null,
         ]);
 
@@ -360,10 +372,13 @@ class SpamCheckServiceTest extends TestCase
 
     public function test_html_entity_decoding_catches_obfuscated_spam(): void
     {
-        DB::table('spam_keywords')->insert([
-            'word' => 'Isis',
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'Isis',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
             'exclude' => null,
         ]);
 
@@ -377,10 +392,13 @@ class SpamCheckServiceTest extends TestCase
 
     public function test_url_in_job_post_not_flagged(): void
     {
-        DB::table('spam_keywords')->insert([
-            'word' => 'click here',
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'click here',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
             'exclude' => null,
         ]);
 

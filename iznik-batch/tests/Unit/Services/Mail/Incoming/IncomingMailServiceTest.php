@@ -1442,10 +1442,13 @@ class IncomingMailServiceTest extends TestCase
         $userEmail = $user->emails->first()->email;
 
         // Seed a spam keyword so the spam checker can detect it
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'Western Union',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
         ]);
 
         // Recreate service to pick up the newly inserted keyword
@@ -1485,10 +1488,13 @@ class IncomingMailServiceTest extends TestCase
         $userEmail = $user->emails->first()->email;
 
         // Seed a spam keyword
-        DB::table('spam_keywords')->insert([
-            'word' => 'Nigerian Prince',
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'Nigerian Prince',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
         ]);
 
         // Recreate service to pick up the newly inserted keyword
@@ -1603,10 +1609,13 @@ class IncomingMailServiceTest extends TestCase
         $userEmail = $user->emails->first()->email;
 
         // Seed spam keyword
-        DB::table('spam_keywords')->insert([
-            'word' => 'Lottery Winner',
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'Lottery Winner',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
         ]);
 
         // Recreate service to pick up the newly inserted keyword
@@ -1865,10 +1874,13 @@ class IncomingMailServiceTest extends TestCase
 
     public function test_volunteers_with_spam_keyword_detected_as_spam(): void
     {
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'Western Union',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
         ]);
 
         // Recreate service to pick up the newly inserted keyword
@@ -2195,10 +2207,13 @@ class IncomingMailServiceTest extends TestCase
     public function test_chat_reply_with_spam_keyword_flagged_for_review(): void
     {
         // Seed a spam keyword
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'Western Union',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
         ]);
 
         // Recreate service to pick up the newly inserted keyword
@@ -2340,10 +2355,13 @@ class IncomingMailServiceTest extends TestCase
     public function test_direct_mail_with_spam_flagged_for_review(): void
     {
         // Seed a spam keyword
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'Western Union',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
         ]);
 
         // Recreate service to pick up the newly inserted keyword
@@ -2557,10 +2575,13 @@ class IncomingMailServiceTest extends TestCase
         $this->createMembership($user, $group);
 
         // Seed spam keyword
-        DB::table('spam_keywords')->insert([
-            'word' => 'Western Union',
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'Western Union',
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
         ]);
 
         // Recreate service to pick up the newly inserted keyword
@@ -4304,12 +4325,15 @@ class IncomingMailServiceTest extends TestCase
             'lastlocation' => $this->createLocation(51.5, -0.1),
         ]);
 
-        DB::table('spam_keywords')->insert([
-            'word' => 'SpamLogTest' . uniqid(),
-            'action' => 'Spam',
-            'type' => 'Literal',
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'SpamLogTest' . uniqid(),
+            'action' => 'block',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+            'group_id' => 0,
+            'category' => 'review',
         ]);
-        $spamWord = DB::table('spam_keywords')->orderBy('id', 'desc')->first()->word;
+        $spamWord = DB::table('concern_keywords')->orderBy('id', 'desc')->first()->keyword;
 
         $this->service = app(IncomingMailService::class);
 

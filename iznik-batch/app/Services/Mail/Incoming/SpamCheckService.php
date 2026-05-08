@@ -77,10 +77,10 @@ class SpamCheckService
 
     public const REASON_IMAGE_SENT_MANY_TIMES = 'SameImage';
 
-    // Actions matching legacy
-    public const ACTION_SPAM = 'Spam';
+    // Actions matching concern_keywords.action values
+    public const ACTION_SPAM = 'block';
 
-    public const ACTION_REVIEW = 'Review';
+    public const ACTION_REVIEW = 'flag';
 
     // Greetings for greeting spam detection
     private const GREETINGS = [
@@ -335,9 +335,9 @@ class SpamCheckService
         if (! $check) {
             $keywords = $this->getSpamWords();
             foreach ($keywords as $word) {
-                $w = $word->type === 'Literal' ? preg_quote($word->word, '/') : $word->word;
+                $w = $word->type !== 'regex' ? preg_quote($word->word, '/') : $word->word;
 
-                if ($word->action === 'Review' &&
+                if ($word->action === self::ACTION_REVIEW &&
                     preg_match('/\b'.$w.'\b/i', $message) &&
                     (empty($word->exclude) || ! @preg_match('/'.$word->exclude.'/i', $message))) {
                     $check = self::REASON_KNOWN_KEYWORD;
@@ -901,12 +901,20 @@ class SpamCheckService
     }
 
     /**
-     * Get spam keywords from database (cached for the request).
+     * Get spam keywords from concern_keywords (global, non-whitelist entries).
+     * Aliases keyword→word and match_mode→type to preserve existing field access.
      */
     private function getSpamWords(): array
     {
         if ($this->cachedSpamWords === null) {
-            $this->cachedSpamWords = DB::table('spam_keywords')->get()->all();
+            $this->cachedSpamWords = DB::table('concern_keywords')
+                ->select('keyword as word', 'match_mode as type', 'action', 'exclude')
+                ->where('scope', 'global')
+                ->where('group_id', 0)
+                ->where('category', '!=', 'allowed')
+                ->whereRaw('LENGTH(TRIM(keyword)) > 0')
+                ->get()
+                ->all();
         }
 
         return $this->cachedSpamWords;
