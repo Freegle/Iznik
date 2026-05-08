@@ -218,6 +218,7 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | `messages_illustrations.php` | `messages:generate-illustrations` | - | AI illustrations for messages without photos |
 | `whatjobs_spam.php` | `cleanup:whatjobs-spam` | - | Delete spammy WhatJobs postings |
 | `archive_attachments.php` | `cleanup:archive-profile-images` | - | Delete older duplicate profile images, keeping only the most recent per user |
+| `newsfeed_link_previews.php` | `newsfeed:generate-link-previews` | - | Fetch and cache link previews for URLs in recent newsfeed posts (also covers `previews.php`) |
 
 ## Code Written - Running via CircleCI (Not Scheduler)
 
@@ -257,7 +258,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`lovejunk.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~LoveJunk integration~~ — **Migrated: `integrations:sync-lovejunk`** |
 | ~~`exports.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Data exports~~ — **Migrated: `users:process-exports`** |
 | ~~`notification_chaseup.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Notification reminders~~ — **Migrated: `mail:notifications:chaseup`** |
-| `previews.php` | Every 5 min | Medium | Link preview generation |
+| ~~`previews.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Link preview generation~~ — **Covered: `newsfeed:generate-link-previews`** |
 | `check_cgas.php` | Every 5 min | Low | CGA checking |
 | ~~`message_spatial.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Spatial index updates~~ — **Migrated: `messages:update-spatial-index` — PR #398** |
 | ~~`messages_illustrations.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Message illustrations~~ — **Migrated: `messages:generate-illustrations`** |
@@ -268,7 +269,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`users_modmails.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Mod mail processing~~ — **Migrated: `users:update-modmails` — PR #392** |
 | `visualise.php` | Every 5 min | Low | Data visualisation |
 | `microvolunteering.php` | Every 5 min | Low | Micro-volunteering — **Migrated: `microvolunteering:score`** |
-| `newsfeed_link_previews.php` | Every 1 min | Low | Newsfeed link previews |
+| ~~`newsfeed_link_previews.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Newsfeed link previews~~ — **Migrated: `newsfeed:generate-link-previews`** |
 | `tn_sync.php` | Every 1 min | Medium | Trash Nothing sync |
 
 ## Medium Frequency Scripts (Every 10-60 min) - Not Started

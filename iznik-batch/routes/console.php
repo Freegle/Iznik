@@ -652,6 +652,18 @@ Schedule::command('messages:update-index')
 //     ->runInBackground();
 
 // =============================================================================
+// NEWSFEED
+// =============================================================================
+
+// Fetch and cache link previews for URLs found in recent newsfeed posts.
+// V1: cron/newsfeed_link_previews.php (every 1 minute)
+// Schedule::command('newsfeed:generate-link-previews')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('newsfeed:generate-link-previews'))
+//     ->runInBackground();
+
+// =============================================================================
 // GIT SUMMARY
 // =============================================================================
 
