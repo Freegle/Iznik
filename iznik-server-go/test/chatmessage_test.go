@@ -582,6 +582,17 @@ func TestReviewReasonEnrichment(t *testing.T) {
 
 	chatID := CreateTestChatRoom(t, regularUserID, nil, &groupID, "User2Mod")
 
+	// Set up concern_keywords rows for keyword-match subtests.
+	ckLiteral := "testspamkeyword_abc123"
+	ckRegex := `buynow_regex\d+`
+	ckExcluded := "testspamkeyword_excl456"
+	db.Exec("INSERT IGNORE INTO concern_keywords (keyword, category, match_mode, scope, group_id, action) VALUES (?, 'scam', 'literal', 'global', 0, 'flag')", ckLiteral)
+	db.Exec("INSERT IGNORE INTO concern_keywords (keyword, category, match_mode, scope, group_id, action) VALUES (?, 'scam', 'regex', 'global', 0, 'flag')", ckRegex)
+	db.Exec("INSERT IGNORE INTO concern_keywords (keyword, category, match_mode, scope, group_id, action, exclude) VALUES (?, 'scam', 'literal', 'global', 0, 'flag', 'legitimate_use')", ckExcluded)
+	defer func() {
+		db.Exec("DELETE FROM concern_keywords WHERE keyword IN (?, ?, ?)", ckLiteral, ckRegex, ckExcluded)
+	}()
+
 	tests := []struct {
 		name     string
 		message  string
@@ -597,6 +608,9 @@ func TestReviewReasonEnrichment(t *testing.T) {
 		{"non_spam_reason", "Normal message", "Fully", "Fully"},
 		{"no_reason", "Normal message", "", ""},
 		{"freegle_email_excluded", "Email noreply@ilovefreegle.org for info", "Spam", "Spam"},
+		{"concern_keyword_literal", "Get some " + ckLiteral + " today", "Spam", "Known spam keyword"},
+		{"concern_keyword_regex", "Use code buynow_regex42 for discount", "Spam", "Known spam keyword"},
+		{"concern_keyword_excluded", "Buy " + ckExcluded + " legitimate_use here", "Spam", "Spam"},
 	}
 
 	for _, tc := range tests {
