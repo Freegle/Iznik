@@ -4,18 +4,18 @@ namespace Tests\Unit\Services;
 
 use App\Models\Message;
 use App\Models\MessageGroup;
-use App\Services\MessageSpatialIndexService;
+use App\Services\MessageSpatialService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
-class MessageSpatialIndexServiceTest extends TestCase
+class MessageSpatialServiceTest extends TestCase
 {
-    protected MessageSpatialIndexService $service;
+    protected MessageSpatialService $service;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new MessageSpatialIndexService();
+        $this->service = new MessageSpatialService();
         DB::statement('DELETE FROM messages_spatial');
     }
 
@@ -45,7 +45,7 @@ class MessageSpatialIndexServiceTest extends TestCase
         $result = $this->service->updateSpatialIndex();
 
         $this->assertEquals(1, DB::table('messages_spatial')->where('msgid', $message->id)->count());
-        $this->assertGreaterThanOrEqual(1, $result['indexed']);
+        $this->assertGreaterThanOrEqual(1, $result);
     }
 
     public function test_removes_withdrawn_message_from_spatial_index(): void

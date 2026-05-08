@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands\Message;
 
-use App\Services\MessageDeindexService;
+use App\Services\MessageSearchService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
@@ -13,19 +13,19 @@ class DeindexCommand extends Command
 
     protected $description = 'Remove search index entries for messages older than 30 days';
 
-    public function handle(MessageDeindexService $service): int
+    public function handle(MessageSearchService $service): int
     {
         if ($this->option('dry-run')) {
-            $this->info('Dry run — no changes made.');
+            $this->info('DRY RUN — no changes will be made.');
             return Command::SUCCESS;
         }
 
         Log::info('Starting message deindex');
 
-        $result = $service->deindexOldMessages();
+        $count = $service->deindexOldMessages();
 
-        $this->info("Deindexed {$result['deindexed']} messages.");
-        Log::info('Message deindex complete', $result);
+        $this->info("deleted: {$count}");
+        Log::info('Message deindex complete', ['deleted' => $count]);
 
         return Command::SUCCESS;
     }

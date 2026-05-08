@@ -45,6 +45,7 @@ class PurgeMessagesCommand extends Command
 
             if ($dryRun) {
                 $this->info('DRY RUN — no changes will be made.');
+                return Command::SUCCESS;
             }
 
             Log::info('Starting message purge', ['dry_run' => $dryRun]);

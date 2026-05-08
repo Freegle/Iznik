@@ -2,30 +2,30 @@
 
 namespace App\Console\Commands\Message;
 
-use App\Services\MessageIndexUnindexedService;
+use App\Services\MessageSearchService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 
 class IndexUnindexedCommand extends Command
 {
-    protected $signature = 'messages:index-unindexed
+    protected $signature = 'messages:update-index
                             {--dry-run : Show what would be indexed without making changes}';
 
     protected $description = 'Add search index entries for recent approved messages that are not yet indexed';
 
-    public function handle(MessageIndexUnindexedService $service): int
+    public function handle(MessageSearchService $service): int
     {
         if ($this->option('dry-run')) {
-            $this->info('Dry run — no changes made.');
+            $this->info('DRY RUN — no changes will be made.');
             return Command::SUCCESS;
         }
 
-        Log::info('Starting message index-unindexed');
+        Log::info('Starting messages:update-index');
 
-        $result = $service->indexUnindexedMessages();
+        $count = $service->indexUnindexedMessages();
 
-        $this->info("Indexed {$result['indexed']} messages.");
-        Log::info('Message index-unindexed complete', $result);
+        $this->info("indexed: {$count}");
+        Log::info('messages:update-index complete', ['indexed' => $count]);
 
         return Command::SUCCESS;
     }

@@ -18,7 +18,7 @@ class UpdateModMailsCommand extends Command
         $dryRun = $this->option('dry-run');
 
         if ($dryRun) {
-            $this->info('DRY RUN — no changes will be made.');
+            $this->info('Dry run — no changes made.');
 
             return Command::SUCCESS;
         }

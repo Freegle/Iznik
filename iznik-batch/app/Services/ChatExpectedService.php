@@ -27,6 +27,21 @@ class ChatExpectedService
     private const REPLY_TIME_LOOKBACK_DAYS = 90;
 
     /**
+     * Orchestrates the full expected-reply update cycle.
+     * Mirrors V1 cron/chat_expected.php top-level flow.
+     *
+     * @return array{deleted_cleared: int, spam_cleared: int, waiting: int, received: int}
+     */
+    public function updateChatExpected(): array
+    {
+        $deleted = $this->tidyDeletedUsersReplies();
+        $spam = $this->tidySpamUsersReplies();
+        $stats = $this->updateExpected();
+
+        return array_merge(['deleted_cleared' => $deleted, 'spam_cleared' => $spam], $stats);
+    }
+
+    /**
      * Clear replyexpected on chat messages from recently-deleted users.
      * Mirrors V1 chat_expected.php tidy-deleted loop.
      *

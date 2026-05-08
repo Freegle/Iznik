@@ -32,19 +32,12 @@ class UpdateChatExpectedCommand extends Command
         return $this->runWithLogging(function () use ($service) {
             Log::info('Starting chat expected update');
 
-            $deleted = $service->tidyDeletedUsersReplies();
-            $spam = $service->tidySpamUsersReplies();
+            $stats = $service->updateChatExpected();
 
-            $this->info("Cleared replyexpected for {$deleted} deleted-user messages, {$spam} spam messages.");
-
-            $stats = $service->updateExpected();
-
+            $this->info("Cleared replyexpected for {$stats['deleted_cleared']} deleted-user messages, {$stats['spam_cleared']} spam messages.");
             $this->info("Expected update: {$stats['waiting']} waiting, {$stats['received']} received.");
 
-            Log::info('Chat expected update complete', array_merge($stats, [
-                'deleted_cleared' => $deleted,
-                'spam_cleared'    => $spam,
-            ]));
+            Log::info('Chat expected update complete', $stats);
 
             return Command::SUCCESS;
         });

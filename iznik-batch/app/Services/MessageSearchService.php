@@ -7,7 +7,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-class MessageIndexUnindexedService
+class MessageSearchService
 {
     // Common words excluded from the search index (matches V1 Search::$common).
     private array $common = [
@@ -22,7 +22,45 @@ class MessageIndexUnindexedService
         'brand', 'pack', 'soft', 'single', 'double', 'top', 'plastic', 'electric', 'unopened',
     ];
 
-    public function indexUnindexedMessages(): array
+    /**
+     * Remove search index entries for messages older than 30 days.
+     * Mirrors V1 cron/message_deindex.php.
+     *
+     * @return int Number of messages deindexed.
+     */
+    public function deindexOldMessages(): int
+    {
+        $date = now()->subDays(30)->format('Y-m-d');
+
+        $msgids = DB::table('messages_groups')
+            ->join('messages_index', 'messages_index.msgid', '=', 'messages_groups.msgid')
+            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages_groups.arrival', '<', $date)
+            ->distinct()
+            ->pluck('messages_groups.msgid');
+
+        Log::info("MessageSearch: deindexing {$msgids->count()} messages");
+
+        $done = 0;
+
+        foreach ($msgids->chunk(500) as $chunk) {
+            DB::table('messages_index')->whereIn('msgid', $chunk)->delete();
+            $done += count($chunk);
+            Log::info("MessageSearch: deindex ...{$done} / {$msgids->count()}");
+        }
+
+        DB::table('words_cache')->delete();
+
+        return $done;
+    }
+
+    /**
+     * Add search index entries for recent approved messages not yet indexed.
+     * Mirrors V1 cron/message_unindexed.php.
+     *
+     * @return int Number of messages indexed.
+     */
+    public function indexUnindexedMessages(): int
     {
         $cutoff = now()->subDays(31)->startOfDay()->format('Y-m-d');
 
@@ -38,7 +76,7 @@ class MessageIndexUnindexedService
             ->select('messages_groups.msgid', 'messages.subject', 'messages_groups.arrival', 'messages_groups.groupid')
             ->get();
 
-        Log::info("MessageIndexUnindexed: indexing {$msgs->count()} messages");
+        Log::info("MessageSearch: indexing {$msgs->count()} messages");
 
         $count = 0;
         $total = $msgs->count();
@@ -61,7 +99,7 @@ class MessageIndexUnindexedService
 
         DB::table('words_cache')->delete();
 
-        return ['indexed' => $count];
+        return $count;
     }
 
     private function parseSubject(string $subject): array

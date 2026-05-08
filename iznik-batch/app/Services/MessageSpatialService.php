@@ -7,13 +7,13 @@ use App\Models\MessageGroup;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-class MessageSpatialIndexService
+class MessageSpatialService
 {
     // V1: MessageCollection::RECENTPOSTS = "Midnight 31 days ago"
     private const RECENT_DAYS = 31;
     private const SRID = 3857;
 
-    public function updateSpatialIndex(): array
+    public function updateSpatialIndex(): int
     {
         $count = 0;
 
@@ -25,7 +25,7 @@ class MessageSpatialIndexService
 
         Log::info("MessageSpatialIndex: updated {$count} entries");
 
-        return ['indexed' => $count];
+        return $count;
     }
 
     private function upsertRecentMessages(): int

@@ -3,7 +3,7 @@
 namespace App\Console\Commands\Message;
 
 use App\Console\Concerns\PreventsOverlapping;
-use App\Services\MessageSpatialIndexService;
+use App\Services\MessageSpatialService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -18,7 +18,7 @@ class UpdateSpatialIndexCommand extends Command
 
     protected $description = 'Update the spatial index for recent messages';
 
-    public function handle(MessageSpatialIndexService $service): int
+    public function handle(MessageSpatialService $service): int
     {
         if (!$this->acquireLock()) {
             $this->info('Already running, exiting.');
@@ -33,10 +33,10 @@ class UpdateSpatialIndexCommand extends Command
 
             Log::info('Starting message spatial index update');
 
-            $result = $service->updateSpatialIndex();
+            $count = $service->updateSpatialIndex();
 
-            $this->info("Updated {$result['indexed']} spatial index entries.");
-            Log::info('Message spatial index update complete', $result);
+            $this->info("{$count} row(s) processed");
+            Log::info('Message spatial index update complete', ['count' => $count]);
 
             return Command::SUCCESS;
         } finally {

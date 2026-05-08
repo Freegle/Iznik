@@ -4,22 +4,115 @@ namespace Tests\Unit\Services;
 
 use App\Models\Message;
 use App\Models\MessageGroup;
-use App\Services\MessageIndexUnindexedService;
+use App\Services\MessageSearchService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
-class MessageIndexUnindexedServiceTest extends TestCase
+class MessageSearchServiceTest extends TestCase
 {
-    protected MessageIndexUnindexedService $service;
+    protected MessageSearchService $service;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new MessageIndexUnindexedService();
+        $this->service = new MessageSearchService();
         DB::table('messages_index')->delete();
         DB::table('messages_groups')->delete();
         DB::table('words_cache')->delete();
+        DB::table('words')->insertOrIgnore(['word' => 'testword', 'firstthree' => 'tes', 'soundex' => 'T363']);
+        $this->wordId = DB::table('words')->where('word', 'testword')->value('id');
     }
+
+    // --- deindexOldMessages ---
+
+    public function test_deindexes_messages_older_than_30_days(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: old sofa (London)',
+            'textbody' => 'Old sofa.',
+            'source' => 'Platform',
+            'date' => now()->subDays(31),
+            'arrival' => now()->subDays(31),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(31),
+        ]);
+
+        DB::table('messages_index')->insert([
+            'msgid' => $message->id,
+            'wordid' => $this->wordId,
+            'arrival' => -now()->subDays(31)->timestamp,
+            'groupid' => $group->id,
+        ]);
+
+        $result = $this->service->deindexOldMessages();
+
+        $this->assertEquals(0, DB::table('messages_index')->where('msgid', $message->id)->count());
+        $this->assertGreaterThanOrEqual(1, $result);
+    }
+
+    public function test_recent_messages_not_deindexed(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: recent chair (London)',
+            'textbody' => 'Recent chair.',
+            'source' => 'Platform',
+            'date' => now()->subDays(5),
+            'arrival' => now()->subDays(5),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subDays(5),
+        ]);
+
+        DB::table('messages_index')->insert([
+            'msgid' => $message->id,
+            'wordid' => $this->wordId,
+            'arrival' => -now()->subDays(5)->timestamp,
+            'groupid' => $group->id,
+        ]);
+
+        $this->service->deindexOldMessages();
+
+        $this->assertEquals(1, DB::table('messages_index')->where('msgid', $message->id)->count());
+    }
+
+    public function test_words_cache_cleared_after_deindex(): void
+    {
+        DB::table('words_cache')->insert(['search' => 'sofa', 'words' => '1,2,3']);
+
+        $this->service->deindexOldMessages();
+
+        $this->assertEquals(0, DB::table('words_cache')->count());
+    }
+
+    public function test_deindex_returns_zero_when_nothing_to_deindex(): void
+    {
+        $result = $this->service->deindexOldMessages();
+
+        $this->assertEquals(0, $result);
+    }
+
+    // --- indexUnindexedMessages ---
 
     public function test_indexes_recent_unindexed_message(): void
     {
@@ -46,7 +139,7 @@ class MessageIndexUnindexedServiceTest extends TestCase
 
         $result = $this->service->indexUnindexedMessages();
 
-        $this->assertGreaterThanOrEqual(1, $result['indexed']);
+        $this->assertGreaterThanOrEqual(1, $result);
         $this->assertGreaterThan(0, DB::table('messages_index')->where('msgid', $message->id)->count());
     }
 
@@ -73,7 +166,6 @@ class MessageIndexUnindexedServiceTest extends TestCase
             'arrival' => now()->subDays(3),
         ]);
 
-        // Pre-seed an index entry.
         DB::table('words')->insertOrIgnore(['word' => 'table', 'firstthree' => 'tab', 'soundex' => 'T140']);
         $wordId = DB::table('words')->where('word', 'table')->value('id');
         DB::table('messages_index')->insert([
@@ -85,8 +177,7 @@ class MessageIndexUnindexedServiceTest extends TestCase
 
         $result = $this->service->indexUnindexedMessages();
 
-        // Already indexed — should not be in the "indexed" count.
-        $this->assertEquals(0, $result['indexed']);
+        $this->assertEquals(0, $result);
     }
 
     public function test_parses_subject_to_index_item_not_type(): void
@@ -94,7 +185,6 @@ class MessageIndexUnindexedServiceTest extends TestCase
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
 
-        // Subject "OFFER: widget (London)" — item is "widget", type is "offer", location is "london"
         $message = Message::create([
             'type' => Message::TYPE_OFFER,
             'fromuser' => $user->id,
@@ -115,7 +205,6 @@ class MessageIndexUnindexedServiceTest extends TestCase
 
         $this->service->indexUnindexedMessages();
 
-        // "widget" should be indexed
         $widgetId = DB::table('words')->where('word', 'widget')->value('id');
         $this->assertNotNull($widgetId);
         $this->assertGreaterThan(0, DB::table('messages_index')
@@ -123,7 +212,6 @@ class MessageIndexUnindexedServiceTest extends TestCase
             ->where('wordid', $widgetId)
             ->count());
 
-        // "offer" should NOT be indexed (it's a common/type word — actually "offer" is in the $common list)
         $offerId = DB::table('words')->where('word', 'offer')->value('id');
         if ($offerId) {
             $this->assertEquals(0, DB::table('messages_index')
