@@ -119,16 +119,28 @@ class MessageExpiryService
     }
 
     /**
-     * Process messages that are expired based on spatial index.
+     * Process messages_spatial cleanup. Mirrors V1 cron/messages_expired.php's spatial loop,
+     * which calls Message::processExpiry() — that V1 method is a no-op unless the message
+     * already has an OUTCOME_EXPIRED entry.
+     *
+     * V1 logic when an EXPIRED outcome exists:
+     *   - Delete from spatial index.
+     *   - Add an OUTCOME_WITHDRAWN with comment "Auto-expired".
+     *
+     * Without this filter, every messages_spatial row with successful=0 would get a
+     * brand-new OUTCOME_EXPIRED on each run — that includes all active OFFER/WANTED
+     * posts that just haven't had a Taken/Received yet, ~27k on prod.
      */
     public function processExpiredFromSpatialIndex(bool $dryRun = false): int
     {
         $count = 0;
 
         $msgids = DB::table('messages_spatial')
-            ->where('successful', 0)
+            ->join('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages_spatial.msgid')
+            ->where('messages_spatial.successful', 0)
+            ->where('messages_outcomes.outcome', MessageOutcome::OUTCOME_EXPIRED)
             ->distinct()
-            ->pluck('msgid');
+            ->pluck('messages_spatial.msgid');
 
         foreach ($msgids as $msgid) {
             try {
@@ -143,17 +155,7 @@ class MessageExpiryService
                     continue;
                 }
 
-                $hasAnyOutcome = MessageOutcome::where('msgid', $msgid)->exists();
-                if (!$hasAnyOutcome) {
-                    DB::table('messages_outcomes_intended')->where('msgid', $msgid)->delete();
-                    MessageOutcome::create([
-                        'msgid' => $msgid,
-                        'outcome' => MessageOutcome::OUTCOME_EXPIRED,
-                        'timestamp' => now(),
-                    ]);
-                }
-
-                DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+                $this->processMessageExpiry($message);
                 $count++;
             } catch (\Exception $e) {
                 Log::error("Error processing spatial index expiry for {$msgid}: " . $e->getMessage());

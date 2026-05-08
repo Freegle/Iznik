@@ -399,20 +399,19 @@ Schedule::command('mail:admin:chase')
 
 // Process pending GDPR data export requests and purge old completed data.
 // V1: cron/exports.php (every 1 minute)
-// — disabled pending sign-off
-// Schedule::command('users:process-exports')
-//     ->everyMinute()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('users:process-exports'))
-//     ->runInBackground();
+Schedule::command('users:process-exports')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:process-exports'))
+    ->runInBackground();
 
 // Update user engagement classifications based on activity.
 // V1: cron/engage_update.php (daily at 03:00)
-// Schedule::command('users:update-engagement')
-//     ->dailyAt('03:00')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('users:update-engagement'))
-//     ->runInBackground();
+Schedule::command('users:update-engagement')
+    ->dailyAt('03:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-engagement'))
+    ->runInBackground();
 
 // Remove search index entries for messages older than 30 days.
 // V1: cron/message_deindex.php (daily at 01:00)

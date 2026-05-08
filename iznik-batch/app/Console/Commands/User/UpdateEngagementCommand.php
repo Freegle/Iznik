@@ -26,17 +26,30 @@ class UpdateEngagementCommand extends Command
         }
 
         try {
-            if ($this->option('dry-run')) {
-                $this->info('Dry run — no changes made.');
-                return Command::SUCCESS;
+            $dryRun = (bool) $this->option('dry-run');
+
+            if ($dryRun) {
+                $this->info('Dry run — counting transitions but not writing.');
+            } else {
+                Log::info('Starting user engagement update');
             }
 
-            Log::info('Starting user engagement update');
+            $stats = $service->updateEngagement($dryRun);
 
-            $count = $service->updateEngagement();
+            $verb = $dryRun ? 'Would update' : 'Updated';
+            $this->info("{$verb} {$stats['total']} user(s):");
+            $this->line(sprintf('  NULL → New:                       %d', $stats['null_to_new']));
+            $this->line(sprintf('  NULL → Inactive:                  %d', $stats['null_to_inactive']));
+            $this->line(sprintf('  New/Occasional → Inactive:        %d', $stats['new_or_occasional_to_inactive']));
+            $this->line(sprintf('  * → Dormant (>182d):              %d', $stats['to_dormant']));
+            $this->line(sprintf('  New/Inactive/Dormant → Occasional: %d', $stats['to_occasional']));
+            $this->line(sprintf('  Occasional → Frequent:            %d', $stats['occasional_to_frequent']));
+            $this->line(sprintf('  Frequent → Obsessed:              %d', $stats['frequent_to_obsessed']));
+            $this->line(sprintf('  Obsessed → Frequent:              %d', $stats['obsessed_to_frequent']));
 
-            $this->info("{$count} user(s) updated");
-            Log::info('User engagement update complete', ['count' => $count]);
+            if (!$dryRun) {
+                Log::info('User engagement update complete', $stats);
+            }
 
             return Command::SUCCESS;
         } finally {
