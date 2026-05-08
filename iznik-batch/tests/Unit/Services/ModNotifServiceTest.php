@@ -435,4 +435,73 @@ class ModNotifServiceTest extends TestCase
 
         $this->assertFalse($this->service->isModRecentlyActive($mod->id));
     }
+
+    // ===================================================================
+    // getNotificationsToSend
+    // ===================================================================
+
+    public function test_get_notifications_returns_empty_when_mod_has_no_recent_activity(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // No messages approved by this mod → isModRecentlyActive returns false → skipped
+        $result = $this->service->getNotificationsToSend();
+
+        $modIds = array_column($result, 'user_id');
+        $this->assertNotContains($mod->id, $modIds);
+    }
+
+    public function test_get_notifications_returns_notification_for_mod_with_pending_work(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $author = $this->createTestUser();
+
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Record recent activity for the mod
+        $message = $this->createTestMessage($author, $group);
+        MessageGroup::where('msgid', $message->id)->update([
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'approvedby' => $mod->id,
+            'arrival' => now()->subDays(1),
+        ]);
+
+        // Add a pending message requiring moderation in this group
+        $pending = $this->createTestMessage($author, $group);
+        MessageGroup::where('msgid', $pending->id)->update([
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->subDays(2),
+        ]);
+
+        $result = $this->service->getNotificationsToSend();
+
+        $modIds = array_column($result, 'user_id');
+        $this->assertContains($mod->id, $modIds);
+    }
+
+    public function test_get_notifications_skips_mod_with_notifications_disabled(): void
+    {
+        // Settings on the User (not membership) control minage; -1 = disabled
+        $mod = $this->createTestUser(['settings' => ['modnotifs' => -1]]);
+        $group = $this->createTestGroup();
+        $author = $this->createTestUser();
+
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Record recent activity so isModRecentlyActive() passes
+        $message = $this->createTestMessage($author, $group);
+        MessageGroup::where('msgid', $message->id)->update([
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'approvedby' => $mod->id,
+            'arrival' => now()->subDays(1),
+        ]);
+
+        $result = $this->service->getNotificationsToSend();
+
+        $modIds = array_column($result, 'user_id');
+        $this->assertNotContains($mod->id, $modIds);
+    }
 }

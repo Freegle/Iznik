@@ -111,7 +111,7 @@ class ModNotifService
             }
         }
 
-        $modtoolsUrl = config('freegle.mod_site');
+        $modtoolsUrl = config('freegle.sites.mod', 'https://modtools.org');
 
         foreach ($modData as $modId => $data) {
             $textSummary = $this->buildTextSummary($data['groups'], $data['chat_review'], $modtoolsUrl);
