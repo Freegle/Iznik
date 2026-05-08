@@ -1847,6 +1847,8 @@ jobs:
             checkout_code() {
               if [ -d .git ]; then
                 git fetch --prune origin
+                git reset --hard HEAD
+                git clean -fd
                 git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
               else
                 # git clone fails when the directory isn't empty (leftover files from
