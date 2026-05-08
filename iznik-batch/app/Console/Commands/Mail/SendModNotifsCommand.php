@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Mail;
 
+use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\ModNotifMail;
 use App\Services\ModNotifService;
 use Illuminate\Console\Command;
@@ -10,6 +11,8 @@ use Illuminate\Support\Facades\Mail;
 
 class SendModNotifsCommand extends Command
 {
+    use PreventsOverlapping;
+
     protected $signature = 'mail:mod-notifs
                             {--dry-run : Show what would be sent without sending}
                             {--force : Send even outside 08:00–21:00 window}';
@@ -21,6 +24,21 @@ class SendModNotifsCommand extends Command
     private const HOUR_END = 21;
 
     public function handle(ModNotifService $service): int
+    {
+        if (! $this->acquireLock()) {
+            $this->info('Already running, exiting.');
+
+            return Command::SUCCESS;
+        }
+
+        try {
+            return $this->runLocked($service);
+        } finally {
+            $this->releaseLock();
+        }
+    }
+
+    private function runLocked(ModNotifService $service): int
     {
         $dryRun = $this->option('dry-run');
         $force = $this->option('force');
