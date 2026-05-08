@@ -115,6 +115,14 @@ Schedule::command('cleanup:chat-duplicates')
     ->sendOutputTo(cronLog('cleanup:chat-duplicates'))
     ->runInBackground();
 
+// Archive old duplicate profile images, keeping latest per user.
+// V1: cron/archive_attachments.php — disabled pending sign-off
+// Schedule::command('cleanup:archive-profile-images')
+//     ->dailyAt('22:30')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('cleanup:archive-profile-images'))
+//     ->runInBackground();
+
 // Clean up old sessions.
 // V1: cron/purge_sessions.php
 Schedule::command('cleanup:sessions')

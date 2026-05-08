@@ -217,6 +217,7 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | `jobs_illustrations.php` | `jobs:generate-illustrations` | - | AI illustrations for canonical job categories |
 | `messages_illustrations.php` | `messages:generate-illustrations` | - | AI illustrations for messages without photos |
 | `whatjobs_spam.php` | `cleanup:whatjobs-spam` | - | Delete spammy WhatJobs postings |
+| `archive_attachments.php` | `cleanup:archive-profile-images` | - | Delete older duplicate profile images, keeping only the most recent per user |
 
 ## Code Written - Running via CircleCI (Not Scheduler)
 
@@ -325,7 +326,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `microactions_score.php` | 23:00 | Low | Microactions scoring |
 | `restartproject.php` | 23:00 | Low | Restart project |
 | `repaircafewales.php` | 23:00 | Low | Repair Cafe Wales |
-| `archive_attachments.php` | 22:30 | Low | Attachment archiving |
+| ~~`archive_attachments.php`~~ | ~~22:30~~ | ~~Low~~ | ~~Attachment archiving~~ — **Migrated: `cleanup:archive-profile-images`** |
 
 ## Weekly Scripts - Not Started
 
