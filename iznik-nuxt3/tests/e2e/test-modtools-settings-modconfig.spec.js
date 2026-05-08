@@ -13,35 +13,55 @@ async function navigateToModConfigTab(page) {
   await page.goto(`${MODTOOLS_URL}/settings`, {
     timeout: timeouts.navigation.initial,
   })
-  const stdMsgTab = page.locator('h2:has-text("Standard Messages")')
-  await stdMsgTab.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
-  await stdMsgTab.click()
+  // Target the BVN tab button directly (role="tab") rather than the h2 inside it.
+  const tabBtn = page.locator('[role="tab"]:has-text("Standard Messages")')
+  await expect(tabBtn).toBeVisible({ timeout: timeouts.ui.appearance })
+  await tabBtn.click()
+  // Wait for the active tab pane's content to become visible.
+  await expect(page.locator('.tab-pane.active .scrollinplace')).toBeVisible({
+    timeout: timeouts.ui.appearance,
+  })
 }
 
 async function selectFirstConfig(page) {
-  const configSelect = page.locator('.scrollinplace select').first()
-  await configSelect.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+  const configSelect = page.locator('.tab-pane.active .scrollinplace select').first()
+  // Wait for the select to be in the DOM (it may be hidden by BVN; we use force).
+  await configSelect.waitFor({ state: 'attached', timeout: timeouts.ui.appearance })
   const options = await configSelect.locator('option').all()
   for (const opt of options) {
     const val = await opt.getAttribute('value')
     if (val && val !== '' && val !== 'null' && parseInt(val) > 0) {
-      await configSelect.selectOption(val)
+      await configSelect.selectOption(val, { force: true })
       return val
     }
   }
   return null
 }
 
+async function expandGeneralSettings(page) {
+  // The "General Settings" accordion is closed by default.  Open it if not visible.
+  // b-button with href="#" renders as <a>, not <button>, in Bootstrap Vue Next.
+  const accordionContent = page.locator('#accordion-general')
+  const alreadyOpen = await accordionContent.isVisible().catch(() => false)
+  if (!alreadyOpen) {
+    // Use .btn selector to match both <button> and <a class="btn"> renderings.
+    const toggleBtn = page.locator('.tab-pane.active .btn:has-text("General Settings")')
+    await toggleBtn.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+    await toggleBtn.click()
+    await accordionContent.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+  }
+}
+
 async function saveConfigName(page, name) {
-  const nameField = page
-    .locator('.scrollinplace input[type="text"]')
-    .first()
+  await expandGeneralSettings(page)
+
+  const nameField = page.locator('#accordion-general input[type="text"]').first()
   await nameField.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
   await nameField.clear()
   await nameField.fill(name)
 
   const saveBtn = page
-    .locator('.scrollinplace button')
+    .locator('#accordion-general button')
     .filter({ hasText: /save/i })
     .first()
 
@@ -69,8 +89,10 @@ test.describe('ModTools Settings - ModConfig persistence', () => {
       return
     }
 
+    await expandGeneralSettings(page)
+
     // Read current name so we can restore it after the test
-    const nameField = page.locator('.scrollinplace input[type="text"]').first()
+    const nameField = page.locator('#accordion-general input[type="text"]').first()
     await nameField.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
     const originalName = await nameField.inputValue()
 
@@ -81,10 +103,9 @@ test.describe('ModTools Settings - ModConfig persistence', () => {
     await page.reload({ timeout: timeouts.navigation.default })
     await navigateToModConfigTab(page)
     await selectFirstConfig(page)
+    await expandGeneralSettings(page)
 
-    const nameFieldAfter = page
-      .locator('.scrollinplace input[type="text"]')
-      .first()
+    const nameFieldAfter = page.locator('#accordion-general input[type="text"]').first()
     await nameFieldAfter.waitFor({
       state: 'visible',
       timeout: timeouts.ui.appearance,
