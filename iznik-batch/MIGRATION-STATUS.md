@@ -171,7 +171,7 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | `digest.php` | `mail:digest:unified` | UnifiedDigest | Unified Freegle digests (user-centric) |
 | `donations_email.php` | `mail:donations:ask` | - | Donation reminders |
 | `donations_thank.php` | `mail:donations:thank` | - | Donation thank-you emails |
-| `bounce.php` | `mail:bounced` | - | Bounced email handling |
+| `bounce.php` + `bounce_users.php` | `mail:bounced` | - | Bounced email handling + user suspension (PR #390) |
 | `messages_expired.php` | `messages:process-expired` | - | Deadline expiry handling |
 | `autoapprove.php` | `messages:auto-approve` | - | Auto-approve pending messages after 48h |
 | `autorepost.php` | `messages:auto-repost` | - | Auto-repost messages based on group settings |
@@ -192,6 +192,15 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | `email_validate.php` | `emails:validate` | - | Delete invalid emails |
 | `locations_skewwhiff.php` | `locations:fix-skewed` | - | Fix swapped lat/lng |
 | `user_ratings.php` | `users:update-ratings` | - | Rating visibility |
+| `check_spammers.php` | `users:remove-spammers` | - | Remove spam members + content cleanup (PR #395) |
+| `chat_spam.php` | `chats:process-spam` | - | Warn innocent users + auto-mark spam (PR #397) |
+| `chat_expected.php` | `chats:update-expected` | - | Chat reply expectation tracking (PR #396) |
+| `users_modmails.php` | `users:update-modmails` | - | Sync mod actions into users_modmails (PR #392) |
+| `mod_notifs.php` | `mail:mod-notifs` | - | Moderator notification emails (PR #391) |
+| `donations_giftaid.php` | `donations:update-giftaid` | - | Gift Aid identification + chase-ups (PR #394) |
+| `message_spatial.php` | `messages:update-spatial-index` | - | Spatial index updates (PR #398) |
+| `message_unindexed.php` | `messages:update-index` | - | Index missing messages (PR #393) |
+| `message_deindex.php` | `messages:deindex` | - | De-index old messages (PR #393) |
 
 ## Code Written - Running via CircleCI (Not Scheduler)
 
@@ -233,13 +242,13 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`notification_chaseup.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Notification reminders~~ — **Migrated: `mail:notifications:chaseup`** |
 | `previews.php` | Every 5 min | Medium | Link preview generation |
 | `check_cgas.php` | Every 5 min | Low | CGA checking |
-| `message_spatial.php` | Every 5 min | Medium | Spatial index updates |
+| ~~`message_spatial.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Spatial index updates~~ — **Migrated: `messages:update-spatial-index` — PR #398** |
 | `messages_illustrations.php` | Every 1 min | Medium | Message illustrations |
 | `messages_remap.php` | Every 5 min | Low | Message remapping |
-| `chat_expected.php` | Every 5 min | Medium | Expected chat responses |
-| `chat_spam.php` | Every 5 min | Medium | Chat spam detection |
-| `check_spammers.php` | Every 5 min | Medium | Spam detection |
-| `users_modmails.php` | Every 5 min | Medium | Mod mail processing |
+| ~~`chat_expected.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Expected chat responses~~ — **Migrated: `chats:update-expected` — PR #396** |
+| ~~`chat_spam.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Chat spam detection~~ — **Migrated: `chats:process-spam` — PR #397** |
+| ~~`check_spammers.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Spam detection~~ — **Migrated: `users:remove-spammers` — PR #395** |
+| ~~`users_modmails.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Mod mail processing~~ — **Migrated: `users:update-modmails` — PR #392** |
 | `visualise.php` | Every 5 min | Low | Data visualisation |
 | `microvolunteering.php` | Every 5 min | Low | Micro-volunteering |
 | `newsfeed_link_previews.php` | Every 1 min | Low | Newsfeed link previews |
@@ -249,24 +258,24 @@ These original scripts need to be migrated to Laravel artisan commands:
 
 | Script | Frequency | Priority | Description |
 |--------|-----------|----------|-------------|
-| `donations_giftaid.php` | Every 10 min | Medium | Gift Aid processing |
+| ~~`donations_giftaid.php`~~ | ~~Every 10 min~~ | ~~Medium~~ | ~~Gift Aid processing~~ — **Migrated: `donations:update-giftaid` — PR #394** |
 | `alerts.php` | Every 10 min | Medium | System alerts |
 | ~~`user_ratings.php`~~ | ~~Every 10 min~~ | ~~Low~~ | ~~User ratings~~ — **Migrated: `users:update-ratings`** |
 | `eximlogs.php` | Every 10 min | Low | Exim mail logs |
 | `whatjobs_spam.php` | Every 10 min | Low | WhatJobs spam |
 | `jobs_illustrations.php` | Every 30 min | Low | Job illustrations |
-| `message_unindexed.php` | Every 30 min | Low | Unindexed messages |
+| ~~`message_unindexed.php`~~ | ~~Every 30 min~~ | ~~Low~~ | ~~Unindexed messages~~ — **Migrated: `messages:update-index` — PR #393** |
 | ~~`chat_latestmessage.php`~~ | ~~Every 60 min~~ | ~~Low~~ | ~~Chat latest message~~ — **Migrated: `chats:update-counts`** |
 | `pledge.php` | Every 60 min | Low | Pledges |
 | ~~`lastacces.php`~~ | ~~Every 59 min~~ | ~~Low~~ | ~~Last access tracking~~ — **Migrated: `users:update-lastaccess`** |
-| `mod_notifs.php` | Every 60 min | Medium | Moderator notifications |
+| ~~`mod_notifs.php`~~ | ~~Every 60 min~~ | ~~Medium~~ | ~~Moderator notifications~~ — **Migrated: `mail:mod-notifs` — PR #391** |
 | ~~`supporttools.php`~~ | ~~Every 60 min~~ | ~~Low~~ | ~~Support tools~~ — **Migrated: `users:update-support-roles`** |
 | ~~`membercounts.php`~~ | ~~Every 60 min~~ | ~~Low~~ | ~~Member counts~~ — **Migrated: `groups:update-counts`** |
 | ~~`autorepost.php`~~ | ~~Every 60 min~~ | ~~Medium~~ | ~~Auto-repost messages~~ — **Migrated: `messages:auto-repost`** |
 | ~~`chaseup.php`~~ | ~~Every 60 min~~ | ~~Medium~~ | ~~Message chase-up~~ — **Migrated: `messages:chase-up`** |
 | ~~`searchdups.php`~~ | ~~Every 60 min~~ | ~~Low~~ | ~~Search duplicates~~ — **Migrated: `cleanup:search-duplicates`** |
 | ~~`autoapprove.php`~~ | ~~Every 60 min~~ | ~~Medium~~ | ~~Auto-approve messages~~ — **Migrated: `messages:auto-approve`** |
-| `bounce_users.php` | Every 60 min | Medium | User bounce processing |
+| ~~`bounce_users.php`~~ | ~~Every 60 min~~ | ~~Medium~~ | ~~User bounce processing~~ — **Migrated: `mail:bounced` — PR #390** |
 | ~~`chatdups.php`~~ | ~~Every 120 min~~ | ~~Low~~ | ~~Chat duplicates~~ — **Migrated: `cleanup:chat-duplicates`** |
 
 ## Daily Scripts - Not Started
@@ -281,7 +290,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `newsfeed_modnotif.php` | 13:30 | Low | Newsfeed mod notifications |
 | `noticeboards.php` | 15:30 | Low | Noticeboards |
 | `group_welcomereview.php` | 01:00, 15:00 | Low | Group welcome review |
-| `message_deindex.php` | 01:00 | Low | Message de-indexing |
+| ~~`message_deindex.php`~~ | ~~01:00~~ | ~~Low~~ | ~~Message de-indexing~~ — **Migrated: `messages:deindex` — PR #393** |
 | `group_stats.php` | 02:00 | Low | Group statistics |
 | `doogal` | 03:00 | Low | Doogal data import |
 | `engage_update.php` | 03:00 | Low | Engagement update |
