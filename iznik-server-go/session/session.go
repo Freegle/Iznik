@@ -1334,6 +1334,10 @@ func GetSession(c *fiber.Ctx) error {
 		displayname = user.InventName(db, myid)
 	}
 
+	// Apply V1-parity defaults (notificationmails, engagement, mod-only modnotifs/backupmodnotifs)
+	// to the settings before returning.  GetSession is a read path — this never persists to DB.
+	settingsWithDefaults := user.ApplySettingsDefaultsToJSON(userRow.Settings, userRow.Systemrole)
+
 	// Build the me object.
 	me := fiber.Map{
 		"id":                 userRow.ID,
@@ -1342,7 +1346,7 @@ func GetSession(c *fiber.Ctx) error {
 		"firstname":          userRow.Firstname,
 		"lastname":           userRow.Lastname,
 		"systemrole":         userRow.Systemrole,
-		"settings":           userRow.Settings,
+		"settings":           settingsWithDefaults,
 		"lastaccess":         userRow.Lastaccess,
 		"added":              userRow.Added,
 		"source":             userRow.Source,

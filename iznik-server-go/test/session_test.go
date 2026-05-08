@@ -367,6 +367,57 @@ func TestGetSessionReturnsMailFlags(t *testing.T) {
 	check(0, 1)
 }
 
+func TestGetSessionAppliesSettingsDefaults(t *testing.T) {
+	// V1 (User.php:2075) injects notificationmails=true and engagement=true for any user
+	// where the key is absent from the DB settings column.  V2 GetSession must do the same
+	// so the UI toggle renders ON (matching cron behaviour) rather than OFF (Boolean(undefined)).
+	prefix := uniquePrefix("sess_defaults")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Overwrite settings to a blob that has no notificationmails or engagement keys.
+	db.Exec("UPDATE users SET settings = ? WHERE id = ?", `{"mylocation":{"lat":55.9,"lng":-3.1}}`, userID)
+
+	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	me, ok := result["me"].(map[string]interface{})
+	assert.True(t, ok, "me should be a map")
+
+	settings, ok := me["settings"].(map[string]interface{})
+	assert.True(t, ok, "me.settings should be a map")
+
+	gotNotif, hasNotif := settings["notificationmails"]
+	assert.True(t, hasNotif, "me.settings.notificationmails must be present when absent from DB")
+	assert.Equal(t, true, gotNotif, "me.settings.notificationmails must default to true")
+
+	gotEngagement, hasEngagement := settings["engagement"]
+	assert.True(t, hasEngagement, "me.settings.engagement must be present when absent from DB")
+	assert.Equal(t, true, gotEngagement, "me.settings.engagement must default to true")
+
+	// Existing explicit false must be preserved (not overwritten by default).
+	db.Exec("UPDATE users SET settings = ? WHERE id = ?", `{"notificationmails":false,"engagement":false}`, userID)
+	req2 := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+	resp2, _ := getApp().Test(req2)
+	var result2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&result2)
+	me2 := result2["me"].(map[string]interface{})
+	settings2 := me2["settings"].(map[string]interface{})
+	assert.Equal(t, false, settings2["notificationmails"], "explicit false must not be overwritten by default")
+	assert.Equal(t, false, settings2["engagement"], "explicit false must not be overwritten by default")
+
+	// Null settings should not panic and should inject defaults.
+	db.Exec("UPDATE users SET settings = NULL WHERE id = ?", userID)
+	req3 := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+	resp3, _ := getApp().Test(req3)
+	assert.Equal(t, 200, resp3.StatusCode)
+}
+
 func TestGetSessionNotLoggedIn(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/session", nil)
 	resp, _ := getApp().Test(req)
