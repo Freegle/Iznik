@@ -20,6 +20,35 @@ class EngageUpdateService
     private const OBSESSED_LOOKBACK_DAYS = 31;
 
     /**
+     * Run a WHERE-driven bulk UPDATE against `users` safely under Galera.
+     *
+     * Step 1: plucks every matching ID up front (read-only, releases when done).
+     * Step 2: updates each row by primary key (narrow PK lock, no gap-lock scan).
+     *
+     * Matches the per-row pattern used elsewhere in the codebase. Avoids the
+     * gap-lock deadlock a full-table-scan UPDATE causes when concurrent
+     * writes on `users` overlap with the WHERE column.
+     *
+     * @param  callable  $applyWhere  receives the query builder, applies WHERE clauses
+     * @param  array     $update      column => value to set
+     * @return int                    total rows affected
+     */
+    private function bulkUpdate(callable $applyWhere, array $update): int
+    {
+        $query = DB::table('users');
+        $applyWhere($query);
+        $ids = $query->orderBy('id')->pluck('id');
+
+        $total = 0;
+        foreach ($ids as $id) {
+            DB::table('users')->where('id', $id)->update($update);
+            $total++;
+        }
+
+        return $total;
+    }
+
+    /**
      * Update engagement classifications for all users.
      * Mirrors V1 Engage::updateEngagement().
      *
@@ -48,23 +77,35 @@ class EngageUpdateService
     {
         $cutoff = now()->subDays(self::LOOKBACK_DAYS)->startOfDay()->toDateString();
 
-        $query = DB::table('users')
-            ->whereNull('engagement')
-            ->where('added', '>=', $cutoff);
+        $where = function ($q) use ($cutoff) {
+            $q->whereNull('engagement')->where('added', '>=', $cutoff);
+        };
 
-        $affected = $dryRun ? $query->count() : $query->update(['engagement' => 'New']);
+        if ($dryRun) {
+            $count = DB::table('users')->where($where)->count();
+            Log::info("EngageUpdate: NULL => New: would-{$count}");
+            return $count;
+        }
 
-        Log::info('EngageUpdate: NULL => New: ' . ($dryRun ? "would-{$affected}" : $affected));
+        $affected = $this->bulkUpdate($where, ['engagement' => 'New']);
+        Log::info("EngageUpdate: NULL => New: {$affected}");
         return $affected;
     }
 
     private function setInactiveForRemainingNulls(bool $dryRun = false): int
     {
-        $query = DB::table('users')->whereNull('engagement');
+        $where = function ($q) {
+            $q->whereNull('engagement');
+        };
 
-        $affected = $dryRun ? $query->count() : $query->update(['engagement' => 'Inactive']);
+        if ($dryRun) {
+            $count = DB::table('users')->where($where)->count();
+            Log::info("EngageUpdate: NULL => Inactive: would-{$count}");
+            return $count;
+        }
 
-        Log::info('EngageUpdate: NULL => Inactive: ' . ($dryRun ? "would-{$affected}" : $affected));
+        $affected = $this->bulkUpdate($where, ['engagement' => 'Inactive']);
+        Log::info("EngageUpdate: NULL => Inactive: {$affected}");
         return $affected;
     }
 
@@ -72,16 +113,22 @@ class EngageUpdateService
     {
         $cutoff = now()->subDays(self::RECENT_ACCESS_DAYS)->startOfDay()->toDateString();
 
-        $query = DB::table('users')
-            ->whereIn('engagement', ['New', 'Occasional'])
-            ->where(function ($q) use ($cutoff) {
-                $q->whereNull('lastaccess')
-                    ->orWhere('lastaccess', '<', $cutoff);
-            });
+        $where = function ($q) use ($cutoff) {
+            $q->whereIn('engagement', ['New', 'Occasional'])
+                ->where(function ($qq) use ($cutoff) {
+                    $qq->whereNull('lastaccess')
+                        ->orWhere('lastaccess', '<', $cutoff);
+                });
+        };
 
-        $affected = $dryRun ? $query->count() : $query->update(['engagement' => 'Inactive']);
+        if ($dryRun) {
+            $count = DB::table('users')->where($where)->count();
+            Log::info("EngageUpdate: New/Occasional => Inactive: would-{$count}");
+            return $count;
+        }
 
-        Log::info('EngageUpdate: New/Occasional => Inactive: ' . ($dryRun ? "would-{$affected}" : $affected));
+        $affected = $this->bulkUpdate($where, ['engagement' => 'Inactive']);
+        Log::info("EngageUpdate: New/Occasional => Inactive: {$affected}");
         return $affected;
     }
 
@@ -89,16 +136,22 @@ class EngageUpdateService
     {
         $cutoff = now()->subDays(self::USER_INACTIVE_DAYS)->startOfDay()->toDateString();
 
-        $query = DB::table('users')
-            ->where('engagement', '!=', 'Dormant')
-            ->where(function ($q) use ($cutoff) {
-                $q->whereNull('lastaccess')
-                    ->orWhere('lastaccess', '<', $cutoff);
-            });
+        $where = function ($q) use ($cutoff) {
+            $q->where('engagement', '!=', 'Dormant')
+                ->where(function ($qq) use ($cutoff) {
+                    $qq->whereNull('lastaccess')
+                        ->orWhere('lastaccess', '<', $cutoff);
+                });
+        };
 
-        $affected = $dryRun ? $query->count() : $query->update(['engagement' => 'Dormant']);
+        if ($dryRun) {
+            $count = DB::table('users')->where($where)->count();
+            Log::info("EngageUpdate: * => Dormant: would-{$count}");
+            return $count;
+        }
 
-        Log::info('EngageUpdate: * => Dormant: ' . ($dryRun ? "would-{$affected}" : $affected));
+        $affected = $this->bulkUpdate($where, ['engagement' => 'Dormant']);
+        Log::info("EngageUpdate: * => Dormant: {$affected}");
         return $affected;
     }
 
