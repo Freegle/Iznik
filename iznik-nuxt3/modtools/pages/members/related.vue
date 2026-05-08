@@ -39,7 +39,7 @@
   </div>
 </template>
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { setupModMembers } from '~/composables/useModMembers'
 import { useMemberStore } from '~/stores/member'
 
@@ -64,12 +64,15 @@ const members = computed(() => {
 // populated for Related pairs, causing the single-community view to show nothing.
 const visibleMembers = computed(() => members.value)
 
-// When the community selection changes, reset state so loadMore re-fetches
-// from the API with the new groupid rather than re-filtering stale data.
-watch(groupid, () => {
-  memberStore.clear()
-  context.value = null
-  show.value = 0
-  bump.value++
+// Register watch inside onMounted so it only fires for user-initiated group
+// changes, not for the programmatic reset that setupModMembers(true) performs
+// during setup (which would cause a spurious second clear mid-fetch).
+onMounted(() => {
+  watch(groupid, () => {
+    memberStore.clear()
+    context.value = null
+    show.value = 0
+    bump.value++
+  })
 })
 </script>

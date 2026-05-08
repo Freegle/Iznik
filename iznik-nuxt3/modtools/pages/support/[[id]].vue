@@ -131,6 +131,12 @@
                   </template>
                   <ModSupportSpamKeywords ref="spamKeywordsComponent" />
                 </b-tab>
+                <b-tab>
+                  <template #title>
+                    <span class="subtab-title">Keyword List</span>
+                  </template>
+                  <ModSupportConcernKeywords />
+                </b-tab>
               </b-tabs>
             </div>
           </b-tab>

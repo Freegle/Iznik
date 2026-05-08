@@ -1399,7 +1399,25 @@ func PatchMemberships(c *fiber.Ctx) error {
 	}
 
 	if req.Settings != nil {
-		// Save the membership settings JSON (active, configid, showmessages, etc.).
+		// Strip configid from the settings blob — it is a top-level column, not a settings field.
+		// If the caller is a mod and no top-level configid was supplied, promote the embedded value
+		// so the column update below will run. Non-mods have it silently discarded.
+		var settingsMap map[string]json.RawMessage
+		if err := json.Unmarshal(*req.Settings, &settingsMap); err == nil {
+			if raw, ok := settingsMap["configid"]; ok {
+				if req.Configid == nil && isModOfGroup(myid, req.Groupid) {
+					var cid uint64
+					if json.Unmarshal(raw, &cid) == nil && cid > 0 {
+						req.Configid = &cid
+					}
+				}
+				delete(settingsMap, "configid")
+				if cleaned, err := json.Marshal(settingsMap); err == nil {
+					stripped := json.RawMessage(cleaned)
+					req.Settings = &stripped
+				}
+			}
+		}
 		db.Exec("UPDATE memberships SET settings = ? WHERE userid = ? AND groupid = ?",
 			string(*req.Settings), userid, req.Groupid)
 	}

@@ -49,8 +49,8 @@ class GroupMaintenanceService
     /**
      * Fix locations where latitude and longitude are swapped.
      *
-     * UK locations should have lat < lng (lat ~50-60, lng ~-8 to 2).
-     * When lat > lng, the coordinates are likely swapped.
+     * UK locations should have lat > lng (lat ~50-60, lng ~-8 to +2).
+     * When lat < lng, the coordinates are likely swapped.
      * Excludes BF (British Forces) postcodes which may legitimately have lat > lng.
      *
      * Also fixes any messages referencing the affected locations.

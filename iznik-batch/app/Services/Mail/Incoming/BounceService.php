@@ -462,6 +462,78 @@ class BounceService
     }
 
     /**
+     * Bulk suspend all users whose preferred email has accumulated enough bounces.
+     *
+     * Mirrors the V1 bounce_users.php cron job. Applies the same thresholds as
+     * checkAndSuspendUser() but via a single set of bulk queries rather than
+     * per-user calls. Only processes users with bouncing=0.
+     *
+     * @return int Number of users suspended
+     */
+    public function suspendBouncingUsers(): int
+    {
+        $suspended = 0;
+
+        // Step 1: permanent bounces (reset=0) >= PERMANENT_THRESHOLD on preferred email
+        $permanentCandidates = DB::table('bounces_emails')
+            ->join('users_emails', 'users_emails.id', '=', 'bounces_emails.emailid')
+            ->join('users', 'users.id', '=', 'users_emails.userid')
+            ->where('bounces_emails.permanent', 1)
+            ->where('bounces_emails.reset', 0)
+            ->where('users_emails.preferred', 1)
+            ->where('users.bouncing', 0)
+            ->select('users_emails.userid')
+            ->groupBy('users_emails.userid')
+            ->havingRaw('COUNT(*) >= ?', [self::PERMANENT_THRESHOLD])
+            ->pluck('userid');
+
+        foreach ($permanentCandidates as $userId) {
+            $this->suspendUser($userId);
+            $suspended++;
+        }
+
+        // Step 2: soft bounces within window >= SOFT_BOUNCE_THRESHOLD on preferred email
+        $softCandidates = DB::table('bounces_emails')
+            ->join('users_emails', 'users_emails.id', '=', 'bounces_emails.emailid')
+            ->join('users', 'users.id', '=', 'users_emails.userid')
+            ->where('bounces_emails.permanent', 0)
+            ->where('bounces_emails.reset', 0)
+            ->where('bounces_emails.date', '>=', now()->subDays(self::SOFT_BOUNCE_DAYS))
+            ->where('users_emails.preferred', 1)
+            ->where('users.bouncing', 0)
+            ->select('users_emails.userid')
+            ->groupBy('users_emails.userid')
+            ->havingRaw('COUNT(*) >= ?', [self::SOFT_BOUNCE_THRESHOLD])
+            ->pluck('userid');
+
+        foreach ($softCandidates as $userId) {
+            $this->suspendUser($userId);
+            $suspended++;
+        }
+
+        // Step 3: total bounces (any, reset=0) >= TOTAL_THRESHOLD on preferred email
+        $totalCandidates = DB::table('bounces_emails')
+            ->join('users_emails', 'users_emails.id', '=', 'bounces_emails.emailid')
+            ->join('users', 'users.id', '=', 'users_emails.userid')
+            ->where('bounces_emails.reset', 0)
+            ->where('users_emails.preferred', 1)
+            ->where('users.bouncing', 0)
+            ->select('users_emails.userid')
+            ->groupBy('users_emails.userid')
+            ->havingRaw('COUNT(*) >= ?', [self::TOTAL_THRESHOLD])
+            ->pluck('userid');
+
+        foreach ($totalCandidates as $userId) {
+            $this->suspendUser($userId);
+            $suspended++;
+        }
+
+        Log::info('Bulk bounce suspension complete', ['suspended' => $suspended]);
+
+        return $suspended;
+    }
+
+    /**
      * Suspend a user's email delivery.
      */
     private function suspendUser(int $userId): void

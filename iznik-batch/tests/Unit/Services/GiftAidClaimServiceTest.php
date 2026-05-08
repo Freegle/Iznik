@@ -555,4 +555,116 @@ class GiftAidClaimServiceTest extends TestCase
         // Cleanup
         DB::delete('DELETE FROM giftaid WHERE userid = ?', [$user->id]);
     }
+
+    // =========================================================================
+    // sendGiftAidChaseUps tests
+    // =========================================================================
+
+    private function insertDonation(int $userId, array $attrs = []): int
+    {
+        return DB::table('users_donations')->insertGetId(array_merge([
+            'userid' => $userId,
+            'source' => 'DonateWithPayPal',
+            'GrossAmount' => '5.00',
+            'timestamp' => now()->subDays(5)->toDateTimeString(),
+            'giftaidconsent' => 0,
+            'giftaidchaseup' => null,
+            'Payer' => 'test@example.com',
+            'PayerDisplayName' => 'Test User',
+            'TransactionID' => uniqid('tx', true),
+        ], $attrs));
+    }
+
+    public function test_chaseup_sends_email_to_eligible_donor(): void
+    {
+        $user = $this->createTestUser();
+        $this->insertDonation($user->id);
+
+        \Illuminate\Support\Facades\Mail::fake();
+
+        $sent = $this->service->sendGiftAidChaseUps();
+
+        $this->assertGreaterThanOrEqual(1, $sent);
+        \Illuminate\Support\Facades\Mail::assertQueued(\App\Mail\Donation\GiftAidChaseUp::class, function ($mail) use ($user) {
+            return $mail->user->id === $user->id;
+        });
+    }
+
+    public function test_chaseup_marks_giftaidchaseup_after_send(): void
+    {
+        $user = $this->createTestUser();
+        $donationId = $this->insertDonation($user->id);
+
+        \Illuminate\Support\Facades\Mail::fake();
+        $this->service->sendGiftAidChaseUps();
+
+        $chaseup = DB::table('users_donations')->where('id', $donationId)->value('giftaidchaseup');
+        $this->assertNotNull($chaseup);
+    }
+
+    public function test_chaseup_skips_donor_already_chased(): void
+    {
+        $user = $this->createTestUser();
+        $this->insertDonation($user->id, ['giftaidchaseup' => now()->subDays(1)->toDateTimeString()]);
+
+        \Illuminate\Support\Facades\Mail::fake();
+        $sent = $this->service->sendGiftAidChaseUps();
+
+        \Illuminate\Support\Facades\Mail::assertNotQueued(\App\Mail\Donation\GiftAidChaseUp::class, function ($mail) use ($user) {
+            return $mail->user->id === $user->id;
+        });
+    }
+
+    public function test_chaseup_skips_donor_with_giftaid_consent(): void
+    {
+        $user = $this->createTestUser();
+        $this->insertDonation($user->id, ['giftaidconsent' => 1]);
+
+        \Illuminate\Support\Facades\Mail::fake();
+        $this->service->sendGiftAidChaseUps();
+
+        \Illuminate\Support\Facades\Mail::assertNotQueued(\App\Mail\Donation\GiftAidChaseUp::class, function ($mail) use ($user) {
+            return $mail->user->id === $user->id;
+        });
+    }
+
+    public function test_chaseup_skips_donation_older_than_30_days(): void
+    {
+        $user = $this->createTestUser();
+        $this->insertDonation($user->id, ['timestamp' => now()->subDays(31)->toDateTimeString()]);
+
+        \Illuminate\Support\Facades\Mail::fake();
+        $this->service->sendGiftAidChaseUps();
+
+        \Illuminate\Support\Facades\Mail::assertNotQueued(\App\Mail\Donation\GiftAidChaseUp::class, function ($mail) use ($user) {
+            return $mail->user->id === $user->id;
+        });
+    }
+
+    public function test_chaseup_skips_donation_less_than_2_days_old(): void
+    {
+        $user = $this->createTestUser();
+        $this->insertDonation($user->id, ['timestamp' => now()->subHours(12)->toDateTimeString()]);
+
+        \Illuminate\Support\Facades\Mail::fake();
+        $this->service->sendGiftAidChaseUps();
+
+        \Illuminate\Support\Facades\Mail::assertNotQueued(\App\Mail\Donation\GiftAidChaseUp::class, function ($mail) use ($user) {
+            return $mail->user->id === $user->id;
+        });
+    }
+
+    public function test_chaseup_sends_only_one_email_per_user(): void
+    {
+        $user = $this->createTestUser();
+        // Two donations from same user
+        $this->insertDonation($user->id);
+        $this->insertDonation($user->id);
+
+        \Illuminate\Support\Facades\Mail::fake();
+        $sent = $this->service->sendGiftAidChaseUps();
+
+        // Only 1 email per user
+        \Illuminate\Support\Facades\Mail::assertQueued(\App\Mail\Donation\GiftAidChaseUp::class, 1);
+    }
 }

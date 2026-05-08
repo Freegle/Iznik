@@ -1,0 +1,173 @@
+<?php
+
+namespace Tests\Unit\Services;
+
+use App\Models\Message;
+use App\Models\MessageGroup;
+use App\Services\MessageIllustrationsService;
+use App\Services\PollinationsService;
+use Illuminate\Support\Facades\DB;
+use Tests\TestCase;
+
+class MessageIllustrationsServiceTest extends TestCase
+{
+    protected function setUp(): void
+    {
+        parent::setUp();
+        DB::table('config')->where('key', 'illustrations_last_arrival')->delete();
+        DB::table('messages_ai_declined')->delete();
+        DB::table('messages_attachments')->delete();
+        DB::table('messages_spatial')->delete();
+        DB::table('ai_images')->delete();
+    }
+
+    private function makeService(?object $mockPollinations = null): MessageIllustrationsService
+    {
+        $mock = $mockPollinations ?? $this->makeMockPollinations();
+
+        return new MessageIllustrationsService($mock);
+    }
+
+    private function makeMockPollinations(array $fetchResult = null): object
+    {
+        $mock = $this->createMock(PollinationsService::class);
+        $mock->method('shouldSkipItem')->willReturn(false);
+        $mock->method('recordFailure')->willReturn(false);
+        $mock->method('fetchBatch')->willReturn($fetchResult ?? ['results' => [], 'failed' => []]);
+        $mock->method('buildMessagePrompt')->willReturnCallback(fn ($n) => "prompt for $n");
+        $mock->method('uploadImageAndCache')->willReturn('freegletusd-testuid123');
+
+        return $mock;
+    }
+
+    private function createMessageInSpatial(string $subject = 'OFFER: Test Lamp (TestTown)'): object
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => $subject,
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now()->subMinutes(10),
+            'arrival' => now()->subMinutes(10),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+        ]);
+
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now()->subMinutes(10),
+        ]);
+
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+             VALUES (?, ST_GeomFromText('POINT(-0.1 51.5)', 3857), ?, ?, ?)",
+            [$message->id, $group->id, 'Offer', now()->subMinutes(10)]
+        );
+
+        return $message;
+    }
+
+    public function test_processes_message_using_cached_illustration(): void
+    {
+        $message = $this->createMessageInSpatial('OFFER: Vintage Lamp (TestTown)');
+
+        DB::table('ai_images')->insert([
+            'name' => 'Vintage Lamp',
+            'externaluid' => 'freegletusd-cached999',
+            'imagehash' => 'abc123',
+        ]);
+
+        $service = $this->makeService();
+        $result = $service->processIllustrations();
+
+        $attachment = DB::table('messages_attachments')->where('msgid', $message->id)->first();
+        $this->assertNotNull($attachment, 'Expected attachment to be created for message');
+        $this->assertEquals('freegletusd-cached999', $attachment->externaluid);
+        $externalmods = json_decode($attachment->externalmods, true);
+        $this->assertTrue($externalmods['ai']);
+        $this->assertGreaterThanOrEqual(1, $result['processed']);
+    }
+
+    public function test_skips_message_in_declined_table(): void
+    {
+        $message = $this->createMessageInSpatial('OFFER: Widget (TestTown)');
+
+        DB::table('messages_ai_declined')->insert(['msgid' => $message->id]);
+
+        $service = $this->makeService();
+        $service->processIllustrations();
+
+        $count = DB::table('messages_attachments')->where('msgid', $message->id)->count();
+        $this->assertEquals(0, $count, 'Should not create attachment for declined message');
+    }
+
+    public function test_cleans_ai_attachment_when_user_adds_photo(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $message = Message::create([
+            'type' => Message::TYPE_OFFER,
+            'fromuser' => $user->id,
+            'subject' => 'OFFER: Kettle (TestTown)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+        ]);
+
+        // AI attachment.
+        $aiAttachId = DB::table('messages_attachments')->insertGetId([
+            'msgid' => $message->id,
+            'externaluid' => 'freegletusd-ai001',
+            'externalmods' => json_encode(['ai' => true]),
+            'contenttype' => 'image/jpeg',
+        ]);
+
+        // User's own attachment.
+        DB::table('messages_attachments')->insert([
+            'msgid' => $message->id,
+            'externaluid' => 'freegletusd-user001',
+            'externalmods' => null,
+            'contenttype' => 'image/jpeg',
+            'primary' => 1,
+        ]);
+
+        $service = $this->makeService();
+        $result = $service->processIllustrations();
+
+        $this->assertGreaterThanOrEqual(1, $result['cleaned']);
+        $this->assertFalse(
+            DB::table('messages_attachments')->where('id', $aiAttachId)->exists(),
+            'AI attachment should have been deleted'
+        );
+        $this->assertTrue(
+            DB::table('messages_attachments')->where('externaluid', 'freegletusd-user001')->exists(),
+            'User attachment should remain'
+        );
+    }
+
+    public function test_updates_last_arrival_in_config(): void
+    {
+        $this->createMessageInSpatial('OFFER: Toaster (TestTown)');
+
+        DB::table('ai_images')->insert([
+            'name' => 'Toaster',
+            'externaluid' => 'freegletusd-toaster',
+            'imagehash' => 'hash001',
+        ]);
+
+        $service = $this->makeService();
+        $service->processIllustrations();
+
+        $lastArrival = DB::table('config')->where('key', 'illustrations_last_arrival')->value('value');
+        $this->assertNotNull($lastArrival, 'Config should have last arrival set after processing');
+    }
+}

@@ -76,11 +76,15 @@ export const useComposeStore = defineStore({
 
       // Extract the server attachment id from message.attachments.
       if (message.attachments) {
+        const hasRealPhoto = message.attachments.some(
+          (a) => a.id && typeof a.id === 'number' && !(a.externalmods && a.externalmods.ai)
+        )
+
         for (const attachment of message.attachments) {
-          // AI illustrations need to be converted to real server-side attachments
+          // AI illustrations need to be converted to real server-side attachments,
+          // but are suppressed when the user has uploaded their own real photo.
           if (attachment.externalmods && attachment.externalmods.ai) {
-            // Create a real attachment from the AI illustration's external UID
-            if (attachment.ouruid) {
+            if (!hasRealPhoto && attachment.ouruid) {
               try {
                 const result = await this.$api.image.post({
                   externaluid: attachment.ouruid,
@@ -391,8 +395,21 @@ export const useComposeStore = defineStore({
             const attids = []
 
             if (message.attachments) {
+              const hasRealPhoto = message.attachments.some(
+                (a) =>
+                  a.id &&
+                  typeof a.id === 'number' &&
+                  !(a.externalmods && a.externalmods.ai)
+              )
+
               for (const att in message.attachments) {
-                attids.push(message.attachments[att].id)
+                const attachment = message.attachments[att]
+                if (attachment.externalmods && attachment.externalmods.ai && hasRealPhoto) {
+                  continue
+                }
+                if (attachment.id && typeof attachment.id === 'number') {
+                  attids.push(attachment.id)
+                }
               }
             }
 

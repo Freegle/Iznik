@@ -891,6 +891,38 @@ print(json.dumps(out))
   },
 
   {
+    name: 'close_extra_prs',
+    description: 'Close any PRs opened since iterationStartTs that are not the expected PR number. Prevents rogue delegate work from polluting the repo. Returns { closed: number[], kept: number }.',
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        expectedPrNumber: { type: 'number', description: 'The one PR that should stay open' },
+        iterationStartTs: { type: 'string', description: 'ISO timestamp — close PRs opened after this' },
+      },
+      required: ['expectedPrNumber', 'iterationStartTs'],
+    },
+    handler: async (params) => {
+      const expectedPrNumber = params.expectedPrNumber as number
+      const iterationStartTs = params.iterationStartTs as string
+      const listRes = await sh('gh', ['pr', 'list', '--repo', 'Freegle/Iznik', '--state', 'open', '--json', 'number,createdAt,headRefName,author'])
+      if (listRes.code !== 0) return { error: `gh pr list failed: ${listRes.stderr}`, closed: [], kept: expectedPrNumber }
+      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } }>
+      const cutoff = new Date(iterationStartTs)
+      const extras = prs.filter(pr =>
+        pr.number !== expectedPrNumber &&
+        new Date(pr.createdAt) >= cutoff &&
+        pr.author?.login === 'edwh'
+      )
+      const closed: number[] = []
+      for (const pr of extras) {
+        const closeRes = await sh('gh', ['pr', 'close', String(pr.number), '--repo', 'Freegle/Iznik', '--comment', 'Closed: opened outside scope of assigned fix task — FSM enforces one PR per implementation step'])
+        if (closeRes.code === 0) closed.push(pr.number)
+      }
+      return { closed, kept: expectedPrNumber }
+    },
+  },
+
+  {
     name: 'post_discourse_reply_draft',
     description: 'Queue a Discourse reply draft by APPENDING it to /tmp/freegle-monitor/retest-drafts.md. NEVER posts to Discourse — drafts require explicit human approval per iteration. Strict template (enforced here): body must be a single sentence; the file entry always renders the full [quote] block, the @username tag, the body, and a testable URL if provided. Params: {topic, post, username, quote, body, previewUrl?, prNumber?, prUrl?}. Use previewUrl ONLY for frontend-only fixes; backend/mixed fixes must include NO previewUrl because the user cannot retest until a deploy. The body should be exactly "Fix applied for <specific issue> (<prUrl>). Please retest." or (with preview) "Possible fix — please test: <url>". Always include the prUrl in the body so the reporter can see which PR fixed their issue.',
     paramsSchema: {
@@ -1219,6 +1251,7 @@ FORBIDDEN:
   - Starting tests asynchronously and returning before they finish — wait for test output. If tests take too long, still wait; the FSM has a 20-minute timeout and will kill you only if truly stuck.
   - Creating a new PR when asked to fix an existing one (FIX_OPEN_PR_CI). Push a commit to the PR's branch instead.
   - Using port 38081 or any port other than 8081 for the test/status API.
+  - Opening more than one PR or branch in a single session. You are fixing exactly one bug — open AT MOST ONE PR. If you encounter other bugs while reading the code, note them in the PR description but do not fix them. If you accidentally open extra PRs, close them with \`gh pr close <n> --repo Freegle/Iznik\` before emitting your output marker.
 
 PUSH VERIFICATION — Required before any push marker:
 For PR_NUMBER=, DIRECT_PUSH=, or COMMIT_PUSHED=, you MUST first verify the push landed remotely:
@@ -2037,8 +2070,14 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
            WHERE pr_number IS NOT NULL AND state IN ('open', 'investigating', 'fix-queued')`
         ).all() as Array<{ topic: number }>).map((r: { topic: number }) => r.topic)
       )
+      // Skip topics where Edward posted this iteration (type='mine'): he's actively
+      // engaged (e.g. waiting for a retest) and the FSM should not duplicate that work.
+      const topicsWithMinePost = new Set(
+        classifications.filter(c => c.type === 'mine').map(c => Number(c.topic))
+      )
       const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
         .filter(b => !topicsWithActivePr.has(Number(b.topic)))
+        .filter(b => !topicsWithMinePost.has(Number(b.topic)))
 
       if (allPending.length > 0) {
         // Dispatch ONE bug at a time (oldest first_seen_at). With a single self-hosted

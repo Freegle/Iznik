@@ -51,9 +51,10 @@ class MessageExpiryService
                 }
 
                 $this->markAsExpired($message);
-                $this->sendDeadlineNotification($message);
+                if ($this->sendDeadlineNotification($message)) {
+                    $stats['emails_sent']++;
+                }
                 $stats['processed']++;
-                $stats['emails_sent']++;
             } catch (\Exception $e) {
                 Log::error("Error processing expired message {$message->id}: " . $e->getMessage());
                 $stats['errors']++;
@@ -70,21 +71,26 @@ class MessageExpiryService
     {
         $earliestDate = now()->subDays(self::EXPIRE_LOOKBACK_DAYS);
 
-        return Message::select('messages.*', 'messages_groups.groupid')
+        return Message::select('messages.*')
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
             ->whereRaw('messages.deadline < CURDATE()')
             ->whereNull('messages_outcomes.id')
+            ->distinct()
             ->get();
     }
 
     /**
      * Mark a message as expired.
+     *
+     * V1 mark() also clears messages_outcomes_intended first — replicate that.
      */
     protected function markAsExpired(Message $message): void
     {
+        DB::table('messages_outcomes_intended')->where('msgid', $message->id)->delete();
+
         MessageOutcome::create([
             'msgid' => $message->id,
             'outcome' => MessageOutcome::OUTCOME_EXPIRED,
@@ -97,42 +103,60 @@ class MessageExpiryService
 
     /**
      * Send a notification email about the deadline.
+     *
+     * Returns true if email was sent.
      */
-    protected function sendDeadlineNotification(Message $message): void
+    protected function sendDeadlineNotification(Message $message): bool
     {
         $user = $message->fromUser;
 
         if (!$user || !$user->email_preferred) {
-            return;
+            return false;
         }
 
         Mail::send(new DeadlineReached($message, $user));
+        return true;
     }
 
     /**
-     * Process messages that are expired based on spatial index.
+     * Process messages_spatial cleanup. Mirrors V1 cron/messages_expired.php's spatial loop,
+     * which calls Message::processExpiry() — that V1 method is a no-op unless the message
+     * already has an OUTCOME_EXPIRED entry.
+     *
+     * V1 logic when an EXPIRED outcome exists:
+     *   - Delete from spatial index.
+     *   - Add an OUTCOME_WITHDRAWN with comment "Auto-expired".
+     *
+     * Without this filter, every messages_spatial row with successful=0 would get a
+     * brand-new OUTCOME_EXPIRED on each run — that includes all active OFFER/WANTED
+     * posts that just haven't had a Taken/Received yet, ~27k on prod.
      */
     public function processExpiredFromSpatialIndex(bool $dryRun = false): int
     {
         $count = 0;
 
-        $messages = DB::table('messages_spatial')
-            ->where('successful', 0)
-            ->pluck('msgid');
+        $msgids = DB::table('messages_spatial')
+            ->join('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages_spatial.msgid')
+            ->where('messages_spatial.successful', 0)
+            ->where('messages_outcomes.outcome', MessageOutcome::OUTCOME_EXPIRED)
+            ->distinct()
+            ->pluck('messages_spatial.msgid');
 
-        foreach ($messages as $msgid) {
+        foreach ($msgids as $msgid) {
             try {
                 $message = Message::find($msgid);
-                if ($message) {
-                    if ($dryRun) {
-                        Log::info("Dry run: would expire spatial message #{$msgid}");
-                        $count++;
-                        continue;
-                    }
-
-                    $this->processMessageExpiry($message);
-                    $count++;
+                if (!$message) {
+                    continue;
                 }
+
+                if ($dryRun) {
+                    Log::info("Dry run: would auto-withdraw spatial message #{$msgid}");
+                    $count++;
+                    continue;
+                }
+
+                $this->processMessageExpiry($message);
+                $count++;
             } catch (\Exception $e) {
                 Log::error("Error processing spatial index expiry for {$msgid}: " . $e->getMessage());
             }
@@ -146,26 +170,34 @@ class MessageExpiryService
     }
 
     /**
-     * Process expiry for a single message based on group repost settings.
+     * Clean up messages that have already been marked OUTCOME_EXPIRED elsewhere
+     * (e.g. by autorepost based on group settings). Mirrors V1 Message::processExpiry().
+     *
+     * V1 logic: only act if an EXPIRED outcome already exists; in that case
+     * delete from spatial index and add an OUTCOME_WITHDRAWN with comment "Auto-expired".
      */
     protected function processMessageExpiry(Message $message): void
     {
-        // Check if message has already been marked as expired or has an outcome.
-        $hasOutcome = MessageOutcome::where('msgid', $message->id)->exists();
+        $hasExpiredOutcome = MessageOutcome::where('msgid', $message->id)
+            ->where('outcome', MessageOutcome::OUTCOME_EXPIRED)
+            ->exists();
 
-        if (!$hasOutcome) {
-            // Mark as expired.
-            MessageOutcome::create([
-                'msgid' => $message->id,
-                'outcome' => MessageOutcome::OUTCOME_EXPIRED,
-                'comments' => 'Auto-expired based on group settings',
-                'timestamp' => now(),
-            ]);
+        if (!$hasExpiredOutcome) {
+            return;
         }
 
-        // Remove from spatial index.
+        // Mirror V1 mark() side-effect: clear messages_outcomes_intended for this msg.
+        DB::table('messages_outcomes_intended')->where('msgid', $message->id)->delete();
+
         DB::table('messages_spatial')
             ->where('msgid', $message->id)
             ->delete();
+
+        MessageOutcome::create([
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+            'comments' => 'Auto-expired',
+            'timestamp' => now(),
+        ]);
     }
 }

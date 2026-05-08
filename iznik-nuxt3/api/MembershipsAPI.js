@@ -21,6 +21,11 @@ export default class MembershipsAPI extends BaseAPI {
 
   async fetchMembers(params) {
     const ret = await this.$getv2('/memberships', params)
+    // Related collection returns a raw array; all other collections return
+    // { members, context?, ratings?, filtercount? }.
+    if (Array.isArray(ret)) {
+      return { members: ret, context: null, ratings: [], filtercount: null }
+    }
     return {
       members: ret?.members ?? [],
       context: ret?.context ?? null,

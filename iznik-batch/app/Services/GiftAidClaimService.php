@@ -2,9 +2,12 @@
 
 namespace App\Services;
 
+use App\Mail\Donation\GiftAidChaseUp;
 use App\Models\GiftAid;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 /**
  * Generates HMRC Gift Aid claim CSVs from reviewed, unclaimed donation records.
@@ -395,6 +398,82 @@ class GiftAidClaimService
         } elseif ($rowCallback !== null) {
             $rowCallback($row);
         }
+    }
+
+    /**
+     * Send one-off gift aid consent chase-up emails to eligible donors.
+     *
+     * Mirrors V1 donations_giftaid.php chase-up loop.
+     * Targets PayPal/Stripe donors (2-30 days ago) with no gift aid consent and
+     * no prior chaseup record. Sends at most one email per user and marks all
+     * their donations with giftaidchaseup = NOW() to prevent re-sending.
+     *
+     * @return int Number of emails sent
+     */
+    public function sendGiftAidChaseUps(): int
+    {
+        $start = now()->subDays(2)->toDateString();
+        $end = now()->subDays(30)->toDateString();
+
+        $donations = DB::table('users_donations')
+            ->leftJoin('giftaid', 'giftaid.userid', '=', 'users_donations.userid')
+            ->where('users_donations.timestamp', '>=', '2016-04-06')
+            ->where('users_donations.timestamp', '>=', $end)
+            ->where('users_donations.timestamp', '<=', $start)
+            ->whereIn('users_donations.source', ['DonateWithPayPal', 'Stripe'])
+            ->where('users_donations.giftaidconsent', 0)
+            ->whereNull('giftaid.userid')
+            ->whereNull('users_donations.giftaidchaseup')
+            ->whereNotNull('users_donations.userid')
+            ->select('users_donations.*')
+            ->get();
+
+        $sent = 0;
+        $sentTo = [];
+
+        foreach ($donations as $donation) {
+            if (isset($sentTo[$donation->userid])) {
+                continue;
+            }
+
+            // Check for any previous chaseup on any of this user's donations
+            $previousChaseUp = DB::table('users_donations')
+                ->where('userid', $donation->userid)
+                ->whereNotNull('giftaidchaseup')
+                ->exists();
+
+            if ($previousChaseUp) {
+                // Fix up pre-existing gap: mark all their donations as chased
+                DB::table('users_donations')
+                    ->where('userid', $donation->userid)
+                    ->update(['giftaidchaseup' => now()]);
+                $sentTo[$donation->userid] = true;
+                continue;
+            }
+
+            $user = User::find($donation->userid);
+            if (! $user || ! $user->email_preferred) {
+                continue;
+            }
+
+            $sentTo[$donation->userid] = true;
+            $donationDate = date('d-M-Y', strtotime($donation->timestamp));
+
+            try {
+                $mailable = new GiftAidChaseUp($user, $donationDate);
+                Mail::queue($mailable);
+
+                DB::table('users_donations')
+                    ->where('userid', $donation->userid)
+                    ->update(['giftaidchaseup' => now()]);
+
+                $sent++;
+            } catch (\Throwable $e) {
+                Log::error('GiftAid chaseup failed', ['userid' => $donation->userid, 'error' => $e->getMessage()]);
+            }
+        }
+
+        return $sent;
     }
 
     /**

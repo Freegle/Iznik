@@ -2929,6 +2929,10 @@ func PutMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "type must be Offer or Wanted")
 	}
 
+	if strings.TrimSpace(req.Item) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Item is required")
+	}
+
 	// For non-Draft, check membership and fetch posting status in one query.
 	var ourPostingStatus *string
 	var isMember bool
