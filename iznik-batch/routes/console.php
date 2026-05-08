@@ -124,12 +124,12 @@ Schedule::command('cleanup:sessions')
     ->runInBackground();
 
 // Remove spam members from groups and clean up their content.
-// V1: cron/check_spammers.php
-Schedule::command('users:remove-spammers')
-    ->everyFiveMinutes()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('users:remove-spammers'))
-    ->runInBackground();
+// V1: cron/check_spammers.php — disabled pending sign-off
+// Schedule::command('users:remove-spammers')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:remove-spammers'))
+//     ->runInBackground();
 
 // Process bounced emails — mark as invalid.
 // V1: cron/bounce.php + bounce_users.php
@@ -141,12 +141,12 @@ Schedule::command('mail:bounced')
 
 // Moderator work notifications — tells mods about pending messages, events, etc.
 // Only runs 08:00–21:00; deduplicates against last sent summary.
-// V1: cron/mod_notifs.php
-Schedule::command('mail:mod-notifs')
-    ->hourly()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('mail:mod-notifs'))
-    ->runInBackground();
+// V1: cron/mod_notifs.php — disabled pending sign-off
+// Schedule::command('mail:mod-notifs')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('mail:mod-notifs'))
+//     ->runInBackground();
 
 // Email health monitor — alerts if incoming or outgoing email flow drops below
 // configurable thresholds during daytime hours.
@@ -214,12 +214,12 @@ Schedule::command('chats:update-counts')
     ->runInBackground();
 
 // Sync recent mod actions into users_modmails and prune old entries.
-// V1: cron/users_modmails.php
-Schedule::command('users:update-modmails')
-    ->everyFiveMinutes()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('users:update-modmails'))
-    ->runInBackground();
+// V1: cron/users_modmails.php — disabled pending sign-off
+// Schedule::command('users:update-modmails')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('users:update-modmails'))
+//     ->runInBackground();
 
 // Hourly fallback users.lastaccess update from chat / membership activity.
 // V1: cron/lastaccess.php
@@ -230,20 +230,20 @@ Schedule::command('users:update-lastaccess')
     ->runInBackground();
 
 // Update chat reply-expectation tracking and per-user reply-time metrics.
-// V1: cron/chat_expected.php
-Schedule::command('chats:update-expected')
-    ->everyFiveMinutes()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('chats:update-expected'))
-    ->runInBackground();
+// V1: cron/chat_expected.php — disabled pending sign-off
+// Schedule::command('chats:update-expected')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:update-expected'))
+//     ->runInBackground();
 
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
-// V1: cron/chat_spam.php
-Schedule::command('chats:process-spam')
-    ->everyFiveMinutes()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('chats:process-spam'))
-    ->runInBackground();
+// V1: cron/chat_spam.php — disabled pending sign-off
+// Schedule::command('chats:process-spam')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:process-spam'))
+//     ->runInBackground();
 
 // =============================================================================
 // DISABLED COMMANDS (to be enabled when ready)
@@ -608,12 +608,12 @@ Schedule::command('ai:usage-counts:update')
 
 // Update gift aid data: identify postcodes, houses, consented donations.
 // Also sends one-off chase-up emails to eligible donors (2-30 days ago, PayPal/Stripe).
-// V1: cron/donations_giftaid.php
-Schedule::command('donations:update-giftaid')
-    ->everyTenMinutes()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('donations:update-giftaid'))
-    ->runInBackground();
+// V1: cron/donations_giftaid.php — disabled pending sign-off
+// Schedule::command('donations:update-giftaid')
+//     ->everyTenMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('donations:update-giftaid'))
+//     ->runInBackground();
 
 // =============================================================================
 // VECTOR SEARCH EMBEDDINGS
