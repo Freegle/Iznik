@@ -146,6 +146,63 @@ Schedule::command('mail:notifications:chaseup')
     ->sendOutputTo(cronLog('mail:notifications:chaseup'))
     ->runInBackground();
 
+// Daily purge of spam chat messages, empty rooms, orphaned chat images.
+// V1: cron/purge_chats.php
+Schedule::command('purge:chats')
+    ->dailyAt('02:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('purge:chats'))
+    ->runInBackground();
+
+// Daily log/bounce/likes purge.
+// V1: cron/purge_logs.php
+Schedule::command('purge:logs')
+    ->dailyAt('03:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('purge:logs'))
+    ->runInBackground();
+
+// Daily syntactic email validation (last 30 days only).
+// V1: cron/email_validate.php
+Schedule::command('emails:validate')
+    ->dailyAt('04:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('emails:validate'))
+    ->runInBackground();
+
+// Daily kudos recalculation for users active in last 2 days.
+// V1: cron/users_kudos.php
+Schedule::command('users:update-kudos')
+    ->dailyAt('04:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-kudos'))
+    ->runInBackground();
+
+// Hourly group member/mod count refresh.
+// V1: cron/membercounts.php
+Schedule::command('groups:update-counts')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:update-counts'))
+    ->runInBackground();
+
+// Hourly chat-room message count refresh + reopen User2Mod chats with mod
+// replies that the user closed before seeing.
+// V1: cron/chat_latestmessage.php
+Schedule::command('chats:update-counts')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:update-counts'))
+    ->runInBackground();
+
+// Hourly fallback users.lastaccess update from chat / membership activity.
+// V1: cron/lastaccess.php
+Schedule::command('users:update-lastaccess')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:update-lastaccess'))
+    ->runInBackground();
+
 // =============================================================================
 // DISABLED COMMANDS (to be enabled when ready)
 // =============================================================================
@@ -194,22 +251,9 @@ Schedule::command('messages:process-expired --spatial')
     ->runInBackground();
 
 // Purge operations - run daily at off-peak hours.
-Schedule::command('purge:chats')
-    ->dailyAt('02:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-
+// (purge:chats, purge:logs, emails:validate enabled above.)
 Schedule::command('purge:messages')
     ->dailyAt('02:30')
-    ->withoutOverlapping()
-    ->runInBackground();
-
-Schedule::command('purge:logs')
-    ->dailyAt('04:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-Schedule::command('emails:validate')
-    ->dailyAt('04:00')
     ->withoutOverlapping()
     ->runInBackground();
 
@@ -248,11 +292,7 @@ Schedule::command('mail:donations:ask')
     ->runInBackground();
 
 // User management commands.
-Schedule::command('users:update-kudos')
-    ->dailyAt('04:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-
+// (users:update-kudos enabled above.)
 Schedule::command('users:cleanup')
     ->weekly()
     ->sundays()
@@ -260,23 +300,7 @@ Schedule::command('users:cleanup')
     ->withoutOverlapping()
     ->runInBackground();
 
-// Group maintenance.
-Schedule::command('groups:update-counts')
-    ->hourly()
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Chat maintenance - update message counts and reopen closed User2Mod chats.
-Schedule::command('chats:update-counts')
-    ->hourly()
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Fallback lastaccess update from chat messages and memberships.
-Schedule::command('users:update-lastaccess')
-    ->hourly()
-    ->withoutOverlapping()
-    ->runInBackground();
+// Group/chat maintenance, lastaccess fallback enabled above.
 
 // Donation ad targeting - update ads-off target based on recent donations.
 Schedule::command('donations:update-ads-target')

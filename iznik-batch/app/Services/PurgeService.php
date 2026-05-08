@@ -565,15 +565,24 @@ class PurgeService
             return DB::table('messages_likes')->where('timestamp', '<', $cutoff)->count();
         }
 
+        // `messages_likes.timestamp` is unindexed, so DELETE WHERE timestamp < ?
+        // would do a full scan and gap-lock the rows it touches — on Galera that
+        // deadlocks against concurrent inserts. v1 (purge_logs.php) avoids this
+        // by reading distinct old msgids first (read-only full scan, no gap
+        // locks) and then deleting per msgid using the `(msgid, type)` index.
+        $msgids = DB::table('messages_likes')
+            ->where('timestamp', '<', $cutoff)
+            ->distinct()
+            ->pluck('msgid');
+
         $total = 0;
 
-        do {
-            $count = DB::delete(
-                "DELETE FROM messages_likes WHERE `timestamp` < ? LIMIT {$this->chunkSize}",
-                [$cutoff]
-            );
-            $total += $count;
-        } while ($count > 0);
+        foreach ($msgids as $msgid) {
+            $total += DB::table('messages_likes')
+                ->where('msgid', $msgid)
+                ->where('timestamp', '<', $cutoff)
+                ->delete();
+        }
 
         return $total;
     }
@@ -801,21 +810,30 @@ class PurgeService
         $start = now()->subDays(30)->startOfDay();
         $end = now()->subDays(60)->startOfDay();
 
-        $logs = DB::select(
-            "SELECT logs.id FROM logs LEFT JOIN messages ON messages.id = logs.msgid WHERE logs.msgid IS NOT NULL AND messages.id IS NULL AND logs.timestamp >= ? AND logs.timestamp < ?",
-            [$end, $start]
-        );
-
         if ($dryRun) {
-            return count($logs);
+            $row = DB::selectOne(
+                "SELECT COUNT(*) AS cnt FROM logs LEFT JOIN messages ON messages.id = logs.msgid WHERE logs.msgid IS NOT NULL AND messages.id IS NULL AND logs.timestamp >= ? AND logs.timestamp < ?",
+                [$end, $start]
+            );
+
+            return (int) ($row->cnt ?? 0);
         }
 
         $total = 0;
 
-        foreach ($logs as $log) {
-            DB::delete("DELETE FROM logs WHERE id = ?", [$log->id]);
-            $total++;
-        }
+        do {
+            // Fetch a chunk of orphan IDs rather than every match — keeps memory
+            // bounded even when the 30-day window contains millions of rows.
+            $logs = DB::select(
+                "SELECT logs.id FROM logs LEFT JOIN messages ON messages.id = logs.msgid WHERE logs.msgid IS NOT NULL AND messages.id IS NULL AND logs.timestamp >= ? AND logs.timestamp < ? LIMIT {$this->chunkSize}",
+                [$end, $start]
+            );
+
+            foreach ($logs as $log) {
+                DB::delete("DELETE FROM logs WHERE id = ?", [$log->id]);
+                $total++;
+            }
+        } while (count($logs) > 0);
 
         return $total;
     }
