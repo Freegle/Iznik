@@ -377,6 +377,16 @@ Schedule::command('mail:admin:chase')
 // NOT YET ENABLED — enable individually after testing
 // =============================================================================
 
+// Process pending chat messages (processingrequired=1): spam check, roster update, reopen closed chats.
+// V1: cron/chat_process.php (continuous daemon, restarted by cron every 2 minutes)
+// IncomingMailService creates messages with processingrequired=1; this makes them visible to notifications.
+// — disabled pending sign-off
+// Schedule::command('chats:process-incoming')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:process-incoming'))
+//     ->runInBackground();
+
 // Process pending GDPR data export requests and purge old completed data.
 // V1: cron/exports.php (every 1 minute)
 // — disabled pending sign-off

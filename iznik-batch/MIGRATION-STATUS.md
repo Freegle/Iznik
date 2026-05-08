@@ -53,6 +53,7 @@ All email-related commands use the `mail:` prefix. Other batch commands use desc
 | `data:classify-app-release` | Classify app release versions |
 | `groups:update-counts` | Update group member/moderator counts |
 | `chats:update-counts` | Update chat message counts, reopen closed User2Mod |
+| `chats:process-incoming` | Process pending chat messages (processingrequired=1): spam check, roster update |
 | `users:update-lastaccess` | Fallback update of user last access timestamps |
 | `users:update-support-roles` | Grant/remove support tools access |
 | `donations:update-ads-target` | Update ads-off donation target |
@@ -203,6 +204,7 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | `message_spatial.php` | `messages:update-spatial-index` | - | Spatial index updates (PR #398) |
 | `message_unindexed.php` | `messages:update-index` | - | Index missing messages (PR #393) |
 | `message_deindex.php` | `messages:deindex` | - | De-index old messages (PR #393) |
+| `chat_process.php` | `chats:process-incoming` | - | Process pending incoming chat messages: spam check, roster update, reopen closed chats |
 | `memberships_processing.php` | `memberships:process` | - | Membership processing: welcome emails, flag mod comments |
 | `exports.php` | `users:process-exports` | - | GDPR data export processing + purge old export data |
 | `engage_update.php` | `users:update-engagement` | - | Update user engagement classifications (New/Occasional/Frequent/Obsessed/Inactive/Dormant) |
@@ -244,7 +246,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | Script | Frequency | Priority | Description |
 |--------|-----------|----------|-------------|
 | `background.php` | Every 1 min | High | Background job processor — **Covered: `queue:background-tasks` (Go API background tasks)** |
-| `chat_process.php` | Every 1 min | High | Chat message processing |
+| ~~`chat_process.php`~~ | ~~Every 1 min~~ | ~~High~~ | ~~Chat message processing~~ — **Migrated: `chats:process-incoming`** |
 | `admins.php` | Every 1 min | Medium | Admin notifications — **Covered: `mail:admin:copy` + `mail:admin:send` + `mail:admin:chase`** |
 | `tryst.php` | Every 1 min | Medium | Meeting coordination |
 | ~~`memberships_processing.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Membership processing~~ — **Migrated: `memberships:process`** |
