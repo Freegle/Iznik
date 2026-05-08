@@ -54,6 +54,7 @@ All email-related commands use the `mail:` prefix. Other batch commands use desc
 | `groups:update-counts` | Update group member/moderator counts |
 | `chats:update-counts` | Update chat message counts, reopen closed User2Mod |
 | `chats:process-incoming` | Process pending chat messages (processingrequired=1): spam check, roster update |
+| `memberships:process` | Process pending membership history: per-group welcome emails, flag reviewed members |
 | `users:update-lastaccess` | Fallback update of user last access timestamps |
 | `users:update-support-roles` | Grant/remove support tools access |
 | `donations:update-ads-target` | Update ads-off donation target |
@@ -205,7 +206,7 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | `message_unindexed.php` | `messages:update-index` | - | Index missing messages (PR #393) |
 | `message_deindex.php` | `messages:deindex` | - | De-index old messages (PR #393) |
 | `chat_process.php` | `chats:process-incoming` | - | Process pending incoming chat messages: spam check, roster update, reopen closed chats |
-| `memberships_processing.php` | `memberships:process` | - | Membership processing: welcome emails, flag mod comments |
+| `memberships_processing.php` | `memberships:process` | - | Process pending membership history: per-group welcome emails, flag reviewed members |
 | `exports.php` | `users:process-exports` | - | GDPR data export processing + purge old export data |
 | `engage_update.php` | `users:update-engagement` | - | Update user engagement classifications (New/Occasional/Frequent/Obsessed/Inactive/Dormant) |
 | `users_remap.php` | `users:remap-locations` | - | Update cached location names in user settings |
