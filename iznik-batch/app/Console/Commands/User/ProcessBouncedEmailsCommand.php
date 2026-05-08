@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\User;
 
+use App\Services\Mail\Incoming\BounceService;
 use App\Services\UserManagementService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
@@ -21,7 +22,7 @@ class ProcessBouncedEmailsCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle(UserManagementService $userService): int
+    public function handle(UserManagementService $userService, BounceService $bounceService): int
     {
         $dryRun = $this->option('dry-run');
 
@@ -39,6 +40,14 @@ class ProcessBouncedEmailsCommand extends Command
         $this->info("{$prefix}Marked invalid: {$stats['marked_invalid']}");
 
         Log::info('Bounced email processing complete', $stats);
+
+        // Suspend users who have accumulated enough bounces on their preferred email.
+        // Mirrors V1 bounce_users.php cron job.
+        if (!$dryRun) {
+            $this->info('Suspending users with excessive bounces...');
+            $suspended = $bounceService->suspendBouncingUsers();
+            $this->info("Suspended: {$suspended}");
+        }
 
         return Command::SUCCESS;
     }
