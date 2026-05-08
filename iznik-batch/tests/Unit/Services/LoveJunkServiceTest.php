@@ -29,16 +29,19 @@ class LoveJunkServiceTest extends TestCase
 
     private function createGroup(array $attrs = []): int
     {
-        return DB::table('groups')->insertGetId(array_merge([
-            'nameshort' => 'TestLJGroup_' . uniqid(),
-            'namefull' => 'Test LoveJunk Group',
-            'type' => 'Freegle',
-            'onlovejunk' => 1,
-            'onhere' => 1,
-            'publish' => 1,
-            'lat' => 51.5,
-            'lng' => -0.1,
-        ], $attrs));
+        $nameshort = $attrs['nameshort'] ?? ('TestLJGroup_' . uniqid());
+        $onlovejunk = $attrs['onlovejunk'] ?? 1;
+
+        // polyindex is NOT NULL spatial — must be set in the INSERT statement
+        DB::statement("
+            INSERT INTO `groups`
+                (nameshort, namefull, type, onlovejunk, onhere, publish, lat, lng, polyindex)
+            VALUES
+                (?, 'Test LoveJunk Group', 'Freegle', ?, 1, 1, 51.5, -0.1,
+                 ST_GeomFromText('POLYGON((-1 51,-1 52,0 52,0 51,-1 51))',3857))
+        ", [$nameshort, $onlovejunk]);
+
+        return (int) DB::getPdo()->lastInsertId();
     }
 
     private function createUser(array $attrs = []): int
@@ -272,5 +275,109 @@ class LoveJunkServiceTest extends TestCase
         // Should mark as deleted in lovejunk table
         $lj = DB::table('lovejunk')->where('msgid', $msgId)->first();
         $this->assertNotNull($lj->deleted);
+    }
+
+    public function test_completes_offer_via_lj_promise(): void
+    {
+        Http::fake([
+            '*/freegle/offers/888/complete' => Http::response('', 200),
+        ]);
+
+        $senderId = $this->createUser();
+        $promiseeId = $this->createUser(['ljuserid' => 888]);
+        $groupId = $this->createGroup();
+        $locationId = $this->createLocation();
+        $msgId = $this->createMessage($senderId, $groupId, $locationId);
+
+        DB::table('lovejunk')->insert([
+            'msgid' => $msgId,
+            'success' => 1,
+            'status' => json_encode(['draftId' => 'lj-draft-003']),
+        ]);
+
+        DB::table('messages_promises')->insert([
+            'msgid' => $msgId,
+            'userid' => $promiseeId,
+        ]);
+
+        DB::table('chat_rooms')->insert([
+            'user1' => $senderId,
+            'user2' => $promiseeId,
+            'chattype' => 'User2User',
+            'ljofferid' => 888,
+        ]);
+
+        DB::table('messages_outcomes')->insert([
+            'msgid' => $msgId,
+            'outcome' => 'Taken',
+            'happiness' => null,
+            'timestamp' => now(),
+        ]);
+
+        $service = new LoveJunkService();
+        $result = $service->sync();
+
+        $this->assertEquals(1, $result['completed_or_deleted']);
+
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), '/freegle/offers/888/complete');
+        });
+
+        $lj = DB::table('lovejunk')->where('msgid', $msgId)->first();
+        $this->assertNotNull($lj->deleted);
+    }
+
+    public function test_sends_message_with_attachment_images(): void
+    {
+        Http::fake([
+            '*/freegle/drafts*' => Http::response(json_encode(['body' => ['draftId' => 'lj-draft-att']]), 200),
+        ]);
+
+        $userId = $this->createUser();
+        $groupId = $this->createGroup();
+        $locationId = $this->createLocation();
+        $msgId = $this->createMessage($userId, $groupId, $locationId);
+
+        $itemId = DB::table('items')->insertGetId(['name' => 'Table', 'popularity' => 1, 'updated' => now()]);
+        DB::table('messages_items')->insert(['msgid' => $msgId, 'itemid' => $itemId]);
+
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msgId,
+            'externaluid' => 'freegletusd-abc123',
+        ]);
+
+        $service = new LoveJunkService();
+        $result = $service->sync();
+
+        $this->assertEquals(1, $result['sent']);
+
+        Http::assertSent(function ($request) {
+            $data = $request->data();
+            return isset($data['images'][0]['url']) && str_contains($data['images'][0]['url'], 'abc123');
+        });
+    }
+
+    public function test_extracts_item_from_subject_when_no_messages_items(): void
+    {
+        Http::fake([
+            '*/freegle/drafts*' => Http::response(json_encode(['body' => ['draftId' => 'lj-draft-subj']]), 200),
+        ]);
+
+        $userId = $this->createUser();
+        $groupId = $this->createGroup();
+        $locationId = $this->createLocation();
+        $msgId = $this->createMessage($userId, $groupId, $locationId, [
+            'subject' => 'OFFER: Vintage lamp (Shoreditch)',
+        ]);
+
+        $service = new LoveJunkService();
+        $result = $service->sync();
+
+        $this->assertEquals(1, $result['sent']);
+
+        Http::assertSent(function ($request) {
+            $data = $request->data();
+            return isset($data['title']) && trim($data['title']) === 'Vintage lamp';
+        });
     }
 }
