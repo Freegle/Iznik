@@ -1,0 +1,3 @@
+Dear {{ $recipientName }},
+
+{{ $textSummary }}

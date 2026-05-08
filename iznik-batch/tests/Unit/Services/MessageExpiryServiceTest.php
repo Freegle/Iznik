@@ -126,8 +126,75 @@ class MessageExpiryServiceTest extends TestCase
         $stats = $this->service->processDeadlineExpired();
 
         $this->assertEquals(1, $stats['processed']);
-        // Email should not be sent since user has no email.
+        $this->assertEquals(0, $stats['emails_sent']);
         Mail::assertNothingSent();
+    }
+
+    public function test_multi_group_message_processed_once(): void
+    {
+        Mail::fake();
+
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $this->createMembership($user, $group1);
+        $this->createMembership($user, $group2);
+
+        $message = $this->createTestMessage($user, $group1);
+
+        // Add the same message to a second group.
+        DB::table('messages_groups')->insert([
+            'msgid' => $message->id,
+            'groupid' => $group2->id,
+            'collection' => 'Approved',
+            'arrival' => now(),
+        ]);
+
+        $message->deadline = now()->subDays(1)->format('Y-m-d');
+        $message->save();
+
+        $stats = $this->service->processDeadlineExpired();
+
+        // Message in 2 groups must only be processed once.
+        $this->assertEquals(1, $stats['processed']);
+        $this->assertEquals(1, $stats['emails_sent']);
+        $this->assertEquals(1, MessageOutcome::where('msgid', $message->id)->count());
+
+        Mail::assertSent(DeadlineReached::class, 1);
+    }
+
+    public function test_expiry_clears_messages_outcomes_intended(): void
+    {
+        Mail::fake();
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $message = $this->createTestMessage($user, $group);
+
+        $message->deadline = now()->subDays(1)->format('Y-m-d');
+        $message->save();
+
+        // Create a pre-existing intended outcome.
+        DB::table('messages_outcomes_intended')->insert([
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_TAKEN,
+            'timestamp' => now(),
+        ]);
+
+        $stats = $this->service->processDeadlineExpired();
+
+        $this->assertEquals(1, $stats['processed']);
+
+        // Intended outcome must be cleared.
+        $this->assertDatabaseMissing('messages_outcomes_intended', ['msgid' => $message->id]);
+
+        // Real outcome must be created.
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_EXPIRED,
+        ]);
     }
 
     public function test_process_expired_from_spatial_index(): void

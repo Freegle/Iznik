@@ -415,7 +415,7 @@ func TestPatchMembershipsSettings(t *testing.T) {
 	db.Raw("SELECT settings FROM memberships WHERE userid = ? AND groupid = ?",
 		userID, groupID).Scan(&settingsJSON)
 	assert.Contains(t, settingsJSON, `"active"`)
-	assert.Contains(t, settingsJSON, `"configid"`)
+	assert.NotContains(t, settingsJSON, `"configid"`)
 
 	// Toggle active to 0 (backup).
 	body["settings"] = map[string]interface{}{
@@ -432,6 +432,7 @@ func TestPatchMembershipsSettings(t *testing.T) {
 	db.Raw("SELECT settings FROM memberships WHERE userid = ? AND groupid = ?",
 		userID, groupID).Scan(&settingsJSON)
 	assert.Contains(t, settingsJSON, `"active":0`)
+	assert.NotContains(t, settingsJSON, `"configid"`)
 }
 
 // TestPatchMembershipsStringEmailFrequency verifies that sending emailfrequency
@@ -3495,6 +3496,52 @@ func TestPutMembershipsModAddsMember(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
 		memberID, groupID).Scan(&count)
 	assert.Equal(t, int64(1), count)
+}
+
+// TestPatchMembershipsConfigidInSettings verifies that when the frontend sends
+// configid nested inside the settings object (as ModSettingsGroup.vue does),
+// the memberships.configid column is updated and configid is stripped from
+// the settings JSON blob.
+func TestPatchMembershipsConfigidInSettings(t *testing.T) {
+	prefix := uniquePrefix("mem_cfginsettings")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	_, modToken := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Owner")
+
+	cfgID := createTestModConfig(t, prefix+"_cfg", modID)
+
+	// Send configid inside settings (frontend's actual payload shape).
+	body := map[string]interface{}{
+		"userid":  modID,
+		"groupid": groupID,
+		"settings": map[string]interface{}{
+			"active":   1,
+			"configid": cfgID,
+		},
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/memberships?jwt=%s", modToken)
+	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// memberships.configid column must be updated.
+	var storedConfigID uint64
+	db.Raw("SELECT configid FROM memberships WHERE userid = ? AND groupid = ?",
+		modID, groupID).Scan(&storedConfigID)
+	assert.Equal(t, cfgID, storedConfigID)
+
+	// configid must be stripped from the settings JSON blob.
+	var settingsJSON string
+	db.Raw("SELECT settings FROM memberships WHERE userid = ? AND groupid = ?",
+		modID, groupID).Scan(&settingsJSON)
+	assert.NotContains(t, settingsJSON, `"configid"`)
+	assert.Contains(t, settingsJSON, `"active"`)
 }
 
 func TestPatchMembershipsConfigChange(t *testing.T) {

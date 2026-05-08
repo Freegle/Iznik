@@ -306,4 +306,9 @@ return [
         // --dry-run still works regardless (it only reads).
         'tn_enabled' => env('TN_DEDUP_ENABLED', false),
     ],
+
+    'lovejunk' => [
+        'api' => env('LOVE_JUNK_API', 'https://elmer.api-lovejunk.com/elmer/v1'),
+        'secret' => env('LOVE_JUNK_SECRET', ''),
+    ],
 ];

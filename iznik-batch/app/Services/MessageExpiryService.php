@@ -51,9 +51,10 @@ class MessageExpiryService
                 }
 
                 $this->markAsExpired($message);
-                $this->sendDeadlineNotification($message);
+                if ($this->sendDeadlineNotification($message)) {
+                    $stats['emails_sent']++;
+                }
                 $stats['processed']++;
-                $stats['emails_sent']++;
             } catch (\Exception $e) {
                 Log::error("Error processing expired message {$message->id}: " . $e->getMessage());
                 $stats['errors']++;
@@ -70,21 +71,26 @@ class MessageExpiryService
     {
         $earliestDate = now()->subDays(self::EXPIRE_LOOKBACK_DAYS);
 
-        return Message::select('messages.*', 'messages_groups.groupid')
+        return Message::select('messages.*')
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
             ->where('messages.arrival', '>=', $earliestDate)
             ->whereNotNull('messages.deadline')
             ->whereRaw('messages.deadline < CURDATE()')
             ->whereNull('messages_outcomes.id')
+            ->distinct()
             ->get();
     }
 
     /**
      * Mark a message as expired.
+     *
+     * V1 mark() also clears messages_outcomes_intended first — replicate that.
      */
     protected function markAsExpired(Message $message): void
     {
+        DB::table('messages_outcomes_intended')->where('msgid', $message->id)->delete();
+
         MessageOutcome::create([
             'msgid' => $message->id,
             'outcome' => MessageOutcome::OUTCOME_EXPIRED,
@@ -97,16 +103,19 @@ class MessageExpiryService
 
     /**
      * Send a notification email about the deadline.
+     *
+     * Returns true if email was sent.
      */
-    protected function sendDeadlineNotification(Message $message): void
+    protected function sendDeadlineNotification(Message $message): bool
     {
         $user = $message->fromUser;
 
         if (!$user || !$user->email_preferred) {
-            return;
+            return false;
         }
 
         Mail::send(new DeadlineReached($message, $user));
+        return true;
     }
 
     /**

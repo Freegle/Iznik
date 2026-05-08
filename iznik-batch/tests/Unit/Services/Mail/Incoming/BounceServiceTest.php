@@ -991,4 +991,141 @@ DSN;
         $tracking->refresh();
         $this->assertNotNull($tracking->bounced_at);
     }
+
+    // ===================================================================
+    // Bulk Suspension Tests (suspendBouncingUsers)
+    // ===================================================================
+
+    public function test_suspend_bouncing_users_suspends_user_with_permanent_bounce(): void
+    {
+        $user = $this->createTestUser(['bouncing' => 0]);
+        $email = UserEmail::where('userid', $user->id)->where('preferred', 1)->first();
+
+        DB::table('bounces_emails')->insert([
+            'emailid' => $email->id,
+            'reason' => '550 User unknown',
+            'permanent' => 1,
+            'reset' => 0,
+            'date' => now(),
+        ]);
+
+        $count = $this->service->suspendBouncingUsers();
+
+        $this->assertGreaterThanOrEqual(1, $count);
+        $user->refresh();
+        $this->assertEquals(1, $user->bouncing);
+    }
+
+    public function test_suspend_bouncing_users_suspends_user_with_50_total_bounces(): void
+    {
+        $user = $this->createTestUser(['bouncing' => 0]);
+        $email = UserEmail::where('userid', $user->id)->where('preferred', 1)->first();
+
+        for ($i = 0; $i < 50; $i++) {
+            DB::table('bounces_emails')->insert([
+                'emailid' => $email->id,
+                'reason' => '421 Try again',
+                'permanent' => 0,
+                'reset' => 0,
+                'date' => now(),
+            ]);
+        }
+
+        $count = $this->service->suspendBouncingUsers();
+
+        $this->assertGreaterThanOrEqual(1, $count);
+        $user->refresh();
+        $this->assertEquals(1, $user->bouncing);
+    }
+
+    public function test_suspend_bouncing_users_does_not_suspend_already_bouncing_user(): void
+    {
+        $user = $this->createTestUser(['bouncing' => 1]);
+        $email = UserEmail::where('userid', $user->id)->where('preferred', 1)->first();
+
+        DB::table('bounces_emails')->insert([
+            'emailid' => $email->id,
+            'reason' => '550 User unknown',
+            'permanent' => 1,
+            'reset' => 0,
+            'date' => now(),
+        ]);
+
+        // Record initial update time to verify no DB write happened for this user
+        $beforeBouncing = DB::table('users')->where('id', $user->id)->value('bouncing');
+        $this->service->suspendBouncingUsers();
+        $afterBouncing = DB::table('users')->where('id', $user->id)->value('bouncing');
+
+        $this->assertEquals($beforeBouncing, $afterBouncing);
+    }
+
+    public function test_suspend_bouncing_users_does_not_suspend_user_with_reset_bounces(): void
+    {
+        $user = $this->createTestUser(['bouncing' => 0]);
+        $email = UserEmail::where('userid', $user->id)->where('preferred', 1)->first();
+
+        // Permanent bounce but reset=1 (bounce was cleared)
+        DB::table('bounces_emails')->insert([
+            'emailid' => $email->id,
+            'reason' => '550 User unknown',
+            'permanent' => 1,
+            'reset' => 1,
+            'date' => now(),
+        ]);
+
+        $this->service->suspendBouncingUsers();
+
+        $user->refresh();
+        $this->assertEquals(0, $user->bouncing);
+    }
+
+    public function test_suspend_bouncing_users_does_not_suspend_user_with_bounce_on_non_preferred_email(): void
+    {
+        $user = $this->createTestUser(['bouncing' => 0]);
+
+        // Add a second (non-preferred) email
+        $nonPreferredEmail = UserEmail::create([
+            'userid' => $user->id,
+            'email' => 'secondary_' . $user->id . '@example.com',
+            'preferred' => 0,
+            'validated' => now(),
+            'added' => now(),
+        ]);
+
+        // Permanent bounce on the non-preferred email only
+        DB::table('bounces_emails')->insert([
+            'emailid' => $nonPreferredEmail->id,
+            'reason' => '550 User unknown',
+            'permanent' => 1,
+            'reset' => 0,
+            'date' => now(),
+        ]);
+
+        $this->service->suspendBouncingUsers();
+
+        $user->refresh();
+        $this->assertEquals(0, $user->bouncing);
+    }
+
+    public function test_suspend_bouncing_users_returns_count_of_suspended(): void
+    {
+        $user1 = $this->createTestUser(['bouncing' => 0]);
+        $user2 = $this->createTestUser(['bouncing' => 0]);
+        $email1 = UserEmail::where('userid', $user1->id)->where('preferred', 1)->first();
+        $email2 = UserEmail::where('userid', $user2->id)->where('preferred', 1)->first();
+
+        foreach ([$email1->id, $email2->id] as $emailId) {
+            DB::table('bounces_emails')->insert([
+                'emailid' => $emailId,
+                'reason' => '550 User unknown',
+                'permanent' => 1,
+                'reset' => 0,
+                'date' => now(),
+            ]);
+        }
+
+        $count = $this->service->suspendBouncingUsers();
+
+        $this->assertGreaterThanOrEqual(2, $count);
+    }
 }
