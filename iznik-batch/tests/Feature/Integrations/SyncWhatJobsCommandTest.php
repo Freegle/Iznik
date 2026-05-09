@@ -232,7 +232,7 @@ class SyncWhatJobsCommandTest extends TestCase
     {
         Cache::flush();
         $mock = $this->createMock(WhatJobsService::class);
-        $mock->method('sync')->with(true)->willReturn(['total' => 10, 'inserted' => 0, 'dry_run' => true]);
+        $mock->method('sync')->willReturn(['total' => 10, 'inserted' => 0, 'dry_run' => true]);
         $this->app->instance(WhatJobsService::class, $mock);
 
         $this->artisan('integrations:sync-whatjobs', ['--dry-run' => true])
