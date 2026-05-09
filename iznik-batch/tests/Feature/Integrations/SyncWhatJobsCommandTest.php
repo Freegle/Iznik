@@ -286,4 +286,76 @@ class SyncWhatJobsCommandTest extends TestCase
             'jobs_new should not exist after dry-run'
         );
     }
+
+    /** @test */
+    public function test_sync_dry_run_covers_real_sync_method(): void
+    {
+        $geom = WhatJobsService::boxPoly(53.8, -1.55, 53.9, -1.45);
+        $xml  = $this->makeFeedXml([
+            ['job_reference' => 'sync-dr-1', 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK'],
+            ['job_reference' => 'sync-dr-2', 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK'],
+        ]);
+
+        $svc = new class($xml, $geom) extends WhatJobsService {
+            public function __construct(private string $xml, private string $geom) {}
+            protected function downloadFeed(string $url): ?string
+            {
+                $tmp = tempnam(sys_get_temp_dir(), 'whatjobs_sdr_');
+                file_put_contents($tmp, $this->xml);
+                return $tmp;
+            }
+            public function geocodeCityState(string $city, string $state, string $country, array &$cache): ?array
+            {
+                return [53.8, -1.55, 53.9, -1.45, $this->geom];
+            }
+        };
+
+        config(['freegle.whatjobs.feed1' => 'http://fake-feed1-url', 'freegle.whatjobs.feed2' => null]);
+
+        $result = $svc->sync(true);
+
+        $this->assertTrue($result['dry_run']);
+        $this->assertEquals(2, $result['total']);
+        $this->assertEquals(0, $result['inserted']);
+    }
+
+    /** @test */
+    public function test_sync_non_dry_run_inserts_into_jobs_new(): void
+    {
+        DB::statement('DROP TABLE IF EXISTS jobs_new');
+
+        $geom = WhatJobsService::boxPoly(53.8, -1.55, 53.9, -1.45);
+        $xml  = $this->makeFeedXml([
+            ['job_reference' => 'sync-e2e-1', 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK'],
+        ]);
+
+        $svc = new class($xml, $geom) extends WhatJobsService {
+            public function __construct(private string $xml, private string $geom) {}
+            protected function downloadFeed(string $url): ?string
+            {
+                $tmp = tempnam(sys_get_temp_dir(), 'whatjobs_ndr_');
+                file_put_contents($tmp, $this->xml);
+                return $tmp;
+            }
+            public function geocodeCityState(string $city, string $state, string $country, array &$cache): ?array
+            {
+                return [53.8, -1.55, 53.9, -1.45, $this->geom];
+            }
+            // Prevent destructive DDL in tests
+            public function swapTables(): void {}
+            public function analyseClickability(): void {}
+            public function updateClickability(): void {}
+        };
+
+        config(['freegle.whatjobs.feed1' => 'http://fake-feed1-url', 'freegle.whatjobs.feed2' => null]);
+
+        $result = $svc->sync(false);
+
+        $this->assertFalse($result['dry_run']);
+        $this->assertEquals(1, $result['total']);
+        $this->assertEquals(1, $result['inserted']);
+        $this->assertEquals(1, DB::table('jobs_new')->where('job_reference', 'sync-e2e-1')->count());
+
+        DB::statement('DROP TABLE IF EXISTS jobs_new');
+    }
 }

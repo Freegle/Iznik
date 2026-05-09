@@ -168,4 +168,97 @@ class SyncTrashNothingCommandTest extends TestCase
 
         $this->assertEquals(0, DB::table('users_replytime')->where('userid', $user->id)->count());
     }
+
+    public function test_updates_about_me_for_tn_user(): void
+    {
+        $user = $this->createTestUser(['email_preferred' => 'bob-g456@user.trashnothing.com']);
+
+        Http::fake([
+            '*trashnothing.com/fd/api/ratings*'      => Http::response(['ratings' => []], 200),
+            '*trashnothing.com/fd/api/user-changes*' => Http::sequence()
+                ->push(['changes' => [
+                    [
+                        'fd_user_id' => $user->id,
+                        'about_me'   => 'I love freecycling',
+                        'date'       => '2026-05-01T12:00:00Z',
+                    ],
+                ]])
+                ->push(['changes' => []]),
+        ]);
+
+        $this->artisan('integrations:sync-trashnothing')
+            ->expectsOutputToContain('Processed 0 rating(s), 1 user change(s)')
+            ->assertExitCode(0);
+
+        $this->assertEquals(
+            1,
+            DB::table('users_aboutme')->where('userid', $user->id)->where('text', 'I love freecycling')->count()
+        );
+    }
+
+    public function test_updates_username_for_tn_user(): void
+    {
+        $user = $this->createTestUser([
+            'email_preferred' => 'carol-g789@user.trashnothing.com',
+            'fullname'        => 'carol-g789',
+        ]);
+
+        Http::fake([
+            '*trashnothing.com/fd/api/ratings*'      => Http::response(['ratings' => []], 200),
+            '*trashnothing.com/fd/api/user-changes*' => Http::sequence()
+                ->push(['changes' => [
+                    [
+                        'fd_user_id' => $user->id,
+                        'username'   => 'newcarol',
+                        'date'       => '2026-05-01T12:00:00Z',
+                    ],
+                ]])
+                ->push(['changes' => []]),
+        ]);
+
+        $this->artisan('integrations:sync-trashnothing')
+            ->expectsOutputToContain('Processed 0 rating(s), 1 user change(s)')
+            ->assertExitCode(0);
+
+        $this->assertEquals('newcarol', DB::table('users')->where('id', $user->id)->value('fullname'));
+    }
+
+    public function test_handles_ratings_api_error_gracefully(): void
+    {
+        Http::fake([
+            '*trashnothing.com/fd/api/ratings*'      => Http::response(null, 503),
+            '*trashnothing.com/fd/api/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('integrations:sync-trashnothing')
+            ->expectsOutputToContain('Processed 0 rating(s), 0 user change(s)')
+            ->assertExitCode(0);
+    }
+
+    public function test_removes_account_on_account_removed(): void
+    {
+        $user = $this->createTestUser(['email_preferred' => 'dave-g999@user.trashnothing.com']);
+
+        Http::fake([
+            '*trashnothing.com/fd/api/ratings*'      => Http::response(['ratings' => []], 200),
+            '*trashnothing.com/fd/api/user-changes*' => Http::sequence()
+                ->push(['changes' => [
+                    [
+                        'fd_user_id'      => $user->id,
+                        'account_removed' => true,
+                        'date'            => '2026-05-01T12:00:00Z',
+                    ],
+                ]])
+                ->push(['changes' => []]),
+        ]);
+
+        $this->artisan('integrations:sync-trashnothing')
+            ->expectsOutputToContain('Processed 0 rating(s), 1 user change(s)')
+            ->assertExitCode(0);
+
+        $this->assertStringContainsString(
+            'Deleted User',
+            (string) DB::table('users')->where('id', $user->id)->value('fullname')
+        );
+    }
 }
