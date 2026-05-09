@@ -76,6 +76,10 @@ return [
         'trashnothing_domain' => env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
         // Trash Nothing shared secret for mail authentication (skips spam check)
         'trashnothing_secret' => env('FREEGLE_TRASHNOTHING_SECRET', ''),
+        // Mentors address for mod escalation and review summary emails.
+        'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
+        // Modbot user email — the system user that auto-rejects stale review messages.
+        'moderator_email' => env('FREEGLE_MODERATOR_EMAIL', 'modtools@modtools.org'),
     ],
 
     // Firebase Cloud Messaging for push notifications

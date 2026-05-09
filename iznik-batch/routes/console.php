@@ -762,6 +762,14 @@ Schedule::command('stories:send-to-central')
     ->sendOutputTo(cronLog('stories:send-to-central'))
     ->runInBackground();
 
+// Auto-reject stale chat review messages (7+ days) and notify group mods of pending reviews (48+ hours).
+// V1: cron/chat_review.php (daily)
+Schedule::command('chats:review-pending')
+    ->dailyAt('09:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:review-pending'))
+    ->runInBackground();
+
 // =============================================================================
 // GIT SUMMARY
 // =============================================================================
