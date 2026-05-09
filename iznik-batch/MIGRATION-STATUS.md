@@ -254,7 +254,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `tryst.php` | Every 1 min | Medium | Meeting coordination |
 | ~~`memberships_processing.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Membership processing~~ — **Migrated: `memberships:process`** |
 | ~~`donations_ads_target.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Donation ad targeting~~ — **Migrated: `donations:update-ads-target`** |
-| `user_exhort.php` | Every 1 min | Medium | User encouragement (parameterized one-off tool, not a regular cron) |
+| ~~`user_exhort.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~User encouragement~~ — **Skip: parameterized CLI tool (`-u url -l title -x text -s since`), not a scheduled cron** |
 | ~~`lovejunk.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~LoveJunk integration~~ — **Migrated: `integrations:sync-lovejunk`** |
 | ~~`exports.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Data exports~~ — **Migrated: `users:process-exports`** |
 | ~~`notification_chaseup.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Notification reminders~~ — **Migrated: `mail:notifications:chaseup`** |
@@ -336,7 +336,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `events.php` | Thu 23:00 | Low | Community events email |
 | `volunteering.php` | Mon 23:00 | Low | Volunteering opportunities email |
 | `stories.php` | Sat 11:00 | Low | Success story requests |
-| `groups_closed.php` | Sun 08:00 | Low | Closed groups check |
+| ~~`groups_closed.php`~~ | ~~Sun 08:00~~ | ~~Low~~ | ~~Closed groups check~~ — **Skip: COVID-era group closure reminder; body references "Closed for COVID-19" — retired** |
 | `stories_tocentral.php` | Fri 14:00 | Low | Stories to central |
 | ~~`domains_common.php`~~ | ~~Fri 07:00~~ | ~~Low~~ | ~~Common domains~~ — **Migrated: `domains:update-common`** |
 | `mod_active.php` | Mon 15:00 | Low | Active moderators |
@@ -364,6 +364,8 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `sms.php` | Retired |
 | `badnumber.php` | Retired |
 | `spam_toddlers.php` | Commented out |
+| `groups_closed.php` | COVID-era group closure reminder — body hardcodes "Closed for COVID-19" message |
+| `user_exhort.php` | Parameterized CLI tool, not a scheduled cron |
 
 ## Known Issues
 
