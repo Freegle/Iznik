@@ -4,6 +4,8 @@ namespace Tests\Feature\Chat;
 
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
+use App\Models\Group;
+use App\Models\Membership;
 use App\Models\User;
 use App\Services\ChatReviewService;
 use Illuminate\Support\Facades\DB;
@@ -35,7 +37,7 @@ class ReviewPendingCommandTest extends TestCase
     {
         $id = DB::table('groups')->insertGetId(array_merge([
             'nameshort' => 'TestGroup_' . uniqid(),
-            'type' => 'Freegle',
+            'type' => Group::TYPE_FREEGLE,
             'publish' => 1,
             'onmap' => 1,
             'onhere' => 1,
@@ -48,8 +50,8 @@ class ReviewPendingCommandTest extends TestCase
         DB::table('memberships')->insertOrIgnore([
             'userid' => $userId,
             'groupid' => $groupId,
-            'collection' => 'Approved',
-            'role' => 'Member',
+            'collection' => Membership::COLLECTION_APPROVED,
+            'role' => Membership::ROLE_MEMBER,
             'added' => now(),
         ]);
     }
