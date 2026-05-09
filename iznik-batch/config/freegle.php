@@ -316,4 +316,11 @@ return [
         'api_base' => env('TN_API_BASE', 'https://trashnothing.com'),
         'key'      => env('TN_KEY', ''),
     ],
+
+    'geocoder' => env('FREEGLE_GEOCODER_URL', ''),
+
+    'whatjobs' => [
+        'feed1' => env('WHATJOBS_FEED1', ''),
+        'feed2' => env('WHATJOBS_FEED2', ''),
+    ],
 ];

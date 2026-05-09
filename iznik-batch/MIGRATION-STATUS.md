@@ -323,7 +323,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `engage.php` | 16:00 | Medium | User engagement emails |
 | `user_askdonation.php` | 17:00 | Medium | Donation requests |
 | ~~`facebook_chaseup.php`~~ | ~~18:00~~ | ~~Low~~ | ~~Facebook chase-up~~ — **Skip: file not found (retired)** |
-| `whatjobs.php` | Hourly 08:00-22:00 | Low | WhatJobs |
+| ~~`whatjobs.php`~~ | ~~Hourly 08:00-22:00~~ | ~~Low~~ | ~~WhatJobs~~ — **Migrated: `integrations:sync-whatjobs`** |
 | ~~`microactions_score.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Microactions scoring~~ — **Covered: `microvolunteering:score`** |
 | ~~`restartproject.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Restart project~~ — **Migrated: `integrations:sync-restartproject` (PR #408)** |
 | ~~`repaircafewales.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Repair Cafe Wales~~ — **Migrated: `integrations:sync-repaircafewales` (PR #408)** |

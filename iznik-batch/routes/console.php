@@ -503,6 +503,15 @@ Schedule::command('data:fetch-app-versions')
     ->sendOutputTo(cronLog('data:fetch-app-versions'))
     ->runInBackground();
 
+// Sync WhatJobs job listings from XML feeds into the jobs table.
+// V1: cron/whatjobs.php (hourly 08:00-22:00)
+Schedule::command('integrations:sync-whatjobs')
+    ->hourlyAt(0)
+    ->between('08:00', '22:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
+    ->runInBackground();
+
 // Sync Freegle offers with LoveJunk - runs every minute.
 // V1: cron/lovejunk.php
 Schedule::command('integrations:sync-lovejunk')
