@@ -438,6 +438,13 @@ Schedule::command('users:remap-locations')
     ->sendOutputTo(cronLog('users:remap-locations'))
     ->runInBackground();
 
+// V1: cron/tn_names.php — fix display names for TN users whose email encodes their name.
+Schedule::command('users:fix-tn-names')
+    ->dailyAt('06:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:fix-tn-names'))
+    ->runInBackground();
+
 // Update message subjects when associated location names have changed.
 // V1: cron/messages_remap.php (every 5 minutes)
 Schedule::command('messages:remap-subjects')
