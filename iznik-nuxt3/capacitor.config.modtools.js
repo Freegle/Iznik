@@ -11,6 +11,11 @@ const config = {
   bundledWebRuntime: false,
   zoomEnabled: true,
 
+  server: {
+    hostname: 'ilovefreegle.org',
+    androidScheme: 'https',
+  },
+
   cordova: {
     preferences: {
       AndroidLaunchMode: 'singleTask',
@@ -53,7 +58,7 @@ const config = {
   plugins: {
     StatusBar: {
       overlaysWebView: false,
-      backgroundColor: '#FF004080',
+      backgroundColor: '#00000000',
     },
     PushNotifications: {
       presentationOptions: ['badge', 'sound', 'alert'],
