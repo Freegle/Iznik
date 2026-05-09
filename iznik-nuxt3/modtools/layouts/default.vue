@@ -288,6 +288,7 @@ import { useModConfigStore } from '@/stores/modconfig'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
 import { useAIImages } from '~/modtools/composables/useAIImages'
+import { useMobileStore } from '@/stores/mobile'
 
 import { buildHead } from '~/composables/useMTBuildHead'
 
@@ -382,6 +383,14 @@ const menuCount = computed(() => {
   return work.total
 })
 
+const mobileStore = useMobileStore()
+
+watch(menuCount, (newVal) => {
+  if (mobileStore.isApp) {
+    mobileStore.setBadgeCount(newVal)
+  }
+})
+
 watch(
   () => route.fullPath,
   async (newVal, oldVal) => {
@@ -462,6 +471,36 @@ onMounted(async () => {
 
   // Get chats and poll regularly for new ones
   chatStore.fetchLatestChatsMT()
+
+  // Capacitor app: clear all delivered notifications on open and sync badge count
+  if (mobileStore.isApp) {
+    try {
+      const { PushNotifications } = await import(
+        '@freegle/capacitor-push-notifications-cap7'
+      )
+      await PushNotifications.removeAllDeliveredNotifications()
+    } catch (e) {
+      console.log('removeAllDeliveredNotifications error', e)
+    }
+    mobileStore.setBadgeCount(menuCount.value || 0)
+
+    // On app resume (foregrounded), refresh work and clear notifications
+    try {
+      const { App } = await import('@capacitor/app')
+      App.addListener('resume', async () => {
+        try {
+          const { PushNotifications } = await import(
+            '@freegle/capacitor-push-notifications-cap7'
+          )
+          await PushNotifications.removeAllDeliveredNotifications()
+        } catch (e) {}
+        await checkWork()
+        mobileStore.setBadgeCount(menuCount.value || 0)
+      })
+    } catch (e) {
+      console.log('App resume listener error', e)
+    }
+  }
 })
 
 onBeforeUnmount(() => {

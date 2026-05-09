@@ -81,6 +81,13 @@ workflows:
               ignore:
                 - production
                 - modtools
+      - freegle/build-android-modtools-debug:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              only:
+                - feat/modtools-capacitor-app
 
   build-test-cloud:
     when:
@@ -117,6 +124,13 @@ workflows:
               ignore:
                 - production
                 - modtools
+      - freegle/build-android-modtools-debug:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              only:
+                - feat/modtools-capacitor-app
 
   # Deploy apps when production branch is pushed
   deploy-apps:

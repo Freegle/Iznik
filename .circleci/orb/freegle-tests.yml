@@ -2959,6 +2959,140 @@ jobs:
             echo "🎉 Debug build complete!"
             echo "📱 Download APK from CircleCI artifacts tab"
 
+  build-android-modtools-debug:
+    executor: android-executor
+    working_directory: ~/project/iznik-nuxt3
+    steps:
+      - checkout:
+          path: ~/project
+      - run:
+          name: Install Node.js 22
+          command: |
+            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+            sudo apt-get install -y nodejs
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - restore_cache:
+          keys:
+            - npm-deps-v1-{{ checksum "package-lock.json" }}
+            - npm-deps-v1-
+      - run:
+          name: Install Node.js Dependencies
+          command: npm ci
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - save_cache:
+          key: npm-deps-v1-{{ checksum "package-lock.json" }}
+          paths:
+            - node_modules
+      - run:
+          name: Build ModTools Nuxt App
+          command: |
+            export NODE_OPTIONS="--max-old-space-size=3584"
+            export ISAPP=true
+            export APP_ENV=development
+            export MOBILE_VERSION=$(node -p "require('./modtools/package.json').version")
+            echo "🔧 Building ModTools debug version - $MOBILE_VERSION"
+            cd modtools && npm run generate
+      - run:
+          name: Setup Firebase Configuration
+          command: |
+            if [ -n "$MODTOOLS_GOOGLE_SERVICES_JSON_BASE64" ]; then
+              echo "Decoding modtools google-services.json"
+              echo "$MODTOOLS_GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n' | base64 -d > android/app/google-services.json
+            elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+              echo "Using Freegle google-services.json for ModTools (same Firebase project)"
+              echo "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n' | base64 -d > android/app/google-services.json
+            else
+              echo "⚠️  No Firebase config - push notifications will not work"
+            fi
+            if [ -f android/app/google-services.json ]; then
+              if python3 -m json.tool android/app/google-services.json > /dev/null 2>&1; then
+                echo "✅ Valid google-services.json"
+              else
+                echo "❌ Invalid JSON in google-services.json"
+                exit 1
+              fi
+            fi
+      - run:
+          name: Switch to ModTools Capacitor Config
+          command: |
+            rm -f capacitor.config.ts
+            cp capacitor.config.modtools.js capacitor.config.js
+            echo "Using ModTools Capacitor config"
+      - run:
+          name: Sync Capacitor to Android
+          command: npx cap sync android
+      - run:
+          name: Configure ModTools Android Identity
+          command: |
+            sed -i 's/org\.ilovefreegle\.direct/org.ilovefreegle.modtools/g' android/app/build.gradle
+            sed -i 's/>Freegle</>Freegle ModTools</g' android/app/src/main/res/values/strings.xml
+            echo "✅ ModTools identity configured"
+      - run:
+          name: Make gradlew executable
+          command: chmod +x android/gradlew
+      - run:
+          name: Configure Gradle Plugin Portal
+          command: |
+            mkdir -p ~/.gradle/init.d
+            cat > ~/.gradle/init.d/plugin-portal.gradle \<<'INITSCRIPT'
+            allprojects {
+              buildscript {
+                repositories {
+                  maven { url "https://plugins.gradle.org/m2/" }
+                  google()
+                  mavenCentral()
+                }
+              }
+              repositories {
+                maven { url "https://plugins.gradle.org/m2/" }
+                google()
+                mavenCentral()
+              }
+            }
+            INITSCRIPT
+      - restore_cache:
+          keys:
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "package-lock.json" }}
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-
+            - gradle-deps-v1-
+      - run:
+          name: Create Debug Keystore
+          command: |
+            mkdir -p ~/.android
+            if [ ! -f ~/.android/debug.keystore ]; then
+              keytool -genkey -v \
+                -keystore ~/.android/debug.keystore \
+                -storepass android \
+                -alias androiddebugkey \
+                -keypass android \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
+      - run:
+          name: Build ModTools Debug APK
+          command: |
+            cd android
+            ./gradlew assembleDebug --stacktrace
+            echo "✅ ModTools debug APK built"
+            ls -lh app/build/outputs/apk/debug/
+      - save_cache:
+          key: gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "package-lock.json" }}
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
+      - store_artifacts:
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          destination: modtools-debug.apk
+      - run:
+          name: Build Complete
+          command: |
+            echo "🎉 ModTools debug build complete!"
+            echo "📱 Download APK from CircleCI artifacts tab"
+
   build-android:
     executor: android-executor
     working_directory: ~/project/iznik-nuxt3
