@@ -3042,14 +3042,17 @@ jobs:
               echo "Decoding modtools google-services.json"
               echo "$MODTOOLS_GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n' | base64 -d > android/app/google-services.json
             elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
-              echo "Using Freegle google-services.json for ModTools (same Firebase project)"
+              echo "Using Freegle google-services.json for ModTools (patching package name)"
               echo "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n' | base64 -d > android/app/google-services.json
+              # Patch package name so Firebase SDK finds the right client entry for this app
+              python3 -c "import json; gs=json.load(open('android/app/google-services.json')); [c['client_info']['android_client_info'].update({'package_name':'org.ilovefreegle.modtools'}) for c in gs.get('client',[]) if c.get('client_info',{}).get('android_client_info',{}).get('package_name')=='org.ilovefreegle.direct']; json.dump(gs,open('android/app/google-services.json','w'),indent=2); print('Patched package_name')"
             else
               echo "⚠️  No Firebase config - push notifications will not work"
             fi
             if [ -f android/app/google-services.json ]; then
               if python3 -m json.tool android/app/google-services.json > /dev/null 2>&1; then
                 echo "✅ Valid google-services.json"
+                echo "📱 Package name: $(python3 -c 'import json; gs=json.load(open("android/app/google-services.json")); print(gs["client"][0]["client_info"]["android_client_info"]["package_name"])')"
               else
                 echo "❌ Invalid JSON in google-services.json"
                 exit 1
@@ -3134,7 +3137,11 @@ jobs:
           name: Create Debug Keystore
           command: |
             mkdir -p ~/.android
-            if [ ! -f ~/.android/debug.keystore ]; then
+            if [ -n "$MODTOOLS_DEBUG_KEYSTORE_BASE64" ]; then
+              echo "Restoring stored debug keystore from env var"
+              echo "$MODTOOLS_DEBUG_KEYSTORE_BASE64" | tr -d '\n' | base64 -d > ~/.android/debug.keystore
+            elif [ ! -f ~/.android/debug.keystore ]; then
+              echo "Creating fresh debug keystore (register SHA-1 from build output)"
               keytool -genkey -v \
                 -keystore ~/.android/debug.keystore \
                 -storepass android \
@@ -3145,6 +3152,8 @@ jobs:
                 -validity 10000 \
                 -dname "CN=Android Debug,O=Android,C=US"
             fi
+            echo "📋 Debug keystore SHA-1 (register in Firebase/Google Cloud for Google Sign-In):"
+            keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android 2>/dev/null | grep "SHA1:"
       - run:
           name: Build ModTools Debug APK
           command: |
