@@ -1764,7 +1764,8 @@ func TestJoinAndPostGroupDefaultModerated(t *testing.T) {
 }
 
 // TestJoinAndPostForcePendingOverridesApproved verifies that forcepending=true
-// sends an otherwise-approved message to Pending.
+// results in a Pending message. All messages now start Pending regardless, so
+// forcepending is a no-op but must not cause errors.
 func TestJoinAndPostForcePendingOverridesApproved(t *testing.T) {
 	prefix := uniquePrefix("msgmod_jap_fp")
 	db := database.DBConn
@@ -1773,7 +1774,7 @@ func TestJoinAndPostForcePendingOverridesApproved(t *testing.T) {
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, userID)
 
-	// User has UNMODERATED posting status — would normally go to Approved.
+	// User has unmoderated posting status — all messages start Pending regardless.
 	CreateTestMembership(t, userID, groupID, "Member")
 
 	// Create a draft message.
@@ -8147,4 +8148,157 @@ func TestMessagePartnerKeyBypassesBodyMasking(t *testing.T) {
 	bogusBody, _ := bogus["textbody"].(string)
 	assert.NotContains(t, bogusBody, "07700900123",
 		"Invalid partner key must not bypass masking")
+}
+
+// --- Content check pipeline tests ---
+
+// TestJoinAndPostUnmoderatedUserStartsPending verifies that even a user with
+// an explicit non-moderated posting status starts in Pending (awaiting contentcheck).
+func TestJoinAndPostUnmoderatedUserStartsPending(t *testing.T) {
+	prefix := uniquePrefix("msgcc_jap_unmod")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Explicitly non-moderated posting status — previously this caused Approved.
+	CreateTestMembership(t, userID, groupID, "Member")
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", userID, groupID)
+
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Unmod chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)", msgID, groupID, userID)
+
+	body := map[string]interface{}{"id": msgID, "action": "JoinAndPost"}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	// Must start Pending — contentcheck batch job promotes to Approved after checking.
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	assert.Equal(t, "Pending", collection, "all submissions must start Pending for content check processing")
+
+	// No push_notify_group_mods task should be queued at submit time.
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'push_notify_group_mods' AND processed_at IS NULL AND data LIKE ?",
+		fmt.Sprintf(`%%"group_id":%d%%`, groupID)).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "push notification must not be queued at submit time — contentcheck batch job does that")
+}
+
+// TestContentcheckUnprocessedHiddenFromPendingQueue verifies that a message with
+// contentcheck_checked_at IS NULL does not appear in the pending mod queue.
+func TestContentcheckUnprocessedHiddenFromPendingQueue(t *testing.T) {
+	prefix := uniquePrefix("msgcc_hidden")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// Create a Pending message with contentcheck_checked_at IS NULL (unprocessed).
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Hidden chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, deleted) VALUES (?, ?, 'Pending', NOW(), 0)", msgID, groupID)
+	// contentcheck_checked_at is NULL — should be hidden.
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	messages, _ := result["messages"].([]interface{})
+	for _, m := range messages {
+		assert.NotEqual(t, float64(msgID), m, "unprocessed message must not appear in pending queue")
+	}
+}
+
+// TestContentcheckProcessedVisibleInPendingQueue verifies that a message with
+// contentcheck_checked_at set IS visible in the pending mod queue.
+func TestContentcheckProcessedVisibleInPendingQueue(t *testing.T) {
+	prefix := uniquePrefix("msgcc_visible")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Visible chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	// contentcheck_checked_at IS SET — should be visible.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, contentcheck_checked_at, deleted) VALUES (?, ?, 'Pending', NOW(), NOW(), 0)", msgID, groupID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	messages, _ := result["messages"].([]interface{})
+	found := false
+	for _, m := range messages {
+		if m == float64(msgID) {
+			found = true
+		}
+	}
+	assert.True(t, found, "processed message must appear in pending queue")
+}
+
+// TestContentcheckFallbackVisibleAfter5Minutes verifies the safety-net: a message
+// with contentcheck_checked_at IS NULL but arrival > 5 minutes ago IS shown.
+func TestContentcheckFallbackVisibleAfter5Minutes(t *testing.T) {
+	prefix := uniquePrefix("msgcc_fallback")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Old unprocessed chair', 'A chair', 'A chair', NOW() - INTERVAL 10 MINUTE, NOW() - INTERVAL 10 MINUTE, 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	// contentcheck_checked_at IS NULL but arrival is 10 minutes ago — safety fallback should show it.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, deleted) VALUES (?, ?, 'Pending', NOW() - INTERVAL 10 MINUTE, 0)", msgID, groupID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	messages, _ := result["messages"].([]interface{})
+	found := false
+	for _, m := range messages {
+		if m == float64(msgID) {
+			found = true
+		}
+	}
+	assert.True(t, found, "unprocessed message older than 5 minutes must appear in pending queue as safety fallback")
 }
