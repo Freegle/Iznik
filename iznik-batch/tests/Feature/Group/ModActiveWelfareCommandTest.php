@@ -4,6 +4,7 @@ namespace Tests\Feature\Group;
 
 use App\Models\Group;
 use App\Models\Membership;
+use App\Models\Message;
 use App\Models\User;
 use App\Services\ModWelfareService;
 use Illuminate\Support\Facades\DB;
@@ -44,8 +45,8 @@ class ModActiveWelfareCommandTest extends TestCase
     {
         // messages_groups.msgid must be unique per group; use a random large id to avoid collisions
         $msgId = DB::table('messages')->insertGetId([
-            'type' => 'Offer',
-            'source' => 'Platform',
+            'type' => Message::TYPE_OFFER,
+            'source' => Message::SOURCE_PLATFORM,
             'subject' => 'Test offer',
             'textbody' => 'test',
             'arrival' => $arrival ?? now()->subDays(5)->toDateString(),
@@ -56,7 +57,7 @@ class ModActiveWelfareCommandTest extends TestCase
             'groupid' => $groupId,
             'approvedby' => $userId,
             'arrival' => $arrival ?? now()->subDays(5)->toDateString(),
-            'collection' => 'Approved',
+            'collection' => Membership::COLLECTION_APPROVED,
         ]);
     }
 

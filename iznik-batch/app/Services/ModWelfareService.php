@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\Group;
+use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -26,7 +28,7 @@ class ModWelfareService
         $geeksAddr = config('freegle.mail.geeks_addr');
 
         $groups = DB::table('groups')
-            ->where('type', 'Freegle')
+            ->where('type', Group::TYPE_FREEGLE)
             ->where('onhere', 1)
             ->where('publish', 1)
             ->orderBy('nameshort')
@@ -70,7 +72,7 @@ class ModWelfareService
             $mods = DB::table('memberships')
                 ->join('users', 'users.id', '=', 'memberships.userid')
                 ->where('memberships.groupid', $group->id)
-                ->whereIn('memberships.role', ['Moderator', 'Owner'])
+                ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
                 ->where('memberships.added', '>=', $addedSince)
                 ->whereNull('users.deleted')
                 ->select(['users.id', 'users.email', 'memberships.settings'])
@@ -168,7 +170,7 @@ class ModWelfareService
         $owners = DB::table('memberships')
             ->join('users', 'users.id', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupId)
-            ->where('memberships.role', 'Owner')
+            ->where('memberships.role', Membership::ROLE_OWNER)
             ->whereNull('users.deleted')
             ->select(['users.id', 'memberships.settings'])
             ->get();
@@ -195,7 +197,7 @@ class ModWelfareService
             $mods = DB::table('memberships')
                 ->join('users', 'users.id', '=', 'memberships.userid')
                 ->where('memberships.groupid', $groupId)
-                ->where('memberships.role', 'Moderator')
+                ->where('memberships.role', Membership::ROLE_MODERATOR)
                 ->whereNull('users.deleted')
                 ->select(['users.id', 'memberships.settings'])
                 ->get();
