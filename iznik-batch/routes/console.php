@@ -643,6 +643,14 @@ Schedule::command('messages:update-index')
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
 
+// Send a copy of each group's welcome mail to mods for annual review.
+// V1: cron/group_welcomereview.php (daily 01:00 and 15:00 — processes 10 groups per run)
+Schedule::command('groups:welcome-review')
+    ->twiceDaily(1, 15)
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:welcome-review'))
+    ->runInBackground();
+
 // =============================================================================
 // GIT SUMMARY
 // =============================================================================
