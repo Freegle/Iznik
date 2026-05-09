@@ -215,3 +215,82 @@ describe('work_router_decide action', () => {
     expect(result.singleBug?.topic).toBe(9999)
   })
 })
+
+describe('recent merged PR dedup in work_router_decide', () => {
+  it('skips DB bug from dispatch when recent merged PR title mentions its featureArea', async () => {
+    upsertDiscourseBug(db, { topic: 300, post: 1, state: 'open', featureArea: 'modtools' })
+
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [],
+      bugsFixed: [],
+      recentlyMergedPRs: [{ number: 999, title: 'fix: delete stdmsg in modtools' }],
+    })
+
+    expect(result._transition).toBe('COVERAGE_GATE')
+  })
+
+  it('still dispatches bug when merged PR title does not match its featureArea', async () => {
+    upsertDiscourseBug(db, { topic: 301, post: 1, state: 'open', featureArea: 'search' })
+
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [],
+      bugsFixed: [],
+      recentlyMergedPRs: [{ number: 999, title: 'fix: delete stdmsg in modtools' }],
+    })
+
+    expect(result._transition).toBe('DIAGNOSE_BUG')
+  })
+
+  it('skips bug when merged PR title matches a symptom tag', async () => {
+    upsertDiscourseBug(db, { topic: 302, post: 1, state: 'open', symptomTags: ['chat', 'delete', '404'] })
+
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [],
+      bugsFixed: [],
+      recentlyMergedPRs: [{ number: 998, title: 'feat: fix chat message delete' }],
+    })
+
+    expect(result._transition).toBe('COVERAGE_GATE')
+  })
+
+  it('dispatches bug when no recentlyMergedPRs in context', async () => {
+    upsertDiscourseBug(db, { topic: 303, post: 1, state: 'open', featureArea: 'modtools' })
+
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [],
+      bugsFixed: [],
+    })
+
+    expect(result._transition).toBe('DIAGNOSE_BUG')
+  })
+
+  it('dispatches bug when recentlyMergedPRs is empty', async () => {
+    upsertDiscourseBug(db, { topic: 304, post: 1, state: 'open', featureArea: 'modtools' })
+
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [],
+      bugsFixed: [],
+      recentlyMergedPRs: [],
+    })
+
+    expect(result._transition).toBe('DIAGNOSE_BUG')
+  })
+
+  it('bug with no featureArea or symptomTags is not skipped by merged PR', async () => {
+    upsertDiscourseBug(db, { topic: 305, post: 1, state: 'open' })
+
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [],
+      bugsFixed: [],
+      recentlyMergedPRs: [{ number: 997, title: 'fix everything' }],
+    })
+
+    expect(result._transition).toBe('DIAGNOSE_BUG')
+  })
+})
