@@ -64,6 +64,10 @@ return [
         'partnerships_addr' => env('FREEGLE_PARTNERSHIPS_ADDR', 'partnerships@ilovefreegle.org'),
         // Info address for donation notifications and general admin emails.
         'info_addr' => env('FREEGLE_INFO_ADDR', 'info@ilovefreegle.org'),
+        // Fundraising address — receives the daily donation summary email.
+        'fundraising_addr' => env('FREEGLE_FUNDRAISING_ADDR', 'info@ilovefreegle.org'),
+        // Mentors address — volunteer support team who handle escalations.
+        'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
         'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
         // Trash Nothing domain for incoming mail detection
