@@ -305,7 +305,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | Script | Time | Priority | Description |
 |--------|------|----------|-------------|
 | `chat_chaseup_expected.php` | 06:00 | Medium | Chat expected response chase-up |
-| `birthday.php` | 12:00 | Low | Birthday notifications |
+| ~~`birthday.php`~~ | ~~12:00~~ | ~~Low~~ | ~~Birthday notifications~~ — **Migrated: `birthday:send-emails`** |
 | `relevant.php` | 14:30 | Medium | Relevant message matching |
 | `chat_chaseupmods.php` | 15:30 | Medium | Moderator chat chase-up |
 | `newsfeed_digest.php` | 15:30 | Low | Newsfeed digest |

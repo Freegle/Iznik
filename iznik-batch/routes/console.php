@@ -727,6 +727,18 @@ Schedule::command('noticeboards:thank-users')
     ->runInBackground();
 
 // =============================================================================
+// BIRTHDAY EMAILS
+// =============================================================================
+
+// Send birthday emails to members of groups founded on today's date.
+// V1: cron/birthday.php (daily at 12:00)
+Schedule::command('birthday:send-emails')
+    ->dailyAt('12:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('birthday:send-emails'))
+    ->runInBackground();
+
+// =============================================================================
 // STORIES
 // =============================================================================
 
