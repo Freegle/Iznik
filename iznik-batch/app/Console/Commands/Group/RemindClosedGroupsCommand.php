@@ -29,7 +29,8 @@ class RemindClosedGroupsCommand extends Command
 
             $stats = $service->sendReminders($dryRun);
 
-            $this->info("Checked {$stats['groups_checked']} closed group(s): sent {$stats['sent']} reminder(s), skipped {$stats['skipped']}.");
+            $verb = $dryRun ? 'would send' : 'sent';
+            $this->info("Checked {$stats['groups_checked']} closed group(s): {$verb} {$stats['sent']} reminder(s), skipped {$stats['skipped']}.");
             Log::info('Closed group reminders complete', $stats);
 
             return Command::SUCCESS;

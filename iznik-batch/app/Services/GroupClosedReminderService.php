@@ -50,12 +50,12 @@ class GroupClosedReminderService
                 Mail::raw(
                     "Hi there - just to remind you that your Freegle group is currently closed. "
                     . "If you now feel it's time to re-open then you can do that from ModTools, "
-                    . "in Settings->Community->Features for Members->Closed for COVID-19. "
+                    . "in Settings->Community->Features for Members. "
                     . "We'll send this automated mail once a week.",
                     function ($message) use ($modEmails, $mentorsAddr, $geeksAddr, $group) {
                         $message->to($modEmails)
                             ->cc($mentorsAddr)
-                            ->from($geeksAddr, 'Freegle')
+                            ->from($geeksAddr, config('freegle.branding.name', 'Freegle'))
                             ->subject('Reminder: Your Freegle group is currently closed');
                     }
                 );
