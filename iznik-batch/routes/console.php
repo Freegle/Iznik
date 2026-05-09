@@ -659,3 +659,11 @@ Schedule::command('data:git-summary')
 // The check-hotfix-promote job runs after beta builds and triggers
 // immediate promotion if the commit message has hotfix: prefix.
 // See iznik-nuxt3/.circleci/config.yml
+
+// Alert geeks about Freegle groups that have not received messages in 7+ days.
+// V1: cron/groups_nomessages.php (daily)
+Schedule::command('groups:alert-no-messages')
+    ->dailyAt('07:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:alert-no-messages'))
+    ->runInBackground();
