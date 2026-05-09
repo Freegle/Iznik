@@ -3045,7 +3045,7 @@ jobs:
               echo "Using Freegle google-services.json for ModTools (patching package name)"
               echo "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n' | base64 -d > android/app/google-services.json
               # Patch package name so Firebase SDK finds the right client entry for this app
-              python3 -c "import json; gs=json.load(open('android/app/google-services.json')); [c['client_info']['android_client_info'].update({'package_name':'org.ilovefreegle.modtools'}) for c in gs.get('client',[]) if c.get('client_info',{}).get('android_client_info',{}).get('package_name')=='org.ilovefreegle.direct']; json.dump(gs,open('android/app/google-services.json','w'),indent=2); print('Patched package_name')"
+              python3 -c "import json; gs=json.load(open('android/app/google-services.json')); [c['client_info']['android_client_info'].update({'package_name':'org.ilovefreegle.modtools'}) for c in gs.get('client',[]) if 'android_client_info' in c.get('client_info',{})]; json.dump(gs,open('android/app/google-services.json','w'),indent=2); print('Patched package_name to org.ilovefreegle.modtools')"
             else
               echo "⚠️  No Firebase config - push notifications will not work"
             fi
