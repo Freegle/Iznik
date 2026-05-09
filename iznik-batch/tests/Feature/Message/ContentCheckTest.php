@@ -5,7 +5,6 @@ namespace Tests\Feature\Message;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
-use App\Services\Mail\Incoming\SpamCheckService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -16,8 +15,8 @@ class ContentCheckTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new ContentCheckService(new SpamCheckService());
-        // Mark any pre-existing unprocessed pending messages so processUnprocessed() only
+        $this->service = new ContentCheckService();
+        // Mark any unprocessed pending messages so processUnprocessed() only
         // sees rows inserted within this test's transaction.
         DB::table('messages_groups')
             ->where('collection', 'Pending')
@@ -26,77 +25,141 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
-    // checkWorryWords
-    // -------------------------------------------------------------------------
-
-    public function test_worry_word_match_returns_reason(): void
-    {
-        DB::table('worrywords')->insert(['keyword' => 'testworryword_cc', 'type' => 'Review']);
-
-        $result = $this->service->checkWorryWords('OFFER: testworryword_cc chair', 'A nice chair', null);
-
-        $this->assertNotNull($result);
-        $this->assertEquals('WorryWord', $result['check']);
-        $this->assertStringContainsString('testworryword_cc', $result['detail']);
-    }
-
-    public function test_clean_subject_and_body_returns_null_for_worry_words(): void
-    {
-        $result = $this->service->checkWorryWords('OFFER: Nice sofa', 'A lovely sofa in great condition', null);
-
-        $this->assertNull($result);
-    }
-
-    public function test_blank_worry_word_does_not_match_all_messages(): void
-    {
-        DB::table('worrywords')->insert(['keyword' => '', 'type' => 'Review']);
-
-        $result = $this->service->checkWorryWords('OFFER: Nice sofa', 'A lovely sofa', null);
-
-        $this->assertNull($result);
-    }
-
-    public function test_worry_word_match_is_case_insensitive(): void
-    {
-        DB::table('worrywords')->insert(['keyword' => 'testworryword_cc2', 'type' => 'Review']);
-
-        $result = $this->service->checkWorryWords('OFFER: TESTWORRYWORD_CC2 item', '', null);
-
-        $this->assertNotNull($result);
-    }
-
-    // -------------------------------------------------------------------------
-    // checkConcernKeywords
+    // checkConcernKeywords — unified keyword check (replaces worrywords + spam_keywords)
     // -------------------------------------------------------------------------
 
     public function test_concern_keyword_match_returns_reason(): void
     {
+        $group = $this->createTestGroup();
         DB::table('concern_keywords')->insert([
             'keyword'  => 'testconcernkw_cc',
             'category' => 'scam',
             'action'   => 'flag',
         ]);
 
-        $result = $this->service->checkConcernKeywords('OFFER: testconcernkw_cc item', 'Some text');
+        $result = $this->service->checkConcernKeywords('OFFER: testconcernkw_cc item', 'Some text', $group->id);
 
         $this->assertNotNull($result);
         $this->assertEquals('ConcernKeyword', $result['check']);
+        $this->assertEquals('scam', $result['category']);
         $this->assertStringContainsString('testconcernkw_cc', $result['detail']);
+    }
+
+    public function test_concern_keyword_returns_category_in_result(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testmedicine_cc',
+            'category' => 'substance_medicine',
+            'action'   => 'flag',
+        ]);
+
+        $result = $this->service->checkConcernKeywords('OFFER: testmedicine_cc tablets', '', $group->id);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('substance_medicine', $result['category']);
     }
 
     public function test_clean_text_returns_null_for_concern_keywords(): void
     {
-        $result = $this->service->checkConcernKeywords('OFFER: Nice lamp', 'A lovely lamp');
+        $group = $this->createTestGroup();
+
+        $result = $this->service->checkConcernKeywords('OFFER: Nice lamp', 'A lovely lamp', $group->id);
 
         $this->assertNull($result);
     }
 
     public function test_blank_concern_keyword_does_not_match_all_messages(): void
     {
-        DB::table('concern_keywords')->insert(['keyword' => '', 'category' => 'test', 'action' => 'flag']);
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert(['keyword' => '', 'category' => 'review', 'action' => 'flag']);
 
-        $result = $this->service->checkConcernKeywords('OFFER: Nice lamp', 'A lovely lamp');
+        $result = $this->service->checkConcernKeywords('OFFER: Nice lamp', 'A lovely lamp', $group->id);
 
+        $this->assertNull($result);
+    }
+
+    public function test_concern_keyword_literal_match_uses_word_boundary(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'knife',
+            'category'   => 'substance_reportable',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        // 'penknife' should NOT match the word-boundary literal check for 'knife'.
+        $noMatch = $this->service->checkConcernKeywords('OFFER: penknife', '', $group->id);
+        $this->assertNull($noMatch);
+
+        // 'knife' as a standalone word should match.
+        $match = $this->service->checkConcernKeywords('OFFER: knife', '', $group->id);
+        $this->assertNotNull($match);
+    }
+
+    public function test_concern_keyword_regex_match(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'diazep[ai]m',
+            'category'   => 'substance_medicine',
+            'action'     => 'flag',
+            'match_mode' => 'regex',
+        ]);
+
+        $match = $this->service->checkConcernKeywords('OFFER: diazepam tablets', '', $group->id);
+        $this->assertNotNull($match);
+    }
+
+    public function test_concern_keyword_exclude_pattern_suppresses_match(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'gun',
+            'category'   => 'substance_regulated',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+            'exclude'    => 'water gun|toy gun',
+        ]);
+
+        $noMatch = $this->service->checkConcernKeywords('OFFER: water gun', '', $group->id);
+        $this->assertNull($noMatch);
+
+        $match = $this->service->checkConcernKeywords('OFFER: gun (real)', '', $group->id);
+        $this->assertNotNull($match);
+    }
+
+    public function test_concern_keyword_per_group_scope_only_fires_for_matching_group(): void
+    {
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testgroupkw_cc',
+            'category'   => 'review',
+            'action'     => 'flag',
+            'scope'      => 'group',
+            'group_id'   => $group1->id,
+        ]);
+
+        $matchGroup1 = $this->service->checkConcernKeywords('OFFER: testgroupkw_cc item', '', $group1->id);
+        $this->assertNotNull($matchGroup1);
+
+        $noMatchGroup2 = $this->service->checkConcernKeywords('OFFER: testgroupkw_cc item', '', $group2->id);
+        $this->assertNull($noMatchGroup2);
+    }
+
+    public function test_allowed_category_keywords_are_not_flagged(): void
+    {
+        // 'allowed' is a category (whitelist) in concern_keywords, not an action.
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testallowed_cc',
+            'category' => 'allowed',
+            'action'   => 'flag',
+        ]);
+
+        $result = $this->service->checkConcernKeywords('OFFER: testallowed_cc item', '', $group->id);
         $this->assertNull($result);
     }
 
@@ -270,7 +333,11 @@ class ContentCheckTest extends TestCase
     {
         $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
         $user  = $this->createTestUser();
-        DB::table('worrywords')->insert(['keyword' => 'worrycheck_cc', 'type' => 'Review']);
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'worrycheck_cc',
+            'category' => 'review',
+            'action'   => 'flag',
+        ]);
 
         $msgid = DB::table('messages')->insertGetId([
             'fromuser' => $user->id,
@@ -282,13 +349,6 @@ class ContentCheckTest extends TestCase
             'date'     => now(),
             'source'   => 'Platform',
         ]);
-        DB::table('items')->insertOrIgnore(['name' => 'cc_testvague_stuff']);
-        $itemId = DB::table('items')->where('name', 'cc_testvague_stuff')->value('id');
-        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
-
-        // Override item name lookup by directly using a known vague item.
-        // Re-create with vague item name so checkVagueItem fires.
-        DB::table('messages_items')->where('msgid', $msgid)->delete();
         DB::table('items')->insertOrIgnore(['name' => 'stuff']);
         $stuffId = DB::table('items')->where('name', 'stuff')->value('id');
         DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $stuffId]);
@@ -298,7 +358,7 @@ class ContentCheckTest extends TestCase
         $checkNames = array_column($reasons, 'check');
         $this->assertContains('Vague', $checkNames);
         $this->assertContains('PhoneNumber', $checkNames);
-        $this->assertContains('WorryWord', $checkNames);
+        $this->assertContains('ConcernKeyword', $checkNames);
     }
 
     public function test_check_message_returns_empty_for_clean_message(): void

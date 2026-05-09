@@ -5,16 +5,12 @@ namespace App\Services;
 use App\Models\BackgroundTask;
 use App\Models\Message;
 use App\Models\MessageGroup;
-use App\Services\Mail\Incoming\SpamCheckService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class ContentCheckService
 {
-    public const CHECK_WORRY_WORD      = 'WorryWord';
     public const CHECK_CONCERN_KEYWORD = 'ConcernKeyword';
-    public const CHECK_SPAM_KEYWORD    = 'SpamKeyword';
-    public const CHECK_REVIEW          = 'Review';
     public const CHECK_VAGUE           = 'Vague';
     public const CHECK_PHONE_NUMBER    = 'PhoneNumber';
     public const CHECK_EMAIL_ADDRESS   = 'EmailAddress';
@@ -37,13 +33,11 @@ class ContentCheckService
         'signal.group',
     ];
 
-    public function __construct(private SpamCheckService $spamCheck) {}
-
     /**
      * Run all content checks for a single (msgid, groupid) pair.
      *
      * Returns array of failure reasons — empty means clean.
-     * Each reason: ['check' => string, 'detail' => string]
+     * Each reason: ['check' => string, 'category' => string|null, 'detail' => string]
      */
     public function checkMessage(int $msgid, int $groupid): array
     {
@@ -66,16 +60,7 @@ class ContentCheckService
 
         $reasons = [];
 
-        if ($r = $this->checkWorryWords($subject, $textbody, $groupid)) {
-            $reasons[] = $r;
-        }
-        if ($r = $this->checkConcernKeywords($subject, $textbody)) {
-            $reasons[] = $r;
-        }
-        if ($r = $this->checkSpamKeywords($subject, $textbody)) {
-            $reasons[] = $r;
-        }
-        if ($r = $this->checkReview($subject, $textbody)) {
+        if ($r = $this->checkConcernKeywords($subject, $textbody, $groupid)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkVagueItem($itemName)) {
@@ -213,98 +198,54 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // Worry words (global + per-group from settings.spammers.worrywords)
+    // Concern keywords — unified table replacing worrywords + spam_keywords.
+    // Supports match_mode (fuzzy/literal/regex), global + per-group scope,
+    // exclude patterns, and category-specific frontend guidance.
     // -------------------------------------------------------------------------
 
-    public function checkWorryWords(string $subject, string $textbody, ?int $groupid): ?array
+    public function checkConcernKeywords(string $subject, string $textbody, int $groupid): ?array
     {
-        $words = DB::table('worrywords')->get();
+        $keywords = DB::table('concern_keywords')
+            ->where(function ($q) use ($groupid) {
+                $q->where('scope', 'global')
+                  ->orWhere(function ($q2) use ($groupid) {
+                      $q2->where('scope', 'group')->where('group_id', $groupid);
+                  });
+            })
+            ->where('category', '!=', 'allowed')
+            ->get();
 
-        $groupWords = [];
-        if ($groupid) {
-            $raw = DB::table('groups')
-                ->where('id', $groupid)
-                ->value(DB::raw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.spammers.worrywords'))"));
-            if ($raw && $raw !== 'null') {
-                foreach (explode(',', $raw) as $w) {
-                    $w = trim($w);
-                    if ($w !== '') {
-                        $groupWords[] = (object) ['keyword' => strtolower($w), 'type' => self::CHECK_REVIEW];
-                    }
-                }
-            }
-        }
-
-        $allWords = array_merge($words->all(), $groupWords);
         $haystack = strtolower($subject . ' ' . $textbody);
-
-        foreach ($allWords as $word) {
-            $kw = strtolower($word->keyword);
-            if ($kw === '') {
-                continue;
-            }
-            if (str_contains($haystack, $kw)) {
-                return ['check' => self::CHECK_WORRY_WORD, 'detail' => "Matched worry word '{$kw}' (type: {$word->type})"];
-            }
-        }
-
-        return null;
-    }
-
-    // -------------------------------------------------------------------------
-    // Concern keywords (global — regulated/spam items)
-    // -------------------------------------------------------------------------
-
-    public function checkConcernKeywords(string $subject, string $textbody): ?array
-    {
-        $keywords = DB::table('concern_keywords')->get();
-        $haystack = strtolower($subject . ' ' . $textbody);
+        $original = $subject . ' ' . $textbody;
 
         foreach ($keywords as $kw) {
-            $word = strtolower($kw->keyword);
+            $word = trim($kw->keyword);
             if ($word === '') {
                 continue;
             }
-            if (str_contains($haystack, $word)) {
-                return ['check' => self::CHECK_CONCERN_KEYWORD, 'detail' => "Matched concern keyword '{$word}' (category: {$kw->category}; action: {$kw->action})"];
+
+            $matched = match ($kw->match_mode) {
+                'regex'  => @preg_match('/' . $word . '/i', $original) === 1,
+                'literal' => preg_match('/\b' . preg_quote(strtolower($word), '/') . '\b/', $haystack) === 1,
+                default  => str_contains($haystack, strtolower($word)), // fuzzy
+            };
+
+            if (!$matched) {
+                continue;
             }
+
+            if (!empty($kw->exclude) && @preg_match('/' . $kw->exclude . '/i', $original)) {
+                continue;
+            }
+
+            return [
+                'check'    => self::CHECK_CONCERN_KEYWORD,
+                'category' => $kw->category,
+                'detail'   => "Matched concern keyword '{$word}'",
+            ];
         }
 
         return null;
-    }
-
-    // -------------------------------------------------------------------------
-    // Spam keywords (spam_keywords table)
-    // -------------------------------------------------------------------------
-
-    public function checkSpamKeywords(string $subject, string $textbody): ?array
-    {
-        $result = $this->spamCheck->checkSpamKeywords($subject . ' ' . $textbody, [
-            SpamCheckService::ACTION_SPAM,
-            SpamCheckService::ACTION_REVIEW,
-        ]);
-
-        if ($result === null) {
-            return null;
-        }
-
-        [, , $detail] = $result;
-
-        return ['check' => self::CHECK_SPAM_KEYWORD, 'detail' => $detail];
-    }
-
-    // -------------------------------------------------------------------------
-    // Review checks — money symbols, untrusted links, external email addresses
-    // -------------------------------------------------------------------------
-
-    public function checkReview(string $subject, string $textbody): ?array
-    {
-        $reason = $this->spamCheck->checkReview($subject . ' ' . $textbody, false);
-        if ($reason === null) {
-            return null;
-        }
-
-        return ['check' => self::CHECK_REVIEW, 'detail' => "Content review triggered: {$reason}"];
     }
 
     // -------------------------------------------------------------------------
@@ -320,7 +261,7 @@ class ContentCheckService
         $lower = strtolower(trim($itemName));
 
         if (mb_strlen($lower) < 3) {
-            return ['check' => self::CHECK_VAGUE, 'detail' => "Item name '{$itemName}' is too short"];
+            return ['check' => self::CHECK_VAGUE, 'category' => null, 'detail' => "Item name '{$itemName}' is too short"];
         }
 
         foreach (self::VAGUE_KEYWORDS as $keyword) {
@@ -328,7 +269,7 @@ class ContentCheckService
                 || str_starts_with($lower, $keyword . ' ')
                 || str_ends_with($lower, ' ' . $keyword)
             ) {
-                return ['check' => self::CHECK_VAGUE, 'detail' => "Item name '{$itemName}' is too generic"];
+                return ['check' => self::CHECK_VAGUE, 'category' => null, 'detail' => "Item name '{$itemName}' is too generic"];
             }
         }
 
@@ -354,7 +295,7 @@ class ContentCheckService
 
         // UK phone number detection — broad pattern covering mobile and landline formats.
         if (preg_match('/\b(?:(?:\+44|0044)\s?|0)(?:\d[\s\-]?){9,10}\b/', $haystack)) {
-            return ['check' => self::CHECK_PHONE_NUMBER, 'detail' => 'Post contains what looks like a phone number'];
+            return ['check' => self::CHECK_PHONE_NUMBER, 'category' => null, 'detail' => 'Post contains what looks like a phone number'];
         }
 
         // External email address detection.
@@ -364,7 +305,7 @@ class ContentCheckService
                     || str_contains($email, 'trashnothing')
                     || str_contains($email, 'yahoogroups');
             if (!$isOurs) {
-                return ['check' => self::CHECK_EMAIL_ADDRESS, 'detail' => 'Post contains an external email address'];
+                return ['check' => self::CHECK_EMAIL_ADDRESS, 'category' => null, 'detail' => 'Post contains an external email address'];
             }
         }
 
@@ -381,7 +322,7 @@ class ContentCheckService
 
         foreach (self::MESSAGING_LINK_DOMAINS as $domain) {
             if (str_contains($haystack, $domain)) {
-                return ['check' => self::CHECK_MESSAGING_LINK, 'detail' => "Post contains a messaging app link ({$domain})"];
+                return ['check' => self::CHECK_MESSAGING_LINK, 'category' => null, 'detail' => "Post contains a messaging app link ({$domain})"];
             }
         }
 
@@ -395,20 +336,6 @@ class ContentCheckService
     /**
      * Scan existing Pending and Approved messages and report where the content
      * check service disagrees with the current state.  Read-only — no DB writes.
-     *
-     * Returns an array of disagreement records:
-     *   [
-     *     'msgid'       => int,
-     *     'groupid'     => int,
-     *     'collection'  => 'Pending'|'Approved',
-     *     'type'        => 'should_flag'|'should_approve',
-     *     'reasons'     => array,   // non-empty when type === 'should_flag'
-     *     'is_moderated'=> bool,
-     *   ]
-     *
-     * 'should_flag':   message is Approved but content checks would flag it.
-     * 'should_approve': message is Pending, content checks pass, and the user
-     *                   is not moderated — the pipeline would auto-approve it.
      *
      * @param int|null $groupid  Restrict audit to a single group (null = all groups).
      * @param int      $limit    Max rows per collection to examine (0 = no limit).
