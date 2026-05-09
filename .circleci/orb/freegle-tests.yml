@@ -285,7 +285,7 @@ commands:
               if docker-compose build $CACHE_FLAG \
                 apiv1 apiv1-phpunit apiv2 \
                 freegle-prod-local modtools-prod-local \
-                playwright status batch; then
+                playwright status; then
                 echo "✅ Build succeeded on attempt $attempt"
                 break
               else
@@ -301,6 +301,17 @@ commands:
                 fi
               fi
             done
+
+            # Build batch with legacy builder to avoid BuildKit WSL2 build context bug
+            # where stale COPY . . layers persist between branches (same bug as status-nuxt).
+            # Legacy builder correctly detects context changes and invalidates the cache.
+            echo "Building batch container..."
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
+              echo "Self-hosted runner: building batch with legacy builder (avoids BuildKit context bug)"
+              DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker-compose build batch 2>&1
+            else
+              docker-compose build --no-cache batch 2>&1
+            fi
 
             # Two-phase startup: databases must exist before application containers start.
             #
@@ -2993,6 +3004,18 @@ jobs:
             export APP_ENV=development
             echo "🔧 Building ModTools debug version"
             cd modtools && npm run generate
+            cd ..
+            # Detect output location and patch capacitor config to match
+            if [ -d "modtools/.output/public" ] && [ "$(ls -A modtools/.output/public 2>/dev/null)" ]; then
+              WEBDIR="modtools/.output/public"
+            elif [ -d "modtools/dist" ] && [ "$(ls -A modtools/dist 2>/dev/null)" ]; then
+              WEBDIR="modtools/dist"
+            else
+              echo "❌ ModTools build output not found in modtools/.output/public or modtools/dist"
+              exit 1
+            fi
+            echo "✅ Build output at: $WEBDIR"
+            sed -i "s|webDir: '.*'|webDir: '$WEBDIR'|" capacitor.config.modtools.js
       - run:
           name: Setup Firebase Configuration
           command: |
