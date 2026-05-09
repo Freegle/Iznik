@@ -643,6 +643,14 @@ Schedule::command('messages:update-index')
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
 
+// Ask eligible users (≥5 offers or ≥3 outcomes) to share their Freegle story.
+// V1: cron/stories.php (weekly Sat 11:00)
+Schedule::command('stories:ask')
+    ->weeklyOn(6, '11:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stories:ask'))
+    ->runInBackground();
+
 // =============================================================================
 // GIT SUMMARY
 // =============================================================================
