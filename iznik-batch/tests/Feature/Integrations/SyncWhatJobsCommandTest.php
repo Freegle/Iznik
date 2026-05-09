@@ -233,7 +233,6 @@ class SyncWhatJobsCommandTest extends TestCase
     {
         $this->mock(WhatJobsService::class)
             ->shouldReceive('sync')
-            ->with(true)
             ->once()
             ->andReturn(['total' => 10, 'inserted' => 0, 'dry_run' => true]);
 

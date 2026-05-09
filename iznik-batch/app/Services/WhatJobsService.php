@@ -489,14 +489,16 @@ class WhatJobsService
                 continue;
             }
 
-            // expand() returns current node as DOMNode without advancing cursor.
-            // readOuterXml() advances cursor on newer libxml2, causing next() to skip one element.
-            $node    = $reader->expand();
-            $hasNode = $reader->next();
+            // expand() snapshots the current node without advancing the cursor.
+            // saveXML() must be called BEFORE next() — after next(), the node's
+            // ownerDocument becomes null as the reader advances past it.
+            $node = $reader->expand();
             if (!$node) {
+                $hasNode = $reader->next();
                 continue;
             }
-            $xmlStr = $node->ownerDocument->saveXML($node);
+            $xmlStr  = $node->ownerDocument->saveXML($node);
+            $hasNode = $reader->next();
 
             $job = @simplexml_load_string($xmlStr);
             if (!$job) {
