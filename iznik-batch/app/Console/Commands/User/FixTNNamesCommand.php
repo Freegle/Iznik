@@ -30,11 +30,13 @@ class FixTNNamesCommand extends Command
             $fixed  = 0;
             $skipped = 0;
 
-            // TN emails have the format: firstname-groupid@trashnothing.com
-            // The backwards column is the reversed email, so TN emails end with 'moc.gnihtonhsart'
+            // TN emails have the format: firstname-groupid@trashnothing.com.
+            // The backwards column stores strrev(email), so TN rows begin with the reversed domain.
+            $tnBackwardsPrefix = strrev(config('freegle.mail.trashnothing_domain')) . '%';
+
             $rows = DB::table('users')
                 ->join('users_emails', 'users.id', '=', 'users_emails.userid')
-                ->where('users_emails.backwards', 'LIKE', 'moc.gnihtonhsart%')
+                ->where('users_emails.backwards', 'LIKE', $tnBackwardsPrefix)
                 ->whereNull('users.firstname')
                 ->whereNull('users.lastname')
                 ->where(function ($q) {
@@ -62,7 +64,8 @@ class FixTNNamesCommand extends Command
                 }
             }
 
-            $this->info("Processed " . count($rows) . " TN users: fixed {$fixed}, skipped {$skipped}.");
+            $verb = $dryRun ? 'would fix' : 'fixed';
+            $this->info("Processed " . count($rows) . " TN users: {$verb} {$fixed}, skipped {$skipped}.");
             Log::info('TN name fix complete', [
                 'candidates' => count($rows),
                 'fixed'      => $fixed,
