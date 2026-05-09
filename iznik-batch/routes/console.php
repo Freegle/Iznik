@@ -659,3 +659,12 @@ Schedule::command('data:git-summary')
 // The check-hotfix-promote job runs after beta builds and triggers
 // immediate promotion if the commit message has hotfix: prefix.
 // See iznik-nuxt3/.circleci/config.yml
+
+// Daily donation summary — sends HTML email to fundraising address listing
+// all donations received today with amounts, payer, and recurring/birthday flags.
+// V1: cron/donations_email.php (daily)
+Schedule::command('mail:donations:summary')
+    ->dailyAt('23:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:donations:summary'))
+    ->runInBackground();
