@@ -3,6 +3,8 @@
 namespace Tests\Feature\Mail;
 
 use App\Mail\Engage\EngageMail;
+use App\Models\Group;
+use App\Models\Membership;
 use App\Services\EngageEmailService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -22,7 +24,7 @@ class EngageEmailsCommandTest extends TestCase
     {
         $id = DB::table('groups')->insertGetId([
             'nameshort' => 'TestEngage_' . uniqid(),
-            'type' => 'Freegle',
+            'type' => Group::TYPE_FREEGLE,
             'publish' => 1,
             'onmap' => 1,
             'onhere' => 1,
@@ -37,8 +39,8 @@ class EngageEmailsCommandTest extends TestCase
         DB::table('memberships')->insertOrIgnore([
             'userid' => $user->id,
             'groupid' => $group->id,
-            'collection' => 'Approved',
-            'role' => 'Member',
+            'collection' => Membership::COLLECTION_APPROVED,
+            'role' => Membership::ROLE_MEMBER,
             'added' => now(),
         ]);
         return $user;
