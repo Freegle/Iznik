@@ -245,6 +245,14 @@ Schedule::command('chats:update-expected')
     ->sendOutputTo(cronLog('chats:update-expected'))
     ->runInBackground();
 
+// Send calendar invites and chat reminders for arranged handover trysts.
+// V1: cron/tryst.php (every 1 minute)
+Schedule::command('chats:send-tryst-reminders')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:send-tryst-reminders'))
+    ->runInBackground();
+
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
 // V1: cron/chat_spam.php — disabled pending sign-off
 // Schedule::command('chats:process-spam')
