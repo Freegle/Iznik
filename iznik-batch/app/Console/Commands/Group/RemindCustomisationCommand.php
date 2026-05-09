@@ -29,7 +29,8 @@ class RemindCustomisationCommand extends Command
 
             $stats = $service->sendReminders($dryRun);
 
-            $this->info("Checked {$stats['groups_checked']} groups: sent {$stats['sent']} reminder(s), skipped {$stats['skipped']}.");
+            $verb = $dryRun ? 'would send' : 'sent';
+            $this->info("Checked {$stats['groups_checked']} groups: {$verb} {$stats['sent']} reminder(s), skipped {$stats['skipped']}.");
             Log::info('Group customisation reminders complete', $stats);
 
             return Command::SUCCESS;

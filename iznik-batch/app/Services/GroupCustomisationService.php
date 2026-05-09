@@ -74,7 +74,7 @@ class GroupCustomisationService
             if (!$dryRun) {
                 Mail::raw($body, function ($message) use ($group, $modEmails, $noreplyAddr) {
                     $message->to($modEmails)
-                        ->from($noreplyAddr, 'Freegle')
+                        ->from($noreplyAddr, config('freegle.branding.name', 'Freegle'))
                         ->returnPath($noreplyAddr)
                         ->subject("Reminder - ways to make {$group->nameshort} more welcoming");
                 });
