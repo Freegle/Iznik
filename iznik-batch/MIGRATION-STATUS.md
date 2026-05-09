@@ -259,7 +259,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`exports.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Data exports~~ — **Migrated: `users:process-exports`** |
 | ~~`notification_chaseup.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Notification reminders~~ — **Migrated: `mail:notifications:chaseup`** |
 | ~~`previews.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Link preview generation~~ — **Covered: `newsfeed:generate-link-previews`** |
-| `check_cgas.php` | Every 5 min | Low | CGA checking |
+| ~~`check_cgas.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~CGA checking~~ — **Migrated: `groups:check-boundaries`** |
 | ~~`message_spatial.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Spatial index updates~~ — **Migrated: `messages:update-spatial-index` — PR #398** |
 | ~~`messages_illustrations.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Message illustrations~~ — **Migrated: `messages:generate-illustrations`** |
 | ~~`messages_remap.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~Message remapping~~ — **Migrated: `messages:remap-subjects`** |
@@ -267,10 +267,10 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`chat_spam.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Chat spam detection~~ — **Migrated: `chats:process-spam` — PR #397** |
 | ~~`check_spammers.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Spam detection~~ — **Migrated: `users:remove-spammers` — PR #395** |
 | ~~`users_modmails.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Mod mail processing~~ — **Migrated: `users:update-modmails` — PR #392** |
-| `visualise.php` | Every 5 min | Low | Data visualisation |
-| `microvolunteering.php` | Every 5 min | Low | Micro-volunteering — **Migrated: `microvolunteering:score`** |
-| ~~`newsfeed_link_previews.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Newsfeed link previews~~ — **Migrated: `newsfeed:generate-link-previews`** |
-| `tn_sync.php` | Every 1 min | Medium | Trash Nothing sync |
+| ~~`visualise.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~Data visualisation~~ — **Migrated: `messages:update-visualise`** |
+| ~~`microvolunteering.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~Micro-volunteering~~ — **Migrated: `microvolunteering:score`** |
+| ~~`newsfeed_link_previews.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Newsfeed link previews~~ — **Covered: `newsfeed:generate-link-previews` (PR #405)** |
+| ~~`tn_sync.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Trash Nothing sync~~ — **Migrated: `integrations:sync-trashnothing`** |
 
 ## Medium Frequency Scripts (Every 10-60 min) - Not Started
 
@@ -284,7 +284,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`jobs_illustrations.php`~~ | ~~Every 30 min~~ | ~~Low~~ | ~~Job illustrations~~ — **Migrated: `jobs:generate-illustrations`** |
 | ~~`message_unindexed.php`~~ | ~~Every 30 min~~ | ~~Low~~ | ~~Unindexed messages~~ — **Migrated: `messages:update-index` — PR #393** |
 | ~~`chat_latestmessage.php`~~ | ~~Every 60 min~~ | ~~Low~~ | ~~Chat latest message~~ — **Migrated: `chats:update-counts`** |
-| `pledge.php` | Every 60 min | Low | Pledges |
+| ~~`pledge.php`~~ | ~~Every 60 min~~ | ~~Low~~ | ~~Pledges~~ — **Skip: retired** |
 | ~~`lastacces.php`~~ | ~~Every 59 min~~ | ~~Low~~ | ~~Last access tracking~~ — **Migrated: `users:update-lastaccess`** |
 | ~~`mod_notifs.php`~~ | ~~Every 60 min~~ | ~~Medium~~ | ~~Moderator notifications~~ — **Migrated: `mail:mod-notifs` — PR #391** |
 | ~~`supporttools.php`~~ | ~~Every 60 min~~ | ~~Low~~ | ~~Support tools~~ — **Migrated: `users:update-support-roles`** |
@@ -315,19 +315,19 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`purge_sessions.php`~~ | ~~03:00~~ | ~~Low~~ | ~~Session purging~~ — **Migrated: `purge:sessions`** |
 | ~~`purge_logs.php`~~ | ~~04:00~~ | ~~Low~~ | ~~Log purging~~ — **Migrated: `purge:logs`** |
 | ~~`email_validate.php`~~ | ~~04:00~~ | ~~Low~~ | ~~Email validation~~ — **Migrated: `emails:validate`** |
-| `messages_popular.php` | 05:00 | Low | Popular messages |
+| ~~`messages_popular.php`~~ | ~~05:00~~ | ~~Low~~ | ~~Popular messages~~ — **Skip: `Group::findPopularMessages()` not implemented in iznik-server** |
 | ~~`users_remap.php`~~ | ~~05:00~~ | ~~Low~~ | ~~User remapping~~ — **Migrated: `users:remap-locations`** |
 | ~~`locations_skewwhiff.php`~~ | ~~05:00~~ | ~~Low~~ | ~~Location fixes~~ — **Migrated: `locations:fix-skewed`** |
 | `nearby.php` | 14:05 | Medium | Nearby items |
 | `chat_review.php` | 11:00 | Medium | Chat review queue |
 | `engage.php` | 16:00 | Medium | User engagement emails |
 | `user_askdonation.php` | 17:00 | Medium | Donation requests |
-| `facebook_chaseup.php` | 18:00 | Low | Facebook chase-up |
+| ~~`facebook_chaseup.php`~~ | ~~18:00~~ | ~~Low~~ | ~~Facebook chase-up~~ — **Skip: file not found (retired)** |
 | `whatjobs.php` | Hourly 08:00-22:00 | Low | WhatJobs |
-| `microactions_score.php` | 23:00 | Low | Microactions scoring |
-| `restartproject.php` | 23:00 | Low | Restart project |
-| `repaircafewales.php` | 23:00 | Low | Repair Cafe Wales |
-| ~~`archive_attachments.php`~~ | ~~22:30~~ | ~~Low~~ | ~~Attachment archiving~~ — **Migrated: `cleanup:archive-profile-images`** |
+| ~~`microactions_score.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Microactions scoring~~ — **Covered: `microvolunteering:score`** |
+| ~~`restartproject.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Restart project~~ — **Migrated: `integrations:sync-restartproject` (PR #408)** |
+| ~~`repaircafewales.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Repair Cafe Wales~~ — **Migrated: `integrations:sync-repaircafewales` (PR #408)** |
+| ~~`archive_attachments.php`~~ | ~~22:30~~ | ~~Low~~ | ~~Attachment archiving~~ — **Migrated: `cleanup:archive-profile-images` (PR #405)** |
 
 ## Weekly Scripts - Not Started
 
