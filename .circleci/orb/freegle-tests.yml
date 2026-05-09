@@ -3075,7 +3075,7 @@ jobs:
           command: |
             SRC="modtools/public/android-chrome-512x512.png"
             RES="android/app/src/main/res"
-            pip install pillow --quiet
+            pip3 install pillow --quiet
             python3 - \<<'PYEOF'
             from PIL import Image
             src = Image.open("modtools/public/android-chrome-512x512.png").convert("RGBA")
