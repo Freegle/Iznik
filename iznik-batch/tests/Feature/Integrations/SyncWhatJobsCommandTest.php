@@ -231,10 +231,14 @@ class SyncWhatJobsCommandTest extends TestCase
     /** @test */
     public function test_command_dry_run_outputs_dry_run_prefix(): void
     {
-        $this->mock(WhatJobsService::class)
-            ->shouldReceive('sync')
-            ->once()
-            ->andReturn(['total' => 10, 'inserted' => 0, 'dry_run' => true]);
+        // Use a concrete stub via app->bind() — $this->mock() (Mockery) does not reliably
+        // inject into artisan command method injection when run after another mock in the same suite.
+        $this->app->bind(WhatJobsService::class, fn () => new class extends WhatJobsService {
+            public function sync(bool $dryRun = false): array
+            {
+                return ['total' => 10, 'inserted' => 0, 'dry_run' => true];
+            }
+        });
 
         $this->artisan('integrations:sync-whatjobs', ['--dry-run' => true])
             ->expectsOutputToContain('[DRY RUN]')

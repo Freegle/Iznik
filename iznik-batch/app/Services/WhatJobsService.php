@@ -489,16 +489,15 @@ class WhatJobsService
                 continue;
             }
 
-            // expand() snapshots the current node without advancing the cursor.
-            // saveXML() must be called BEFORE next() — after next(), the node's
-            // ownerDocument becomes null as the reader advances past it.
-            $node = $reader->expand();
+            // expand($doc) imports the current node into $doc so ownerDocument is never null.
+            // Without a DOMDocument argument, ownerDocument can be null on some libxml2 builds.
+            $doc     = new \DOMDocument();
+            $node    = $reader->expand($doc);
+            $hasNode = $reader->next();
             if (!$node) {
-                $hasNode = $reader->next();
                 continue;
             }
-            $xmlStr  = $node->ownerDocument->saveXML($node);
-            $hasNode = $reader->next();
+            $xmlStr = $doc->saveXML($node);
 
             $job = @simplexml_load_string($xmlStr);
             if (!$job) {
