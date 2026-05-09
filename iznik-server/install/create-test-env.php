@@ -249,7 +249,7 @@ function findOrCreateMessage($dbhr, $dbhm, $subject, $gid, $groupName, $approver
                     [$approver, $id]
                 );
             } else {
-                $dbhm->preExec("UPDATE messages_groups SET collection = ? WHERE msgid = ?", [$collection, $id]);
+                $dbhm->preExec("UPDATE messages_groups SET collection = ?, contentcheck_checked_at = NOW() WHERE msgid = ?", [$collection, $id]);
             }
         }
 
@@ -328,7 +328,7 @@ function findOrCreateMessage($dbhr, $dbhm, $subject, $gid, $groupName, $approver
         } elseif ($collection === 'Rejected') {
             $dbhm->preExec("UPDATE messages_groups SET collection = 'Rejected' WHERE msgid = ?", [$id]);
         } else {
-            $dbhm->preExec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ?", [$id]);
+            $dbhm->preExec("UPDATE messages_groups SET collection = 'Pending', contentcheck_checked_at = NOW() WHERE msgid = ?", [$id]);
         }
     }
 

@@ -1680,6 +1680,13 @@ const testWithFixtures = test.extend({
       // Set password to default test password in NewUserInfo component
       await setNewUserPassword()
 
+      // Run content check so the new message gets contentcheck_checked_at set
+      // and becomes visible in the ModTools pending queue immediately.
+      try {
+        const statusUrl = process.env.STATUS_API_URL || 'http://localhost:8081'
+        await fetch(`${statusUrl}/api/utility/run-contentcheck`, { method: 'POST' })
+      } catch (_e) {}
+
       // Return information about the post
       return {
         id: postId,
