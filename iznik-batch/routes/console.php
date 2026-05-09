@@ -643,6 +643,14 @@ Schedule::command('messages:update-index')
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
 
+// Community event roundup — weekly to group members with upcoming events.
+// V1: cron/events.php (weekly Thu 23:00)
+Schedule::command('mail:events-digest')
+    ->weeklyOn(4, '23:00')  // Thursday at 11pm
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:events-digest'))
+    ->runInBackground();
+
 // =============================================================================
 // GIT SUMMARY
 // =============================================================================
