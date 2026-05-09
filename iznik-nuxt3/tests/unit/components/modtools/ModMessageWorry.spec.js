@@ -14,203 +14,179 @@ vi.mock('~/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
 }))
 
-describe('ModMessageWorry', () => {
-  const createTestMessage = (overrides = {}) => ({
+const STUBS = {
+  NoticeMessage: {
+    template: '<div class="notice-message" :class="variant"><slot /></div>',
+    props: ['variant'],
+  },
+  ExternalLink: {
+    template: '<a :href="href" target="_blank"><slot /></a>',
+    props: ['href'],
+  },
+}
+
+function makeMessage(reasons = []) {
+  return {
     id: 123,
-    worry: [
-      {
-        worryword: {
-          id: 1,
-          keyword: 'dangerous',
-          type: 'Review',
-        },
-      },
-    ],
-    ...overrides,
-  })
-
-  function mountComponent(props = {}, messageOverrides = {}) {
-    const messageData = createTestMessage(messageOverrides)
-
-    mockMessageStore.byId.mockImplementation((id) => {
-      if (id === messageData.id) return messageData
-      return null
-    })
-
-    return mount(ModMessageWorry, {
-      props: {
-        messageid: messageData.id,
-        ...props,
-      },
-      global: {
-        stubs: {
-          NoticeMessage: {
-            template:
-              '<div class="notice-message" :class="variant"><slot /></div>',
-            props: ['variant'],
-          },
-          'b-button': {
-            template:
-              '<button :class="variant" @click="$emit(\'click\')"><slot /></button>',
-            props: ['variant'],
-          },
-          ExternalLink: {
-            template: '<a :href="href" target="_blank"><slot /></a>',
-            props: ['href'],
-          },
-        },
-      },
-    })
+    messagegroups: [{ contentcheck_reasons: reasons }],
   }
+}
 
+function mountWithReasons(reasons) {
+  const message = makeMessage(reasons)
+  mockMessageStore.byId.mockImplementation((id) =>
+    id === message.id ? message : null
+  )
+  return mount(ModMessageWorry, {
+    props: { messageid: message.id },
+    global: { stubs: STUBS },
+  })
+}
+
+describe('ModMessageWorry', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
   describe('rendering', () => {
-    it('displays NoticeMessage for each worry word', () => {
-      const wrapper = mountComponent(
-        {},
-        {
-          worry: [
-            { worryword: { id: 1, keyword: 'word1', type: 'Review' } },
-            { worryword: { id: 2, keyword: 'word2', type: 'Review' } },
-          ],
-        }
-      )
+    it('renders nothing when there are no contentcheck reasons', () => {
+      const wrapper = mountWithReasons([])
+      expect(wrapper.findAll('.notice-message').length).toBe(0)
+    })
+
+    it('renders one NoticeMessage per reason', () => {
+      const wrapper = mountWithReasons([
+        { check: 'Vague', category: null, detail: "Item name 'stuff' is too generic" },
+        { check: 'PhoneNumber', category: null, detail: 'Post contains what looks like a phone number' },
+      ])
       expect(wrapper.findAll('.notice-message').length).toBe(2)
     })
 
-    it('displays worry word keyword in danger text', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('dangerous')
-      expect(wrapper.find('span.text-danger').exists()).toBe(true)
-    })
-
-    it('displays "Flagged for review" text', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('Flagged for review')
-    })
-
-    it('displays "Click for more info" button initially', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.text()).toContain('Click for more info')
-    })
-
-    it('applies warning variant to NoticeMessage', () => {
-      const wrapper = mountComponent()
+    it('applies warning variant to each NoticeMessage', () => {
+      const wrapper = mountWithReasons([
+        { check: 'Vague', category: null, detail: 'too generic' },
+      ])
       expect(wrapper.find('.notice-message.warning').exists()).toBe(true)
     })
-  })
 
-  describe('expand/collapse behavior', () => {
-    it('starts collapsed (expand is false)', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.vm.expand).toBe(false)
+    it('handles message with no messagegroups', () => {
+      const message = { id: 123 }
+      mockMessageStore.byId.mockImplementation(() => message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.findAll('.notice-message').length).toBe(0)
     })
 
-    it('expands when "Click for more info" is clicked', async () => {
-      const wrapper = mountComponent()
-      const button = wrapper.find('button')
-      await button.trigger('click')
-      expect(wrapper.vm.expand).toBe(true)
-    })
-
-    it('collapses when "Hide more info" is clicked', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.expand = true
-      await wrapper.vm.$nextTick()
-      const button = wrapper.find('button')
-      await button.trigger('click')
-      expect(wrapper.vm.expand).toBe(false)
-    })
-
-    it('shows "Hide more info" when expanded', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.expand = true
-      await wrapper.vm.$nextTick()
-      expect(wrapper.text()).toContain('Hide more info')
+    it('handles messagegroup with null contentcheck_reasons', () => {
+      const message = { id: 123, messagegroups: [{ contentcheck_reasons: null }] }
+      mockMessageStore.byId.mockImplementation(() => message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.findAll('.notice-message').length).toBe(0)
     })
   })
 
-  describe('worry word types', () => {
-    describe('Review type', () => {
-      it('displays Review explanation when expanded', async () => {
-        const wrapper = mountComponent(
-          {},
-          {
-            worry: [{ worryword: { id: 1, keyword: 'test', type: 'Review' } }],
-          }
-        )
-        wrapper.vm.expand = true
-        await wrapper.vm.$nextTick()
-        expect(wrapper.text()).toContain('flagged up for review')
-        expect(wrapper.text()).toContain("If you can't see anything wrong")
-      })
+  describe('Vague check', () => {
+    it('shows Vague post heading', () => {
+      const wrapper = mountWithReasons([
+        { check: 'Vague', category: null, detail: "Item name 'stuff' is too generic" },
+      ])
+      expect(wrapper.text()).toContain('Vague post')
     })
 
-    describe('Regulated type', () => {
-      it('displays Regulated explanation when expanded', async () => {
-        const wrapper = mountComponent(
-          {},
-          {
-            worry: [
-              { worryword: { id: 1, keyword: 'test', type: 'Regulated' } },
-            ],
-          }
-        )
-        wrapper.vm.expand = true
-        await wrapper.vm.$nextTick()
-        expect(wrapper.text()).toContain('regulated substance')
-        expect(wrapper.text()).toContain('not legal on Freegle')
-      })
+    it('shows the detail text', () => {
+      const wrapper = mountWithReasons([
+        { check: 'Vague', category: null, detail: "Item name 'stuff' is too generic" },
+      ])
+      expect(wrapper.text()).toContain("Item name 'stuff' is too generic")
     })
 
-    describe('Reportable type', () => {
-      it('displays Reportable explanation when expanded', async () => {
-        const wrapper = mountComponent(
-          {},
-          {
-            worry: [
-              { worryword: { id: 1, keyword: 'test', type: 'Reportable' } },
-            ],
-          }
-        )
-        wrapper.vm.expand = true
-        await wrapper.vm.$nextTick()
-        expect(wrapper.text()).toContain('reportable substance')
-        expect(wrapper.text()).toContain('reported to the police')
-      })
-    })
-
-    describe('Medicine type', () => {
-      it('displays Medicine explanation when expanded', async () => {
-        const wrapper = mountComponent(
-          {},
-          {
-            worry: [
-              { worryword: { id: 1, keyword: 'aspirin', type: 'Medicine' } },
-            ],
-          }
-        )
-        wrapper.vm.expand = true
-        await wrapper.vm.$nextTick()
-        expect(wrapper.text()).toContain('drug, medicine or supplement')
-        expect(wrapper.text()).toContain('not legal on Freegle')
-      })
+    it('asks mod to request a more specific description', () => {
+      const wrapper = mountWithReasons([
+        { check: 'Vague', category: null, detail: "Item name 'junk' is too generic" },
+      ])
+      expect(wrapper.text()).toContain('describe the item more specifically')
     })
   })
 
-  describe('external links', () => {
-    it('displays link to Central/Discourse when expanded', async () => {
-      const wrapper = mountComponent(
-        {},
-        {
-          worry: [{ worryword: { id: 1, keyword: 'test', type: 'Regulated' } }],
-        }
-      )
-      wrapper.vm.expand = true
-      await wrapper.vm.$nextTick()
+  describe('PhoneNumber check', () => {
+    it('shows Phone number heading', () => {
+      const wrapper = mountWithReasons([
+        { check: 'PhoneNumber', category: null, detail: 'Post contains what looks like a phone number' },
+      ])
+      expect(wrapper.text()).toContain('Phone number')
+    })
+
+    it('asks mod to request phone number removal', () => {
+      const wrapper = mountWithReasons([
+        { check: 'PhoneNumber', category: null, detail: 'Post contains what looks like a phone number' },
+      ])
+      expect(wrapper.text()).toContain('remove their phone number')
+    })
+  })
+
+  describe('EmailAddress check', () => {
+    it('shows Email address heading', () => {
+      const wrapper = mountWithReasons([
+        { check: 'EmailAddress', category: null, detail: 'Post contains an external email address' },
+      ])
+      expect(wrapper.text()).toContain('Email address')
+    })
+
+    it('asks mod to request email removal', () => {
+      const wrapper = mountWithReasons([
+        { check: 'EmailAddress', category: null, detail: 'Post contains an external email address' },
+      ])
+      expect(wrapper.text()).toContain('remove their email address')
+    })
+  })
+
+  describe('MessagingLink check', () => {
+    it('shows Messaging app link heading', () => {
+      const wrapper = mountWithReasons([
+        { check: 'MessagingLink', category: null, detail: 'Post contains a messaging app link (wa.me)' },
+      ])
+      expect(wrapper.text()).toContain('Messaging app link')
+    })
+
+    it('shows the detail text', () => {
+      const wrapper = mountWithReasons([
+        { check: 'MessagingLink', category: null, detail: 'Post contains a messaging app link (wa.me)' },
+      ])
+      expect(wrapper.text()).toContain('Post contains a messaging app link (wa.me)')
+    })
+
+    it('asks mod to request link removal', () => {
+      const wrapper = mountWithReasons([
+        { check: 'MessagingLink', category: null, detail: 'Post contains a messaging app link (wa.me)' },
+      ])
+      expect(wrapper.text()).toContain('remove the link')
+    })
+  })
+
+  describe('ConcernKeyword check — categories', () => {
+    it('substance_regulated: shows Regulated substance heading', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'substance_regulated', detail: "Matched concern keyword 'cocaine'" },
+      ])
+      expect(wrapper.text()).toContain('Regulated substance')
+    })
+
+    it('substance_regulated: mentions not legal on Freegle', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'substance_regulated', detail: "Matched concern keyword 'cocaine'" },
+      ])
+      expect(wrapper.text()).toContain('not legal on Freegle')
+    })
+
+    it('substance_regulated: links to Central', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'substance_regulated', detail: "Matched concern keyword 'cocaine'" },
+      ])
       const links = wrapper.findAll('a')
       const centralLink = links.find((l) =>
         l.attributes('href')?.includes('discourse.ilovefreegle.org')
@@ -218,170 +194,101 @@ describe('ModMessageWorry', () => {
       expect(centralLink).toBeDefined()
     })
 
-    it('displays link to wiki for more information', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.expand = true
-      await wrapper.vm.$nextTick()
-      const links = wrapper.findAll('a')
-      const wikiLink = links.find((l) =>
-        l.attributes('href')?.includes('wiki.ilovefreegle.org/Worry_Words')
-      )
-      expect(wikiLink).toBeDefined()
+    it('substance_reportable: shows Reportable substance heading', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'substance_reportable', detail: "Matched concern keyword 'asbestos'" },
+      ])
+      expect(wrapper.text()).toContain('Reportable substance')
+    })
+
+    it('substance_reportable: mentions reporting to police', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'substance_reportable', detail: "Matched concern keyword 'asbestos'" },
+      ])
+      expect(wrapper.text()).toContain('reported to the police')
+    })
+
+    it('substance_medicine: shows Medicine or drug heading', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'substance_medicine', detail: "Matched concern keyword 'aspirin'" },
+      ])
+      expect(wrapper.text()).toContain('Medicine or drug')
+    })
+
+    it('substance_medicine: mentions not legal on Freegle', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'substance_medicine', detail: "Matched concern keyword 'aspirin'" },
+      ])
+      expect(wrapper.text()).toContain('not legal on Freegle')
+    })
+
+    it('scam: shows Possible scam heading', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'scam', detail: "Matched concern keyword 'lottery'" },
+      ])
+      expect(wrapper.text()).toContain('Possible scam')
+    })
+
+    it('scam: says fine to approve if nothing wrong', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'scam', detail: "Matched concern keyword 'lottery'" },
+      ])
+      expect(wrapper.text()).toContain("fine to approve")
+    })
+
+    it('review (generic category): shows Flagged for review heading', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'review', detail: "Matched concern keyword 'test'" },
+      ])
+      expect(wrapper.text()).toContain('Flagged for review')
+    })
+
+    it('review: shows detail text', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'review', detail: "Matched concern keyword 'suspicious'" },
+      ])
+      expect(wrapper.text()).toContain("Matched concern keyword 'suspicious'")
+    })
+
+    it('unknown category: falls through to Flagged for review', () => {
+      const wrapper = mountWithReasons([
+        { check: 'ConcernKeyword', category: 'unknown_future_category', detail: 'some detail' },
+      ])
+      expect(wrapper.text()).toContain('Flagged for review')
     })
   })
 
-  describe('multiple worry words', () => {
-    it('renders separate NoticeMessage for each worry word', () => {
-      const wrapper = mountComponent(
-        {},
-        {
-          worry: [
-            { worryword: { id: 1, keyword: 'word1', type: 'Review' } },
-            { worryword: { id: 2, keyword: 'word2', type: 'Regulated' } },
-            { worryword: { id: 3, keyword: 'word3', type: 'Medicine' } },
-          ],
-        }
-      )
-      const notices = wrapper.findAll('.notice-message')
-      expect(notices.length).toBe(3)
+  describe('unknown check type', () => {
+    it('shows generic Flagged heading', () => {
+      const wrapper = mountWithReasons([
+        { check: 'SomeFutureCheck', category: null, detail: 'something flagged' },
+      ])
+      expect(wrapper.text()).toContain('Flagged')
     })
 
-    it('displays each keyword', () => {
-      const wrapper = mountComponent(
-        {},
-        {
-          worry: [
-            { worryword: { id: 1, keyword: 'alpha', type: 'Review' } },
-            { worryword: { id: 2, keyword: 'beta', type: 'Review' } },
-          ],
-        }
-      )
-      expect(wrapper.text()).toContain('alpha')
-      expect(wrapper.text()).toContain('beta')
+    it('shows the detail text', () => {
+      const wrapper = mountWithReasons([
+        { check: 'SomeFutureCheck', category: null, detail: 'something flagged' },
+      ])
+      expect(wrapper.text()).toContain('something flagged')
+    })
+  })
+
+  describe('multiple reasons', () => {
+    it('renders a separate NoticeMessage for each reason', () => {
+      const wrapper = mountWithReasons([
+        { check: 'Vague', category: null, detail: "Item name 'stuff' is too generic" },
+        { check: 'ConcernKeyword', category: 'scam', detail: "Matched concern keyword 'lottery'" },
+        { check: 'PhoneNumber', category: null, detail: 'Post contains what looks like a phone number' },
+      ])
+      expect(wrapper.findAll('.notice-message').length).toBe(3)
     })
   })
 
   describe('props', () => {
-    it('messageid prop is required', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.props('messageid')).toBeDefined()
-    })
-  })
-
-  describe('key generation', () => {
-    it('generates unique keys for v-for based on message and worryword id', () => {
-      const wrapper = mountComponent(
-        { messageid: 456 },
-        {
-          id: 456,
-          worry: [
-            { worryword: { id: 1, keyword: 'word1', type: 'Review' } },
-            { worryword: { id: 2, keyword: 'word2', type: 'Review' } },
-          ],
-        }
-      )
-      // Each NoticeMessage should be rendered uniquely
-      const notices = wrapper.findAll('.notice-message')
-      expect(notices.length).toBe(2)
-    })
-  })
-
-  describe('edge cases', () => {
-    it('handles empty worry array', () => {
-      const wrapper = mountComponent({}, { worry: [] })
-      expect(wrapper.findAll('.notice-message').length).toBe(0)
-    })
-
-    it('handles undefined worry array', () => {
-      const messageData = createTestMessage()
-      delete messageData.worry
-
-      mockMessageStore.byId.mockImplementation((id) => {
-        if (id === messageData.id) return messageData
-        return null
-      })
-
-      const wrapper = mount(ModMessageWorry, {
-        props: { messageid: messageData.id },
-        global: {
-          stubs: {
-            NoticeMessage: {
-              template:
-                '<div class="notice-message" :class="variant"><slot /></div>',
-              props: ['variant'],
-            },
-            'b-button': {
-              template:
-                '<button :class="variant" @click="$emit(\'click\')"><slot /></button>',
-              props: ['variant'],
-            },
-            ExternalLink: {
-              template: '<a :href="href" target="_blank"><slot /></a>',
-              props: ['href'],
-            },
-          },
-        },
-      })
-      expect(wrapper.findAll('.notice-message').length).toBe(0)
-    })
-
-    it('handles worry word with empty keyword', () => {
-      const wrapper = mountComponent(
-        {},
-        {
-          worry: [{ worryword: { id: 1, keyword: '', type: 'Review' } }],
-        }
-      )
-      expect(wrapper.find('.notice-message').exists()).toBe(true)
-    })
-
-    it('handles unknown worry type', async () => {
-      const wrapper = mountComponent(
-        {},
-        {
-          worry: [
-            { worryword: { id: 1, keyword: 'test', type: 'UnknownType' } },
-          ],
-        }
-      )
-      wrapper.vm.expand = true
-      await wrapper.vm.$nextTick()
-      // Should not show any type-specific explanation
-      expect(wrapper.text()).not.toContain('flagged up for review')
-      expect(wrapper.text()).not.toContain('regulated substance')
-    })
-  })
-
-  describe('styling', () => {
-    it('has mb-1 class on NoticeMessage', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.find('.notice-message.mb-1').exists()).toBe(true)
-    })
-
-    it('keyword has text-danger and fw-bold classes', () => {
-      const wrapper = mountComponent()
-      const keywordSpan = wrapper.find('span.text-danger.fw-bold')
-      expect(keywordSpan.exists()).toBe(true)
-    })
-
-    it('button has link variant and alignment classes', () => {
-      const wrapper = mountComponent()
-      const button = wrapper.find('button')
-      expect(button.classes()).toContain('link')
-    })
-  })
-
-  describe('state management', () => {
-    it('expand state is component-local (ref)', () => {
-      const wrapper = mountComponent()
-      expect(wrapper.vm.expand).toBe(false)
-    })
-
-    it('expand state persists across re-renders', async () => {
-      const wrapper = mountComponent()
-      wrapper.vm.expand = true
-      await wrapper.vm.$nextTick()
-      expect(wrapper.vm.expand).toBe(true)
+    it('messageid prop is required and used', () => {
+      const wrapper = mountWithReasons([])
+      expect(wrapper.props('messageid')).toBe(123)
     })
   })
 })
