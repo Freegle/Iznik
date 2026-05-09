@@ -441,10 +441,12 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	var msgIDs []uint64
 
 	// Hide messages not yet processed by the content-check batch job.
-	// The 5-minute fallback ensures mods always see messages if the batch job is down.
+	// The 30-minute fallback ensures mods always see messages if the batch job is down,
+	// and also makes existing rows (contentcheck_checked_at IS NULL) visible without a
+	// backfill — their arrival times are already in the past.
 	contentcheckFilter := ""
 	if collection == utils.COLLECTION_PENDING {
-		contentcheckFilter = " AND (mg.contentcheck_checked_at IS NOT NULL OR mg.arrival < NOW() - INTERVAL 5 MINUTE)"
+		contentcheckFilter = " AND (mg.contentcheck_checked_at IS NOT NULL OR mg.arrival < NOW() - INTERVAL 30 MINUTE)"
 	}
 
 	if collection == "Edit" {

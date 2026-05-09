@@ -593,6 +593,160 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // auditExisting — read-only disagreement scan
+    // -------------------------------------------------------------------------
+
+    public function test_audit_approved_message_that_would_be_flagged_returns_should_flag(): void
+    {
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        // Approved message that contains a phone number (would be flagged by PII check).
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Sofa (SW1A)',
+            'textbody' => 'Call 07700 900111 to collect.',
+            'message'  => 'Call 07700 900111 to collect.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'                   => $msgid,
+            'groupid'                 => $group->id,
+            'collection'              => 'Approved',
+            'arrival'                 => now(),
+            'deleted'                 => 0,
+            'contentcheck_checked_at' => now(),
+        ]);
+
+        $disagreements = $this->service->auditExisting($group->id);
+
+        $this->assertNotEmpty($disagreements);
+        $types = array_column($disagreements, 'type');
+        $this->assertContains('should_flag', $types);
+
+        $flagged = array_filter($disagreements, fn ($d) => $d['msgid'] === (int) $msgid);
+        $this->assertNotEmpty($flagged, 'Our specific message should appear in disagreements');
+
+        $entry = array_values($flagged)[0];
+        $this->assertEquals('should_flag', $entry['type']);
+        $this->assertNotEmpty($entry['reasons']);
+    }
+
+    public function test_audit_pending_message_that_would_be_approved_returns_should_approve(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        // Clean pending message from a non-moderated user — audit should flag it as should_approve.
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Wooden bookshelf (SW1A)',
+            'textbody' => 'Beautiful solid oak bookshelf. Collection only.',
+            'message'  => 'Beautiful solid oak bookshelf. Collection only.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Wooden bookshelf']);
+        $itemId = DB::table('items')->where('name', 'Wooden bookshelf')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        $disagreements = $this->service->auditExisting($group->id);
+
+        $approvals = array_filter($disagreements, fn ($d) => $d['msgid'] === (int) $msgid);
+        $this->assertNotEmpty($approvals, 'Clean pending message from unmoderated user should appear as should_approve');
+
+        $entry = array_values($approvals)[0];
+        $this->assertEquals('should_approve', $entry['type']);
+        $this->assertEmpty($entry['reasons']);
+    }
+
+    public function test_audit_pending_moderated_user_not_returned_as_should_approve(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        // NULL ourPostingStatus = MODERATED — message should NOT appear as should_approve.
+        $this->createMembership($user, $group);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Lamp (SW1A)',
+            'textbody' => 'A nice lamp. Collection only.',
+            'message'  => 'A nice lamp. Collection only.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Lamp']);
+        $itemId = DB::table('items')->where('name', 'Lamp')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        $disagreements = $this->service->auditExisting($group->id);
+
+        $forThisMsg = array_filter($disagreements, fn ($d) => $d['msgid'] === (int) $msgid);
+        $this->assertEmpty($forThisMsg, 'Moderated user pending message should not appear in audit results');
+    }
+
+    public function test_audit_returns_empty_when_no_disagreements(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        // Approved message with contentcheck already done and no failures — no disagreement.
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Oak table (SW1A)',
+            'textbody' => 'A lovely oak table. Collection only.',
+            'message'  => 'A lovely oak table. Collection only.',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Oak table']);
+        $itemId = DB::table('items')->where('name', 'Oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'                   => $msgid,
+            'groupid'                 => $group->id,
+            'collection'              => 'Approved',
+            'arrival'                 => now(),
+            'deleted'                 => 0,
+            'contentcheck_checked_at' => now(),
+        ]);
+
+        $disagreements = $this->service->auditExisting($group->id);
+
+        $forThisMsg = array_filter($disagreements, fn ($d) => $d['msgid'] === (int) $msgid);
+        $this->assertEmpty($forThisMsg);
+    }
+
+    // -------------------------------------------------------------------------
     // Artisan command
     // -------------------------------------------------------------------------
 
