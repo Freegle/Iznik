@@ -3068,8 +3068,37 @@ jobs:
           name: Configure ModTools Android Identity
           command: |
             sed -i 's/org\.ilovefreegle\.direct/org.ilovefreegle.modtools/g' android/app/build.gradle
-            sed -i 's/>Freegle</>Freegle ModTools</g' android/app/src/main/res/values/strings.xml
+            sed -i 's/>Freegle</>ModTools</g' android/app/src/main/res/values/strings.xml
             echo "✅ ModTools identity configured"
+      - run:
+          name: Set ModTools Launcher Icons
+          command: |
+            SRC="modtools/public/android-chrome-512x512.png"
+            RES="android/app/src/main/res"
+            pip install pillow --quiet
+            python3 - \<<'PYEOF'
+            from PIL import Image
+            src = Image.open("modtools/public/android-chrome-512x512.png").convert("RGBA")
+            res = "android/app/src/main/res"
+            icons = {
+              "mipmap-ldpi/ic_launcher.png": 36,
+              "mipmap-mdpi/ic_launcher.png": 48,
+              "mipmap-hdpi/ic_launcher.png": 72,
+              "mipmap-xhdpi/ic_launcher.png": 96,
+              "mipmap-xxhdpi/ic_launcher.png": 144,
+              "mipmap-xxxhdpi/ic_launcher.png": 192,
+              "mipmap-ldpi-v26/ic_launcher_foreground.png": 81,
+              "mipmap-mdpi-v26/ic_launcher_foreground.png": 108,
+              "mipmap-hdpi-v26/ic_launcher_foreground.png": 162,
+              "mipmap-xhdpi-v26/ic_launcher_foreground.png": 216,
+              "mipmap-xxhdpi-v26/ic_launcher_foreground.png": 324,
+              "mipmap-xxxhdpi-v26/ic_launcher_foreground.png": 432,
+            }
+            for path, size in icons.items():
+                img = src.resize((size, size), Image.LANCZOS)
+                img.save(f"{res}/{path}")
+                print(f"OK {path} ({size}x{size})")
+            PYEOF
       - run:
           name: Make gradlew executable
           command: chmod +x android/gradlew
