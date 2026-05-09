@@ -778,6 +778,14 @@ Schedule::command('mail:engage')
     ->sendOutputTo(cronLog('mail:engage'))
     ->runInBackground();
 
+// Check for inactive mods and notify group owners/mentors.
+// V1: cron/mod_active.php (weekly Monday 15:00)
+Schedule::command('groups:check-mod-welfare')
+    ->weeklyOn(1, '15:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:check-mod-welfare'))
+    ->runInBackground();
+
 // =============================================================================
 // GIT SUMMARY
 // =============================================================================
