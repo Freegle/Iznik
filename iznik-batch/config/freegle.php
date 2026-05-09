@@ -66,6 +66,8 @@ return [
         'info_addr' => env('FREEGLE_INFO_ADDR', 'info@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
         'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
+        // Central mail recipient for newsletter/story vote emails (discoursereplies+Tech or geeks).
+        'central_mail_to' => env('FREEGLE_CENTRAL_MAIL_TO', 'discoursereplies+Tech@ilovefreegle.org'),
         // Trash Nothing domain for incoming mail detection
         'trashnothing_domain' => env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
         // Trash Nothing shared secret for mail authentication (skips spam check)
