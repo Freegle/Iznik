@@ -15,7 +15,7 @@ parameters:
     description: "Set to true to build iOS and upload to TestFlight from current branch"
 
 orbs:
-  freegle: freegle/tests@1.1.260
+  freegle: freegle/tests@1.1.261
 
 jobs:
   mark-ci-passed:
