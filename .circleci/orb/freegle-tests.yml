@@ -2997,6 +2997,11 @@ jobs:
           paths:
             - node_modules
       - run:
+          name: Install ModTools Dependencies
+          command: cd modtools && npm ci --legacy-peer-deps
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - run:
           name: Build ModTools Nuxt App
           command: |
             export NODE_OPTIONS="--max-old-space-size=3584"
