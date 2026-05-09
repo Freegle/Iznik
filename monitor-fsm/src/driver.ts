@@ -814,6 +814,8 @@ async function main() {
       const result = await putStatusPost(db)
       if (result.posted) {
         out(`Discourse status post updated (HTTP ${result.status})`)
+      } else if (result.reason === 'content unchanged') {
+        dbg('Discourse status post skipped — content unchanged')
       } else {
         outWarn(`Discourse status post NOT updated: ${result.reason ?? `HTTP ${result.status}`}`)
       }
