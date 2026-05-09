@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 
 class GroupBoundaryService
 {
@@ -48,6 +49,17 @@ class GroupBoundaryService
                     'nameshort'  => $group->nameshort,
                     'error'      => $e->getMessage(),
                 ]);
+
+                // V1 mailed GEEKS_ADDR on boundary errors — preserve that notification.
+                Mail::raw(
+                    "Invalid CGA/DPA for {$group->id} {$group->nameshort}\n\n{$e->getMessage()}",
+                    function ($message) use ($group) {
+                        $message->to(config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org'))
+                            ->from(config('freegle.mail.from_address', 'geeks@ilovefreegle.org'))
+                            ->subject("Invalid CGA/DPA for {$group->id} {$group->nameshort}");
+                    }
+                );
+
                 $errors++;
             }
         }

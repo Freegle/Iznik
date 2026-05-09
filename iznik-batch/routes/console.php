@@ -454,6 +454,16 @@ Schedule::command('messages:remap-subjects')
     ->sendOutputTo(cronLog('messages:remap-subjects'))
     ->runInBackground();
 
+// Record giver/taker visualise pairs for offers with photos (distance ≤ 30 km).
+// V1: cron/visualise.php (every 5 minutes) — disabled pending sign-off
+// Note: V1 called ensureAvatar() as a side effect to refresh TN user avatars; omitted here
+//       since it involved external HTTP calls and is unrelated to the visualise insert.
+// Schedule::command('messages:update-visualise')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('messages:update-visualise'))
+//     ->runInBackground();
+
 // Update messages_spatial with recent messages, outcomes, and remove stale entries.
 // V1: cron/message_spatial.php (every 5 minutes)
 // Note: V1 also pushed freebie-alert jobs to Pheanstalk — that mechanism is retired in the new stack.
@@ -520,6 +530,22 @@ Schedule::command('integrations:sync-lovejunk')
     ->sendOutputTo(cronLog('integrations:sync-lovejunk'))
     ->runInBackground();
 
+// Sync upcoming Restart Project repair events into group events.
+// V1: cron/restartproject.php (23:00 daily) — disabled pending sign-off
+// Schedule::command('integrations:sync-restartproject')
+//     ->dailyAt('23:00')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('integrations:sync-restartproject'))
+//     ->runInBackground();
+
+// Sync upcoming Repair Cafe Wales events into group events.
+// V1: cron/repaircafewales.php (23:00 daily) — disabled pending sign-off
+// Schedule::command('integrations:sync-repaircafewales')
+//     ->dailyAt('23:00')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('integrations:sync-repaircafewales'))
+//     ->runInBackground();
+
 // Message expiry - process deadline-expired messages and spatial index expiry.
 // V1: cron/messages_expired.php (was hourly; daily is sufficient since deadline < CURDATE() only changes daily).
 // Fixed: clears messages_outcomes_intended before creating outcome (matches V1 mark()).
@@ -559,6 +585,14 @@ Schedule::command('users:update-support-roles')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('users:update-support-roles'))
     ->runInBackground();
+
+// Validate group boundary geometry (CGA/DPA polygons).
+// V1: cron/check_cgas.php (every 5 minutes) — disabled pending sign-off
+// Schedule::command('groups:check-boundaries')
+//     ->everyFiveMinutes()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('groups:check-boundaries'))
+//     ->runInBackground();
 
 // Update group stats: fix repost settings, polyindex, activity/funding, mod counts, stats_outcomes.
 // V1: cron/group_stats.php (daily at 02:00)
