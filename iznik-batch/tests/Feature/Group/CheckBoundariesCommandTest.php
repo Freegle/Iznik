@@ -63,7 +63,7 @@ class CheckBoundariesCommandTest extends TestCase
             "INSERT INTO authorities (id, name, polygon) VALUES (74579, 'Test Auth', ST_GeomFromText('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 3857))"
         );
 
-        // Group with syntactically invalid WKT — ST_GeomFromText will throw ER_GIS_INVALID_DATA.
+        // Group with syntactically invalid WKT — ST_GeomFromText throws ER_GIS_INVALID_DATA.
         $group = $this->createTestGroup(['publish' => 1, 'onmap' => 1, 'polyofficial' => 'POLYGON((0 0, 1 0))']);
 
         $result = (new GroupBoundaryService())->checkBoundaries(false);
