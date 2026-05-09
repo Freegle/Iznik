@@ -643,6 +643,14 @@ Schedule::command('messages:update-index')
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
 
+// Notify group mods about recent chitchat (newsfeed) posts from their members.
+// V1: cron/newsfeed_modnotif.php (daily 13:30)
+Schedule::command('mail:newsfeed-mod-notif')
+    ->dailyAt('13:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:newsfeed-mod-notif'))
+    ->runInBackground();
+
 // =============================================================================
 // GIT SUMMARY
 // =============================================================================
