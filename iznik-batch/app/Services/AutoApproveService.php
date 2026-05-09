@@ -71,7 +71,6 @@ class AutoApproveService
             ->where('messages_groups.deleted', 0)
             ->whereNull('messages.deleted')
             ->whereRaw('TIMESTAMPDIFF(HOUR, messages_groups.arrival, NOW()) > ?', [self::PENDING_HOURS])
-            ->whereNotNull('messages_groups.contentcheck_checked_at')
             ->get()
             ->groupBy('msgid');
 
