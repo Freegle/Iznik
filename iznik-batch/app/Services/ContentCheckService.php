@@ -2,12 +2,24 @@
 
 namespace App\Services;
 
+use App\Models\BackgroundTask;
+use App\Models\Message;
+use App\Models\MessageGroup;
 use App\Services\Mail\Incoming\SpamCheckService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class ContentCheckService
 {
+    public const CHECK_WORRY_WORD      = 'WorryWord';
+    public const CHECK_CONCERN_KEYWORD = 'ConcernKeyword';
+    public const CHECK_SPAM_KEYWORD    = 'SpamKeyword';
+    public const CHECK_REVIEW          = 'Review';
+    public const CHECK_VAGUE           = 'Vague';
+    public const CHECK_PHONE_NUMBER    = 'PhoneNumber';
+    public const CHECK_EMAIL_ADDRESS   = 'EmailAddress';
+    public const CHECK_MESSAGING_LINK  = 'MessagingLink';
+
     private const VAGUE_KEYWORDS = [
         'stuff', 'things', 'items', 'junk', 'bits', 'various', 'misc',
         'miscellaneous', 'anything', 'loads', 'bundle', 'random', 'assorted',
@@ -92,7 +104,7 @@ class ContentCheckService
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->join('users as u', 'u.id', '=', 'm.fromuser')
             ->select('mg.msgid', 'mg.groupid', 'm.type as msgtype')
-            ->where('mg.collection', 'Pending')
+            ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
             ->whereNull('mg.contentcheck_checked_at')
             ->where('mg.deleted', 0)
             ->whereNull('m.deleted')
@@ -117,7 +129,7 @@ class ContentCheckService
                         ->where('msgid', $row->msgid)
                         ->where('groupid', $row->groupid)
                         ->update([
-                            'collection'              => 'Approved',
+                            'collection'              => MessageGroup::COLLECTION_APPROVED,
                             'approvedby'              => null,
                             'approvedat'              => now(),
                             'arrival'                 => now(),
@@ -125,10 +137,10 @@ class ContentCheckService
                             'contentcheck_reasons'    => null,
                         ]);
 
-                    if ($row->msgtype === 'Offer') {
+                    if ($row->msgtype === Message::TYPE_OFFER) {
                         DB::table('background_tasks')->insert([
-                            'task_type' => 'freebie_alerts_add',
-                            'data'      => json_encode(['msgid' => $row->msgid]),
+                            'task_type' => BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
+                            'data'      => json_encode(['msgid' => (int) $row->msgid]),
                         ]);
                     }
 
@@ -144,8 +156,8 @@ class ContentCheckService
                         ]);
 
                     DB::table('background_tasks')->insert([
-                        'task_type' => 'push_notify_group_mods',
-                        'data'      => json_encode(['group_id' => $row->groupid]),
+                        'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS,
+                        'data'      => json_encode(['group_id' => (int) $row->groupid]),
                     ]);
 
                     $stats['kept_pending']++;
@@ -217,7 +229,7 @@ class ContentCheckService
                 foreach (explode(',', $raw) as $w) {
                     $w = trim($w);
                     if ($w !== '') {
-                        $groupWords[] = (object) ['keyword' => strtolower($w), 'type' => 'Review'];
+                        $groupWords[] = (object) ['keyword' => strtolower($w), 'type' => self::CHECK_REVIEW];
                     }
                 }
             }
@@ -229,7 +241,7 @@ class ContentCheckService
         foreach ($allWords as $word) {
             $kw = strtolower($word->keyword);
             if (str_contains($haystack, $kw)) {
-                return ['check' => 'WorryWord', 'detail' => "Matched worry word '{$kw}' (type: {$word->type})"];
+                return ['check' => self::CHECK_WORRY_WORD, 'detail' => "Matched worry word '{$kw}' (type: {$word->type})"];
             }
         }
 
@@ -248,7 +260,7 @@ class ContentCheckService
         foreach ($keywords as $kw) {
             $word = strtolower($kw->keyword);
             if (str_contains($haystack, $word)) {
-                return ['check' => 'ConcernKeyword', 'detail' => "Matched concern keyword '{$word}' (type: {$kw->type}; action: {$kw->action})"];
+                return ['check' => self::CHECK_CONCERN_KEYWORD, 'detail' => "Matched concern keyword '{$word}' (category: {$kw->category}; action: {$kw->action})"];
             }
         }
 
@@ -272,7 +284,7 @@ class ContentCheckService
 
         [, , $detail] = $result;
 
-        return ['check' => 'SpamKeyword', 'detail' => $detail];
+        return ['check' => self::CHECK_SPAM_KEYWORD, 'detail' => $detail];
     }
 
     // -------------------------------------------------------------------------
@@ -286,7 +298,7 @@ class ContentCheckService
             return null;
         }
 
-        return ['check' => 'Review', 'detail' => "Content review triggered: {$reason}"];
+        return ['check' => self::CHECK_REVIEW, 'detail' => "Content review triggered: {$reason}"];
     }
 
     // -------------------------------------------------------------------------
@@ -302,7 +314,7 @@ class ContentCheckService
         $lower = strtolower(trim($itemName));
 
         if (mb_strlen($lower) < 3) {
-            return ['check' => 'Vague', 'detail' => "Item name '{$itemName}' is too short"];
+            return ['check' => self::CHECK_VAGUE, 'detail' => "Item name '{$itemName}' is too short"];
         }
 
         foreach (self::VAGUE_KEYWORDS as $keyword) {
@@ -310,7 +322,7 @@ class ContentCheckService
                 || str_starts_with($lower, $keyword . ' ')
                 || str_ends_with($lower, ' ' . $keyword)
             ) {
-                return ['check' => 'Vague', 'detail' => "Item name '{$itemName}' is too generic"];
+                return ['check' => self::CHECK_VAGUE, 'detail' => "Item name '{$itemName}' is too generic"];
             }
         }
 
@@ -336,7 +348,7 @@ class ContentCheckService
 
         // UK phone number detection — broad pattern covering mobile and landline formats.
         if (preg_match('/\b(?:(?:\+44|0044)\s?|0)(?:\d[\s\-]?){9,10}\b/', $haystack)) {
-            return ['check' => 'PhoneNumber', 'detail' => 'Post contains what looks like a phone number'];
+            return ['check' => self::CHECK_PHONE_NUMBER, 'detail' => 'Post contains what looks like a phone number'];
         }
 
         // External email address detection.
@@ -346,7 +358,7 @@ class ContentCheckService
                     || str_contains($email, 'trashnothing')
                     || str_contains($email, 'yahoogroups');
             if (!$isOurs) {
-                return ['check' => 'EmailAddress', 'detail' => 'Post contains an external email address'];
+                return ['check' => self::CHECK_EMAIL_ADDRESS, 'detail' => 'Post contains an external email address'];
             }
         }
 
@@ -363,7 +375,7 @@ class ContentCheckService
 
         foreach (self::MESSAGING_LINK_DOMAINS as $domain) {
             if (str_contains($haystack, $domain)) {
-                return ['check' => 'MessagingLink', 'detail' => "Post contains a messaging app link ({$domain})"];
+                return ['check' => self::CHECK_MESSAGING_LINK, 'detail' => "Post contains a messaging app link ({$domain})"];
             }
         }
 
