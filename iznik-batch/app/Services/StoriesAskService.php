@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Mail\Stories\AskMail;
 use App\Models\Group;
+use App\Models\Message;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -55,7 +56,7 @@ class StoriesAskService
 
             $offerCount = (int) DB::table('messages')
                 ->where('fromuser', $userId)
-                ->where('type', 'Offer')
+                ->where('type', Message::TYPE_OFFER)
                 ->count();
 
             if ($outcomeCount <= self::ASK_OUTCOME_THRESHOLD && $offerCount <= self::ASK_OFFER_THRESHOLD) {

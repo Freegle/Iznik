@@ -4,6 +4,7 @@ namespace Tests\Feature\Stories;
 
 use App\Models\Group;
 use App\Models\Membership;
+use App\Models\Message;
 use App\Models\User;
 use App\Services\StoriesAskService;
 use Illuminate\Support\Facades\DB;
@@ -27,8 +28,8 @@ class AskForStoriesCommandTest extends TestCase
 
         for ($i = 0; $i < $offerCount; $i++) {
             $msgId = DB::table('messages')->insertGetId([
-                'type' => 'Offer',
-                'source' => 'Platform',
+                'type' => Message::TYPE_OFFER,
+                'source' => Message::SOURCE_PLATFORM,
                 'subject' => 'OFFER: item',
                 'textbody' => 'test',
                 'fromuser' => $user->id,
@@ -37,7 +38,7 @@ class AskForStoriesCommandTest extends TestCase
             DB::table('messages_groups')->insert([
                 'msgid' => $msgId,
                 'groupid' => $group->id,
-                'collection' => 'Approved',
+                'collection' => Membership::COLLECTION_APPROVED,
                 'arrival' => now()->subDays(10)->toDateString(),
             ]);
         }
@@ -45,8 +46,8 @@ class AskForStoriesCommandTest extends TestCase
         // messages_by.msgid has FK to messages.id and unique(msgid, userid), so create real messages
         for ($i = 0; $i < $outcomeCount; $i++) {
             $msgId = DB::table('messages')->insertGetId([
-                'type' => 'Taken',
-                'source' => 'Platform',
+                'type' => Message::TYPE_TAKEN,
+                'source' => Message::SOURCE_PLATFORM,
                 'subject' => 'TAKEN: item',
                 'textbody' => 'test',
                 'fromuser' => $user->id,
