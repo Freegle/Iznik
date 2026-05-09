@@ -68,6 +68,10 @@ return [
         'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
         // Central mail recipient for newsletter/story vote emails (discoursereplies+Tech or geeks).
         'central_mail_to' => env('FREEGLE_CENTRAL_MAIL_TO', 'discoursereplies+Tech@ilovefreegle.org'),
+        // Treasurer address for financial invoices and reports.
+        'treasurer_addr' => env('FREEGLE_TREASURER_ADDR', 'treasurer@ilovefreegle.org'),
+        // Trash Nothing invoice recipient address for monthly LoveJunk income split.
+        'tn_invoice_addr' => env('FREEGLE_TN_INVOICE_ADDR', ''),
         // Trash Nothing domain for incoming mail detection
         'trashnothing_domain' => env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
         // Trash Nothing shared secret for mail authentication (skips spam check)

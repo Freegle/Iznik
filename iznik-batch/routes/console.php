@@ -727,6 +727,18 @@ Schedule::command('noticeboards:thank-users')
     ->runInBackground();
 
 // =============================================================================
+// LOVEJUNK TN INVOICE
+// =============================================================================
+
+// Monthly LoveJunk/TrashNothing invoice split — run on 1st of month at 15:00.
+// V1: cron/lovejunk_tn_invoice.php (monthly, 1st 15:00)
+Schedule::command('lovejunk:send-tn-invoice')
+    ->monthlyOn(1, '15:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('lovejunk:send-tn-invoice'))
+    ->runInBackground();
+
+// =============================================================================
 // BIRTHDAY EMAILS
 // =============================================================================
 
