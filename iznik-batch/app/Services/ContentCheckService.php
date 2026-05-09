@@ -240,6 +240,9 @@ class ContentCheckService
 
         foreach ($allWords as $word) {
             $kw = strtolower($word->keyword);
+            if ($kw === '') {
+                continue;
+            }
             if (str_contains($haystack, $kw)) {
                 return ['check' => self::CHECK_WORRY_WORD, 'detail' => "Matched worry word '{$kw}' (type: {$word->type})"];
             }
@@ -259,6 +262,9 @@ class ContentCheckService
 
         foreach ($keywords as $kw) {
             $word = strtolower($kw->keyword);
+            if ($word === '') {
+                continue;
+            }
             if (str_contains($haystack, $word)) {
                 return ['check' => self::CHECK_CONCERN_KEYWORD, 'detail' => "Matched concern keyword '{$word}' (category: {$kw->category}; action: {$kw->action})"];
             }

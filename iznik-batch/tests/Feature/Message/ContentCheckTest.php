@@ -47,6 +47,15 @@ class ContentCheckTest extends TestCase
         $this->assertNull($result);
     }
 
+    public function test_blank_worry_word_does_not_match_all_messages(): void
+    {
+        DB::table('worrywords')->insert(['keyword' => '', 'type' => 'Review']);
+
+        $result = $this->service->checkWorryWords('OFFER: Nice sofa', 'A lovely sofa', null);
+
+        $this->assertNull($result);
+    }
+
     public function test_worry_word_match_is_case_insensitive(): void
     {
         DB::table('worrywords')->insert(['keyword' => 'testworryword_cc2', 'type' => 'Review']);
@@ -77,6 +86,15 @@ class ContentCheckTest extends TestCase
 
     public function test_clean_text_returns_null_for_concern_keywords(): void
     {
+        $result = $this->service->checkConcernKeywords('OFFER: Nice lamp', 'A lovely lamp');
+
+        $this->assertNull($result);
+    }
+
+    public function test_blank_concern_keyword_does_not_match_all_messages(): void
+    {
+        DB::table('concern_keywords')->insert(['keyword' => '', 'category' => 'test', 'action' => 'flag']);
+
         $result = $this->service->checkConcernKeywords('OFFER: Nice lamp', 'A lovely lamp');
 
         $this->assertNull($result);
