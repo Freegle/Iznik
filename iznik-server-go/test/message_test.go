@@ -8235,9 +8235,9 @@ func TestContentcheckProcessedVisibleInPendingQueue(t *testing.T) {
 	assert.True(t, found, "processed message must appear in pending queue")
 }
 
-// TestContentcheckFallbackVisibleAfter5Minutes verifies the safety-net: a message
-// with contentcheck_checked_at IS NULL but arrival > 5 minutes ago IS shown.
-func TestContentcheckFallbackVisibleAfter5Minutes(t *testing.T) {
+// TestContentcheckFallbackVisibleAfter30Minutes verifies the safety-net: a message
+// with contentcheck_checked_at IS NULL but arrival > 30 minutes ago IS shown.
+func TestContentcheckFallbackVisibleAfter30Minutes(t *testing.T) {
 	prefix := uniquePrefix("msgcc_fallback")
 	db := database.DBConn
 
@@ -8249,12 +8249,12 @@ func TestContentcheckFallbackVisibleAfter5Minutes(t *testing.T) {
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 
-	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Old unprocessed chair', 'A chair', 'A chair', NOW() - INTERVAL 10 MINUTE, NOW() - INTERVAL 10 MINUTE, 'Platform')", userID)
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Old unprocessed chair', 'A chair', 'A chair', NOW() - INTERVAL 35 MINUTE, NOW() - INTERVAL 35 MINUTE, 'Platform')", userID)
 	var msgID uint64
 	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
 	require.NotZero(t, msgID)
-	// contentcheck_checked_at IS NULL but arrival is 10 minutes ago — safety fallback should show it.
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, deleted) VALUES (?, ?, 'Pending', NOW() - INTERVAL 10 MINUTE, 0)", msgID, groupID)
+	// contentcheck_checked_at IS NULL but arrival is 35 minutes ago — safety fallback should show it.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, deleted) VALUES (?, ?, 'Pending', NOW() - INTERVAL 35 MINUTE, 0)", msgID, groupID)
 
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
 	resp, err := getApp().Test(req)
@@ -8270,5 +8270,5 @@ func TestContentcheckFallbackVisibleAfter5Minutes(t *testing.T) {
 			found = true
 		}
 	}
-	assert.True(t, found, "unprocessed message older than 5 minutes must appear in pending queue as safety fallback")
+	assert.True(t, found, "unprocessed message older than 30 minutes must appear in pending queue as safety fallback")
 }

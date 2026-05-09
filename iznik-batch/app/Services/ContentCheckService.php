@@ -387,4 +387,88 @@ class ContentCheckService
 
         return null;
     }
+
+    // -------------------------------------------------------------------------
+    // Audit mode — scan Pending + Approved and report disagreements
+    // -------------------------------------------------------------------------
+
+    /**
+     * Scan existing Pending and Approved messages and report where the content
+     * check service disagrees with the current state.  Read-only — no DB writes.
+     *
+     * Returns an array of disagreement records:
+     *   [
+     *     'msgid'       => int,
+     *     'groupid'     => int,
+     *     'collection'  => 'Pending'|'Approved',
+     *     'type'        => 'should_flag'|'should_approve',
+     *     'reasons'     => array,   // non-empty when type === 'should_flag'
+     *     'is_moderated'=> bool,
+     *   ]
+     *
+     * 'should_flag':   message is Approved but content checks would flag it.
+     * 'should_approve': message is Pending, content checks pass, and the user
+     *                   is not moderated — the pipeline would auto-approve it.
+     *
+     * @param int|null $groupid  Restrict audit to a single group (null = all groups).
+     * @param int      $limit    Max rows per collection to examine (0 = no limit).
+     */
+    public function auditExisting(?int $groupid = null, int $limit = 500): array
+    {
+        $disagreements = [];
+
+        foreach (['Approved', 'Pending'] as $collection) {
+            $query = DB::table('messages_groups as mg')
+                ->join('messages as m', 'm.id', '=', 'mg.msgid')
+                ->join('users as u', 'u.id', '=', 'm.fromuser')
+                ->select('mg.msgid', 'mg.groupid', 'mg.collection')
+                ->where('mg.collection', $collection)
+                ->where('mg.deleted', 0)
+                ->whereNull('m.deleted')
+                ->whereNotNull('m.fromuser')
+                ->whereNull('u.deleted');
+
+            if ($groupid !== null) {
+                $query->where('mg.groupid', $groupid);
+            }
+
+            if ($limit > 0) {
+                $query->limit($limit);
+            }
+
+            $rows = $query->get();
+
+            foreach ($rows as $row) {
+                try {
+                    $reasons     = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
+                    $isModerated = $this->isUserModerated((int) $row->msgid, (int) $row->groupid)
+                                || $this->isGroupModerated((int) $row->groupid);
+
+                    if ($collection === 'Approved' && !empty($reasons)) {
+                        $disagreements[] = [
+                            'msgid'        => (int) $row->msgid,
+                            'groupid'      => (int) $row->groupid,
+                            'collection'   => 'Approved',
+                            'type'         => 'should_flag',
+                            'reasons'      => $reasons,
+                            'is_moderated' => $isModerated,
+                        ];
+                    } elseif ($collection === 'Pending' && empty($reasons) && !$isModerated) {
+                        $disagreements[] = [
+                            'msgid'        => (int) $row->msgid,
+                            'groupid'      => (int) $row->groupid,
+                            'collection'   => 'Pending',
+                            'type'         => 'should_approve',
+                            'reasons'      => [],
+                            'is_moderated' => false,
+                        ];
+                    }
+                } catch (\Exception $e) {
+                    Log::warning("ContentCheck audit: error on message #{$row->msgid}: " . $e->getMessage());
+                }
+            }
+        }
+
+        return $disagreements;
+    }
 }
