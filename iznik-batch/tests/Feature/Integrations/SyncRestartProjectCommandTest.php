@@ -17,23 +17,28 @@ class SyncRestartProjectCommandTest extends TestCase
         Cache::flush();
     }
 
+    // Use Leeds coords rather than London defaults to avoid conflicts with other
+    // tests that create groups at createTestGroup()'s default lat=51.5074, lng=-0.1278.
+    private const TEST_LAT = 53.8008;
+    private const TEST_LNG = -1.5491;
+
     private function makeGroup(array $override = []): Group
     {
         return $this->createTestGroup(array_merge([
-            'lat'      => 51.5074,
-            'lng'      => -0.1278,
+            'lat'      => self::TEST_LAT,
+            'lng'      => self::TEST_LNG,
             'publish'  => 1,
             'listable' => 1,
         ], $override));
     }
 
-    private function restartGroupData(float $lat = 51.5074, float $lng = -0.1278): array
+    private function restartGroupData(float $lat = self::TEST_LAT, float $lng = self::TEST_LNG): array
     {
         return [
             'location' => ['country_code' => 'GB', 'lat' => $lat, 'lng' => $lng],
-            'name'     => 'London Restart Group',
+            'name'     => 'Leeds Restart Group',
             'website'  => 'https://restarters.net/group/1',
-            'email'    => 'london@restart.org',
+            'email'    => 'leeds@restart.org',
         ];
     }
 
@@ -153,14 +158,14 @@ class SyncRestartProjectCommandTest extends TestCase
         $event        = $this->restartEvent(101);
 
         Http::fake([
-            '*api/v2/groups/names*'     => Http::response(['data' => [['id' => 10, 'name' => 'London Restart']]], 200),
+            '*api/v2/groups/names*'     => Http::response(['data' => [['id' => 10, 'name' => 'Leeds Restart']]], 200),
             '*api/v2/events/101*'       => Http::response(['data' => $this->restartEventData(101)], 200),
             '*api/v2/groups/10/events*' => Http::response(['data' => [$event]], 200),
             '*api/v2/groups/10*'        => Http::response(['data' => $this->restartGroupData()], 200),
         ]);
 
         // Verify group is findable
-        $nearby = \App\Models\Location::groupsNear(51.5074, -0.1278, 15);
+        $nearby = \App\Models\Location::groupsNear(self::TEST_LAT, self::TEST_LNG, 15);
         $this->assertContains($freegleGroup->id, $nearby, 'Group must be findable by haversine');
 
         // Call service directly to isolate from artisan/PendingCommand
