@@ -1,8 +1,8 @@
 import fs from 'fs'
+import config from '../config'
 
 const packageJson = fs.readFileSync('./package.json', 'utf8')
 const version = JSON.parse(packageJson).version || 0
-// import config from '../config'
 console.log('Building iznik-modtools', version)
 
 process.env.MT = 'true'
@@ -55,6 +55,30 @@ export default defineNuxtConfig({
       // process.env.NODE_ENV === 'production'
       //  ? { preset: ['default', { discardComments: { removeAll: true } }] }
       //  : false, // disable cssnano when not in production
+    },
+  },
+
+  // Explicitly declare image providers here so they are reliably included when
+  // building this child layer (Nuxt module config from parent layers may not
+  // propagate correctly to child static builds).
+  image: {
+    uploadcare: {
+      provider: 'uploadcare',
+    },
+    weserv: {
+      provider: 'weserv',
+      baseURL: config.TUS_UPLOADER.replace(':8080', ''),
+      weservURL: config.IMAGE_DELIVERY,
+    },
+    densities: [1, 2],
+    screens: {
+      xs: 320,
+      sm: 576,
+      md: 768,
+      lg: 768,
+      xl: 768,
+      xxl: 768,
+      '2xl': 768,
     },
   },
 
