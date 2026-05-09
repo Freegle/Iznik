@@ -168,6 +168,11 @@ These commands are active in `routes/console.php` and running in production:
 | `git_summary_ai.php` | `data:git-summary` | Weekly Wed 18:00 | Git summary for Discourse |
 | `tryst.php` | `chats:send-tryst-reminders` | Every minute | Calendar invites + chat reminders for handover trysts |
 | `noticeboards.php` | `noticeboards:thank-users` | Daily 15:30 | Thank-you emails for users who added noticeboards |
+| `birthday.php` | `birthday:send-emails` | Daily 12:00 | Birthday emails for group anniversaries — PR #416 |
+| `stories_tocentral.php` | `stories:send-to-central` | Weekly Fri 14:00 | Stories to central team for voting — PR #415 |
+| `lovejunk_tn_invoice.php` | `lovejunk:send-tn-invoice` | Monthly 1st 15:00 | LoveJunk TN/FD split invoice — PR #417 |
+| `chat_review.php` | `chats:review-pending` | Daily 09:00 | Auto-reject stale + notify mods — PR #418 |
+| `engage.php` | `mail:engage` | Daily 16:00 | At-risk and inactive user engagement — PR #419 |
 
 ## Code Written (Scheduler Disabled)
 
@@ -323,9 +328,9 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`users_remap.php`~~ | ~~05:00~~ | ~~Low~~ | ~~User remapping~~ — **Migrated: `users:remap-locations`** |
 | ~~`locations_skewwhiff.php`~~ | ~~05:00~~ | ~~Low~~ | ~~Location fixes~~ — **Migrated: `locations:fix-skewed`** |
 | `nearby.php` | 14:05 | Medium | Nearby items |
-| `chat_review.php` | 11:00 | Medium | Chat review queue |
-| `engage.php` | 16:00 | Medium | User engagement emails |
-| `user_askdonation.php` | 17:00 | Medium | Donation requests |
+| ~~`chat_review.php`~~ | ~~11:00~~ | ~~Medium~~ | ~~Chat review queue~~ — **Migrated: `chats:review-pending` — PR #418** |
+| ~~`engage.php`~~ | ~~16:00~~ | ~~Medium~~ | ~~User engagement emails~~ — **Migrated: `mail:engage` — PR #419** |
+| ~~`user_askdonation.php`~~ | ~~17:00~~ | ~~Medium~~ | ~~Donation requests~~ — **Migrated: `mail:donations:ask`** |
 | ~~`facebook_chaseup.php`~~ | ~~18:00~~ | ~~Low~~ | ~~Facebook chase-up~~ — **Skip: file not found (retired)** |
 | ~~`whatjobs.php`~~ | ~~Hourly 08:00-22:00~~ | ~~Low~~ | ~~WhatJobs~~ — **Migrated: `integrations:sync-whatjobs`** |
 | ~~`microactions_score.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Microactions scoring~~ — **Covered: `microvolunteering:score`** |
