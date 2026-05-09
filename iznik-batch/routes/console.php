@@ -659,3 +659,11 @@ Schedule::command('data:git-summary')
 // The check-hotfix-promote job runs after beta builds and triggers
 // immediate promotion if the commit message has hotfix: prefix.
 // See iznik-nuxt3/.circleci/config.yml
+
+// Remove duplicate user profile images, keeping only the most recent per user.
+// V1: cron/archive_attachments.php (daily)
+Schedule::command('cleanup:user-images')
+    ->dailyAt('01:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('cleanup:user-images'))
+    ->runInBackground();
