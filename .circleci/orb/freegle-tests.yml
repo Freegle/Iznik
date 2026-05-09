@@ -3070,10 +3070,10 @@ jobs:
             sed -i 's/org\.ilovefreegle\.direct/org.ilovefreegle.modtools/g' android/app/build.gradle
             sed -i 's/>Freegle</>Freegle ModTools</g' android/app/src/main/res/values/strings.xml
             # Swap in ModTools MainActivity (no social login plugin dependency).
-            # Use mv so MainActivityModtools.java does not remain alongside MainActivity.java
-            # — Java requires a public class to be in a file matching its name.
+            # File lives in modtools/ (outside the Java source path) so regular builds
+            # are not affected by the public class name mismatch.
             MAIN_JAVA=android/app/src/main/java/org/ilovefreegle/direct/MainActivity.java
-            mv "${MAIN_JAVA%MainActivity.java}MainActivityModtools.java" "$MAIN_JAVA"
+            cp modtools/MainActivityModtools.java "$MAIN_JAVA"
             echo "✅ ModTools identity configured"
       - run:
           name: Make gradlew executable
