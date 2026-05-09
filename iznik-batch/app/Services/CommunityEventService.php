@@ -87,4 +87,15 @@ class CommunityEventService
             ->get()
             ->toArray();
     }
+
+    public function getUpcomingByExternalIdSubstring(string $substring, string $fromDate): array
+    {
+        return DB::table('communityevents')
+            ->join('communityevents_dates', 'communityevents.id', '=', 'communityevents_dates.eventid')
+            ->where('communityevents.externalid', 'LIKE', '%' . $substring . '%')
+            ->where('communityevents_dates.start', '>=', $fromDate)
+            ->select('communityevents.id', 'communityevents.externalid')
+            ->get()
+            ->toArray();
+    }
 }

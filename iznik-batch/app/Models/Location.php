@@ -56,9 +56,13 @@ class Location extends Model
 
     public static function findByName(string $name): ?int
     {
+        return static::getByName($name)?->id;
+    }
+
+    public static function getByName(string $name): ?object
+    {
         $canon = strtolower(preg_replace("/[^A-Za-z0-9]/", '', $name));
-        $loc = DB::table('locations')->where('canon', 'LIKE', $canon)->first();
-        return $loc?->id;
+        return DB::table('locations')->where('canon', 'LIKE', $canon)->first();
     }
 
     public static function groupsNear(float $lat, float $lng, int $radiusMiles = 50, int $limit = 10): array
