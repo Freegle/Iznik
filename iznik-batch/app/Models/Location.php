@@ -53,4 +53,26 @@ class Location extends Model
 
         return null;
     }
+
+    public static function findByName(string $name): ?int
+    {
+        $canon = strtolower(preg_replace("/[^A-Za-z0-9]/", '', $name));
+        $loc = DB::table('locations')->where('canon', 'LIKE', $canon)->first();
+        return $loc?->id;
+    }
+
+    public static function groupsNear(float $lat, float $lng, int $radiusMiles = 50, int $limit = 10): array
+    {
+        $rows = DB::select(
+            "SELECT id
+             FROM `groups`
+             WHERE publish = 1 AND listable = 1
+               AND haversine(lat, lng, ?, ?) < ?
+             ORDER BY haversine(lat, lng, ?, ?) ASC
+             LIMIT ?",
+            [$lat, $lng, $radiusMiles, $lat, $lng, $limit]
+        );
+
+        return array_column($rows, 'id');
+    }
 }
