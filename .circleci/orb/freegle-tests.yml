@@ -320,6 +320,14 @@ commands:
             #
             # Phase 2: Start all remaining containers (all databases already exist)
 
+            # Clear the bind-mounted vendor/ directory before starting batch.
+            # The CI runner's persistent workspace may have a stale vendor/ from a previous
+            # run on a different branch (packages added/removed). A stale vendor/ causes
+            # composer install in the entrypoint to fire prePackageUninstall, which tries
+            # to bootstrap Laravel against the stale vendor/ and fails with exit code 1.
+            echo "Clearing stale vendor directory..."
+            rm -rf ./iznik-batch/vendor/
+
             echo "=== Phase 1: Starting infrastructure + batch for migrations ==="
             docker-compose up -d \
               percona postgres redis beanstalkd mailpit \
@@ -3001,6 +3009,12 @@ jobs:
           command: cd modtools && npm ci --legacy-peer-deps
           max_auto_reruns: 3
           auto_rerun_delay: 10s
+      - run:
+          name: Prepare Parent Nuxt Layer
+          command: |
+            export NODE_OPTIONS="--max-old-space-size=3584"
+            npx nuxt prepare
+            echo "✅ Parent .nuxt/tsconfig.json generated"
       - run:
           name: Build ModTools Nuxt App
           command: |
