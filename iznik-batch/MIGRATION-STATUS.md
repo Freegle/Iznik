@@ -323,8 +323,8 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`facebook_chaseup.php`~~ | ~~18:00~~ | ~~Low~~ | ~~Facebook chase-up~~ — **Skip: file not found (retired)** |
 | `whatjobs.php` | Hourly 08:00-22:00 | Low | WhatJobs |
 | ~~`microactions_score.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Microactions scoring~~ — **Covered: `microvolunteering:score`** |
-| `restartproject.php` | 23:00 | Low | Restart project |
-| `repaircafewales.php` | 23:00 | Low | Repair Cafe Wales |
+| ~~`restartproject.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Restart project~~ — **Migrated: `integrations:sync-restartproject` (PR #408)** |
+| ~~`repaircafewales.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Repair Cafe Wales~~ — **Migrated: `integrations:sync-repaircafewales` (PR #408)** |
 | ~~`archive_attachments.php`~~ | ~~22:30~~ | ~~Low~~ | ~~Attachment archiving~~ — **Migrated: `cleanup:archive-profile-images` (PR #405)** |
 
 ## Weekly Scripts - Not Started
