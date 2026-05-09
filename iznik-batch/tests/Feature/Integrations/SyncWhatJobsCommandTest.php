@@ -217,10 +217,11 @@ class SyncWhatJobsCommandTest extends TestCase
     /** @test */
     public function test_command_reports_inserted_jobs(): void
     {
-        Cache::flush();
-        $mock = $this->createMock(WhatJobsService::class);
-        $mock->method('sync')->with(false)->willReturn(['total' => 5, 'inserted' => 3, 'dry_run' => false]);
-        $this->app->instance(WhatJobsService::class, $mock);
+        $this->mock(WhatJobsService::class)
+            ->shouldReceive('sync')
+            ->with(false)
+            ->once()
+            ->andReturn(['total' => 5, 'inserted' => 3, 'dry_run' => false]);
 
         $this->artisan('integrations:sync-whatjobs')
             ->expectsOutputToContain('Inserted 3 of 5 parsed jobs.')
@@ -230,10 +231,11 @@ class SyncWhatJobsCommandTest extends TestCase
     /** @test */
     public function test_command_dry_run_outputs_dry_run_prefix(): void
     {
-        Cache::flush();
-        $mock = $this->createMock(WhatJobsService::class);
-        $mock->method('sync')->willReturn(['total' => 10, 'inserted' => 0, 'dry_run' => true]);
-        $this->app->instance(WhatJobsService::class, $mock);
+        $this->mock(WhatJobsService::class)
+            ->shouldReceive('sync')
+            ->with(true)
+            ->once()
+            ->andReturn(['total' => 10, 'inserted' => 0, 'dry_run' => true]);
 
         $this->artisan('integrations:sync-whatjobs', ['--dry-run' => true])
             ->expectsOutputToContain('[DRY RUN]')

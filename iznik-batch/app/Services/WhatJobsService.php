@@ -481,14 +481,22 @@ class WhatJobsService
             return [];
         }
 
-        $count = 0;
-        while ($reader->read()) {
+        $count   = 0;
+        $hasNode = $reader->read();
+        while ($hasNode) {
             if ($reader->nodeType !== \XMLReader::ELEMENT || $reader->depth !== 2) {
+                $hasNode = $reader->read();
                 continue;
             }
 
-            $xmlStr = $reader->readOuterXml();
-            $reader->next();
+            // expand() returns current node as DOMNode without advancing cursor.
+            // readOuterXml() advances cursor on newer libxml2, causing next() to skip one element.
+            $node    = $reader->expand();
+            $hasNode = $reader->next();
+            if (!$node) {
+                continue;
+            }
+            $xmlStr = $node->ownerDocument->saveXML($node);
 
             $job = @simplexml_load_string($xmlStr);
             if (!$job) {
