@@ -237,6 +237,14 @@ Schedule::command('chats:update-expected')
     ->sendOutputTo(cronLog('chats:update-expected'))
     ->runInBackground();
 
+// Chase up mods about User2Mod chats with no mod reply older than 6.55 days.
+// V1: cron/chat_chaseupmods.php (daily 15:30)
+Schedule::command('chats:chaseup-mods')
+    ->dailyAt('15:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:chaseup-mods'))
+    ->runInBackground();
+
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
 // V1: cron/chat_spam.php — disabled pending sign-off
 // Schedule::command('chats:process-spam')
