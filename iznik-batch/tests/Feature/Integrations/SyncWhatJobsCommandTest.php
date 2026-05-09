@@ -4,6 +4,7 @@ namespace Tests\Feature\Integrations;
 
 use App\Services\WhatJobsService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -203,6 +204,41 @@ class SyncWhatJobsCommandTest extends TestCase
         $wkt = WhatJobsService::boxPoly(51.5, -0.1, 51.6, 0.0);
         $this->assertStringStartsWith('POLYGON((', $wkt);
         $this->assertStringContainsString('-0.1 51.5', $wkt);
+    }
+
+    // -----------------------------------------------------------------
+    // dry-run mode
+    // -----------------------------------------------------------------
+
+    // -----------------------------------------------------------------
+    // SyncWhatJobsCommand — artisan command level
+    // -----------------------------------------------------------------
+
+    /** @test */
+    public function test_command_reports_inserted_jobs(): void
+    {
+        Cache::flush();
+        $mock = $this->createMock(WhatJobsService::class);
+        $mock->method('sync')->with(false)->willReturn(['total' => 5, 'inserted' => 3, 'dry_run' => false]);
+        $this->app->instance(WhatJobsService::class, $mock);
+
+        $this->artisan('integrations:sync-whatjobs')
+            ->expectsOutputToContain('Inserted 3 of 5 parsed jobs.')
+            ->assertExitCode(0);
+    }
+
+    /** @test */
+    public function test_command_dry_run_outputs_dry_run_prefix(): void
+    {
+        Cache::flush();
+        $mock = $this->createMock(WhatJobsService::class);
+        $mock->method('sync')->with(true)->willReturn(['total' => 10, 'inserted' => 0, 'dry_run' => true]);
+        $this->app->instance(WhatJobsService::class, $mock);
+
+        $this->artisan('integrations:sync-whatjobs', ['--dry-run' => true])
+            ->expectsOutputToContain('[DRY RUN]')
+            ->expectsOutputToContain('Would insert 0 of 10 parsed jobs.')
+            ->assertExitCode(0);
     }
 
     // -----------------------------------------------------------------
