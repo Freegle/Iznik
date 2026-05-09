@@ -552,6 +552,13 @@ Schedule::command('groups:update-stats')
     ->sendOutputTo(cronLog('groups:update-stats'))
     ->runInBackground();
 
+// V1: cron/groups_closed.php
+Schedule::command('groups:remind-closed')
+    ->weeklyOn(1, '09:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:remind-closed'))
+    ->runInBackground();
+
 // V1: cron/donations_thank.php
 // Schedule::command('mail:donations:thank')
 //     ->dailyAt('09:00')
