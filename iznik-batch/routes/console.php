@@ -75,6 +75,15 @@ Schedule::command('data:update-cpi')
     ->sendOutputTo(cronLog('data:update-cpi'))
     ->runInBackground();
 
+// Content check — run all content checks on unprocessed pending messages.
+// Promotes clean messages from non-moderated users to Approved; keeps others
+// in Pending with failure reasons stored, then notifies group mods.
+Schedule::command('messages:contentcheck')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:contentcheck'))
+    ->runInBackground();
+
 // Auto-approve pending messages after 48 hours.
 // V1: cron/autoapprove.php
 Schedule::command('messages:auto-approve')

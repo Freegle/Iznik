@@ -440,6 +440,13 @@ func ListMessagesMT(c *fiber.Ctx) error {
 
 	var msgIDs []uint64
 
+	// Hide messages not yet processed by the content-check batch job.
+	// The 5-minute fallback ensures mods always see messages if the batch job is down.
+	contentcheckFilter := ""
+	if collection == utils.COLLECTION_PENDING {
+		contentcheckFilter = " AND (mg.contentcheck_checked_at IS NOT NULL OR mg.arrival < NOW() - INTERVAL 5 MINUTE)"
+	}
+
 	if collection == "Edit" {
 		// Edit review uses messages_edits table, not messages_groups collection.
 		db.Raw("SELECT DISTINCT me.msgid FROM messages_edits me "+
@@ -457,7 +464,8 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				"INNER JOIN users u ON u.id = m.fromuser " +
 				"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
 				"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL AND m.id = ? " +
-				"ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+				contentcheckFilter +
+				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchID}, groupIDs, limit)
 			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
 		}
@@ -468,7 +476,8 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				"INNER JOIN users u ON u.id = m.fromuser " +
 				"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
 				"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL AND m.subject LIKE ? " +
-				"ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+				contentcheckFilter +
+				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm}, groupIDs, limit)
 			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
 		}
@@ -484,7 +493,8 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				"AND mg.deleted = 0 " +
 				"AND m.deleted IS NULL AND u.deleted IS NULL " +
 				"AND m.fromuser = ? " +
-				"ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+				contentcheckFilter +
+				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchUID}, groupIDs, limit)
 			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
 		}
@@ -501,7 +511,8 @@ func ListMessagesMT(c *fiber.Ctx) error {
 				"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
 				"AND m.deleted IS NULL AND u.deleted IS NULL " +
 				"AND (u.fullname LIKE ? OR ue.email LIKE ?) " +
-				"ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
+				contentcheckFilter +
+				" ORDER BY mg.arrival DESC, mg.msgid DESC LIMIT ?"
 			sql, args := buildMTUnionAllMsgIDQuery(branchSQL, []interface{}{collection, searchTerm, searchTerm}, groupIDs, limit)
 			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
 		}
@@ -510,7 +521,8 @@ func ListMessagesMT(c *fiber.Ctx) error {
 			"INNER JOIN messages m ON m.id = mg.msgid " +
 			"INNER JOIN users u ON u.id = m.fromuser " +
 			"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
-			"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL "
+			"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL " +
+			contentcheckFilter + " "
 		branchArgs := []interface{}{collection}
 
 		if fromuser > 0 {

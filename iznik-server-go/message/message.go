@@ -293,7 +293,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// Both APPROVED and PENDING messages are visible to all users. This is not a privacy
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
-				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
 			}()
 
 			var messageAttachments []MessageAttachment
@@ -2128,31 +2128,14 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 			flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, groupid, myid, myid)
 	}
 
-	// Determine collection based on user's posting status.
-	// (User::postToCollection line 819):
-	//   (!$ps || $ps == MODERATED || $ps == PROHIBITED) → Pending
-	//   anything else → Approved
-	// So NULL, MODERATED, PROHIBITED → Pending. Only an explicit non-moderated value → Approved.
+	// All messages start Pending — the content check batch job runs content checks
+	// and promotes clean messages from non-moderated users to Approved.
 	collection := utils.COLLECTION_PENDING
 	var ourPostingStatus *string
 	db.Raw("SELECT ourPostingStatus FROM memberships WHERE userid = ? AND groupid = ?", myid, groupid).Scan(&ourPostingStatus)
 
 	if ourPostingStatus != nil && strings.EqualFold(*ourPostingStatus, utils.POSTING_STATUS_PROHIBITED) {
 		return fiber.NewError(fiber.StatusForbidden, "You are not allowed to post on this group")
-	}
-
-	if ourPostingStatus != nil &&
-		!strings.EqualFold(*ourPostingStatus, utils.POSTING_STATUS_MODERATED) &&
-		!strings.EqualFold(*ourPostingStatus, utils.POSTING_STATUS_PROHIBITED) &&
-		*ourPostingStatus != "" {
-		// Explicit non-moderated status (e.g. set by mod after reviewing posts) → Approved.
-		collection = utils.COLLECTION_APPROVED
-	}
-
-	// Allow the caller to force the message to Pending, e.g. for bulk posts
-	// that should always be moderated before becoming visible.
-	if req.ForcePending != nil && *req.ForcePending {
-		collection = utils.COLLECTION_PENDING
 	}
 
 	// Reconstruct subject with location and group keyword before submitting
@@ -2228,24 +2211,6 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	if msgLat != 0 || msgLng != 0 {
 		db.Exec("INSERT INTO messages_spatial (msgid, point, successful, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), 1, ?, ?, NOW()) ON DUPLICATE KEY UPDATE point = VALUES(point), groupid = VALUES(groupid), msgtype = VALUES(msgtype), arrival = VALUES(arrival)",
 			req.ID, msgLng, msgLat, groupid, msgType)
-	}
-
-	// Notify freebiealerts.app about Offer posts going directly to Approved.
-	if collection == utils.COLLECTION_APPROVED && msgType == "Offer" {
-		if err := queue.QueueTask(queue.TaskFreebieAlertsAdd, map[string]interface{}{
-			"msgid": req.ID,
-		}); err != nil {
-			log.Printf("Failed to queue freebie alerts add for message %d: %v", req.ID, err)
-		}
-	}
-
-	// Notify group moderators about the new message.
-	if collection == utils.COLLECTION_PENDING {
-		if err := queue.QueueTask(queue.TaskPushNotifyGroupMods, map[string]interface{}{
-			"group_id": groupid,
-		}); err != nil {
-			log.Printf("Failed to queue push notification for group %d on submit: %v", groupid, err)
-		}
 	}
 
 	// Check if user has a password (to determine if they're a new user).
