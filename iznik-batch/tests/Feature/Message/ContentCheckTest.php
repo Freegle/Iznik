@@ -17,6 +17,12 @@ class ContentCheckTest extends TestCase
     {
         parent::setUp();
         $this->service = new ContentCheckService(new SpamCheckService());
+        // Mark any pre-existing unprocessed pending messages so processUnprocessed() only
+        // sees rows inserted within this test's transaction.
+        DB::table('messages_groups')
+            ->where('collection', 'Pending')
+            ->whereNull('contentcheck_checked_at')
+            ->update(['contentcheck_checked_at' => now()]);
     }
 
     // -------------------------------------------------------------------------
@@ -57,9 +63,9 @@ class ContentCheckTest extends TestCase
     public function test_concern_keyword_match_returns_reason(): void
     {
         DB::table('concern_keywords')->insert([
-            'keyword' => 'testconcernkw_cc',
-            'type'    => 'Spam',
-            'action'  => 'Spam',
+            'keyword'  => 'testconcernkw_cc',
+            'category' => 'scam',
+            'action'   => 'flag',
         ]);
 
         $result = $this->service->checkConcernKeywords('OFFER: testconcernkw_cc item', 'Some text');
@@ -141,7 +147,7 @@ class ContentCheckTest extends TestCase
 
     public function test_phone_number_in_body_with_restrict_rule_returns_reason(): void
     {
-        $group = $this->createTestGroup(['rules' => json_encode(['restrictpersonalinfo' => true])]);
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
 
         $result = $this->service->checkPII('OFFER: Sofa', 'Call me on 07700 900123', $group->id);
 
@@ -160,7 +166,7 @@ class ContentCheckTest extends TestCase
 
     public function test_no_phone_in_body_returns_null(): void
     {
-        $group = $this->createTestGroup(['rules' => json_encode(['restrictpersonalinfo' => true])]);
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
 
         $result = $this->service->checkPII('OFFER: Sofa', 'Collection only please', $group->id);
 
@@ -169,7 +175,7 @@ class ContentCheckTest extends TestCase
 
     public function test_external_email_in_body_with_restrict_rule_returns_reason(): void
     {
-        $group = $this->createTestGroup(['rules' => json_encode(['restrictpersonalinfo' => true])]);
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
 
         $result = $this->service->checkPII('OFFER: Sofa', 'Email john@example.com for details', $group->id);
 
@@ -179,7 +185,7 @@ class ContentCheckTest extends TestCase
 
     public function test_freegle_email_not_flagged(): void
     {
-        $group = $this->createTestGroup(['rules' => json_encode(['restrictpersonalinfo' => true])]);
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
 
         $result = $this->service->checkPII('OFFER: Sofa', 'Reply via noreply@ilovefreegle.org', $group->id);
 
@@ -244,7 +250,7 @@ class ContentCheckTest extends TestCase
 
     public function test_check_message_returns_all_failures(): void
     {
-        $group = $this->createTestGroup(['rules' => json_encode(['restrictpersonalinfo' => true])]);
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
         $user  = $this->createTestUser();
         DB::table('worrywords')->insert(['keyword' => 'worrycheck_cc', 'type' => 'Review']);
 
@@ -387,7 +393,7 @@ class ContentCheckTest extends TestCase
 
     public function test_message_with_check_failure_stays_pending_with_reasons(): void
     {
-        $group = $this->createTestGroup(['rules' => json_encode(['restrictpersonalinfo' => true])]);
+        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
         $user  = $this->createTestUser();
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
 
@@ -461,7 +467,7 @@ class ContentCheckTest extends TestCase
 
     public function test_fully_moderated_group_keeps_message_pending(): void
     {
-        $group = $this->createTestGroup(['rules' => json_encode(['fullymoderated' => true])]);
+        $group = $this->createTestGroup(['rules' => ['fullymoderated' => true]]);
         $user  = $this->createTestUser();
         // User is non-moderated — but group is fully moderated.
         $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
@@ -516,19 +522,16 @@ class ContentCheckTest extends TestCase
             'deleted' => 0,
         ]);
 
-        $before = DB::table('background_tasks')
-            ->where('task_type', 'freebie_alerts_add')
-            ->count();
+        $stats = $this->service->processUnprocessed();
 
-        $this->service->processUnprocessed();
+        $this->assertEquals(0, $stats['errors'], 'processUnprocessed had errors');
+        $this->assertEquals(1, $stats['approved'], 'Message was not approved (approved='.$stats['approved'].', kept_pending='.$stats['kept_pending'].')');
 
         $after = DB::table('background_tasks')
             ->where('task_type', 'freebie_alerts_add')
-            ->where('data', json_encode(['msgid' => $msgid]))
+            ->whereRaw("JSON_EXTRACT(data, '$.msgid') = ?", [$msgid])
             ->count();
 
-        $this->assertEquals(1, $after - $before + $after > 0 ? 1 : 0);
-        // Simplified: just verify the task exists.
         $this->assertGreaterThanOrEqual(1, $after);
     }
 
@@ -557,11 +560,14 @@ class ContentCheckTest extends TestCase
             'deleted' => 0,
         ]);
 
-        $this->service->processUnprocessed();
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals(0, $stats['errors'], 'processUnprocessed had errors');
+        $this->assertEquals(1, $stats['kept_pending'], 'Message was not kept pending (kept_pending='.$stats['kept_pending'].', approved='.$stats['approved'].')');
 
         $taskCount = DB::table('background_tasks')
             ->where('task_type', 'push_notify_group_mods')
-            ->where('data', json_encode(['group_id' => $group->id]))
+            ->whereRaw("JSON_EXTRACT(data, '$.group_id') = ?", [$group->id])
             ->whereNull('processed_at')
             ->count();
 

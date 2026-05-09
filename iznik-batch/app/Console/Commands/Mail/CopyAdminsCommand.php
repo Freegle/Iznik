@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Mail;
 
+use App\Models\BackgroundTask;
 use App\Models\Group;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -91,7 +92,7 @@ class CopyAdminsCommand extends Command
 
                 // Notify group moderators about the new pending admin via background task.
                 DB::table('background_tasks')->insert([
-                    'task_type' => 'push_notify_group_mods',
+                    'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS,
                     'data' => json_encode(['group_id' => $group->id]),
                 ]);
 
