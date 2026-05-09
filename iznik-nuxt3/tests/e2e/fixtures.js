@@ -1684,8 +1684,13 @@ const testWithFixtures = test.extend({
       // and becomes visible in the ModTools pending queue immediately.
       try {
         const statusUrl = process.env.STATUS_API_URL || 'http://localhost:8081'
-        await fetch(`${statusUrl}/api/utility/run-contentcheck`, { method: 'POST' })
-      } catch (_e) {}
+        const ccResp = await fetch(`${statusUrl}/api/utility/run-contentcheck`, { method: 'POST' })
+        if (!ccResp.ok) {
+          console.warn(`postMessage: run-contentcheck returned ${ccResp.status} — message may be hidden in pending queue`)
+        }
+      } catch (e) {
+        console.warn(`postMessage: run-contentcheck failed — message may be hidden in pending queue: ${e.message}`)
+      }
 
       // Return information about the post
       return {
