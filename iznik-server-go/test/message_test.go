@@ -663,7 +663,7 @@ func createPendingMessage(t *testing.T, userID uint64, groupID uint64, prefix st
 		t.Fatalf("ERROR: Pending message was created but ID not found")
 	}
 
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)",
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) VALUES (?, ?, NOW(), 'Pending', 0, NOW())",
 		msgID, groupID)
 
 	return msgID
@@ -4419,7 +4419,7 @@ func TestListMessagesMT_LimboUserMessageNotReturned(t *testing.T) {
 
 	// Create a pending message from the poster.
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" limbo test item", 52.0, -1.0)
-	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ?", msgID)
+	db.Exec("UPDATE messages_groups SET collection = 'Pending', contentcheck_checked_at = NOW() WHERE msgid = ?", msgID)
 
 	// Verify it appears in listing before limbo.
 	resp, err := getApp().Test(httptest.NewRequest("GET",
@@ -7295,7 +7295,7 @@ func TestListMessagesMTMultiGroupNoDuplicates(t *testing.T) {
 
 	// Create a message on both groups as Pending.
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) VALUES (?, ?, NOW(), 'Pending', 0, NOW())", msgID, groupB)
 
 	// List Pending messages via ModTools endpoint (no groupid filter).
 	url := fmt.Sprintf("/api/modtools/messages?collection=Pending&jwt=%s", modToken)
@@ -8214,7 +8214,7 @@ func TestContentcheckUnprocessedHiddenFromPendingQueue(t *testing.T) {
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, deleted) VALUES (?, ?, 'Pending', NOW(), 0)", msgID, groupID)
 	// contentcheck_checked_at is NULL — should be hidden.
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
 	resp, err := getApp().Test(req)
 	require.NoError(t, err)
 	require.Equal(t, 200, resp.StatusCode)
@@ -8248,7 +8248,7 @@ func TestContentcheckProcessedVisibleInPendingQueue(t *testing.T) {
 	// contentcheck_checked_at IS SET — should be visible.
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, contentcheck_checked_at, deleted) VALUES (?, ?, 'Pending', NOW(), NOW(), 0)", msgID, groupID)
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
 	resp, err := getApp().Test(req)
 	require.NoError(t, err)
 	require.Equal(t, 200, resp.StatusCode)
@@ -8286,7 +8286,7 @@ func TestContentcheckFallbackVisibleAfter5Minutes(t *testing.T) {
 	// contentcheck_checked_at IS NULL but arrival is 10 minutes ago — safety fallback should show it.
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, deleted) VALUES (?, ?, 'Pending', NOW() - INTERVAL 10 MINUTE, 0)", msgID, groupID)
 
-	req := httptest.NewRequest("GET", fmt.Sprintf("/api/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
 	resp, err := getApp().Test(req)
 	require.NoError(t, err)
 	require.Equal(t, 200, resp.StatusCode)
