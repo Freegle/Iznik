@@ -36,12 +36,10 @@ class StoriesToCentralMail extends MjmlMailable
 
     public function build(): static
     {
-        $html = view('emails.stories.central', [
+        return $this->mjmlView('emails.mjml.stories.central', [
             'stories'     => $this->stories,
-            'previewtext' => $this->previewText,
-            'vote'        => $this->voteUrl,
-        ])->render();
-
-        return $this->html($html);
+            'previewText' => $this->previewText,
+            'voteUrl'     => $this->voteUrl,
+        ]);
     }
 }
