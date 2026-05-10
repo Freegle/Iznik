@@ -52,6 +52,12 @@ class TNSyncCommandTest extends TestCase
         }
 
         parent::tearDown();
+
+        // PCOV accumulates coverage data in-memory across tests. These tests are
+        // #[CoversNothing] so the data is discarded anyway — clear it to prevent OOM.
+        if (extension_loaded('pcov')) {
+            \pcov\clear();
+        }
     }
 
     // =========================================================================
