@@ -275,7 +275,7 @@ commands:
             for attempt in $(seq 1 $MAX_RETRIES); do
               echo "Build attempt $attempt of $MAX_RETRIES..."
 
-              # Self-hosted runner has persistent Docker layer cache — use it
+              # Self-hosted runner has persistent Docker layer cache — use it for most containers
               CACHE_FLAG="--no-cache"
               if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
                 CACHE_FLAG=""
@@ -285,7 +285,7 @@ commands:
               if docker-compose build $CACHE_FLAG \
                 apiv1 apiv1-phpunit apiv2 \
                 freegle-prod-local modtools-prod-local \
-                playwright status batch; then
+                playwright status; then
                 echo "✅ Build succeeded on attempt $attempt"
                 break
               else
@@ -301,6 +301,17 @@ commands:
                 fi
               fi
             done
+
+            # Build batch with legacy builder to avoid BuildKit WSL2 build context bug
+            # where stale COPY . . layers persist between branches (same bug as status-nuxt).
+            # Legacy builder correctly detects context changes and invalidates the cache.
+            echo "Building batch container..."
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
+              echo "Self-hosted runner: building batch with legacy builder (avoids BuildKit context bug)"
+              DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker-compose build batch 2>&1
+            else
+              docker-compose build --no-cache batch 2>&1
+            fi
 
             # Two-phase startup: databases must exist before application containers start.
             #

@@ -213,4 +213,43 @@ class MembershipsProcessingServiceTest extends TestCase
             ->first();
         $this->assertNull($membership->reviewrequestedat ?? null);
     }
+
+    // --- Dry-run mode ---
+
+    public function test_dry_run_does_not_mark_entries_as_processed(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $historyId = DB::table('memberships_history')->insertGetId([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'processingrequired' => 1,
+        ]);
+
+        $count = $this->service->processAll(dryRun: true);
+
+        $this->assertEquals(1, $count);
+
+        $entry = DB::table('memberships_history')->where('id', $historyId)->first();
+        $this->assertEquals(1, $entry->processingrequired);
+    }
+
+    public function test_dry_run_does_not_send_welcome_email(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup(['onhere' => 1, 'welcomemail' => 'Welcome!']);
+
+        DB::table('memberships_history')->insert([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'collection' => 'Approved',
+            'processingrequired' => 1,
+        ]);
+
+        $this->service->processAll(dryRun: true);
+
+        Mail::assertNothingSent();
+    }
 }

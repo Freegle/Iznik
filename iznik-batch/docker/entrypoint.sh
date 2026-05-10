@@ -7,11 +7,27 @@ echo "=== Laravel Batch Container Starting ==="
 # No .env file is needed - APP_KEY and all other config is passed via environment
 echo "Using environment variables for configuration (no .env file needed)"
 
-# Install PHP dependencies (host mount may not have vendor directory)
-if [ ! -f "/var/www/html/vendor/autoload.php" ]; then
-    echo "Installing PHP dependencies..."
-    composer install --no-interaction --prefer-dist --optimize-autoloader
-fi
+# Always clear service/package manifests before any composer/artisan bootstrap.
+# These files can be stale across environments and reference dev-only providers.
+rm -f /var/www/html/bootstrap/cache/services.php
+rm -f /var/www/html/bootstrap/cache/packages.php
+
+# Always run composer install to ensure vendor matches composer.lock.
+# The host bind-mount directory may contain a stale vendor/ from a previous run
+# (git clean -fd skips gitignored paths, and /vendor is gitignored). Running
+# composer install unconditionally is fast when nothing changed and ensures
+# newly added packages are always present.
+#
+# --no-scripts: skip composer event hooks (pre-package-uninstall, post-autoload-dump etc.)
+# The pre-package-uninstall hook boots the full Laravel application, which fails when the
+# CI runner's persistent workspace has a stale vendor/ with packages that need removing.
+# We handle cache clearing manually above and run package:discover explicitly below.
+echo "Installing/updating PHP dependencies..."
+composer install --no-interaction --prefer-dist --optimize-autoloader --no-scripts
+
+# Run package discovery manually (replaces post-autoload-dump hook skipped above).
+# This writes bootstrap/cache/packages.php so all package service providers are registered.
+php artisan package:discover --ansi || true
 
 # Wait for database server to be ready (connect without specifying database)
 echo "Waiting for database server..."
@@ -73,7 +89,7 @@ chmod -R 777 /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || 
 
 # Clear environment-specific bootstrap cache files.
 # These contain resolved paths/env values that differ between environments.
-# services.php and packages.php are committed to git and should not be cleared.
+# services.php and packages.php are handled at startup before bootstrap.
 echo "Cleaning environment-specific bootstrap cache..."
 rm -f /var/www/html/bootstrap/cache/config.php
 rm -f /var/www/html/bootstrap/cache/routes-v7.php
