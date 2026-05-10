@@ -2,12 +2,11 @@
 
 namespace App\Mail\Birthday;
 
-use Illuminate\Mail\Mailable;
+use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
-use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 
-class BirthdayMail extends Mailable
+class BirthdayMail extends MjmlMailable
 {
     public function __construct(
         public readonly string $groupName,
@@ -18,7 +17,14 @@ class BirthdayMail extends Mailable
         public readonly string $fromEmail,
         public readonly string $fromName,
         public readonly array $volunteers,
-    ) {}
+    ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return 'Happy Birthday to all us freeglers!';
+    }
 
     public function envelope(): Envelope
     {
@@ -26,21 +32,20 @@ class BirthdayMail extends Mailable
             from: new Address($this->fromEmail, $this->fromName),
             to: [new Address($this->recipientEmail)],
             replyTo: [new Address($this->fromEmail)],
-            subject: 'Happy Birthday to all us freeglers!',
+            subject: $this->getSubject(),
         );
     }
 
-    public function content(): Content
+    public function build(): static
     {
-        return new Content(
-            view: 'emails.birthday.birthday',
-            with: [
-                'groupName' => $this->groupName,
-                'groupNameShort' => $this->groupNameShort,
-                'groupAge' => $this->groupAge,
-                'email' => $this->recipientEmail,
-                'volunteers' => $this->volunteers,
-            ],
-        );
+        $html = view('emails.birthday.birthday', [
+            'groupName'      => $this->groupName,
+            'groupNameShort' => $this->groupNameShort,
+            'groupAge'       => $this->groupAge,
+            'email'          => $this->recipientEmail,
+            'volunteers'     => $this->volunteers,
+        ])->render();
+
+        return $this->html($html);
     }
 }
