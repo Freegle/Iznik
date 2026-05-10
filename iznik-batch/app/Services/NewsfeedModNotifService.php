@@ -139,36 +139,34 @@ class NewsfeedModNotifService
                 continue;
             }
 
-            $count = count($posts);
             $maxId = 0;
-            $textSummary = "Recent chitchat posts from your members:\r\n\r\n";
+            $postsData = [];
 
             foreach ($posts as $post) {
                 $maxId = max($maxId, $post->id);
 
-                $str = $post->message ?? '';
+                $label = match($post->type) {
+                    'Story'   => 'Freegle story',
+                    'AboutMe' => 'About me',
+                    default   => 'Post',
+                };
 
-                switch ($post->type) {
-                    case 'AboutMe':
-                        $str = '"' . $str . '"';
-                        break;
-                    case 'Story':
-                        $str = 'told their Freegle story';
-                        break;
+                if ($post->type === 'Story') {
+                    $preview = 'shared their Freegle story';
+                } else {
+                    $msg = $post->message ?? '';
+                    $preview = mb_strlen($msg) > 200 ? mb_substr($msg, 0, 200) . '...' : $msg;
                 }
 
-                if (mb_strlen($str) > 200) {
-                    $str = mb_substr($str, 0, 200) . '...';
-                }
-
-                $textSummary .= "{$str}\r\n\r\n";
+                $postsData[] = [
+                    'label'   => $label,
+                    'preview' => $preview,
+                    'added'   => $post->added,
+                ];
             }
 
-            $chitchatUrl = "{$modSite}/chitchat";
-            $textSummary .= "Read them at: {$chitchatUrl}\r\n";
-
             if (!$dryRun) {
-                Mail::send(new NewsfeedModNotifMail($mod->email, $count, $textSummary));
+                Mail::send(new NewsfeedModNotifMail($mod->email, $postsData));
 
                 // Update the last seen marker for this mod.
                 DB::table('newsfeed_users')->updateOrInsert(

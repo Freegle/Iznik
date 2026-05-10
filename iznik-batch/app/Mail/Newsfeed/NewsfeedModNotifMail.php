@@ -10,16 +10,16 @@ class NewsfeedModNotifMail extends MjmlMailable
 {
     public function __construct(
         public readonly string $recipientEmail,
-        public readonly int $count,
-        public readonly string $summary,
+        public readonly array $posts,
     ) {
         parent::__construct();
     }
 
     protected function getSubject(): string
     {
-        $plural = $this->count !== 1 ? 's' : '';
-        return "{$this->count} chitchat post{$plural} from your members";
+        $count = count($this->posts);
+        $plural = $count !== 1 ? 's' : '';
+        return "{$count} chitchat post{$plural} from your members";
     }
 
     public function envelope(): Envelope
@@ -39,10 +39,10 @@ class NewsfeedModNotifMail extends MjmlMailable
         $modSite = config('freegle.sites.mod', 'https://modtools.org');
 
         return $this->mjmlView('emails.mjml.newsfeed.mod-notif', [
-            'count'   => $this->count,
-            'summary' => $this->summary,
-            'modSite' => $modSite,
-            'email'   => $this->recipientEmail,
+            'posts'       => $this->posts,
+            'count'       => count($this->posts),
+            'chitchatUrl' => "{$modSite}/chitchat",
+            'email'       => $this->recipientEmail,
         ]);
     }
 }
