@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Mail;
 
+use App\Mail\Newsfeed\NewsfeedModNotifMail;
 use App\Models\Group;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -13,12 +14,13 @@ class NewsfeedModNotifCommandTest extends TestCase
     private function createNewsfeedPost(int $userId, int $groupId, array $attributes = []): int
     {
         return DB::table('newsfeed')->insertGetId(array_merge([
-            'userid' => $userId,
-            'groupid' => $groupId,
-            'type' => 'Message',
-            'message' => 'A chitchat post message.',
-            'added' => now()->subHours(1),
+            'userid'    => $userId,
+            'groupid'   => $groupId,
+            'type'      => 'Message',
+            'message'   => 'A chitchat post message.',
+            'added'     => now()->subHours(1),
             'timestamp' => now()->subHours(1),
+            'position'  => DB::raw("ST_GeomFromText('POINT(-0.1278 51.5074)', 3857)"),
         ], $attributes));
     }
 

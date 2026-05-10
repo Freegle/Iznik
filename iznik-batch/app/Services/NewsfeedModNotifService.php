@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Mail\Newsfeed\NewsfeedModNotifMail;
 use App\Models\Group;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -30,7 +31,6 @@ class NewsfeedModNotifService
      */
     public function notifyMods(bool $dryRun = false): array
     {
-        $noReplyAddr = config('freegle.mail.noreply_addr');
         $modSite = config('freegle.sites.mod');
 
         $notified = 0;
@@ -167,16 +167,8 @@ class NewsfeedModNotifService
             $chitchatUrl = "{$modSite}/chitchat";
             $textSummary .= "Read them at: {$chitchatUrl}\r\n";
 
-            $subject = $count . ' chitchat post' . ($count !== 1 ? 's' : '') . ' from your members';
-
             if (!$dryRun) {
-                Mail::raw($textSummary, function ($message) use (
-                    $subject, $noReplyAddr, $mod
-                ) {
-                    $message->from($noReplyAddr, 'Freegle')
-                        ->to($mod->email, $mod->fullname ?: null)
-                        ->subject($subject);
-                });
+                Mail::to($mod->email)->send(new NewsfeedModNotifMail($count, $textSummary));
 
                 // Update the last seen marker for this mod.
                 DB::table('newsfeed_users')->updateOrInsert(
