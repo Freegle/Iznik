@@ -11,6 +11,22 @@ use Tests\TestCase;
 
 class NewsfeedModNotifCommandTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Explicit cleanup guards against DatabaseTransactions rollback failures.
+        // NewsfeedModNotifService queries memberships/users/groups/newsfeed globally;
+        // any committed rows left by a previous test method cause count mismatches.
+        // Deleting inside the current transaction hides committed leaked data from
+        // this test's perspective without affecting other test classes.
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        foreach (['newsfeed_users', 'newsfeed', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
+            DB::table($table)->delete();
+        }
+        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+    }
+
     private function createNewsfeedPost(int $userId, int $groupId, array $attributes = []): int
     {
         return DB::table('newsfeed')->insertGetId(array_merge([
