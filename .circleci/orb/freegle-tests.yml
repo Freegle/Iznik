@@ -70,8 +70,8 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
-      PW_WORKERS: 11
-      VITEST_MAX_WORKERS: 8
+      PW_WORKERS: 13
+      VITEST_MAX_WORKERS: 12
       PORT_TRAEFIK_HTTP: 9080
       PORT_TRAEFIK_API: 17192
       PORT_TRAEFIK_DASHBOARD: 17080
@@ -293,63 +293,128 @@ commands:
       - run:
           name: Build containers
           command: |
-            # Pre-pull base image once (avoids multiple registry checks during parallel builds).
-            # Wrapped in a 3-minute timeout: GHCR can stall indefinitely on slow connections,
-            # leaving the build hanging. If the pull times out we continue — Docker will use
-            # whatever is in the local cache, and the build itself will re-attempt the pull
-            # with its own retry logic.
-            echo "Pre-pulling base image (timeout 180s)..."
+            # Pre-pull shared base images once before any parallel builds start.
+            # freegle-base: used by apiv1, freegle-prod-local, modtools-prod-local, etc.
+            # freegle-batch-base: used by batch — contains compiled PHP extensions/PECL/MJML.
+            #   On Katapult, the cache server GHCR mirror (185.44.254.6:5001) serves both
+            #   images locally, so pulls are fast even on ephemeral VMs with no layer cache.
+            echo "Pre-pulling shared base images (timeout 180s each)..."
             timeout 180 docker pull ghcr.io/freegle/freegle-base:latest \
-              || echo "⚠️  Pre-pull timed out or failed — continuing with cached layers"
+              || echo "⚠️  freegle-base pre-pull timed out — builds will re-attempt"
+            timeout 180 docker pull ghcr.io/freegle/freegle-batch-base:latest \
+              || echo "⚠️  freegle-batch-base pre-pull timed out — builds will re-attempt"
 
-            # Build only containers needed for CI tests (skip dev containers)
-            # This saves ~2-3 minutes by not building dev-local, modtools-dev-local, ai-support-helper
             echo "Building CI-required containers..."
 
-            # Retry logic for transient network errors (ECONNRESET, etc.) during npm install
-            MAX_RETRIES=3
-            RETRY_DELAY=30
-
-            for attempt in $(seq 1 $MAX_RETRIES); do
-              echo "Build attempt $attempt of $MAX_RETRIES..."
-
-              # Self-hosted runner has persistent Docker layer cache — use it for most containers
-              CACHE_FLAG="--no-cache"
-              if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
-                CACHE_FLAG=""
-                echo "Self-hosted runner: using Docker layer cache"
-              fi
-
-              if docker-compose build $CACHE_FLAG \
-                apiv1 apiv1-phpunit apiv2 \
-                freegle-prod-local modtools-prod-local \
-                playwright status; then
-                echo "✅ Build succeeded on attempt $attempt"
-                break
-              else
-                if [ $attempt -lt $MAX_RETRIES ]; then
-                  echo "⚠️ Build failed on attempt $attempt, retrying in ${RETRY_DELAY}s..."
-                  # Clean up any partial builds
-                  docker-compose down --remove-orphans 2>/dev/null || true
-                  docker system prune -f 2>/dev/null || true
-                  sleep $RETRY_DELAY
-                else
-                  echo "❌ Build failed after $MAX_RETRIES attempts"
-                  exit 1
-                fi
-              fi
-            done
-
-            # Build batch with legacy builder to avoid BuildKit WSL2 build context bug
-            # where stale COPY . . layers persist between branches (same bug as status-nuxt).
-            # Legacy builder correctly detects context changes and invalidates the cache.
-            echo "Building batch container..."
+            CACHE_FLAG="--no-cache"
             if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
-              echo "Self-hosted runner: building batch with legacy builder (avoids BuildKit context bug)"
-              DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker-compose build batch 2>&1
-            else
-              docker-compose build --no-cache batch 2>&1
+              CACHE_FLAG=""
+              echo "Self-hosted runner: using Docker layer cache"
             fi
+
+            IS_WSL=false
+            grep -qi "microsoft\|wsl" /proc/version 2>/dev/null && IS_WSL=true
+
+            # Batch build: freegle-batch-base already contains compiled PHP extensions, PECL,
+            # and MJML so the build is just COPY + composer install (~1-2 min, not ~10 min).
+            # WSL still needs legacy builder to avoid the BuildKit context bug (COPY . . bug).
+            BATCH_LOG=$(mktemp)
+            if [ "$IS_WSL" = "true" ]; then
+              echo "Batch: legacy builder (WSL — avoids BuildKit context bug)"
+              DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker-compose build batch > "$BATCH_LOG" 2>&1 &
+            else
+              echo "Batch: BuildKit (fast — base image has all compiled deps)"
+              docker-compose build $CACHE_FLAG batch > "$BATCH_LOG" 2>&1 &
+            fi
+            BATCH_PID=$!
+
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && [ "$IS_WSL" = "false" ]; then
+              # Katapult runner (native Linux, 16+ CPUs / 48GB RAM):
+              # Build all container groups in parallel — each group is independent.
+              # BuildKit's internal scheduler further parallelises steps within each build.
+              echo "Katapult: building all container groups in parallel..."
+              PHP_LOG=$(mktemp) GO_LOG=$(mktemp) NUXT_LOG=$(mktemp) OTHER_LOG=$(mktemp)
+
+              # PHP API containers (share freegle-base PHP layer)
+              docker-compose build apiv1 apiv1-phpunit > "$PHP_LOG" 2>&1 &
+              PHP_PID=$!
+
+              # Go API container (independent — no shared layers with PHP/Nuxt)
+              docker-compose build apiv2 > "$GO_LOG" 2>&1 &
+              GO_PID=$!
+
+              # Nuxt containers — wrapped in retry for transient npm ECONNRESET errors
+              (
+                for attempt in 1 2 3; do
+                  docker-compose build freegle-prod-local modtools-prod-local && exit 0
+                  echo "⚠️ Nuxt build attempt $attempt failed, retrying in 30s..."
+                  [ $attempt -lt 3 ] && sleep 30
+                done
+                exit 1
+              ) > "$NUXT_LOG" 2>&1 &
+              NUXT_PID=$!
+
+              # Playwright + status (lightweight, finishes quickly)
+              docker-compose build playwright status > "$OTHER_LOG" 2>&1 &
+              OTHER_PID=$!
+
+              BUILD_FAILED=0
+              check_build() {
+                local pid=$1 name=$2 log=$3
+                if wait "$pid"; then
+                  echo "✅ $name build complete"
+                else
+                  echo "❌ $name build failed:"
+                  cat "$log"
+                  BUILD_FAILED=1
+                fi
+              }
+
+              check_build $PHP_PID   "PHP (apiv1/apiv1-phpunit)" "$PHP_LOG"
+              check_build $GO_PID    "Go (apiv2)"                "$GO_LOG"
+              check_build $NUXT_PID  "Nuxt (freegle/modtools)"   "$NUXT_LOG"
+              check_build $OTHER_PID "Playwright + status"       "$OTHER_LOG"
+
+              if [ $BUILD_FAILED -eq 1 ]; then
+                kill $BATCH_PID 2>/dev/null || true
+                exit 1
+              fi
+
+            else
+              # WSL / cloud CircleCI: sequential build with retry for npm ECONNRESET
+              MAX_RETRIES=3
+              RETRY_DELAY=30
+              for attempt in $(seq 1 $MAX_RETRIES); do
+                echo "Build attempt $attempt of $MAX_RETRIES..."
+                if docker-compose build $CACHE_FLAG \
+                  apiv1 apiv1-phpunit apiv2 \
+                  freegle-prod-local modtools-prod-local \
+                  playwright status; then
+                  echo "✅ Build succeeded on attempt $attempt"
+                  break
+                else
+                  if [ $attempt -lt $MAX_RETRIES ]; then
+                    echo "⚠️ Build failed on attempt $attempt, retrying in ${RETRY_DELAY}s..."
+                    docker-compose down --remove-orphans 2>/dev/null || true
+                    docker system prune -f 2>/dev/null || true
+                    sleep $RETRY_DELAY
+                  else
+                    echo "❌ Build failed after $MAX_RETRIES attempts"
+                    kill $BATCH_PID 2>/dev/null || true
+                    exit 1
+                  fi
+                fi
+              done
+            fi
+
+            echo "Waiting for batch build to complete..."
+            if ! wait $BATCH_PID; then
+              echo "❌ Batch build failed:"
+              cat "$BATCH_LOG"
+              exit 1
+            fi
+            echo "✅ Batch build complete"
+            cat "$BATCH_LOG" | tail -5
 
             # Two-phase startup: databases must exist before application containers start.
             #
@@ -823,11 +888,11 @@ commands:
           no_output_timeout: 40m
 
   run-php-tests:
-    description: "Run PHPUnit tests via the status service API"
+    description: "RETIRED — iznik-server PHPUnit tests have been removed. This command is no longer called."
     parameters:
       reason:
         type: string
-        default: "Running PHPUnit tests"
+        default: "Retired"
     steps:
       - restore_cache:
           keys:
@@ -1088,7 +1153,13 @@ commands:
           name: Install Node.js 22 for Vitest
           command: |
             if [ "$SKIP_VITEST" = "true" ]; then
-              echo "Skipping Node.js install — Vitest tests skipped (no changes in iznik-nuxt3/)"
+              echo "Skipping Node.js install — Vitest tests skipped"
+              exit 0
+            fi
+            # On Katapult (native Linux self-hosted): Vitest runs inside the parallel tests
+            # block instead, so skip the sequential pre-step to avoid blocking parallel starts.
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && ! grep -qi "microsoft\|wsl" /proc/version 2>/dev/null; then
+              echo "Katapult runner: Vitest will run in parallel with other tests — skipping sequential pre-step"
               exit 0
             fi
             echo "📦 Installing Node.js 22..."
@@ -1100,6 +1171,11 @@ commands:
           command: |
             if [ "$SKIP_VITEST" = "true" ]; then
               echo "Skipping Vitest tests — no changes in iznik-nuxt3/"
+              exit 0
+            fi
+            # On Katapult: Vitest runs in the parallel tests block — skip here.
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && ! grep -qi "microsoft\|wsl" /proc/version 2>/dev/null; then
+              echo "Katapult runner: Vitest runs in parallel — skipping sequential step"
               exit 0
             fi
             echo "🧪 << parameters.reason >>..."
@@ -1120,21 +1196,17 @@ commands:
             echo "📂 Using iznik-nuxt3 at: $NUXT_DIR"
             cd "$NUXT_DIR"
 
-            # Check if vitest is configured
             if ! grep -q '"test:unit:run"' package.json; then
-              echo "⚠️ Vitest not configured in package.json, skipping unit tests"
+              echo "⚠️ Vitest not configured in package.json, skipping"
               exit 0
             fi
 
-            # Install dependencies (using npm ci for faster, deterministic installs)
             echo "📦 Installing npm dependencies..."
             npm ci --prefer-offline --no-audit
 
-            # Generate .nuxt directory (required for tsconfig.json extends)
             echo "🔧 Running nuxi prepare..."
             npx nuxi prepare
 
-            # Run vitest
             echo "🧪 Running Vitest unit tests..."
             npm run test:unit:run -- --reporter=verbose --coverage 2>&1 | tee /tmp/vitest-output.log
             VITEST_EXIT_CODE=${PIPESTATUS[0]}
@@ -1994,15 +2066,11 @@ jobs:
             SKIP_VITEST=false
             SKIP_PLAYWRIGHT=false
             SKIP_LARAVEL=false
-            # iznik-server (PHP/PHPUnit) tests are permanently disabled: the concern_keywords
-            # migration will break them and iznik-server is not being actively maintained.
-            SKIP_PHP=true
 
             echo "export SKIP_GO=$SKIP_GO" >> "$BASH_ENV"
             echo "export SKIP_VITEST=$SKIP_VITEST" >> "$BASH_ENV"
             echo "export SKIP_PLAYWRIGHT=$SKIP_PLAYWRIGHT" >> "$BASH_ENV"
             echo "export SKIP_LARAVEL=$SKIP_LARAVEL" >> "$BASH_ENV"
-            echo "export SKIP_PHP=$SKIP_PHP" >> "$BASH_ENV"
 
       - setup-dependencies
 
@@ -2020,9 +2088,11 @@ jobs:
       - run-vitest-tests:
           reason: "Running Vitest unit tests (fail-fast before parallel tests)"
 
-      # Run iznik-batch, Playwright, Go, and iznik-server tests in parallel via status API
+      # Run all tests in parallel via status API.
+      # On Katapult: Vitest also runs here (no sequential pre-step).
+      # On WSL/cloud: Vitest already ran as a sequential pre-step above.
       - run:
-          name: Run iznik-batch, Playwright, Go, and iznik-server tests in parallel
+          name: Run iznik-batch, Playwright, Go, and Vitest tests in parallel
           command: |
             echo "🚀 Running all tests in parallel via status API..."
             mkdir -p ~/test-output
@@ -2031,7 +2101,7 @@ jobs:
             # === INITIALIZE RESULT FILES ===
             # On self-hosted runner (cleanup_working_directory: false), stale /tmp files
             # from previous runs persist. Initialize all result files to prevent false results.
-            for f in laravel go php playwright; do
+            for f in laravel go playwright vitest; do
               echo "pending" > /tmp/${f}-result
             done
             rm -f /tmp/watchdog-triggered /tmp/watchdog-pid
@@ -2182,77 +2252,45 @@ jobs:
             ) > ~/test-output/go.out 2>&1 &
             GO_PID=$!
 
-            # iznik-server (PHPUnit) tests are permanently skipped — see SKIP_PHP above.
-            echo "⏭️ Skipping iznik-server PHP tests (disabled — concern_keywords migration will break them)"
-            (
-              if [ "${SKIP_PHP:-true}" = "true" ]; then
-                echo "Skipping iznik-server PHP tests (SKIP_PHP=true)"
-                echo "pass" > /tmp/php-result
-                echo "0" > /tmp/php-completed
-                echo "0" > /tmp/php-total
-                exit 0
-              fi
-
-              # Restore GeoIP database from cache if available
-              if [ -f ~/geoip-cache/GeoLite2-Country.mmdb ]; then
-                echo "📍 Restoring GeoIP database from cache..."
-                docker exec ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit mkdir -p /var/lib/GeoIP
-                docker cp ~/geoip-cache/GeoLite2-Country.mmdb ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/var/lib/GeoIP/GeoLite2-Country.mmdb
-                docker cp ~/geoip-cache/GeoLite2-City.mmdb ${COMPOSE_PROJECT_NAME:-freegle}-apiv1-phpunit:/var/lib/GeoIP/GeoLite2-City.mmdb 2>/dev/null || true
-              fi
-
-              # Trigger PHPUnit tests via API
-              response=$(curl -s -w "%{http_code}" -X POST -H "Content-Type: application/json" http://localhost:${PORT_STATUS:-8081}/api/tests/php)
-              http_code="${response: -3}"
-
-              if [ "$http_code" = "409" ]; then
-                echo "⚠️ PHP tests already running (HTTP 409) - joining existing run"
-              elif [ "$http_code" -ne "200" ]; then
-                echo "❌ Failed to trigger PHP tests. HTTP code: $http_code"
-                echo "fail" > /tmp/php-result
-                echo "0" > /tmp/php-completed
-                echo "0" > /tmp/php-total
-                exit 1
-              else
-                echo "✅ PHP tests triggered successfully"
-              fi
-
-              # Mark as running so fail-fast can detect killed tests
-              echo "running" > /tmp/php-result
-
-              # Poll for PHPUnit completion
-              while true; do
-                sleep 10
-                status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/php/status || echo '{"status":"error"}')
-                status=$(echo "$status_response" | jq -r '.status // "unknown"')
-                # Extract progress counts for display
-                completed=$(echo "$status_response" | jq -r '.progress.completed // 0')
-                total=$(echo "$status_response" | jq -r '.progress.total // 0')
-                echo "$completed" > /tmp/php-completed
-                echo "$total" > /tmp/php-total
-
-
-                if [ "$status" = "completed" ]; then
-                  success=$(echo "$status_response" | jq -r '.success // false')
-                  if [ "$success" = "true" ]; then
-                    echo "pass" > /tmp/php-result
-                    echo "✅ iznik-server tests passed!"
-                  else
-                    echo "fail" > /tmp/php-result
-                    echo "❌ iznik-server tests failed!"
-                  fi
-                  # Always write logs to output file for artifacts
-                  echo "$status_response" | jq -r '.logs // "No logs"'
-                  break
-                elif [ "$status" = "failed" ] || [ "$status" = "error" ]; then
-                  echo "fail" > /tmp/php-result
-                  echo "❌ iznik-server tests failed!"
-                  echo "$status_response" | jq -r '.logs // "No logs"'
-                  break
+            # Start Vitest in background — only on Katapult (WSL/cloud ran it as a pre-step above)
+            VITEST_PID=""
+            echo "pending" > /tmp/vitest-result
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && ! grep -qi "microsoft\|wsl" /proc/version 2>/dev/null; then
+              echo "🧪 Starting Vitest unit tests in background (Katapult runner)..."
+              (
+                if [ "${SKIP_VITEST:-false}" = "true" ]; then
+                  echo "Skipping Vitest"
+                  echo "pass" > /tmp/vitest-result
+                  exit 0
                 fi
-              done
-            ) > ~/test-output/phpunit.out 2>&1 &
-            PHPUNIT_PID=$!
+                # Find iznik-nuxt3 directory
+                if [ -d "./iznik-nuxt3" ]; then
+                  NUXT_DIR="./iznik-nuxt3"
+                elif [ -d "$HOME/project/iznik-nuxt3" ]; then
+                  NUXT_DIR="$HOME/project/iznik-nuxt3"
+                else
+                  echo "❌ Could not find iznik-nuxt3 directory"; echo "fail" > /tmp/vitest-result; exit 1
+                fi
+                cd "$NUXT_DIR"
+                echo "running" > /tmp/vitest-result
+                npm ci --prefer-offline --no-audit
+                npx nuxi prepare
+                npm run test:unit:run -- --reporter=verbose --coverage 2>&1 | tee /tmp/vitest-output.log
+                EXIT_CODE=${PIPESTATUS[0]}
+                if [ $EXIT_CODE -eq 0 ]; then
+                  echo "pass" > /tmp/vitest-result
+                  echo "✅ Vitest unit tests passed!"
+                else
+                  echo "fail" > /tmp/vitest-result
+                  echo "❌ Vitest unit tests failed!"
+                  exit $EXIT_CODE
+                fi
+              ) > ~/test-output/vitest.out 2>&1 &
+              VITEST_PID=$!
+            else
+              # WSL/cloud: Vitest already ran sequentially — mark as pass placeholder
+              echo "pass" > /tmp/vitest-result
+            fi
 
             # Start Playwright tests in background
             echo "🎭 Starting Playwright tests in background..."
@@ -2318,7 +2356,7 @@ jobs:
             ) > ~/test-output/playwright.out 2>&1 &
             PLAYWRIGHT_PID=$!
 
-            # Unified monitoring loop for all 4 tests
+            # Unified monitoring loop
             echo "📊 Monitoring all tests..."
             start_time=$(date +%s)
             timeout_duration=2400  # 40 minutes — keeps total job under 60 min
@@ -2331,7 +2369,7 @@ jobs:
 
               if [ $elapsed -gt $timeout_duration ]; then
                 echo "⏰ Tests timed out after 40 minutes"
-                kill $LARAVEL_PID $GO_PID $PHPUNIT_PID $PLAYWRIGHT_PID 2>/dev/null || true
+                kill $LARAVEL_PID $GO_PID $PLAYWRIGHT_PID ${VITEST_PID:-} 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
               fi
@@ -2342,19 +2380,14 @@ jobs:
                 echo "timeout" > /tmp/playwright-result
                 kill $LARAVEL_PID 2>/dev/null || true
                 kill $GO_PID 2>/dev/null || true
-                kill $PHPUNIT_PID 2>/dev/null || true
+                kill ${VITEST_PID:-} 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
               fi
 
               sleep 10
 
-              status_response=$(curl -s http://localhost:${PORT_STATUS:-8081}/api/tests/playwright/status || echo '{"status":"error"}')
-              status=$(echo "$status_response" | jq -r '.status // "unknown"')
-              completed=$(echo "$status_response" | jq -r '.progress.completed // 0')
-              total=$(echo "$status_response" | jq -r '.progress.total // 0')
-
-              elapsed_min=$((elapsed / 60))
+              elapsed_min=$(( ($(date +%s) - start_time) / 60 ))
               LARAVEL_STATUS=$([ -f /tmp/laravel-result ] && cat /tmp/laravel-result || echo 'running')
               LARAVEL_COMPLETED=$([ -f /tmp/laravel-completed ] && cat /tmp/laravel-completed || echo '0')
               LARAVEL_COMPLETED=${LARAVEL_COMPLETED:-0}
@@ -2367,7 +2400,6 @@ jobs:
               GO_COMPLETED=${GO_COMPLETED:-0}
               GO_TOTAL=$([ -f /tmp/go-total ] && cat /tmp/go-total || echo '0')
               GO_TOTAL=${GO_TOTAL:-0}
-              # Go doesn't have a pre-count, so show just completed when total is 0
               if [ "$GO_STATUS" = "running" ]; then
                 if [ "$GO_TOTAL" -gt 0 ]; then
                   GO_DISPLAY="running ($GO_COMPLETED/$GO_TOTAL)"
@@ -2378,19 +2410,11 @@ jobs:
                 GO_DISPLAY="$GO_STATUS"
               fi
 
-              PHP_STATUS=$([ -f /tmp/php-result ] && cat /tmp/php-result || echo 'running')
-              PHP_COMPLETED=$([ -f /tmp/php-completed ] && cat /tmp/php-completed || echo '0')
-              PHP_COMPLETED=${PHP_COMPLETED:-0}
-              PHP_TOTAL=$([ -f /tmp/php-total ] && cat /tmp/php-total || echo '0')
-              PHP_TOTAL=${PHP_TOTAL:-0}
-              PHP_DISPLAY=$([ "$PHP_STATUS" = "running" ] && echo "running ($PHP_COMPLETED/$PHP_TOTAL)" || echo "$PHP_STATUS")
-
               PLAYWRIGHT_STATUS=$([ -f /tmp/playwright-result ] && cat /tmp/playwright-result || echo 'running')
               PLAYWRIGHT_COMPLETED=$([ -f /tmp/playwright-completed ] && cat /tmp/playwright-completed || echo '0')
               PLAYWRIGHT_COMPLETED=${PLAYWRIGHT_COMPLETED:-0}
               PLAYWRIGHT_TOTAL=$([ -f /tmp/playwright-total ] && cat /tmp/playwright-total || echo '0')
               PLAYWRIGHT_TOTAL=${PLAYWRIGHT_TOTAL:-0}
-              # Cap completed at total for display (symbol counting can double-count at end)
               if [ "$PLAYWRIGHT_STATUS" = "running" ]; then
                 if [ "$PLAYWRIGHT_TOTAL" -gt 0 ] && [ "$PLAYWRIGHT_COMPLETED" -gt "$PLAYWRIGHT_TOTAL" ]; then
                   PLAYWRIGHT_DISPLAY="running ($PLAYWRIGHT_TOTAL/$PLAYWRIGHT_TOTAL)"
@@ -2401,36 +2425,41 @@ jobs:
                 PLAYWRIGHT_DISPLAY="$PLAYWRIGHT_STATUS"
               fi
 
-              echo "[${elapsed_min}m] iznik-batch: $LARAVEL_DISPLAY | Go: $GO_DISPLAY | iznik-server: $PHP_DISPLAY | Playwright: $PLAYWRIGHT_DISPLAY"
+              VITEST_STATUS=$([ -f /tmp/vitest-result ] && cat /tmp/vitest-result || echo 'pass')
+              VITEST_DISPLAY="$VITEST_STATUS"
+
+              echo "[${elapsed_min}m] iznik-batch: $LARAVEL_DISPLAY | Go: $GO_DISPLAY | Playwright: $PLAYWRIGHT_DISPLAY | Vitest: $VITEST_DISPLAY"
 
               # Check for any failures (fail-fast)
               if [ "$LARAVEL_STATUS" = "fail" ]; then
                 echo "❌ FAIL-FAST: iznik-batch tests failed - stopping all tests"
-                kill $GO_PID $PHPUNIT_PID $PLAYWRIGHT_PID 2>/dev/null || true
+                kill $GO_PID $PLAYWRIGHT_PID ${VITEST_PID:-} 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
               fi
               if [ "$GO_STATUS" = "fail" ]; then
                 echo "❌ FAIL-FAST: Go tests failed - stopping all tests"
-                kill $LARAVEL_PID $PHPUNIT_PID $PLAYWRIGHT_PID 2>/dev/null || true
+                kill $LARAVEL_PID $PLAYWRIGHT_PID ${VITEST_PID:-} 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
               fi
-              if [ "$PHP_STATUS" = "fail" ]; then
-                echo "❌ FAIL-FAST: iznik-server tests failed - stopping all tests"
+              if [ "$VITEST_STATUS" = "fail" ]; then
+                echo "❌ FAIL-FAST: Vitest tests failed - stopping all tests"
                 kill $LARAVEL_PID $GO_PID $PLAYWRIGHT_PID 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
               fi
               if [ "$PLAYWRIGHT_STATUS" = "fail" ]; then
                 echo "❌ FAIL-FAST: Playwright tests failed - stopping all tests"
-                kill $LARAVEL_PID $GO_PID $PHPUNIT_PID 2>/dev/null || true
+                kill $LARAVEL_PID $GO_PID ${VITEST_PID:-} 2>/dev/null || true
                 TESTS_KILLED_EARLY=true
                 break
               fi
 
               # Check if all tests completed
-              if [ "$LARAVEL_STATUS" != "running" ] && [ "$GO_STATUS" != "running" ] && [ "$PHP_STATUS" != "running" ] && [ "$PLAYWRIGHT_STATUS" != "running" ]; then
+              VITEST_DONE=$([ -f /tmp/vitest-result ] && cat /tmp/vitest-result || echo 'pass')
+              if [ "$LARAVEL_STATUS" != "running" ] && [ "$GO_STATUS" != "running" ] && \
+                 [ "$PLAYWRIGHT_STATUS" != "running" ] && [ "$VITEST_DONE" != "running" ]; then
                 echo "✅ All tests completed"
                 break
               fi
@@ -2441,21 +2470,14 @@ jobs:
             # Wait for all background processes to finish
             wait $LARAVEL_PID 2>/dev/null || true
             wait $GO_PID 2>/dev/null || true
-            wait $PHPUNIT_PID 2>/dev/null || true
             wait $PLAYWRIGHT_PID 2>/dev/null || true
+            [ -n "${VITEST_PID:-}" ] && wait $VITEST_PID 2>/dev/null || true
 
-            # For killed tests, the background subshell was terminated before it could
-            # write logs to the output file. Fetch and append logs from the status API.
+            # For killed tests, fetch final logs from the status API
             if [ "$TESTS_KILLED_EARLY" = "true" ]; then
               echo "📋 Capturing final logs for killed tests..."
-              for test_type in laravel go php playwright; do
-                outfile=""
-                case $test_type in
-                  laravel) outfile=~/test-output/laravel.out ;;
-                  go) outfile=~/test-output/go.out ;;
-                  php) outfile=~/test-output/phpunit.out ;;
-                  playwright) outfile=~/test-output/playwright.out ;;
-                esac
+              for test_type in laravel go playwright; do
+                outfile=~/test-output/${test_type}.out
                 result=$(cat /tmp/${test_type}-result 2>/dev/null || echo "unknown")
                 if [ "$result" = "running" ] || [ "$result" = "unknown" ]; then
                   echo "📋 Fetching final logs for $test_type..."
@@ -2470,11 +2492,11 @@ jobs:
             # Check results from files
             LARAVEL_RESULT=$(cat /tmp/laravel-result 2>/dev/null || echo "fail")
             GO_RESULT=$(cat /tmp/go-result 2>/dev/null || echo "fail")
-            PHP_RESULT=$(cat /tmp/php-result 2>/dev/null || echo "fail")
             PLAYWRIGHT_RESULT=$(cat /tmp/playwright-result 2>/dev/null || echo "fail")
+            VITEST_RESULT=$(cat /tmp/vitest-result 2>/dev/null || echo "pass")
 
             # Handle killed or never-started tests
-            for varname in LARAVEL_RESULT GO_RESULT PHP_RESULT PLAYWRIGHT_RESULT; do
+            for varname in LARAVEL_RESULT GO_RESULT PLAYWRIGHT_RESULT VITEST_RESULT; do
               val="${!varname}"
               if [ "$TESTS_KILLED_EARLY" = "true" ] && [ "$val" = "running" ]; then
                 eval "$varname=killed"
@@ -2487,34 +2509,15 @@ jobs:
             echo ""
             echo "=== Parallel Test Results ==="
             echo "iznik-batch: $LARAVEL_RESULT"
-            echo "Go: $GO_RESULT"
-            echo "iznik-server: $PHP_RESULT"
-            echo "Playwright: $PLAYWRIGHT_RESULT"
+            echo "Go:          $GO_RESULT"
+            echo "Playwright:  $PLAYWRIGHT_RESULT"
+            echo "Vitest:      $VITEST_RESULT"
 
             # Set environment variables for later steps
-            if [ "$LARAVEL_RESULT" = "pass" ]; then
-              echo "LARAVEL_TESTS_PASSED=true" >> $BASH_ENV
-            else
-              echo "LARAVEL_TESTS_PASSED=false" >> $BASH_ENV
-            fi
-
-            if [ "$GO_RESULT" = "pass" ]; then
-              echo "GO_TESTS_PASSED=true" >> $BASH_ENV
-            else
-              echo "GO_TESTS_PASSED=false" >> $BASH_ENV
-            fi
-
-            if [ "$PHP_RESULT" = "pass" ]; then
-              echo "PHP_TESTS_PASSED=true" >> $BASH_ENV
-            else
-              echo "PHP_TESTS_PASSED=false" >> $BASH_ENV
-            fi
-
-            if [ "$PLAYWRIGHT_RESULT" = "pass" ]; then
-              echo "PLAYWRIGHT_TESTS_PASSED=true" >> $BASH_ENV
-            else
-              echo "PLAYWRIGHT_TESTS_PASSED=false" >> $BASH_ENV
-            fi
+            [ "$LARAVEL_RESULT"    = "pass" ] && echo "LARAVEL_TESTS_PASSED=true"    >> $BASH_ENV || echo "LARAVEL_TESTS_PASSED=false"    >> $BASH_ENV
+            [ "$GO_RESULT"         = "pass" ] && echo "GO_TESTS_PASSED=true"         >> $BASH_ENV || echo "GO_TESTS_PASSED=false"         >> $BASH_ENV
+            [ "$PLAYWRIGHT_RESULT" = "pass" ] && echo "PLAYWRIGHT_TESTS_PASSED=true" >> $BASH_ENV || echo "PLAYWRIGHT_TESTS_PASSED=false" >> $BASH_ENV
+            [ "$VITEST_RESULT"     = "pass" ] && echo "VITEST_TESTS_PASSED=true"     >> $BASH_ENV || echo "VITEST_TESTS_PASSED=false"     >> $BASH_ENV
 
             # === WATCHDOG CLEANUP ===
             # Kill the watchdog since tests completed (either pass or fail)
@@ -2539,7 +2542,7 @@ jobs:
             fi
 
             # Check test suite results
-            if [ "$LARAVEL_RESULT" != "pass" ] || [ "$GO_RESULT" != "pass" ] || [ "$PHP_RESULT" != "pass" ] || [ "$PLAYWRIGHT_RESULT" != "pass" ]; then
+            if [ "$LARAVEL_RESULT" != "pass" ] || [ "$GO_RESULT" != "pass" ] || [ "$PLAYWRIGHT_RESULT" != "pass" ] || [ "$VITEST_RESULT" != "pass" ]; then
               echo "❌ One or more test suites failed"
               # Show failed test output files
               echo ""
@@ -2734,13 +2737,13 @@ jobs:
             set +o pipefail
             echo "=== Overall Test Results ==="
 
-            # All tests (required) — iznik-server PHP tests excluded (disabled)
-            if [ "$LARAVEL_TESTS_PASSED" = "true" ] && [ "$GO_TESTS_PASSED" = "true" ] && [ "$PLAYWRIGHT_TESTS_PASSED" = "true" ]; then
+            if [ "$LARAVEL_TESTS_PASSED" = "true" ] && [ "$GO_TESTS_PASSED" = "true" ] && \
+               [ "$PLAYWRIGHT_TESTS_PASSED" = "true" ] && [ "${VITEST_TESTS_PASSED:-true}" = "true" ]; then
               echo "✅ All tests passed successfully!"
               echo "ALL_TESTS_PASSED=true" >> $BASH_ENV
             else
               echo "❌ Tests failed"
-              echo "Laravel: $LARAVEL_TESTS_PASSED, Go: $GO_TESTS_PASSED, Playwright: $PLAYWRIGHT_TESTS_PASSED"
+              echo "Laravel: $LARAVEL_TESTS_PASSED, Go: $GO_TESTS_PASSED, Playwright: $PLAYWRIGHT_TESTS_PASSED, Vitest: ${VITEST_TESTS_PASSED:-pass}"
               echo ""
 
               # Extract and display failure details from test output files
@@ -2773,13 +2776,18 @@ jobs:
 
               if [ "$PLAYWRIGHT_TESTS_PASSED" != "true" ] && [ -f ~/test-output/playwright.out ]; then
                 echo "=== Playwright Failure Details ==="
-                # Show lines containing failure markers
                 if grep -q "✘\|Error:\|failed" ~/test-output/playwright.out; then
                   grep -B 2 -A 10 "✘\|Error:\|failed" ~/test-output/playwright.out | head -60
                 else
                   echo "(Showing last 50 lines of output)"
                   tail -50 ~/test-output/playwright.out
                 fi
+                echo ""
+              fi
+
+              if [ "${VITEST_TESTS_PASSED:-true}" != "true" ] && [ -f ~/test-output/vitest.out ]; then
+                echo "=== Vitest Failure Details ==="
+                tail -50 ~/test-output/vitest.out
                 echo ""
               fi
 

@@ -129,6 +129,8 @@ configure_runner() {
 set -e
 
 # Configure Docker to use cache server mirrors
+# Port 5000: Docker Hub pull-through mirror
+# Port 5001: GHCR pull-through mirror (serves freegle-base and freegle-batch-base)
 cat > /etc/docker/daemon.json << 'EOF'
 {
   "registry-mirrors": [
