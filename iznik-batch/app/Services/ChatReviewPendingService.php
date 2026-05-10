@@ -120,7 +120,7 @@ class ChatReviewPendingService
 
             if (!$dryRun) {
                 foreach ($modEmails as $email) {
-                    Mail::to($email)->send(new ChatReviewPendingMail($groupName, $count));
+                    Mail::send(new ChatReviewPendingMail($email, $groupName, $count));
                 }
             }
         }
@@ -128,7 +128,7 @@ class ChatReviewPendingService
         if ($groupsNotified > 0 && !$dryRun && $mentorsSummary) {
             $total       = collect($groups)->sum('cnt');
             $mentorsAddr = config('freegle.mail.mentors_addr');
-            Mail::to($mentorsAddr)->send(new ChatReviewSummaryMail((int) $total, $mentorsSummary));
+            Mail::send(new ChatReviewSummaryMail($mentorsAddr, (int) $total, $mentorsSummary));
         }
 
         return $groupsNotified;

@@ -2,20 +2,23 @@
 
 namespace App\Mail\Chat;
 
-use Illuminate\Bus\Queueable;
-use Illuminate\Mail\Mailable;
+use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
-use Illuminate\Queue\SerializesModels;
 
-class ChatReviewSummaryMail extends Mailable
+class ChatReviewSummaryMail extends MjmlMailable
 {
-    use Queueable, SerializesModels;
-
     public function __construct(
+        public readonly string $recipientEmail,
         public readonly int $total,
         public readonly string $summary,
     ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return "Summary of chat messages waiting for review ({$this->total} total)";
     }
 
     public function envelope(): Envelope
@@ -25,12 +28,17 @@ class ChatReviewSummaryMail extends Mailable
                 config('freegle.mail.support_addr'),
                 config('freegle.branding.name')
             ),
-            subject: "Summary of chat messages waiting for review ({$this->total} total)",
+            to: [new Address($this->recipientEmail)],
+            subject: $this->getSubject(),
         );
     }
 
     public function build(): static
     {
-        return $this->text('emails.text.chat.review-summary');
+        return $this->mjmlView('emails.mjml.chat.review-summary', [
+            'total'   => $this->total,
+            'summary' => $this->summary,
+            'email'   => $this->recipientEmail,
+        ]);
     }
 }
