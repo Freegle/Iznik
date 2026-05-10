@@ -135,7 +135,8 @@ class ChatChaseupModsService
                 $notified++;
 
                 if (!$dryRun) {
-                    Mail::to($modEmail)->send(new ChaseupModsMail(
+                    Mail::send(new ChaseupModsMail(
+                        recipientEmail: $modEmail,
                         groupName: $group->nameshort,
                         memberName: $memberName,
                         memberEmail: $memberEmail ?? '',

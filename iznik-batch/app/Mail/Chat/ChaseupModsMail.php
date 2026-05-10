@@ -2,22 +2,19 @@
 
 namespace App\Mail\Chat;
 
-use Illuminate\Bus\Queueable;
-use Illuminate\Mail\Mailable;
+use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
-use Illuminate\Queue\SerializesModels;
 
 /**
- * Plain text email sent to group mods when a member's User2Mod chat has had no reply.
+ * Email sent to group mods when a member's User2Mod chat has had no reply.
  *
  * V1 parity: ChatRoom::chaseupMods() lines 2010-2076.
  */
-class ChaseupModsMail extends Mailable
+class ChaseupModsMail extends MjmlMailable
 {
-    use Queueable, SerializesModels;
-
     public function __construct(
+        public readonly string $recipientEmail,
         public readonly string $groupName,
         public readonly string $memberName,
         public readonly string $memberEmail,
@@ -26,6 +23,12 @@ class ChaseupModsMail extends Mailable
         public readonly string $fromAddress,
         public readonly string $replyToAddress,
     ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return "Member conversation on {$this->groupName} with {$this->memberName} ({$this->memberEmail})";
     }
 
     public function envelope(): Envelope
@@ -33,19 +36,20 @@ class ChaseupModsMail extends Mailable
         return new Envelope(
             from: new Address($this->fromAddress, $this->memberName),
             replyTo: [new Address($this->replyToAddress)],
-            subject: "Member conversation on {$this->groupName} with {$this->memberName} ({$this->memberEmail})",
+            to: [new Address($this->recipientEmail)],
+            subject: $this->getSubject(),
         );
     }
 
     public function build(): static
     {
-        $body = "We can't find a reply to this message from your member, so we're resending it in case you missed it.\r\n\r\n"
-            . "If you've already replied, or if it doesn't need a reply, please ignore this.\r\n\r\n"
-            . "From: {$this->memberName}\r\n\r\n"
-            . $this->textSummary . "\r\n\r\n"
-            . "View and reply at: {$this->chatUrl}\r\n\r\n"
-            . "(You can also reply by email, but the button works better.)";
-
-        return $this->text('emails.plain.refer-to-support', ['body' => $body]);
+        return $this->mjmlView('emails.mjml.chat.chaseup-mods', [
+            'groupName'   => $this->groupName,
+            'memberName'  => $this->memberName,
+            'memberEmail' => $this->memberEmail,
+            'textSummary' => $this->textSummary,
+            'chatUrl'     => $this->chatUrl,
+            'email'       => $this->recipientEmail,
+        ]);
     }
 }
