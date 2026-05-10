@@ -38,13 +38,12 @@ class EngageMail extends MjmlMailable
 
     public function build(): static
     {
-        $html = view("emails.engage.{$this->template}", [
+        return $this->mjmlView("emails.mjml.engage.{$this->template}", [
             'name'           => $this->recipientName,
             'email'          => $this->recipientEmail,
             'engageId'       => $this->engageId,
             'unsubscribeUrl' => $this->unsubscribeUrl,
-        ])->render();
-
-        return $this->html($html);
+            'userSite'       => config('freegle.sites.user', 'https://www.ilovefreegle.org'),
+        ]);
     }
 }
