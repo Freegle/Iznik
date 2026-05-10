@@ -2,12 +2,11 @@
 
 namespace App\Mail\Tryst;
 
-use Illuminate\Mail\Mailable;
+use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
-use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 
-class TrystCalendarInviteMail extends Mailable
+class TrystCalendarInviteMail extends MjmlMailable
 {
     public function __construct(
         public readonly string $title,
@@ -15,7 +14,14 @@ class TrystCalendarInviteMail extends Mailable
         public readonly int $recipientUserId,
         public readonly string $recipientName,
         public readonly string $recipientEmail,
-    ) {}
+    ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return "Please add to your calendar - {$this->title}";
+    }
 
     public function envelope(): Envelope
     {
@@ -25,27 +31,25 @@ class TrystCalendarInviteMail extends Mailable
                 config('freegle.branding.name', 'Freegle')
             ),
             to: [new Address($this->recipientEmail, $this->recipientName)],
-            subject: "Please add to your calendar - {$this->title}",
+            subject: $this->getSubject(),
         );
     }
 
-    public function content(): Content
+    protected function getRecipientUserId(): ?int
     {
-        $unsubscribeUrl = config('freegle.sites.user', 'https://www.ilovefreegle.org')
-            . '/unsubscribe/' . $this->recipientUserId;
-
-        return new Content(
-            view: 'emails.tryst.calendar-invite',
-            with: [
-                'title' => $this->title,
-                'calendarLink' => $this->calendarLink,
-                'unsubscribeUrl' => $unsubscribeUrl,
-            ],
-        );
+        return $this->recipientUserId;
     }
 
-    public function attachments(): array
+    public function build(): static
     {
-        return [];
+        $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
+
+        return $this->mjmlView('emails.mjml.tryst.calendar-invite', [
+            'title'          => $this->title,
+            'calendarLink'   => $this->calendarLink,
+            'email'          => $this->recipientEmail,
+            'settingsUrl'    => $userSite . '/settings',
+            'unsubscribeUrl' => $userSite . '/unsubscribe/' . $this->recipientUserId,
+        ]);
     }
 }
