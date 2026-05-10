@@ -2,32 +2,44 @@
 
 namespace App\Mail\Group;
 
-use Illuminate\Mail\Mailable;
-use Illuminate\Mail\Mailables\Content;
+use App\Mail\MjmlMailable;
+use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-/**
- * Weekly reminder to mods that their group is currently closed.
- * Migrated from iznik-server/scripts/cron/groups_closed.php
- */
-class ClosedGroupReminderMail extends Mailable
+class ClosedGroupReminderMail extends MjmlMailable
 {
     public function __construct(
+        public readonly string $recipientEmail,
         public readonly string $groupName,
-    ) {}
+    ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return 'Reminder: Your Freegle group is currently closed';
+    }
 
     public function envelope(): Envelope
     {
         return new Envelope(
-            from: config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org'),
-            subject: 'Reminder: Your Freegle group is currently closed',
+            from: new Address(
+                config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org'),
+                config('freegle.branding.name', 'Freegle')
+            ),
+            to: [new Address($this->recipientEmail)],
+            subject: $this->getSubject(),
         );
     }
 
-    public function content(): Content
+    public function build(): static
     {
-        return new Content(
-            text: 'emails.text.group.closed-reminder',
-        );
+        $modSite = config('freegle.sites.mod', 'https://modtools.org');
+
+        return $this->mjmlView('emails.mjml.group.closed-reminder', [
+            'groupName' => $this->groupName,
+            'modSite'   => $modSite,
+            'email'     => $this->recipientEmail,
+        ]);
     }
 }

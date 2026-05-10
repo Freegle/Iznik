@@ -46,9 +46,10 @@ class GroupClosedReminderService
             ]);
 
             if (!$dryRun) {
-                Mail::to($modEmails)
-                    ->cc($mentorsAddr)
-                    ->send(new ClosedGroupReminderMail($group->nameshort));
+                foreach ($modEmails as $modEmail) {
+                    Mail::send(new ClosedGroupReminderMail($modEmail, $group->nameshort));
+                }
+                Mail::send(new ClosedGroupReminderMail($mentorsAddr, $group->nameshort));
             }
 
             $sent++;

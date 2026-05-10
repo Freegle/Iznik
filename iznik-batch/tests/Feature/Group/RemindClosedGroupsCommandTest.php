@@ -43,7 +43,7 @@ class RemindClosedGroupsCommandTest extends TestCase
         $this->artisan('groups:remind-closed')
             ->assertExitCode(0);
 
-        Mail::assertSentCount(1);
+        Mail::assertSentCount(2); // 1 to mod + 1 to mentors
     }
 
     public function test_skips_open_group(): void
@@ -104,6 +104,6 @@ class RemindClosedGroupsCommandTest extends TestCase
         $this->artisan('groups:remind-closed')
             ->assertExitCode(0);
 
-        Mail::assertSentCount(2);
+        Mail::assertSentCount(4); // 1 mod + 1 mentors per group × 2 groups
     }
 }
