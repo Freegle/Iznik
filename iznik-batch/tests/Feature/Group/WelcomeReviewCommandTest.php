@@ -147,12 +147,11 @@ class WelcomeReviewCommandTest extends TestCase
         $group = $this->makeGroupWithWelcome();
         $this->makeOwner($group);
 
-        $before = now()->subSeconds(1);
-
         $this->artisan('groups:welcome-review')->assertExitCode(0);
 
+        // welcomereview is a date column (not datetime), so compare date strings
         $updated = DB::table('groups')->where('id', $group->id)->value('welcomereview');
-        $this->assertGreaterThan($before, \Carbon\Carbon::parse($updated));
+        $this->assertEquals(now()->toDateString(), $updated);
     }
 
     // ── Dry-run ───────────────────────────────────────────────────────────────

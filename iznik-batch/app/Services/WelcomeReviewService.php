@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Mail\Group\WelcomeReviewMail;
 use App\Models\Group;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -23,7 +24,6 @@ class WelcomeReviewService
     public function sendWelcomeReviews(bool $dryRun = false): array
     {
         $modSite = config('freegle.sites.mod');
-        $supportAddr = config('freegle.mail.support_addr');
 
         $groups = DB::table('groups')
             ->whereNotNull('welcomemail')
@@ -64,24 +64,14 @@ class WelcomeReviewService
                     continue;
                 }
 
-                $subject = "Please review: Welcome to {$groupName}";
-
-                $body = "This is the welcome mail that gets sent to members who join {$groupName}.\r\n\r\n"
-                    . "We send you this once a year so you can check it's up-to-date. If you'd like to edit it, "
-                    . "you can do so at {$modSite}/modtools/settings/.\r\n\r\n"
-                    . "---\r\n\r\n"
-                    . $group->welcomemail . "\r\n\r\n"
-                    . "---\r\n\r\n"
-                    . "Freegle";
-
                 $sent++;
 
                 if (!$dryRun) {
-                    Mail::raw($body, function ($message) use ($subject, $supportAddr, $email, $groupName) {
-                        $message->from($supportAddr, "{$groupName} Volunteers")
-                            ->to($email)
-                            ->subject($subject);
-                    });
+                    Mail::to($email)->send(new WelcomeReviewMail(
+                        groupName: $groupName,
+                        welcomeContent: $group->welcomemail,
+                        modSite: $modSite,
+                    ));
                 }
             }
 
