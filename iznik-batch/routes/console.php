@@ -117,11 +117,11 @@ Schedule::command('cleanup:chat-duplicates')
 
 // Archive old duplicate profile images, keeping latest per user.
 // V1: cron/archive_attachments.php — disabled pending sign-off
-// Schedule::command('cleanup:archive-profile-images')
-//     ->dailyAt('22:30')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('cleanup:archive-profile-images'))
-//     ->runInBackground();
+Schedule::command('cleanup:archive-profile-images')
+    ->dailyAt('22:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('cleanup:archive-profile-images'))
+    ->runInBackground();
 
 // Clean up old sessions.
 // V1: cron/purge_sessions.php
@@ -458,11 +458,11 @@ Schedule::command('messages:remap-subjects')
 // V1: cron/visualise.php (every 5 minutes) — disabled pending sign-off
 // Note: V1 called ensureAvatar() as a side effect to refresh TN user avatars; omitted here
 //       since it involved external HTTP calls and is unrelated to the visualise insert.
-// Schedule::command('messages:update-visualise')
-//     ->everyFiveMinutes()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('messages:update-visualise'))
-//     ->runInBackground();
+Schedule::command('messages:update-visualise')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:update-visualise'))
+    ->runInBackground();
 
 // Update messages_spatial with recent messages, outcomes, and remove stale entries.
 // V1: cron/message_spatial.php (every 5 minutes)
@@ -531,20 +531,20 @@ Schedule::command('integrations:sync-lovejunk')
     ->runInBackground();
 
 // Sync upcoming Restart Project repair events into group events.
-// V1: cron/restartproject.php (23:00 daily) — disabled pending sign-off
-// Schedule::command('integrations:sync-restartproject')
-//     ->dailyAt('23:00')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('integrations:sync-restartproject'))
-//     ->runInBackground();
+// V1: cron/restartproject.php (23:00 daily)
+Schedule::command('integrations:sync-restartproject')
+    ->dailyAt('23:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('integrations:sync-restartproject'))
+    ->runInBackground();
 
 // Sync upcoming Repair Cafe Wales events into group events.
-// V1: cron/repaircafewales.php (23:00 daily) — disabled pending sign-off
-// Schedule::command('integrations:sync-repaircafewales')
-//     ->dailyAt('23:00')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('integrations:sync-repaircafewales'))
-//     ->runInBackground();
+// V1: cron/repaircafewales.php (23:00 daily)
+Schedule::command('integrations:sync-repaircafewales')
+    ->dailyAt('23:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('integrations:sync-repaircafewales'))
+    ->runInBackground();
 
 // Message expiry - process deadline-expired messages and spatial index expiry.
 // V1: cron/messages_expired.php (was hourly; daily is sufficient since deadline < CURDATE() only changes daily).
@@ -588,11 +588,11 @@ Schedule::command('users:update-support-roles')
 
 // Validate group boundary geometry (CGA/DPA polygons).
 // V1: cron/check_cgas.php (every 5 minutes) — disabled pending sign-off
-// Schedule::command('groups:check-boundaries')
-//     ->everyFiveMinutes()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('groups:check-boundaries'))
-//     ->runInBackground();
+Schedule::command('groups:check-boundaries')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:check-boundaries'))
+    ->runInBackground();
 
 // Update group stats: fix repost settings, polyindex, activity/funding, mod counts, stats_outcomes.
 // V1: cron/group_stats.php (daily at 02:00)
@@ -700,11 +700,11 @@ Schedule::command('messages:update-index')
 
 // Fetch and cache link previews for URLs found in recent newsfeed posts.
 // V1: cron/newsfeed_link_previews.php (every 1 minute)
-// Schedule::command('newsfeed:generate-link-previews')
-//     ->everyMinute()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('newsfeed:generate-link-previews'))
-//     ->runInBackground();
+Schedule::command('newsfeed:generate-link-previews')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('newsfeed:generate-link-previews'))
+    ->runInBackground();
 
 // =============================================================================
 // GIT SUMMARY
