@@ -2,26 +2,39 @@
 
 namespace App\Console\Commands\Chat;
 
-use App\Services\ChatReviewService;
+use App\Services\ChatReviewPendingService;
+use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
 
 class ReviewPendingCommand extends Command
 {
+    use LogsBatchJob;
+
     protected $signature = 'chats:review-pending
-                            {--dry-run : Report counts without sending emails or updating records}';
+                            {--dry-run : Count pending messages without sending emails or auto-rejecting}';
 
-    protected $description = 'Auto-reject stale chat review messages (7+ days) and notify group mods of pending reviews (48+ hours)';
+    protected $description = 'Auto-reject stale chat review messages and notify mods about pending ones';
 
-    public function handle(ChatReviewService $service): int
+    public function handle(ChatReviewPendingService $service): int
     {
         $dryRun = (bool) $this->option('dry-run');
-        $prefix = $dryRun ? '[DRY RUN] ' : '';
 
-        $result = $service->processReview($dryRun);
+        if ($dryRun) {
+            $this->info('DRY RUN — no emails will be sent and no messages will be auto-rejected.');
+        }
 
-        $this->info("{$prefix}{$result['rejected']} messages auto-rejected (stuck > 7 days)");
-        $this->info("{$prefix}{$result['notified_groups']} groups notified, {$result['total_pending']} messages pending review (> 48 hours)");
+        return $this->runWithLogging(function () use ($service, $dryRun) {
+            $result = $service->processReview($dryRun);
 
-        return self::SUCCESS;
+            $verb = $dryRun ? 'Would auto-reject' : 'Auto-rejected';
+            $this->info("{$verb} {$result['auto_rejected']} message(s) stuck in review for "
+                . ChatReviewPendingService::AUTO_REJECT_DAYS . '+ days.');
+
+            $verb = $dryRun ? 'Would notify' : 'Notified';
+            $this->info("{$verb} mods for {$result['groups_notified']} group(s) with messages pending "
+                . ChatReviewPendingService::NOTIFY_HOURS . '+ hours.');
+
+            return Command::SUCCESS;
+        });
     }
 }

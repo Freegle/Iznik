@@ -1,41 +1,45 @@
 <?php
 
-namespace App\Mail\Noticeboard;
+namespace App\Mail\Group;
 
 use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class NoticeboardThankMail extends MjmlMailable
+class ClosedGroupReminderMail extends MjmlMailable
 {
     public function __construct(
         public readonly string $recipientEmail,
-        public readonly string $recipientName,
+        public readonly string $groupName,
     ) {
         parent::__construct();
     }
 
     protected function getSubject(): string
     {
-        return 'Thanks for putting up a poster!';
+        return 'Reminder: Your Freegle group is currently closed';
     }
 
     public function envelope(): Envelope
     {
         return new Envelope(
             from: new Address(
-                config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
+                config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org'),
                 config('freegle.branding.name', 'Freegle')
             ),
-            to: [new Address($this->recipientEmail, $this->recipientName)],
+            to: [new Address($this->recipientEmail)],
             subject: $this->getSubject(),
         );
     }
 
     public function build(): static
     {
-        return $this->mjmlView('emails.mjml.noticeboard.thanks', [
-            'email' => $this->recipientEmail,
+        $modSite = config('freegle.sites.mod', 'https://modtools.org');
+
+        return $this->mjmlView('emails.mjml.group.closed-reminder', [
+            'groupName' => $this->groupName,
+            'modSite'   => $modSite,
+            'email'     => $this->recipientEmail,
         ]);
     }
 }

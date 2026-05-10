@@ -25,6 +25,7 @@ return [
         'name' => env('FREEGLE_SITE_NAME', 'Freegle'),
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
         'wallpaper_url' => env('FREEGLE_WALLPAPER_URL', 'https://www.ilovefreegle.org/wallpaper.png'),
+        'modtools_logo_url' => env('MODTOOLS_LOGO_URL', 'https://modtools.org/icon.png'),
     ],
 
     'mail' => [
@@ -64,22 +65,18 @@ return [
         'partnerships_addr' => env('FREEGLE_PARTNERSHIPS_ADDR', 'partnerships@ilovefreegle.org'),
         // Info address for donation notifications and general admin emails.
         'info_addr' => env('FREEGLE_INFO_ADDR', 'info@ilovefreegle.org'),
+        // Fundraising address — receives the daily donation summary email.
+        'fundraising_addr' => env('FREEGLE_FUNDRAISING_ADDR', 'info@ilovefreegle.org'),
+        // Mentors address — volunteer support team who handle escalations.
+        'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
         'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
-        // Central mail recipient for newsletter/story vote emails (discoursereplies+Tech or geeks).
-        'central_mail_to' => env('FREEGLE_CENTRAL_MAIL_TO', 'discoursereplies+Tech@ilovefreegle.org'),
-        // Treasurer address for financial invoices and reports.
-        'treasurer_addr' => env('FREEGLE_TREASURER_ADDR', 'treasurer@ilovefreegle.org'),
-        // Trash Nothing invoice recipient address for monthly LoveJunk income split.
-        'tn_invoice_addr' => env('FREEGLE_TN_INVOICE_ADDR', ''),
+        // Mentors address - help for moderators with group setup.
+        'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
         // Trash Nothing domain for incoming mail detection
         'trashnothing_domain' => env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
         // Trash Nothing shared secret for mail authentication (skips spam check)
         'trashnothing_secret' => env('FREEGLE_TRASHNOTHING_SECRET', ''),
-        // Mentors address for mod escalation and review summary emails.
-        'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
-        // Modbot user email — the system user that auto-rejects stale review messages.
-        'moderator_email' => env('FREEGLE_MODERATOR_EMAIL', 'modtools@modtools.org'),
     ],
 
     // Firebase Cloud Messaging for push notifications
