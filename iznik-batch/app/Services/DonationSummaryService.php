@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Mail\Donation\DonationSummaryMail;
 use App\Models\Group;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -21,7 +22,6 @@ class DonationSummaryService
     public function sendDailySummary(bool $dryRun = false): array
     {
         $fundraisingAddr = config('freegle.mail.fundraising_addr');
-        $noReplyAddr     = config('freegle.mail.noreply_addr');
 
         $donations = DB::table('users_donations')
             ->whereRaw('DATE(users_donations.timestamp) = DATE(NOW())')
@@ -81,16 +81,10 @@ class DonationSummaryService
                 . "</tr>\n";
         }
 
-        $totalFormatted = number_format($total, 2);
         $html = "<table><tbody>{$rows}</tbody></table>";
-        $subject = "Donation total today £{$totalFormatted}";
 
         if (!$dryRun) {
-            Mail::html($html, function ($message) use ($subject, $noReplyAddr, $fundraisingAddr) {
-                $message->from($noReplyAddr, 'Freegle')
-                    ->to($fundraisingAddr)
-                    ->subject($subject);
-            });
+            Mail::to($fundraisingAddr)->send(new DonationSummaryMail(htmlContent: $html, total: $total));
         }
 
         return [
