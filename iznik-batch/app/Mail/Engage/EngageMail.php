@@ -11,7 +11,7 @@ class EngageMail extends MjmlMailable
     public function __construct(
         public readonly string $recipientName,
         public readonly string $recipientEmail,
-        public readonly string $subject,
+        public readonly string $emailSubject,
         public readonly string $template,
         public readonly int $engageId,
         public readonly string $unsubscribeUrl,
@@ -21,7 +21,7 @@ class EngageMail extends MjmlMailable
 
     protected function getSubject(): string
     {
-        return $this->subject;
+        return $this->emailSubject;
     }
 
     public function envelope(): Envelope
