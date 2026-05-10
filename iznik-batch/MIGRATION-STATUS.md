@@ -55,6 +55,7 @@ All email-related commands use the `mail:` prefix. Other batch commands use desc
 | `chats:update-counts` | Update chat message counts, reopen closed User2Mod |
 | `chats:process-incoming` | Process pending chat messages (processingrequired=1): spam check, roster update |
 | `chats:send-tryst-reminders` | Send calendar invites and chat reminders for arranged handover trysts |
+| `noticeboards:thank-users` | Send thank-you emails to users who added noticeboards |
 | `memberships:process` | Process pending membership history: per-group welcome emails, flag reviewed members |
 | `users:update-lastaccess` | Fallback update of user last access timestamps |
 | `users:update-support-roles` | Grant/remove support tools access |
@@ -166,6 +167,7 @@ These commands are active in `routes/console.php` and running in production:
 | `spool.php` | `mail:spool:process --cleanup` | Daily 04:00 | Clean up old sent emails |
 | `git_summary_ai.php` | `data:git-summary` | Weekly Wed 18:00 | Git summary for Discourse |
 | `tryst.php` | `chats:send-tryst-reminders` | Every minute | Calendar invites + chat reminders for handover trysts |
+| `noticeboards.php` | `noticeboards:thank-users` | Daily 15:30 | Thank-you emails for users who added noticeboards |
 
 ## Code Written (Scheduler Disabled)
 
@@ -308,7 +310,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `chat_chaseupmods.php` | 15:30 | Medium | Moderator chat chase-up |
 | `newsfeed_digest.php` | 15:30 | Low | Newsfeed digest |
 | `newsfeed_modnotif.php` | 13:30 | Low | Newsfeed mod notifications |
-| `noticeboards.php` | 15:30 | Low | Noticeboards |
+| ~~`noticeboards.php`~~ | ~~15:30~~ | ~~Low~~ | ~~Noticeboards~~ — **Migrated: `noticeboards:thank-users`** |
 | `group_welcomereview.php` | 01:00, 15:00 | Low | Group welcome review |
 | ~~`message_deindex.php`~~ | ~~01:00~~ | ~~Low~~ | ~~Message de-indexing~~ — **Migrated: `messages:deindex` — PR #393** |
 | ~~`group_stats.php`~~ | ~~02:00~~ | ~~Low~~ | ~~Group statistics~~ — **Migrated: `groups:update-stats`** |
