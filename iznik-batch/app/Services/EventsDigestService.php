@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Mail\Event\EventsDigestMail;
 use App\Models\Group;
 use App\Models\Membership;
 use Carbon\Carbon;
@@ -20,7 +21,6 @@ class EventsDigestService
      */
     public function sendEventDigests(bool $dryRun = false): array
     {
-        $noReplyAddr = config('freegle.mail.noreply_addr');
         $userSite = config('freegle.sites.user');
 
         $sent = 0;
@@ -102,8 +102,6 @@ class EventsDigestService
             $textSummary .= "View all events: https://{$userSite}/communityevents\r\n";
             $textSummary .= "Change settings: https://{$userSite}/settings\r\n";
 
-            $subject = "[{$groupRow->nameshort}] Community Event Roundup";
-
             // Find members who have events enabled and are not opted out.
             $members = DB::table('memberships')
                 ->join('users', 'users.id', '=', 'memberships.userid')
@@ -122,13 +120,7 @@ class EventsDigestService
 
             foreach ($members as $member) {
                 if (!$dryRun) {
-                    Mail::raw($textSummary, function ($message) use (
-                        $subject, $noReplyAddr, $groupRow, $member
-                    ) {
-                        $message->from($noReplyAddr, $groupRow->nameshort)
-                            ->to($member->email, $member->fullname ?: null)
-                            ->subject($subject);
-                    });
+                    Mail::to($member->email)->send(new EventsDigestMail($groupRow->nameshort, $textSummary));
                 }
                 $sent++;
             }
