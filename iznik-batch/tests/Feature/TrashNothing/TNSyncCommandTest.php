@@ -8,6 +8,7 @@ use App\Services\LokiService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\CoversNothing;
+use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Tests\TestCase;
 
 /**
@@ -19,11 +20,13 @@ use Tests\TestCase;
  *   chatRoomsTest::testUserStopsReplyingReplyTime()
  * - iznik-server-go: TestPostUserRateUp/Down, TestPatchUserAboutMe
  *
- * CoversNothing: each test runs the full tn:sync command, generating large PCOV
- * datasets. Accumulating 25 per-test datasets exceeds the PHP memory limit.
- * The tests still verify all behaviour; coverage attribution is omitted.
+ * RunTestsInSeparateProcesses: each test runs the full tn:sync command.
+ * tn:sync loads many vendor dependencies via Http::fake(), causing PCOV's
+ * coverage buffer to accumulate across ~20 tests and exhaust memory.
+ * Separate processes give each test a clean PCOV state.
  */
 #[CoversNothing]
+#[RunTestsInSeparateProcesses]
 class TNSyncCommandTest extends TestCase
 {
     private const DATE_SYNC = '2026-03-20T10:00:00+00:00';
