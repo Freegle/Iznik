@@ -92,15 +92,19 @@ class EventsDigestService
 
             $groupsProcessed++;
 
-            // Build plain-text summary.
-            $textSummary = "Here are upcoming Community Events for {$groupRow->nameshort}.\r\n\r\n";
-            foreach ($events as $event) {
+            // Build structured event data for the template.
+            $eventData = $events->map(function ($event) use ($userSite) {
                 $start = Carbon::parse($event->start)->setTimezone('Europe/London')->format('D, jS F g:ia');
-                $textSummary .= "{$event->title} — {$start} at {$event->location}\r\n";
-                $textSummary .= "https://{$userSite}/communityevent/{$event->id}\r\n\r\n";
-            }
-            $textSummary .= "View all events: https://{$userSite}/communityevents\r\n";
-            $textSummary .= "Change settings: https://{$userSite}/settings\r\n";
+                $end   = Carbon::parse($event->end)->setTimezone('Europe/London')->format('g:ia');
+                return [
+                    'id'       => $event->id,
+                    'title'    => $event->title,
+                    'location' => $event->location,
+                    'start'    => $start,
+                    'end'      => $end,
+                    'url'      => "https://{$userSite}/communityevent/{$event->id}",
+                ];
+            })->values()->all();
 
             // Find members who have events enabled and are not opted out.
             $members = DB::table('memberships')
@@ -115,12 +119,18 @@ class EventsDigestService
                 ->where('memberships.emailfrequency', '!=', 0)
                 ->whereNull('users.deleted')
                 ->whereNotNull('users_emails.email')
-                ->select(['users_emails.email', 'users.fullname'])
+                ->select(['users_emails.email', 'users.id as userId'])
                 ->get();
 
             foreach ($members as $member) {
                 if (!$dryRun) {
-                    Mail::send(new EventsDigestMail($member->email, $groupRow->nameshort, $textSummary));
+                    $unsubscribeUrl = "https://{$userSite}/unsubscribe?email=" . urlencode($member->email);
+                    Mail::send(new EventsDigestMail(
+                        recipientEmail: $member->email,
+                        groupName: $groupRow->nameshort,
+                        events: $eventData,
+                        unsubscribeUrl: $unsubscribeUrl,
+                    ));
                 }
                 $sent++;
             }
