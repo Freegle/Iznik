@@ -20,9 +20,11 @@ use Illuminate\Support\Facades\Log;
  */
 class UserDataExportService
 {
-    public function processAll(): int
+    public function processAll(bool $dryRun = false): int
     {
-        $this->purgeOldExportData();
+        if (!$dryRun) {
+            $this->purgeOldExportData();
+        }
 
         $exports = DB::table('users_exports')
             ->whereNull('completed')
@@ -32,6 +34,15 @@ class UserDataExportService
         $count = 0;
 
         foreach ($exports as $export) {
+            if ($dryRun) {
+                Log::info('UserDataExport: dry run — would process export', [
+                    'export_id' => $export->id,
+                    'userid'    => $export->userid,
+                ]);
+                $count++;
+                continue;
+            }
+
             try {
                 $this->processExport($export);
                 $count++;
@@ -43,7 +54,11 @@ class UserDataExportService
             }
         }
 
-        Log::info("UserDataExport: processed {$count} exports");
+        if ($dryRun) {
+            Log::info('UserDataExport: dry run complete', ['would_process' => $count]);
+        } else {
+            Log::info("UserDataExport: processed {$count} exports");
+        }
 
         return $count;
     }

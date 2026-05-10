@@ -267,7 +267,13 @@ export const useChatStore = defineStore({
         this.messages[id] = messages
 
         messages.forEach((m) => {
-          this.listByChatMessageId[m.id] = m
+          // Merge rather than overwrite — preserves review-context fields
+          // (touserid, fromuserid, etc.) written by fetchReviewChatsMT when
+          // per-room fetchMessages runs for the same message afterwards.
+          this.listByChatMessageId[m.id] = {
+            ...this.listByChatMessageId[m.id],
+            ...m,
+          }
         })
       }
 
