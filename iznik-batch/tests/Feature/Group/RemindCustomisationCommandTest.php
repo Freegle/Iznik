@@ -28,7 +28,6 @@ class RemindCustomisationCommandTest extends TestCase
     {
         $mod = $this->createTestUser();
         $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createTestUserEmail($mod, ['preferred' => 1]);
     }
 
     public function test_smoke_runs_with_no_matching_groups(): void
