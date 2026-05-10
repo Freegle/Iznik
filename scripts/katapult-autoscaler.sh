@@ -133,12 +133,16 @@ set -e
 # Port 5001: GHCR pull-through mirror (serves freegle-base and freegle-batch-base)
 cat > /etc/docker/daemon.json << 'EOF'
 {
+  "features": {
+    "buildkit": true
+  },
   "registry-mirrors": [
     "http://${CACHE_SERVER}:5000"
   ],
   "insecure-registries": [
     "${CACHE_SERVER}:5000",
-    "${CACHE_SERVER}:5001"
+    "${CACHE_SERVER}:5001",
+    "${CACHE_SERVER}:5002"
   ]
 }
 EOF

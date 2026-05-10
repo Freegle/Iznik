@@ -258,6 +258,20 @@ commands:
                 docker stop $old_containers 2>/dev/null || true
                 docker rm $old_containers 2>/dev/null || true
               fi
+
+              # Ensure local build-layer cache registry (185.44.254.6:5002) is in insecure-registries.
+              # The pull-through mirrors (5000/5001) are configured at VM provision time; 5002 may be
+              # missing on older VMs, so we add it here if absent and reload Docker config.
+              if ! grep -q "5002" /etc/docker/daemon.json 2>/dev/null; then
+                echo "Adding 185.44.254.6:5002 to Docker insecure-registries..."
+                DAEMON_JSON=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
+                echo "$DAEMON_JSON" \
+                  | jq '."insecure-registries" = (."insecure-registries" // [] | . + ["185.44.254.6:5002"])' \
+                  | sudo tee /etc/docker/daemon.json > /dev/null \
+                  && sudo systemctl reload docker 2>/dev/null \
+                  && echo "Done — daemon config updated" \
+                  || echo "⚠️  Could not update daemon.json (non-critical)"
+              fi
             fi
             # Only prune on cloud — self-hosted runner needs layer cache for fast builds
             if [ "${SELF_HOSTED_RUNNER:-}" != "true" ]; then
@@ -315,6 +329,61 @@ commands:
             IS_WSL=false
             grep -qi "microsoft\|wsl" /proc/version 2>/dev/null && IS_WSL=true
 
+            # On Katapult: pull previously built images from the local cache registry so
+            # BuildKit finds cache hits via --cache-from even on fresh VMs.
+            # Generates a compose override that adds cache_from: to each service.
+            INLINE_CACHE_FLAG=""
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && [ "$IS_WSL" = "false" ]; then
+              CACHE_REG="185.44.254.6:5002"
+              echo "Pulling CI images from local cache registry (${CACHE_REG})..."
+              for svc in apiv1 apiv2 freegle-prod-local modtools-prod-local playwright batch status; do
+                docker pull ${CACHE_REG}/ci/${svc}:latest 2>/dev/null \
+                  && echo "  ✅ Pulled: ${svc}" \
+                  || echo "  ⚠️  Not cached: ${svc} (first build or expired)"
+              done
+
+              {
+                echo 'services:'
+                echo '  apiv1:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/apiv1:latest'
+                echo '  apiv1-phpunit:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/apiv1:latest'
+                echo '  apiv2:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/apiv2:latest'
+                echo '  freegle-prod-local:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/freegle-prod-local:latest'
+                echo '  modtools-prod-local:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/modtools-prod-local:latest'
+                echo '  playwright:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/playwright:latest'
+                echo '  batch:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/batch:latest'
+                echo '  status:'
+                echo '    build:'
+                echo '      cache_from:'
+                echo '        - 185.44.254.6:5002/ci/status:latest'
+              } > /tmp/docker-compose.cache.yml
+
+              export COMPOSE_FILE="${COMPOSE_FILE}:/tmp/docker-compose.cache.yml"
+              # Embed inline cache metadata so the pushed images can serve as --cache-from sources
+              INLINE_CACHE_FLAG="--build-arg BUILDKIT_INLINE_CACHE=1"
+              echo "Cache-from overlay added to COMPOSE_FILE"
+            fi
+
             # Batch build: freegle-batch-base already contains compiled PHP extensions, PECL,
             # and MJML so the build is just COPY + composer install (~1-2 min, not ~10 min).
             # WSL still needs legacy builder to avoid the BuildKit context bug (COPY . . bug).
@@ -324,7 +393,7 @@ commands:
               DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker-compose build batch > "$BATCH_LOG" 2>&1 &
             else
               echo "Batch: BuildKit (fast — base image has all compiled deps)"
-              docker-compose build $CACHE_FLAG batch > "$BATCH_LOG" 2>&1 &
+              docker-compose build $CACHE_FLAG $INLINE_CACHE_FLAG batch > "$BATCH_LOG" 2>&1 &
             fi
             BATCH_PID=$!
 
@@ -336,17 +405,17 @@ commands:
               PHP_LOG=$(mktemp) GO_LOG=$(mktemp) NUXT_LOG=$(mktemp) OTHER_LOG=$(mktemp)
 
               # PHP API containers (share freegle-base PHP layer)
-              docker-compose build apiv1 apiv1-phpunit > "$PHP_LOG" 2>&1 &
+              docker-compose build $INLINE_CACHE_FLAG apiv1 apiv1-phpunit > "$PHP_LOG" 2>&1 &
               PHP_PID=$!
 
               # Go API container (independent — no shared layers with PHP/Nuxt)
-              docker-compose build apiv2 > "$GO_LOG" 2>&1 &
+              docker-compose build $INLINE_CACHE_FLAG apiv2 > "$GO_LOG" 2>&1 &
               GO_PID=$!
 
               # Nuxt containers — wrapped in retry for transient npm ECONNRESET errors
               (
                 for attempt in 1 2 3; do
-                  docker-compose build freegle-prod-local modtools-prod-local && exit 0
+                  docker-compose build $INLINE_CACHE_FLAG freegle-prod-local modtools-prod-local && exit 0
                   echo "⚠️ Nuxt build attempt $attempt failed, retrying in 30s..."
                   [ $attempt -lt 3 ] && sleep 30
                 done
@@ -355,7 +424,7 @@ commands:
               NUXT_PID=$!
 
               # Playwright + status (lightweight, finishes quickly)
-              docker-compose build playwright status > "$OTHER_LOG" 2>&1 &
+              docker-compose build $INLINE_CACHE_FLAG playwright status > "$OTHER_LOG" 2>&1 &
               OTHER_PID=$!
 
               BUILD_FAILED=0
@@ -415,6 +484,37 @@ commands:
             fi
             echo "✅ Batch build complete"
             cat "$BATCH_LOG" | tail -5
+
+            # Push built images to local cache registry in background — doesn't block startup.
+            # These provide --cache-from sources for fresh Katapult VMs on subsequent runs.
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && [ "$IS_WSL" = "false" ]; then
+              (
+                CACHE_REG="185.44.254.6:5002"
+                PROJECT="${COMPOSE_PROJECT_NAME:-freegle}"
+                echo "Pushing built images to local cache registry (${CACHE_REG})..."
+                # Map: registry name → docker-compose generated image name
+                declare -A SVC_IMAGES=(
+                  ["apiv1"]="${PROJECT}-apiv1"
+                  ["apiv2"]="${PROJECT}-apiv2"
+                  ["freegle-prod-local"]="${PROJECT}-freegle-prod-local"
+                  ["modtools-prod-local"]="${PROJECT}-modtools-prod-local"
+                  ["playwright"]="${PROJECT}-playwright"
+                  ["batch"]="${PROJECT}-batch"
+                  ["status"]="${PROJECT}-status"
+                )
+                for svc in "${!SVC_IMAGES[@]}"; do
+                  img="${SVC_IMAGES[$svc]}"
+                  if docker image inspect "${img}" > /dev/null 2>&1; then
+                    docker tag "${img}" "${CACHE_REG}/ci/${svc}:latest"
+                    docker push "${CACHE_REG}/ci/${svc}:latest" 2>/dev/null \
+                      && echo "  ✅ Pushed: ${svc}" \
+                      || echo "  ⚠️  Push failed: ${svc} (non-critical)"
+                  fi
+                done
+                echo "Cache push complete"
+              ) &
+              CACHE_PUSH_PID=$!
+            fi
 
             # Two-phase startup: databases must exist before application containers start.
             #
@@ -1955,7 +2055,10 @@ jobs:
             # On self-hosted runner, also clean up leftover Docker containers/volumes
             if [ "${SELF_HOSTED_RUNNER:-false}" = "true" ]; then
               echo "Self-hosted runner: cleaning up previous Docker resources..."
-              docker compose down --volumes --remove-orphans 2>/dev/null || true
+              # No --volumes: preserving named volumes (MySQL data, GeoIP) saves ~80s of
+              # re-initialization per run. setup-test-database.sh resets the iznik
+              # database via DROP/CREATE/migrate, so test isolation is maintained.
+              docker compose down --remove-orphans 2>/dev/null || true
               sudo rm -rf logs test-results ssl/certs status/data 2>/dev/null || true
               # Remove stale git lock files left by crashed previous runs
               find . -name "*.lock" -path "*/.git/*" -delete 2>/dev/null || true
