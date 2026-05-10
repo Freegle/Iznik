@@ -3,11 +3,11 @@
 
   <mj-body background-color="#f4f4f4">
 
-    @include('emails.mjml.components.header')
+    @include('emails.mjml.components.modtools-header')
 
     <mj-section background-color="#ffffff" padding="20px">
       <mj-column>
-        <mj-text font-size="20px" font-weight="bold" mj-class="text-success">
+        <mj-text font-size="20px" font-weight="bold" mj-class="text-modtools">
           Your Freegle group is currently closed
         </mj-text>
         <mj-text>
@@ -21,7 +21,7 @@
 
     <mj-section background-color="#ffffff" padding="0 20px 20px">
       <mj-column>
-        <mj-button href="{{ $modSite }}/modtools" mj-class="btn-success" border-radius="3px" font-size="16px">
+        <mj-button href="{{ $modSite }}/modtools" mj-class="btn-modtools" border-radius="3px" font-size="16px">
           Go to ModTools
         </mj-button>
         <mj-divider border-color="#eeeeee" border-width="1px" />
@@ -31,7 +31,7 @@
       </mj-column>
     </mj-section>
 
-    @include('emails.mjml.partials.footer', ['email' => $email])
+    @include('emails.mjml.partials.modtools-footer', ['email' => $email])
 
   </mj-body>
 </mjml>

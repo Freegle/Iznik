@@ -3,11 +3,11 @@
 
   <mj-body background-color="#f4f4f4">
 
-    @include('emails.mjml.components.header')
+    @include('emails.mjml.components.modtools-header')
 
     <mj-section background-color="#ffffff" padding="20px">
       <mj-column>
-        <mj-text font-size="20px" font-weight="bold" mj-class="text-success">
+        <mj-text font-size="20px" font-weight="bold" mj-class="text-modtools">
           Chat messages pending review
         </mj-text>
         <mj-text>
@@ -19,7 +19,7 @@
       </mj-column>
     </mj-section>
 
-    @include('emails.mjml.partials.footer', ['email' => $email])
+    @include('emails.mjml.partials.modtools-footer', ['email' => $email])
 
   </mj-body>
 </mjml>
