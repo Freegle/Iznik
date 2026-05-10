@@ -220,6 +220,50 @@ func TestCreateSessionAndJWTSeriesIsNumericAndUnique(t *testing.T) {
 		"persistent.series must match sessions.series in DB (no silent coercion)")
 }
 
+// TestSessionLastactiveUpdatedWhenOld verifies that the auth middleware refreshes
+// sessions.lastactive when the session has been idle for more than 10 minutes.
+// V1 PHP updates lastactive every 10+ minutes; Go must do the same to prevent the
+// cron purge_sessions (31-day cutoff) from deleting active sessions.
+func TestSessionLastactiveUpdatedWhenOld(t *testing.T) {
+	prefix := uniquePrefix("lastactive_old")
+	userID := CreateTestUser(t, prefix, "User")
+	sessionID, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("UPDATE sessions SET lastactive = DATE_SUB(NOW(), INTERVAL 2 HOUR) WHERE id = ?", sessionID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user?jwt="+token, nil), 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var lastactive time.Time
+	db.Raw("SELECT lastactive FROM sessions WHERE id = ?", sessionID).Scan(&lastactive)
+	assert.WithinDuration(t, time.Now(), lastactive, time.Minute,
+		"sessions.lastactive must be refreshed after authenticated request when idle >10 min")
+}
+
+// TestSessionLastactiveNotUpdatedWhenRecent verifies that sessions.lastactive is NOT
+// updated on every request — only when it is older than 10 minutes, to avoid
+// hammering the DB on every API call.
+func TestSessionLastactiveNotUpdatedWhenRecent(t *testing.T) {
+	prefix := uniquePrefix("lastactive_recent")
+	userID := CreateTestUser(t, prefix, "User")
+	sessionID, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("UPDATE sessions SET lastactive = DATE_SUB(NOW(), INTERVAL 5 MINUTE) WHERE id = ?", sessionID)
+
+	var lastactiveBefore time.Time
+	db.Raw("SELECT lastactive FROM sessions WHERE id = ?", sessionID).Scan(&lastactiveBefore)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user?jwt="+token, nil), 60000)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var lastactiveAfter time.Time
+	db.Raw("SELECT lastactive FROM sessions WHERE id = ?", sessionID).Scan(&lastactiveAfter)
+	assert.Equal(t, lastactiveBefore, lastactiveAfter,
+		"sessions.lastactive must NOT be updated when last active <10 minutes ago")
+}
+
 func TestHasPermission(t *testing.T) {
 	prefix := uniquePrefix("hasperm")
 	db := database.DBConn
