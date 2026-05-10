@@ -85,9 +85,23 @@ jobs:
               exit 0
             fi
 
-            if [ "<< pipeline.parameters.use_katapult >>" = "true" ]; then
-              echo "Katapult runner requested — skipping local runner check"
-              echo "{\"use_self_hosted\": false}" > /tmp/pipeline-params.json
+            if [ "<< pipeline.parameters.use_katapult >>" = "true" ] || [ "<< pipeline.git.branch >>" = "test/katapult-runner-e2e" ]; then
+              echo "Katapult runner requested — provisioning VM and routing to Katapult"
+              # Kick off VM provisioning immediately so it's ready by the time the job queues
+              KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-}"
+              KATAPULT_ORG="org_0zTGdMXAyOgIV5DB"
+              KATAPULT_API="https://api.katapult.io/core/v1"
+              if [ -n "$KATAPULT_TOKEN" ]; then
+                VM_NAME="katapult-runner-$(date +%s)"
+                curl -sf -X POST "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines/build" \
+                  -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"name\":\"$VM_NAME\",\"hostname\":\"$VM_NAME\",\"package\":{\"id\":\"vmpkg_7k6bXXWeEXIc17Yt\"},\"disk_template\":{\"id\":\"dtpl_GsTMRz9tpUUNkmDO\"},\"data_center\":{\"id\":\"loc_UUhPmoCbpic6UX0Y\"}}" \
+                  > /dev/null 2>&1 && echo "VM provisioning started: $VM_NAME" || echo "VM provisioning failed (runner may already be available)"
+              else
+                echo "KATAPULT_API_TOKEN not set — skipping VM provisioning (runner must already be online)"
+              fi
+              echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
               cat /tmp/pipeline-params.json
               exit 0
             fi
