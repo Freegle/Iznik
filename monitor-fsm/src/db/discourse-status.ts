@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'node:fs'
 import type { Database as DB } from 'better-sqlite3'
-import { listOpenDiscourseBugs, markDiscourseBugFixed, type DiscourseBugRow } from './index.js'
+import { listOpenDiscourseBugs, markDiscourseBugFixed, kvGet, kvSet, type DiscourseBugRow } from './index.js'
 import { DISCOURSE_BASE } from '../discourse.js'
 
 export const STATUS_POST_ID = 63250
@@ -177,12 +177,25 @@ function getDiscourseApiKey(): string | null {
   }
 }
 
+const KV_LAST_STATUS_BODY = 'discourse_status_last_body'
+
+// Strip the "Last updated: ..." timestamp line before diffing so a timestamp-only
+// change doesn't trigger an unnecessary Discourse edit.
+function stableBody(raw: string): string {
+  return raw.replace(/^\*Last updated:.*\*\s*$/m, '')
+}
+
 export async function putStatusPost(db: DB, opts: { postId?: number; apiKey?: string; editReason?: string } = {}): Promise<{ posted: boolean; status?: number; reason?: string; body: string }> {
   const body = renderStatusPostBody(db)
   const postId = opts.postId ?? STATUS_POST_ID
   const apiKey = opts.apiKey ?? getDiscourseApiKey()
   if (!apiKey) {
     return { posted: false, reason: 'no Discourse API key available', body: body.raw }
+  }
+
+  const lastBody = kvGet(db, KV_LAST_STATUS_BODY)
+  if (lastBody !== null && stableBody(lastBody) === stableBody(body.raw)) {
+    return { posted: false, reason: 'content unchanged', body: body.raw }
   }
 
   const form = new URLSearchParams({
@@ -203,5 +216,7 @@ export async function putStatusPost(db: DB, opts: { postId?: number; apiKey?: st
     const text = await resp.text().catch(() => '')
     return { posted: false, status: resp.status, reason: text.slice(0, 500), body: body.raw }
   }
+
+  kvSet(db, KV_LAST_STATUS_BODY, body.raw)
   return { posted: true, status: resp.status, body: body.raw }
 }
