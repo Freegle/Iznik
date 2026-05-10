@@ -77,6 +77,15 @@ func NewAuthMiddleware(config Config) fiber.Handler {
 			db.Exec("UPDATE users SET lastaccess = NOW() WHERE id = ?", userIdInDB.Id)
 		}
 
+		// Refresh sessions.lastactive if older than 10 minutes — this gives the session
+		// sliding expiry, matching V1 PHP behaviour. Without this the cron purge
+		// (purge_sessions.php: DELETE WHERE lastactive < 31 days ago) would delete
+		// active sessions 31 days after login regardless of recent use.
+		if userIdInJWT > 0 && userIdInDB.Id > 0 {
+			db := database.DBConn
+			db.Exec("UPDATE sessions SET lastactive = NOW() WHERE id = ? AND lastactive < DATE_SUB(NOW(), INTERVAL 10 MINUTE)", sessionIdInJWT)
+		}
+
 		return ret
 	}
 }

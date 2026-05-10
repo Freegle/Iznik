@@ -25,6 +25,7 @@ class NoticeboardThankCommandTest extends TestCase
             'name' => 'Test Noticeboard',
             'lat' => 51.5,
             'lng' => -0.1,
+            'position' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
             'thanked' => null,
         ], $attributes));
     }

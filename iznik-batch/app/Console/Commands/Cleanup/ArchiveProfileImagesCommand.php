@@ -23,27 +23,61 @@ class ArchiveProfileImagesCommand extends Command
 
         $this->info('Archiving duplicate profile images...');
 
+        // V1 (cron/archive_attachments.php) groups by userid. The bound NULL in the
+        // GROUP BY result key produces `WHERE userid = NULL`, which is always false
+        // in SQL — so per-user duplicates are removed but rows where userid IS NULL
+        // are never reached. Those rows accumulate (placeholder gravatar/default
+        // avatar entries from upload paths that didn't set userid) and must be
+        // cleaned with an explicit `IS NULL` predicate.
         $dups = DB::select(
-            'SELECT userid, MAX(id) AS max, COUNT(*) AS count FROM users_images GROUP BY userid HAVING count > 1'
+            'SELECT userid, MAX(id) AS max, COUNT(*) AS count
+             FROM users_images
+             WHERE userid IS NOT NULL
+             GROUP BY userid HAVING count > 1'
         );
 
-        $deleted = 0;
+        $duplicatesDeleted = 0;
 
         foreach ($dups as $dup) {
             if ($dryRun) {
-                $deleted += $dup->count - 1;
+                $duplicatesDeleted += $dup->count - 1;
             } else {
                 $affected = DB::delete(
                     'DELETE FROM users_images WHERE userid = ? AND id < ?',
                     [$dup->userid, $dup->max]
                 );
-                $deleted += $affected;
+                $duplicatesDeleted += $affected;
             }
         }
 
-        $verb = $dryRun ? 'Would delete' : 'Deleted';
-        $this->info("{$verb} {$deleted} duplicate profile images.");
-        Log::info('Archive profile images complete', ['deleted' => $deleted, 'dry_run' => $dryRun]);
+        // Delete orphan rows (userid IS NULL) one at a time by primary key.
+        // Per-row deletion avoids Galera gap-lock issues on a large WHERE-driven
+        // single-statement DELETE — the same pattern used by EngageUpdateService.
+        $orphanIds = DB::table('users_images')
+            ->whereNull('userid')
+            ->orderBy('id')
+            ->pluck('id');
+
+        $orphansDeleted = 0;
+
+        foreach ($orphanIds as $id) {
+            if ($dryRun) {
+                $orphansDeleted++;
+                continue;
+            }
+            DB::table('users_images')->where('id', $id)->delete();
+            $orphansDeleted++;
+        }
+
+        $total = $duplicatesDeleted + $orphansDeleted;
+        $verb  = $dryRun ? 'Would delete' : 'Deleted';
+        $this->info("{$verb} {$total} profile image(s): {$duplicatesDeleted} duplicate, {$orphansDeleted} orphan (NULL userid).");
+        Log::info('Archive profile images complete', [
+            'duplicates_deleted' => $duplicatesDeleted,
+            'orphans_deleted'    => $orphansDeleted,
+            'total'              => $total,
+            'dry_run'            => $dryRun,
+        ]);
 
         return Command::SUCCESS;
     }
