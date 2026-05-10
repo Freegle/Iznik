@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Mail\Chat\ChaseupModsMail;
 use App\Models\ChatRoom;
 use App\Models\Group;
 use App\Models\Membership;
@@ -79,7 +80,7 @@ class ChatChaseupModsService
 
             // Check the conversation started more than CHASEUP_AGE_SECONDS ago
             $firstMessage = $messages->first();
-            $ageSeconds = now()->diffInSeconds(\Carbon\Carbon::parse($firstMessage->date));
+            $ageSeconds = abs(now()->diffInSeconds(\Carbon\Carbon::parse($firstMessage->date)));
             if ($ageSeconds < self::CHASEUP_AGE_SECONDS) {
                 continue;
             }
@@ -108,7 +109,6 @@ class ChatChaseupModsService
             // Build message summary
             $textSummary = $messages->map(fn ($m) => $m->message)->implode("\r\n");
 
-            $subject = "Member conversation on {$group->nameshort} with {$memberName} ({$memberEmail})";
             $replyTo = "notify-{$room->room_id}-{$memberId}@{$userDomain}";
             $chatUrl = "{$modSite}/modtools/chats/{$room->room_id}";
 
@@ -135,21 +135,15 @@ class ChatChaseupModsService
                 $notified++;
 
                 if (!$dryRun) {
-                    $body = "We can't find a reply to this message from your member, so we're resending it in case you missed it.\r\n\r\n"
-                        . "If you've already replied, or if it doesn't need a reply, please ignore this.\r\n\r\n"
-                        . "From: {$memberName}\r\n\r\n"
-                        . $textSummary . "\r\n\r\n"
-                        . "View and reply at: {$chatUrl}\r\n\r\n"
-                        . "(You can also reply by email, but the button works better.)";
-
-                    Mail::raw($body, function ($message) use (
-                        $subject, $noReplyAddr, $memberName, $modEmail, $replyTo
-                    ) {
-                        $message->from($noReplyAddr, $memberName)
-                            ->to($modEmail)
-                            ->replyTo($replyTo)
-                            ->subject($subject);
-                    });
+                    Mail::to($modEmail)->send(new ChaseupModsMail(
+                        groupName: $group->nameshort,
+                        memberName: $memberName,
+                        memberEmail: $memberEmail ?? '',
+                        textSummary: $textSummary,
+                        chatUrl: $chatUrl,
+                        fromAddress: $noReplyAddr,
+                        replyToAddress: $replyTo,
+                    ));
                 }
             }
         }
