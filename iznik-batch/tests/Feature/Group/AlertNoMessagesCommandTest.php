@@ -12,10 +12,11 @@ class AlertNoMessagesCommandTest extends TestCase
     private function insertApprovedMessage(int $groupId, string $arrival): void
     {
         $messageId = DB::table('messages')->insertGetId([
-            'source'    => 'Email',
-            'arrival'   => $arrival,
-            'date'      => $arrival,
-            'fromip'    => '127.0.0.1',
+            'source'       => 'Email',
+            'message'      => 'Test message.',
+            'arrival'      => $arrival,
+            'date'         => $arrival,
+            'fromip'       => '127.0.0.1',
             'envelopefrom' => 'test@example.com',
         ]);
 
@@ -93,6 +94,7 @@ class AlertNoMessagesCommandTest extends TestCase
             'region'    => 'Test',
             'lat'       => 51.5,
             'lng'       => -0.1,
+            'polyindex' => DB::raw("ST_GeomFromText('POINT(-0.1 51.5)', 3857)"),
         ]);
 
         $this->artisan('groups:alert-no-messages')

@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Group;
 
+use App\Mail\Group\AlertNoMessagesMail;
 use App\Models\Group;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
@@ -62,13 +63,9 @@ class AlertNoMessagesCommand extends Command
                     . implode('', $stale);
 
                 $geeksAddr = config('freegle.mail.geeks_addr');
-                $subject   = "WARNING: {$count} groups not receiving messages on Iznik";
 
-                Mail::raw($body, function ($message) use ($subject, $geeksAddr) {
-                    $message->from($geeksAddr, 'Freegle Geeks')
-                        ->to($geeksAddr)
-                        ->subject($subject);
-                });
+                Mail::to($geeksAddr)
+                    ->send(new AlertNoMessagesMail($count, $body));
             }
 
             return Command::SUCCESS;
