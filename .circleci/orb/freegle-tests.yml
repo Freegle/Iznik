@@ -459,6 +459,12 @@ commands:
               sleep 2
             done
 
+            echo "=== Installing PHP dependencies in batch container ==="
+            docker exec ${COMPOSE_PROJECT_NAME:-freegle}-batch \
+              composer install --no-interaction --prefer-dist --optimize-autoloader --no-scripts \
+              2>&1 | tail -5
+            echo "✅ PHP vendor directory ready"
+
             echo "=== Creating test databases (before application containers start) ==="
             # Find and run setup-test-database.sh
             if [ -f "./scripts/setup-test-database.sh" ]; then
@@ -590,6 +596,12 @@ commands:
               fi
               sleep 2
             done
+
+            echo "=== Installing PHP dependencies in batch container ==="
+            docker exec ${COMPOSE_PROJECT_NAME:-freegle}-batch \
+              composer install --no-interaction --prefer-dist --optimize-autoloader --no-scripts \
+              2>&1 | tail -5
+            echo "✅ PHP vendor directory ready"
 
             echo "=== Creating test databases ==="
             if [ -f "./scripts/setup-test-database.sh" ]; then
