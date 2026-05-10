@@ -577,6 +577,34 @@ class NotificationChaseUpServiceTest extends TestCase
     }
 
     // -----------------------------------------------------------------------
+    // Already-mailed notifications must not appear in email body
+    // -----------------------------------------------------------------------
+
+    public function test_email_body_excludes_already_mailed_notifications(): void
+    {
+        $user   = $this->createTestUser(['lastaccess' => now()]);
+        $sender = $this->createTestUser();
+
+        // Old notification already sent in a previous email (mailed=1, never seen)
+        $this->createNotification($user, $sender, [
+            'mailed'    => 1,
+            'timestamp' => now()->subHours(12),
+        ]);
+
+        // New notification that triggers this send
+        $this->createNotification($user, $sender, [
+            'mailed'    => 0,
+            'timestamp' => now()->subMinutes(10),
+        ]);
+
+        $this->service->sendEmails();
+
+        Mail::assertSent(ChaseUpMail::class, function (ChaseUpMail $mail) {
+            return count($mail->notifications) === 1;
+        });
+    }
+
+    // -----------------------------------------------------------------------
     // User-specific filtering
     // -----------------------------------------------------------------------
 
