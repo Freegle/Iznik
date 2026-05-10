@@ -2,17 +2,23 @@
 
 namespace App\Mail\Noticeboard;
 
-use Illuminate\Mail\Mailable;
+use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
-use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 
-class NoticeboardThankMail extends Mailable
+class NoticeboardThankMail extends MjmlMailable
 {
     public function __construct(
         public readonly string $recipientEmail,
         public readonly string $recipientName,
-    ) {}
+    ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return 'Thanks for putting up a poster!';
+    }
 
     public function envelope(): Envelope
     {
@@ -22,22 +28,14 @@ class NoticeboardThankMail extends Mailable
                 config('freegle.branding.name', 'Freegle')
             ),
             to: [new Address($this->recipientEmail, $this->recipientName)],
-            subject: 'Thanks for putting up a poster!',
+            subject: $this->getSubject(),
         );
     }
 
-    public function content(): Content
+    public function build(): static
     {
-        return new Content(
-            view: 'emails.noticeboard.thanks',
-            with: [
-                'email' => $this->recipientEmail,
-            ],
-        );
-    }
-
-    public function attachments(): array
-    {
-        return [];
+        return $this->mjmlView('emails.mjml.noticeboard.thanks', [
+            'email' => $this->recipientEmail,
+        ]);
     }
 }
