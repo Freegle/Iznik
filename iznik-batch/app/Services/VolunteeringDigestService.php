@@ -61,24 +61,40 @@ class VolunteeringDigestService
             }
 
             // Find active volunteering opportunities for this group (or with no specific group).
-            // V1: includes volunteerings with no group assigned (global opportunities).
+            // V1 note: don't use IS NULL in a LEFT JOIN WHERE clause — fetch all and filter in PHP
+            // instead. Use NOT EXISTS to find global volunteerings explicitly.
             $volunteerings = DB::table('volunteering')
-                ->leftJoin('volunteering_groups', 'volunteering_groups.volunteeringid', '=', 'volunteering.id')
                 ->where('volunteering.pending', 0)
                 ->where('volunteering.deleted', 0)
                 ->where('volunteering.expired', 0)
                 ->where(function ($q) use ($groupRow) {
-                    $q->whereNull('volunteering_groups.groupid')
-                        ->orWhere('volunteering_groups.groupid', '=', $groupRow->id);
+                    // Group-specific volunteerings for this group
+                    $q->whereExists(function ($sub) use ($groupRow) {
+                        $sub->select(DB::raw(1))
+                            ->from('volunteering_groups')
+                            ->whereColumn('volunteering_groups.volunteeringid', 'volunteering.id')
+                            ->where('volunteering_groups.groupid', $groupRow->id);
+                    })
+                    // OR global volunteerings with no group assignment at all
+                    ->orWhereNotExists(function ($sub) {
+                        $sub->select(DB::raw(1))
+                            ->from('volunteering_groups')
+                            ->whereColumn('volunteering_groups.volunteeringid', 'volunteering.id');
+                    });
                 })
                 ->select([
                     'volunteering.id',
                     'volunteering.title',
                     'volunteering.location',
                     'volunteering.description',
+                    'volunteering.timecommitment',
+                    'volunteering.contactname',
+                    'volunteering.contactphone',
+                    'volunteering.contactemail',
+                    'volunteering.contacturl',
                 ])
-                ->get()
-                ->unique('id');
+                ->orderByDesc('volunteering.id')
+                ->get();
 
             if ($volunteerings->isEmpty()) {
                 if (!$dryRun) {
@@ -92,11 +108,16 @@ class VolunteeringDigestService
 
             // Build structured volunteering data for the template.
             $volData = $volunteerings->map(fn($v) => [
-                'id'          => $v->id,
-                'title'       => $v->title,
-                'location'    => $v->location,
-                'description' => $v->description,
-                'url'         => "https://{$userSite}/volunteering/{$v->id}",
+                'id'             => $v->id,
+                'title'          => $v->title,
+                'location'       => $v->location,
+                'description'    => $v->description,
+                'timecommitment' => $v->timecommitment,
+                'contactname'    => $v->contactname,
+                'contactphone'   => $v->contactphone,
+                'contactemail'   => $v->contactemail,
+                'contacturl'     => $v->contacturl,
+                'url'            => "https://{$userSite}/volunteering/{$v->id}",
             ])->values()->all();
 
             // Find members who have volunteering enabled and are not opted out.
