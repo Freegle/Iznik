@@ -251,6 +251,7 @@ Schedule::command('chats:send-tryst-reminders')
     ->everyMinute()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('chats:send-tryst-reminders'))
+    ->runInBackground();
 
 // Chase up mods about User2Mod chats with no mod reply older than 6.55 days.
 // V1: cron/chat_chaseupmods.php (daily 15:30)
