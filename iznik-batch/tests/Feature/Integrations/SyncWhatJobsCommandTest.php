@@ -37,9 +37,10 @@ class SyncWhatJobsCommandTest extends TestCase
             {
                 $srid = config('freegle.srid', 3857);
                 $geocodeCache = [];
-                $jobs = $this->parseFeed($this->file1, 2, $geocodeCache);
+                // Match production sync(): feed1 → format 1, feed2 → format 2.
+                $jobs = $this->parseFeed($this->file1, 1, $geocodeCache);
                 if ($this->file2) {
-                    $jobs = array_merge($jobs, $this->parseFeed($this->file2, 1, $geocodeCache));
+                    $jobs = array_merge($jobs, $this->parseFeed($this->file2, 2, $geocodeCache));
                 }
                 $total = count($jobs);
                 if ($dryRun) {
@@ -308,7 +309,8 @@ class SyncWhatJobsCommandTest extends TestCase
             }
         };
 
-        config(['freegle.whatjobs.feed1' => 'http://fake-feed1-url', 'freegle.whatjobs.feed2' => null]);
+        // makeFeedXml produces format-2 (clickcast) XML, so wire it as feed2.
+        config(['freegle.whatjobs.feed1' => null, 'freegle.whatjobs.feed2' => 'http://fake-feed2-url']);
 
         $result = $svc->sync(true);
 
@@ -345,7 +347,8 @@ class SyncWhatJobsCommandTest extends TestCase
             public function updateClickability(): void {}
         };
 
-        config(['freegle.whatjobs.feed1' => 'http://fake-feed1-url', 'freegle.whatjobs.feed2' => null]);
+        // makeFeedXml produces format-2 (clickcast) XML, so wire it as feed2.
+        config(['freegle.whatjobs.feed1' => null, 'freegle.whatjobs.feed2' => 'http://fake-feed2-url']);
 
         $result = $svc->sync(false);
 
