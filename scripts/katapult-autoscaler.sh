@@ -61,12 +61,13 @@ except:
 }
 
 # Count running Katapult runner VMs (VMs with name starting katapult-runner-)
+# Note: the list API does not return a state field; count by name prefix.
 count_running_vms() {
     katapult "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines" | python3 -c "
 import json,sys
 data=json.load(sys.stdin)
 runners=[v for v in data.get('virtual_machines',[])
-         if v.get('name','').startswith('katapult-runner-') and v.get('state') in ('started','starting')]
+         if v.get('name','').startswith('katapult-runner-')]
 print(len(runners))
 " 2>/dev/null || echo "0"
 }
@@ -103,20 +104,42 @@ provision_runner() {
           \"data_center\": {\"id\": \"$KATAPULT_DC\"}
         }")
 
-    local vm_id vm_name
-    vm_id=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('virtual_machine',{}).get('id',''))" 2>/dev/null)
-    vm_name=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('virtual_machine',{}).get('name','unknown'))" 2>/dev/null)
-    log "Build triggered for: $vm_name (id: $vm_id)"
+    # The build endpoint returns a virtual_machine_build object, not a virtual_machine.
+    local build_id
+    build_id=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('virtual_machine_build',{}).get('id',''))" 2>/dev/null)
+    log "Build started: $name (build_id: $build_id)"
 
-    # Wait for VM to get an IPv4, then configure idle-check and cache proxies
+    if [ -z "$build_id" ]; then
+        log "ERROR: no build_id in response: $(echo "$result" | head -c 200)"
+        return 1
+    fi
+
+    # Poll until the build completes and we have a VM ID
+    local vm_id="" build_state=""
+    local i=0
+    log "Polling build $build_id for completion..."
+    while [ "$build_state" != "complete" ]; do
+        sleep 10
+        i=$((i+1))
+        if [ $i -gt 60 ]; then log "Timeout waiting for build $build_id"; return 1; fi
+        local build_resp
+        build_resp=$(katapult "${KATAPULT_API}/virtual_machine_builds/${build_id}" 2>/dev/null || echo "{}")
+        build_state=$(echo "$build_resp" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('virtual_machine_build',{}).get('state',''))" 2>/dev/null || echo "")
+        vm_id=$(echo "$build_resp" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('virtual_machine_build',{}).get('virtual_machine',{}).get('id',''))" 2>/dev/null || echo "")
+        log "Build $build_id: state=$build_state vm_id=$vm_id (${i}0s elapsed)"
+        if [ "$build_state" = "failed" ]; then log "Build failed!"; return 1; fi
+    done
+    log "Build complete. VM id: $vm_id"
+
+    # Poll for IPv4, then configure idle-check and cache proxies
     if [ -n "$vm_id" ]; then
         local vm_ip=""
-        local i=0
-        log "Waiting for $vm_name to get an IP..."
+        i=0
+        log "Waiting for $name to get an IPv4..."
         while [ -z "$vm_ip" ]; do
             sleep 10
             i=$((i+1))
-            if [ $i -gt 60 ]; then log "Timeout waiting for IP for $vm_name"; return 1; fi
+            if [ $i -gt 30 ]; then log "Timeout waiting for IP for $name"; return 1; fi
             vm_ip=$(katapult "${KATAPULT_API}/virtual_machines/${vm_id}" 2>/dev/null | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -125,8 +148,8 @@ ips=[ip.get('address','') for ip in vm.get('ip_addresses',[]) if ':' not in ip.g
 print(ips[0] if ips else '')
 " 2>/dev/null || echo "")
         done
-        log "VM $vm_name has IP: $vm_ip — configuring..."
-        configure_runner "$vm_ip" "$vm_name" "$vm_id"
+        log "VM $name has IP: $vm_ip — configuring..."
+        configure_runner "$vm_ip" "$name" "$vm_id"
     fi
 }
 
