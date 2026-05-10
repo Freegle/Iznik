@@ -14,7 +14,7 @@ class ProcessExportsCommand extends Command
     use GracefulShutdown;
 
     protected $signature = 'users:process-exports
-                            {--dry-run : Show what would be processed without making changes}';
+                            {--dry-run : Log what would be processed without making changes}';
 
     protected $description = 'Process pending GDPR data export requests and purge old completed export data';
 
@@ -26,20 +26,19 @@ class ProcessExportsCommand extends Command
         }
 
         try {
-            if ($this->option('dry-run')) {
-                $count = \Illuminate\Support\Facades\DB::table('users_exports')
-                    ->whereNull('completed')
-                    ->count();
-                $this->info("Dry run — {$count} export(s) would be processed.");
-                return Command::SUCCESS;
+            $dryRun = (bool) $this->option('dry-run');
+
+            if ($dryRun) {
+                $this->info('DRY RUN — no exports will be assembled or data written.');
             }
 
-            Log::info('Starting GDPR export processing');
+            Log::info('Starting GDPR export processing', ['dry_run' => $dryRun]);
 
-            $count = $service->processAll();
+            $count = $service->processAll($dryRun);
 
-            $this->info("{$count} export(s) processed");
-            Log::info('GDPR export processing complete', ['count' => $count]);
+            $prefix = $dryRun ? '[DRY RUN] Would process' : 'Processed';
+            $this->info("{$prefix} {$count} export(s).");
+            Log::info('GDPR export processing complete', ['count' => $count, 'dry_run' => $dryRun]);
 
             return Command::SUCCESS;
         } finally {
