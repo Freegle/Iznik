@@ -213,6 +213,17 @@ describe('MicroVolunteeringAIImageReview', () => {
         expect(btn.attributes('disabled')).toBeUndefined()
       })
     })
+
+    it('disables Previous button at first image and Next button at last image', () => {
+      const wrapper = createWrapper()
+      const allButtons = wrapper.findAll('button')
+      const prevBtn = allButtons.find((b) => /previous|undo/i.test(b.text()))
+      const nextBtn = allButtons.find((b) => /^next$/i.test(b.text()))
+      expect(prevBtn).toBeDefined()
+      expect(nextBtn).toBeDefined()
+      expect(prevBtn.attributes('disabled')).toBeDefined()
+      expect(nextBtn.attributes('disabled')).toBeDefined()
+    })
   })
 
   // Regression tests for: "lost image after Regenerate — no undo available"
@@ -341,12 +352,13 @@ describe('MicroVolunteeringAIImageReview', () => {
       await prevBtn.trigger('click')
       expect(wrapper.find('.review-image').attributes('src')).toBe(urlInitial)
 
-      // Next button should now appear since there is a newer image ahead
+      // Next button should now be enabled since there is a newer image ahead
       const nextBtn = wrapper
         .findAll('button')
         .find((b) => /^next$/i.test(b.text()))
       expect(nextBtn).toBeDefined()
       expect(nextBtn.exists()).toBe(true)
+      expect(nextBtn.attributes('disabled')).toBeUndefined()
 
       // clicking Next should advance back to urlA
       await nextBtn.trigger('click')

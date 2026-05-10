@@ -51,14 +51,14 @@
             Regenerate
           </button>
           <button
-            v-show="currentIndex > 0"
+            :disabled="currentIndex === 0"
             class="btn btn-outline-secondary"
             @click="previous"
           >
             Previous
           </button>
           <button
-            v-show="currentIndex < images.length - 1"
+            :disabled="currentIndex >= images.length - 1"
             class="btn btn-outline-secondary"
             @click="next"
           >
