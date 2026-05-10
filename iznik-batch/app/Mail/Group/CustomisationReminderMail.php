@@ -2,33 +2,48 @@
 
 namespace App\Mail\Group;
 
-use Illuminate\Mail\Mailable;
-use Illuminate\Mail\Mailables\Content;
+use App\Mail\MjmlMailable;
+use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-/**
- * Monthly reminder to group mods about missing customisation attributes.
- * Migrated from iznik-server/scripts/cron/group_customisation.php
- */
-class CustomisationReminderMail extends Mailable
+class CustomisationReminderMail extends MjmlMailable
 {
     public function __construct(
+        public readonly string $recipientEmail,
         public readonly string $groupName,
         public readonly string $missing,
-    ) {}
+    ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return "Reminder - ways to make {$this->groupName} more welcoming";
+    }
 
     public function envelope(): Envelope
     {
         return new Envelope(
-            from: config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
-            subject: "Reminder - ways to make {$this->groupName} more welcoming",
+            from: new Address(
+                config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
+                config('freegle.branding.name', 'Freegle')
+            ),
+            to: [new Address($this->recipientEmail)],
+            subject: $this->getSubject(),
         );
     }
 
-    public function content(): Content
+    public function build(): static
     {
-        return new Content(
-            text: 'emails.text.group.customisation-reminder',
-        );
+        $modSite = config('freegle.sites.mod', 'https://modtools.org');
+        $mentorsAddr = config('freegle.mail.mentors_addr', 'mentors@ilovefreegle.org');
+
+        return $this->mjmlView('emails.mjml.group.customisation-reminder', [
+            'groupName'   => $this->groupName,
+            'missing'     => $this->missing,
+            'modSite'     => $modSite,
+            'mentorsAddr' => $mentorsAddr,
+            'email'       => $this->recipientEmail,
+        ]);
     }
 }

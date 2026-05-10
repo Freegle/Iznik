@@ -72,8 +72,9 @@ class GroupCustomisationService
             ]);
 
             if (!$dryRun) {
-                Mail::to($modEmails)
-                    ->send(new CustomisationReminderMail($group->nameshort, $missing));
+                foreach ($modEmails as $modEmail) {
+                    Mail::send(new CustomisationReminderMail($modEmail, $group->nameshort, $missing));
+                }
             }
 
             $sent++;
