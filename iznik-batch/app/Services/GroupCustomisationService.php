@@ -2,9 +2,9 @@
 
 namespace App\Services;
 
+use App\Mail\Group\CustomisationReminderMail;
 use App\Models\Group;
 use App\Models\Membership;
-use App\Models\UserEmail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -72,12 +72,8 @@ class GroupCustomisationService
             ]);
 
             if (!$dryRun) {
-                Mail::raw($body, function ($message) use ($group, $modEmails, $noreplyAddr) {
-                    $message->to($modEmails)
-                        ->from($noreplyAddr, config('freegle.branding.name', 'Freegle'))
-                        ->returnPath($noreplyAddr)
-                        ->subject("Reminder - ways to make {$group->nameshort} more welcoming");
-                });
+                Mail::to($modEmails)
+                    ->send(new CustomisationReminderMail($group->nameshort, $missing));
             }
 
             $sent++;

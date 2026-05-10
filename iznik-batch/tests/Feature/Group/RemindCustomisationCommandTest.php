@@ -4,6 +4,7 @@ namespace Tests\Feature\Group;
 
 use App\Models\Group;
 use App\Models\Membership;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
@@ -13,6 +14,14 @@ class RemindCustomisationCommandTest extends TestCase
     {
         parent::setUp();
         Mail::fake();
+    }
+
+    private function createGroupImageId(Group $group): int
+    {
+        return DB::table('groups_images')->insertGetId([
+            'groupid'     => $group->id,
+            'contenttype' => 'image/jpeg',
+        ]);
     }
 
     private function createModForGroup(Group $group): void
@@ -43,12 +52,12 @@ class RemindCustomisationCommandTest extends TestCase
 
     public function test_skips_group_with_all_attrs_set(): void
     {
-        $group = $this->createTestGroup([
-            'profile'     => 'some-profile-image.jpg',
+        $group   = $this->createTestGroup([
             'tagline'     => 'We give away stuff!',
             'welcomemail' => 'Welcome to our group.',
             'description' => 'A friendly local group.',
         ]);
+        $group->update(['profile' => $this->createGroupImageId($group)]);
         $this->createModForGroup($group);
 
         $this->artisan('groups:remind-customisation')
@@ -60,9 +69,8 @@ class RemindCustomisationCommandTest extends TestCase
     public function test_sends_when_some_attrs_missing(): void
     {
         $group = $this->createTestGroup([
-            'profile'  => 'some-profile-image.jpg',
-            'tagline'  => 'We give away stuff!',
-            // welcomemail and description are null
+            'tagline' => 'We give away stuff!',
+            // profile, welcomemail and description are null
         ]);
         $this->createModForGroup($group);
 
