@@ -772,6 +772,7 @@ Schedule::command('chats:review-pending')
     ->dailyAt('09:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('chats:review-pending'))
+    ->runInBackground();
 
 // Daily donation summary — sends HTML email to fundraising address listing
 // all donations received today with amounts, payer, and recurring/birthday flags.

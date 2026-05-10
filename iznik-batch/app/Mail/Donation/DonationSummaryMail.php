@@ -2,43 +2,49 @@
 
 namespace App\Mail\Donation;
 
-use Illuminate\Bus\Queueable;
-use Illuminate\Mail\Mailable;
+use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
-use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
-use Illuminate\Queue\SerializesModels;
 
 /**
  * HTML daily donation summary sent to the fundraising address.
  *
  * V1 parity: donations_email.php
  */
-class DonationSummaryMail extends Mailable
+class DonationSummaryMail extends MjmlMailable
 {
-    use Queueable, SerializesModels;
-
     public function __construct(
+        public readonly string $recipientEmail,
         public readonly string $htmlContent,
         public readonly float $total,
     ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        $totalFormatted = number_format($this->total, 2);
+        return "Donation total today £{$totalFormatted}";
     }
 
     public function envelope(): Envelope
     {
-        $totalFormatted = number_format($this->total, 2);
-
         return new Envelope(
             from: new Address(
-                config('freegle.mail.noreply_addr'),
-                'Freegle'
+                config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
+                config('freegle.branding.name', 'Freegle')
             ),
-            subject: "Donation total today £{$totalFormatted}",
+            to: [new Address($this->recipientEmail)],
+            subject: $this->getSubject(),
         );
     }
 
-    public function content(): Content
+    public function build(): static
     {
-        return new Content(htmlString: $this->htmlContent);
+        return $this->mjmlView('emails.mjml.donation.daily-summary', [
+            'htmlContent' => $this->htmlContent,
+            'total'       => $this->total,
+            'email'       => $this->recipientEmail,
+        ]);
     }
 }

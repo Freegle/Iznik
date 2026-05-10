@@ -84,7 +84,7 @@ class DonationSummaryService
         $html = "<table><tbody>{$rows}</tbody></table>";
 
         if (!$dryRun) {
-            Mail::to($fundraisingAddr)->send(new DonationSummaryMail(htmlContent: $html, total: $total));
+            Mail::send(new DonationSummaryMail(recipientEmail: $fundraisingAddr, htmlContent: $html, total: $total));
         }
 
         return [
