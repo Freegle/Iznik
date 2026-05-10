@@ -311,4 +311,16 @@ return [
         'api' => env('LOVE_JUNK_API', 'https://elmer.api-lovejunk.com/elmer/v1'),
         'secret' => env('LOVE_JUNK_SECRET', ''),
     ],
+
+    'trashnothing' => [
+        'api_base' => env('TN_API_BASE', 'https://trashnothing.com'),
+        'key'      => env('TN_KEY', ''),
+    ],
+
+    'geocoder' => env('FREEGLE_GEOCODER_URL', ''),
+
+    'whatjobs' => [
+        'feed1' => env('WHATJOBS_FEED1', ''),
+        'feed2' => env('WHATJOBS_FEED2', ''),
+    ],
 ];
