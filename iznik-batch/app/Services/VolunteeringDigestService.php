@@ -64,7 +64,9 @@ class VolunteeringDigestService
             // Find active volunteering opportunities for this group (or with no specific group).
             // V1 note: don't use IS NULL in a LEFT JOIN WHERE clause — fetch all and filter in PHP
             // instead. Use NOT EXISTS to find global volunteerings explicitly.
+            $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
             $volunteerings = DB::table('volunteering')
+                ->leftJoin('volunteering_images', 'volunteering_images.opportunityid', '=', 'volunteering.id')
                 ->where('volunteering.pending', 0)
                 ->where('volunteering.deleted', 0)
                 ->where('volunteering.expired', 0)
@@ -93,6 +95,8 @@ class VolunteeringDigestService
                     'volunteering.contactphone',
                     'volunteering.contactemail',
                     'volunteering.contacturl',
+                    DB::raw('volunteering_images.id AS photo_id'),
+                    DB::raw('volunteering_images.externaluid AS photo_externaluid'),
                 ])
                 ->orderByDesc('volunteering.id')
                 ->get();
@@ -108,18 +112,38 @@ class VolunteeringDigestService
             $groupsProcessed++;
 
             // Build structured volunteering data for the template.
-            $volData = $volunteerings->map(fn($v) => [
-                'id'             => $v->id,
-                'title'          => $v->title,
-                'location'       => $v->location,
-                'description'    => $v->description,
-                'timecommitment' => $v->timecommitment,
-                'contactname'    => $v->contactname,
-                'contactphone'   => $v->contactphone,
-                'contactemail'   => $v->contactemail,
-                'contacturl'     => $v->contacturl,
-                'url'            => "https://{$userSite}/volunteering/{$v->id}",
-            ])->values()->all();
+            $tusUploader = config('freegle.tus_uploader', 'https://uploads.ilovefreegle.org:8080');
+            $deliveryUrl = config('freegle.delivery.base_url');
+            $volData = $volunteerings->map(function ($v) use ($userSite, $imagesDomain, $tusUploader, $deliveryUrl) {
+                $photoThumb = null;
+                if ($v->photo_id) {
+                    if ($v->photo_externaluid) {
+                        $p = strrpos($v->photo_externaluid, 'freegletusd-');
+                        if ($p !== false) {
+                            $fileId = substr($v->photo_externaluid, $p + strlen('freegletusd-'));
+                            $source = $tusUploader . '/' . $fileId;
+                            $photoThumb = $deliveryUrl
+                                ? $deliveryUrl . '?url=' . urlencode($source) . '&w=80'
+                                : $source;
+                        }
+                    } else {
+                        $photoThumb = "{$imagesDomain}/toimg_{$v->photo_id}.jpg";
+                    }
+                }
+                return [
+                    'id'             => $v->id,
+                    'title'          => $v->title,
+                    'location'       => $v->location,
+                    'description'    => $v->description,
+                    'timecommitment' => $v->timecommitment,
+                    'contactname'    => $v->contactname,
+                    'contactphone'   => $v->contactphone,
+                    'contactemail'   => $v->contactemail,
+                    'contacturl'     => $v->contacturl,
+                    'photo_thumb'    => $photoThumb,
+                    'url'            => "https://{$userSite}/volunteering/{$v->id}",
+                ];
+            })->values()->all();
 
             // Find members who have volunteering enabled and are not opted out.
             $members = DB::table('memberships')
