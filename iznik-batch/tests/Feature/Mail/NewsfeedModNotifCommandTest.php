@@ -181,25 +181,6 @@ class NewsfeedModNotifCommandTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_skips_mod_with_email_frequency_zero(): void
-    {
-        Mail::fake();
-
-        $mod = $this->createTestUser();
-        $member = $this->createTestUser();
-        $group = $this->createTestGroup();
-
-        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
-        DB::table('users')->where('id', $mod->id)->update(['emailfrequency' => 0]);
-
-        $this->createNewsfeedPost($member->id, $group->id);
-
-        $this->artisan('mail:newsfeed-mod-notif')
-            ->assertExitCode(0);
-
-        Mail::assertNothingSent();
-    }
-
     public function test_skips_mod_with_notif_setting_disabled(): void
     {
         Mail::fake();

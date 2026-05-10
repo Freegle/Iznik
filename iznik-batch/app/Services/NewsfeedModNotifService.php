@@ -65,7 +65,6 @@ class NewsfeedModNotifService
                     'users.id',
                     'users.fullname',
                     'users.settings',
-                    'users.emailfrequency',
                     'users_emails.email',
                 ])
                 ->first();
@@ -76,11 +75,6 @@ class NewsfeedModNotifService
 
             // Skip the system modtools address.
             if (strtolower($mod->email) === self::SYSTEM_MOD_EMAIL) {
-                continue;
-            }
-
-            // Skip mods who have opted out of email (emailfrequency = 0).
-            if ((int) $mod->emailfrequency === 0) {
                 continue;
             }
 
