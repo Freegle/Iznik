@@ -41,7 +41,7 @@ RUN docker-php-ext-install \
 RUN pecl install redis pcov && docker-php-ext-enable redis pcov
 
 # Increase PHP memory limit for PCOV coverage tracking across full test suite
-RUN echo "memory_limit=4096M" >> /usr/local/etc/php/conf.d/memory-limit.ini
+RUN echo "memory_limit=-1" >> /usr/local/etc/php/conf.d/memory-limit.ini
 
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
