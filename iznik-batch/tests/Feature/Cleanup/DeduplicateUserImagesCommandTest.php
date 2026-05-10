@@ -10,9 +10,10 @@ class DeduplicateUserImagesCommandTest extends TestCase
     private function insertUserImage(int $userId): int
     {
         return DB::table('users_images')->insertGetId([
-            'userid' => $userId,
-            'url' => 'https://images.example.com/img/' . uniqid() . '.jpg',
-            'ouruid' => uniqid(),
+            'userid'      => $userId,
+            'contenttype' => 'image/jpeg',
+            'url'         => 'https://images.example.com/img/' . uniqid() . '.jpg',
+            'externaluid' => uniqid(),
         ]);
     }
 
