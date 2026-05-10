@@ -1850,6 +1850,10 @@ jobs:
                 git reset --hard HEAD
                 git clean -fd
                 git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+                # Second clean: removes files from previous branch that git checkout couldn't
+                # delete (e.g., root-owned files created by Docker containers via bind mounts,
+                # or files left by concurrent builds sharing the workspace directory).
+                git clean -fd
               else
                 # git clone fails when the directory isn't empty (leftover files from
                 # a previous build). Use git init + fetch instead, which works either way.
@@ -1859,6 +1863,7 @@ jobs:
                 git fetch --prune origin
                 git clean -fd
                 git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+                git clean -fd
               fi
             }
 
@@ -1970,6 +1975,25 @@ jobs:
       # Run Vitest unit tests first (fast, fail-fast before slower tests)
       - run-vitest-tests:
           reason: "Running Vitest unit tests (fail-fast before parallel tests)"
+
+      # Guard against cross-branch file contamination on the self-hosted runner.
+      # The self-hosted runner reuses its workspace; if a concurrent build on another
+      # branch ran git checkout between our checkout and now, it may have added source
+      # files from that branch into our workspace (they appear as untracked files here).
+      # Remove any untracked PHP source files in app/ and tests/ before running tests.
+      - run:
+          name: Remove untracked PHP source files (prevent cross-branch contamination)
+          command: |
+            echo "Scanning for untracked PHP source files..."
+            extra=$(git ls-files --others --exclude-standard -- iznik-batch/app/ iznik-batch/tests/ 2>/dev/null | grep -E '\.php$' || true)
+            if [ -n "$extra" ]; then
+              echo "⚠️  Found untracked PHP source files (from another branch checkout) — removing:"
+              echo "$extra" | while IFS= read -r f; do echo "  - $f"; done
+              echo "$extra" | xargs rm -f
+              echo "Cleanup complete"
+            else
+              echo "✅ No unexpected PHP source files found"
+            fi
 
       # Run iznik-batch, Playwright, Go, and iznik-server tests in parallel via status API
       - run:
