@@ -12,13 +12,19 @@ echo "Using environment variables for configuration (no .env file needed)"
 rm -f /var/www/html/bootstrap/cache/services.php
 rm -f /var/www/html/bootstrap/cache/packages.php
 
-# Always run composer install to ensure vendor matches composer.lock.
-# The host bind-mount directory may contain a stale vendor/ from a previous run
-# (git clean -fd skips gitignored paths, and /vendor is gitignored). Running
-# composer install unconditionally is fast when nothing changed and ensures
-# newly added packages are always present.
-echo "Installing/updating PHP dependencies..."
-composer install --no-interaction --prefer-dist --optimize-autoloader
+# In CI, the Dockerfile already ran composer install during image build.
+# Repeating it in the entrypoint is wasteful and can fail due to network issues
+# or post-install script failures, causing the container to exit and CI to fall
+# back to cached layers with stale code. Skip it in CI mode.
+#
+# In dev, vendor/ lives in a bind-mounted gitignored directory that can be stale,
+# so we run composer install to ensure it matches the lock file.
+if [ "${CI:-false}" = "false" ]; then
+    echo "Installing/updating PHP dependencies..."
+    composer install --no-interaction --prefer-dist --optimize-autoloader
+else
+    echo "CI mode: skipping composer install (already done during Docker image build)"
+fi
 
 # Wait for database server to be ready (connect without specifying database)
 echo "Waiting for database server..."
