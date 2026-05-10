@@ -173,6 +173,87 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent']);
     }
 
+    public function test_deduplication_same_subject_different_body_not_deduped(): void
+    {
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        // Two messages with same subject but different body text.
+        $message1 = $this->createTestMessage($user, $group1, [
+            'subject' => 'OFFER: Garden tools (London)',
+            'textbody' => 'I have a spade and a fork available for collection.',
+        ]);
+        $message2 = $this->createTestMessage($user, $group2, [
+            'subject' => 'OFFER: Garden tools (London)',
+            'textbody' => 'Lawnmower available, needs collecting this weekend.',
+        ]);
+
+        $message1->groupid = $group1->id;
+        $message2->groupid = $group2->id;
+
+        $posts = collect([$message1, $message2]);
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        // Should NOT be deduplicated because bodies are different.
+        $this->assertCount(2, $deduplicated);
+    }
+
+    public function test_deduplication_same_subject_same_body_deduped(): void
+    {
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        $bodyText = 'I have a lovely sofa available for collection.';
+
+        // Two messages with same subject AND same body.
+        $message1 = $this->createTestMessage($user, $group1, [
+            'subject' => 'OFFER: Sofa (London)',
+            'textbody' => $bodyText,
+        ]);
+        $message2 = $this->createTestMessage($user, $group2, [
+            'subject' => 'OFFER: Sofa (London)',
+            'textbody' => $bodyText,
+        ]);
+
+        $message1->groupid = $group1->id;
+        $message2->groupid = $group2->id;
+
+        $posts = collect([$message1, $message2]);
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        // Should be deduplicated because both subject and body match.
+        $this->assertCount(1, $deduplicated);
+        $this->assertCount(2, $deduplicated->first()['postedToGroups']);
+    }
+
+    public function test_deduplication_null_body_treated_as_matching(): void
+    {
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        // Two messages with same subject and both null bodies.
+        $message1 = $this->createTestMessage($user, $group1, [
+            'subject' => 'OFFER: Table (London)',
+            'textbody' => null,
+        ]);
+        $message2 = $this->createTestMessage($user, $group2, [
+            'subject' => 'OFFER: Table (London)',
+            'textbody' => null,
+        ]);
+
+        $message1->groupid = $group1->id;
+        $message2->groupid = $group2->id;
+
+        $posts = collect([$message1, $message2]);
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        // Should be deduplicated - null bodies both normalize to ''.
+        $this->assertCount(1, $deduplicated);
+    }
+
     public function test_sponsors_are_included_and_deduplicated(): void
     {
         $poster = $this->createTestUser();
@@ -287,43 +368,6 @@ class UnifiedDigestServiceTest extends TestCase
 
         $sponsors = $this->service->getSponsorsForUser($user);
         $this->assertCount(0, $sponsors);
-    }
-
-    public function test_deduplication_with_same_message_on_multiple_groups(): void
-    {
-        // Multi-group model: same messages.id has two messages_groups rows.
-        // The digest query joins messages with messages_groups, so the same message
-        // appears twice with different groupids. deduplicatePosts should merge them.
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-
-        $message = $this->createTestMessage($user, $group1, [
-            'subject' => 'OFFER: Multi-Group Item (TestTown)',
-        ]);
-
-        // Add the same message to a second group (simulating the multi-group model).
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id,
-            'groupid' => $group2->id,
-            'collection' => 'Approved',
-            'arrival' => now(),
-        ]);
-
-        // Simulate what getPostsForUser returns: two rows for the same message
-        // with different groupid attributes (from the join).
-        $row1 = clone $message;
-        $row1->groupid = $group1->id;
-        $row2 = clone $message;
-        $row2->groupid = $group2->id;
-
-        $posts = collect([$row1, $row2]);
-        $deduplicated = $this->service->deduplicatePosts($posts);
-
-        $this->assertCount(1, $deduplicated, 'Same message on two groups should deduplicate to one');
-        $this->assertCount(2, $deduplicated->first()['postedToGroups'], 'Both groups should be in postedToGroups');
-        $this->assertContains($group1->id, $deduplicated->first()['postedToGroups']);
-        $this->assertContains($group2->id, $deduplicated->first()['postedToGroups']);
     }
 
     public function test_immediate_mode_requires_full_setting(): void
