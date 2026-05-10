@@ -345,6 +345,18 @@ commands:
               sleep 2
             done
 
+            echo "=== Syncing PHP vendor directory from Docker image ==="
+            # The bind mount (./iznik-batch:/var/www/html) overrides the image's vendor/
+            # with the host's filesystem. On the self-hosted runner, the host vendor/ can
+            # be stale (missing packages added since the last entrypoint composer install).
+            # We run composer install --no-scripts here (after the container is healthy but
+            # before migrations) to ensure vendor/ is up to date without risk of entrypoint
+            # failure due to post-install scripts that need services that aren't up yet.
+            docker exec ${COMPOSE_PROJECT_NAME:-freegle}-ci-batch \
+              composer install --no-interaction --prefer-dist --optimize-autoloader --no-scripts \
+              2>&1 | tail -5
+            echo "✅ PHP vendor directory ready"
+
             echo "=== Creating test databases (before application containers start) ==="
             # Find and run setup-test-database.sh
             if [ -f "./scripts/setup-test-database.sh" ]; then
