@@ -90,14 +90,14 @@ class VolunteeringDigestService
 
             $groupsProcessed++;
 
-            // Build plain-text summary.
-            $textSummary = "Here are volunteering opportunities for {$groupRow->nameshort}.\r\n\r\n";
-            foreach ($volunteerings as $vol) {
-                $textSummary .= "{$vol->title} — {$vol->location}\r\n";
-                $textSummary .= "https://{$userSite}/volunteering/{$vol->id}\r\n\r\n";
-            }
-            $textSummary .= "View all volunteering: https://{$userSite}/volunteering\r\n";
-            $textSummary .= "Change settings: https://{$userSite}/settings\r\n";
+            // Build structured volunteering data for the template.
+            $volData = $volunteerings->map(fn($v) => [
+                'id'          => $v->id,
+                'title'       => $v->title,
+                'location'    => $v->location,
+                'description' => $v->description,
+                'url'         => "https://{$userSite}/volunteering/{$v->id}",
+            ])->values()->all();
 
             // Find members who have volunteering enabled and are not opted out.
             $members = DB::table('memberships')
@@ -112,12 +112,18 @@ class VolunteeringDigestService
                 ->where('memberships.emailfrequency', '!=', 0)
                 ->whereNull('users.deleted')
                 ->whereNotNull('users_emails.email')
-                ->select(['users_emails.email', 'users.fullname'])
+                ->select(['users_emails.email', 'users.id as userId'])
                 ->get();
 
             foreach ($members as $member) {
                 if (!$dryRun) {
-                    Mail::send(new VolunteeringDigestMail($member->email, $groupRow->nameshort, $textSummary));
+                    $unsubscribeUrl = "https://{$userSite}/unsubscribe?email=" . urlencode($member->email);
+                    Mail::send(new VolunteeringDigestMail(
+                        recipientEmail: $member->email,
+                        groupName: $groupRow->nameshort,
+                        volunteerings: $volData,
+                        unsubscribeUrl: $unsubscribeUrl,
+                    ));
                 }
                 $sent++;
             }

@@ -11,7 +11,8 @@ class VolunteeringDigestMail extends MjmlMailable
     public function __construct(
         public readonly string $recipientEmail,
         public readonly string $groupName,
-        public readonly string $summary,
+        public readonly array $volunteerings,
+        public readonly string $unsubscribeUrl,
     ) {
         parent::__construct();
     }
@@ -35,10 +36,14 @@ class VolunteeringDigestMail extends MjmlMailable
 
     public function build(): static
     {
+        $userSite = config('freegle.sites.user');
+
         return $this->mjmlView('emails.mjml.volunteering.digest', [
-            'groupName' => $this->groupName,
-            'summary'   => $this->summary,
-            'email'     => $this->recipientEmail,
+            'groupName'      => $this->groupName,
+            'volunteerings'  => $this->volunteerings,
+            'userSite'       => $userSite,
+            'unsubscribeUrl' => $this->unsubscribeUrl,
+            'email'          => $this->recipientEmail,
         ]);
     }
 }
