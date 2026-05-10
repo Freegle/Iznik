@@ -825,11 +825,3 @@ Schedule::command('data:git-summary')
 // immediate promotion if the commit message has hotfix: prefix.
 // See iznik-nuxt3/.circleci/config.yml
 
-// Auto-reject chat messages stuck in review for 7+ days; notify group mods
-// about messages pending review for 48+ hours; send mentors a daily summary.
-// V1: cron/chat_review.php (daily)
-Schedule::command('chats:review-pending')
-    ->dailyAt('09:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('chats:review-pending'))
-    ->runInBackground();
