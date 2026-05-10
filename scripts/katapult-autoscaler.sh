@@ -104,53 +104,42 @@ provision_runner() {
           \"data_center\": {\"id\": \"$KATAPULT_DC\"}
         }")
 
-    # The build endpoint returns a virtual_machine_build object, not a virtual_machine.
-    local build_id
-    build_id=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('virtual_machine_build',{}).get('id',''))" 2>/dev/null)
-    log "Build started: $name (build_id: $build_id)"
+    log "Build triggered for: $name (polling VM list for it to appear...)"
 
-    if [ -z "$build_id" ]; then
-        log "ERROR: no build_id in response: $(echo "$result" | head -c 200)"
-        return 1
-    fi
-
-    # Poll until the build completes and we have a VM ID
-    local vm_id="" build_state=""
+    # Poll the VM list until the named VM appears, then poll its state until 'started'.
+    # (The build API has no stable polling endpoint, but the VM appears in the list quickly.)
+    local vm_id="" vm_state="" vm_ip=""
     local i=0
-    log "Polling build $build_id for completion..."
-    while [ "$build_state" != "complete" ]; do
+    while [ "$vm_state" != "started" ]; do
         sleep 10
         i=$((i+1))
-        if [ $i -gt 60 ]; then log "Timeout waiting for build $build_id"; return 1; fi
-        local build_resp
-        build_resp=$(katapult "${KATAPULT_API}/virtual_machine_builds/${build_id}" 2>/dev/null || echo "{}")
-        build_state=$(echo "$build_resp" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('virtual_machine_build',{}).get('state',''))" 2>/dev/null || echo "")
-        vm_id=$(echo "$build_resp" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('virtual_machine_build',{}).get('virtual_machine',{}).get('id',''))" 2>/dev/null || echo "")
-        log "Build $build_id: state=$build_state vm_id=$vm_id (${i}0s elapsed)"
-        if [ "$build_state" = "failed" ]; then log "Build failed!"; return 1; fi
-    done
-    log "Build complete. VM id: $vm_id"
+        if [ $i -gt 90 ]; then log "Timeout waiting for $name to reach started state"; return 1; fi
 
-    # Poll for IPv4, then configure idle-check and cache proxies
-    if [ -n "$vm_id" ]; then
-        local vm_ip=""
-        i=0
-        log "Waiting for $name to get an IPv4..."
-        while [ -z "$vm_ip" ]; do
-            sleep 10
-            i=$((i+1))
-            if [ $i -gt 30 ]; then log "Timeout waiting for IP for $name"; return 1; fi
-            vm_ip=$(katapult "${KATAPULT_API}/virtual_machines/${vm_id}" 2>/dev/null | python3 -c "
+        if [ -z "$vm_id" ]; then
+            vm_id=$(katapult "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines" 2>/dev/null | python3 -c "
 import json,sys
-d=json.load(sys.stdin)
-vm=d.get('virtual_machine',{})
+for v in json.load(sys.stdin).get('virtual_machines',[]):
+    if v.get('name') == '${name}':
+        print(v.get('id',''))
+" 2>/dev/null || echo "")
+            [ -n "$vm_id" ] && log "VM appeared in list: $vm_id"
+        fi
+
+        if [ -n "$vm_id" ]; then
+            local detail
+            detail=$(katapult "${KATAPULT_API}/virtual_machines/${vm_id}" 2>/dev/null || echo "{}")
+            vm_state=$(echo "$detail" | python3 -c "import json,sys; print(json.load(sys.stdin).get('virtual_machine',{}).get('state',''))" 2>/dev/null || echo "")
+            vm_ip=$(echo "$detail" | python3 -c "
+import json,sys
+vm=json.load(sys.stdin).get('virtual_machine',{})
 ips=[ip.get('address','') for ip in vm.get('ip_addresses',[]) if ':' not in ip.get('address','')]
 print(ips[0] if ips else '')
 " 2>/dev/null || echo "")
-        done
-        log "VM $name has IP: $vm_ip — configuring..."
-        configure_runner "$vm_ip" "$name" "$vm_id"
-    fi
+        fi
+        log "$name: state=${vm_state:-building} ip=${vm_ip:-pending} (${i}0s elapsed)"
+    done
+    log "VM $name started. IP: $vm_ip — configuring..."
+    configure_runner "$vm_ip" "$name" "$vm_id"
 }
 
 # Configure a freshly-built VM as a CircleCI runner
@@ -279,12 +268,11 @@ while true; do
     log "Running: $running/$MAX_RUNNERS | Pending jobs: $pending"
 
     if [ "$pending" -gt 0 ] && [ "$running" -lt "$MAX_RUNNERS" ]; then
-        needed=$((MAX_RUNNERS - running))
-        to_spawn=$((pending < needed ? pending : needed))
-        log "Need $to_spawn more runner(s)"
-        for ((i=0; i<to_spawn; i++)); do
-            provision_runner &
-        done
+        log "Need 1 more runner"
+        # Run synchronously — blocks until build complete + idle-check configured.
+        # This prevents the poll loop from provisioning a second VM before the first
+        # appears in the API list (which can take longer than POLL_INTERVAL seconds).
+        provision_runner
     fi
 
     sleep "$POLL_INTERVAL"

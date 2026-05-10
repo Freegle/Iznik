@@ -335,13 +335,9 @@ commands:
             INLINE_CACHE_FLAG=""
             if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && [ "$IS_WSL" = "false" ]; then
               CACHE_REG="185.44.254.6:5002"
-              echo "Pulling CI images from local cache registry (${CACHE_REG})..."
-              for svc in apiv1 apiv2 freegle-prod-local modtools-prod-local playwright batch status; do
-                docker pull ${CACHE_REG}/ci/${svc}:latest 2>/dev/null \
-                  && echo "  ✅ Pulled: ${svc}" \
-                  || echo "  ⚠️  Not cached: ${svc} (first build or expired)"
-              done
-
+              # Don't pre-pull full images — BuildKit fetches only matching cache layers
+              # on demand via cache_from. Pre-pulling large images adds more overhead than
+              # it saves (7 large images × 300-500MB = 2-3GB of unnecessary downloads).
               {
                 echo 'services:'
                 echo '  apiv1:'
