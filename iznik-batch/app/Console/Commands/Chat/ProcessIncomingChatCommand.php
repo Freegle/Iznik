@@ -30,7 +30,8 @@ class ProcessIncomingChatCommand extends Command
                 $count = \Illuminate\Support\Facades\DB::table('chat_messages')
                     ->where('processingrequired', 1)
                     ->count();
-                $this->info("Dry run — {$count} message(s) would be processed.");
+                $this->info("[DRY RUN] {$count} message(s) pending processing.");
+                Log::info('Dry run — chat message processing', ['pending' => $count]);
                 return Command::SUCCESS;
             }
 
