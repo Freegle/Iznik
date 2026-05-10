@@ -68,6 +68,61 @@
       </mj-column>
     </mj-section>
 
+    {{-- Jobs section --}}
+    @if(!empty($jobAds) && $jobAds->isNotEmpty())
+    <mj-section background-color="#f8f9fa" padding="20px 20px 10px 20px" border-top="1px solid #e9ecef">
+      <mj-column>
+        <mj-text font-size="16px" font-weight="bold" color="#333333" align="center" padding-bottom="10px">
+          Jobs near you
+        </mj-text>
+      </mj-column>
+    </mj-section>
+    <mj-section background-color="#f8f9fa" padding="5px 20px">
+      <mj-column>
+        <mj-table cellpadding="0" cellspacing="0" width="100%">
+          @foreach($jobAds as $job)
+          <tr>
+            @if(!empty($job->image_url))
+            <td style="width: 50px; padding: 6px 8px 6px 0; vertical-align: middle;">
+              <a href="{{ $job->tracked_url }}">
+                <img src="{{ $job->image_url }}" width="40" height="40" alt="" style="border-radius: 4px; display: block;" />
+              </a>
+            </td>
+            @endif
+            <td style="padding: 6px 0; vertical-align: middle;">
+              <a href="{{ $job->tracked_url }}" style="color: #2e7d32; font-weight: bold; text-decoration: none; font-size: 14px;">
+                {{ $job->title }}
+              </a>
+              @if(!empty($job->location))
+              <br/><span style="color: #666666; font-size: 12px;">{{ $job->location }}</span>
+              @endif
+            </td>
+          </tr>
+          @endforeach
+        </mj-table>
+      </mj-column>
+    </mj-section>
+    <mj-section background-color="#f8f9fa" padding="0 20px 10px 20px">
+      <mj-column>
+        <mj-text font-size="12px" color="#666666" line-height="1.4">
+          If you are interested and click, it will raise a little to help keep Freegle running and free to use.
+        </mj-text>
+      </mj-column>
+    </mj-section>
+    <mj-section background-color="#f8f9fa" padding="0 20px 20px 20px">
+      <mj-column width="50%">
+        <mj-button href="{{ $jobsUrl }}" mj-class="btn-secondary" font-size="14px" padding="12px 20px" width="90%">
+          View more jobs
+        </mj-button>
+      </mj-column>
+      <mj-column width="50%">
+        <mj-button href="{{ $donateUrl }}" mj-class="btn-success" font-size="14px" padding="12px 20px" width="90%">
+          Donating helps too!
+        </mj-button>
+      </mj-column>
+    </mj-section>
+    @endif
+
     @include('emails.mjml.partials.footer', [
       'unsubscribeUrl' => $unsubscribeUrl,
       'email'          => $email,

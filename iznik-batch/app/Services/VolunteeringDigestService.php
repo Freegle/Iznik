@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Mail\Volunteering\VolunteeringDigestMail;
 use App\Models\Group;
 use App\Models\Membership;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -127,16 +128,25 @@ class VolunteeringDigestService
                     $join->on('users_emails.userid', '=', 'memberships.userid')
                         ->where('users_emails.preferred', '=', 1);
                 })
+                ->leftJoin('locations', 'locations.id', '=', 'users.lastlocation')
                 ->where('memberships.groupid', $groupRow->id)
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED)
                 ->where('memberships.volunteeringallowed', 1)
                 ->where('memberships.emailfrequency', '!=', 0)
                 ->whereNull('users.deleted')
                 ->whereNotNull('users_emails.email')
-                ->select(['users_emails.email', 'users.id as userId'])
+                ->select(['users_emails.email', 'users.id as userId', 'locations.lat', 'locations.lng'])
                 ->get();
 
             foreach ($members as $member) {
+                $jobAds = collect();
+                if ($member->lat && $member->lng) {
+                    $user = User::find($member->userId);
+                    if ($user) {
+                        $jobAds = $user->getJobAds()['jobs'];
+                    }
+                }
+
                 if (!$dryRun) {
                     $unsubscribeUrl = "https://{$userSite}/unsubscribe?email=" . urlencode($member->email);
                     Mail::send(new VolunteeringDigestMail(
@@ -144,6 +154,8 @@ class VolunteeringDigestService
                         groupName: $groupRow->nameshort,
                         volunteerings: $volData,
                         unsubscribeUrl: $unsubscribeUrl,
+                        jobAds: $jobAds,
+                        userId: $member->userId,
                     ));
                 }
                 $sent++;
