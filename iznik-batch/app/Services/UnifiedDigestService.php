@@ -10,6 +10,8 @@ use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
+use App\Models\GroupDigest;
+use App\Models\Group;
 use App\Models\UserDigest;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -684,4 +686,174 @@ class UnifiedDigestService
         // in the result set due to ORDER BY amount DESC).
         return $sponsors->unique('name')->values();
     }
+
+    // =========================================================================
+    // GROUP MODE — one email per group per user (replicates V1 per-group digest)
+    // =========================================================================
+
+    /**
+     * Send group digests for a group at a specific frequency.
+     *
+     * Called by SendDigestCommand. Loops over members of the group who want
+     * emails at this frequency and sends each one a UnifiedDigest (MODE_GROUP).
+     */
+    public function sendGroupDigests(Group $group, int $frequency, bool $dryRun = false): array
+    {
+        $stats = [
+            'members_processed' => 0,
+            'emails_sent' => 0,
+            'errors' => 0,
+        ];
+
+        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
+            Log::info('UnifiedDigest emails disabled via FREEGLE_MAIL_ENABLED_TYPES');
+            return $stats;
+        }
+
+        if ($group->isClosed()) {
+            Log::debug("Skipping closed group: {$group->nameshort}");
+            return $stats;
+        }
+
+        $groupDigest = $this->getOrCreateGroupDigest($group, $frequency);
+        $messages = $this->getPostsForGroup($group, $groupDigest);
+
+        if ($messages->isEmpty()) {
+            Log::debug("No new messages for {$group->nameshort} at frequency {$frequency}");
+            return $stats;
+        }
+
+        $members = $this->getMembersForGroup($group, $frequency);
+
+        foreach ($members as $membership) {
+            try {
+                $user = $membership->user;
+
+                if (!$user || !$user->email_preferred) {
+                    continue;
+                }
+
+                // Filter out messages posted by this user.
+                $userMessages = $messages->filter(fn($msg) => $msg->fromuser !== $user->id);
+
+                if ($userMessages->isEmpty()) {
+                    continue;
+                }
+
+                // Wrap messages in the post-array format UnifiedDigest expects.
+                $posts = $userMessages->values()->map(fn($msg) => [
+                    'message'        => $msg,
+                    'postedToGroups' => [$group->id],
+                ]);
+
+                if (!$dryRun) {
+                    $sponsors = $this->getSponsorsForGroup($group);
+                    Mail::send(new UnifiedDigest($user, $posts, self::MODE_GROUP, $sponsors));
+                }
+
+                $stats['emails_sent']++;
+            } catch (\Exception $e) {
+                Log::error("UnifiedDigestService: Failed to send group digest to user {$membership->userid}", [
+                    'group' => $group->id,
+                    'error' => $e->getMessage(),
+                ]);
+                $stats['errors']++;
+            }
+
+            $stats['members_processed']++;
+        }
+
+        if (!$dryRun) {
+            $this->updateGroupDigestTracker($groupDigest, $messages);
+        }
+
+        Log::info("UnifiedDigestService: Group digest complete for {$group->nameshort}", $stats);
+
+        return $stats;
+    }
+
+    /**
+     * Get or create a GroupDigest tracker for group+frequency.
+     */
+    protected function getOrCreateGroupDigest(Group $group, int $frequency): GroupDigest
+    {
+        return GroupDigest::firstOrCreate(
+            [
+                'groupid'   => $group->id,
+                'frequency' => $frequency,
+            ],
+            [
+                'msgid'    => null,
+                'msgdate'  => null,
+            ]
+        );
+    }
+
+    /**
+     * Get approved messages for a group since the last group digest.
+     */
+    protected function getPostsForGroup(Group $group, GroupDigest $tracker): Collection
+    {
+        $query = Message::select('messages.*', 'messages_groups.arrival')
+            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+            ->where('messages_groups.groupid', $group->id)
+            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages_groups.deleted', 0)
+            ->whereNull('messages.deleted')
+            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
+            ->where('messages_groups.arrival', '>=', now()->subDays(30))
+            ->orderBy('messages_groups.arrival', 'asc');
+
+        if ($tracker->msgdate) {
+            $query->where('messages_groups.arrival', '>', $tracker->msgdate);
+        } else {
+            // First digest for this group/frequency — cap at 24 hours.
+            $query->where('messages_groups.arrival', '>=', now()->subDay());
+        }
+
+        return $query->with(['attachments', 'fromUser'])->get();
+    }
+
+    /**
+     * Get approved members of a group who want digests at this frequency.
+     */
+    protected function getMembersForGroup(Group $group, int $frequency): Collection
+    {
+        return Membership::where('groupid', $group->id)
+            ->where('collection', Membership::COLLECTION_APPROVED)
+            ->where('emailfrequency', $frequency)
+            ->with('user')
+            ->get();
+    }
+
+    /**
+     * Update the GroupDigest tracker after a successful send.
+     */
+    protected function updateGroupDigestTracker(GroupDigest $tracker, Collection $messages): void
+    {
+        $lastMessage = $messages->last();
+
+        if ($lastMessage) {
+            $tracker->update([
+                'msgid'   => $lastMessage->id,
+                'msgdate' => $lastMessage->arrival,
+                'ended'   => now(),
+            ]);
+        }
+    }
+
+    /**
+     * Get active sponsors for a single group.
+     */
+    public function getSponsorsForGroup(Group $group): Collection
+    {
+        return DB::table('groups_sponsorship')
+            ->where('groupid', $group->id)
+            ->where('visible', true)
+            ->where('startdate', '<=', now())
+            ->where('enddate', '>=', now()->startOfDay())
+            ->orderByDesc('amount')
+            ->get();
+    }
+
 }

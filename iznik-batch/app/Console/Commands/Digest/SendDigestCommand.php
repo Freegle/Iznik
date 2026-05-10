@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands\Digest;
 
-use App\Services\DigestService;
+use App\Services\UnifiedDigestService;
 use App\Traits\ChunkedProcessing;
 use App\Traits\GracefulShutdown;
 use App\Traits\ShardedExecution;
@@ -31,7 +31,7 @@ class SendDigestCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle(DigestService $digestService): int
+    public function handle(UnifiedDigestService $digestService): int
     {
         $frequency = (int) $this->argument('frequency');
         $this->mod = (int) $this->option('mod');
@@ -44,9 +44,10 @@ class SendDigestCommand extends Command
         }
 
         // Validate frequency.
-        if (!in_array($frequency, DigestService::getValidFrequencies())) {
+        $validFrequencies = [-1, 1, 2, 4, 8, 24];
+        if (!in_array($frequency, $validFrequencies)) {
             $this->error("Invalid frequency: {$frequency}");
-            $this->info('Valid frequencies: ' . implode(', ', DigestService::getValidFrequencies()));
+            $this->info('Valid frequencies: ' . implode(', ', $validFrequencies));
             return Command::FAILURE;
         }
 
@@ -73,7 +74,7 @@ class SendDigestCommand extends Command
             $group = \App\Models\Group::activeFreegle()->where('id', (int) $groupId)->first();
             $groupsQuery = $group ? collect([$group]) : collect();
         } else {
-            $groupsQuery = $digestService->getActiveGroups();
+            $groupsQuery = \App\Models\Group::activeFreegle()->get();
 
             // Apply sharding if specified.
             if ($this->mod > 1) {
@@ -92,7 +93,7 @@ class SendDigestCommand extends Command
             try {
                 $this->line("Processing group: {$group->nameshort} (ID: {$group->id})");
 
-                $stats = $digestService->sendDigestForGroup($group, $frequency, $dryRun);
+                $stats = $digestService->sendGroupDigests($group, $frequency, $dryRun);
 
                 $totalStats['groups_processed']++;
                 $totalStats['members_processed'] += $stats['members_processed'];

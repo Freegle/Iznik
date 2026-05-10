@@ -75,15 +75,6 @@ Schedule::command('data:update-cpi')
     ->sendOutputTo(cronLog('data:update-cpi'))
     ->runInBackground();
 
-// Content check — run all content checks on unprocessed pending messages.
-// Promotes clean messages from non-moderated users to Approved; keeps others
-// in Pending with failure reasons stored, then notifies group mods.
-Schedule::command('messages:contentcheck')
-    ->everyMinute()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('messages:contentcheck'))
-    ->runInBackground();
-
 // Auto-approve pending messages after 48 hours.
 // V1: cron/autoapprove.php
 Schedule::command('messages:auto-approve')
@@ -281,59 +272,54 @@ Schedule::command('chats:process-spam')
 // Sync data from TrashNothing.
 // This command can be called more frequently if the "kick" API is called by TN,
 // e.g. to reduce latency by requesting an immediate sync after sending a chat message.
-Schedule::command('tn:sync')
-    ->everyMinute()
-    ->withoutOverlapping()
-    ->runInBackground();
+// TRACE: commented out for port testing. Instead called in iznik-server/tn_sync.php
+// Schedule::command('tn:sync')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->runInBackground();
 
 // =============================================================================
 // DISABLED COMMANDS (to be enabled when ready)
 // =============================================================================
 
-// Digest and immediate mail are still handled by V1 (cron/digest.php on
-// bulk3-internal). Per MIGRATION-STATUS.md, digest emails are "Code written"
-// not "Live". Keep these scheduled commands disabled until the V1 cron is
-// retired and we cut over here, to avoid duplicate sends.
-//
-// Schedule::command('mail:digest 1')
-//     ->hourly()
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
-// Schedule::command('mail:digest 2')
-//     ->everyTwoHours()
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
-// Schedule::command('mail:digest 4')
-//     ->everyFourHours()
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
-// Schedule::command('mail:digest 8')
-//     ->cron('0 0,8,16 * * *')
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
-// Daily digests — V1 ran two parallel workers sharded by MOD(groupid, 2)
-// (cron/digest.php -i 24 -m 2 -v 0 / -v 1). Preserved as two entries so a
-// re-enable keeps the throughput.
-// Schedule::command('mail:digest 24 --mod=2 --val=0')
-//     ->dailyAt('08:00')
-//     ->withoutOverlapping()
-//     ->runInBackground();
-// Schedule::command('mail:digest 24 --mod=2 --val=1')
-//     ->dailyAt('08:00')
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
-// Unified digest - one email per user covering all their communities.
-// Schedule::command('mail:digest:unified --mode=daily')
-//     ->dailyAt('08:00')
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
-// Immediate mode - notifications for users who want instant alerts.
+/*
+// Immediate digests (-1) handled by mail:digest:unified --mode=immediate above.
+// mail:digest -1 disabled.
+*/
+
+// Per-group digests (Phase 2) — SendDigestCommand now uses UnifiedDigestService.
+Schedule::command('mail:digest 1')
+    ->hourly()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('mail:digest 2')
+    ->everyTwoHours()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('mail:digest 4')
+    ->everyFourHours()
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('mail:digest 8')
+    ->cron('0 0,8,16 * * *')
+    ->withoutOverlapping()
+    ->runInBackground();
+
+Schedule::command('mail:digest 24')
+    ->dailyAt('08:00')
+    ->withoutOverlapping()
+    ->runInBackground();
+/* Unified daily mode (Phase 3) — disabled until per-group mode is live.
+Schedule::command('mail:digest:unified --mode=daily')
+    ->dailyAt('08:00')
+    ->withoutOverlapping()
+    ->runInBackground();
+*/
+
+// Immediate mode - sends notifications for users who want instant alerts.
 // Eligibility mirrors V1: a user matches if their global simplemail
 // setting is Full, OR they have no global setting and at least one
 // approved membership with per-group emailfrequency=-1 (immediate).
@@ -346,12 +332,6 @@ Schedule::command('mail:digest:unified --mode=immediate')
     ->everyMinute()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('mail:digest:unified'))
-    ->runInBackground();
-
-// Immediate mode - sends notifications for users who want instant alerts.
-Schedule::command('mail:digest:unified --mode=immediate')
-    ->everyMinute()
-    ->withoutOverlapping()
     ->runInBackground();
 
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
@@ -967,13 +947,4 @@ Schedule::command('integrations:sync-reachvolunteering')
     ->dailyAt('21:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('integrations:sync-reachvolunteering'))
-    ->runInBackground();
-
-// Sync EEELabel micro-volunteering rows to the eee-browser labels DB so
-// volunteer labels show up on the model-accuracy dashboard. Idempotent
-// (upserts) and uses an incremental cursor, so frequent runs are safe.
-Schedule::command('eee:sync-mv-labels')
-    ->everyTenMinutes()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('eee:sync-mv-labels'))
     ->runInBackground();

@@ -258,6 +258,23 @@ class UnifiedDigest extends MjmlMailable
             return $groupName ? "[{$groupName}] {$postSubject}" : $postSubject;
         }
 
+        if ($this->mode === UnifiedDigestService::MODE_GROUP && $this->posts->isNotEmpty()) {
+            $firstPost = $this->posts->first();
+            $groupId = $firstPost['postedToGroups'][0] ?? null;
+            $groupRow = $groupId
+                ? DB::table('groups')->where('id', $groupId)->first(['nameshort', 'namefull'])
+                : null;
+            $groupName = $groupRow ? ($groupRow->namefull ?: $groupRow->nameshort) : null;
+            $count = $this->posts->count();
+            if ($count === 1) {
+                $postSubject = $firstPost['message']->subject;
+                $suffix = $postSubject;
+            } else {
+                $suffix = "What's New ($count message" . ($count === 1 ? ')' : 's)');
+            }
+            return $groupName ? "[{$groupName}] {$suffix}" : $suffix;
+        }
+
         $count = $this->posts->count();
         $itemNames = $this->getItemNamesForSubject();
 
