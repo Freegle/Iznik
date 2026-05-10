@@ -11,6 +11,10 @@ parameters:
     type: boolean
     default: false
     description: "Set to true to build iOS and upload to TestFlight from current branch"
+  use_katapult:
+    type: boolean
+    default: false
+    description: "Set to true to run tests on a Katapult cloud runner"
 
 orbs:
   continuation: circleci/continuation@2
@@ -77,6 +81,13 @@ jobs:
             if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || [ "<< pipeline.parameters.build_testflight >>" = "true" ]; then
               echo "Manual promote or testflight trigger — skipping runner check"
               echo "{\"use_self_hosted\": false}" > /tmp/pipeline-params.json
+              cat /tmp/pipeline-params.json
+              exit 0
+            fi
+
+            if [ "<< pipeline.parameters.use_katapult >>" = "true" ]; then
+              echo "Katapult runner requested — skipping local runner check"
+              echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
               cat /tmp/pipeline-params.json
               exit 0
             fi
