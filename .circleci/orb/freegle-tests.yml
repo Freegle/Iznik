@@ -60,6 +60,43 @@ executors:
       PORT_POSTFIX_SMTP: 9025
       PORT_MCP_SANITIZER: 17084
 
+  machine-executor-katapult:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: freegle/katapult-runner
+    environment:
+      DOCKER_BUILDKIT: 1
+      COMPOSE_DOCKER_CLI_BUILD: 1
+      COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
+      COMPOSE_PROJECT_NAME: freegle-ci
+      SELF_HOSTED_RUNNER: "true"
+      PW_WORKERS: 11
+      PORT_TRAEFIK_HTTP: 9080
+      PORT_TRAEFIK_API: 17192
+      PORT_TRAEFIK_DASHBOARD: 17080
+      PORT_PHPMYADMIN: 17086
+      PORT_MAILPIT_WEB: 17025
+      PORT_MAILPIT_SMTP: 10025
+      PORT_SPAMASSASSIN: 9783
+      PORT_RSPAMD: 20334
+      PORT_TUSD: 10080
+      PORT_STATUS: 17081
+      PORT_AI_SUPPORT: 17083
+      PORT_APIV1_SSH: 10023
+      PORT_APIV1_HTTP: 9083
+      PORT_APIV1_HTTP2: 17181
+      PORT_APIV2: 17193
+      PORT_APIV2_LIVE: 17194
+      PORT_FREEGLE_DEV_LOCAL: 12002
+      PORT_FREEGLE_DEV_LIVE: 12005
+      PORT_FREEGLE_PROD_LOCAL: 12012
+      PORT_MODTOOLS_DEV_LOCAL: 12003
+      PORT_MODTOOLS_DEV_LIVE: 12006
+      PORT_MODTOOLS_PROD_LOCAL: 12013
+      PORT_LOKI: 12100
+      PORT_POSTFIX_SMTP: 9025
+      PORT_MCP_SANITIZER: 17084
+
   android-executor:
     docker:
       - image: cimg/android:2025.10-node
