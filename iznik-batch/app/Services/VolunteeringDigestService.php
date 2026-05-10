@@ -117,7 +117,7 @@ class VolunteeringDigestService
 
             foreach ($members as $member) {
                 if (!$dryRun) {
-                    Mail::to($member->email)->send(new VolunteeringDigestMail($groupRow->nameshort, $textSummary));
+                    Mail::send(new VolunteeringDigestMail($member->email, $groupRow->nameshort, $textSummary));
                 }
                 $sent++;
             }
