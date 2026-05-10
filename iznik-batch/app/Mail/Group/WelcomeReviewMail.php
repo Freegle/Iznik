@@ -2,49 +2,51 @@
 
 namespace App\Mail\Group;
 
-use Illuminate\Bus\Queueable;
-use Illuminate\Mail\Mailable;
+use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
-use Illuminate\Queue\SerializesModels;
 
 /**
- * Plain text email sent to group mods with their welcome mail for annual review.
+ * Email sent to group mods with their welcome mail for annual review.
  *
  * V1 parity: group_welcomereview.php
  */
-class WelcomeReviewMail extends Mailable
+class WelcomeReviewMail extends MjmlMailable
 {
-    use Queueable, SerializesModels;
-
     public function __construct(
+        public readonly string $recipientEmail,
         public readonly string $groupName,
         public readonly string $welcomeContent,
-        public readonly string $modSite,
     ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return "Please review: Welcome to {$this->groupName}";
     }
 
     public function envelope(): Envelope
     {
         return new Envelope(
             from: new Address(
-                config('freegle.mail.support_addr'),
+                config('freegle.mail.support_addr', 'support@ilovefreegle.org'),
                 "{$this->groupName} Volunteers"
             ),
-            subject: "Please review: Welcome to {$this->groupName}",
+            to: [new Address($this->recipientEmail)],
+            subject: $this->getSubject(),
         );
     }
 
     public function build(): static
     {
-        $body = "This is the welcome mail that gets sent to members who join {$this->groupName}.\r\n\r\n"
-            . "We send you this once a year so you can check it's up-to-date. If you'd like to edit it, "
-            . "you can do so at {$this->modSite}/modtools/settings/.\r\n\r\n"
-            . "---\r\n\r\n"
-            . $this->welcomeContent . "\r\n\r\n"
-            . "---\r\n\r\n"
-            . "Freegle";
+        $modSite = config('freegle.sites.mod', 'https://modtools.org');
 
-        return $this->text('emails.plain.refer-to-support', ['body' => $body]);
+        return $this->mjmlView('emails.mjml.group.welcome-review', [
+            'groupName'      => $this->groupName,
+            'welcomeContent' => $this->welcomeContent,
+            'modSite'        => $modSite,
+            'email'          => $this->recipientEmail,
+        ]);
     }
 }

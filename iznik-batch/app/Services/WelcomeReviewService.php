@@ -67,10 +67,10 @@ class WelcomeReviewService
                 $sent++;
 
                 if (!$dryRun) {
-                    Mail::to($email)->send(new WelcomeReviewMail(
+                    Mail::send(new WelcomeReviewMail(
+                        recipientEmail: $email,
                         groupName: $groupName,
                         welcomeContent: $group->welcomemail,
-                        modSite: $modSite,
                     ));
                 }
             }
