@@ -168,7 +168,7 @@ class NewsfeedModNotifService
             $textSummary .= "Read them at: {$chitchatUrl}\r\n";
 
             if (!$dryRun) {
-                Mail::to($mod->email)->send(new NewsfeedModNotifMail($count, $textSummary));
+                Mail::send(new NewsfeedModNotifMail($mod->email, $count, $textSummary));
 
                 // Update the last seen marker for this mod.
                 DB::table('newsfeed_users')->updateOrInsert(
