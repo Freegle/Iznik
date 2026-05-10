@@ -40,8 +40,8 @@ RUN docker-php-ext-install \
 # Install Redis and PCOV PHP extensions (PCOV is faster than Xdebug for coverage)
 RUN pecl install redis pcov && docker-php-ext-enable redis pcov
 
-# Increase PHP memory limit for PCOV coverage tracking across full test suite
-RUN echo "memory_limit=4096M" >> /usr/local/etc/php/conf.d/memory-limit.ini
+# Increase PHP memory limit for PCOV coverage tracking
+RUN echo "memory_limit=1024M" >> /usr/local/etc/php/conf.d/memory-limit.ini
 
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
