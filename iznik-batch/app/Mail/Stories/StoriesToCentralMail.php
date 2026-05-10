@@ -13,7 +13,7 @@ class StoriesToCentralMail extends Mailable
         public readonly array $stories,
         public readonly string $previewText,
         public readonly string $voteUrl,
-        public readonly string $subject,
+        public readonly string $emailSubject,
     ) {}
 
     public function envelope(): Envelope
@@ -21,7 +21,7 @@ class StoriesToCentralMail extends Mailable
         return new Envelope(
             from: new Address(config('freegle.mail.geeks_addr'), config('freegle.branding.name')),
             to: [new Address(config('freegle.mail.central_mail_to'))],
-            subject: $this->subject,
+            subject: $this->emailSubject,
         );
     }
 
