@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
+use App\Mail\Group\ClosedGroupReminderMail;
 use App\Models\Membership;
-use App\Models\UserEmail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -19,7 +19,6 @@ class GroupClosedReminderService
 
     public function sendReminders(bool $dryRun = false): array
     {
-        $geeksAddr   = config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org');
         $mentorsAddr = config('freegle.mail.mentors_addr', 'mentors@ilovefreegle.org');
 
         $closedGroups = DB::table('groups')
@@ -47,18 +46,9 @@ class GroupClosedReminderService
             ]);
 
             if (!$dryRun) {
-                Mail::raw(
-                    "Hi there - just to remind you that your Freegle group is currently closed. "
-                    . "If you now feel it's time to re-open then you can do that from ModTools, "
-                    . "in Settings->Community->Features for Members. "
-                    . "We'll send this automated mail once a week.",
-                    function ($message) use ($modEmails, $mentorsAddr, $geeksAddr, $group) {
-                        $message->to($modEmails)
-                            ->cc($mentorsAddr)
-                            ->from($geeksAddr, config('freegle.branding.name', 'Freegle'))
-                            ->subject('Reminder: Your Freegle group is currently closed');
-                    }
-                );
+                Mail::to($modEmails)
+                    ->cc($mentorsAddr)
+                    ->send(new ClosedGroupReminderMail($group->nameshort));
             }
 
             $sent++;
