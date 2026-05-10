@@ -150,12 +150,11 @@ class UserModelTest extends TestCase
         $this->assertEquals(0, $user->chatMessages()->count());
     }
 
-    public function test_user_notifications_relationship_exists(): void
+    public function test_user_notifications_relationship_returns_collection(): void
     {
         $user = $this->createTestUser();
 
-        // Verify the relationship method exists and is callable.
-        $this->assertTrue(method_exists($user, 'notifications'));
+        $this->assertEquals(0, $user->notifications()->count());
     }
 
     public function test_user_chat_rooms_as_user1_relationship(): void

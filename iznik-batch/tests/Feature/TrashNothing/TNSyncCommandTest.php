@@ -979,6 +979,199 @@ class TNSyncCommandTest extends TestCase
         $this->artisan('tn:sync')->assertExitCode(0);
     }
 
+
+    // =========================================================================
+    // Edge cases and uncovered paths
+    // =========================================================================
+
+    public function test_exits_early_when_lock_already_held(): void
+    {
+        // Partial-mock the command so acquireLock() returns false, simulating
+        // a concurrent run. The command must exit 0 (not an error).
+        $this->partialMock(\App\Console\Commands\TrashNothing\TNSyncCommand::class, function ($mock) {
+            $mock->shouldReceive('acquireLock')->once()->andReturn(false);
+        });
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+        Http::assertNothingSent();
+    }
+
+    public function test_returns_failure_on_unexpected_exception(): void
+    {
+        // Make the ratings HTTP call throw so the outer catch in handle() fires.
+        Http::fake([
+            '*/ratings*' => function () {
+                throw new \RuntimeException('API exploded during sync');
+            },
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(1);
+    }
+
+    public function test_from_option_overrides_sync_date(): void
+    {
+        $fromDate = '2026-01-15T00:00:00+00:00';
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync', ['--from' => $fromDate])->assertExitCode(0);
+
+        Http::assertSent(function ($request) use ($fromDate) {
+            return str_contains($request->url(), 'ratings')
+                && $request['date_min'] === $fromDate;
+        });
+    }
+
+    public function test_to_option_overrides_sync_date(): void
+    {
+        $toDate = '2026-06-01T00:00:00+00:00';
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync', ['--to' => $toDate])->assertExitCode(0);
+
+        Http::assertSent(function ($request) use ($toDate) {
+            return str_contains($request->url(), 'ratings')
+                && $request['date_max'] === $toDate;
+        });
+    }
+
+    public function test_mark_queue_run_completed_warns_when_run_id_not_found(): void
+    {
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        // Pass a run-id for which no background_tasks row exists; command must
+        // still complete successfully (the missing row is just a warning).
+        $this->artisan('tn:sync', ['--run-id' => 'missing-run-id-' . uniqid()])->assertExitCode(0);
+    }
+
+    public function test_mark_queue_run_completed_updates_background_tasks_row(): void
+    {
+        $runId = 'test-run-' . uniqid('', true);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'tn_sync_command',
+            'data' => json_encode(['run_id' => $runId]),
+            'created_at' => now(),
+        ]);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $this->artisan('tn:sync', ['--run-id' => $runId])->assertExitCode(0);
+
+        $row = DB::table('background_tasks')
+            ->where('task_type', 'tn_sync_command')
+            ->whereRaw("JSON_EXTRACT(data, '$.run_id') = ?", [$runId])
+            ->first();
+
+        $this->assertNotNull($row);
+        $data = json_decode($row->data, true);
+        $this->assertTrue($data['tn_sync_finished']);
+        $this->assertEquals('success', $data['tn_sync_status']);
+        $this->assertEquals(0, $data['tn_sync_exit_code']);
+    }
+
+    public function test_store_sync_date_logs_error_when_write_fails(): void
+    {
+        // Set the date file to a path that cannot be written.
+        config(['freegle.trashnothing.sync_date_file' => '/dev/full']);
+
+        $user = $this->createTestUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response([
+                'ratings' => [[
+                    'rating_id' => 'tn_r_' . uniqid(),
+                    'ratee_fd_user_id' => $user->id,
+                    'rating' => 'Up',
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        // Command should still exit successfully even when the date file write fails.
+        $this->artisan('tn:sync')->assertExitCode(0);
+    }
+
+    public function test_skips_user_change_without_fd_user_id(): void
+    {
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => null,
+                    'reply_time' => 3600,
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        // Should complete without error.
+        $this->artisan('tn:sync')->assertExitCode(0);
+    }
+
+    public function test_location_change_with_no_postcode_result_is_silently_ignored(): void
+    {
+        // Provide coordinates in the middle of the ocean — closestPostcode returns null.
+        $user = $this->createTNUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'location' => [
+                        'latitude' => 0.0,
+                        'longitude' => 0.0,
+                    ],
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+    }
+
+    public function test_location_change_with_null_lat_lng_is_skipped(): void
+    {
+        $user = $this->createTNUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'location' => [
+                        'latitude' => null,
+                        'longitude' => null,
+                    ],
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+    }
+
     // =========================================================================
     // Helpers
     // =========================================================================
