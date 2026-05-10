@@ -120,7 +120,7 @@ class EventsDigestService
 
             foreach ($members as $member) {
                 if (!$dryRun) {
-                    Mail::to($member->email)->send(new EventsDigestMail($groupRow->nameshort, $textSummary));
+                    Mail::send(new EventsDigestMail($member->email, $groupRow->nameshort, $textSummary));
                 }
                 $sent++;
             }

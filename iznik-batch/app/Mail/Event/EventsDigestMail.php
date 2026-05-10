@@ -2,35 +2,43 @@
 
 namespace App\Mail\Event;
 
-use Illuminate\Bus\Queueable;
-use Illuminate\Mail\Mailable;
+use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
-use Illuminate\Queue\SerializesModels;
 
-class EventsDigestMail extends Mailable
+class EventsDigestMail extends MjmlMailable
 {
-    use Queueable, SerializesModels;
-
     public function __construct(
+        public readonly string $recipientEmail,
         public readonly string $groupName,
         public readonly string $summary,
     ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return "[{$this->groupName}] Community Event Roundup";
     }
 
     public function envelope(): Envelope
     {
         return new Envelope(
             from: new Address(
-                config('freegle.mail.noreply_addr'),
+                config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
                 $this->groupName
             ),
-            subject: "[{$this->groupName}] Community Event Roundup",
+            to: [new Address($this->recipientEmail)],
+            subject: $this->getSubject(),
         );
     }
 
     public function build(): static
     {
-        return $this->text('emails.text.event.events-digest');
+        return $this->mjmlView('emails.mjml.event.events-digest', [
+            'groupName' => $this->groupName,
+            'summary'   => $this->summary,
+            'email'     => $this->recipientEmail,
+        ]);
     }
 }
