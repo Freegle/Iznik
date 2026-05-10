@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Mail\Volunteering\VolunteeringDigestMail;
 use App\Models\Group;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -21,7 +22,6 @@ class VolunteeringDigestService
      */
     public function sendVolunteeringDigests(bool $dryRun = false): array
     {
-        $noReplyAddr = config('freegle.mail.noreply_addr');
         $userSite = config('freegle.sites.user');
 
         $sent = 0;
@@ -99,8 +99,6 @@ class VolunteeringDigestService
             $textSummary .= "View all volunteering: https://{$userSite}/volunteering\r\n";
             $textSummary .= "Change settings: https://{$userSite}/settings\r\n";
 
-            $subject = "[{$groupRow->nameshort}] Volunteer Opportunity Roundup";
-
             // Find members who have volunteering enabled and are not opted out.
             $members = DB::table('memberships')
                 ->join('users', 'users.id', '=', 'memberships.userid')
@@ -119,13 +117,7 @@ class VolunteeringDigestService
 
             foreach ($members as $member) {
                 if (!$dryRun) {
-                    Mail::raw($textSummary, function ($message) use (
-                        $subject, $noReplyAddr, $groupRow, $member
-                    ) {
-                        $message->from($noReplyAddr, $groupRow->nameshort)
-                            ->to($member->email, $member->fullname ?: null)
-                            ->subject($subject);
-                    });
+                    Mail::to($member->email)->send(new VolunteeringDigestMail($groupRow->nameshort, $textSummary));
                 }
                 $sent++;
             }
