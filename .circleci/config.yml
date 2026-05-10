@@ -87,7 +87,7 @@ jobs:
 
             if [ "<< pipeline.parameters.use_katapult >>" = "true" ]; then
               echo "Katapult runner requested — skipping local runner check"
-              echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
+              echo "{\"use_self_hosted\": false}" > /tmp/pipeline-params.json
               cat /tmp/pipeline-params.json
               exit 0
             fi
