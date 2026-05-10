@@ -512,7 +512,7 @@ commands:
                   fi
                 done
                 echo "Cache push complete"
-              ) &
+              ) >> /tmp/cache-push.log 2>&1 &
               CACHE_PUSH_PID=$!
             fi
 

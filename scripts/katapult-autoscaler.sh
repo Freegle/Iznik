@@ -103,10 +103,31 @@ provision_runner() {
           \"data_center\": {\"id\": \"$KATAPULT_DC\"}
         }")
 
-    local vm_name
-    vm_name=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('hostname','unknown'))" 2>/dev/null)
-    log "Build triggered for: $vm_name"
-    echo "$result"
+    local vm_id vm_name
+    vm_id=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('virtual_machine',{}).get('id',''))" 2>/dev/null)
+    vm_name=$(echo "$result" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('virtual_machine',{}).get('name','unknown'))" 2>/dev/null)
+    log "Build triggered for: $vm_name (id: $vm_id)"
+
+    # Wait for VM to get an IPv4, then configure idle-check and cache proxies
+    if [ -n "$vm_id" ]; then
+        local vm_ip=""
+        local i=0
+        log "Waiting for $vm_name to get an IP..."
+        while [ -z "$vm_ip" ]; do
+            sleep 10
+            i=$((i+1))
+            if [ $i -gt 60 ]; then log "Timeout waiting for IP for $vm_name"; return 1; fi
+            vm_ip=$(katapult "${KATAPULT_API}/virtual_machines/${vm_id}" 2>/dev/null | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+vm=d.get('virtual_machine',{})
+ips=[ip.get('address','') for ip in vm.get('ip_addresses',[]) if ':' not in ip.get('address','')]
+print(ips[0] if ips else '')
+" 2>/dev/null || echo "")
+        done
+        log "VM $vm_name has IP: $vm_ip — configuring..."
+        configure_runner "$vm_ip" "$vm_name" "$vm_id"
+    fi
 }
 
 # Configure a freshly-built VM as a CircleCI runner
