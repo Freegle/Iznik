@@ -64,8 +64,7 @@ class AlertNoMessagesCommand extends Command
 
                 $geeksAddr = config('freegle.mail.geeks_addr');
 
-                Mail::to($geeksAddr)
-                    ->send(new AlertNoMessagesMail($count, $body));
+                Mail::send(new AlertNoMessagesMail($geeksAddr, $count, $body));
             }
 
             return Command::SUCCESS;
