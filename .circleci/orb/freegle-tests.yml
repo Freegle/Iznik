@@ -1156,10 +1156,9 @@ commands:
               echo "Skipping Node.js install — Vitest tests skipped"
               exit 0
             fi
-            # On Katapult (native Linux self-hosted): Vitest runs inside the parallel tests
-            # block instead, so skip the sequential pre-step to avoid blocking parallel starts.
-            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && ! grep -qi "microsoft\|wsl" /proc/version 2>/dev/null; then
-              echo "Katapult runner: Vitest will run in parallel with other tests — skipping sequential pre-step"
+            # On any self-hosted runner: Vitest runs inside the parallel tests block instead.
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
+              echo "Self-hosted runner: Vitest will run in parallel with other tests — skipping sequential pre-step"
               exit 0
             fi
             echo "📦 Installing Node.js 22..."
@@ -1173,9 +1172,9 @@ commands:
               echo "Skipping Vitest tests — no changes in iznik-nuxt3/"
               exit 0
             fi
-            # On Katapult: Vitest runs in the parallel tests block — skip here.
-            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && ! grep -qi "microsoft\|wsl" /proc/version 2>/dev/null; then
-              echo "Katapult runner: Vitest runs in parallel — skipping sequential step"
+            # On any self-hosted runner: Vitest runs in the parallel tests block — skip here.
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
+              echo "Self-hosted runner: Vitest runs in parallel — skipping sequential step"
               exit 0
             fi
             echo "🧪 << parameters.reason >>..."
@@ -2252,11 +2251,11 @@ jobs:
             ) > ~/test-output/go.out 2>&1 &
             GO_PID=$!
 
-            # Start Vitest in background — only on Katapult (WSL/cloud ran it as a pre-step above)
+            # Start Vitest in background — on any self-hosted runner (cloud ran it as a pre-step above)
             VITEST_PID=""
             echo "pending" > /tmp/vitest-result
-            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ] && ! grep -qi "microsoft\|wsl" /proc/version 2>/dev/null; then
-              echo "🧪 Starting Vitest unit tests in background (Katapult runner)..."
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
+              echo "🧪 Starting Vitest unit tests in background..."
               (
                 if [ "${SKIP_VITEST:-false}" = "true" ]; then
                   echo "Skipping Vitest"
