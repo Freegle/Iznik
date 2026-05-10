@@ -402,10 +402,17 @@ class WhatJobsService
         $geocodeCache = [];
         $jobs = [];
 
+        // V1 (cron/whatjobs.php → Jobs::scanToCSV) uses format=1 for the WhatJobs
+        // feed and format=2 for the clickcast feed. parseFeed's format=1 branch
+        // expects WhatJobs field names (locations->location->location, urlDeeplink,
+        // company->name, custom->CPC, id, timePosted), and format=2 expects the
+        // clickcast names. The format codes used to be swapped here, which made
+        // parseFeed yield 0 jobs and would have caused swapTables() to replace the
+        // live jobs table with an empty one.
         if ($feed1) {
             $tmp1 = $this->downloadFeed($feed1);
             if ($tmp1) {
-                $jobs = array_merge($jobs, $this->parseFeed($tmp1, 2, $geocodeCache));
+                $jobs = array_merge($jobs, $this->parseFeed($tmp1, 1, $geocodeCache));
                 @unlink($tmp1);
             }
         }
@@ -413,7 +420,7 @@ class WhatJobsService
         if ($feed2) {
             $tmp2 = $this->downloadFeed($feed2);
             if ($tmp2) {
-                $jobs = array_merge($jobs, $this->parseFeed($tmp2, 1, $geocodeCache));
+                $jobs = array_merge($jobs, $this->parseFeed($tmp2, 2, $geocodeCache));
                 @unlink($tmp2);
             }
         }
@@ -443,12 +450,17 @@ class WhatJobsService
         $xmlFile = tempnam(sys_get_temp_dir(), 'whatjobs_xml_');
 
         try {
-            $response = Http::timeout(1200)->get($url);
+            // Stream the gzipped feed straight to disk via Guzzle's sink option.
+            // Without this, Http::body() buffers the whole response (hundreds of MB) into PHP memory.
+            $response = Http::timeout(1200)
+                ->withOptions(['sink' => $gzFile])
+                ->get($url);
             if (!$response->successful()) {
                 Log::warning('WhatJobs feed download failed', ['url' => $url, 'status' => $response->status()]);
+                @unlink($gzFile);
+                @unlink($xmlFile);
                 return null;
             }
-            file_put_contents($gzFile, $response->body());
 
             // Stream-decompress to avoid loading everything into memory
             $gz  = gzopen($gzFile, 'rb');
