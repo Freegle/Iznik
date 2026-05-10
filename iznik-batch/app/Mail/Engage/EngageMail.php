@@ -2,11 +2,11 @@
 
 namespace App\Mail\Engage;
 
-use Illuminate\Mail\Mailable;
-use Illuminate\Mail\Mailables\Content;
+use App\Mail\MjmlMailable;
+use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class EngageMail extends Mailable
+class EngageMail extends MjmlMailable
 {
     public function __construct(
         public readonly string $recipientName,
@@ -15,27 +15,36 @@ class EngageMail extends Mailable
         public readonly string $template,
         public readonly int $engageId,
         public readonly string $unsubscribeUrl,
-    ) {}
+    ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return $this->subject;
+    }
 
     public function envelope(): Envelope
     {
         return new Envelope(
-            from: config('freegle.mail.noreply_addr'),
-            to: [$this->recipientEmail],
-            subject: $this->subject,
+            from: new Address(
+                config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
+                config('freegle.branding.name', 'Freegle')
+            ),
+            to: [new Address($this->recipientEmail)],
+            subject: $this->getSubject(),
         );
     }
 
-    public function content(): Content
+    public function build(): static
     {
-        return new Content(
-            view: "emails.engage.{$this->template}",
-            with: [
-                'name' => $this->recipientName,
-                'email' => $this->recipientEmail,
-                'engageId' => $this->engageId,
-                'unsubscribeUrl' => $this->unsubscribeUrl,
-            ],
-        );
+        $html = view("emails.engage.{$this->template}", [
+            'name'           => $this->recipientName,
+            'email'          => $this->recipientEmail,
+            'engageId'       => $this->engageId,
+            'unsubscribeUrl' => $this->unsubscribeUrl,
+        ])->render();
+
+        return $this->html($html);
     }
 }
