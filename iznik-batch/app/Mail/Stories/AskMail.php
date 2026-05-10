@@ -2,34 +2,45 @@
 
 namespace App\Mail\Stories;
 
-use Illuminate\Mail\Mailable;
-use Illuminate\Mail\Mailables\Content;
+use App\Mail\MjmlMailable;
+use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class AskMail extends Mailable
+class AskMail extends MjmlMailable
 {
     public function __construct(
         public readonly string $recipientName,
         public readonly string $recipientEmail,
         public readonly string $storiesUrl,
         public readonly string $unsubscribeUrl,
-    ) {}
+    ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return 'Tell us your Freegle story!';
+    }
 
     public function envelope(): Envelope
     {
-        return new Envelope(subject: 'Tell us your Freegle story!');
+        return new Envelope(
+            from: new Address(
+                config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
+                config('freegle.branding.name', 'Freegle')
+            ),
+            to: [new Address($this->recipientEmail)],
+            subject: $this->getSubject(),
+        );
     }
 
-    public function content(): Content
+    public function build(): static
     {
-        return new Content(
-            view: 'emails.stories.ask',
-            with: [
-                'name' => $this->recipientName,
-                'email' => $this->recipientEmail,
-                'storiesUrl' => $this->storiesUrl,
-                'unsubscribeUrl' => $this->unsubscribeUrl,
-            ]
-        );
+        return $this->mjmlView('emails.mjml.stories.ask', [
+            'name'           => $this->recipientName,
+            'storiesUrl'     => $this->storiesUrl,
+            'unsubscribeUrl' => $this->unsubscribeUrl,
+            'email'          => $this->recipientEmail,
+        ]);
     }
 }
