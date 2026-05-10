@@ -2,8 +2,9 @@
 
 namespace Tests\Feature\Chat;
 
+use App\Mail\Chat\ChatReviewPendingMail;
+use App\Mail\Chat\ChatReviewSummaryMail;
 use App\Models\Membership;
-use App\Services\ChatReviewPendingService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
@@ -95,8 +96,8 @@ class ReviewPendingCommandTest extends TestCase
             ->expectsOutputToContain('Notified mods for 1 group(s)')
             ->assertExitCode(0);
 
-        // At least 1 email (to mod) + 1 (mentors summary)
-        $this->assertGreaterThanOrEqual(1, Mail::getSentCount());
+        Mail::assertSent(ChatReviewPendingMail::class);
+        Mail::assertSent(ChatReviewSummaryMail::class);
     }
 
     public function test_skips_already_reviewed_messages(): void

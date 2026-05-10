@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Mail\Chat\ChatReviewPendingMail;
+use App\Mail\Chat\ChatReviewSummaryMail;
 use App\Models\Group;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -25,14 +27,10 @@ class ChatReviewPendingService
      */
     public function processReview(bool $dryRun = false): array
     {
-        $supportAddr = config('freegle.mail.support_addr');
-        $mentorsAddr = config('freegle.mail.mentors_addr');
-        $modSite     = config('freegle.sites.mod');
-
         $systemUserId = $this->getSystemUserId();
 
         $autoRejected   = $this->autoRejectStale($systemUserId, $dryRun);
-        $groupsNotified = $this->notifyMods($supportAddr, $mentorsAddr, $modSite, $dryRun);
+        $groupsNotified = $this->notifyMods($dryRun);
 
         return [
             'auto_rejected'   => $autoRejected,
@@ -71,7 +69,7 @@ class ChatReviewPendingService
             ]);
     }
 
-    private function notifyMods(string $supportAddr, string $mentorsAddr, string $modSite, bool $dryRun): int
+    private function notifyMods(bool $dryRun): int
     {
         $cutoff = now()->subHours(self::NOTIFY_HOURS)->toDateTimeString();
 
@@ -121,40 +119,16 @@ class ChatReviewPendingService
             $groupsNotified++;
 
             if (!$dryRun) {
-                $body = "Dear {$groupName} Volunteers,\r\n\r\n"
-                    . "Messages between members are scanned to spot spam. For some of these, we need you to review them "
-                    . "to check whether they are really spam or not.\r\n\r\n"
-                    . "You currently have some messages which have been waiting for 48 hours for review. Some of these may "
-                    . "be real messages which members won't have received yet, so they may be wondering what's going on.\r\n\r\n"
-                    . "Please can you review these at {$modSite}/modtools/chats/review? They will automatically be deleted "
-                    . "after 7 days.\r\n\r\nThanks.\r\n\r\n"
-                    . "P.S. This is an automated mail sent once a day. If you need help using ModTools, please ask the "
-                    . "Mentor folk at {$mentorsAddr}.";
-
-                $subject = "{$count} message" . ($count !== 1 ? 's' : '')
-                    . ' between members waiting for your review on ' . $groupName;
-
                 foreach ($modEmails as $email) {
-                    Mail::raw($body, function ($message) use ($subject, $supportAddr, $email) {
-                        $message->from($supportAddr, 'Freegle')
-                            ->to($email)
-                            ->subject($subject);
-                    });
+                    Mail::to($email)->send(new ChatReviewPendingMail($groupName, $count));
                 }
             }
         }
 
         if ($groupsNotified > 0 && !$dryRun && $mentorsSummary) {
-            $total = collect($groups)->sum('cnt');
-            Mail::raw(
-                "Here's a list of groups which have chat messages pending review for more than "
-                . self::NOTIFY_HOURS . " hours:\r\n\r\n{$mentorsSummary}",
-                function ($message) use ($supportAddr, $mentorsAddr, $total) {
-                    $message->from($supportAddr, 'Freegle')
-                        ->to($mentorsAddr)
-                        ->subject("Summary of chat messages waiting for review ({$total} total)");
-                }
-            );
+            $total       = collect($groups)->sum('cnt');
+            $mentorsAddr = config('freegle.mail.mentors_addr');
+            Mail::to($mentorsAddr)->send(new ChatReviewSummaryMail((int) $total, $mentorsSummary));
         }
 
         return $groupsNotified;
