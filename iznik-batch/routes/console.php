@@ -430,6 +430,14 @@ Schedule::command('microvolunteering:score')
     ->sendOutputTo(cronLog('microvolunteering:score'))
     ->runInBackground();
 
+// Notify Moderate+ members of pending messages awaiting microvolunteering review,
+// and Basic members of approved messages eligible for rating/thanks.
+Schedule::command('microvolunteering:notify')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('microvolunteering:notify'))
+    ->runInBackground();
+
 // Update cached location names in user settings when the canonical name has changed.
 // V1: cron/users_remap.php (daily at 05:00)
 Schedule::command('users:remap-locations')
