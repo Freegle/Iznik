@@ -898,6 +898,40 @@ func TestPutUser(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 }
 
+// TestPutUserAuthenticatedDoesNotReturnAuthTokens verifies that when an authenticated
+// user (e.g. a moderator using Add Member) creates a new user, the response does NOT
+// include jwt/persistent tokens.  Returning them clobbered the caller's own session,
+// logging the mod out and in as the newly created member.
+func TestPutUserAuthenticatedDoesNotReturnAuthTokens(t *testing.T) {
+	prefix := uniquePrefix("putauth")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	newEmail := fmt.Sprintf("%s_new@test.com", prefix)
+	payload := map[string]interface{}{
+		"email":       newEmail,
+		"firstname":   "New",
+		"lastname":    "Member",
+		"displayname": "New Member",
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("PUT", "/api/user?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request, 5000)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+	assert.NotZero(t, result["id"])
+
+	// The response must NOT contain auth tokens — returning them overwrites the caller's session.
+	assert.Nil(t, result["jwt"], "jwt must not be returned when an authenticated user creates another user")
+	assert.Nil(t, result["persistent"], "persistent must not be returned when an authenticated user creates another user")
+}
+
 func TestPutUserDuplicateEmail(t *testing.T) {
 	prefix := uniquePrefix("putdup")
 	// Create an existing user with an email.
