@@ -634,6 +634,13 @@ Schedule::command('groups:remind-closed')
     ->sendOutputTo(cronLog('groups:remind-closed'))
     ->runInBackground();
 
+// V1: cron/group_customisation.php
+Schedule::command('groups:remind-customisation')
+    ->monthlyOn(1, '08:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:remind-customisation'))
+    ->runInBackground();
+
 // V1: cron/donations_thank.php
 // Schedule::command('mail:donations:thank')
 //     ->dailyAt('09:00')
