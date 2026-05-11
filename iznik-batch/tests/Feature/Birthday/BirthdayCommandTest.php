@@ -228,7 +228,7 @@ class BirthdayCommandTest extends TestCase
     {
         $founded = now()->subYear()->format('Y-m-d');
         $group = $this->createTestGroup([
-            'founded' => $founded,
+            'founded'     => $founded,
             'contactmail' => 'custom@example.com',
         ]);
         $this->createMemberInGroup($group->id);
