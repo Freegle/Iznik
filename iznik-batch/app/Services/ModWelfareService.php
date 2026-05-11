@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Mail\Group\ModWelfareAlertMail;
 use App\Models\Group;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -58,11 +59,12 @@ class ModWelfareService
                 $subject = $groupName . ' does not have an active owner';
                 $body = "We don't think there is an active mod with owner status on this group. Can you check it?";
                 if (!$dryRun) {
-                    Mail::raw($body, function ($message) use ($subject, $supportAddr, $mentorsAddr) {
-                        $message->from($supportAddr, 'Freegle')
-                            ->to($mentorsAddr)
-                            ->subject($subject);
-                    });
+                    Mail::send(new ModWelfareAlertMail(
+                        recipientEmail: $mentorsAddr,
+                        fromEmail: $supportAddr,
+                        emailSubject: $subject,
+                        body: $body,
+                    ));
                 }
                 continue;
             }
@@ -75,7 +77,7 @@ class ModWelfareService
                 ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
                 ->where('memberships.added', '>=', $addedSince)
                 ->whereNull('users.deleted')
-                ->select(['users.id', 'users.email', 'memberships.settings'])
+                ->select(['users.id', 'memberships.settings'])
                 ->get();
 
             foreach ($mods as $mod) {
@@ -253,18 +255,24 @@ class ModWelfareService
 
         if (is_string($notify)) {
             // Fallback: notify mentors directly
-            Mail::raw($body, function ($message) use ($subject, $fromAddr, $notify) {
-                $message->from($fromAddr, 'Freegle')->to($notify)->subject($subject);
-            });
+            Mail::send(new ModWelfareAlertMail(
+                recipientEmail: $notify,
+                fromEmail: $fromAddr,
+                emailSubject: $subject,
+                body: $body,
+            ));
             return;
         }
 
         foreach ($notify as $userId) {
             $email = $this->getPreferredEmail($userId);
             if ($email) {
-                Mail::raw($body, function ($message) use ($subject, $fromAddr, $email) {
-                    $message->from($fromAddr, 'Freegle')->to($email)->subject($subject);
-                });
+                Mail::send(new ModWelfareAlertMail(
+                    recipientEmail: $email,
+                    fromEmail: $fromAddr,
+                    emailSubject: $subject,
+                    body: $body,
+                ));
             }
         }
     }
