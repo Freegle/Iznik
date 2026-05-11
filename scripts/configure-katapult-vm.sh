@@ -102,7 +102,10 @@ ln -sf /usr/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 
 
 # Configure CircleCI runner
 mkdir -p /opt/circleci-runner
-cat > /opt/circleci-runner/circleci-runner-config.yaml << 'EOF'
+
+# Write config atomically: write to .tmp then mv so start.sh's `until [ -f config ]`
+# check only succeeds once the file is complete, eliminating the EOF parse race.
+cat > /opt/circleci-runner/circleci-runner-config.yaml.tmp << 'EOF'
 runner:
   name: "${VM_NAME}"
   working_directory: "/home/circleci/workdir"
@@ -111,6 +114,36 @@ runner:
 api:
   auth_token: "${RUNNER_AUTH_TOKEN}"
 EOF
+mv /opt/circleci-runner/circleci-runner-config.yaml.tmp /opt/circleci-runner/circleci-runner-config.yaml
+
+# Rewrite start.sh to fix set -e killing the restart loop when the runner exits non-zero.
+# The disk template's start.sh uses set -euo pipefail which causes bash to exit the
+# entire script when 'circleci-runner machine' exits with code 1 (e.g. auth failure
+# or transient error), defeating the while-true restart loop.
+cat > /opt/circleci-runner/start.sh << 'STARTEOF'
+#!/bin/bash
+set -uo pipefail
+
+CONFIG=/opt/circleci-runner/circleci-runner-config.yaml
+LOG=/var/log/circleci-runner.log
+
+echo "$(date): Waiting for runner config..." >> "$LOG"
+until [ -f "$CONFIG" ]; do sleep 2; done
+echo "$(date): Config found, starting runner" >> "$LOG"
+
+rm -f /tmp/circleci-plugin.sock /tmp/circleci-ts.sock
+rm -rf /home/circleci/workdir
+mkdir -p /home/circleci/workdir
+chown circleci:circleci /home/circleci/workdir
+
+while true; do
+  sudo -u circleci /opt/circleci-runner/circleci-runner machine \
+    --config "$CONFIG" >> "$LOG" 2>&1 || true
+  echo "$(date): Runner exited, restarting in 5s" >> "$LOG"
+  sleep 5
+done
+STARTEOF
+chmod +x /opt/circleci-runner/start.sh
 
 # Store VM ID and API token for self-destruct and teardown step
 echo "${VM_ID}" > /opt/circleci-runner/vm-id
