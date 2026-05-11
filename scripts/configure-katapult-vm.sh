@@ -68,6 +68,8 @@ systemctl mask apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/de
 
 # Pre-install pip3 now (as root, apt lock clear) so the CI coverage
 # step never needs to run apt-get install mid-job.
+# Update package lists first (no proxy configured yet — direct internet).
+apt-get update -qq 2>/dev/null || true
 apt-get install -y -q python3-pip 2>/dev/null || true
 
 # Configure Docker to use cache server mirrors

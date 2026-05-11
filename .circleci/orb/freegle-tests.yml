@@ -2803,7 +2803,8 @@ jobs:
             echo "=== Patch Coverage Check ==="
             if ! command -v pip3 >/dev/null 2>&1 && ! command -v pip >/dev/null 2>&1; then
               echo "pip3 not found — installing python3-pip"
-              sudo apt-get install -y --no-install-recommends python3-pip
+              # Bypass apt-cacher-ng proxy: python3-pip may not be cached and the proxy hangs on cache misses.
+              sudo apt-get -o Acquire::http::Proxy="" install -y --no-install-recommends python3-pip
             fi
             pip3 install --quiet --break-system-packages diff-cover lcov-cobertura 2>/dev/null || \
               pip install --quiet --break-system-packages diff-cover lcov-cobertura 2>/dev/null || \
