@@ -254,7 +254,7 @@ class SyncWhatJobsCommandTest extends TestCase
         $xml  = $this->makeFeedXml([['job_reference' => 'j1', 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK']]);
         $svc  = new class($xml, $geom) extends WhatJobsService {
             public function __construct(private string $xml, private string $geom) {}
-            public function geocodeCityState(string $city, string $state, string $country, array &$cache): ?array
+            public function geocodeCityState(string $city, string $state, string $country, array &$cache, string $zip = ''): ?array
             {
                 return [53.8, -1.55, 53.9, -1.45, $this->geom];
             }
@@ -303,7 +303,7 @@ class SyncWhatJobsCommandTest extends TestCase
                 file_put_contents($tmp, $this->xml);
                 return $tmp;
             }
-            public function geocodeCityState(string $city, string $state, string $country, array &$cache): ?array
+            public function geocodeCityState(string $city, string $state, string $country, array &$cache, string $zip = ''): ?array
             {
                 return [53.8, -1.55, 53.9, -1.45, $this->geom];
             }
@@ -337,7 +337,7 @@ class SyncWhatJobsCommandTest extends TestCase
                 file_put_contents($tmp, $this->xml);
                 return $tmp;
             }
-            public function geocodeCityState(string $city, string $state, string $country, array &$cache): ?array
+            public function geocodeCityState(string $city, string $state, string $country, array &$cache, string $zip = ''): ?array
             {
                 return [53.8, -1.55, 53.9, -1.45, $this->geom];
             }
