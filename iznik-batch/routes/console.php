@@ -773,6 +773,30 @@ Schedule::command('noticeboards:thank-users')
     ->runInBackground();
 
 // =============================================================================
+// LOVEJUNK TN INVOICE
+// =============================================================================
+
+// Monthly LoveJunk/TrashNothing invoice split — run on 1st of month at 15:00.
+// V1: cron/lovejunk_tn_invoice.php (monthly, 1st 15:00)
+Schedule::command('lovejunk:send-tn-invoice')
+    ->monthlyOn(1, '15:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('lovejunk:send-tn-invoice'))
+    ->runInBackground();
+
+// =============================================================================
+// BIRTHDAY EMAILS
+// =============================================================================
+
+// Send birthday emails to members of groups founded on today's date.
+// V1: cron/birthday.php (daily at 12:00)
+Schedule::command('birthday:send-emails')
+    ->dailyAt('12:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('birthday:send-emails'))
+    ->runInBackground();
+
+// =============================================================================
 // STORIES
 // =============================================================================
 
@@ -782,6 +806,14 @@ Schedule::command('stories:send-to-central')
     ->weeklyOn(5, '14:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('stories:send-to-central'))
+    ->runInBackground();
+
+// Auto-reject stale chat review messages (7+ days) and notify group mods of pending reviews (48+ hours).
+// V1: cron/chat_review.php (daily)
+Schedule::command('chats:review-pending')
+    ->dailyAt('09:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:review-pending'))
     ->runInBackground();
 
 // =============================================================================
