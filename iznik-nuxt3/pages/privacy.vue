@@ -148,17 +148,53 @@
           use, it's not free to run, so it helps if you
           <nuxt-link no-prefetch to="/donate">donate</nuxt-link>.
         </p>
-        <h2>4. Deleting your data</h2>
+        <h2>4. Unsubscribing and deleting your data</h2>
+        <h3>4.1 Unsubscribing from emails</h3>
         <p>
-          We'll delete your data automatically if you're inactive for six
-          months. If you want to leave Freegle, please go
+          You can stop receiving emails from Freegle at any time. Either:
+        </p>
+        <ul>
+          <li>
+            Go to
+            <!-- eslint-disable-next-line -->
+            <nuxt-link no-prefetch to="/settings">Settings</nuxt-link>
+            and change your email preferences there, or
+          </li>
+          <li>
+            Click the <strong>Unsubscribe</strong> link at the bottom of any
+            email we send you.
+          </li>
+        </ul>
+        <h3>4.2 Deleting your account and data</h3>
+        <p>
+          You have the right to have all your personal data deleted. To do this:
+        </p>
+        <div class="privacy-page__delete-cta">
           <!-- eslint-disable-next-line -->
-          <nuxt-link no-prefetch to="/unsubscribe">here</nuxt-link>.
+          <nuxt-link no-prefetch to="/unsubscribe" class="privacy-page__delete-btn">
+            Unsubscribe / Delete my data
+          </nuxt-link>
+        </div>
+        <p>This will permanently delete:</p>
+        <ul>
+          <li>Your name, email address and profile picture</li>
+          <li>Your location and account settings</li>
+          <li>Your posts, replies and chat messages</li>
+        </ul>
+        <p>
+          All your personal data will be deleted within <strong>14 days</strong>
+          of your request. If you change your mind before that deadline, you can
+          log back in to reactivate your account.
         </p>
         <p>
-          Once you leave, this will delete all your personal data within 14
-          days. If you change your mind before then, or left by mistake, you can
-          log back in to reactivate your account.
+          If you logged in using Facebook, you can also request deletion directly
+          through Facebook: go to
+          <strong>Settings &amp; Privacy → Settings → Your Facebook Information
+          → Deactivation and Deletion</strong>.
+        </p>
+        <p>
+          Your data is also deleted automatically if your account is inactive for
+          six months.
         </p>
         <h2>5. Communities leaving Freegle</h2>
         <p>
@@ -187,6 +223,11 @@
         <h3>Change History</h3>
         <p>Here are the changes to this page.</p>
         <ul class>
+          <li>
+            10/05/2026: Restructure section 4 to clearly explain how to unsubscribe
+            and request data deletion, with a prominent delete button, to satisfy
+            Facebook Platform Terms 4.b.
+          </li>
           <li>
             20/12/2025: Add mention of recording more information for diagnosing
             problems and optimising the site.
@@ -313,6 +354,38 @@ useHead(
       color: $gray-700;
       margin-bottom: 0.5rem;
     }
+  }
+
+  ol {
+    padding-left: 1.25rem;
+    margin-bottom: 1rem;
+
+    li {
+      font-size: 0.95rem;
+      line-height: 1.6;
+      color: $gray-700;
+      margin-bottom: 0.5rem;
+    }
+  }
+}
+
+.privacy-page__delete-cta {
+  margin: 1.25rem 0;
+}
+
+.privacy-page__delete-btn {
+  display: inline-block;
+  background-color: $color-green--darker;
+  color: white !important;
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  text-decoration: none !important;
+
+  &:hover {
+    background-color: darken($color-green--darker, 8%);
+    color: white !important;
   }
 }
 </style>

@@ -13,6 +13,10 @@ parameters:
     type: boolean
     default: false
     description: "Set to true to build iOS and upload to TestFlight from current branch"
+  use_katapult:
+    type: boolean
+    default: false
+    description: "Set to true to run tests on a Katapult cloud runner (freegle/katapult-runner)"
 
 orbs:
   freegle: freegle/tests@1
@@ -86,6 +90,7 @@ workflows:
     when:
       and:
         - not: << pipeline.parameters.use_self_hosted >>
+        - not: << pipeline.parameters.use_katapult >>
         - not: << pipeline.parameters.run_manual_promote >>
         - not: << pipeline.parameters.build_testflight >>
     jobs:
@@ -172,6 +177,17 @@ workflows:
             branches:
               only:
                 - production
+
+  # Katapult cloud runner test — triggered manually with use_katapult: true
+  build-test-katapult:
+    when: << pipeline.parameters.use_katapult >>
+    jobs:
+      - freegle/build-and-test:
+          use-executor:
+            name: freegle/machine-executor-katapult
+      - mark-ci-passed:
+          requires:
+            - freegle/build-and-test
 
   # Build iOS for TestFlight from any branch
   testflight-branch:
