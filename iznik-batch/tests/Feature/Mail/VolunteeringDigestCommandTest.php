@@ -5,6 +5,7 @@ namespace Tests\Feature\Mail;
 use App\Mail\Volunteering\VolunteeringDigestMail;
 use App\Models\Group;
 use App\Models\Membership;
+use App\Services\VolunteeringDigestService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
@@ -246,6 +247,95 @@ class VolunteeringDigestCommandTest extends TestCase
             ->assertExitCode(0);
 
         Mail::assertSentCount(1);
+    }
+
+    public function test_debug_global_volunteering_intermediate_state(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $volId = DB::table('volunteering')->insertGetId([
+            'title'       => 'Global Opportunity',
+            'location'    => 'Community Centre',
+            'description' => 'Help needed.',
+            'pending'     => 0,
+            'deleted'     => 0,
+            'expired'     => 0,
+            'added'       => now(),
+        ]);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, [
+            'volunteeringallowed' => 1,
+            'emailfrequency'      => 24,
+        ]);
+
+        // Step 1: confirm no volunteering_groups row for our volunteering
+        $vgCount = (int) DB::table('volunteering_groups')->where('volunteeringid', $volId)->count();
+        $this->assertSame(0, $vgCount, "volunteering_groups should have no row for global volunteering");
+
+        // Step 2: groups query
+        $groups = DB::table('groups')
+            ->where('type', Group::TYPE_FREEGLE)
+            ->where('publish', 1)
+            ->where('onhere', 1)
+            ->where(function ($q) {
+                $q->whereNull('lastvolunteeringroundup')
+                    ->orWhereRaw('DATEDIFF(NOW(), lastvolunteeringroundup) >= ?', [VolunteeringDigestService::MIN_INTERVAL_DAYS]);
+            })
+            ->whereRaw("nameshort NOT LIKE '%playground%'")
+            ->select(['id', 'nameshort', 'settings'])
+            ->get();
+
+        $groupIds = $groups->pluck('id')->toArray();
+        $this->assertContains($group->id, $groupIds, "Groups query must include our test group. Found IDs: ".implode(',', $groupIds));
+
+        // Step 3: volunteerings query for our group
+        $groupRow = $groups->firstWhere('id', $group->id);
+        $volunteerings = DB::table('volunteering')
+            ->leftJoin('volunteering_images', 'volunteering_images.opportunityid', '=', 'volunteering.id')
+            ->where('volunteering.pending', 0)
+            ->where('volunteering.deleted', 0)
+            ->where('volunteering.expired', 0)
+            ->where(function ($q) use ($groupRow) {
+                $q->whereExists(function ($sub) use ($groupRow) {
+                    $sub->select(DB::raw(1))
+                        ->from('volunteering_groups')
+                        ->whereColumn('volunteering_groups.volunteeringid', 'volunteering.id')
+                        ->where('volunteering_groups.groupid', $groupRow->id);
+                })->orWhereNotExists(function ($sub) {
+                    $sub->select(DB::raw(1))
+                        ->from('volunteering_groups')
+                        ->whereColumn('volunteering_groups.volunteeringid', 'volunteering.id');
+                });
+            })
+            ->select(['volunteering.id', 'volunteering.title'])
+            ->get();
+
+        $volIds = $volunteerings->pluck('id')->toArray();
+        $this->assertContains($volId, $volIds, "Volunteering query must include our global volunteering. Found IDs: ".implode(',', $volIds));
+
+        // Step 4: members query
+        $members = DB::table('memberships')
+            ->join('users', 'users.id', '=', 'memberships.userid')
+            ->join('users_emails', function ($join) {
+                $join->on('users_emails.userid', '=', 'memberships.userid')
+                    ->where('users_emails.preferred', '=', 1);
+            })
+            ->where('memberships.groupid', $group->id)
+            ->where('memberships.collection', Membership::COLLECTION_APPROVED)
+            ->where('memberships.volunteeringallowed', 1)
+            ->where('memberships.emailfrequency', '!=', 0)
+            ->whereNull('users.deleted')
+            ->whereNotNull('users_emails.email')
+            ->get();
+
+        $this->assertCount(1, $members, "Members query must find exactly 1 member");
+
+        // Step 5: full service call
+        $result = (new VolunteeringDigestService())->sendVolunteeringDigests(false);
+        $this->assertSame(1, $result['groups_processed'], "Service must process 1 group");
+        $this->assertSame(1, $result['sent'], "Service must send 1 email");
     }
 
     public function test_skips_expired_volunteerings(): void
