@@ -86,7 +86,7 @@ jobs:
               exit 0
             fi
 
-            if [ "<< pipeline.parameters.use_katapult >>" = "true" ] || [ "<< pipeline.git.branch >>" = "test/katapult-runner-e2e" ]; then
+            if [[ "<< pipeline.parameters.use_katapult >>" = "true" || "<< pipeline.git.branch >>" == test/katapult* ]]; then
               echo "Katapult preferred — checking runner availability"
               KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-}"
               KATAPULT_ORG="org_0zTGdMXAyOgIV5DB"
