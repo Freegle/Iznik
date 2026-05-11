@@ -14,6 +14,8 @@ class RemindCustomisationCommandTest extends TestCase
     {
         parent::setUp();
         Mail::fake();
+        // Prevent pre-existing DB groups from matching the command's query.
+        DB::table('groups')->update(['onhere' => 0]);
     }
 
     private function createGroupImageId(Group $group): int
