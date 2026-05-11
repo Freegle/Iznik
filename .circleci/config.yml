@@ -97,7 +97,7 @@ jobs:
                 if [ -z "$CIRCLE_TOKEN" ]; then echo "0"; return; fi
                 curl -sf -H "Circle-Token: $CIRCLE_TOKEN" \
                   "${RUNNER_API}/runner?resource-class=freegle/katapult-runner" 2>/dev/null \
-                  | python3 -c "import json,sys; d=json.load(sys.stdin); print(len([r for r in d.get('items',[]) if r.get('resource_class')=='freegle/katapult-runner']))" 2>/dev/null \
+                  | python3 -c "import json,sys; d=json.load(sys.stdin); print(len([r for r in d.get('items',[]) if r.get('resource_class')=='freegle/katapult-runner' and r.get('connected',False)]))" 2>/dev/null \
                   || echo "0"
               }
 
