@@ -6,7 +6,6 @@ use App\Console\Concerns\PreventsOverlapping;
 use App\Services\MembershipsProcessingService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class ProcessMembershipsCommand extends Command
@@ -15,7 +14,7 @@ class ProcessMembershipsCommand extends Command
     use GracefulShutdown;
 
     protected $signature = 'memberships:process
-                            {--dry-run : Show what would be processed without making changes}';
+                            {--dry-run : Log what would be processed without making changes}';
 
     protected $description = 'Process pending membership history entries: send per-group welcome emails, flag reviewed members';
 
@@ -27,20 +26,19 @@ class ProcessMembershipsCommand extends Command
         }
 
         try {
-            if ($this->option('dry-run')) {
-                $count = DB::table('memberships_history')
-                    ->where('processingrequired', 1)
-                    ->count();
-                $this->info("Dry run — {$count} entry/entries would be processed.");
-                return Command::SUCCESS;
+            $dryRun = (bool) $this->option('dry-run');
+
+            if ($dryRun) {
+                $this->info('DRY RUN — no emails will be sent or records updated.');
             }
 
-            Log::info('Starting membership processing');
+            Log::info('Starting membership processing', ['dry_run' => $dryRun]);
 
-            $count = $service->processAll();
+            $count = $service->processAll($dryRun);
 
-            $this->info("{$count} entry/entries processed");
-            Log::info('Membership processing complete', ['count' => $count]);
+            $prefix = $dryRun ? '[DRY RUN] Would process' : 'Processed';
+            $this->info("{$prefix} {$count} entry/entries.");
+            Log::info('Membership processing complete', ['count' => $count, 'dry_run' => $dryRun]);
 
             return Command::SUCCESS;
         } finally {

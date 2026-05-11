@@ -115,6 +115,14 @@ Schedule::command('cleanup:chat-duplicates')
     ->sendOutputTo(cronLog('cleanup:chat-duplicates'))
     ->runInBackground();
 
+// Archive old duplicate profile images, keeping latest per user.
+// V1: cron/archive_attachments.php — disabled pending sign-off
+Schedule::command('cleanup:archive-profile-images')
+    ->dailyAt('22:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('cleanup:archive-profile-images'))
+    ->runInBackground();
+
 // Clean up old sessions.
 // V1: cron/purge_sessions.php
 Schedule::command('cleanup:sessions')
@@ -235,6 +243,14 @@ Schedule::command('chats:update-expected')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('chats:update-expected'))
+    ->runInBackground();
+
+// Send calendar invites and chat reminders for arranged handover trysts.
+// V1: cron/tryst.php (every 1 minute)
+Schedule::command('chats:send-tryst-reminders')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:send-tryst-reminders'))
     ->runInBackground();
 
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
@@ -430,6 +446,15 @@ Schedule::command('microvolunteering:score')
     ->sendOutputTo(cronLog('microvolunteering:score'))
     ->runInBackground();
 
+// Notify Moderate+ members of pending messages awaiting microvolunteering review,
+// and Basic members of approved messages eligible for rating/thanks.
+// V1: cron/microvolunteering.php (every 5 minutes).
+Schedule::command('microvolunteering:notify')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('microvolunteering:notify'))
+    ->runInBackground();
+
 // Update cached location names in user settings when the canonical name has changed.
 // V1: cron/users_remap.php (daily at 05:00)
 Schedule::command('users:remap-locations')
@@ -438,12 +463,29 @@ Schedule::command('users:remap-locations')
     ->sendOutputTo(cronLog('users:remap-locations'))
     ->runInBackground();
 
+// V1: cron/tn_names.php — fix display names for TN users whose email encodes their name.
+Schedule::command('users:fix-tn-names')
+    ->dailyAt('06:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:fix-tn-names'))
+    ->runInBackground();
+
 // Update message subjects when associated location names have changed.
 // V1: cron/messages_remap.php (every 5 minutes)
 Schedule::command('messages:remap-subjects')
     ->everyFiveMinutes()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('messages:remap-subjects'))
+    ->runInBackground();
+
+// Record giver/taker visualise pairs for offers with photos (distance ≤ 30 km).
+// V1: cron/visualise.php (every 5 minutes) — disabled pending sign-off
+// Note: V1 called ensureAvatar() as a side effect to refresh TN user avatars; omitted here
+//       since it involved external HTTP calls and is unrelated to the visualise insert.
+Schedule::command('messages:update-visualise')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:update-visualise'))
     ->runInBackground();
 
 // Update messages_spatial with recent messages, outcomes, and remove stale entries.
@@ -495,12 +537,37 @@ Schedule::command('data:fetch-app-versions')
     ->sendOutputTo(cronLog('data:fetch-app-versions'))
     ->runInBackground();
 
+// Sync WhatJobs job listings from XML feeds into the jobs table.
+// V1: cron/whatjobs.php (hourly 08:00-22:00)
+Schedule::command('integrations:sync-whatjobs')
+    ->hourlyAt(0)
+    ->between('08:00', '22:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
+    ->runInBackground();
+
 // Sync Freegle offers with LoveJunk - runs every minute.
 // V1: cron/lovejunk.php
 Schedule::command('integrations:sync-lovejunk')
     ->everyMinute()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('integrations:sync-lovejunk'))
+    ->runInBackground();
+
+// Sync upcoming Restart Project repair events into group events.
+// V1: cron/restartproject.php (23:00 daily)
+Schedule::command('integrations:sync-restartproject')
+    ->dailyAt('23:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('integrations:sync-restartproject'))
+    ->runInBackground();
+
+// Sync upcoming Repair Cafe Wales events into group events.
+// V1: cron/repaircafewales.php (23:00 daily)
+Schedule::command('integrations:sync-repaircafewales')
+    ->dailyAt('23:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('integrations:sync-repaircafewales'))
     ->runInBackground();
 
 // Message expiry - process deadline-expired messages and spatial index expiry.
@@ -543,6 +610,14 @@ Schedule::command('users:update-support-roles')
     ->sendOutputTo(cronLog('users:update-support-roles'))
     ->runInBackground();
 
+// Validate group boundary geometry (CGA/DPA polygons).
+// V1: cron/check_cgas.php (every 5 minutes) — disabled pending sign-off
+Schedule::command('groups:check-boundaries')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:check-boundaries'))
+    ->runInBackground();
+
 // Update group stats: fix repost settings, polyindex, activity/funding, mod counts, stats_outcomes.
 // V1: cron/group_stats.php (daily at 02:00)
 // Note: V1 also generates per-group stats (Stats::generate) and syncs TrashNothing groups — those parts are not migrated here.
@@ -550,6 +625,13 @@ Schedule::command('groups:update-stats')
     ->dailyAt('02:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('groups:update-stats'))
+    ->runInBackground();
+
+// V1: cron/groups_closed.php
+Schedule::command('groups:remind-closed')
+    ->weeklyOn(1, '09:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:remind-closed'))
     ->runInBackground();
 
 // V1: cron/donations_thank.php
@@ -644,6 +726,30 @@ Schedule::command('messages:update-index')
 //     ->runInBackground();
 
 // =============================================================================
+// NEWSFEED
+// =============================================================================
+
+// Fetch and cache link previews for URLs found in recent newsfeed posts.
+// V1: cron/newsfeed_link_previews.php (every 1 minute)
+Schedule::command('newsfeed:generate-link-previews')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('newsfeed:generate-link-previews'))
+    ->runInBackground();
+
+// =============================================================================
+// NOTICEBOARDS
+// =============================================================================
+
+// Thank users who added noticeboards (once per user, not per board).
+// V1: cron/noticeboards.php (daily at 15:30)
+Schedule::command('noticeboards:thank-users')
+    ->dailyAt('15:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('noticeboards:thank-users'))
+    ->runInBackground();
+
+// =============================================================================
 // GIT SUMMARY
 // =============================================================================
 
@@ -666,4 +772,12 @@ Schedule::command('cleanup:user-images')
     ->dailyAt('01:30')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('cleanup:user-images'))
+
+// Auto-reject chat messages stuck in review for 7+ days; notify group mods
+// about messages pending review for 48+ hours; send mentors a daily summary.
+// V1: cron/chat_review.php (daily)
+Schedule::command('chats:review-pending')
+    ->dailyAt('09:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:review-pending'))
     ->runInBackground();
