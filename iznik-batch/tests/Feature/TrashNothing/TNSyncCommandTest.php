@@ -33,6 +33,18 @@ class TNSyncCommandTest extends TestCase
 
     protected function setUp(): void
     {
+        // Free cyclic garbage from the previous test (or a crashed test that skipped tearDown).
+        // Each artisan() call boots a full Laravel kernel with many cyclic references that
+        // PHP's reference counter won't collect automatically — gc_collect_cycles() does.
+        gc_collect_cycles();
+
+        // Stop PCOV before booting the app: this class is #[CoversNothing] so no coverage
+        // is needed, and stopping prevents the coverage buffer from growing at all.
+        if (extension_loaded('pcov')) {
+            \pcov\stop();
+            \pcov\clear();
+        }
+
         parent::setUp();
 
         $this->dateFile = sys_get_temp_dir() . '/tn_sync_test_' . uniqid('', true) . '.txt';
@@ -53,10 +65,15 @@ class TNSyncCommandTest extends TestCase
 
         parent::tearDown();
 
-        // PCOV accumulates coverage data in-memory across tests. These tests are
-        // #[CoversNothing] so the data is discarded anyway — clear it to prevent OOM.
+        // Force collection of cyclic references left by Laravel's service container
+        // and Eloquent after each artisan() run. Without this, cycles accumulate
+        // across the 41 tests in this class and exhaust the 1GB memory limit.
+        gc_collect_cycles();
+
         if (extension_loaded('pcov')) {
             \pcov\clear();
+            // Restart PCOV so the next test class's coverage is collected normally.
+            \pcov\start();
         }
     }
 
