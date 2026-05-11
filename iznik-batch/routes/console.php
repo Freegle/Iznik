@@ -794,3 +794,11 @@ Schedule::command('chats:review-pending')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('chats:review-pending'))
     ->runInBackground();
+
+// Alert geeks about Freegle groups that have not received messages in 7+ days.
+// V1: cron/groups_nomessages.php (daily)
+Schedule::command('groups:alert-no-messages')
+    ->dailyAt('07:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:alert-no-messages'))
+    ->runInBackground();
