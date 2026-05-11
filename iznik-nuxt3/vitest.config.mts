@@ -142,9 +142,9 @@ export default defineConfig({
     // See: https://vitest.dev/guide/improving-performance
     pool: 'forks', // 'forks' is more stable than 'threads' for memory isolation
     // Limit workers based on available memory (WSL often has limited resources)
-    // Using 50% of CPU cores as a safe default - adjust if needed
+    // VITEST_MAX_WORKERS overrides the CI cap (used by Katapult runners with many CPUs)
     maxWorkers: process.env.CI
-      ? 2
+      ? parseInt(process.env.VITEST_MAX_WORKERS || '2', 10)
       : Math.max(1, Math.floor(os.cpus().length / 2)),
     // Disable file parallelism if running with --single-thread for debugging
     fileParallelism: !process.env.VITEST_SINGLE_THREAD,
