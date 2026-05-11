@@ -456,8 +456,9 @@ Schedule::command('microvolunteering:score')
 
 // Notify Moderate+ members of pending messages awaiting microvolunteering review,
 // and Basic members of approved messages eligible for rating/thanks.
+// V1: cron/microvolunteering.php (every 5 minutes).
 Schedule::command('microvolunteering:notify')
-    ->hourly()
+    ->everyFiveMinutes()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('microvolunteering:notify'))
     ->runInBackground();
@@ -731,6 +732,14 @@ Schedule::command('messages:update-index')
 //     ->withoutOverlapping()
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
+
+// Notify group mods about recent chitchat (newsfeed) posts from their members.
+// V1: cron/newsfeed_modnotif.php (daily 13:30)
+Schedule::command('mail:newsfeed-mod-notif')
+    ->dailyAt('13:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:newsfeed-mod-notif'))
+    ->runInBackground();
 
 // =============================================================================
 // NEWSFEED
