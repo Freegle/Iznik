@@ -81,12 +81,18 @@ class ModWelfareService
                 ->get();
 
             foreach ($mods as $mod) {
-                // Skip modbot user
-                $modEmail = $this->getPreferredEmail($mod->id);
-                if ($modEmail === $modbotEmail) {
+                // Skip modbot user — check all emails since modbot is on an internal domain
+                // that getPreferredEmail() filters out.
+                $isModbot = $modbotEmail && DB::table('users_emails')
+                    ->where('userid', $mod->id)
+                    ->where('email', $modbotEmail)
+                    ->exists();
+                if ($isModbot) {
                     $skipped++;
                     continue;
                 }
+
+                $modEmail = $this->getPreferredEmail($mod->id);
 
                 // Skip if already warned recently
                 $recentlyWarned = DB::table('groups_mods_welfare')
