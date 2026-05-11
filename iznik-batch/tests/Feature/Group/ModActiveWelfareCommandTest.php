@@ -233,7 +233,7 @@ class ModActiveWelfareCommandTest extends TestCase
 
         // Mod has settings.active = false → backup mod, not expected to be active
         $backupMod = $this->makeMod($group, [
-            'settings' => json_encode(['active' => false]),
+            'settings' => ['active' => false],
         ]);
 
         $this->recordApproval($owner->id, $group->id);
