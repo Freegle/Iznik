@@ -159,8 +159,8 @@ IDLE_SINCE=\$(cat "\$IDLE_MARKER")
 NOW=\$(date +%s)
 IDLE_SECONDS=\$((NOW - IDLE_SINCE))
 
-# Safety-net: destroy VM after 30 minutes idle post-job (primary teardown is job end-step)
-if [ "\$IDLE_SECONDS" -gt 1800 ]; then
+# Safety-net: destroy VM after 5 minutes idle post-job (primary teardown is cron at job end)
+if [ "\$IDLE_SECONDS" -gt 300 ]; then
     echo "Runner idle for \${IDLE_SECONDS}s — self-destructing"
     if [ -n "\$VM_ID" ]; then
         curl -sf -X DELETE \
