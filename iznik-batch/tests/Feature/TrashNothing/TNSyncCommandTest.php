@@ -247,6 +247,25 @@ class TNSyncCommandTest extends TestCase
         $this->assertEquals('Deleted User #' . $user->id, $updated->fullname);
     }
 
+    public function test_sync_account_removed_executes_without_error(): void
+    {
+        $user = $this->createTNUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'account_removed' => true,
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        // Writes are commented out in port-testing mode; verify the command doesn't crash.
+        $this->artisan('tn:sync')->assertExitCode(0);
+    }
+
     // =========================================================================
     // User changes: reply time
     // =========================================================================
@@ -304,6 +323,25 @@ class TNSyncCommandTest extends TestCase
         $this->assertEquals(7200, $replyTime);
     }
 
+    public function test_sync_reply_time_executes_without_error(): void
+    {
+        $user = $this->createTNUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'reply_time' => 3600,
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        // Save is commented out in port-testing mode; verify model setup doesn't crash.
+        $this->artisan('tn:sync')->assertExitCode(0);
+    }
+
     // =========================================================================
     // User changes: about me
     // =========================================================================
@@ -329,6 +367,25 @@ class TNSyncCommandTest extends TestCase
 
         $aboutMe = DB::table('users_aboutme')->where('userid', $user->id)->value('text');
         $this->assertEquals('I love giving things away!', $aboutMe);
+    }
+
+    public function test_sync_about_me_executes_without_error(): void
+    {
+        $user = $this->createTNUser();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'about_me' => 'I love giving things away!',
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        // Save is commented out in port-testing mode; verify model setup doesn't crash.
+        $this->artisan('tn:sync')->assertExitCode(0);
     }
 
     // =========================================================================
@@ -419,6 +476,26 @@ class TNSyncCommandTest extends TestCase
 
         $fullname = DB::table('users')->where('id', $user->id)->value('fullname');
         $this->assertEquals('SameName', $fullname);
+    }
+
+    public function test_sync_name_change_executes_without_error_when_name_changes(): void
+    {
+        $user = $this->createTNUser('OldName');
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response([
+                'changes' => [[
+                    'fd_user_id' => $user->id,
+                    'username' => 'NewName',
+                    'date' => self::DATE_SYNC,
+                ]],
+            ], 200),
+        ]);
+
+        // User has no email matching the "{oldname}-" pattern so no removeEmail/addEmail
+        // is triggered. Save is commented out in port-testing mode.
+        $this->artisan('tn:sync')->assertExitCode(0);
     }
 
     // =========================================================================
