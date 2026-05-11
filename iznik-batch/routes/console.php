@@ -731,6 +731,7 @@ Schedule::command('mail:volunteering-digest')
     ->weeklyOn(1, '23:00')  // Monday at 11pm
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('mail:volunteering-digest'))
+    ->runInBackground();
 // Notify group mods about recent chitchat (newsfeed) posts from their members.
 // V1: cron/newsfeed_modnotif.php (daily 13:30)
 Schedule::command('mail:newsfeed-mod-notif')
