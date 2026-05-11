@@ -9,6 +9,13 @@ use Tests\TestCase;
 
 class AlertNoMessagesCommandTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // Prevent pre-existing DB groups from being found by the command.
+        DB::table('groups')->update(['onhere' => 0]);
+    }
+
     private function insertApprovedMessage(int $groupId, string $arrival): void
     {
         $messageId = DB::table('messages')->insertGetId([
