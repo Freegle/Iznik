@@ -511,7 +511,11 @@ export default defineNuxtConfig({
             ...(!production
               ? [
                   eslintPlugin({
-                    exclude: ['**/node_modules/**', '**/dist/**', '**/.nuxt/**'],
+                    exclude: [
+                      '**/node_modules/**',
+                      '**/dist/**',
+                      '**/.nuxt/**',
+                    ],
                   }),
                 ]
               : []),
