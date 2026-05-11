@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\Group;
+use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -105,7 +107,7 @@ class ChatReviewService
                 continue;
             }
 
-            if ($groupData->type !== 'Freegle' || !$groupData->publish) {
+            if ($groupData->type !== Group::TYPE_FREEGLE || !$groupData->publish) {
                 continue;
             }
 
