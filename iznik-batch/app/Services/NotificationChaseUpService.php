@@ -202,6 +202,7 @@ class NotificationChaseUpService
     {
         return Notification::where('touser', $userId)
             ->where('seen', 0)
+            ->where('mailed', 0)
             ->orderByDesc('id')
             ->limit(10)
             ->get();
