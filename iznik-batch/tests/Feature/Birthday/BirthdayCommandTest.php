@@ -49,7 +49,6 @@ class BirthdayCommandTest extends TestCase
 
     public function test_sends_birthday_email_to_group_member(): void
     {
-        // Founded exactly 1 year ago — same month/day, prior year
         $founded = now()->subYear()->format('Y-m-d');
         $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id);
@@ -61,7 +60,6 @@ class BirthdayCommandTest extends TestCase
 
     public function test_skips_group_not_founded_today(): void
     {
-        // Founded last year but on a different day
         $founded = now()->subYear()->subDays(5)->format('Y-m-d');
         $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id);
@@ -83,7 +81,6 @@ class BirthdayCommandTest extends TestCase
 
     public function test_skips_group_founded_this_year(): void
     {
-        // Founded today but in the current year (age = 0) — should not trigger
         $founded = now()->format('Y-m-d');
         $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id);
