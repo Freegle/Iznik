@@ -84,6 +84,33 @@ for v in data.get('virtual_machines',[]):
 " 2>/dev/null
 }
 
+# Delete runner VMs older than MAX_VM_AGE_SECONDS (default 150 min).
+# VM names encode creation time: katapult-runner-<unix_timestamp>.
+# max_run_time in the runner config is 2h; 150 min gives a safety buffer.
+MAX_VM_AGE_SECONDS="${MAX_VM_AGE_SECONDS:-9000}"
+cleanup_stale_vms() {
+    local now
+    now=$(date +%s)
+    katapult "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines" 2>/dev/null | python3 -c "
+import json,sys
+data=json.load(sys.stdin)
+for v in data.get('virtual_machines',[]):
+    name=v.get('name','')
+    if name.startswith('katapult-runner-'):
+        ts=name.removeprefix('katapult-runner-')
+        if ts.isdigit():
+            print(v.get('id',''), name, ts)
+" 2>/dev/null | while read vm_id vm_name vm_ts; do
+        local age=$(( now - vm_ts ))
+        if [ "$age" -gt "$MAX_VM_AGE_SECONDS" ]; then
+            log "Deleting stale VM $vm_name (age ${age}s > ${MAX_VM_AGE_SECONDS}s)"
+            if [ "$DRY_RUN" != "1" ]; then
+                katapult -X DELETE "${KATAPULT_API}/virtual_machines/${vm_id}" 2>/dev/null || true
+            fi
+        fi
+    done
+}
+
 provision_runner() {
     local name="katapult-runner-$(date +%s)"
     log "Provisioning runner VM: $name"
@@ -108,7 +135,7 @@ provision_runner() {
 
     # Poll the VM list until the named VM appears, then poll its state until 'started'.
     # (The build API has no stable polling endpoint, but the VM appears in the list quickly.)
-    local vm_id="" vm_state="" vm_ip=""
+    local vm_id="" vm_state="" vm_ip="" vm_root_pass=""
     local i=0
     while [ "$vm_state" != "started" ]; do
         sleep 10
@@ -135,11 +162,14 @@ vm=json.load(sys.stdin).get('virtual_machine',{})
 ips=[ip.get('address','') for ip in vm.get('ip_addresses',[]) if ':' not in ip.get('address','')]
 print(ips[0] if ips else '')
 " 2>/dev/null || echo "")
+            if [ -z "$vm_root_pass" ]; then
+                vm_root_pass=$(echo "$detail" | python3 -c "import json,sys; print(json.load(sys.stdin).get('virtual_machine',{}).get('initial_root_password',''))" 2>/dev/null || echo "")
+            fi
         fi
         log "$name: state=${vm_state:-building} ip=${vm_ip:-pending} (${i}0s elapsed)"
     done
     log "VM $name started. IP: $vm_ip — configuring..."
-    configure_runner "$vm_ip" "$name" "$vm_id"
+    configure_runner "$vm_ip" "$name" "$vm_id" "$vm_root_pass" || log "WARNING: configure_runner failed for $name — runner may need manual setup"
 }
 
 # Configure a freshly-built VM as a CircleCI runner
@@ -147,16 +177,35 @@ configure_runner() {
     local vm_ip="$1"
     local vm_name="$2"
     local vm_id="${3:-}"
+    local vm_pass="${4:-}"
 
     log "Configuring runner on $vm_ip ($vm_name)"
 
-    # Wait for SSH
+    # SSH helper: use sshpass for password auth if we have a password,
+    # falling back to key auth (for VMs already configured with our key).
+    ssh_cmd() {
+        if [ -n "$vm_pass" ]; then
+            sshpass -p "$vm_pass" ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no -o ConnectTimeout=5 "root@$vm_ip" "$@"
+        else
+            ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "root@$vm_ip" "$@"
+        fi
+    }
+
+    # Wait for SSH (up to 10 minutes — VM state='started' but sshd may still be starting)
     local i=0
-    while ! ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 "root@$vm_ip" "true" 2>/dev/null; do
-        sleep 5
+    while ! ssh_cmd "true" 2>/dev/null; do
+        sleep 10
         i=$((i+1))
-        if [ $i -gt 30 ]; then log "SSH timeout for $vm_ip"; return 1; fi
+        if [ $i -gt 60 ]; then log "SSH timeout for $vm_ip"; return 1; fi
+        log "Waiting for SSH on $vm_ip (${i}0s)..."
     done
+    log "SSH ready on $vm_ip"
+
+    # Install our public key so future connections don't need the password
+    local pub_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILoLZkvjEE3ztp3V/OhTah6ajDz5Gn3PJpBeicand2AZ edward@DESKTOP-890T9K5"
+    ssh_cmd "mkdir -p /root/.ssh && echo '$pub_key' >> /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys"
+    log "SSH key installed — switching to key auth"
+    vm_pass=""  # Future calls use key auth
 
     ssh -o StrictHostKeyChecking=no "root@$vm_ip" << SSHEOF
 set -e
@@ -212,44 +261,10 @@ echo 'export GOPROXY=http://${CACHE_SERVER}:8081,direct' >> /etc/environment
 # Configure apt to use apt-cacher-ng
 echo 'Acquire::http::Proxy "http://${CACHE_SERVER}:3142";' > /etc/apt/apt.conf.d/01proxy
 
-# Install idle self-destruct (10 min with no circleci-agent = delete this VM)
-cat > /usr/local/bin/idle-check.sh << 'IDLEEOF'
-#!/bin/bash
-# Delete this VM via Katapult API if circleci-agent has been idle for 10+ min
-IDLE_MARKER="/tmp/.runner-idle-since"
-VM_ID=\$(curl -sf --max-time 3 "http://169.254.169.254/katapult/v1/vm-id" 2>/dev/null || \
-         cat /opt/circleci-runner/vm-id 2>/dev/null || echo "")
-
-if pgrep -f "circleci-agent" > /dev/null 2>&1; then
-    # Agent running — reset idle marker
-    rm -f "\$IDLE_MARKER"
-    exit 0
-fi
-
-# Agent not running
-if [ ! -f "\$IDLE_MARKER" ]; then
-    date +%s > "\$IDLE_MARKER"
-    exit 0
-fi
-
-IDLE_SINCE=\$(cat "\$IDLE_MARKER")
-NOW=\$(date +%s)
-IDLE_SECONDS=\$((NOW - IDLE_SINCE))
-
-if [ "\$IDLE_SECONDS" -gt 600 ]; then
-    echo "Runner idle for \${IDLE_SECONDS}s — self-destructing"
-    if [ -n "\$VM_ID" ]; then
-        curl -sf -X DELETE \
-            -H "Authorization: Bearer ${KATAPULT_TOKEN}" \
-            "https://api.katapult.io/core/v1/virtual_machines/\$VM_ID" 2>/dev/null || true
-    fi
-    shutdown -h now
-fi
-IDLEEOF
-chmod +x /usr/local/bin/idle-check.sh
-
-# Run idle check every 2 minutes
-echo "*/2 * * * * root /usr/local/bin/idle-check.sh >> /var/log/idle-check.log 2>&1" > /etc/cron.d/runner-idle-check
+# NOTE: No per-VM idle-check cron installed. VM lifecycle is managed entirely
+# by the autoscaler's cleanup_stale_vms() (time-based, 150 min max age).
+# In-VM idle detection is unreliable because circleci-agent runs jobs in its
+# own goroutines without spawning detectable subprocesses.
 
 # Start runner (template handles this, but ensure it's running)
 systemctl start circleci-runner 2>/dev/null || true
@@ -262,6 +277,7 @@ SSHEOF
 log "Katapult autoscaler starting (MAX_CONCURRENT_RUNNERS=$MAX_RUNNERS, POLL_INTERVAL=${POLL_INTERVAL}s)"
 
 while true; do
+    cleanup_stale_vms
     running=$(count_running_vms)
     pending=$(count_pending_jobs)
 
@@ -272,7 +288,7 @@ while true; do
         # Run synchronously — blocks until build complete + idle-check configured.
         # This prevents the poll loop from provisioning a second VM before the first
         # appears in the API list (which can take longer than POLL_INTERVAL seconds).
-        provision_runner
+        provision_runner || log "WARNING: provision_runner failed — will retry next poll"
     fi
 
     sleep "$POLL_INTERVAL"
