@@ -66,6 +66,10 @@ dpkg --configure -a 2>/dev/null || true
 systemctl stop apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
 systemctl mask apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/dev/null || true
 
+# Pre-install pip3 now (as root, apt lock clear) so the CI coverage
+# step never needs to run apt-get install mid-job.
+apt-get install -y -q python3-pip 2>/dev/null || true
+
 # Configure Docker to use cache server mirrors
 # Port 5000: Docker Hub pull-through mirror
 # Port 5001: GHCR pull-through mirror
