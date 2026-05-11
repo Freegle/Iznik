@@ -79,9 +79,10 @@ class StoriesAskService
                 ->where('groups.type', Group::TYPE_FREEGLE)
                 ->where('groups.publish', 1)
                 ->where(function ($q) {
-                    // stories defaults to 1 when not set; only disabled if explicitly 0
+                    // stories defaults to 1 when not set; only disabled if explicitly 0.
+                    // Compare as integers (not strings) to avoid JSON_UNQUOTE type-coercion issues.
                     $q->whereNull('groups.settings')
-                        ->orWhereRaw("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(groups.settings, '$.stories')), '1') != '0'");
+                        ->orWhereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.stories'), 1) != 0");
                 })
                 ->exists();
 
