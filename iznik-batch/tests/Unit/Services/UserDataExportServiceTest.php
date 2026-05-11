@@ -174,4 +174,46 @@ class UserDataExportServiceTest extends TestCase
         $this->assertNotEmpty($json['memberships']);
         $this->assertEquals($group->id, $json['memberships'][0]['groupid']);
     }
+
+    // --- Dry-run mode ---
+
+    public function test_dry_run_does_not_write_export_data(): void
+    {
+        $user = $this->createTestUser();
+        $this->createTestUserEmail($user);
+
+        $exportId = DB::table('users_exports')->insertGetId([
+            'userid' => $user->id,
+            'tag' => 'test-tag',
+            'requested' => now(),
+        ]);
+
+        $count = $this->service->processAll(dryRun: true);
+
+        $this->assertEquals(1, $count);
+
+        $export = DB::table('users_exports')->where('id', $exportId)->first();
+        $this->assertNull($export->started);
+        $this->assertNull($export->completed);
+        $this->assertNull($export->data);
+    }
+
+    public function test_dry_run_does_not_purge_old_exports(): void
+    {
+        $user = $this->createTestUser();
+        $this->createTestUserEmail($user);
+
+        $oldExportId = DB::table('users_exports')->insertGetId([
+            'userid' => $user->id,
+            'tag' => 'old-tag',
+            'requested' => now()->subDays(10),
+            'completed' => now()->subDays(10),
+            'data' => 'old-data',
+        ]);
+
+        $this->service->processAll(dryRun: true);
+
+        $export = DB::table('users_exports')->where('id', $oldExportId)->first();
+        $this->assertEquals('old-data', $export->data);
+    }
 }

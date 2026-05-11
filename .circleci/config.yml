@@ -11,6 +11,10 @@ parameters:
     type: boolean
     default: false
     description: "Set to true to build iOS and upload to TestFlight from current branch"
+  use_katapult:
+    type: boolean
+    default: false
+    description: "Set to true to run tests on a Katapult cloud runner"
 
 orbs:
   continuation: circleci/continuation@2
@@ -70,6 +74,7 @@ jobs:
             echo "Done checking for redundant pipelines"
       - run:
           name: Check self-hosted runner availability
+          no_output_timeout: 30m
           command: |
             # For manual promote or testflight, skip runner check — those workflows
             # don't use the runner. Only pass use_self_hosted to avoid re-passing
@@ -81,46 +86,94 @@ jobs:
               exit 0
             fi
 
-            # Query CircleCI runner API to see if our self-hosted runner is online
-            # Uses CIRCLE_TOKEN (project env var — personal API token) for runner API auth
-            RUNNER_AVAILABLE=false
+            # Katapult is the default runner for all CI builds.
+            KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-fl5K0qz5p68bMSPPBMH0D5MUSul0owTaCM3D4RnXgCc7Ew89}"
+            KATAPULT_ORG="org_0zTGdMXAyOgIV5DB"
+            KATAPULT_API="https://api.katapult.io/core/v1"
+            MAX_VMS=10
 
-            if [ -n "$CIRCLE_TOKEN" ]; then
-              echo "Checking for online runners in freegle/circleci-docker-runner..."
-              RESPONSE=$(curl -sf --retry 2 --retry-delay 3 \
-                -H "Circle-Token: ${CIRCLE_TOKEN}" \
-                "https://runner.circleci.com/api/v3/runner?resource-class=freegle/circleci-docker-runner" 2>/dev/null) || true
+            # Count VMs already provisioned (by name prefix) to enforce the cap.
+            # We count VMs, not online runners — busy runners appear offline to the
+            # runner API while executing a job, so online-runner counts would cause
+            # every setup stage to over-provision.
+            EXISTING_VMS=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
+              "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines" 2>/dev/null | \
+              jq '[.virtual_machines[] | select(.name | startswith("circleci-runner-"))] | length' 2>/dev/null || echo "0")
+            echo "Runner VMs: $EXISTING_VMS / $MAX_VMS"
 
-              if [ -n "$RESPONSE" ]; then
-                # The runner API lists all runners that have ever connected, not just live ones.
-                # A runner is considered online only if it connected within the last 120 seconds.
-                # Runners poll CircleCI every few seconds, so a live runner is always recent.
-                NOW_EPOCH=$(date +%s)
-                ONLINE_COUNT=0
-                while IFS= read -r LAST_CONNECTED; do
-                  [ -z "$LAST_CONNECTED" ] && continue
-                  # Strip fractional seconds and Z suffix for date parsing
-                  LAST_CLEAN=$(echo "$LAST_CONNECTED" | sed 's/\.[0-9]*Z$//' | sed 's/Z$//')
-                  LAST_EPOCH=$(date -d "${LAST_CLEAN}" +%s 2>/dev/null) || continue
-                  DIFF=$((NOW_EPOCH - LAST_EPOCH))
-                  echo "Runner last_connected=${LAST_CONNECTED} (${DIFF}s ago)"
-                  if [ "$DIFF" -lt 120 ]; then
-                    ONLINE_COUNT=$((ONLINE_COUNT + 1))
-                  fi
-                done < <(echo "$RESPONSE" | jq -r '.items[] | select(.resource_class=="freegle/circleci-docker-runner") | .last_connected' 2>/dev/null)
-                echo "Found ${ONLINE_COUNT} recently-connected runner(s)"
-                if [ "$ONLINE_COUNT" -gt "0" ]; then
-                  RUNNER_AVAILABLE=true
+            if [ "$EXISTING_VMS" -lt "$MAX_VMS" ]; then
+              # Retry up to 3 times: if configure fails, delete the bad VM and provision a fresh one.
+              # On all retries exhausted, job still routes to katapult and queues until a runner is free.
+              PROVISION_OK=false
+              for attempt in 1 2 3; do
+                [ "$attempt" -gt 1 ] && echo "=== Provision attempt $attempt/3 ==="
+                # Pipeline number suffix guarantees uniqueness even when multiple
+                # setup stages run date +%s in the same second.
+                VM_NAME="circleci-runner-$(date +%s)-<< pipeline.number >>"
+                echo "Provisioning VM: $VM_NAME"
+                if ! curl -sf -X POST "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines/build" \
+                  -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"name\":\"$VM_NAME\",\"hostname\":\"$VM_NAME\",\"package\":{\"id\":\"vmpkg_7k6bXXWeEXIc17Yt\"},\"disk_template\":{\"id\":\"dtpl_GsTMRz9tpUUNkmDO\"},\"data_center\":{\"id\":\"loc_UUhPmoCbpic6UX0Y\"}}" \
+                  > /dev/null; then
+                  echo "VM provisioning API call failed on attempt $attempt"
+                  sleep 10
+                  continue
                 fi
-              else
-                echo "Runner API check failed or returned empty response — falling back to cloud"
+                echo "Build triggered for $VM_NAME"
+
+                # Poll VM list until named VM appears, then poll state until 'started' (up to 15 min)
+                VM_ID="" VM_STATE="" VM_IP="" VM_PASS=""
+                for i in $(seq 1 90); do
+                  sleep 10
+                  if [ -z "$VM_ID" ]; then
+                    VM_ID=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                      "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines" 2>/dev/null | \
+                      jq -r --arg n "$VM_NAME" '.virtual_machines[] | select(.name == $n) | .id' 2>/dev/null || echo "")
+                    [ -n "$VM_ID" ] && echo "  VM appeared in list: $VM_ID"
+                  fi
+                  if [ -n "$VM_ID" ]; then
+                    DETAIL=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                      "${KATAPULT_API}/virtual_machines/${VM_ID}" 2>/dev/null || echo "{}")
+                    VM_STATE=$(echo "$DETAIL" | jq -r '.virtual_machine.state // ""' 2>/dev/null || echo "")
+                    VM_IP=$(echo "$DETAIL" | jq -r '.virtual_machine.ip_addresses[] | select(.address | contains(":") | not) | .address' 2>/dev/null | head -1 || echo "")
+                    if [ -z "$VM_PASS" ]; then
+                      VM_PASS=$(echo "$DETAIL" | jq -r '.virtual_machine.initial_root_password // ""' 2>/dev/null || echo "")
+                    fi
+                  fi
+                  echo "  [${i}/90] $VM_NAME state=${VM_STATE:-building} ip=${VM_IP:-pending}"
+                  [ "$VM_STATE" = "started" ] && break
+                done
+
+                if [ "$VM_STATE" != "started" ] || [ -z "$VM_IP" ]; then
+                  echo "Attempt $attempt: VM $VM_NAME did not reach started state"
+                  [ -n "$VM_ID" ] && curl -sf -X DELETE -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                    "${KATAPULT_API}/virtual_machines/$VM_ID" 2>/dev/null || true
+                  sleep 5
+                  continue
+                fi
+
+                if bash scripts/configure-katapult-vm.sh "$VM_IP" "$VM_PASS" "$VM_NAME" "$VM_ID" "$KATAPULT_TOKEN"; then
+                  PROVISION_OK=true
+                  break
+                else
+                  echo "Attempt $attempt: configure failed — deleting VM $VM_NAME ($VM_ID)"
+                  curl -sf -X DELETE -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                    "${KATAPULT_API}/virtual_machines/$VM_ID" 2>/dev/null || true
+                  sleep 5
+                fi
+              done
+
+              if [ "$PROVISION_OK" != "true" ]; then
+                echo "WARNING: All provision attempts failed — job will queue on existing runner pool"
               fi
             else
-              echo "CIRCLE_TOKEN not set — falling back to cloud"
+              echo "At VM cap ($MAX_VMS) — routing job to existing runner pool"
             fi
 
-            echo "Runner available: ${RUNNER_AVAILABLE}"
-            echo "{\"use_self_hosted\": ${RUNNER_AVAILABLE}}" > /tmp/pipeline-params.json
+            # Always route to Katapult resource class. If no runner is free the job
+            # queues until one finishes — no fallback to the local runner.
+            echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
             cat /tmp/pipeline-params.json
       - run:
           name: Mark CI as running on PR

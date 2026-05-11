@@ -542,6 +542,49 @@ describe('chat store', () => {
     })
   })
 
+  describe('fetchReviewChatsMT + fetchMessages merge', () => {
+    it('preserves review fields in listByChatMessageId after a per-room fetchMessages', async () => {
+      // Seed the store with a rich review-queue message via fetchReviewChatsMT.
+      // fetchMessages for the same room then returns only the slim per-room shape.
+      // The review fields (touserid, fromuserid) must survive the overwrite.
+      const store = useChatStore()
+      store.config = {}
+
+      const richMsg = {
+        id: 500,
+        chatid: 10,
+        userid: 1,
+        type: 'Chat',
+        message: 'hello',
+        date: '2026-01-01',
+        fromuserid: 1,
+        touserid: 2,
+        chatroom: { id: 10, chattype: 'User2User' },
+      }
+      mockFetchReviewChatsMT.mockResolvedValueOnce({ chatmessages: [richMsg] })
+      await store.fetchReviewChatsMT(10, {})
+
+      // Confirm the rich shape is stored
+      expect(store.messageById(500).touserid).toBe(2)
+
+      // Now fetchMessages returns the slim per-room shape (no touserid)
+      const slimMsg = {
+        id: 500,
+        chatid: 10,
+        userid: 1,
+        type: 'Chat',
+        message: 'hello',
+        date: '2026-01-01',
+      }
+      mockFetchMessages.mockResolvedValueOnce([slimMsg])
+      // Use force=true so the update() path definitely runs
+      await store.fetchMessages(10, true)
+
+      // touserid must still be present — merge, not replace
+      expect(store.messageById(500).touserid).toBe(2)
+    })
+  })
+
   describe('deleteMessage', () => {
     it('calls API and refetches messages', async () => {
       const store = useChatStore()

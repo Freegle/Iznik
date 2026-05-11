@@ -1925,6 +1925,22 @@ func PutUser(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to generate JWT")
 	}
 
+	// If an authenticated user (e.g. a moderator using Add Member) created this account,
+	// don't return auth tokens — returning them would overwrite the caller's own session.
+	// Auth tokens are only needed for self-signup where the caller becomes the new user.
+	callerID := WhoAmI(c)
+	if callerID > 0 {
+		resp := fiber.Map{
+			"ret":    0,
+			"status": "Success",
+			"id":     newUserID,
+		}
+		if req.Password == "" {
+			resp["password"] = password
+		}
+		return c.JSON(resp)
+	}
+
 	resp := fiber.Map{
 		"ret":    0,
 		"status": "Success",
