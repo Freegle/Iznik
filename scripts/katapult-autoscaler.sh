@@ -112,7 +112,7 @@ for v in data.get('virtual_machines',[]):
 }
 
 provision_runner() {
-    local name="katapult-runner-$(date +%s)"
+    local name="circleci-runner-$(date +%s)"
     log "Provisioning runner VM: $name"
 
     if [ "$DRY_RUN" = "1" ]; then

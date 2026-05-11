@@ -97,7 +97,14 @@ jobs:
                 if [ -z "$CIRCLE_TOKEN" ]; then echo "0"; return; fi
                 curl -sf -H "Circle-Token: $CIRCLE_TOKEN" \
                   "${RUNNER_API}/runner?resource-class=freegle/katapult-runner" 2>/dev/null \
-                  | python3 -c "import json,sys; d=json.load(sys.stdin); print(len([r for r in d.get('items',[]) if r.get('resource_class')=='freegle/katapult-runner' and r.get('connected',False)]))" 2>/dev/null \
+                  | python3 -c "
+import json,sys
+from datetime import datetime,timezone,timedelta
+d=json.load(sys.stdin)
+cutoff=datetime.now(timezone.utc)-timedelta(seconds=120)
+active=[r for r in d.get('items',[]) if r.get('resource_class')=='freegle/katapult-runner' and r.get('last_connected','') and datetime.fromisoformat(r['last_connected'].replace('Z','+00:00'))>cutoff]
+print(len(active))
+" 2>/dev/null \
                   || echo "0"
               }
 
@@ -106,7 +113,7 @@ jobs:
 
               if [ "$ONLINE" = "0" ]; then
                 if [ -n "$KATAPULT_TOKEN" ]; then
-                  VM_NAME="katapult-runner-$(date +%s)"
+                  VM_NAME="circleci-runner-$(date +%s)"
                   echo "No runner online — provisioning VM: $VM_NAME"
                   curl -sf -X POST "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines/build" \
                     -H "Authorization: Bearer $KATAPULT_TOKEN" \
