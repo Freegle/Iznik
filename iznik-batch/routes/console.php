@@ -253,6 +253,14 @@ Schedule::command('chats:send-tryst-reminders')
     ->sendOutputTo(cronLog('chats:send-tryst-reminders'))
     ->runInBackground();
 
+// Chase up mods about User2Mod chats with no mod reply older than 6.55 days.
+// V1: cron/chat_chaseupmods.php (daily 15:30)
+Schedule::command('chats:chaseup-mods')
+    ->dailyAt('15:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:chaseup-mods'))
+    ->runInBackground();
+
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
 // V1: cron/chat_spam.php — disabled pending sign-off
 // Schedule::command('chats:process-spam')
@@ -634,6 +642,13 @@ Schedule::command('groups:remind-closed')
     ->sendOutputTo(cronLog('groups:remind-closed'))
     ->runInBackground();
 
+// V1: cron/group_customisation.php
+Schedule::command('groups:remind-customisation')
+    ->monthlyOn(1, '08:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:remind-customisation'))
+    ->runInBackground();
+
 // V1: cron/donations_thank.php
 // Schedule::command('mail:donations:thank')
 //     ->dailyAt('09:00')
@@ -758,30 +773,6 @@ Schedule::command('noticeboards:thank-users')
     ->runInBackground();
 
 // =============================================================================
-// LOVEJUNK TN INVOICE
-// =============================================================================
-
-// Monthly LoveJunk/TrashNothing invoice split — run on 1st of month at 15:00.
-// V1: cron/lovejunk_tn_invoice.php (monthly, 1st 15:00)
-Schedule::command('lovejunk:send-tn-invoice')
-    ->monthlyOn(1, '15:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('lovejunk:send-tn-invoice'))
-    ->runInBackground();
-
-// =============================================================================
-// BIRTHDAY EMAILS
-// =============================================================================
-
-// Send birthday emails to members of groups founded on today's date.
-// V1: cron/birthday.php (daily at 12:00)
-Schedule::command('birthday:send-emails')
-    ->dailyAt('12:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('birthday:send-emails'))
-    ->runInBackground();
-
-// =============================================================================
 // STORIES
 // =============================================================================
 
@@ -791,30 +782,6 @@ Schedule::command('stories:send-to-central')
     ->weeklyOn(5, '14:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('stories:send-to-central'))
-    ->runInBackground();
-
-// Auto-reject stale chat review messages (7+ days) and notify group mods of pending reviews (48+ hours).
-// V1: cron/chat_review.php (daily)
-Schedule::command('chats:review-pending')
-    ->dailyAt('09:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('chats:review-pending'))
-    ->runInBackground();
-
-// Send engagement emails to at-risk users (7 days before inactive) and inactive users.
-// V1: cron/engage.php (daily 16:00)
-Schedule::command('mail:engage')
-    ->dailyAt('16:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('mail:engage'))
-    ->runInBackground();
-
-// Check for inactive mods and notify group owners/mentors.
-// V1: cron/mod_active.php (weekly Monday 15:00)
-Schedule::command('groups:check-mod-welfare')
-    ->weeklyOn(1, '15:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('groups:check-mod-welfare'))
     ->runInBackground();
 
 // =============================================================================
@@ -834,3 +801,19 @@ Schedule::command('data:git-summary')
 // immediate promotion if the commit message has hotfix: prefix.
 // See iznik-nuxt3/.circleci/config.yml
 
+// Auto-reject chat messages stuck in review for 7+ days; notify group mods
+// about messages pending review for 48+ hours; send mentors a daily summary.
+// V1: cron/chat_review.php (daily)
+Schedule::command('chats:review-pending')
+    ->dailyAt('09:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:review-pending'))
+    ->runInBackground();
+
+// Alert geeks about Freegle groups that have not received messages in 7+ days.
+// V1: cron/groups_nomessages.php (daily)
+Schedule::command('groups:alert-no-messages')
+    ->dailyAt('07:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:alert-no-messages'))
+    ->runInBackground();
