@@ -103,7 +103,7 @@ ln -sf /usr/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 
 # Configure CircleCI runner
 mkdir -p /opt/circleci-runner
 
-# Write config atomically: write to .tmp then mv so start.sh's `until [ -f config ]`
+# Write config atomically: write to .tmp then mv so start.sh's until-loop
 # check only succeeds once the file is complete, eliminating the EOF parse race.
 cat > /opt/circleci-runner/circleci-runner-config.yaml.tmp << 'EOF'
 runner:
