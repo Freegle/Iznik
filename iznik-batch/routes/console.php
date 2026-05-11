@@ -253,6 +253,14 @@ Schedule::command('chats:send-tryst-reminders')
     ->sendOutputTo(cronLog('chats:send-tryst-reminders'))
     ->runInBackground();
 
+// Chase up mods about User2Mod chats with no mod reply older than 6.55 days.
+// V1: cron/chat_chaseupmods.php (daily 15:30)
+Schedule::command('chats:chaseup-mods')
+    ->dailyAt('15:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:chaseup-mods'))
+    ->runInBackground();
+
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
 // V1: cron/chat_spam.php — disabled pending sign-off
 // Schedule::command('chats:process-spam')
@@ -634,6 +642,13 @@ Schedule::command('groups:remind-closed')
     ->sendOutputTo(cronLog('groups:remind-closed'))
     ->runInBackground();
 
+// V1: cron/group_customisation.php
+Schedule::command('groups:remind-customisation')
+    ->monthlyOn(1, '08:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:remind-customisation'))
+    ->runInBackground();
+
 // V1: cron/donations_thank.php
 // Schedule::command('mail:donations:thank')
 //     ->dailyAt('09:00')
@@ -725,12 +740,12 @@ Schedule::command('messages:update-index')
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
 
-// Community event roundup — weekly to group members with upcoming events.
-// V1: cron/events.php (weekly Thu 23:00)
-Schedule::command('mail:events-digest')
-    ->weeklyOn(4, '23:00')  // Thursday at 11pm
+// Notify group mods about recent chitchat (newsfeed) posts from their members.
+// V1: cron/newsfeed_modnotif.php (daily 13:30)
+Schedule::command('mail:newsfeed-mod-notif')
+    ->dailyAt('13:30')
     ->withoutOverlapping()
-    ->sendOutputTo(cronLog('mail:events-digest'))
+    ->sendOutputTo(cronLog('mail:newsfeed-mod-notif'))
     ->runInBackground();
 
 // =============================================================================
@@ -758,6 +773,18 @@ Schedule::command('noticeboards:thank-users')
     ->runInBackground();
 
 // =============================================================================
+// STORIES
+// =============================================================================
+
+// Send unreviewed stories to central team for newsletter voting.
+// V1: cron/stories_tocentral.php (weekly, Friday 14:00)
+Schedule::command('stories:send-to-central')
+    ->weeklyOn(5, '14:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stories:send-to-central'))
+    ->runInBackground();
+
+// =============================================================================
 // GIT SUMMARY
 // =============================================================================
 
@@ -781,4 +808,12 @@ Schedule::command('chats:review-pending')
     ->dailyAt('09:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('chats:review-pending'))
+    ->runInBackground();
+
+// Alert geeks about Freegle groups that have not received messages in 7+ days.
+// V1: cron/groups_nomessages.php (daily)
+Schedule::command('groups:alert-no-messages')
+    ->dailyAt('07:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:alert-no-messages'))
     ->runInBackground();
