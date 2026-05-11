@@ -10,6 +10,9 @@ export default defineNuxtConfig({
     },
   },
   nitro: {
+    externals: {
+      external: ['better-sqlite3'],
+    },
     prerender: {
       crawlLinks: false,
       routes: [],
