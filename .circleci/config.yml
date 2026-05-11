@@ -74,6 +74,7 @@ jobs:
             echo "Done checking for redundant pipelines"
       - run:
           name: Check self-hosted runner availability
+          no_output_timeout: 30m
           command: |
             # For manual promote or testflight, skip runner check — those workflows
             # don't use the runner. Only pass use_self_hosted to avoid re-passing
@@ -86,53 +87,88 @@ jobs:
             fi
 
             if [ "<< pipeline.parameters.use_katapult >>" = "true" ] || [ "<< pipeline.git.branch >>" = "test/katapult-runner-e2e" ]; then
-              echo "Katapult runner requested — ensuring runner is online before continuing"
+              echo "Katapult preferred — checking runner availability"
               KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-}"
               KATAPULT_ORG="org_0zTGdMXAyOgIV5DB"
               KATAPULT_API="https://api.katapult.io/core/v1"
               RUNNER_API="https://runner.circleci.com/api/v3"
 
-              # Check if a Katapult runner is already online
-              ONLINE=0
-              if [ -n "$CIRCLE_TOKEN" ]; then
-                ONLINE=$(curl -sf -H "Circle-Token: $CIRCLE_TOKEN" \
+              katapult_online() {
+                if [ -z "$CIRCLE_TOKEN" ]; then echo "0"; return; fi
+                curl -sf -H "Circle-Token: $CIRCLE_TOKEN" \
                   "${RUNNER_API}/runner?resource-class=freegle/katapult-runner" 2>/dev/null \
-                  | python3 -c "import json,sys; d=json.load(sys.stdin); print(len([r for r in d.get('items',[]) if r.get('resource_class')=='freegle/katapult-runner']))" 2>/dev/null || echo "0")
-              fi
+                  | python3 -c "import json,sys; d=json.load(sys.stdin); print(len([r for r in d.get('items',[]) if r.get('resource_class')=='freegle/katapult-runner']))" 2>/dev/null \
+                  || echo "0"
+              }
+
+              ONLINE=$(katapult_online)
               echo "Katapult runners currently online: $ONLINE"
 
-              if [ "$ONLINE" = "0" ] && [ -n "$KATAPULT_TOKEN" ]; then
-                VM_NAME="katapult-runner-$(date +%s)"
-                echo "No runner online — provisioning VM: $VM_NAME"
-                curl -sf -X POST "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines/build" \
-                  -H "Authorization: Bearer $KATAPULT_TOKEN" \
-                  -H "Content-Type: application/json" \
-                  -d "{\"name\":\"$VM_NAME\",\"hostname\":\"$VM_NAME\",\"package\":{\"id\":\"vmpkg_7k6bXXWeEXIc17Yt\"},\"disk_template\":{\"id\":\"dtpl_GsTMRz9tpUUNkmDO\"},\"data_center\":{\"id\":\"loc_UUhPmoCbpic6UX0Y\"}}" \
-                  > /dev/null 2>&1 && echo "VM build triggered" || echo "VM provisioning API call failed"
+              if [ "$ONLINE" = "0" ]; then
+                if [ -n "$KATAPULT_TOKEN" ]; then
+                  VM_NAME="katapult-runner-$(date +%s)"
+                  echo "No runner online — provisioning VM: $VM_NAME"
+                  curl -sf -X POST "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines/build" \
+                    -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"name\":\"$VM_NAME\",\"hostname\":\"$VM_NAME\",\"package\":{\"id\":\"vmpkg_7k6bXXWeEXIc17Yt\"},\"disk_template\":{\"id\":\"dtpl_GsTMRz9tpUUNkmDO\"},\"data_center\":{\"id\":\"loc_UUhPmoCbpic6UX0Y\"}}" \
+                    > /dev/null && echo "Build triggered for $VM_NAME" || echo "VM provisioning API call failed"
 
-                # Wait for runner to come online (up to 5 minutes)
-                echo "Waiting for Katapult runner to come online..."
-                for i in $(seq 1 30); do
-                  sleep 10
-                  ONLINE=$(curl -sf -H "Circle-Token: $CIRCLE_TOKEN" \
-                    "${RUNNER_API}/runner?resource-class=freegle/katapult-runner" 2>/dev/null \
-                    | python3 -c "import json,sys; d=json.load(sys.stdin); print(len([r for r in d.get('items',[]) if r.get('resource_class')=='freegle/katapult-runner']))" 2>/dev/null || echo "0")
-                  echo "  [${i}/30] Katapult runners online: $ONLINE"
-                  if [ "$ONLINE" -gt "0" ]; then
-                    echo "✅ Runner is online — proceeding"
-                    break
+                  # Poll VM list until named VM appears, then poll state until 'started' (up to 15 min)
+                  VM_ID="" VM_STATE="" VM_IP="" VM_PASS=""
+                  for i in $(seq 1 90); do
+                    sleep 10
+                    if [ -z "$VM_ID" ]; then
+                      VM_ID=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                        "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines" 2>/dev/null | \
+                        jq -r --arg n "$VM_NAME" '.virtual_machines[] | select(.name == $n) | .id' 2>/dev/null || echo "")
+                      [ -n "$VM_ID" ] && echo "  VM appeared in list: $VM_ID"
+                    fi
+                    if [ -n "$VM_ID" ]; then
+                      DETAIL=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                        "${KATAPULT_API}/virtual_machines/${VM_ID}" 2>/dev/null || echo "{}")
+                      VM_STATE=$(echo "$DETAIL" | jq -r '.virtual_machine.state // ""' 2>/dev/null || echo "")
+                      VM_IP=$(echo "$DETAIL" | jq -r '.virtual_machine.ip_addresses[] | select(.address | contains(":") | not) | .address' 2>/dev/null | head -1 || echo "")
+                      if [ -z "$VM_PASS" ]; then
+                        VM_PASS=$(echo "$DETAIL" | jq -r '.virtual_machine.initial_root_password // ""' 2>/dev/null || echo "")
+                      fi
+                    fi
+                    echo "  [${i}/90] $VM_NAME state=${VM_STATE:-building} ip=${VM_IP:-pending}"
+                    [ "$VM_STATE" = "started" ] && break
+                  done
+
+                  if [ "$VM_STATE" = "started" ] && [ -n "$VM_IP" ]; then
+                    bash scripts/configure-katapult-vm.sh "$VM_IP" "$VM_PASS" "$VM_NAME" "$VM_ID" "$KATAPULT_TOKEN" \
+                      || echo "WARNING: configure-katapult-vm.sh failed — runner may need manual setup"
+                  else
+                    echo "WARNING: VM $VM_NAME did not reach started state — skipping configuration"
                   fi
-                done
-                if [ "$ONLINE" = "0" ]; then
-                  echo "⚠️  Runner did not come online within 5 minutes — job will queue until it does"
+
+                  echo "Waiting for Katapult runner to come online (up to 5 min)..."
+                  for i in $(seq 1 30); do
+                    sleep 10
+                    ONLINE=$(katapult_online)
+                    echo "  [${i}/30] Katapult runners online: $ONLINE"
+                    if [ "$ONLINE" -gt "0" ]; then
+                      echo "✅ Katapult runner is online"
+                      break
+                    fi
+                  done
+                else
+                  echo "KATAPULT_API_TOKEN not set — cannot provision VM"
                 fi
               else
-                echo "✅ Runner already online — proceeding immediately"
+                echo "✅ Katapult runner already online"
               fi
 
-              echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
-              cat /tmp/pipeline-params.json
-              exit 0
+              if [ "$ONLINE" -gt "0" ]; then
+                echo "{\"use_self_hosted\": false, \"use_katapult\": true}" > /tmp/pipeline-params.json
+                cat /tmp/pipeline-params.json
+                exit 0
+              fi
+
+              echo "⚠️  No Katapult runner available — falling back to local runner check"
+              # Fall through to local/cloud runner check below
             fi
 
             # Query CircleCI runner API to see if our self-hosted runner is online
