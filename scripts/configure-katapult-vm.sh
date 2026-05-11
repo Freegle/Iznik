@@ -55,6 +55,23 @@ sshpass -p "$VM_PASS" ssh \
     "root@$VM_IP" << SSHEOF
 set -e
 
+# Kill unattended-upgrades and prevent it from restarting.
+# 'mask' alone won't kill an already-running process, so we kill first,
+# remove stale locks, and run dpkg --configure -a to clean up any
+# interrupted dpkg state. These VMs are ephemeral so lock removal is safe.
+pkill -9 unattended-upgrades 2>/dev/null || true
+pkill -9 apt-get 2>/dev/null || true
+rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
+dpkg --configure -a 2>/dev/null || true
+systemctl stop apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+systemctl mask apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/dev/null || true
+
+# Pre-install pip3 now (as root, apt lock clear) so the CI coverage
+# step never needs to run apt-get install mid-job.
+# Update package lists first (no proxy configured yet — direct internet).
+apt-get update -qq 2>/dev/null || true
+apt-get install -y -q python3-pip 2>/dev/null || true
+
 # Configure Docker to use cache server mirrors
 # Port 5000: Docker Hub pull-through mirror
 # Port 5001: GHCR pull-through mirror
@@ -95,8 +112,9 @@ api:
   auth_token: "${RUNNER_AUTH_TOKEN}"
 EOF
 
-# Store VM ID for self-destruct (used by idle-check if metadata service unavailable)
+# Store VM ID and API token for self-destruct and teardown step
 echo "${VM_ID}" > /opt/circleci-runner/vm-id
+echo "${KATAPULT_TOKEN}" > /opt/circleci-runner/katapult-token
 
 # Configure npm to use Verdaccio cache
 cat > /root/.npmrc << 'EOF'
@@ -112,6 +130,7 @@ echo 'Acquire::http::Proxy "http://${CACHE_SERVER}:3142";' > /etc/apt/apt.conf.d
 # Idle self-destruct: detect active job via Docker containers.
 # A running CI job always has freegle compose containers up.
 # When docker compose down runs at job end, containers disappear — starts 10-min timer.
+# This is the PRIMARY cleanup mechanism. The teardown step does not call DELETE.
 cat > /usr/local/bin/idle-check.sh << 'IDLEEOF'
 #!/bin/bash
 IDLE_MARKER="/tmp/.runner-idle-since"
@@ -141,8 +160,10 @@ IDLE_SINCE=\$(cat "\$IDLE_MARKER")
 NOW=\$(date +%s)
 IDLE_SECONDS=\$((NOW - IDLE_SINCE))
 
-# Safety-net: destroy VM after 30 minutes idle post-job (primary teardown is job end-step)
-if [ "\$IDLE_SECONDS" -gt 1800 ]; then
+# Destroy VM after 10 minutes idle. 10 min is long enough for a queued job to
+# be dispatched and start containers, but short enough to avoid wasting resources.
+# Must exceed the container-less gap during job startup (checkout + build ≈ 420s).
+if [ "\$IDLE_SECONDS" -gt 600 ]; then
     echo "Runner idle for \${IDLE_SECONDS}s — self-destructing"
     if [ -n "\$VM_ID" ]; then
         curl -sf -X DELETE \

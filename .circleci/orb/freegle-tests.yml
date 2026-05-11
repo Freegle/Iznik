@@ -117,11 +117,17 @@ commands:
       - run:
           name: Kill stale apt processes
           command: |
-            if [ "$SELF_HOSTED_RUNNER" = "true" ]; then
-              echo "Self-hosted runner — skipping apt cleanup (not needed)"
+            # Skip on the WSL2 local self-hosted runner — it doesn't run
+            # unattended-upgrades. Katapult VMs run Ubuntu 22.04 and DO need
+            # cleanup even though SELF_HOSTED_RUNNER=true.
+            IS_KATAPULT_VM=false
+            [ -f /opt/circleci-runner/vm-id ] && IS_KATAPULT_VM=true
+            if [ "$SELF_HOSTED_RUNNER" = "true" ] && [ "$IS_KATAPULT_VM" != "true" ]; then
+              echo "WSL2 self-hosted runner — skipping apt cleanup (not needed)"
               exit 0
             fi
             # Kill any stale unattended-upgrade processes that may block apt
+            sudo pkill -9 unattended-upgrades 2>/dev/null || true
             sudo pkill -9 unattended-upgrade 2>/dev/null || true
             sudo pkill -9 apt 2>/dev/null || true
             sudo pkill -9 dpkg 2>/dev/null || true
@@ -2797,7 +2803,8 @@ jobs:
             echo "=== Patch Coverage Check ==="
             if ! command -v pip3 >/dev/null 2>&1 && ! command -v pip >/dev/null 2>&1; then
               echo "pip3 not found — installing python3-pip"
-              sudo apt-get install -y --no-install-recommends python3-pip
+              # Bypass apt-cacher-ng proxy: python3-pip may not be cached and the proxy hangs on cache misses.
+              sudo apt-get -o Acquire::http::Proxy="" install -y --no-install-recommends python3-pip
             fi
             pip3 install --quiet --break-system-packages diff-cover lcov-cobertura 2>/dev/null || \
               pip install --quiet --break-system-packages diff-cover lcov-cobertura 2>/dev/null || \
@@ -2969,15 +2976,23 @@ jobs:
           name: Teardown Katapult VM
           when: always
           command: |
-            VM_ID_FILE="/opt/circleci-runner/vm-id"
-            if [ ! -f "$VM_ID_FILE" ]; then exit 0; fi
-            VM_ID=$(cat "$VM_ID_FILE" 2>/dev/null || echo "")
-            if [ -z "$VM_ID" ] || [ -z "${KATAPULT_API_TOKEN:-}" ]; then exit 0; fi
-            echo "Deleting Katapult VM $VM_ID..."
-            curl -sf -X DELETE \
-              -H "Authorization: Bearer $KATAPULT_API_TOKEN" \
-              "https://api.katapult.io/core/v1/virtual_machines/$VM_ID" 2>/dev/null && \
-              echo "VM deletion triggered" || echo "VM deletion API call failed (VM may already be gone)"
+            # VM cleanup is handled entirely by the idle-check cron on each VM.
+            # It detects when freegle-ci containers go down and deletes + shuts down
+            # the VM after 10 minutes idle — long enough to pick up queued jobs.
+            # Calling DELETE here caused ghost VMs: Katapult's async deletion (10-30 min)
+            # left live runners that grabbed new jobs, then died mid-job.
+            if [ ! -f "/opt/circleci-runner/vm-id" ]; then exit 0; fi
+            # Bring containers down so idle-check can detect the idle state.
+            # Without this, containers from the completed job stay up indefinitely
+            # and the idle-check never fires (it waits for freegle-ci containers to go away).
+            docker compose down --remove-orphans 2>/dev/null || true
+            # Fallback: stop any freegle-ci containers still running (handles COMPOSE_FILE mismatch)
+            STILL_RUNNING=$(docker ps -q --filter 'label=com.docker.compose.project=freegle-ci' 2>/dev/null || true)
+            if [ -n "$STILL_RUNNING" ]; then
+              echo "Stopping remaining freegle-ci containers..."
+              docker stop $STILL_RUNNING 2>/dev/null || true
+            fi
+            echo "Katapult VM $(cat /opt/circleci-runner/vm-id) will self-destruct via idle-check after 10 min idle"
 
   # === App Build Jobs ===
 
