@@ -274,7 +274,14 @@ IDLE_MARKER="/tmp/.runner-idle-since"
 VM_ID=\$(curl -sf --max-time 3 "http://169.254.169.254/katapult/v1/vm-id" 2>/dev/null || \
          cat /opt/circleci-runner/vm-id 2>/dev/null || echo "")
 
-if docker ps -q --filter "label=com.docker.compose.project=freegle" 2>/dev/null | grep -q .; then
+# Grace period: don't fire idle-check for first 20 minutes after boot.
+UPTIME_SECONDS=\$(awk '{print int(\$1)}' /proc/uptime)
+if [ "\$UPTIME_SECONDS" -lt 1200 ]; then
+    exit 0
+fi
+
+# A running CI job uses COMPOSE_PROJECT_NAME=freegle-ci
+if docker ps -q --filter "label=com.docker.compose.project=freegle-ci" 2>/dev/null | grep -q .; then
     rm -f "\$IDLE_MARKER"
     exit 0
 fi
@@ -288,7 +295,8 @@ IDLE_SINCE=\$(cat "\$IDLE_MARKER")
 NOW=\$(date +%s)
 IDLE_SECONDS=\$((NOW - IDLE_SINCE))
 
-if [ "\$IDLE_SECONDS" -gt 600 ]; then
+# Safety-net: destroy VM after 30 minutes idle post-job (primary teardown is job end-step)
+if [ "\$IDLE_SECONDS" -gt 1800 ]; then
     echo "Runner idle for \${IDLE_SECONDS}s — self-destructing"
     if [ -n "\$VM_ID" ]; then
         curl -sf -X DELETE \

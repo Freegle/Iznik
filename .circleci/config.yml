@@ -102,44 +102,70 @@ jobs:
               echo "Runner VMs: $EXISTING_VMS / $MAX_VMS"
 
               if [ "$EXISTING_VMS" -lt "$MAX_VMS" ]; then
-                # Pipeline number suffix guarantees uniqueness even when multiple
-                # setup stages run date +%s in the same second.
-                VM_NAME="circleci-runner-$(date +%s)-<< pipeline.number >>"
-                echo "Provisioning VM: $VM_NAME"
-                curl -sf -X POST "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines/build" \
-                  -H "Authorization: Bearer $KATAPULT_TOKEN" \
-                  -H "Content-Type: application/json" \
-                  -d "{\"name\":\"$VM_NAME\",\"hostname\":\"$VM_NAME\",\"package\":{\"id\":\"vmpkg_7k6bXXWeEXIc17Yt\"},\"disk_template\":{\"id\":\"dtpl_GsTMRz9tpUUNkmDO\"},\"data_center\":{\"id\":\"loc_UUhPmoCbpic6UX0Y\"}}" \
-                  > /dev/null && echo "Build triggered for $VM_NAME" || echo "VM provisioning API call failed"
+                # Retry up to 3 times: if configure fails, delete the bad VM and provision a fresh one.
+                # On all retries exhausted, job still routes to katapult and queues until a runner is free.
+                PROVISION_OK=false
+                for attempt in 1 2 3; do
+                  [ "$attempt" -gt 1 ] && echo "=== Provision attempt $attempt/3 ==="
+                  # Pipeline number suffix guarantees uniqueness even when multiple
+                  # setup stages run date +%s in the same second.
+                  VM_NAME="circleci-runner-$(date +%s)-<< pipeline.number >>"
+                  echo "Provisioning VM: $VM_NAME"
+                  if ! curl -sf -X POST "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines/build" \
+                    -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"name\":\"$VM_NAME\",\"hostname\":\"$VM_NAME\",\"package\":{\"id\":\"vmpkg_7k6bXXWeEXIc17Yt\"},\"disk_template\":{\"id\":\"dtpl_GsTMRz9tpUUNkmDO\"},\"data_center\":{\"id\":\"loc_UUhPmoCbpic6UX0Y\"}}" \
+                    > /dev/null; then
+                    echo "VM provisioning API call failed on attempt $attempt"
+                    sleep 10
+                    continue
+                  fi
+                  echo "Build triggered for $VM_NAME"
 
-                # Poll VM list until named VM appears, then poll state until 'started' (up to 15 min)
-                VM_ID="" VM_STATE="" VM_IP="" VM_PASS=""
-                for i in $(seq 1 90); do
-                  sleep 10
-                  if [ -z "$VM_ID" ]; then
-                    VM_ID=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
-                      "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines" 2>/dev/null | \
-                      jq -r --arg n "$VM_NAME" '.virtual_machines[] | select(.name == $n) | .id' 2>/dev/null || echo "")
-                    [ -n "$VM_ID" ] && echo "  VM appeared in list: $VM_ID"
-                  fi
-                  if [ -n "$VM_ID" ]; then
-                    DETAIL=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
-                      "${KATAPULT_API}/virtual_machines/${VM_ID}" 2>/dev/null || echo "{}")
-                    VM_STATE=$(echo "$DETAIL" | jq -r '.virtual_machine.state // ""' 2>/dev/null || echo "")
-                    VM_IP=$(echo "$DETAIL" | jq -r '.virtual_machine.ip_addresses[] | select(.address | contains(":") | not) | .address' 2>/dev/null | head -1 || echo "")
-                    if [ -z "$VM_PASS" ]; then
-                      VM_PASS=$(echo "$DETAIL" | jq -r '.virtual_machine.initial_root_password // ""' 2>/dev/null || echo "")
+                  # Poll VM list until named VM appears, then poll state until 'started' (up to 15 min)
+                  VM_ID="" VM_STATE="" VM_IP="" VM_PASS=""
+                  for i in $(seq 1 90); do
+                    sleep 10
+                    if [ -z "$VM_ID" ]; then
+                      VM_ID=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                        "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines" 2>/dev/null | \
+                        jq -r --arg n "$VM_NAME" '.virtual_machines[] | select(.name == $n) | .id' 2>/dev/null || echo "")
+                      [ -n "$VM_ID" ] && echo "  VM appeared in list: $VM_ID"
                     fi
+                    if [ -n "$VM_ID" ]; then
+                      DETAIL=$(curl -sf -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                        "${KATAPULT_API}/virtual_machines/${VM_ID}" 2>/dev/null || echo "{}")
+                      VM_STATE=$(echo "$DETAIL" | jq -r '.virtual_machine.state // ""' 2>/dev/null || echo "")
+                      VM_IP=$(echo "$DETAIL" | jq -r '.virtual_machine.ip_addresses[] | select(.address | contains(":") | not) | .address' 2>/dev/null | head -1 || echo "")
+                      if [ -z "$VM_PASS" ]; then
+                        VM_PASS=$(echo "$DETAIL" | jq -r '.virtual_machine.initial_root_password // ""' 2>/dev/null || echo "")
+                      fi
+                    fi
+                    echo "  [${i}/90] $VM_NAME state=${VM_STATE:-building} ip=${VM_IP:-pending}"
+                    [ "$VM_STATE" = "started" ] && break
+                  done
+
+                  if [ "$VM_STATE" != "started" ] || [ -z "$VM_IP" ]; then
+                    echo "Attempt $attempt: VM $VM_NAME did not reach started state"
+                    [ -n "$VM_ID" ] && curl -sf -X DELETE -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                      "${KATAPULT_API}/virtual_machines/$VM_ID" 2>/dev/null || true
+                    sleep 5
+                    continue
                   fi
-                  echo "  [${i}/90] $VM_NAME state=${VM_STATE:-building} ip=${VM_IP:-pending}"
-                  [ "$VM_STATE" = "started" ] && break
+
+                  if bash scripts/configure-katapult-vm.sh "$VM_IP" "$VM_PASS" "$VM_NAME" "$VM_ID" "$KATAPULT_TOKEN"; then
+                    PROVISION_OK=true
+                    break
+                  else
+                    echo "Attempt $attempt: configure failed — deleting VM $VM_NAME ($VM_ID)"
+                    curl -sf -X DELETE -H "Authorization: Bearer $KATAPULT_TOKEN" \
+                      "${KATAPULT_API}/virtual_machines/$VM_ID" 2>/dev/null || true
+                    sleep 5
+                  fi
                 done
 
-                if [ "$VM_STATE" = "started" ] && [ -n "$VM_IP" ]; then
-                  bash scripts/configure-katapult-vm.sh "$VM_IP" "$VM_PASS" "$VM_NAME" "$VM_ID" "$KATAPULT_TOKEN" \
-                    || echo "WARNING: configure-katapult-vm.sh failed — runner may need manual setup"
-                else
-                  echo "WARNING: VM $VM_NAME did not reach started state — skipping configuration"
+                if [ "$PROVISION_OK" != "true" ]; then
+                  echo "WARNING: All provision attempts failed — job will queue on existing runner pool"
                 fi
               else
                 echo "At VM cap ($MAX_VMS) — routing job to existing runner pool"
