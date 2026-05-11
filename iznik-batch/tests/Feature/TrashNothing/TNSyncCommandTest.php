@@ -9,7 +9,6 @@ use App\Services\LokiService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
-use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Psr\Log\NullLogger;
@@ -28,7 +27,6 @@ use Tests\TestCase;
  * memory accumulation. 28+ artisan() calls in one process exhaust the heap
  * because PHP's zend_mm doubles its segment size on each expansion attempt.
  */
-#[CoversNothing]
 #[RunTestsInSeparateProcesses]
 #[PreserveGlobalState(false)]
 class TNSyncCommandTest extends TestCase
@@ -48,13 +46,6 @@ class TNSyncCommandTest extends TestCase
         // Each artisan() call boots a full Laravel kernel with many cyclic references that
         // PHP's reference counter won't collect automatically — gc_collect_cycles() does.
         gc_collect_cycles();
-
-        // Stop PCOV before booting the app: this class is #[CoversNothing] so no coverage
-        // is needed, and stopping prevents the coverage buffer from growing at all.
-        if (extension_loaded('pcov')) {
-            \pcov\stop();
-            \pcov\clear();
-        }
 
         parent::setUp();
 
@@ -86,12 +77,6 @@ class TNSyncCommandTest extends TestCase
         // and Eloquent after each artisan() run. Without this, cycles accumulate
         // across the 41 tests in this class and exhaust the 1GB memory limit.
         gc_collect_cycles();
-
-        if (extension_loaded('pcov')) {
-            \pcov\clear();
-            // Restart PCOV so the next test class's coverage is collected normally.
-            \pcov\start();
-        }
     }
 
     // =========================================================================
@@ -587,8 +572,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_stores_max_change_date(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user = $this->createTestUser();
 
         Http::fake([
