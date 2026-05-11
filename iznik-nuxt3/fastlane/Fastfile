@@ -439,6 +439,96 @@ platform :ios do
     UI.success("✅ Successfully uploaded to TestFlight!")
   end
 
+  desc "Build and upload ModTools to TestFlight"
+  lane :modtools_beta do
+    unless ENV['APP_STORE_CONNECT_API_KEY_KEY_ID']
+      UI.user_error!("❌ CRITICAL: APP_STORE_CONNECT_API_KEY_KEY_ID not set")
+    end
+    unless ENV['APP_STORE_CONNECT_API_KEY_ISSUER_ID']
+      UI.user_error!("❌ CRITICAL: APP_STORE_CONNECT_API_KEY_ISSUER_ID not set")
+    end
+    unless ENV['APP_STORE_CONNECT_API_KEY_KEY']
+      UI.user_error!("❌ CRITICAL: APP_STORE_CONNECT_API_KEY_KEY not set")
+    end
+
+    app_store_connect_api_key(
+      key_id: ENV['APP_STORE_CONNECT_API_KEY_KEY_ID'],
+      issuer_id: ENV['APP_STORE_CONNECT_API_KEY_ISSUER_ID'],
+      key_content: Base64.decode64(ENV['APP_STORE_CONNECT_API_KEY_KEY']),
+      is_key_content_base64: false
+    )
+
+    version_file = '../.new_version'
+    unless File.exist?(version_file)
+      UI.user_error!("❌ CRITICAL: Version file not found at #{version_file}")
+    end
+    version = File.read(version_file).strip
+
+    increment_version_number(
+      version_number: version,
+      xcodeproj: "ios/App/App.xcodeproj"
+    )
+
+    begin
+      latest_build = latest_testflight_build_number(
+        version: version,
+        initial_build_number: 0,
+        app_identifier: "org.ilovefreegle.modtools"
+      )
+    rescue => e
+      UI.message("ℹ️  No existing builds for v#{version}, starting at 0")
+      latest_build = 0
+    end
+
+    new_build = [latest_build + 1, 1272].max
+    increment_build_number(
+      build_number: new_build,
+      xcodeproj: "ios/App/App.xcodeproj"
+    )
+
+    import_certificate(
+      certificate_path: ENV['IOS_CERTIFICATE_PATH'] || 'ios_distribution.p12',
+      certificate_password: ENV['IOS_CERTIFICATE_PASSWORD'] || '',
+      keychain_name: ENV['KEYCHAIN_NAME'] || 'login.keychain',
+      keychain_password: ENV['KEYCHAIN_PASSWORD'] || ''
+    )
+
+    profile_path = ENV['IOS_PROVISIONING_PROFILE_PATH'] || 'modtools_appstore.mobileprovision'
+    install_provisioning_profile(path: profile_path)
+
+    update_project_provisioning(
+      xcodeproj: "ios/App/App.xcodeproj",
+      target_filter: "Freegle",
+      profile: profile_path,
+      code_signing_identity: "iPhone Distribution"
+    )
+
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path: "ios/App/App.xcodeproj",
+      targets: ["Freegle"],
+      code_sign_identity: "iPhone Distribution",
+      bundle_identifier: "org.ilovefreegle.modtools"
+    )
+
+    gym(
+      scheme: "Freegle",
+      workspace: "ios/App/App.xcworkspace",
+      export_method: "app-store",
+      clean: true,
+      output_directory: "./build",
+      skip_package_dependencies_resolution: true
+    )
+
+    pilot(
+      skip_waiting_for_build_processing: true,
+      distribute_external: false,
+      app_identifier: "org.ilovefreegle.modtools"
+    )
+
+    UI.success("✅ Successfully uploaded ModTools to TestFlight!")
+  end
+
   desc "Promote TestFlight to Production"
   lane :release do
     app_store_connect_api_key(
