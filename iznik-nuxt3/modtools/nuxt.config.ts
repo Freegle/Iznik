@@ -43,7 +43,8 @@ export default defineNuxtConfig({
             // Include some CSS in all components.
             // There are some other Bootstrap files we'd like to include, but doing this breaks the colours in a way
             // I don't understand and can't fix.
-            '@import "@/assets/css/_color-vars.scss";',
+            '@use "@/assets/css/_color-vars.scss" as *;',
+          silenceDeprecations: ['import'],
         },
       },
     },
