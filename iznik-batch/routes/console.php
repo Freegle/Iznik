@@ -448,8 +448,9 @@ Schedule::command('microvolunteering:score')
 
 // Notify Moderate+ members of pending messages awaiting microvolunteering review,
 // and Basic members of approved messages eligible for rating/thanks.
+// V1: cron/microvolunteering.php (every 5 minutes).
 Schedule::command('microvolunteering:notify')
-    ->hourly()
+    ->everyFiveMinutes()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('microvolunteering:notify'))
     ->runInBackground();
