@@ -130,6 +130,7 @@ echo 'Acquire::http::Proxy "http://${CACHE_SERVER}:3142";' > /etc/apt/apt.conf.d
 # Idle self-destruct: detect active job via Docker containers.
 # A running CI job always has freegle compose containers up.
 # When docker compose down runs at job end, containers disappear — starts 10-min timer.
+# This is the PRIMARY cleanup mechanism. The teardown step does not call DELETE.
 cat > /usr/local/bin/idle-check.sh << 'IDLEEOF'
 #!/bin/bash
 IDLE_MARKER="/tmp/.runner-idle-since"
@@ -159,8 +160,10 @@ IDLE_SINCE=\$(cat "\$IDLE_MARKER")
 NOW=\$(date +%s)
 IDLE_SECONDS=\$((NOW - IDLE_SINCE))
 
-# Safety-net: destroy VM after 5 minutes idle post-job (primary teardown is cron at job end)
-if [ "\$IDLE_SECONDS" -gt 300 ]; then
+# Destroy VM after 10 minutes idle. 10 min is long enough for a queued job to
+# be dispatched and start containers, but short enough to avoid wasting resources.
+# Must exceed the container-less gap during job startup (checkout + build ≈ 420s).
+if [ "\$IDLE_SECONDS" -gt 600 ]; then
     echo "Runner idle for \${IDLE_SECONDS}s — self-destructing"
     if [ -n "\$VM_ID" ]; then
         curl -sf -X DELETE \

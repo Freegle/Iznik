@@ -2976,20 +2976,13 @@ jobs:
           name: Teardown Katapult VM
           when: always
           command: |
-            VM_ID_FILE="/opt/circleci-runner/vm-id"
-            if [ ! -f "$VM_ID_FILE" ]; then exit 0; fi
-            VM_ID=$(cat "$VM_ID_FILE" 2>/dev/null || echo "")
-            # Read token from env var (if set in CircleCI project settings) or from file
-            # written by configure-katapult-vm.sh during provisioning.
-            KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-$(cat /opt/circleci-runner/katapult-token 2>/dev/null || echo "")}"
-            if [ -z "$VM_ID" ] || [ -z "$KATAPULT_TOKEN" ]; then exit 0; fi
-            # Write a one-shot root cron job to delete this VM within 60 seconds.
-            # Cron runs as root and is NOT killed when the runner cleans up after a job,
-            # so this is more reliable than nohup (which the runner may SIGKILL on exit).
-            printf '* * * * * root curl -sf -X DELETE -H "Authorization: Bearer %s" "https://api.katapult.io/core/v1/virtual_machines/%s" 2>/dev/null && rm -f /etc/cron.d/vm-self-destruct\n' \
-              "${KATAPULT_TOKEN}" "${VM_ID}" \
-              | sudo tee /etc/cron.d/vm-self-destruct > /dev/null
-            echo "VM $VM_ID deletion scheduled via cron in ≤60s (job completing cleanly first)"
+            # VM cleanup is handled entirely by the idle-check cron on each VM.
+            # It detects when freegle-ci containers go down and deletes + shuts down
+            # the VM after 10 minutes idle — long enough to pick up queued jobs.
+            # Calling DELETE here caused ghost VMs: Katapult's async deletion (10-30 min)
+            # left live runners that grabbed new jobs, then died mid-job.
+            if [ ! -f "/opt/circleci-runner/vm-id" ]; then exit 0; fi
+            echo "Katapult VM $(cat /opt/circleci-runner/vm-id) will self-destruct via idle-check after 10 min idle"
 
   # === App Build Jobs ===
 
