@@ -62,41 +62,40 @@ class VolunteeringDigestService
             }
 
             // Find active volunteering opportunities for this group (or with no specific group).
-            // V1 note: don't use IS NULL in a LEFT JOIN WHERE clause — fetch all and filter in PHP
-            // instead. Use NOT EXISTS to find global volunteerings explicitly.
-            // Note: photos are fetched separately to avoid the LEFT JOIN interfering with
-            // the orWhereRaw clause used to detect global (no-group) volunteerings.
-            // Raw SQL for NOT EXISTS ensures the correlated subquery references volunteering.id
-            // from the outer query correctly — Laravel's whereNotExists with whereColumn can
-            // produce ambiguous column references in some MySQL contexts.
-            $volunteerings = DB::table('volunteering')
+            // Two separate queries avoid correlated-subquery ambiguity in some MySQL contexts:
+            // 1) group-specific volunteerings (inner join on this group's rows)
+            // 2) global volunteerings (left join + IS NULL — those with no group assignment at all)
+            $volColumns = [
+                'volunteering.id',
+                'volunteering.title',
+                'volunteering.location',
+                'volunteering.description',
+                'volunteering.timecommitment',
+                'volunteering.contactname',
+                'volunteering.contactphone',
+                'volunteering.contactemail',
+                'volunteering.contacturl',
+            ];
+
+            $groupSpecific = DB::table('volunteering')
+                ->join('volunteering_groups', 'volunteering_groups.volunteeringid', '=', 'volunteering.id')
                 ->where('volunteering.pending', 0)
                 ->where('volunteering.deleted', 0)
                 ->where('volunteering.expired', 0)
-                ->where(function ($q) use ($groupRow) {
-                    // Group-specific volunteerings for this group
-                    $q->whereExists(function ($sub) use ($groupRow) {
-                        $sub->select(DB::raw(1))
-                            ->from('volunteering_groups')
-                            ->whereColumn('volunteering_groups.volunteeringid', 'volunteering.id')
-                            ->where('volunteering_groups.groupid', $groupRow->id);
-                    })
-                    // OR global volunteerings with no group assignment at all
-                    ->orWhereRaw('NOT EXISTS (SELECT 1 FROM volunteering_groups WHERE volunteering_groups.volunteeringid = volunteering.id)');
-                })
-                ->select([
-                    'volunteering.id',
-                    'volunteering.title',
-                    'volunteering.location',
-                    'volunteering.description',
-                    'volunteering.timecommitment',
-                    'volunteering.contactname',
-                    'volunteering.contactphone',
-                    'volunteering.contactemail',
-                    'volunteering.contacturl',
-                ])
-                ->orderByDesc('volunteering.id')
+                ->where('volunteering_groups.groupid', $groupRow->id)
+                ->select($volColumns)
                 ->get();
+
+            $globalVols = DB::table('volunteering')
+                ->leftJoin('volunteering_groups', 'volunteering_groups.volunteeringid', '=', 'volunteering.id')
+                ->where('volunteering.pending', 0)
+                ->where('volunteering.deleted', 0)
+                ->where('volunteering.expired', 0)
+                ->whereNull('volunteering_groups.volunteeringid')
+                ->select($volColumns)
+                ->get();
+
+            $volunteerings = $groupSpecific->merge($globalVols)->sortByDesc('id')->values();
 
             if ($volunteerings->isEmpty()) {
                 if (!$dryRun) {
