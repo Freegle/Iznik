@@ -8,7 +8,12 @@ RUN npm run build
 FROM node:22-alpine AS runner
 WORKDIR /app
 
-# Runtime deps only
+# Install production deps so better-sqlite3 native bindings are compiled for this platform
+COPY package*.json ./
+RUN apk add --no-cache python3 make g++ && \
+    npm ci --omit=dev && \
+    apk del python3 make g++
+
 COPY --from=builder /app/.output .output
 
 # Data dir — mount a Fly volume here at /data
