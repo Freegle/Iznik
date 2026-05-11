@@ -8,6 +8,8 @@ use App\Services\LokiService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\CoversNothing;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
 use Tests\TestCase;
 
 /**
@@ -18,8 +20,14 @@ use Tests\TestCase;
  * - iznik-server: userAPITest::testRating(), sessionTest::testAboutMe(),
  *   chatRoomsTest::testUserStopsReplyingReplyTime()
  * - iznik-server-go: TestPostUserRateUp/Down, TestPatchUserAboutMe
+ *
+ * Process isolation: each test runs in a separate PHP process to prevent
+ * memory accumulation. 28+ artisan() calls in one process exhaust the heap
+ * because PHP's zend_mm doubles its segment size on each expansion attempt.
  */
 #[CoversNothing]
+#[RunTestsInSeparateProcesses]
+#[PreserveGlobalState(false)]
 class TNSyncCommandTest extends TestCase
 {
     private const DATE_SYNC = '2026-03-20T10:00:00+00:00';
