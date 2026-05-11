@@ -75,7 +75,7 @@ systemctl restart docker
 for _i in 1 2 3 4 5; do
   sleep 3
   docker info >/dev/null 2>&1 && break
-  echo "Waiting for Docker to start (${_i}/5)..."
+  echo "Waiting for Docker to start (\${_i}/5)..."
 done
 docker info >/dev/null 2>&1 || { echo "ERROR: Docker daemon did not start after restart"; exit 1; }
 
