@@ -55,6 +55,11 @@ sshpass -p "$VM_PASS" ssh \
     "root@$VM_IP" << SSHEOF
 set -e
 
+# Disable unattended-upgrades so it can't hold the apt lock mid-job
+systemctl stop unattended-upgrades 2>/dev/null || true
+systemctl disable unattended-upgrades 2>/dev/null || true
+systemctl mask unattended-upgrades 2>/dev/null || true
+
 # Configure Docker to use cache server mirrors
 # Port 5000: Docker Hub pull-through mirror
 # Port 5001: GHCR pull-through mirror
