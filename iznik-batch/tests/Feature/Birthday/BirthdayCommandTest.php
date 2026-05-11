@@ -3,6 +3,7 @@
 namespace Tests\Feature\Birthday;
 
 use App\Mail\Birthday\BirthdayMail;
+use App\Models\Group;
 use App\Services\BirthdayService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -16,18 +17,18 @@ class BirthdayCommandTest extends TestCase
         Mail::fake();
     }
 
-    private function createFreegleGroup(array $attributes = []): object
+    private function createFreegleGroup(array $attributes = []): Group
     {
-        $id = DB::table('groups')->insertGetId(array_merge([
+        return Group::create(array_merge([
             'nameshort' => 'TestBirthdayGroup_' . uniqid(),
-            'namefull' => 'Test Birthday Group',
-            'type' => 'Freegle',
-            'publish' => 1,
-            'onmap' => 1,
-            'onhere' => 1,
+            'namefull'  => 'Test Birthday Group',
+            'type'      => Group::TYPE_FREEGLE,
+            'publish'   => 1,
+            'onmap'     => 1,
+            'onhere'    => 1,
+            'lat'       => 51.5074,
+            'lng'       => -0.1278,
         ], $attributes));
-
-        return DB::table('groups')->where('id', $id)->first();
     }
 
     private function createMemberInGroup(int $groupId, array $userAttributes = []): object
