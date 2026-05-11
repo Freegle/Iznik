@@ -758,6 +758,18 @@ Schedule::command('noticeboards:thank-users')
     ->runInBackground();
 
 // =============================================================================
+// STORIES
+// =============================================================================
+
+// Send unreviewed stories to central team for newsletter voting.
+// V1: cron/stories_tocentral.php (weekly, Friday 14:00)
+Schedule::command('stories:send-to-central')
+    ->weeklyOn(5, '14:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stories:send-to-central'))
+    ->runInBackground();
+
+// =============================================================================
 // GIT SUMMARY
 // =============================================================================
 

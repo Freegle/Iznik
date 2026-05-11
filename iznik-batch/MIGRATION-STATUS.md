@@ -341,7 +341,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `volunteering.php` | Mon 23:00 | Low | Volunteering opportunities email |
 | `stories.php` | Sat 11:00 | Low | Success story requests |
 | ~~`groups_closed.php`~~ | ~~Sun 08:00~~ | ~~Low~~ | ~~Closed groups check~~ — **Skip: COVID-era group closure reminder; body references "Closed for COVID-19" — retired** |
-| `stories_tocentral.php` | Fri 14:00 | Low | Stories to central |
+| ~~`stories_tocentral.php`~~ | ~~Fri 14:00~~ | ~~Low~~ | ~~Stories to central~~ — **Migrated: `stories:send-to-central`** |
 | ~~`domains_common.php`~~ | ~~Fri 07:00~~ | ~~Low~~ | ~~Common domains~~ — **Migrated: `domains:update-common`** |
 | `mod_active.php` | Mon 15:00 | Low | Active moderators |
 
