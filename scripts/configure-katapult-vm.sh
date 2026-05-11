@@ -112,8 +112,9 @@ api:
   auth_token: "${RUNNER_AUTH_TOKEN}"
 EOF
 
-# Store VM ID for self-destruct (used by idle-check if metadata service unavailable)
+# Store VM ID and API token for self-destruct and teardown step
 echo "${VM_ID}" > /opt/circleci-runner/vm-id
+echo "${KATAPULT_TOKEN}" > /opt/circleci-runner/katapult-token
 
 # Configure npm to use Verdaccio cache
 cat > /root/.npmrc << 'EOF'
