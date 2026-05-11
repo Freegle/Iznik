@@ -59,9 +59,9 @@ set -e
 # Port 5000: Docker Hub pull-through mirror
 # Port 5001: GHCR pull-through mirror
 # Port 5002: Docker layer cache (BuildKit)
+# Note: "features.buildkit" was removed in Docker 23+; omit it to avoid startup failure.
 cat > /etc/docker/daemon.json << 'EOF'
 {
-  "features": { "buildkit": true },
   "registry-mirrors": ["http://${CACHE_SERVER}:5000"],
   "insecure-registries": [
     "${CACHE_SERVER}:5000",
@@ -70,7 +70,14 @@ cat > /etc/docker/daemon.json << 'EOF'
   ]
 }
 EOF
-systemctl restart docker 2>/dev/null || true
+systemctl restart docker
+# Verify Docker came up — fail loudly rather than silently leaving it down
+for _i in 1 2 3 4 5; do
+  sleep 3
+  docker info >/dev/null 2>&1 && break
+  echo "Waiting for Docker to start (${_i}/5)..."
+done
+docker info >/dev/null 2>&1 || { echo "ERROR: Docker daemon did not start after restart"; exit 1; }
 
 # docker-compose symlink
 ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || \
