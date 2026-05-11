@@ -141,7 +141,7 @@ class BirthdayCommandTest extends TestCase
     {
         $founded = now()->subYear()->format('Y-m-d');
         $group = $this->createTestGroup(['founded' => $founded]);
-        $settings = json_encode(['lastbirthdayappeal' => now()->subDays(10)->format('Y-m-d H:i:s')]);
+        $settings = ['lastbirthdayappeal' => now()->subDays(10)->format('Y-m-d H:i:s')];
         $this->createMemberInGroup($group->id, ['settings' => $settings]);
 
         (new BirthdayService())->sendBirthdayEmails();
@@ -153,7 +153,7 @@ class BirthdayCommandTest extends TestCase
     {
         $founded = now()->subYear()->format('Y-m-d');
         $group = $this->createTestGroup(['founded' => $founded]);
-        $settings = json_encode(['lastbirthdayappeal' => now()->subDays(40)->format('Y-m-d H:i:s')]);
+        $settings = ['lastbirthdayappeal' => now()->subDays(40)->format('Y-m-d H:i:s')];
         $this->createMemberInGroup($group->id, ['settings' => $settings]);
 
         (new BirthdayService())->sendBirthdayEmails();
