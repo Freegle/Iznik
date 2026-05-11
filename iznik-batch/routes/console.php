@@ -253,6 +253,14 @@ Schedule::command('chats:send-tryst-reminders')
     ->sendOutputTo(cronLog('chats:send-tryst-reminders'))
     ->runInBackground();
 
+// Chase up mods about User2Mod chats with no mod reply older than 6.55 days.
+// V1: cron/chat_chaseupmods.php (daily 15:30)
+Schedule::command('chats:chaseup-mods')
+    ->dailyAt('15:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:chaseup-mods'))
+    ->runInBackground();
+
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
 // V1: cron/chat_spam.php — disabled pending sign-off
 // Schedule::command('chats:process-spam')
@@ -634,6 +642,13 @@ Schedule::command('groups:remind-closed')
     ->sendOutputTo(cronLog('groups:remind-closed'))
     ->runInBackground();
 
+// V1: cron/group_customisation.php
+Schedule::command('groups:remind-customisation')
+    ->monthlyOn(1, '08:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:remind-customisation'))
+    ->runInBackground();
+
 // V1: cron/donations_thank.php
 // Schedule::command('mail:donations:thank')
 //     ->dailyAt('09:00')
@@ -758,6 +773,18 @@ Schedule::command('noticeboards:thank-users')
     ->runInBackground();
 
 // =============================================================================
+// STORIES
+// =============================================================================
+
+// Send unreviewed stories to central team for newsletter voting.
+// V1: cron/stories_tocentral.php (weekly, Friday 14:00)
+Schedule::command('stories:send-to-central')
+    ->weeklyOn(5, '14:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stories:send-to-central'))
+    ->runInBackground();
+
+// =============================================================================
 // GIT SUMMARY
 // =============================================================================
 
@@ -783,11 +810,10 @@ Schedule::command('chats:review-pending')
     ->sendOutputTo(cronLog('chats:review-pending'))
     ->runInBackground();
 
-// Daily donation summary — sends HTML email to fundraising address listing
-// all donations received today with amounts, payer, and recurring/birthday flags.
-// V1: cron/donations_email.php (daily)
-Schedule::command('mail:donations:summary')
-    ->dailyAt('23:30')
+// Alert geeks about Freegle groups that have not received messages in 7+ days.
+// V1: cron/groups_nomessages.php (daily)
+Schedule::command('groups:alert-no-messages')
+    ->dailyAt('07:00')
     ->withoutOverlapping()
-    ->sendOutputTo(cronLog('mail:donations:summary'))
+    ->sendOutputTo(cronLog('groups:alert-no-messages'))
     ->runInBackground();
