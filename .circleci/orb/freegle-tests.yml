@@ -275,7 +275,7 @@ commands:
             for attempt in $(seq 1 $MAX_RETRIES); do
               echo "Build attempt $attempt of $MAX_RETRIES..."
 
-              # Self-hosted runner has persistent Docker layer cache — use it
+              # Self-hosted runner has persistent Docker layer cache — use it for most containers
               CACHE_FLAG="--no-cache"
               if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
                 CACHE_FLAG=""
