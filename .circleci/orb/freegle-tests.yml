@@ -117,11 +117,17 @@ commands:
       - run:
           name: Kill stale apt processes
           command: |
-            if [ "$SELF_HOSTED_RUNNER" = "true" ]; then
-              echo "Self-hosted runner — skipping apt cleanup (not needed)"
+            # Skip on the WSL2 local self-hosted runner — it doesn't run
+            # unattended-upgrades. Katapult VMs run Ubuntu 22.04 and DO need
+            # cleanup even though SELF_HOSTED_RUNNER=true.
+            IS_KATAPULT_VM=false
+            [ -f /opt/circleci-runner/vm-id ] && IS_KATAPULT_VM=true
+            if [ "$SELF_HOSTED_RUNNER" = "true" ] && [ "$IS_KATAPULT_VM" != "true" ]; then
+              echo "WSL2 self-hosted runner — skipping apt cleanup (not needed)"
               exit 0
             fi
             # Kill any stale unattended-upgrade processes that may block apt
+            sudo pkill -9 unattended-upgrades 2>/dev/null || true
             sudo pkill -9 unattended-upgrade 2>/dev/null || true
             sudo pkill -9 apt 2>/dev/null || true
             sudo pkill -9 dpkg 2>/dev/null || true

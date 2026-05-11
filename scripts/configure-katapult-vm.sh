@@ -55,10 +55,16 @@ sshpass -p "$VM_PASS" ssh \
     "root@$VM_IP" << SSHEOF
 set -e
 
-# Disable unattended-upgrades so it can't hold the apt lock mid-job
-systemctl stop unattended-upgrades 2>/dev/null || true
-systemctl disable unattended-upgrades 2>/dev/null || true
-systemctl mask unattended-upgrades 2>/dev/null || true
+# Kill unattended-upgrades and prevent it from restarting.
+# 'mask' alone won't kill an already-running process, so we kill first,
+# remove stale locks, and run dpkg --configure -a to clean up any
+# interrupted dpkg state. These VMs are ephemeral so lock removal is safe.
+pkill -9 unattended-upgrades 2>/dev/null || true
+pkill -9 apt-get 2>/dev/null || true
+rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock 2>/dev/null || true
+dpkg --configure -a 2>/dev/null || true
+systemctl stop apt-daily.service apt-daily-upgrade.service apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+systemctl mask apt-daily.timer apt-daily-upgrade.timer unattended-upgrades 2>/dev/null || true
 
 # Configure Docker to use cache server mirrors
 # Port 5000: Docker Hub pull-through mirror
