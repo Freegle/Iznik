@@ -3,7 +3,6 @@
 namespace Tests\Feature\Birthday;
 
 use App\Mail\Birthday\BirthdayMail;
-use App\Models\Group;
 use App\Services\BirthdayService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -17,48 +16,23 @@ class BirthdayCommandTest extends TestCase
         Mail::fake();
     }
 
-    private function createFreegleGroup(array $attributes = []): Group
-    {
-        return Group::create(array_merge([
-            'nameshort' => 'TestBirthdayGroup_' . uniqid(),
-            'namefull'  => 'Test Birthday Group',
-            'type'      => Group::TYPE_FREEGLE,
-            'publish'   => 1,
-            'onmap'     => 1,
-            'onhere'    => 1,
-            'lat'       => 51.5074,
-            'lng'       => -0.1278,
-        ], $attributes));
-    }
-
     private function createMemberInGroup(int $groupId, array $userAttributes = []): object
     {
-        $userId = DB::table('users')->insertGetId(array_merge([
-            'firstname' => 'Birthday',
-            'lastname' => 'User',
-            'fullname' => 'Birthday User',
-            'added' => now(),
-            'lastaccess' => now(),
+        $user = $this->createTestUser(array_merge([
             'marketingconsent' => 1,
-            'bouncing' => 0,
+            'bouncing'         => 0,
+            'lastaccess'       => now(),
         ], $userAttributes));
 
-        DB::table('users_emails')->insert([
-            'userid' => $userId,
-            'email' => 'birthdaytest_' . $userId . '@test.com',
-            'preferred' => 1,
-            'added' => now(),
-        ]);
-
         DB::table('memberships')->insert([
-            'userid' => $userId,
-            'groupid' => $groupId,
-            'role' => 'Member',
+            'userid'     => $user->id,
+            'groupid'    => $groupId,
+            'role'       => 'Member',
             'collection' => 'Approved',
-            'added' => now(),
+            'added'      => now(),
         ]);
 
-        return DB::table('users')->where('id', $userId)->first();
+        return $user;
     }
 
     public function test_command_runs_cleanly_with_no_birthday_groups(): void
@@ -75,9 +49,8 @@ class BirthdayCommandTest extends TestCase
 
     public function test_sends_birthday_email_to_group_member(): void
     {
-        // Founded exactly 1 year ago — same month/day, prior year
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id);
 
         (new BirthdayService())->sendBirthdayEmails();
@@ -87,9 +60,8 @@ class BirthdayCommandTest extends TestCase
 
     public function test_skips_group_not_founded_today(): void
     {
-        // Founded last year but on a different day
         $founded = now()->subYear()->subDays(5)->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id);
 
         (new BirthdayService())->sendBirthdayEmails();
@@ -99,7 +71,7 @@ class BirthdayCommandTest extends TestCase
 
     public function test_skips_group_with_null_founded(): void
     {
-        $group = $this->createFreegleGroup(['founded' => null]);
+        $group = $this->createTestGroup(['founded' => null]);
         $this->createMemberInGroup($group->id);
 
         (new BirthdayService())->sendBirthdayEmails();
@@ -109,9 +81,8 @@ class BirthdayCommandTest extends TestCase
 
     public function test_skips_group_founded_this_year(): void
     {
-        // Founded today but in the current year (age = 0) — should not trigger
         $founded = now()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id);
 
         (new BirthdayService())->sendBirthdayEmails();
@@ -122,7 +93,7 @@ class BirthdayCommandTest extends TestCase
     public function test_skips_member_without_marketing_consent(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id, ['marketingconsent' => 0]);
 
         (new BirthdayService())->sendBirthdayEmails();
@@ -133,7 +104,7 @@ class BirthdayCommandTest extends TestCase
     public function test_skips_bouncing_member(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id, ['bouncing' => 1]);
 
         (new BirthdayService())->sendBirthdayEmails();
@@ -144,7 +115,7 @@ class BirthdayCommandTest extends TestCase
     public function test_skips_deleted_user(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id, ['deleted' => now()]);
 
         (new BirthdayService())->sendBirthdayEmails();
@@ -155,7 +126,7 @@ class BirthdayCommandTest extends TestCase
     public function test_skips_inactive_member(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id, ['lastaccess' => now()->subDays(200)]);
 
         (new BirthdayService())->sendBirthdayEmails();
@@ -166,7 +137,7 @@ class BirthdayCommandTest extends TestCase
     public function test_skips_member_recently_sent_birthday_appeal(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $settings = json_encode(['lastbirthdayappeal' => now()->subDays(10)->format('Y-m-d H:i:s')]);
         $this->createMemberInGroup($group->id, ['settings' => $settings]);
 
@@ -178,7 +149,7 @@ class BirthdayCommandTest extends TestCase
     public function test_sends_to_member_with_old_birthday_appeal(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $settings = json_encode(['lastbirthdayappeal' => now()->subDays(40)->format('Y-m-d H:i:s')]);
         $this->createMemberInGroup($group->id, ['settings' => $settings]);
 
@@ -190,7 +161,7 @@ class BirthdayCommandTest extends TestCase
     public function test_records_birthday_appeal_sent_in_settings(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $member = $this->createMemberInGroup($group->id);
 
         (new BirthdayService())->sendBirthdayEmails();
@@ -202,8 +173,8 @@ class BirthdayCommandTest extends TestCase
     public function test_filters_to_specified_group_ids(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group1 = $this->createFreegleGroup(['founded' => $founded]);
-        $group2 = $this->createFreegleGroup(['founded' => $founded]);
+        $group1 = $this->createTestGroup(['founded' => $founded]);
+        $group2 = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group1->id);
         $this->createMemberInGroup($group2->id);
 
@@ -215,7 +186,7 @@ class BirthdayCommandTest extends TestCase
     public function test_email_override_sends_to_specified_address(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id);
 
         $overrideEmail = 'override@test.com';
@@ -229,7 +200,7 @@ class BirthdayCommandTest extends TestCase
     public function test_email_override_stops_after_one_email(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id);
         $this->createMemberInGroup($group->id);
 
@@ -241,7 +212,7 @@ class BirthdayCommandTest extends TestCase
     public function test_returns_count_of_emails_sent(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup(['founded' => $founded]);
+        $group = $this->createTestGroup(['founded' => $founded]);
         $this->createMemberInGroup($group->id);
         $this->createMemberInGroup($group->id);
 
@@ -253,8 +224,8 @@ class BirthdayCommandTest extends TestCase
     public function test_uses_contactmail_when_set(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup([
-            'founded' => $founded,
+        $group = $this->createTestGroup([
+            'founded'     => $founded,
             'contactmail' => 'custom@example.com',
         ]);
         $this->createMemberInGroup($group->id);
@@ -269,9 +240,8 @@ class BirthdayCommandTest extends TestCase
     public function test_uses_volunteers_group_address_when_no_contactmail(): void
     {
         $founded = now()->subYear()->format('Y-m-d');
-        $group = $this->createFreegleGroup([
-            'founded' => $founded,
-            'nameshort' => 'TestGroup_' . uniqid(),
+        $group = $this->createTestGroup([
+            'founded'     => $founded,
             'contactmail' => null,
         ]);
         $this->createMemberInGroup($group->id);

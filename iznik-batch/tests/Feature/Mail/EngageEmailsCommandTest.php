@@ -3,7 +3,7 @@
 namespace Tests\Feature\Mail;
 
 use App\Mail\Engage\EngageMail;
-use App\Models\Group;
+use App\Models\Membership;
 use App\Services\EngageEmailService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -19,30 +19,11 @@ class EngageEmailsCommandTest extends TestCase
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
-    private function createFreegleGroup(): Group
-    {
-        return Group::create([
-            'nameshort' => 'TestEngage_' . uniqid(),
-            'type'      => Group::TYPE_FREEGLE,
-            'publish'   => 1,
-            'onmap'     => 1,
-            'onhere'    => 1,
-            'lat'       => 51.5074,
-            'lng'       => -0.1278,
-        ]);
-    }
-
     private function createUserWithGroupMembership(array $userAttributes = []): object
     {
-        $user = $this->createTestUser($userAttributes);
-        $group = $this->createFreegleGroup();
-        DB::table('memberships')->insertOrIgnore([
-            'userid' => $user->id,
-            'groupid' => $group->id,
-            'collection' => 'Approved',
-            'role' => 'Member',
-            'added' => now(),
-        ]);
+        $user  = $this->createTestUser($userAttributes);
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
         return $user;
     }
 
