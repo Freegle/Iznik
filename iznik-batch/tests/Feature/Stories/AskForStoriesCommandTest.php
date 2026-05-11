@@ -135,7 +135,7 @@ class AskForStoriesCommandTest extends TestCase
 
     public function test_skips_user_when_all_groups_have_stories_disabled(): void
     {
-        $group = $this->createTestGroup(['settings' => json_encode(['stories' => 0])]);
+        $group = $this->createTestGroup(['settings' => ['stories' => 0]]);
         $this->makeUserWithMessages($group, offerCount: 6);
 
         $this->artisan('stories:ask')->assertExitCode(0);
@@ -145,7 +145,7 @@ class AskForStoriesCommandTest extends TestCase
 
     public function test_sends_email_when_group_has_stories_enabled_explicitly(): void
     {
-        $group = $this->createTestGroup(['settings' => json_encode(['stories' => 1])]);
+        $group = $this->createTestGroup(['settings' => ['stories' => 1]]);
         $this->makeUserWithMessages($group, offerCount: 6);
 
         $this->artisan('stories:ask')->assertExitCode(0);
@@ -179,7 +179,7 @@ class AskForStoriesCommandTest extends TestCase
     public function test_records_consideration_even_when_stories_disabled(): void
     {
         // V1 records to users_stories_requested before checking stories flag
-        $group = $this->createTestGroup(['settings' => json_encode(['stories' => 0])]);
+        $group = $this->createTestGroup(['settings' => ['stories' => 0]]);
         $user = $this->makeUserWithMessages($group, offerCount: 6);
 
         $this->artisan('stories:ask')->assertExitCode(0);
