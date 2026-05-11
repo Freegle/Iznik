@@ -62,40 +62,44 @@ class VolunteeringDigestService
             }
 
             // Find active volunteering opportunities for this group (or with no specific group).
-            // Two separate queries avoid correlated-subquery ambiguity in some MySQL contexts:
-            // 1) group-specific volunteerings (inner join on this group's rows)
-            // 2) global volunteerings (left join + IS NULL — those with no group assignment at all)
-            $volColumns = [
-                'volunteering.id',
-                'volunteering.title',
-                'volunteering.location',
-                'volunteering.description',
-                'volunteering.timecommitment',
-                'volunteering.contactname',
-                'volunteering.contactphone',
-                'volunteering.contactemail',
-                'volunteering.contacturl',
-            ];
-
-            $groupSpecific = DB::table('volunteering')
-                ->join('volunteering_groups', 'volunteering_groups.volunteeringid', '=', 'volunteering.id')
+            // V1 note: don't use IS NULL in a LEFT JOIN WHERE clause — fetch all and filter in PHP
+            // instead. Use NOT EXISTS to find global volunteerings explicitly.
+            $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
+            $volunteerings = DB::table('volunteering')
+                ->leftJoin('volunteering_images', 'volunteering_images.opportunityid', '=', 'volunteering.id')
                 ->where('volunteering.pending', 0)
                 ->where('volunteering.deleted', 0)
                 ->where('volunteering.expired', 0)
-                ->where('volunteering_groups.groupid', $groupRow->id)
-                ->select($volColumns)
+                ->where(function ($q) use ($groupRow) {
+                    // Group-specific volunteerings for this group
+                    $q->whereExists(function ($sub) use ($groupRow) {
+                        $sub->select(DB::raw(1))
+                            ->from('volunteering_groups')
+                            ->whereColumn('volunteering_groups.volunteeringid', 'volunteering.id')
+                            ->where('volunteering_groups.groupid', $groupRow->id);
+                    })
+                    // OR global volunteerings with no group assignment at all
+                    ->orWhereNotExists(function ($sub) {
+                        $sub->select(DB::raw(1))
+                            ->from('volunteering_groups')
+                            ->whereColumn('volunteering_groups.volunteeringid', 'volunteering.id');
+                    });
+                })
+                ->select([
+                    'volunteering.id',
+                    'volunteering.title',
+                    'volunteering.location',
+                    'volunteering.description',
+                    'volunteering.timecommitment',
+                    'volunteering.contactname',
+                    'volunteering.contactphone',
+                    'volunteering.contactemail',
+                    'volunteering.contacturl',
+                    DB::raw('volunteering_images.id AS photo_id'),
+                    DB::raw('volunteering_images.externaluid AS photo_externaluid'),
+                ])
+                ->orderByDesc('volunteering.id')
                 ->get();
-
-            $globalVols = DB::table('volunteering')
-                ->leftJoin('volunteering_groups', 'volunteering_groups.volunteeringid', '=', 'volunteering.id')
-                ->where('volunteering.pending', 0)
-                ->where('volunteering.deleted', 0)
-                ->where('volunteering.expired', 0)
-                ->whereNull('volunteering_groups.volunteeringid')
-                ->select($volColumns)
-                ->get();
-
-            $volunteerings = $groupSpecific->merge($globalVols)->sortByDesc('id')->values();
 
             if ($volunteerings->isEmpty()) {
                 if (!$dryRun) {
@@ -107,33 +111,23 @@ class VolunteeringDigestService
 
             $groupsProcessed++;
 
-            // Fetch photos separately to avoid interfering with the NOT EXISTS clause above.
-            $volIds = $volunteerings->pluck('id')->all();
-            $photos = DB::table('volunteering_images')
-                ->whereIn('opportunityid', $volIds)
-                ->select(['opportunityid', 'id', 'externaluid'])
-                ->get()
-                ->keyBy('opportunityid');
-
             // Build structured volunteering data for the template.
-            $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
             $tusUploader = config('freegle.tus_uploader', 'https://uploads.ilovefreegle.org:8080');
             $deliveryUrl = config('freegle.delivery.base_url');
-            $volData = $volunteerings->map(function ($v) use ($userSite, $imagesDomain, $tusUploader, $deliveryUrl, $photos) {
+            $volData = $volunteerings->map(function ($v) use ($userSite, $imagesDomain, $tusUploader, $deliveryUrl) {
                 $photoThumb = null;
-                $photo = $photos->get($v->id);
-                if ($photo) {
-                    if ($photo->externaluid) {
-                        $p = strrpos($photo->externaluid, 'freegletusd-');
+                if ($v->photo_id) {
+                    if ($v->photo_externaluid) {
+                        $p = strrpos($v->photo_externaluid, 'freegletusd-');
                         if ($p !== false) {
-                            $fileId = substr($photo->externaluid, $p + strlen('freegletusd-'));
+                            $fileId = substr($v->photo_externaluid, $p + strlen('freegletusd-'));
                             $source = $tusUploader . '/' . $fileId;
                             $photoThumb = $deliveryUrl
                                 ? $deliveryUrl . '?url=' . urlencode($source) . '&w=80'
                                 : $source;
                         }
                     } else {
-                        $photoThumb = "{$imagesDomain}/toimg_{$photo->id}.jpg";
+                        $photoThumb = "{$imagesDomain}/toimg_{$v->photo_id}.jpg";
                     }
                 }
                 return [
