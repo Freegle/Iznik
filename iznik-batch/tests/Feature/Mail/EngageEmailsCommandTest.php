@@ -20,16 +20,17 @@ class EngageEmailsCommandTest extends TestCase
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
-    private function createFreegleGroup(): object
+    private function createFreegleGroup(): Group
     {
-        $id = DB::table('groups')->insertGetId([
+        return Group::create([
             'nameshort' => 'TestEngage_' . uniqid(),
-            'type' => Group::TYPE_FREEGLE,
-            'publish' => 1,
-            'onmap' => 1,
-            'onhere' => 1,
+            'type'      => Group::TYPE_FREEGLE,
+            'publish'   => 1,
+            'onmap'     => 1,
+            'onhere'    => 1,
+            'lat'       => 51.5074,
+            'lng'       => -0.1278,
         ]);
-        return DB::table('groups')->where('id', $id)->first();
     }
 
     private function createUserWithGroupMembership(array $userAttributes = []): object
