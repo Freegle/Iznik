@@ -772,6 +772,7 @@ Schedule::command('cleanup:user-images')
     ->dailyAt('01:30')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('cleanup:user-images'))
+    ->runInBackground();
 
 // Auto-reject chat messages stuck in review for 7+ days; notify group mods
 // about messages pending review for 48+ hours; send mentors a daily summary.
