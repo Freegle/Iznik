@@ -60,14 +60,14 @@ except:
 " 2>/dev/null || echo "0"
 }
 
-# Count running Katapult runner VMs (VMs with name starting katapult-runner-)
+# Count running Katapult runner VMs (VMs with name starting circleci-runner-)
 # Note: the list API does not return a state field; count by name prefix.
 count_running_vms() {
     katapult "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines" | python3 -c "
 import json,sys
 data=json.load(sys.stdin)
 runners=[v for v in data.get('virtual_machines',[])
-         if v.get('name','').startswith('katapult-runner-')]
+         if v.get('name','').startswith('circleci-runner-')]
 print(len(runners))
 " 2>/dev/null || echo "0"
 }
@@ -78,14 +78,15 @@ list_runner_vms() {
 import json,sys
 data=json.load(sys.stdin)
 for v in data.get('virtual_machines',[]):
-    if v.get('name','').startswith('katapult-runner-'):
+    if v.get('name','').startswith('circleci-runner-'):
         ips=[ip.get('address','') for ip in v.get('ip_addresses',[])]
         print(v.get('id'), v.get('name'), v.get('state'), ips[0] if ips else 'no-ip')
 " 2>/dev/null
 }
 
 # Delete runner VMs older than MAX_VM_AGE_SECONDS (default 150 min).
-# VM names encode creation time: katapult-runner-<unix_timestamp>.
+# VM names encode creation time: circleci-runner-<unix_timestamp>-<pipeline_number>.
+# Extract the timestamp from the first numeric segment after the prefix.
 # max_run_time in the runner config is 2h; 150 min gives a safety buffer.
 MAX_VM_AGE_SECONDS="${MAX_VM_AGE_SECONDS:-9000}"
 cleanup_stale_vms() {
@@ -96,9 +97,11 @@ import json,sys
 data=json.load(sys.stdin)
 for v in data.get('virtual_machines',[]):
     name=v.get('name','')
-    if name.startswith('katapult-runner-'):
-        ts=name.removeprefix('katapult-runner-')
-        if ts.isdigit():
+    if name.startswith('circleci-runner-'):
+        # Name format: circleci-runner-<timestamp>-<pipeline_number>
+        parts=name.removeprefix('circleci-runner-').split('-')
+        ts=parts[0] if parts and parts[0].isdigit() else ''
+        if ts:
             print(v.get('id',''), name, ts)
 " 2>/dev/null | while read vm_id vm_name vm_ts; do
         local age=$(( now - vm_ts ))

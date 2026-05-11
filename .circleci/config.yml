@@ -102,7 +102,9 @@ jobs:
               echo "Runner VMs: $EXISTING_VMS / $MAX_VMS"
 
               if [ "$EXISTING_VMS" -lt "$MAX_VMS" ]; then
-                VM_NAME="circleci-runner-$(date +%s)"
+                # Pipeline number suffix guarantees uniqueness even when multiple
+                # setup stages run date +%s in the same second.
+                VM_NAME="circleci-runner-$(date +%s)-<< pipeline.number >>"
                 echo "Provisioning VM: $VM_NAME"
                 curl -sf -X POST "${KATAPULT_API}/organizations/${KATAPULT_ORG}/virtual_machines/build" \
                   -H "Authorization: Bearer $KATAPULT_TOKEN" \
