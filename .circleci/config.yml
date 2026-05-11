@@ -92,8 +92,23 @@ jobs:
                 "https://runner.circleci.com/api/v3/runner?resource-class=freegle/circleci-docker-runner" 2>/dev/null) || true
 
               if [ -n "$RESPONSE" ]; then
-                ONLINE_COUNT=$(echo "$RESPONSE" | jq '[.items[] | select(.resource_class=="freegle/circleci-docker-runner")] | length' 2>/dev/null) || ONLINE_COUNT=0
-                echo "Found ${ONLINE_COUNT} runner(s)"
+                # The runner API lists all runners that have ever connected, not just live ones.
+                # A runner is considered online only if it connected within the last 120 seconds.
+                # Runners poll CircleCI every few seconds, so a live runner is always recent.
+                NOW_EPOCH=$(date +%s)
+                ONLINE_COUNT=0
+                while IFS= read -r LAST_CONNECTED; do
+                  [ -z "$LAST_CONNECTED" ] && continue
+                  # Strip fractional seconds and Z suffix for date parsing
+                  LAST_CLEAN=$(echo "$LAST_CONNECTED" | sed 's/\.[0-9]*Z$//' | sed 's/Z$//')
+                  LAST_EPOCH=$(date -d "${LAST_CLEAN}" +%s 2>/dev/null) || continue
+                  DIFF=$((NOW_EPOCH - LAST_EPOCH))
+                  echo "Runner last_connected=${LAST_CONNECTED} (${DIFF}s ago)"
+                  if [ "$DIFF" -lt 120 ]; then
+                    ONLINE_COUNT=$((ONLINE_COUNT + 1))
+                  fi
+                done < <(echo "$RESPONSE" | jq -r '.items[] | select(.resource_class=="freegle/circleci-docker-runner") | .last_connected' 2>/dev/null)
+                echo "Found ${ONLINE_COUNT} recently-connected runner(s)"
                 if [ "$ONLINE_COUNT" -gt "0" ]; then
                   RUNNER_AVAILABLE=true
                 fi
