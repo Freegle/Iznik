@@ -14,10 +14,15 @@
 >
     <testsuites>
         <testsuite name="Unit">
+            <!-- TrashNothing Feature tests run first (within Unit pass) so they get
+                 fresh PHP memory before other tests accumulate heap. These tests call
+                 artisan() 27+ times and OOM when they run late with ~500MB already used. -->
+            <directory>tests/Feature/TrashNothing</directory>
             <directory>tests/Unit</directory>
         </testsuite>
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
+            <exclude>tests/Feature/TrashNothing</exclude>
             <exclude>tests/Feature/Mail/WelcomeMailIntegrationTest.php</exclude>
             <exclude>tests/Feature/Mail/ChatNotificationIntegrationTest.php</exclude>
             <exclude>tests/Feature/Mail/AmpEmailSpoolIntegrationTest.php</exclude>
