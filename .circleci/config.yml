@@ -88,7 +88,7 @@ jobs:
 
             if [[ "<< pipeline.parameters.use_katapult >>" = "true" || "<< pipeline.git.branch >>" == test/katapult* ]]; then
               echo "Katapult preferred — checking runner availability"
-              KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-}"
+              KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-fl5K0qz5p68bMSPPBMH0D5MUSul0owTaCM3D4RnXgCc7Ew89}"
               KATAPULT_ORG="org_0zTGdMXAyOgIV5DB"
               KATAPULT_API="https://api.katapult.io/core/v1"
               RUNNER_API="https://runner.circleci.com/api/v3"
