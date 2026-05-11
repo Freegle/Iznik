@@ -15,7 +15,7 @@ parameters:
     description: "Set to true to build iOS and upload to TestFlight from current branch"
 
 orbs:
-  freegle: freegle/tests@1.1.264
+  freegle: freegle/tests@1.1.288
 
 jobs:
   mark-ci-passed:
@@ -152,6 +152,13 @@ workflows:
               only:
                 - production
       - freegle/build-ios:
+          requires:
+            - freegle/increment-version
+          filters:
+            branches:
+              only:
+                - production
+      - freegle/build-android-modtools:
           requires:
             - freegle/increment-version
           filters:
