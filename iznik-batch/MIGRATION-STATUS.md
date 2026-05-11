@@ -305,7 +305,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | Script | Time | Priority | Description |
 |--------|------|----------|-------------|
 | `chat_chaseup_expected.php` | 06:00 | Medium | Chat expected response chase-up |
-| `birthday.php` | 12:00 | Low | Birthday notifications |
+| ~~`birthday.php`~~ | ~~12:00~~ | ~~Low~~ | ~~Birthday notifications~~ — **Migrated: `birthday:send-emails`** |
 | `relevant.php` | 14:30 | Medium | Relevant message matching |
 | `chat_chaseupmods.php` | 15:30 | Medium | Moderator chat chase-up |
 | `newsfeed_digest.php` | 15:30 | Low | Newsfeed digest |
@@ -341,7 +341,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `volunteering.php` | Mon 23:00 | Low | Volunteering opportunities email |
 | `stories.php` | Sat 11:00 | Low | Success story requests |
 | ~~`groups_closed.php`~~ | ~~Sun 08:00~~ | ~~Low~~ | ~~Closed groups check~~ — **Skip: COVID-era group closure reminder; body references "Closed for COVID-19" — retired** |
-| `stories_tocentral.php` | Fri 14:00 | Low | Stories to central |
+| ~~`stories_tocentral.php`~~ | ~~Fri 14:00~~ | ~~Low~~ | ~~Stories to central~~ — **Migrated: `stories:send-to-central`** |
 | ~~`domains_common.php`~~ | ~~Fri 07:00~~ | ~~Low~~ | ~~Common domains~~ — **Migrated: `domains:update-common`** |
 | `mod_active.php` | Mon 15:00 | Low | Active moderators |
 
@@ -350,7 +350,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | Script | Schedule | Priority | Description |
 |--------|----------|----------|-------------|
 | `stories_newsletter.php` | 12th 23:00 | Low | Stories newsletter |
-| `lovejunk_tn_invoice.php` | 1st 15:00 | Low | LoveJunk/TN invoice |
+| ~~`lovejunk_tn_invoice.php`~~ | ~~1st 15:00~~ | ~~Low~~ | ~~LoveJunk/TN invoice~~ — **Migrated: `lovejunk:send-tn-invoice`** |
 
 ## Scripts to Skip
 
