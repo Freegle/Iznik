@@ -46,6 +46,7 @@ Follow existing patterns in iznik-server-go. Structure: AUTH → PARSE → DB �
 
 - No copy-paste — extract shared logic. Address linting/static analysis warnings.
 - Tools: `jscpd`, `golangci-lint`, PHPStan (in apiv1 container), ESLint.
+- **Use model constants, never naked string literals**: `Group::TYPE_FREEGLE` not `'Freegle'`; `Membership::ROLE_OWNER/MODERATOR/MEMBER`, `Membership::COLLECTION_APPROVED/PENDING`; `Message::TYPE_OFFER/TAKEN/WANTED`, `Message::SOURCE_PLATFORM`; `ChatRoom::TYPE_USER2MOD/USER2USER/MOD2MOD`. This applies in services AND tests.
 
 ## Containers & CI
 
