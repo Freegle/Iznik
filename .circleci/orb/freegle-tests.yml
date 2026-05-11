@@ -2983,11 +2983,15 @@ jobs:
             # written by configure-katapult-vm.sh during provisioning.
             KATAPULT_TOKEN="${KATAPULT_API_TOKEN:-$(cat /opt/circleci-runner/katapult-token 2>/dev/null || echo "")}"
             if [ -z "$VM_ID" ] || [ -z "$KATAPULT_TOKEN" ]; then exit 0; fi
-            echo "Deleting Katapult VM $VM_ID..."
-            curl -sf -X DELETE \
-              -H "Authorization: Bearer $KATAPULT_TOKEN" \
-              "https://api.katapult.io/core/v1/virtual_machines/$VM_ID" 2>/dev/null && \
-              echo "VM deletion triggered" || echo "VM deletion API call failed (VM may already be gone)"
+            echo "Scheduling VM deletion in 30s (background) so runner can report job result first..."
+            # Delay deletion: if we delete immediately the VM shuts down before the runner
+            # can report this step result, causing infrastructure_fail. nohup + sleep lets
+            # the step exit cleanly, then the VM self-destructs 30 seconds later.
+            nohup bash -c "sleep 30 && curl -sf -X DELETE \
+              -H 'Authorization: Bearer ${KATAPULT_TOKEN}' \
+              'https://api.katapult.io/core/v1/virtual_machines/${VM_ID}' 2>/dev/null" \
+              > /tmp/vm-teardown.log 2>&1 &
+            echo "VM $VM_ID deletion scheduled (job will complete cleanly first)"
 
   # === App Build Jobs ===
 
