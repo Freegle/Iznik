@@ -23,9 +23,12 @@ config(['database.connections.mysql.database' => 'iznik_batch_test']);
 $pdo = new PDO('mysql:host='.env('DB_HOST'), env('DB_USERNAME'), env('DB_PASSWORD'));
 $pdo->exec('CREATE DATABASE IF NOT EXISTS iznik_batch_test');
 
-// Run migrations (not fresh - preserves existing data for speed)
-echo "Running migrate on iznik_batch_test...\n";
-$exitCode = \Illuminate\Support\Facades\Artisan::call('migrate', [
+// Use migrate:fresh to guarantee a clean schema on every run.
+// Using plain migrate (not fresh) caused accumulated state on the self-hosted CI
+// runner whose Percona container is reused across runs: residual test data from
+// previous runs was visible to new runs because the DB was never wiped.
+echo "Running migrate:fresh on iznik_batch_test...\n";
+$exitCode = \Illuminate\Support\Facades\Artisan::call('migrate:fresh', [
     '--database' => 'mysql',
     '--force' => true,
 ]);

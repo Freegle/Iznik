@@ -19,7 +19,6 @@ class RemindClosedGroupsCommandTest extends TestCase
     {
         $mod = $this->createTestUser();
         $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
-        $this->createTestUserEmail($mod, ['preferred' => 1]);
     }
 
     private function createClosedGroup(): Group
