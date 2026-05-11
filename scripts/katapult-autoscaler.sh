@@ -261,10 +261,42 @@ echo 'export GOPROXY=http://${CACHE_SERVER}:8081,direct' >> /etc/environment
 # Configure apt to use apt-cacher-ng
 echo 'Acquire::http::Proxy "http://${CACHE_SERVER}:3142";' > /etc/apt/apt.conf.d/01proxy
 
-# NOTE: No per-VM idle-check cron installed. VM lifecycle is managed entirely
-# by the autoscaler's cleanup_stale_vms() (time-based, 150 min max age).
-# In-VM idle detection is unreliable because circleci-agent runs jobs in its
-# own goroutines without spawning detectable subprocesses.
+# Idle self-destruct: detect active job via Docker containers.
+# circleci-agent runs jobs in its own goroutines (no detectable subprocess),
+# but a running job always has freegle compose containers up. When docker
+# compose down runs at job end, containers disappear — that starts the timer.
+cat > /usr/local/bin/idle-check.sh << 'IDLEEOF'
+#!/bin/bash
+IDLE_MARKER="/tmp/.runner-idle-since"
+VM_ID=\$(curl -sf --max-time 3 "http://169.254.169.254/katapult/v1/vm-id" 2>/dev/null || \
+         cat /opt/circleci-runner/vm-id 2>/dev/null || echo "")
+
+if docker ps -q --filter "label=com.docker.compose.project=freegle" 2>/dev/null | grep -q .; then
+    rm -f "\$IDLE_MARKER"
+    exit 0
+fi
+
+if [ ! -f "\$IDLE_MARKER" ]; then
+    date +%s > "\$IDLE_MARKER"
+    exit 0
+fi
+
+IDLE_SINCE=\$(cat "\$IDLE_MARKER")
+NOW=\$(date +%s)
+IDLE_SECONDS=\$((NOW - IDLE_SINCE))
+
+if [ "\$IDLE_SECONDS" -gt 600 ]; then
+    echo "Runner idle for \${IDLE_SECONDS}s — self-destructing"
+    if [ -n "\$VM_ID" ]; then
+        curl -sf -X DELETE \
+            -H "Authorization: Bearer ${KATAPULT_TOKEN}" \
+            "https://api.katapult.io/core/v1/virtual_machines/\$VM_ID" 2>/dev/null || true
+    fi
+    shutdown -h now
+fi
+IDLEEOF
+chmod +x /usr/local/bin/idle-check.sh
+echo "*/2 * * * * root /usr/local/bin/idle-check.sh >> /var/log/idle-check.log 2>&1" > /etc/cron.d/runner-idle-check
 
 # Start runner (template handles this, but ensure it's running)
 systemctl start circleci-runner 2>/dev/null || true
