@@ -816,6 +816,14 @@ Schedule::command('chats:review-pending')
     ->sendOutputTo(cronLog('chats:review-pending'))
     ->runInBackground();
 
+// Send engagement emails to at-risk users (7 days before inactive) and inactive users.
+// V1: cron/engage.php (daily 16:00)
+Schedule::command('mail:engage')
+    ->dailyAt('16:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:engage'))
+    ->runInBackground();
+
 // =============================================================================
 // GIT SUMMARY
 // =============================================================================
