@@ -236,7 +236,7 @@ class TNSyncCommand extends Command
     {
         Log::info("TN-SYNC-TRACE [WRITE] op=file-write path={$this->dateFile} set=date={$date}");
 
-        if (file_put_contents($this->dateFile, $date) !== false) {
+        if (@file_put_contents($this->dateFile, $date) !== false) {
             Log::info("Stored max change date to {$this->dateFile}: {$date}");
         } else {
             Log::error("Failed to store max change date to {$this->dateFile}");

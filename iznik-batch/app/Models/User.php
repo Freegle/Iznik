@@ -216,7 +216,7 @@ class User extends Model implements Auditable
      */
     public function notifications(): HasMany
     {
-        return $this->hasMany(Notification::class, 'userid');
+        return $this->hasMany(Notification::class, 'touser');
     }
 
     /**

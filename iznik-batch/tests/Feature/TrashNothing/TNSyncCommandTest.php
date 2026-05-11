@@ -2,14 +2,17 @@
 
 namespace Tests\Feature\TrashNothing;
 
+use App\Console\Commands\TrashNothing\TNSyncCommand;
 use App\Models\User;
 use App\Models\UserEmail;
 use App\Services\LokiService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\Attributes\PreserveGlobalState;
 use PHPUnit\Framework\Attributes\RunTestsInSeparateProcesses;
+use Psr\Log\NullLogger;
 use Tests\TestCase;
 
 /**
@@ -54,6 +57,12 @@ class TNSyncCommandTest extends TestCase
         }
 
         parent::setUp();
+
+        // With #[RunTestsInSeparateProcesses], each test runs in its own PHP process.
+        // LOG_CHANNEL=stderr in Docker means logs go to child-process stderr, which
+        // PHPUnit captures and treats as risky output (failOnRisky: true → error).
+        // Swap the logger for a NullLogger to prevent all log output in child processes.
+        Log::swap(new NullLogger());
 
         $this->dateFile = sys_get_temp_dir() . '/tn_sync_test_' . uniqid('', true) . '.txt';
         $this->apiBaseUrl = 'https://trashnothing.com/fd/api';
@@ -1019,10 +1028,15 @@ class TNSyncCommandTest extends TestCase
 
     public function test_exits_early_when_lock_already_held(): void
     {
-        // Partial-mock the command so acquireLock() returns false, simulating
-        // a concurrent run. The command must exit 0 (not an error).
-        $this->partialMock(\App\Console\Commands\TrashNothing\TNSyncCommand::class, function ($mock) {
-            $mock->shouldReceive('acquireLock')->once()->andReturn(false);
+        // acquireLock() is protected, and partialMock() can't mock protected methods.
+        // Use an anonymous subclass that overrides acquireLock() to return false,
+        // simulating a concurrent run. The command must exit 0 (not an error).
+        $loki = $this->app->make(LokiService::class);
+        $this->app->bind(TNSyncCommand::class, fn () => new class($loki) extends TNSyncCommand {
+            protected function acquireLock(): bool
+            {
+                return false;
+            }
         });
 
         Http::fake([
@@ -1124,8 +1138,10 @@ class TNSyncCommandTest extends TestCase
 
     public function test_store_sync_date_logs_error_when_write_fails(): void
     {
-        // Set the date file to a path that cannot be written.
-        config(['freegle.trashnothing.sync_date_file' => '/dev/full']);
+        // Set the date file to a path in a non-existent directory so the write fails.
+        // /dev/full MUST NOT be used here: it is a device that returns infinite zeros
+        // on read, which causes file_get_contents() to exhaust all available memory.
+        config(['freegle.trashnothing.sync_date_file' => '/nonexistent-dir/tn_sync_date.txt']);
 
         $user = $this->createTestUser();
 

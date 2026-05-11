@@ -9,7 +9,9 @@ class GroupAttachmentModelTest extends TestCase
 {
     public function test_get_path_returns_gimg_url(): void
     {
-        $attachment = new GroupAttachment(['id' => 42, 'archived' => false]);
+        // id is guarded against mass-assignment; set it directly.
+        $attachment = new GroupAttachment(['archived' => false]);
+        $attachment->id = 42;
 
         $url = $attachment->getPath(false);
 
@@ -19,7 +21,8 @@ class GroupAttachmentModelTest extends TestCase
 
     public function test_get_path_returns_tgimg_url_for_thumb(): void
     {
-        $attachment = new GroupAttachment(['id' => 99, 'archived' => false]);
+        $attachment = new GroupAttachment(['archived' => false]);
+        $attachment->id = 99;
 
         $url = $attachment->getPath(true);
 
@@ -47,7 +50,8 @@ class GroupAttachmentModelTest extends TestCase
 
     public function test_get_path_uses_archived_domain_when_archived(): void
     {
-        $attachment = new GroupAttachment(['id' => 5, 'archived' => true]);
+        $attachment = new GroupAttachment(['archived' => true]);
+        $attachment->id = 5;
 
         config(['freegle.images.archived_domain' => 'https://archived.example.com/']);
         config(['freegle.images.domain' => 'https://live.example.com/']);
@@ -60,7 +64,8 @@ class GroupAttachmentModelTest extends TestCase
 
     public function test_get_path_uses_live_domain_when_not_archived(): void
     {
-        $attachment = new GroupAttachment(['id' => 5, 'archived' => false]);
+        $attachment = new GroupAttachment(['archived' => false]);
+        $attachment->id = 5;
 
         config(['freegle.images.domain' => 'https://live.example.com/']);
 
