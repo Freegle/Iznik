@@ -801,6 +801,14 @@ Schedule::command('data:git-summary')
 // immediate promotion if the commit message has hotfix: prefix.
 // See iznik-nuxt3/.circleci/config.yml
 
+// Remove duplicate user profile images, keeping only the most recent per user.
+// V1: cron/archive_attachments.php (daily)
+Schedule::command('cleanup:user-images')
+    ->dailyAt('01:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('cleanup:user-images'))
+    ->runInBackground();
+
 // Auto-reject chat messages stuck in review for 7+ days; notify group mods
 // about messages pending review for 48+ hours; send mentors a daily summary.
 // V1: cron/chat_review.php (daily)

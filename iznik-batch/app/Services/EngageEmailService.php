@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Mail\Engage\EngageMail;
+use App\Models\Group;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -71,7 +72,7 @@ class EngageEmailService
             $hasMembership = DB::table('memberships')
                 ->join('groups', 'groups.id', '=', 'memberships.groupid')
                 ->where('memberships.userid', $userId)
-                ->where('groups.type', 'Freegle')
+                ->where('groups.type', Group::TYPE_FREEGLE)
                 ->exists();
 
             if (!$hasMembership) {
@@ -82,7 +83,7 @@ class EngageEmailService
             $engagementEnabled = DB::table('memberships')
                 ->join('groups', 'groups.id', '=', 'memberships.groupid')
                 ->where('memberships.userid', $userId)
-                ->where('groups.type', 'Freegle')
+                ->where('groups.type', Group::TYPE_FREEGLE)
                 ->selectRaw('MAX(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(memberships.settings, "$.engagement")), 1)) AS enabled')
                 ->value('enabled');
 

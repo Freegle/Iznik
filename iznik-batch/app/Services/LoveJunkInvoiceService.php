@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use Illuminate\Mail\Message;
+use App\Mail\LoveJunk\TnInvoiceMail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -60,19 +60,16 @@ class LoveJunkInvoiceService
 
         $tnAddr = config('freegle.mail.tn_invoice_addr');
         $treasurerAddr = config('freegle.mail.treasurer_addr');
-        $geeksAddr = config('freegle.mail.geeks_addr');
-
-        $body = "Please raise an invoice on Freegle Ltd for your share of the LoveJunk advertising income, "
-            . "which is £{$tnAmount} for the period from {$start} (inclusive) to {$end} (exclusive). "
-            . "During this period TN provided {$tnPercent}% of the posts sent to LoveJunk.\n\n"
-            . "The invoice should be emailed as a PDF attachment to {$treasurerAddr}. Thanks!";
 
         if (!$dryRun && $tnAddr) {
-            Mail::raw($body, function (Message $message) use ($tnAddr, $geeksAddr, $start, $end) {
-                $message->from($geeksAddr, 'Freegle')
-                    ->to($tnAddr)
-                    ->subject('Please raise an invoice');
-            });
+            Mail::send(new TnInvoiceMail(
+                recipientEmail: $tnAddr,
+                tnAmount: (string) $tnAmount,
+                start: $start,
+                end: $end,
+                tnPercent: $tnPercent,
+                treasurerAddr: $treasurerAddr,
+            ));
         }
 
         return [
