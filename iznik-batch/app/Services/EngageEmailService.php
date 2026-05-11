@@ -113,7 +113,7 @@ class EngageEmailService
                 Mail::send(new EngageMail(
                     recipientName: $user->display_name,
                     recipientEmail: $user->email_preferred,
-                    subject: $mail->subject,
+                    emailSubject: $mail->subject,
                     template: $mail->template,
                     engageId: $engageId,
                     unsubscribeUrl: $unsubscribeUrl,

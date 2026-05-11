@@ -11,7 +11,7 @@ class EngageMail extends Mailable
     public function __construct(
         public readonly string $recipientName,
         public readonly string $recipientEmail,
-        public readonly string $subject,
+        public readonly string $emailSubject,
         public readonly string $template,
         public readonly int $engageId,
         public readonly string $unsubscribeUrl,
@@ -22,7 +22,7 @@ class EngageMail extends Mailable
         return new Envelope(
             from: config('freegle.mail.noreply_addr'),
             to: [$this->recipientEmail],
-            subject: $this->subject,
+            subject: $this->emailSubject,
         );
     }
 
