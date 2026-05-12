@@ -3038,20 +3038,22 @@ jobs:
       - run:
           name: Setup Firebase Configuration
           command: |
+            PATCH_PKG='import json; gs=json.load(open("android/app/google-services.json")); [c["client_info"]["android_client_info"].update({"package_name":"org.ilovefreegle.modtools"}) for c in gs.get("client",[]) if "android_client_info" in c.get("client_info",{})]; json.dump(gs,open("android/app/google-services.json","w"),indent=2); print("Patched package_name to org.ilovefreegle.modtools")'
             if [ -n "$MODTOOLS_GOOGLE_SERVICES_JSON_BASE64" ]; then
               echo "Decoding modtools google-services.json"
               echo "$MODTOOLS_GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n' | base64 -d > android/app/google-services.json
+              python3 -c "$PATCH_PKG"
             elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
               echo "Using Freegle google-services.json for ModTools (patching package name)"
               echo "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n' | base64 -d > android/app/google-services.json
-              # Patch package name so Firebase SDK finds the right client entry for this app
-              python3 -c "import json; gs=json.load(open('android/app/google-services.json')); [c['client_info']['android_client_info'].update({'package_name':'org.ilovefreegle.modtools'}) for c in gs.get('client',[]) if 'android_client_info' in c.get('client_info',{})]; json.dump(gs,open('android/app/google-services.json','w'),indent=2); print('Patched package_name to org.ilovefreegle.modtools')"
+              python3 -c "$PATCH_PKG"
             else
               echo "⚠️  No Firebase config - push notifications will not work"
             fi
             if [ -f android/app/google-services.json ]; then
               if python3 -m json.tool android/app/google-services.json > /dev/null 2>&1; then
                 echo "✅ Valid google-services.json"
+                echo "📱 Project ID: $(python3 -c 'import json; gs=json.load(open("android/app/google-services.json")); print(gs["project_info"]["project_id"])')"
                 echo "📱 Package name: $(python3 -c 'import json; gs=json.load(open("android/app/google-services.json")); print(gs["client"][0]["client_info"]["android_client_info"]["package_name"])')"
               else
                 echo "❌ Invalid JSON in google-services.json"
