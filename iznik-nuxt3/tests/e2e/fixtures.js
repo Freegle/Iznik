@@ -1530,7 +1530,7 @@ const testWithFixtures = test.extend({
         // Load My Posts page from scratch
         await page.goto('/myposts', {
           timeout: timeouts.navigation.default,
-          waitUntil: 'load',
+          waitUntil: 'domcontentloaded',
         })
 
         // Find the post we want to withdraw.
