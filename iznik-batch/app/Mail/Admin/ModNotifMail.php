@@ -3,6 +3,8 @@
 namespace App\Mail\Admin;
 
 use App\Mail\MjmlMailable;
+use Illuminate\Mail\Mailables\Address;
+use Illuminate\Mail\Mailables\Envelope;
 
 class ModNotifMail extends MjmlMailable
 {
@@ -36,6 +38,17 @@ class ModNotifMail extends MjmlMailable
     protected function getSubject(): string
     {
         return $this->modNotifSubject;
+    }
+
+    public function envelope(): Envelope
+    {
+        return new Envelope(
+            from: new Address(
+                config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
+                'ModTools'
+            ),
+            subject: $this->getSubject(),
+        );
     }
 
     public function build(): static
