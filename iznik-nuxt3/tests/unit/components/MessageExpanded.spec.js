@@ -1204,7 +1204,7 @@ describe('MessageExpanded', () => {
       mockBreakpoint.value = 'md' // restore default
     })
 
-    it('expandReply navigates to chat reply page on mobile/tablet', async () => {
+    it('expandReply navigates to chat reply page on mobile (sm)', async () => {
       const mockPush = vi.fn()
       globalThis.__testUseRouter = () => ({
         push: mockPush,
@@ -1222,7 +1222,27 @@ describe('MessageExpanded', () => {
         query: { replyto: mockMessage.value.id },
       })
 
-      mockBreakpoint.value = 'md' // restore default
+      delete globalThis.__testUseRouter
+    })
+
+    it('expandReply navigates to chat reply page on tablet (md)', async () => {
+      const mockPush = vi.fn()
+      globalThis.__testUseRouter = () => ({
+        push: mockPush,
+        replace: vi.fn(),
+        currentRoute: { value: { path: '/' } },
+      })
+
+      mockBreakpoint.value = 'md'
+      const wrapper = await createWrapper()
+      const comp = wrapper.findComponent(MessageExpanded)
+      comp.vm.expandReply()
+      expect(comp.vm.replyExpanded).toBe(false)
+      expect(mockPush).toHaveBeenCalledWith({
+        path: '/chats/reply',
+        query: { replyto: mockMessage.value.id },
+      })
+
       delete globalThis.__testUseRouter
     })
 
