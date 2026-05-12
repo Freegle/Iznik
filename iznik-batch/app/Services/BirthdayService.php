@@ -14,7 +14,7 @@ class BirthdayService
      * @param  string|null  $emailOverride  Send test email to this address and stop after one
      * @param  int[]|null  $groupIds  Only process these specific group IDs
      */
-    public function sendBirthdayEmails(?string $emailOverride = null, ?array $groupIds = null): int
+    public function sendBirthdayEmails(?string $emailOverride = null, ?array $groupIds = null, bool $dryRun = false): int
     {
         $today = now()->format('m-d');
 
@@ -68,22 +68,24 @@ class BirthdayService
                     continue;
                 }
 
-                Mail::send(new BirthdayMail(
-                    groupName: $fromName,
-                    groupNameShort: $group->nameshort,
-                    groupAge: (int) $group->age,
-                    groupId: $group->id,
-                    recipientEmail: $recipientEmail,
-                    fromEmail: $fromEmail,
-                    fromName: $fromName,
-                    volunteers: $volunteers,
-                ));
+                if (!$dryRun) {
+                    Mail::send(new BirthdayMail(
+                        groupName: $fromName,
+                        groupNameShort: $group->nameshort,
+                        groupAge: (int) $group->age,
+                        groupId: $group->id,
+                        recipientEmail: $recipientEmail,
+                        fromEmail: $fromEmail,
+                        fromName: $fromName,
+                        volunteers: $volunteers,
+                    ));
+
+                    if (!$emailOverride) {
+                        $this->recordBirthdayAppealSent($member->id, $member->settings);
+                    }
+                }
 
                 $count++;
-
-                if (!$emailOverride) {
-                    $this->recordBirthdayAppealSent($member->id, $member->settings);
-                }
 
                 if ($emailOverride) {
                     return $count;

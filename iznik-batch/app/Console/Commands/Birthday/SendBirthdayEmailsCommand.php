@@ -16,10 +16,10 @@ class SendBirthdayEmailsCommand extends Command
 
     public function handle(BirthdayService $service): int
     {
-        if ($this->option('dry-run')) {
-            $this->info('[DRY RUN] Birthday email dry run — no emails will be sent.');
+        $dryRun = (bool) $this->option('dry-run');
 
-            return self::SUCCESS;
+        if ($dryRun) {
+            $this->info('[DRY RUN] Birthday email dry run — no emails will be sent.');
         }
 
         $emailOverride = $this->option('email') ?: null;
@@ -29,9 +29,10 @@ class SendBirthdayEmailsCommand extends Command
             $groupIds = array_map('intval', explode(',', $this->option('groups')));
         }
 
-        $count = $service->sendBirthdayEmails($emailOverride, $groupIds);
+        $count = $service->sendBirthdayEmails($emailOverride, $groupIds, $dryRun);
 
-        $this->info("Sent {$count} birthday email(s).");
+        $verb = $dryRun ? 'Would send' : 'Sent';
+        $this->info("{$verb} {$count} birthday email(s).");
 
         return self::SUCCESS;
     }
