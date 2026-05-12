@@ -121,7 +121,7 @@ export default defineNuxtConfig({
   // 404 errors during prerendering when the crawler tried to access build metadata from the CDN.
   $production: {
     app: {
-      cdnURL: process.env.DEPLOY_PRIME_URL,
+      cdnURL: process.env.URL,
     },
   },
 
