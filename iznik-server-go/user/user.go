@@ -161,6 +161,7 @@ type UserMessageHistory struct {
 	Subject    string    `json:"subject"`
 	Type       string    `json:"type"`
 	Arrival    time.Time `json:"arrival"`
+	Postdate   time.Time `json:"postdate"` // V1-parity: frontend reads msg.postdate for $recentwanted
 	Groupid    uint64    `json:"groupid"`
 	Collection string    `json:"collection"`
 	Daysago    int       `json:"daysago"`
@@ -482,12 +483,13 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 		"FROM messages m "+
 		"INNER JOIN messages_groups mg ON m.id = mg.msgid "+
 		"LEFT JOIN messages_postings mp ON mp.msgid = m.id "+
-		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL "+
-		"ORDER BY arrival DESC", userid).Scan(&history)
+		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL AND mg.collection = ? "+
+		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED).Scan(&history)
 
 	now := time.Now()
 	for ix, h := range history {
 		history[ix].Daysago = int(now.Sub(h.Arrival).Hours() / 24)
+		history[ix].Postdate = h.Arrival
 	}
 
 	return history
