@@ -176,7 +176,7 @@ class SendTestPushCommandTest extends TestCase
             'apptype' => $apptype,
             'type' => 'FCMAndroid',
             'subscription' => 'test_token_' . bin2hex(random_bytes(16)),
-            'created' => now(),
+            'added' => now(),
         ]);
     }
 }
