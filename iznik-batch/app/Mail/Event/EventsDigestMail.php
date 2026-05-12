@@ -3,18 +3,31 @@
 namespace App\Mail\Event;
 
 use App\Mail\MjmlMailable;
+use App\Mail\Traits\TrackableEmail;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
 class EventsDigestMail extends MjmlMailable
 {
+    use TrackableEmail;
+
     public function __construct(
         public readonly string $recipientEmail,
         public readonly string $groupName,
         public readonly array $events,
         public readonly string $unsubscribeUrl,
+        public readonly ?int $userId = null,
     ) {
         parent::__construct();
+
+        $this->initTracking(
+            'EventsDigest',
+            $this->recipientEmail,
+            $this->userId,
+            null,
+            $this->getSubject(),
+            ['group' => $this->groupName, 'event_count' => count($this->events)]
+        );
     }
 
     protected function getSubject(): string

@@ -130,6 +130,7 @@ class EventsDigestService
                         groupName: $groupRow->nameshort,
                         events: $eventData,
                         unsubscribeUrl: $unsubscribeUrl,
+                        userId: $member->userId,
                     ));
                 }
                 $sent++;

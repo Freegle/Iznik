@@ -10,6 +10,21 @@ use Tests\TestCase;
 
 class EventsDigestCommandTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // EventsDigestService queries communityevents globally (no WHERE groupid in SQL).
+        // Rows from parallel test classes can slip through DatabaseTransactions isolation.
+        // Delete inside the current transaction so leaked rows are hidden without affecting
+        // other test classes (the DELETE is rolled back with this test's transaction).
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        foreach (['communityevents_dates', 'communityevents_groups', 'communityevents', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
+            DB::table($table)->delete();
+        }
+        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+    }
+
     private function createEvent(int $groupId, string $title = 'Test Event', int $daysFromNow = 7): int
     {
         $eventId = DB::table('communityevents')->insertGetId([
@@ -238,6 +253,26 @@ class EventsDigestCommandTest extends TestCase
         $group = $this->createTestGroup();
         // Event 35 days from now — outside the 30-day window
         $this->createEvent($group->id, 'Far Future Event', 35);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, [
+            'eventsallowed' => 1,
+            'emailfrequency' => 24,
+        ]);
+
+        $this->artisan('mail:events-digest')
+            ->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_skips_past_events(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        // Event 1 day in the past — should not be included
+        $this->createEvent($group->id, 'Past Event', -1);
 
         $member = $this->createTestUser();
         $this->createMembership($member, $group, [
