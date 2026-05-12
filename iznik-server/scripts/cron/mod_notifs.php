@@ -53,7 +53,7 @@ if ($hour >= 8 && $hour <= 21)
                 $earliest = date ("Y-m-d", strtotime("Midnight 31 days ago"));
 
                 $work = [
-                    'Pending Messages' => $dbhr->preQuery("SELECT COUNT(*) AS count FROM messages INNER JOIN messages_groups ON messages.id = messages_groups.msgid AND messages_groups.groupid = ? AND messages_groups.collection = ? AND messages_groups.deleted = 0 AND messages.heldby IS NULL AND messages.deleted IS NULL " . ($minage > 0 ? "AND messages_groups.arrival < '$minageq'" : '') . ";", [
+                    'Pending Messages' => $dbhr->preQuery("SELECT COUNT(*) AS count FROM messages INNER JOIN messages_groups ON messages.id = messages_groups.msgid AND messages_groups.groupid = ? AND messages_groups.collection = ? AND messages_groups.deleted = 0 AND messages.heldby IS NULL AND messages.deleted IS NULL " . ($minage > 0 ? "AND messages_groups.arrival < '$minageq' " : '') . "INNER JOIN users ON users.id = messages.fromuser AND users.deleted IS NULL;", [
                         $group['id'],
                         MessageCollection::PENDING
                     ])[0]['count'],

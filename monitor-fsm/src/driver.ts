@@ -556,16 +556,35 @@ async function main() {
     // ─── DIAGNOSE_BUG re-entry clearing ───
     // DIAGNOSE_BUG uses a two-phase pattern: Phase 1 calls search_code and
     // check_existing_prs, Phase 2 reads those results and produces the brief.
-    // When REVIEW_REPRODUCTION sends us back here (mismatch), the previous
-    // search results are stale — clear them so Phase 1 runs again with a
-    // potentially refined query, incorporating the mismatch reason.
+    // When REVIEW_REPRODUCTION sends us back here (mismatch), clear the stale
+    // search results ONCE so Phase 1 re-runs with the mismatch context.
+    // Guard with _diagnosisSearchCleared so we only clear on first entry after
+    // a mismatch — without this, the clearing fires every step while the LLM
+    // stays in DIAGNOSE_BUG (proposedTransition=null), preventing Phase 2 from
+    // ever seeing the search results it needs.
     if (current.currentState === 'DIAGNOSE_BUG') {
       const ctxNow: any = current.context ?? {}
-      if (ctxNow.diagnosisMismatchReason && (ctxNow._action_search_code || ctxNow._action_check_existing_prs)) {
+      if (ctxNow.diagnosisMismatchReason && !ctxNow._diagnosisSearchCleared &&
+          (ctxNow._action_search_code || ctxNow._action_check_existing_prs)) {
         dbg(`clearing stale search results on DIAGNOSE_BUG re-entry (mismatch: ${ctxNow.diagnosisMismatchReason})`)
         await engine.updateContext(instance.id, {
           _action_search_code: null,
           _action_check_existing_prs: null,
+          _diagnosisSearchCleared: true,
+        })
+      }
+    }
+
+    // ─── PARSE_ONLY: suppress PR-fix task in PARALLEL_ANALYZE_AND_FIX ───
+    // Null out focusPRNumber/onlyFixPR so the LLM skips section (A) (PR fix task)
+    // and launches only the Discourse and Sentry analysis sub-agents.
+    if (process.env.PARSE_ONLY === '1' && current.currentState === 'PARALLEL_ANALYZE_AND_FIX') {
+      const ctxNow: any = current.context ?? {}
+      const ciRouterResult = ctxNow._action_ci_router_decide
+      if (ciRouterResult?.focusPRNumber != null || ciRouterResult?.onlyFixPR) {
+        out('PARSE_ONLY: clearing focusPRNumber to skip PR fix task')
+        await engine.updateContext(instance.id, {
+          _action_ci_router_decide: { ...ciRouterResult, focusPRNumber: null, onlyFixPR: false },
         })
       }
     }
@@ -749,6 +768,29 @@ async function main() {
         }
       }
       consecutiveCoverageFailures = 0
+
+      // ─── PARSE_ONLY mode: stop before any fixing states ───
+      // Set PARSE_ONLY=1 to run through Discourse parsing (LOAD_STATE → CHECK_CI
+      // → CI_ROUTER → PARALLEL_ANALYZE_AND_FIX → COLLATE_RESULTS → WORK_ROUTER)
+      // and exit before the FSM dispatches to bug-fixing or coverage states.
+      // If CI_ROUTER routed to FIX_MASTER_CI (master red), bypass it and go
+      // straight to PARALLEL_ANALYZE_AND_FIX so Discourse parsing still runs.
+      if (process.env.PARSE_ONLY === '1') {
+        const parseOnlyNow = await engine.getInstance(instance.id)
+        if (parseOnlyNow.currentState === 'FIX_MASTER_CI') {
+          out('PARSE_ONLY: master red but skipping fix — forcing straight to Discourse analysis')
+          await engine.forceTransition(instance.id, 'PARALLEL_ANALYZE_AND_FIX', 'PARSE_ONLY: bypassing FIX_MASTER_CI')
+          continue
+        }
+        const ANALYSIS_STATES = new Set([
+          'LOAD_STATE', 'CHECK_CI', 'CI_ROUTER',
+          'PARALLEL_ANALYZE_AND_FIX', 'COLLATE_RESULTS', 'WORK_ROUTER',
+        ])
+        if (!ANALYSIS_STATES.has(parseOnlyNow.currentState)) {
+          out(`PARSE_ONLY: stopping before ${humanizeState(parseOnlyNow.currentState)}`)
+          break
+        }
+      }
     } catch (err: any) {
       outWarn(`step ${step} error: ${err.message ?? err}`)
       // Claude subscription quota exhausted — retrying will produce the same

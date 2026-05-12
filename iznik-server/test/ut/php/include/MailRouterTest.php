@@ -1924,5 +1924,32 @@ class MailRouterTest extends IznikTestCase {
 //        $this->assertEquals(MailRouter::TO_VOLUNTEERS, $rc);
 //
 //        //    }
+
+    public function testPendingCountExcludesDeletedUsers() {
+        # Set up a poster in moderated posting status so messages land in pending.
+        list($poster, $posterid) = $this->createTestUserWithMembership($this->gid, User::ROLE_MEMBER, 'Poster', 'poster@test.com', 'testpw');
+        $poster->setMembershipAtt($this->gid, 'ourPostingStatus', Group::POSTING_MODERATED);
+        User::clearCache();
+
+        list($m, $id, $failok) = $this->createParsedTestMessage('Pending count test', 'poster@test.com', 'to@test.com');
+
+        $r = new MailRouter($this->dbhr, $this->dbhm, $id);
+        $rc = $r->route();
+        $this->assertEquals(MailRouter::PENDING, $rc);
+
+        $g = new Group($this->dbhr, $this->dbhm, $this->gid);
+        $workBefore = $g->getWorkCounts([$this->gid => ['active' => TRUE]], [$this->gid]);
+        $pendingBefore = $workBefore[$this->gid]['pending'] ?? 0;
+        $this->assertGreaterThan(0, $pendingBefore, 'Pending count should be non-zero before user deletion');
+
+        # Soft-delete the poster — ModTools UI hides their messages but the bug was
+        # that notification counts still included them.
+        $this->dbhm->preExec("UPDATE users SET deleted = NOW() WHERE id = ?;", [$posterid]);
+        User::clearCache();
+
+        $workAfter = $g->getWorkCounts([$this->gid => ['active' => TRUE]], [$this->gid]);
+        $pendingAfter = $workAfter[$this->gid]['pending'] ?? 0;
+        $this->assertEquals(0, $pendingAfter, 'Pending count must exclude messages from deleted users');
+    }
 }
 
