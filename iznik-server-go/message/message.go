@@ -2494,15 +2494,19 @@ func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error
 	// req.Attachments is nil when the field is absent from JSON (don't touch).
 	// req.Attachments is [] (empty, non-nil) when all attachments are removed (#338).
 	if req.Attachments != nil {
-		recordAIDeletions(db, myid, req.ID, req.Attachments, req.BadAIImages)
+		// Defence-in-depth: if the keep-list contains both AI-generated and user-supplied
+		// attachments, evict the AI ones so the user's own photo takes precedence.
+		keepAttachments := filterOutAIAttachments(db, req.Attachments)
 
-		if len(req.Attachments) > 0 {
-			for i, attid := range req.Attachments {
+		recordAIDeletions(db, myid, req.ID, keepAttachments, req.BadAIImages)
+
+		if len(keepAttachments) > 0 {
+			for i, attid := range keepAttachments {
 				primary := i == 0
 				db.Exec("UPDATE messages_attachments SET msgid = ?, `primary` = ? WHERE id = ?", req.ID, primary, attid)
 			}
 			// Delete any attachments not in the new list.
-			db.Exec("DELETE FROM messages_attachments WHERE msgid = ? AND id NOT IN (?)", req.ID, req.Attachments)
+			db.Exec("DELETE FROM messages_attachments WHERE msgid = ? AND id NOT IN (?)", req.ID, keepAttachments)
 		} else {
 			// Empty array — remove all attachments.
 			db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", req.ID)
@@ -2927,6 +2931,10 @@ func PutMessage(c *fiber.Ctx) error {
 
 	if req.Type != "Offer" && req.Type != "Wanted" {
 		return fiber.NewError(fiber.StatusBadRequest, "type must be Offer or Wanted")
+	}
+
+	if strings.TrimSpace(req.Item) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Item is required")
 	}
 
 	// For non-Draft, check membership and fetch posting status in one query.
@@ -3680,6 +3688,41 @@ func containsUint64(slice []uint64, val uint64) bool {
 		}
 	}
 	return false
+}
+
+// filterOutAIAttachments returns ids with any AI-generated attachment IDs removed,
+// but only when non-AI attachments are also present. If all attachments are AI or
+// all are non-AI, the original slice is returned unchanged.
+func filterOutAIAttachments(db *gorm.DB, ids []uint64) []uint64 {
+	if len(ids) == 0 {
+		return ids
+	}
+	type row struct {
+		ID           uint64
+		Externalmods json.RawMessage
+	}
+	var rows []row
+	db.Raw("SELECT id, externalmods FROM messages_attachments WHERE id IN (?)", ids).Scan(&rows)
+
+	aiSet := make(map[uint64]bool)
+	hasNonAI := false
+	for _, r := range rows {
+		if isAIAttachment(r.Externalmods) {
+			aiSet[r.ID] = true
+		} else {
+			hasNonAI = true
+		}
+	}
+	if !hasNonAI || len(aiSet) == 0 {
+		return ids
+	}
+	out := make([]uint64, 0, len(ids))
+	for _, id := range ids {
+		if !aiSet[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // isAIAttachment returns true if the externalmods JSON contains {"ai": true}.
