@@ -293,6 +293,10 @@ workflows:
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
+          filters:
+            branches:
+              ignore:
+                - modtools
       - freegle/build-android-modtools-debug:
           requires:
             - freegle/build-and-test
