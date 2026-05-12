@@ -2199,7 +2199,9 @@ class User extends Entity
             $sql = null;
 
             if (count($idsleft)) {
-                $collq = " AND messages_groups.collection IN ('" . implode("','", $msgcoll) . "') ";
+                // messagehistory is used for $recentwanted and similar macros — only Approved
+                // (publicly visible) posts belong here regardless of what the caller requested.
+                $collq = " AND messages_groups.collection = '" . MessageCollection::APPROVED . "' ";
                 $earliest = $historyfull ? '1970-01-01' : date('Y-m-d', strtotime("midnight 30 days ago"));
                 $delq = $historyfull ? '' : ' AND messages_groups.deleted = 0';
 
