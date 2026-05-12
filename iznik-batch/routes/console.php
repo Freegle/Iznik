@@ -254,12 +254,12 @@ Schedule::command('chats:send-tryst-reminders')
     ->runInBackground();
 
 // Chase up mods about User2Mod chats with no mod reply older than 6.55 days.
-// V1: cron/chat_chaseupmods.php (daily 15:30) — disabled pending sign-off
-// Schedule::command('chats:chaseup-mods')
-//     ->dailyAt('15:30')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('chats:chaseup-mods'))
-//     ->runInBackground();
+// V1: cron/chat_chaseupmods.php (daily 15:30)
+Schedule::command('chats:chaseup-mods')
+    ->dailyAt('15:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:chaseup-mods'))
+    ->runInBackground();
 
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
 // V1: cron/chat_spam.php — disabled pending sign-off
@@ -304,11 +304,20 @@ Schedule::command('mail:digest 8')
     ->withoutOverlapping()
     ->runInBackground();
 
-// Daily digests.
-Schedule::command('mail:digest 24')
-    ->dailyAt('08:00')
-    ->withoutOverlapping()
-    ->runInBackground();
+// Daily digests — superseded by mail:digest:unified below. Kept commented
+// here in case we ever need to revert; the unified digest sends one email
+// per user with posts from all their communities instead of one per group.
+// V1 ran two parallel workers sharded by MOD(groupid, 2) (cron/digest.php
+// -i 24 -m 2 -v 0 / -v 1) — preserved here as two entries so a revert
+// keeps the throughput.
+// Schedule::command('mail:digest 24 --mod=2 --val=0')
+//     ->dailyAt('08:00')
+//     ->withoutOverlapping()
+//     ->runInBackground();
+// Schedule::command('mail:digest 24 --mod=2 --val=1')
+//     ->dailyAt('08:00')
+//     ->withoutOverlapping()
+//     ->runInBackground();
 // Unified digest - replaces per-group digests.
 // Daily mode - sends one digest per user with posts from all their communities.
 Schedule::command('mail:digest:unified --mode=daily')
@@ -642,12 +651,13 @@ Schedule::command('groups:remind-closed')
     ->sendOutputTo(cronLog('groups:remind-closed'))
     ->runInBackground();
 
-// V1: cron/group_customisation.php — disabled pending sign-off
-// Schedule::command('groups:remind-customisation')
-//     ->monthlyOn(1, '08:00')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('groups:remind-customisation'))
-//     ->runInBackground();
+// V1: cron/group_customisation.php — script existed in scripts/cron/ but no
+// crontab entry, so it never ran in V1. Migrating to Laravel adds the schedule.
+Schedule::command('groups:remind-customisation')
+    ->monthlyOn(1, '08:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:remind-customisation'))
+    ->runInBackground();
 
 // V1: cron/donations_thank.php
 // Schedule::command('mail:donations:thank')
@@ -741,12 +751,12 @@ Schedule::command('messages:update-index')
 //     ->runInBackground();
 
 // Notify group mods about recent chitchat (newsfeed) posts from their members.
-// V1: cron/newsfeed_modnotif.php (daily 13:30) — disabled pending sign-off
-// Schedule::command('mail:newsfeed-mod-notif')
-//     ->dailyAt('13:30')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('mail:newsfeed-mod-notif'))
-//     ->runInBackground();
+// V1: cron/newsfeed_modnotif.php (daily 13:30)
+Schedule::command('mail:newsfeed-mod-notif')
+    ->dailyAt('13:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:newsfeed-mod-notif'))
+    ->runInBackground();
 
 // =============================================================================
 // NEWSFEED
@@ -777,12 +787,12 @@ Schedule::command('noticeboards:thank-users')
 // =============================================================================
 
 // Send unreviewed stories to central team for newsletter voting.
-// V1: cron/stories_tocentral.php (weekly, Friday 14:00) — disabled pending sign-off
-// Schedule::command('stories:send-to-central')
-//     ->weeklyOn(5, '14:00')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('stories:send-to-central'))
-//     ->runInBackground();
+// V1: cron/stories_tocentral.php (weekly, Friday 14:00)
+Schedule::command('stories:send-to-central')
+    ->weeklyOn(5, '14:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stories:send-to-central'))
+    ->runInBackground();
 
 // =============================================================================
 // GIT SUMMARY
@@ -811,9 +821,10 @@ Schedule::command('chats:review-pending')
     ->runInBackground();
 
 // Alert geeks about Freegle groups that have not received messages in 7+ days.
-// V1: cron/groups_nomessages.php (daily) — disabled pending sign-off
-// Schedule::command('groups:alert-no-messages')
-//     ->dailyAt('07:00')
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('groups:alert-no-messages'))
-//     ->runInBackground();
+// V1: cron/groups_nomessages.php — script existed in scripts/cron/ but no
+// crontab entry, so it never ran in V1. Migrating to Laravel adds the schedule.
+Schedule::command('groups:alert-no-messages')
+    ->dailyAt('07:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:alert-no-messages'))
+    ->runInBackground();
