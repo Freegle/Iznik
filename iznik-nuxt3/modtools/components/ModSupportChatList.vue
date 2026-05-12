@@ -6,24 +6,23 @@
       :chatid="chat.id"
       :pov="pov"
     />
-    <b-button
-      v-if="!showAll && chatsUnshown"
-      variant="white"
-      class="mt-1"
-      @click="showAll = true"
-    >
-      Show +{{ chatsUnshown }}
-    </b-button>
+    <infinite-loading :identifier="infiniteBump" @infinite="loadMore">
+      <template #spinner><span /></template>
+      <template #complete><span /></template>
+      <template #no-results><span /></template>
+    </infinite-loading>
     <notice-message v-if="!props.chats?.length"> No chats. </notice-message>
   </div>
 </template>
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useChatStore } from '~/stores/chat'
+import { useUserStore } from '~/stores/user'
 
-const SHOW = 3
+const PAGE_SIZE = 10
 
 const chatStore = useChatStore()
+const userStore = useUserStore()
 
 const props = defineProps({
   chats: {
@@ -37,6 +36,14 @@ const props = defineProps({
   },
 })
 
+const showCount = ref(0)
+const infiniteBump = ref(0)
+
+function otherUserId(chat) {
+  if (chat.chattype !== 'User2User') return null
+  return chat.user1 === props.pov ? chat.user2 : chat.user1
+}
+
 // Populate the chat store with chat objects so ModSupportChat can look them up by id.
 function populateStore(chats) {
   if (chats) {
@@ -46,18 +53,40 @@ function populateStore(chats) {
   }
 }
 
+async function prefetchUsers(slice) {
+  const ids = [...new Set(slice.map(otherUserId).filter(Boolean))]
+  if (ids.length) {
+    await userStore.fetchMultiple(ids)
+  }
+}
+
+async function loadMore($state) {
+  const nextSlice = props.chats.slice(showCount.value, showCount.value + PAGE_SIZE)
+
+  if (!nextSlice.length) {
+    $state.complete()
+    return
+  }
+
+  await prefetchUsers(nextSlice)
+  showCount.value += nextSlice.length
+
+  if (showCount.value >= props.chats.length) {
+    $state.complete()
+  } else {
+    $state.loaded()
+  }
+}
+
 populateStore(props.chats)
-watch(() => props.chats, populateStore)
 
-const showAll = ref(false)
-
-const chatsShown = computed(() => {
-  if (!props.chats) return []
-  return showAll.value ? props.chats : props.chats.slice(0, SHOW)
+watch(() => props.chats, (newChats) => {
+  populateStore(newChats)
+  showCount.value = 0
+  infiniteBump.value++
 })
 
-const chatsUnshown = computed(() => {
-  if (!props.chats || props.chats.length <= SHOW) return 0
-  return props.chats.length - SHOW
+const chatsShown = computed(() => {
+  return props.chats ? props.chats.slice(0, showCount.value) : []
 })
 </script>

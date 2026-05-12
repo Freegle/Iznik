@@ -64,11 +64,10 @@ const otheruserid = computed(() => {
   }
 })
 
-// Fetch the other user so we can show their displayname.
-if (otheruserid.value) {
-  userStore.fetch(otheruserid.value)
-}
-
+// No individual fetch here — ModSupportChatList batch-fetches all visible
+// other-users via userStore.fetchMultiple() before rendering each page.
+// Reading from the store without triggering a fetch avoids N concurrent
+// requests when a user has many User2User chats.
 const otheruserName = computed(() => {
   if (otheruserid.value) {
     const u = userStore.byId(otheruserid.value)
