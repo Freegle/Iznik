@@ -62,28 +62,24 @@ class VolunteeringDigestService
             }
 
             // Find active volunteering opportunities for this group (or with no specific group).
-            // V1 note: don't use IS NULL in a LEFT JOIN WHERE clause — fetch all and filter in PHP
-            // instead. Use NOT EXISTS to find global volunteerings explicitly.
+            // Pre-fetch assigned IDs to avoid correlated subquery reliability issues.
             $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
+            $groupSpecificIds = DB::table('volunteering_groups')
+                ->where('groupid', $groupRow->id)
+                ->pluck('volunteeringid');
+            $allAssignedIds = DB::table('volunteering_groups')
+                ->pluck('volunteeringid')
+                ->unique()
+                ->values();
             $volunteerings = DB::table('volunteering')
                 ->leftJoin('volunteering_images', 'volunteering_images.opportunityid', '=', 'volunteering.id')
                 ->where('volunteering.pending', 0)
                 ->where('volunteering.deleted', 0)
                 ->where('volunteering.expired', 0)
-                ->where(function ($q) use ($groupRow) {
-                    // Group-specific volunteerings for this group
-                    $q->whereExists(function ($sub) use ($groupRow) {
-                        $sub->select(DB::raw(1))
-                            ->from('volunteering_groups')
-                            ->whereColumn('volunteering_groups.volunteeringid', 'volunteering.id')
-                            ->where('volunteering_groups.groupid', $groupRow->id);
-                    })
-                    // OR global volunteerings with no group assignment at all
-                    ->orWhereNotExists(function ($sub) {
-                        $sub->select(DB::raw(1))
-                            ->from('volunteering_groups')
-                            ->whereColumn('volunteering_groups.volunteeringid', 'volunteering.id');
-                    });
+                ->where(function ($q) use ($groupSpecificIds, $allAssignedIds) {
+                    // Group-specific volunteerings for this group OR global (not assigned to any group)
+                    $q->whereIn('volunteering.id', $groupSpecificIds)
+                      ->orWhereNotIn('volunteering.id', $allAssignedIds);
                 })
                 ->select([
                     'volunteering.id',
