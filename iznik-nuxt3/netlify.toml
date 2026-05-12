@@ -7,6 +7,23 @@ NPM_FLAGS = "--legacy-peer-deps"
 command = "export NODE_OPTIONS=--max_old_space_size=6000 && npm run build"
 publish = "dist"
 
+# CORS headers for assets served from the deploy-specific CDN URL (DEPLOY_URL).
+# When cdnURL is set to DEPLOY_URL, all JS chunks and payload files are referenced
+# from that origin (e.g. 6a02ea...netlify.app). www.ilovefreegle.org must be able
+# to fetch them cross-origin, so Netlify must serve them with CORS headers.
+[[headers]]
+  for = "/_nuxt/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Headers = "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/**/_payload.js"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Headers = "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+
 # Return 404 for requests from old code. This avoids the function call, which costs.
 [[redirects]]
 from = "/api/*"
