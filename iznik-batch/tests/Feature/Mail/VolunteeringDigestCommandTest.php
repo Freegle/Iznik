@@ -10,6 +10,21 @@ use Tests\TestCase;
 
 class VolunteeringDigestCommandTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // VolunteeringDigestService queries volunteerings globally (no WHERE groupid in SQL).
+        // Rows from parallel test classes can slip through DatabaseTransactions isolation.
+        // Delete inside the current transaction so leaked rows are hidden without affecting
+        // other test classes (the DELETE is rolled back with this test's transaction).
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        foreach (['volunteering_images', 'volunteering_groups', 'volunteering', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
+            DB::table($table)->delete();
+        }
+        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+    }
+
     private function createVolunteering(int $groupId = null, string $title = 'Test Volunteering'): int
     {
         $volId = DB::table('volunteering')->insertGetId([

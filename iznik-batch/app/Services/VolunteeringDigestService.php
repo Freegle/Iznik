@@ -62,25 +62,15 @@ class VolunteeringDigestService
             }
 
             // Find active volunteering opportunities for this group (or with no specific group).
-            // Pre-fetch assigned IDs to avoid correlated subquery reliability issues.
+            // V1 note: filtering groupid in SQL with IS NULL / NOT IN / NOT EXISTS is unreliable
+            // in MySQL with LEFT JOINs. Fetch all with groupid included and filter in PHP instead.
             $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
-            $groupSpecificIds = DB::table('volunteering_groups')
-                ->where('groupid', $groupRow->id)
-                ->pluck('volunteeringid');
-            $allAssignedIds = DB::table('volunteering_groups')
-                ->pluck('volunteeringid')
-                ->unique()
-                ->values();
             $volunteerings = DB::table('volunteering')
+                ->leftJoin('volunteering_groups', 'volunteering_groups.volunteeringid', '=', 'volunteering.id')
                 ->leftJoin('volunteering_images', 'volunteering_images.opportunityid', '=', 'volunteering.id')
                 ->where('volunteering.pending', 0)
                 ->where('volunteering.deleted', 0)
                 ->where('volunteering.expired', 0)
-                ->where(function ($q) use ($groupSpecificIds, $allAssignedIds) {
-                    // Group-specific volunteerings for this group OR global (not assigned to any group)
-                    $q->whereIn('volunteering.id', $groupSpecificIds)
-                      ->orWhereNotIn('volunteering.id', $allAssignedIds);
-                })
                 ->select([
                     'volunteering.id',
                     'volunteering.title',
@@ -91,11 +81,14 @@ class VolunteeringDigestService
                     'volunteering.contactphone',
                     'volunteering.contactemail',
                     'volunteering.contacturl',
+                    'volunteering_groups.groupid',
                     DB::raw('volunteering_images.id AS photo_id'),
                     DB::raw('volunteering_images.externaluid AS photo_externaluid'),
                 ])
                 ->orderByDesc('volunteering.id')
-                ->get();
+                ->get()
+                ->filter(fn ($v) => $v->groupid === null || (int) $v->groupid === (int) $groupRow->id)
+                ->unique('id');
 
             if ($volunteerings->isEmpty()) {
                 if (!$dryRun) {
