@@ -127,9 +127,9 @@ set -uo pipefail
 CONFIG=/opt/circleci-runner/circleci-runner-config.yaml
 LOG=/var/log/circleci-runner.log
 
-echo "$(date): Waiting for runner config..." >> "$LOG"
-until [ -f "$CONFIG" ]; do sleep 2; done
-echo "$(date): Config found, starting runner" >> "$LOG"
+echo "\$(date): Waiting for runner config..." >> "\$LOG"
+until [ -f "\$CONFIG" ]; do sleep 2; done
+echo "\$(date): Config found, starting runner" >> "\$LOG"
 
 rm -f /tmp/circleci-plugin.sock /tmp/circleci-ts.sock
 rm -rf /home/circleci/workdir
@@ -138,8 +138,8 @@ chown circleci:circleci /home/circleci/workdir
 
 while true; do
   sudo -u circleci /opt/circleci-runner/circleci-runner machine \
-    --config "$CONFIG" >> "$LOG" 2>&1 || true
-  echo "$(date): Runner exited, restarting in 5s" >> "$LOG"
+    --config "\$CONFIG" >> "\$LOG" 2>&1 || true
+  echo "\$(date): Runner exited, restarting in 5s" >> "\$LOG"
   sleep 5
 done
 STARTEOF

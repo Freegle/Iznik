@@ -283,7 +283,7 @@ abstract class TestCase extends BaseTestCase
             'msgid' => $message->id,
             'groupid' => $group->id,
             'collection' => MessageGroup::COLLECTION_APPROVED,
-            'arrival' => now(),
+            'arrival' => $attributes['arrival'] ?? now(),
         ]);
 
         return $message->fresh();

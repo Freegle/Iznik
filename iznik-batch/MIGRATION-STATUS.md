@@ -280,6 +280,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`microvolunteering.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~Micro-volunteering~~ — **Migrated: `microvolunteering:score`** |
 | ~~`newsfeed_link_previews.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Newsfeed link previews~~ — **Covered: `newsfeed:generate-link-previews` (PR #405)** |
 | `tn_sync.php` | Every 1 min | Medium | Trash Nothing sync — **Deferred: removed from PR #405; will be handled in a separate in-progress PR** |
+| `reachvolunteering.php` | Unclear | Low | Reach Volunteering feed sync — not in Docker crontab but active in production; same pattern as `integrations:sync-restartproject` (PR #408) |
 
 ## Medium Frequency Scripts (Every 10-60 min) - Not Started
 
@@ -361,6 +362,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 
 | Script | Reason |
 |--------|--------|
+| `paypal_download.php` | Fallback for PayPal IPN handler; uses deprecated PayPal NVP/SOAP SDK (PayPal-PHP-SDK). Script comment: "This is a fallback - donateipn catches them normally." Not in Docker crontab. If PayPal integration is still needed a modern SDK would be required. |
 | `sa_train` | SpamAssassin training - external |
 | `cron_checker_iznik.php` | Monitoring - external tool |
 | `discourse_checkusers.php` | Discourse integration - separate system |

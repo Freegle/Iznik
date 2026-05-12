@@ -274,31 +274,26 @@ Schedule::command('chats:chaseup-mods')
 // =============================================================================
 
 /*
-// Immediate digests (-1) - run every minute.
-Schedule::command('mail:digest -1')
-    ->everyMinute()
-    ->withoutOverlapping()
-    ->runInBackground();
+// Immediate digests (-1) handled by mail:digest:unified --mode=immediate above.
+// mail:digest -1 disabled.
+*/
 
-// Hourly digests - run every hour.
+// Per-group digests (Phase 2) — SendDigestCommand now uses UnifiedDigestService.
 Schedule::command('mail:digest 1')
     ->hourly()
     ->withoutOverlapping()
     ->runInBackground();
 
-// Every 2 hours digests.
 Schedule::command('mail:digest 2')
     ->everyTwoHours()
     ->withoutOverlapping()
     ->runInBackground();
 
-// Every 4 hours digests.
 Schedule::command('mail:digest 4')
     ->everyFourHours()
     ->withoutOverlapping()
     ->runInBackground();
 
-// Every 8 hours digests (3 times per day).
 Schedule::command('mail:digest 8')
     ->cron('0 0,8,16 * * *')
     ->withoutOverlapping()
@@ -331,6 +326,7 @@ Schedule::command('mail:digest:unified --mode=immediate')
     ->withoutOverlapping()
     ->runInBackground();
 
+/*
 // Donation-related commands.
 Schedule::command('mail:donations:thank')
     ->dailyAt('09:00')
