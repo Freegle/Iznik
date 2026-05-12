@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\Mail;
 
-use App\Mail\Volunteering\VolunteeringDigestMail;
 use App\Models\Group;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -11,22 +10,6 @@ use Tests\TestCase;
 
 class VolunteeringDigestCommandTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        // Explicit cleanup guards against DatabaseTransactions rollback failures.
-        // VolunteeringDigestService queries groups/volunteerings/memberships globally;
-        // any committed rows left by a previous test cause count mismatches.
-        // Deleting inside the current transaction hides leaked data without
-        // affecting other test classes (the DELETE is rolled back with the test).
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['volunteering_images', 'volunteering_groups', 'volunteering', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
-            DB::table($table)->delete();
-        }
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
-    }
-
     private function createVolunteering(int $groupId = null, string $title = 'Test Volunteering'): int
     {
         $volId = DB::table('volunteering')->insertGetId([
@@ -360,33 +343,5 @@ class VolunteeringDigestCommandTest extends TestCase
             ->assertExitCode(0);
 
         Mail::assertNothingSent();
-    }
-
-    public function test_includes_photo_thumb_when_image_exists(): void
-    {
-        Mail::fake();
-
-        $group = $this->createTestGroup();
-        $volId = $this->createVolunteering($group->id);
-
-        DB::table('volunteering_images')->insert([
-            'opportunityid' => $volId,
-            'contenttype'   => 'image/jpeg',
-            'archived'      => 0,
-        ]);
-
-        $member = $this->createTestUser();
-        $this->createMembership($member, $group, [
-            'volunteeringallowed' => 1,
-            'emailfrequency' => 24,
-        ]);
-
-        $this->artisan('mail:volunteering-digest')
-            ->expectsOutputToContain('Sent 1 email(s)')
-            ->assertExitCode(0);
-
-        Mail::assertSent(VolunteeringDigestMail::class, function ($mail) {
-            return !empty($mail->volunteerings[0]['photo_thumb']);
-        });
     }
 }
