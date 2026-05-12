@@ -393,8 +393,27 @@ class WhatJobsService
         [['lead'], 'General Manager'],
     ];
 
+    /** @var array<string, int|array> per-run drop counts; reset at start of sync() */
+    private array $dropStats = [];
+
+    /**
+     * Increment a geocode-fail bucket and tally per-tuple frequency.
+     * The frequency map lets us spot ambiguous-name false-positives later: if
+     * 285k failures collapse to a few thousand distinct (city|state|country)
+     * tuples, a per-tuple override or postcode fallback can recapture most.
+     */
+    private function recordGeocodeFail(string $reason, string $city, string $state, string $country): void
+    {
+        $this->dropStats['geocode_by_reason'][$reason] = ($this->dropStats['geocode_by_reason'][$reason] ?? 0) + 1;
+
+        $key = "$city|$state|$country";
+        $this->dropStats['geocode_tuple_freq'][$reason][$key]
+            = ($this->dropStats['geocode_tuple_freq'][$reason][$key] ?? 0) + 1;
+    }
+
     public function sync(bool $dryRun = false): array
     {
+        $this->dropStats = [];
         $srid  = config('freegle.srid', 3857);
         $feed1 = config('freegle.whatjobs.feed1');
         $feed2 = config('freegle.whatjobs.feed2');
@@ -426,6 +445,32 @@ class WhatJobsService
         }
 
         $total = count($jobs);
+
+        // Boil the per-tuple frequencies down into a compact summary the log
+        // can show without ballooning: distinct-tuple count + top-20 most-frequent
+        // tuples per reason. Tells us how "concentrated" each failure bucket is.
+        $tupleSummary = [];
+        foreach (($this->dropStats['geocode_tuple_freq'] ?? []) as $reason => $freq) {
+            arsort($freq);
+            $top = array_slice($freq, 0, 20, true);
+            $tupleSummary[$reason] = [
+                'distinct_tuples' => count($freq),
+                'top_20'          => $top,
+            ];
+        }
+
+        Log::info('WhatJobs parse drop stats', [
+            'kept'                => $total,
+            'low_cpc'             => $this->dropStats['low_cpc']      ?? 0,
+            'too_old'             => $this->dropStats['too_old']      ?? 0,
+            'geocode_fail'        => $this->dropStats['geocode_fail'] ?? 0,
+            'no_jobid'            => $this->dropStats['no_jobid']     ?? 0,
+            'too_old_by_cpc'      => $this->dropStats['too_old_by_cpc']      ?? [],
+            'geocode_fail_by_cpc' => $this->dropStats['geocode_fail_by_cpc'] ?? [],
+            'no_jobid_by_cpc'     => $this->dropStats['no_jobid_by_cpc']     ?? [],
+            'geocode_by_reason'   => $this->dropStats['geocode_by_reason']   ?? [],
+            'geocode_tuples'      => $tupleSummary,
+        ]);
 
         if ($dryRun) {
             Log::info('WhatJobs dry run', ['total_jobs' => $total]);
@@ -546,18 +591,30 @@ class WhatJobsService
                 $category    = (string) ($job->category ?? '');
             }
 
+            // Bucket the CPC so the run-end stats (logged below) can show how
+            // many high-paying listings each filter is dropping.
+            $cpcF      = (float) $cpc;
+            $cpcBucket = $cpcF >= 1.00 ? 'cpc_ge_1' : ($cpcF >= 0.50 ? 'cpc_50_99' : ($cpcF >= 0.10 ? 'cpc_10_49' : 'cpc_lt_10'));
+
             if (!$jobId) {
+                $this->dropStats['no_jobid'] = ($this->dropStats['no_jobid'] ?? 0) + 1;
+                $this->dropStats['no_jobid_by_cpc'][$cpcBucket] = ($this->dropStats['no_jobid_by_cpc'][$cpcBucket] ?? 0) + 1;
                 continue;
             }
-            if ((float) $cpc < self::MINIMUM_CPC) {
+            if ($cpcF < self::MINIMUM_CPC) {
+                $this->dropStats['low_cpc'] = ($this->dropStats['low_cpc'] ?? 0) + 1;
                 continue;
             }
             if ($timePosted && strtotime($timePosted) < $cutoff) {
+                $this->dropStats['too_old'] = ($this->dropStats['too_old'] ?? 0) + 1;
+                $this->dropStats['too_old_by_cpc'][$cpcBucket] = ($this->dropStats['too_old_by_cpc'][$cpcBucket] ?? 0) + 1;
                 continue;
             }
 
-            $geom = $this->geocodeCityState($city, $state, $country, $geocodeCache);
+            $geom = $this->geocodeCityState($city, $state, $country, $geocodeCache, $zip);
             if (!$geom) {
+                $this->dropStats['geocode_fail'] = ($this->dropStats['geocode_fail'] ?? 0) + 1;
+                $this->dropStats['geocode_fail_by_cpc'][$cpcBucket] = ($this->dropStats['geocode_fail_by_cpc'][$cpcBucket] ?? 0) + 1;
                 continue;
             }
 
@@ -610,9 +667,18 @@ class WhatJobsService
         return $jobs;
     }
 
-    public function geocodeCityState(string $city, string $state, string $country, array &$cache): ?array
-    {
+    // ISO 3166-2 two/three-letter subdivision codes used by some feeds
+    private const STATE_ISO_CODES = ['eng', 'wls', 'sct', 'nir', 'gb'];
+
+    public function geocodeCityState(
+        string $city,
+        string $state,
+        string $country,
+        array &$cache,
+        string $zip = ''
+    ): ?array {
         if ($country === 'Guernsey') {
+            $this->recordGeocodeFail('country_guernsey', $city, $state, $country);
             return null;
         }
 
@@ -637,37 +703,80 @@ class WhatJobsService
             }
         }
 
-        // Geocode via internal geocoder
-        $badStates = ['not specified', 'united kingdom of great britain and northern ireland',
-            'united kingdom', 'uk', 'england', 'scotland', 'wales', 'home based'];
+        $badStates = [
+            'not specified', 'united kingdom of great britain and northern ireland',
+            'united kingdom', 'uk', 'england', 'scotland', 'wales', 'home based',
+            'northern ireland',
+        ];
+        $badStates = array_merge($badStates, self::STATE_ISO_CODES);
 
-        $result = null;
+        $result      = null;
+        $stateBbox   = null;
+        $stateUsable = $state && strlen(trim($state)) && !in_array(strtolower(trim($state)), $badStates);
+        $stateTried  = false;
 
-        if ($state && strlen(trim($state)) && !in_array(strtolower(trim($state)), $badStates)) {
+        if ($stateUsable) {
+            $stateTried = true;
             $stateClean = str_ireplace('Borough of ', '', $state);
-            $result     = $this->geocodeAddress($stateClean, false, true);
+            $stateBbox  = $this->geocodeAddress($stateClean, false, true);
 
-            if ($result) {
-                $area = ($result[2] - $result[0]) * abs($result[3] - $result[1]);
+            if ($stateBbox) {
+                $area = ($stateBbox[2] - $stateBbox[0]) * abs($stateBbox[3] - $stateBbox[1]);
                 if ($area < 0.05) {
                     // Small area — specific location, use directly
+                    $result = $stateBbox;
                 } else {
-                    // Large region — use as bbox hint for city lookup
-                    $cityResult = $this->geocodeAddress($city, true, false, $result[0], $result[1], $result[2], $result[3]);
-                    $result     = $cityResult ?: $result;
+                    // Large region — try to find the city within its bbox
+                    $cityResult = $this->tryCityVariants(
+                        $city,
+                        $state,
+                        $stateBbox[0], $stateBbox[1], $stateBbox[2], $stateBbox[3]
+                    );
+                    $result = $cityResult ?: $stateBbox;
                 }
             }
         }
 
-        $badCities = ['not specified', 'null', 'home based', 'united kingdom', ', , united kingdom'];
-        if (!$result && $city && strlen(trim($city)) && !in_array(strtolower(trim($city)), $badCities)) {
-            $result = $this->geocodeAddress($city, true, false);
+        // City-only fallback with UK-wide bbox
+        $badCities     = ['not specified', 'null', 'home based', 'united kingdom', ', , united kingdom'];
+        $cityUsable    = $city && strlen(trim($city)) && !in_array(strtolower(trim($city)), $badCities);
+        $cityTried     = false;
+        $cityTooCoarse = false;
+
+        if (!$result && $cityUsable) {
+            $cityTried = true;
+            $result = $this->tryCityVariants($city, $state);
             if ($result) {
                 $area = ($result[2] - $result[0]) * abs($result[3] - $result[1]);
                 if ($area > 50) {
+                    $cityTooCoarse = true;
                     $result = null;
                 }
             }
+        }
+
+        // Postcode fallback: try outward code via dedicated lookup
+        if (!$result && $zip) {
+            $outward = $this->extractOutwardCode($zip);
+            if ($outward) {
+                $result = $this->geocodePostcode($outward);
+            }
+        }
+
+        if (!$result) {
+            // Categorise the failure for observability.
+            if (!$stateUsable && !$cityUsable) {
+                $reason = 'unusable_input';
+            } elseif ($cityTooCoarse) {
+                $reason = 'city_too_coarse';
+            } elseif ($cityTried) {
+                $reason = 'city_no_match';
+            } elseif ($stateTried) {
+                $reason = 'state_no_match_no_city';
+            } else {
+                $reason = 'other';
+            }
+            $this->recordGeocodeFail($reason, $city, $state, $country);
         }
 
         if ($result) {
@@ -677,7 +786,122 @@ class WhatJobsService
         return $result;
     }
 
-    private function geocodeAddress(
+    /**
+     * Try several strategies to geocode a city name within an optional bbox.
+     *
+     * Strategies tried in order:
+     *  1. Each slash-separated segment (feed sometimes sends "Town A / Town B / ...")
+     *  2. For each segment: as-is, then title-cased
+     *  3. Combined "city, state" query (only for single, unambiguous city names)
+     *
+     * Returns the first successful result, or null.
+     */
+    private function tryCityVariants(
+        string $city,
+        string $state,
+        float $bbswlat = self::UK_SWLAT,
+        float $bbswlng = self::UK_SWLNG,
+        float $bbnelat = self::UK_NELAT,
+        float $bbnelng = self::UK_NELNG
+    ): ?array {
+        $segments = str_contains($city, '/')
+            ? array_map('trim', explode('/', $city))
+            : [$city];
+
+        foreach ($segments as $seg) {
+            if (!$seg || mb_strlen(trim($seg)) < 2) {
+                continue;
+            }
+
+            $result = $this->geocodeAddress($seg, true, false, $bbswlat, $bbswlng, $bbnelat, $bbnelng);
+            if ($result) {
+                return $result;
+            }
+
+            // Try title-cased variant (feed often sends all-lowercase cities)
+            $titled = ucwords(mb_strtolower($seg));
+            if ($titled !== $seg) {
+                $result = $this->geocodeAddress($titled, true, false, $bbswlat, $bbswlng, $bbnelat, $bbnelng);
+                if ($result) {
+                    return $result;
+                }
+            }
+        }
+
+        // Combined "city, state" query to help disambiguate (e.g. "Kenwyn, Cornwall")
+        // Only for single city names (slash lists are too ambiguous for this)
+        if (!str_contains($city, '/') && $state) {
+            $combined = trim($city) . ', ' . trim($state);
+            $result   = $this->geocodeAddress($combined, true, false, $bbswlat, $bbswlng, $bbnelat, $bbnelng);
+            if ($result) {
+                return $result;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract the outward code from a UK postcode string.
+     * Handles full postcodes ("TR1 1AA" → "TR1") and outward-only ("TR1" → "TR1").
+     */
+    private function extractOutwardCode(string $zip): string
+    {
+        $zip = strtoupper(trim($zip));
+        if (preg_match('/^([A-Z]{1,2}\d{1,2}[A-Z]?)\s*\d[A-Z]{2}$/', $zip, $m)) {
+            return $m[1];
+        }
+        if (preg_match('/^[A-Z]{1,2}\d{1,2}[A-Z]?$/', $zip)) {
+            return $zip;
+        }
+        return '';
+    }
+
+    /**
+     * Geocode a UK outward postcode using the Freegle locations table.
+     *
+     * The MySQL `locations` table stores UK postcodes (type='Postcode') with
+     * lat/lng coordinates. Querying by outward code prefix gives the geographic
+     * centre of that postcode district — deterministic and free of Photon's
+     * ambiguity for small/unusual UK place names.
+     *
+     * In development the table is empty (returns null). In production it is
+     * populated by the Doogal postcode cron, so this works transparently.
+     */
+    protected function geocodePostcode(string $outward): ?array
+    {
+        $row = DB::selectOne(
+            "SELECT AVG(lat) AS lat, AVG(lng) AS lng,
+                    MIN(lat) AS swlat, MIN(lng) AS swlng,
+                    MAX(lat) AS nelat, MAX(lng) AS nelng
+             FROM locations
+             WHERE type = 'Postcode' AND name LIKE ? AND lat IS NOT NULL",
+            [$outward . ' %']
+        );
+
+        if (!$row || $row->lat === null) {
+            return null;
+        }
+
+        $swlat = (float) $row->swlat;
+        $swlng = (float) $row->swlng;
+        $nelat = (float) $row->nelat;
+        $nelng = (float) $row->nelng;
+
+        // If the district bbox is very small (single postcode), add a small margin
+        if (($nelat - $swlat) < 0.001) {
+            $swlat -= 0.005;
+            $nelat += 0.005;
+        }
+        if (($nelng - $swlng) < 0.001) {
+            $swlng -= 0.01;
+            $nelng += 0.01;
+        }
+
+        return [$swlat, $swlng, $nelat, $nelng, $this->boxPoly($swlat, $swlng, $nelat, $nelng)];
+    }
+
+    protected function geocodeAddress(
         string $addr,
         bool $allowPoint,
         bool $exact,
@@ -709,27 +933,30 @@ class WhatJobsService
         $features = $results['features'] ?? [];
         foreach ($features as $feature) {
             $props = $feature['properties'] ?? [];
-            $name  = $props['name'] ?? null;
-            $nameMatches = $name && strcasecmp($name, $addr) === 0;
 
+            // Extent-based results are always usable as bbox hints.
+            // Previously, an inverted nameMatches guard caused state lookups where
+            // the geocoder name exactly matched (e.g. 'London' → 'London') to return
+            // null, preventing state-constrained city searches for those regions.
             if (isset($props['extent'])) {
-                if (!$exact || !$nameMatches) {
-                    [$swlng, $swlat, $nelng, $nelat] = array_map('floatval', $props['extent']);
-                    return [$swlat, $swlng, $nelat, $nelng, $this->boxPoly($swlat, $swlng, $nelat, $nelng)];
-                }
-                break;
+                [$swlng, $swlat, $nelng, $nelat] = array_map('floatval', $props['extent']);
+                return [$swlat, $swlng, $nelat, $nelng, $this->boxPoly($swlat, $swlng, $nelat, $nelng)];
             }
 
-            if ($allowPoint && (!$exact || $nameMatches)) {
-                $coords = $feature['geometry']['coordinates'] ?? null;
-                if ($coords) {
-                    $lat   = (float) $coords[1];
-                    $lng   = (float) $coords[0];
-                    $swlng = $lng - 0.0005;
-                    $swlat = $lat - 0.0005;
-                    $nelat = $lat + 0.0005;
-                    $nelng = $lng + 0.0005;
-                    return [$swlat, $swlng, $nelat, $nelng, $this->boxPoly($swlat, $swlng, $nelat, $nelng)];
+            if ($allowPoint) {
+                $name        = $props['name'] ?? null;
+                $nameMatches = $name && strcasecmp($name, $addr) === 0;
+                if (!$exact || $nameMatches) {
+                    $coords = $feature['geometry']['coordinates'] ?? null;
+                    if ($coords) {
+                        $lat   = (float) $coords[1];
+                        $lng   = (float) $coords[0];
+                        $swlng = $lng - 0.0005;
+                        $swlat = $lat - 0.0005;
+                        $nelat = $lat + 0.0005;
+                        $nelng = $lng + 0.0005;
+                        return [$swlat, $swlng, $nelat, $nelng, $this->boxPoly($swlat, $swlng, $nelat, $nelng)];
+                    }
                 }
                 break;
             }

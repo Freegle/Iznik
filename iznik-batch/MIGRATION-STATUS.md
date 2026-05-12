@@ -263,7 +263,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`tryst.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Meeting coordination~~ — **Migrated: `chats:send-tryst-reminders`** |
 | ~~`memberships_processing.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Membership processing~~ — **Migrated: `memberships:process`** |
 | ~~`donations_ads_target.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Donation ad targeting~~ — **Migrated: `donations:update-ads-target`** |
-| ~~`user_exhort.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~User encouragement~~ — **Skip: parameterized CLI tool (`-u url -l title -x text -s since`), not a scheduled cron** |
+| `user_exhort.php` | Every 1 min | Medium | User encouragement — **Needs migration**: actively scheduled in V1 crontab with fixed args (`-u "https://www.ilovefreegle.org/stories" -l "Tell us your Freegle story!" -x "We love to hear why people Freegle..." -s "5 minutes ago" -t "1 week ago"`). Sends onsite notifications to users active in the last week. Earlier "Skip" classification was incorrect — V1 cron line is live. |
 | ~~`lovejunk.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~LoveJunk integration~~ — **Migrated: `integrations:sync-lovejunk`** |
 | ~~`exports.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Data exports~~ — **Migrated: `users:process-exports`** |
 | ~~`notification_chaseup.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Notification reminders~~ — **Migrated: `mail:notifications:chaseup`** |
@@ -280,6 +280,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`microvolunteering.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~Micro-volunteering~~ — **Migrated: `microvolunteering:score`** |
 | ~~`newsfeed_link_previews.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Newsfeed link previews~~ — **Covered: `newsfeed:generate-link-previews` (PR #405)** |
 | `tn_sync.php` | Every 1 min | Medium | Trash Nothing sync — **Deferred: removed from PR #405; will be handled in a separate in-progress PR** |
+| `reachvolunteering.php` | Unclear | Low | Reach Volunteering feed sync — not in Docker crontab but active in production; same pattern as `integrations:sync-restartproject` (PR #408) |
 
 ## Medium Frequency Scripts (Every 10-60 min) - Not Started
 
@@ -289,6 +290,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `alerts.php` | Every 10 min | Medium | System alerts |
 | ~~`user_ratings.php`~~ | ~~Every 10 min~~ | ~~Low~~ | ~~User ratings~~ — **Migrated: `users:update-ratings`** |
 | `eximlogs.php` | Every 10 min | Low | Exim mail logs — **Skip: external (mail server logs)** |
+| `paypal_download.php` | Every 4 hrs (30 min past) | Low | Fallback PayPal transaction downloader — donateipn catches them normally; this is the safety net. Needs PayPal API SDK in Laravel. **TODO: consider whether we also need an equivalent Stripe-side safety net (a periodic fetch of recent Stripe charges/payment intents to reconcile against `users_donations`) in case the Stripe webhook ever misses an event.** |
 | ~~`whatjobs_spam.php`~~ | ~~Every 10 min~~ | ~~Low~~ | ~~WhatJobs spam~~ — **Migrated: `cleanup:whatjobs-spam`** |
 | ~~`jobs_illustrations.php`~~ | ~~Every 30 min~~ | ~~Low~~ | ~~Job illustrations~~ — **Migrated: `jobs:generate-illustrations`** |
 | ~~`message_unindexed.php`~~ | ~~Every 30 min~~ | ~~Low~~ | ~~Unindexed messages~~ — **Migrated: `messages:update-index` — PR #393** |
@@ -337,6 +339,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`restartproject.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Restart project~~ — **Migrated: `integrations:sync-restartproject` (PR #408)** |
 | ~~`repaircafewales.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Repair Cafe Wales~~ — **Migrated: `integrations:sync-repaircafewales` (PR #408)** |
 | ~~`archive_attachments.php`~~ | ~~22:30~~ | ~~Low~~ | ~~Attachment archiving~~ — **Migrated: `cleanup:archive-profile-images` (PR #405)** |
+| `reachvolunteering.php` | 21:00 | Low | Fetches the Reach Volunteering feed and processes it into `ReachVolunteering`. Single-class V1 service; needs porting. Reach switched to new field names on 06/10/2025 (V1 hard-codes `$useNewFieldNames = TRUE`). |
 
 ## Weekly Scripts - Not Started
 
@@ -361,6 +364,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 
 | Script | Reason |
 |--------|--------|
+| `paypal_download.php` | Fallback for PayPal IPN handler; uses deprecated PayPal NVP/SOAP SDK (PayPal-PHP-SDK). Script comment: "This is a fallback - donateipn catches them normally." Not in Docker crontab. If PayPal integration is still needed a modern SDK would be required. |
 | `sa_train` | SpamAssassin training - external |
 | `cron_checker_iznik.php` | Monitoring - external tool |
 | `discourse_checkusers.php` | Discourse integration - separate system |
