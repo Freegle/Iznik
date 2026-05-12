@@ -1645,8 +1645,8 @@ func PatchSession(c *fiber.Ctx) error {
 			var pushSub PushSub
 			if err := json.Unmarshal(*req.Notifications.Push, &pushSub); err == nil && pushSub.Type != "" {
 				db.Exec("INSERT INTO users_push_notifications (userid, type, subscription, apptype) VALUES (?, ?, ?, ?) "+
-					"ON DUPLICATE KEY UPDATE subscription = ?, apptype = ?",
-					myid, pushSub.Type, pushSub.Subscription, apptype, pushSub.Subscription, apptype)
+					"ON DUPLICATE KEY UPDATE type = ?, apptype = ?",
+					myid, pushSub.Type, pushSub.Subscription, apptype, pushSub.Type, apptype)
 			}
 		}()
 	}

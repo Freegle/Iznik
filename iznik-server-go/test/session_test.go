@@ -2876,4 +2876,36 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 
 		db.Exec("DELETE FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val)
 	})
+
+	t.Run("ON DUPLICATE KEY UPDATE corrects type on upsert", func(t *testing.T) {
+		prefix := uniquePrefix("push_typefix")
+		userID := CreateTestUser(t, prefix, "User")
+		_, token := CreateTestSession(t, userID)
+
+		token_val := fmt.Sprintf("fcm-token-typefix-%s", prefix)
+
+		// Simulate a pre-existing row with the wrong type (e.g. from before the apptype fix).
+		db.Exec("INSERT INTO users_push_notifications (userid, type, subscription, apptype) VALUES (?, ?, ?, ?)",
+			userID, "Google", token_val, "User")
+
+		body, _ := json.Marshal(map[string]interface{}{
+			"notifications": map[string]interface{}{
+				"push": map[string]interface{}{
+					"type":         "FCMAndroid",
+					"subscription": token_val,
+				},
+			},
+		})
+
+		req := httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var typ string
+		db.Raw("SELECT type FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val).Scan(&typ)
+		assert.Equal(t, "FCMAndroid", typ)
+
+		db.Exec("DELETE FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val)
+	})
 }
