@@ -21,22 +21,22 @@ class ProcessChatSpamCommand extends Command
     {
         $this->registerShutdownHandlers();
 
-        $dryRun = $this->option('dry-run');
+        $dryRun = (bool) $this->option('dry-run');
 
         if ($dryRun) {
             $this->info('DRY RUN — no changes will be made.');
-
-            return Command::SUCCESS;
         }
 
-        return $this->runWithLogging(function () use ($service) {
-            Log::info('Starting chat spam processing');
+        return $this->runWithLogging(function () use ($service, $dryRun) {
+            Log::info('Starting chat spam processing', ['dry_run' => $dryRun]);
 
-            $warned = $service->warnInnocentUsers();
-            $marked = $service->autoMarkSpam();
+            $warned = $service->warnInnocentUsers($dryRun);
+            $marked = $service->autoMarkSpam($dryRun);
 
-            $this->info("Chat spam: warned {$warned} innocent users, auto-marked {$marked} messages.");
-            Log::info('Chat spam processing complete', ['warned' => $warned, 'auto_marked' => $marked]);
+            $verb = $dryRun ? 'would warn' : 'warned';
+            $verb2 = $dryRun ? 'would auto-mark' : 'auto-marked';
+            $this->info("Chat spam: {$verb} {$warned} innocent users, {$verb2} {$marked} messages.");
+            Log::info('Chat spam processing complete', ['warned' => $warned, 'auto_marked' => $marked, 'dry_run' => $dryRun]);
 
             return Command::SUCCESS;
         });

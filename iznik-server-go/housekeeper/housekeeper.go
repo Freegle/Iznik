@@ -384,6 +384,16 @@ var cronJobs = []CronJob{
 
 	// AI & Analytics additions
 	{Command: "microvolunteering:notify", Name: "Microvolunteering Notify", Description: "On-site notifications asking active members to review pending/approved messages; per-group eligibility pool + already-notified-today dedup", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "AI & Analytics", Active: true},
+
+	// Spam / abuse
+	{Command: "users:remove-spammers", Name: "Remove Spam Members", Description: "Removes spam-marked users from groups (bans them, deletes memberships, soft-deletes their messages, rejects pending chat messages, clears their newsfeed/notifications/expected/sessions)", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Spam / Abuse", Active: true},
+	{Command: "chats:process-spam", Name: "Chat Spam Processing", Description: "Warns innocent users who chatted with spammers; auto-rejects pending chat messages from probable spammers (>5 rejects/31 days, no approved messages, not a mod)", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Spam / Abuse", Active: true},
+
+	// Email — Admin / Engagement
+	{Command: "mail:mod-notifs", Name: "Mod Notifications", Description: "Hourly digest of pending mod work to each moderator (08:00-21:00 only); dedup against last summary or 24h gap", Schedule: "Hourly", IntervalMinutes: 60, Category: "Email — Admin", Active: true},
+
+	// Data & Integrations additions
+	{Command: "donations:update-giftaid", Name: "Gift Aid Update", Description: "Identifies postcodes/house numbers on giftaid records, marks eligible donations as giftaidconsent, and sends one-off chase-up emails to donors 2-30 days post-donation", Schedule: "Every 10 minutes", IntervalMinutes: 10, Category: "Data", Active: true},
 }
 
 // ActiveCronJobCount returns the number of active cron jobs in the static registry.

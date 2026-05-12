@@ -29,26 +29,31 @@ class SpamCleanupService
 
     /**
      * Remove spammers from groups and clean up their content.
+     *
+     * Returns the same value as before (memberships + messages count) for
+     * backwards compat with the existing command, plus the full stats array
+     * is available via the second return position for the dry-run path.
      */
-    public function removeSpamMembers(): int
+    public function removeSpamMembers(bool $dryRun = false): array
     {
-        $count = 0;
-        $count += $this->removeSpamMemberships();
-        $count += $this->deleteSpamMessages();
-        $this->rejectSpamChatMessages();
-        $this->deleteSpamNewsfeedItems();
-        $this->deleteSpamNotifications();
-        $this->deleteSpamExpectedRecords();
-        $this->deleteSpamSessions();
+        $stats = [
+            'memberships'   => $this->removeSpamMemberships($dryRun),
+            'messages'      => $this->deleteSpamMessages($dryRun),
+            'chat_messages' => $this->rejectSpamChatMessages($dryRun),
+            'newsfeed'      => $this->deleteSpamNewsfeedItems($dryRun),
+            'notifications' => $this->deleteSpamNotifications($dryRun),
+            'expected'      => $this->deleteSpamExpectedRecords($dryRun),
+            'sessions'      => $this->deleteSpamSessions($dryRun),
+        ];
 
-        return $count;
+        return $stats;
     }
 
     /**
      * Find member-role memberships for known spammers, ban them, remove the membership,
      * and log the action. Mirrors the first loop in V1 removeSpamMembers().
      */
-    public function removeSpamMemberships(): int
+    public function removeSpamMemberships(bool $dryRun = false): int
     {
         $spammers = DB::select(
             "SELECT memberships.userid, memberships.groupid
@@ -58,6 +63,10 @@ class SpamCleanupService
                AND memberships.role = ?",
             [self::SPAMMER_COLLECTION, self::MEMBER_ROLE]
         );
+
+        if ($dryRun) {
+            return count($spammers);
+        }
 
         foreach ($spammers as $spammer) {
             Log::info('Removing spam member', [
@@ -93,7 +102,7 @@ class SpamCleanupService
      * Soft-delete messages authored by known spammers that are still on groups.
      * Mirrors the second loop in V1 removeSpamMembers().
      */
-    public function deleteSpamMessages(): int
+    public function deleteSpamMessages(bool $dryRun = false): int
     {
         $msgs = DB::select(
             "SELECT DISTINCT messages.id, messages_groups.groupid
@@ -106,6 +115,10 @@ class SpamCleanupService
              WHERE messages.deleted IS NULL",
             [self::SPAMMER_COLLECTION]
         );
+
+        if ($dryRun) {
+            return count($msgs);
+        }
 
         foreach ($msgs as $msg) {
             Log::info('Deleting spam message', [
@@ -142,9 +155,17 @@ class SpamCleanupService
     /**
      * Reject chat messages from known spammers.
      */
-    public function rejectSpamChatMessages(): void
+    public function rejectSpamChatMessages(bool $dryRun = false): int
     {
-        DB::update(
+        if ($dryRun) {
+            return (int) DB::table('chat_messages')
+                ->whereIn('userid', function ($q) {
+                    $q->select('userid')->from('spam_users')->where('collection', self::SPAMMER_COLLECTION);
+                })
+                ->where('reviewrejected', '!=', 1)
+                ->count();
+        }
+        return (int) DB::update(
             "UPDATE chat_messages
              SET reviewrejected = 1, reviewrequired = 0
              WHERE userid IN (SELECT userid FROM spam_users WHERE collection = ?)
@@ -156,9 +177,16 @@ class SpamCleanupService
     /**
      * Delete newsfeed items created by known spammers.
      */
-    public function deleteSpamNewsfeedItems(): void
+    public function deleteSpamNewsfeedItems(bool $dryRun = false): int
     {
-        DB::delete(
+        if ($dryRun) {
+            return (int) DB::table('newsfeed')
+                ->whereIn('userid', function ($q) {
+                    $q->select('userid')->from('spam_users')->where('collection', self::SPAMMER_COLLECTION);
+                })
+                ->count();
+        }
+        return (int) DB::delete(
             "DELETE FROM newsfeed
              WHERE userid IN (SELECT userid FROM spam_users WHERE collection = ?)",
             [self::SPAMMER_COLLECTION]
@@ -168,9 +196,16 @@ class SpamCleanupService
     /**
      * Delete site notifications sent from known spammers.
      */
-    public function deleteSpamNotifications(): void
+    public function deleteSpamNotifications(bool $dryRun = false): int
     {
-        DB::delete(
+        if ($dryRun) {
+            return (int) DB::table('users_notifications')
+                ->whereIn('fromuser', function ($q) {
+                    $q->select('userid')->from('spam_users')->where('collection', self::SPAMMER_COLLECTION);
+                })
+                ->count();
+        }
+        return (int) DB::delete(
             "DELETE FROM users_notifications
              WHERE fromuser IN (SELECT userid FROM spam_users WHERE collection = ?)",
             [self::SPAMMER_COLLECTION]
@@ -180,9 +215,16 @@ class SpamCleanupService
     /**
      * Delete "waiting for reply" records where the spammer is the expecter.
      */
-    public function deleteSpamExpectedRecords(): void
+    public function deleteSpamExpectedRecords(bool $dryRun = false): int
     {
-        DB::delete(
+        if ($dryRun) {
+            return (int) DB::table('users_expected')
+                ->whereIn('expecter', function ($q) {
+                    $q->select('userid')->from('spam_users')->where('collection', self::SPAMMER_COLLECTION);
+                })
+                ->count();
+        }
+        return (int) DB::delete(
             "DELETE FROM users_expected
              WHERE expecter IN (SELECT userid FROM spam_users WHERE collection = ?)",
             [self::SPAMMER_COLLECTION]
@@ -192,9 +234,17 @@ class SpamCleanupService
     /**
      * Delete active sessions for known spammers.
      */
-    public function deleteSpamSessions(): void
+    public function deleteSpamSessions(bool $dryRun = false): int
     {
-        DB::delete(
+        if ($dryRun) {
+            return (int) DB::table('sessions')
+                ->whereIn('userid', function ($q) {
+                    $q->select('userid')->from('spam_users')->where('collection', self::SPAMMER_COLLECTION);
+                })
+                ->whereNotNull('userid')
+                ->count();
+        }
+        return (int) DB::delete(
             "DELETE FROM sessions
              WHERE userid IN (SELECT userid FROM spam_users WHERE collection = ?)
                AND userid IS NOT NULL",

@@ -15,18 +15,24 @@ class CheckSpammersCommand extends Command
 
     public function handle(SpamCleanupService $service): int
     {
-        $dryRun = $this->option('dry-run');
+        $dryRun = (bool) $this->option('dry-run');
 
         if ($dryRun) {
             $this->info('DRY RUN — no changes will be made.');
-
-            return Command::SUCCESS;
         }
 
-        $removed = $service->removeSpamMembers();
+        $stats = $service->removeSpamMembers($dryRun);
 
-        $this->info("users:remove-spammers complete — removed: {$removed}");
-        Log::info('users:remove-spammers complete', ['removed' => $removed]);
+        $verb = $dryRun ? 'would' : 'did';
+        $this->info(
+            "users:remove-spammers {$verb}: " .
+            "memberships={$stats['memberships']} messages={$stats['messages']} " .
+            "chat_messages={$stats['chat_messages']} newsfeed={$stats['newsfeed']} " .
+            "notifications={$stats['notifications']} expected={$stats['expected']} " .
+            "sessions={$stats['sessions']}"
+        );
+
+        Log::info('users:remove-spammers complete', $stats + ['dry_run' => $dryRun]);
 
         return Command::SUCCESS;
     }
