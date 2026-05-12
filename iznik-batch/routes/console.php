@@ -254,12 +254,12 @@ Schedule::command('chats:send-tryst-reminders')
     ->runInBackground();
 
 // Chase up mods about User2Mod chats with no mod reply older than 6.55 days.
-// V1: cron/chat_chaseupmods.php (daily 15:30)
-Schedule::command('chats:chaseup-mods')
-    ->dailyAt('15:30')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('chats:chaseup-mods'))
-    ->runInBackground();
+// V1: cron/chat_chaseupmods.php (daily 15:30) — disabled pending sign-off
+// Schedule::command('chats:chaseup-mods')
+//     ->dailyAt('15:30')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('chats:chaseup-mods'))
+//     ->runInBackground();
 
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
 // V1: cron/chat_spam.php — disabled pending sign-off
@@ -642,12 +642,12 @@ Schedule::command('groups:remind-closed')
     ->sendOutputTo(cronLog('groups:remind-closed'))
     ->runInBackground();
 
-// V1: cron/group_customisation.php
-Schedule::command('groups:remind-customisation')
-    ->monthlyOn(1, '08:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('groups:remind-customisation'))
-    ->runInBackground();
+// V1: cron/group_customisation.php — disabled pending sign-off
+// Schedule::command('groups:remind-customisation')
+//     ->monthlyOn(1, '08:00')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('groups:remind-customisation'))
+//     ->runInBackground();
 
 // V1: cron/donations_thank.php
 // Schedule::command('mail:donations:thank')
@@ -741,12 +741,12 @@ Schedule::command('messages:update-index')
 //     ->runInBackground();
 
 // Notify group mods about recent chitchat (newsfeed) posts from their members.
-// V1: cron/newsfeed_modnotif.php (daily 13:30)
-Schedule::command('mail:newsfeed-mod-notif')
-    ->dailyAt('13:30')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('mail:newsfeed-mod-notif'))
-    ->runInBackground();
+// V1: cron/newsfeed_modnotif.php (daily 13:30) — disabled pending sign-off
+// Schedule::command('mail:newsfeed-mod-notif')
+//     ->dailyAt('13:30')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('mail:newsfeed-mod-notif'))
+//     ->runInBackground();
 
 // =============================================================================
 // NEWSFEED
@@ -777,12 +777,12 @@ Schedule::command('noticeboards:thank-users')
 // =============================================================================
 
 // Send unreviewed stories to central team for newsletter voting.
-// V1: cron/stories_tocentral.php (weekly, Friday 14:00)
-Schedule::command('stories:send-to-central')
-    ->weeklyOn(5, '14:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('stories:send-to-central'))
-    ->runInBackground();
+// V1: cron/stories_tocentral.php (weekly, Friday 14:00) — disabled pending sign-off
+// Schedule::command('stories:send-to-central')
+//     ->weeklyOn(5, '14:00')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('stories:send-to-central'))
+//     ->runInBackground();
 
 // =============================================================================
 // GIT SUMMARY
@@ -801,14 +801,6 @@ Schedule::command('data:git-summary')
 // immediate promotion if the commit message has hotfix: prefix.
 // See iznik-nuxt3/.circleci/config.yml
 
-// Remove duplicate user profile images, keeping only the most recent per user.
-// V1: cron/archive_attachments.php (daily)
-Schedule::command('cleanup:user-images')
-    ->dailyAt('01:30')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('cleanup:user-images'))
-    ->runInBackground();
-
 // Auto-reject chat messages stuck in review for 7+ days; notify group mods
 // about messages pending review for 48+ hours; send mentors a daily summary.
 // V1: cron/chat_review.php (daily)
@@ -819,9 +811,9 @@ Schedule::command('chats:review-pending')
     ->runInBackground();
 
 // Alert geeks about Freegle groups that have not received messages in 7+ days.
-// V1: cron/groups_nomessages.php (daily)
-Schedule::command('groups:alert-no-messages')
-    ->dailyAt('07:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('groups:alert-no-messages'))
-    ->runInBackground();
+// V1: cron/groups_nomessages.php (daily) — disabled pending sign-off
+// Schedule::command('groups:alert-no-messages')
+//     ->dailyAt('07:00')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('groups:alert-no-messages'))
+//     ->runInBackground();
