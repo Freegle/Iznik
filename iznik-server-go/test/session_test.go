@@ -2786,3 +2786,94 @@ func TestFetchEmailHealth(t *testing.T) {
 		}
 	})
 }
+
+func TestPatchSessionPushNotificationApptype(t *testing.T) {
+	db := database.DBConn
+
+	t.Run("stores apptype=User when modtools param absent", func(t *testing.T) {
+		prefix := uniquePrefix("push_user")
+		userID := CreateTestUser(t, prefix, "User")
+		_, token := CreateTestSession(t, userID)
+
+		token_val := fmt.Sprintf("fcm-token-user-%s", prefix)
+		body, _ := json.Marshal(map[string]interface{}{
+			"notifications": map[string]interface{}{
+				"push": map[string]interface{}{
+					"type":         "FCMAndroid",
+					"subscription": token_val,
+				},
+			},
+		})
+
+		req := httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var apptype string
+		db.Raw("SELECT apptype FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val).Scan(&apptype)
+		assert.Equal(t, "User", apptype)
+
+		db.Exec("DELETE FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val)
+	})
+
+	t.Run("stores apptype=ModTools when modtools=true", func(t *testing.T) {
+		prefix := uniquePrefix("push_modtools")
+		userID := CreateTestUser(t, prefix, "User")
+		_, token := CreateTestSession(t, userID)
+
+		token_val := fmt.Sprintf("fcm-token-modtools-%s", prefix)
+		body, _ := json.Marshal(map[string]interface{}{
+			"notifications": map[string]interface{}{
+				"push": map[string]interface{}{
+					"type":         "FCMAndroid",
+					"subscription": token_val,
+				},
+			},
+		})
+
+		req := httptest.NewRequest("PATCH", "/api/session?jwt="+token+"&modtools=true", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var apptype string
+		db.Raw("SELECT apptype FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val).Scan(&apptype)
+		assert.Equal(t, "ModTools", apptype)
+
+		db.Exec("DELETE FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val)
+	})
+
+	t.Run("ON DUPLICATE KEY UPDATE preserves apptype correctly", func(t *testing.T) {
+		prefix := uniquePrefix("push_upsert")
+		userID := CreateTestUser(t, prefix, "User")
+		_, token := CreateTestSession(t, userID)
+
+		token_val := fmt.Sprintf("fcm-token-upsert-%s", prefix)
+		body, _ := json.Marshal(map[string]interface{}{
+			"notifications": map[string]interface{}{
+				"push": map[string]interface{}{
+					"type":         "FCMAndroid",
+					"subscription": token_val,
+				},
+			},
+		})
+
+		// First call: ModTools
+		req := httptest.NewRequest("PATCH", "/api/session?jwt="+token+"&modtools=true", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		getApp().Test(req)
+
+		// Second call: same token, no modtools — should flip back to User
+		req2 := httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
+		req2.Header.Set("Content-Type", "application/json")
+		resp2, _ := getApp().Test(req2)
+		assert.Equal(t, 200, resp2.StatusCode)
+
+		var apptype string
+		db.Raw("SELECT apptype FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val).Scan(&apptype)
+		assert.Equal(t, "User", apptype)
+
+		db.Exec("DELETE FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val)
+	})
+}
