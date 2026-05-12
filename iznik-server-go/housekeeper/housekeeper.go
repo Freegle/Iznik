@@ -347,6 +347,43 @@ var cronJobs = []CronJob{
 	{Command: "users:process-exports", Name: "GDPR Exports", Description: "Processes pending GDPR data export requests; purges export data older than 7 days", Schedule: "Every minute", IntervalMinutes: 1, Category: "User Management", Active: true},
 	{Command: "users:update-engagement", Name: "Engagement Classification", Description: "Updates user engagement classifications (New / Occasional / Frequent / Obsessed / Inactive / Dormant) based on recent activity", Schedule: "Daily at 3am", IntervalMinutes: 1440, Category: "User Management", Active: true},
 	{Command: "users:cleanup", Name: "User Cleanup", Description: "Cleans up Yahoo Groups users, inactive users, GDPR forgets, and fully forgotten users", Schedule: "Weekly (Sun 6am)", IntervalMinutes: 10080, Category: "User Management", Active: false},
+	{Command: "users:fix-tn-names", Name: "Fix TN Names", Description: "Extracts display names from TrashNothing email addresses (firstname-groupid@trashnothing.com) for users with no first/last name", Schedule: "Daily at 6:30am", IntervalMinutes: 1440, Category: "User Management", Active: true},
+
+	// Cleanup additions
+	{Command: "cleanup:archive-profile-images", Name: "Archive Profile Images", Description: "Removes older duplicate profile images (keeps most recent per user) and orphan rows where userid IS NULL", Schedule: "Daily at 10:30pm", IntervalMinutes: 1440, Category: "Cleanup", Active: true},
+
+	// Messages — Index additions
+	{Command: "messages:update-visualise", Name: "Update Visualise", Description: "Records taken-OFFER messages into the visualise table for the map view (one row per from→to within 30 km)", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Messages — Index", Active: true},
+
+	// Groups & Chats additions
+	{Command: "groups:check-boundaries", Name: "Boundary Geometry Check", Description: "Validates each Freegle group's CGA/DPA polygon intersection against authority 74579; emails geeks on error", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "Groups & Chats", Active: true},
+	{Command: "groups:check-mod-welfare", Name: "Mod Welfare Check", Description: "Detects inactive moderators (no activity for 6 months); emails group owners or mentors", Schedule: "Weekly (Mon 3pm)", IntervalMinutes: 10080, Category: "Groups & Chats", Active: true},
+	{Command: "groups:welcome-review", Name: "Welcome Mail Review", Description: "Sends each group's welcome email to its mods once a year for review (dedupes via groups.welcomereview)", Schedule: "Daily at 3pm", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
+	{Command: "groups:remind-customisation", Name: "Customisation Reminder", Description: "Reminds mods about missing group profile/tagline/welcome customisation", Schedule: "Monthly (1st 8am)", IntervalMinutes: 43200, Category: "Groups & Chats", Active: true},
+	{Command: "groups:alert-no-messages", Name: "Stale Group Alert", Description: "Alerts mentors about active groups that haven't received messages in 7+ days (excludes test groups)", Schedule: "Daily at 7am", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
+	{Command: "chats:chaseup-mods", Name: "Chase Up Mods on Chats", Description: "Notifies group mods about User2Mod chats where the member has had no reply for 6.55+ days", Schedule: "Daily at 3:30pm", IntervalMinutes: 1440, Category: "Groups & Chats", Active: true},
+
+	// Newsfeed additions
+	{Command: "newsfeed:generate-link-previews", Name: "Newsfeed Link Previews", Description: "Fetches and caches link previews for URLs in newsfeed posts from the last 2 days", Schedule: "Every minute", IntervalMinutes: 1, Category: "Newsfeed", Active: true},
+	{Command: "mail:newsfeed-mod-notif", Name: "Newsfeed Mod Notify", Description: "Notifies group mods about new chitchat (newsfeed) posts from their members since they last looked", Schedule: "Daily at 1:30pm", IntervalMinutes: 1440, Category: "Newsfeed", Active: true},
+
+	// Stories
+	{Command: "stories:send-to-central", Name: "Stories → Central", Description: "Sends reviewed unsent stories to the central team for newsletter voting", Schedule: "Weekly (Fri 2pm)", IntervalMinutes: 10080, Category: "Stories", Active: true},
+	{Command: "stories:ask", Name: "Ask for Stories", Description: "Asks eligible users with outcomes/offers to share their Freegle story", Schedule: "Weekly (Sat 11am)", IntervalMinutes: 10080, Category: "Stories", Active: true},
+
+	// Data & Integrations additions
+	{Command: "integrations:sync-whatjobs", Name: "WhatJobs Sync", Description: "Imports WhatJobs XML job feeds, geocodes locations, filters spam, scores clickability", Schedule: "Hourly 8am–10pm", IntervalMinutes: 60, Category: "Data", Active: true},
+	{Command: "integrations:sync-restartproject", Name: "Restart Project Sync", Description: "Imports upcoming Restart Project repair café events into community events", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "Data", Active: true},
+	{Command: "integrations:sync-repaircafewales", Name: "Repair Cafe Wales Sync", Description: "Imports upcoming Repair Cafe Wales iCal events into community events", Schedule: "Daily at 11pm", IntervalMinutes: 1440, Category: "Data", Active: true},
+
+	// Email — Engagement additions
+	{Command: "birthday:send-emails", Name: "Birthday Emails", Description: "Sends birthday celebration emails to members of groups founded on today's date", Schedule: "Daily at noon", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
+	{Command: "mail:engage", Name: "Engage Emails", Description: "Sends engagement emails to at-risk (about to be inactive) and inactive users", Schedule: "Daily at 4pm", IntervalMinutes: 1440, Category: "Email — Engagement", Active: true},
+	{Command: "mail:donations:summary", Name: "Donation Summary", Description: "Sends a running summary of today's donations to the fundraising address", Schedule: "Hourly 6am–10pm", IntervalMinutes: 60, Category: "Email — Engagement", Active: true},
+	{Command: "lovejunk:send-tn-invoice", Name: "LoveJunk → TN Invoice", Description: "Calculates the previous month's LoveJunk/TrashNothing split and emails the invoice to TN", Schedule: "Monthly (1st 3pm)", IntervalMinutes: 43200, Category: "Email — Engagement", Active: true},
+
+	// AI & Analytics additions
+	{Command: "microvolunteering:notify", Name: "Microvolunteering Notify", Description: "On-site notifications asking active members to review pending/approved messages; per-group eligibility pool + already-notified-today dedup", Schedule: "Every 5 minutes", IntervalMinutes: 5, Category: "AI & Analytics", Active: true},
 }
 
 // ActiveCronJobCount returns the number of active cron jobs in the static registry.

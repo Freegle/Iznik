@@ -342,6 +342,16 @@ Schedule::command('mail:donations:ask')
     ->withoutOverlapping()
     ->runInBackground();
 
+// Daily donation summary email to fundraising — running total of today's
+// donations. V1 (cron/donations_email.php) ran hourly 06:00-22:00 so the
+// team gets intraday visibility; matching that here.
+Schedule::command('mail:donations:summary')
+    ->hourly()
+    ->between('06:00', '22:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:donations:summary'))
+    ->runInBackground();
+
 // User management commands.
 // (users:update-kudos enabled above.)
 Schedule::command('users:cleanup')
@@ -374,6 +384,59 @@ Schedule::command('mail:cleanup-archive')
     ->hourly()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('mail:cleanup-archive'))
+    ->runInBackground();
+
+// Send birthday emails to members of groups founded on today's date.
+// V1: cron/birthday.php (daily 12:00)
+Schedule::command('birthday:send-emails')
+    ->dailyAt('12:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('birthday:send-emails'))
+    ->runInBackground();
+
+// Check for inactive mods and notify group owners / mentors.
+// V1: cron/mod_active.php (Monday 15:00)
+Schedule::command('groups:check-mod-welfare')
+    ->weeklyOn(1, '15:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:check-mod-welfare'))
+    ->runInBackground();
+
+// Send a copy of each group's welcome mail to mods once a year for review.
+// V1: cron/group_welcomereview.php (daily 15:00; service dedupes by
+// groups.welcomereview timestamp so each group only fires on its anniversary).
+// V1 had a second identical crontab entry at 01:00 — likely accidental
+// duplicate; not preserved here since the service is idempotent across runs
+// on the same day.
+Schedule::command('groups:welcome-review')
+    ->dailyAt('15:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:welcome-review'))
+    ->runInBackground();
+
+// Calculate and send the monthly LoveJunk/TrashNothing invoice split to TN.
+// V1: cron/lovejunk_tn_invoice.php (1st of month at 15:00)
+Schedule::command('lovejunk:send-tn-invoice')
+    ->monthlyOn(1, '15:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('lovejunk:send-tn-invoice'))
+    ->runInBackground();
+
+// Engagement emails to at-risk and inactive users.
+// V1: cron/engage.php (daily 16:00). Slow by design — pulls every user with
+// engagement='Inactive' and runs per-user eligibility queries.
+Schedule::command('mail:engage')
+    ->dailyAt('16:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:engage'))
+    ->runInBackground();
+
+// Ask eligible users with outcomes/offers to share their Freegle story.
+// V1: cron/stories.php (weekly Saturday 11:00)
+Schedule::command('stories:ask')
+    ->weeklyOn(6, '11:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stories:ask'))
     ->runInBackground();
 
 // =============================================================================
