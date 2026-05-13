@@ -29,7 +29,7 @@ class GiftAidClaimService
      * found is validated against the locations table (canonical name) before storing,
      * matching V1 Donations::identifyGiftAidPostcode().
      */
-    public function identifyPostcodes(): int
+    public function identifyPostcodes(bool $dryRun = false): int
     {
         $found = 0;
 
@@ -50,7 +50,9 @@ class GiftAidClaimService
                 continue;
             }
 
-            DB::update('UPDATE giftaid SET postcode = ? WHERE id = ?', [$canonical, $record->id]);
+            if (!$dryRun) {
+                DB::update('UPDATE giftaid SET postcode = ? WHERE id = ?', [$canonical, $record->id]);
+            }
             $found++;
         }
 
@@ -114,7 +116,7 @@ class GiftAidClaimService
      * Uses a regex to find a leading house number (possibly with letter suffix)
      * from homeaddress.
      */
-    public function identifyHouseNumbers(): int
+    public function identifyHouseNumbers(bool $dryRun = false): int
     {
         $found = 0;
 
@@ -125,10 +127,12 @@ class GiftAidClaimService
         foreach ($records as $record) {
             if (preg_match('/^([\d\/\-]+[a-z]{0,1})[\w\s]/im', $record->homeaddress, $matches)) {
                 $number = trim($matches[0]);
-                DB::update(
-                    'UPDATE giftaid SET housenameornumber = ? WHERE id = ?',
-                    [$number, $record->id]
-                );
+                if (!$dryRun) {
+                    DB::update(
+                        'UPDATE giftaid SET housenameornumber = ? WHERE id = ?',
+                        [$number, $record->id]
+                    );
+                }
                 $found++;
             }
         }
@@ -169,46 +173,71 @@ class GiftAidClaimService
      *
      * Mirrors the V1 identifyGiftAidedDonations() logic.
      */
-    public function identifyGiftAidedDonations(): int
+    public function identifyGiftAidedDonations(bool $dryRun = false): int
     {
         $found = 0;
 
         $giftaids = DB::select('SELECT * FROM giftaid WHERE reviewed IS NOT NULL');
 
         foreach ($giftaids as $giftaid) {
-            $rows = match ($giftaid->period) {
-                'Past4YearsAndFuture' => DB::update(
-                    'UPDATE users_donations SET giftaidconsent = 1
-                     WHERE userid = ? AND giftaidconsent = 0 AND timestamp >= ?',
-                    [$giftaid->userid, now()->subYears(4)->format('Y-m-d')]
-                ),
-                'Since' => DB::update(
-                    'UPDATE users_donations SET giftaidconsent = 1
-                     WHERE userid = ? AND giftaidconsent = 0 AND timestamp >= ?',
-                    [$giftaid->userid, self::GIFT_AID_EARLIEST_DATE]
-                ),
-                'This' => DB::update(
-                    'UPDATE users_donations SET giftaidconsent = 1
-                     WHERE userid = ? AND giftaidconsent = 0
-                       AND timestamp >= ? AND date(timestamp) = ?',
-                    [
-                        $giftaid->userid,
-                        self::GIFT_AID_EARLIEST_DATE,
-                        date('Y-m-d', strtotime($giftaid->timestamp)),
-                    ]
-                ),
-                'Future' => DB::update(
-                    'UPDATE users_donations SET giftaidconsent = 1
-                     WHERE userid = ? AND giftaidconsent = 0
-                       AND timestamp >= ? AND date(timestamp) >= ?',
-                    [
-                        $giftaid->userid,
-                        self::GIFT_AID_EARLIEST_DATE,
-                        date('Y-m-d', strtotime($giftaid->timestamp)),
-                    ]
-                ),
-                default => 0,
-            };
+            // Dry-run uses an equivalent COUNT() pre-image so the report is meaningful.
+            if ($dryRun) {
+                $rows = match ($giftaid->period) {
+                    'Past4YearsAndFuture' => DB::table('users_donations')
+                        ->where('userid', $giftaid->userid)->where('giftaidconsent', 0)
+                        ->where('timestamp', '>=', now()->subYears(4)->format('Y-m-d'))
+                        ->count(),
+                    'Since' => DB::table('users_donations')
+                        ->where('userid', $giftaid->userid)->where('giftaidconsent', 0)
+                        ->where('timestamp', '>=', self::GIFT_AID_EARLIEST_DATE)
+                        ->count(),
+                    'This' => DB::table('users_donations')
+                        ->where('userid', $giftaid->userid)->where('giftaidconsent', 0)
+                        ->where('timestamp', '>=', self::GIFT_AID_EARLIEST_DATE)
+                        ->whereRaw('date(timestamp) = ?', [date('Y-m-d', strtotime($giftaid->timestamp))])
+                        ->count(),
+                    'Future' => DB::table('users_donations')
+                        ->where('userid', $giftaid->userid)->where('giftaidconsent', 0)
+                        ->where('timestamp', '>=', self::GIFT_AID_EARLIEST_DATE)
+                        ->whereRaw('date(timestamp) >= ?', [date('Y-m-d', strtotime($giftaid->timestamp))])
+                        ->count(),
+                    default => 0,
+                };
+            } else {
+                $rows = match ($giftaid->period) {
+                    'Past4YearsAndFuture' => DB::update(
+                        'UPDATE users_donations SET giftaidconsent = 1
+                         WHERE userid = ? AND giftaidconsent = 0 AND timestamp >= ?',
+                        [$giftaid->userid, now()->subYears(4)->format('Y-m-d')]
+                    ),
+                    'Since' => DB::update(
+                        'UPDATE users_donations SET giftaidconsent = 1
+                         WHERE userid = ? AND giftaidconsent = 0 AND timestamp >= ?',
+                        [$giftaid->userid, self::GIFT_AID_EARLIEST_DATE]
+                    ),
+                    'This' => DB::update(
+                        'UPDATE users_donations SET giftaidconsent = 1
+                         WHERE userid = ? AND giftaidconsent = 0
+                           AND timestamp >= ? AND date(timestamp) = ?',
+                        [
+                            $giftaid->userid,
+                            self::GIFT_AID_EARLIEST_DATE,
+                            date('Y-m-d', strtotime($giftaid->timestamp)),
+                        ]
+                    ),
+                    'Future' => DB::update(
+                        'UPDATE users_donations SET giftaidconsent = 1
+                         WHERE userid = ? AND giftaidconsent = 0
+                           AND timestamp >= ? AND date(timestamp) >= ?',
+                        [
+                            $giftaid->userid,
+                            self::GIFT_AID_EARLIEST_DATE,
+                            date('Y-m-d', strtotime($giftaid->timestamp)),
+                        ]
+                    ),
+                    default => 0,
+                };
+            }
 
             $found += $rows;
         }
@@ -410,7 +439,7 @@ class GiftAidClaimService
      *
      * @return int Number of emails sent
      */
-    public function sendGiftAidChaseUps(): int
+    public function sendGiftAidChaseUps(bool $dryRun = false): int
     {
         $start = now()->subDays(2)->toDateString();
         $end = now()->subDays(30)->toDateString();
@@ -444,9 +473,11 @@ class GiftAidClaimService
 
             if ($previousChaseUp) {
                 // Fix up pre-existing gap: mark all their donations as chased
-                DB::table('users_donations')
-                    ->where('userid', $donation->userid)
-                    ->update(['giftaidchaseup' => now()]);
+                if (!$dryRun) {
+                    DB::table('users_donations')
+                        ->where('userid', $donation->userid)
+                        ->update(['giftaidchaseup' => now()]);
+                }
                 $sentTo[$donation->userid] = true;
                 continue;
             }
@@ -460,12 +491,14 @@ class GiftAidClaimService
             $donationDate = date('d-M-Y', strtotime($donation->timestamp));
 
             try {
-                $mailable = new GiftAidChaseUp($user, $donationDate);
-                Mail::queue($mailable);
+                if (!$dryRun) {
+                    $mailable = new GiftAidChaseUp($user, $donationDate);
+                    Mail::queue($mailable);
 
-                DB::table('users_donations')
-                    ->where('userid', $donation->userid)
-                    ->update(['giftaidchaseup' => now()]);
+                    DB::table('users_donations')
+                        ->where('userid', $donation->userid)
+                        ->update(['giftaidchaseup' => now()]);
+                }
 
                 $sent++;
             } catch (\Throwable $e) {

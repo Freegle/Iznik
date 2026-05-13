@@ -53,7 +53,7 @@
                   @click="unsubscribe"
                 >
                   <v-icon icon="trash-alt" class="me-2" />
-                  Leave completely
+                  Delete your account
                 </button>
               </div>
             </div>
@@ -79,10 +79,20 @@
                   icon-name="trash-alt"
                   variant="danger"
                   class="mobile-btn mobile-btn--danger"
-                  label="Leave completely"
+                  label="Delete your account"
                   @handle="emailConfirm"
                 />
               </div>
+              <p class="mobile-section__label mt-3">
+                Using the app? Having trouble finding your account?
+              </p>
+              <a
+                href="mailto:support@ilovefreegle.org?subject=Delete%20my%20Freegle%20account&body=I%20would%20like%20to%20delete%20my%20Freegle%20account."
+                class="mobile-btn mobile-btn--white mt-3"
+              >
+                <v-icon icon="envelope" class="me-2" />
+                Contact us to delete your account
+              </a>
             </div>
 
             <NoticeMessage v-if="emailSent" variant="primary" class="mt-3">
@@ -160,7 +170,7 @@
                     @click="unsubscribe"
                   >
                     <v-icon icon="trash-alt" />
-                    <span class="ms-1"> Leave Freegle completely </span>
+                    <span class="ms-1"> Delete your account </span>
                   </b-button>
                 </div>
               </template>
@@ -168,7 +178,7 @@
             </div>
             <div v-else>
               <h4>Please enter your email address</h4>
-              <p>We'll email you to confirm that you want to leave Freegle.</p>
+              <p>We'll email you to confirm that you want to delete your Freegle account.</p>
               <EmailValidator
                 v-model:email="email"
                 v-model:valid="emailValid"
@@ -187,10 +197,20 @@
                   icon-name="trash-alt"
                   variant="danger"
                   class="mb-2"
-                  label="Leave Freegle completely"
+                  label="Delete your account"
                   @handle="emailConfirm"
                 />
               </div>
+              <p class="mt-3 mb-1">
+                Using the app? Having trouble finding your account?
+              </p>
+              <a
+                href="mailto:support@ilovefreegle.org?subject=Delete%20my%20Freegle%20account&body=I%20would%20like%20to%20delete%20my%20Freegle%20account."
+                class="btn btn-lg btn-outline-secondary mt-2 mb-2"
+              >
+                <v-icon icon="envelope" />
+                <span class="ms-1">Contact us to delete your account</span>
+              </a>
               <NoticeMessage
                 v-if="emailSent"
                 variant="primary"
@@ -470,6 +490,16 @@ onMounted(() => {
     &:hover {
       background: darken($color-red, 5%);
       color: white;
+    }
+  }
+
+  &--white {
+    background: white;
+    color: $color-black;
+    border: 2px solid $color-gray--darker;
+
+    &:hover {
+      background: darken(white, 5%);
     }
   }
 }

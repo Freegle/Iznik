@@ -29,10 +29,18 @@ class AlertNoMessagesCommand extends Command
         }
 
         return $this->runWithLogging(function () use ($days, $dryRun) {
+            // Only active, on-map, published Freegle groups. Test/internal
+            // groups (FreegleFreshers*, FreeglePlayground, etc.) are excluded
+            // by name pattern — they don't have a dedicated test flag but
+            // they all follow the "Freegle<something>" naming convention
+            // used by the team's internal test groups.
             $groups = DB::table('groups')
                 ->where('type', Group::TYPE_FREEGLE)
                 ->where('onhere', 1)
+                ->where('onmap', 1)
+                ->where('publish', 1)
                 ->where('nameshort', 'NOT LIKE', '%playground%')
+                ->where('nameshort', 'NOT LIKE', '%fresher%')
                 ->orderByRaw('LOWER(nameshort)')
                 ->select(['id', 'nameshort'])
                 ->get();
@@ -62,9 +70,9 @@ class AlertNoMessagesCommand extends Command
                     . "Either they are inactive or don't have modtools@modtools.org on there on individual emails.\r\n\r\n"
                     . implode('', $stale);
 
-                $geeksAddr = config('freegle.mail.geeks_addr');
+                $mentorsAddr = config('freegle.mail.mentors_addr', 'mentors@ilovefreegle.org');
 
-                Mail::send(new AlertNoMessagesMail($geeksAddr, $count, $body));
+                Mail::send(new AlertNoMessagesMail($mentorsAddr, $count, $body));
             }
 
             return Command::SUCCESS;

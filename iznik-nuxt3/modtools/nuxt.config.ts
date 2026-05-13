@@ -13,6 +13,12 @@ export default defineNuxtConfig({
   extends: ['../'],
   sourcemap: { client: true },
   compatibilityDate: '2024-11-26',
+  experimental: {
+    // With ssr:false, vite:serverCreated never fires with ctx.isServer=true, so
+    // NUXT_VITE_NODE_OPTIONS is never set and all dev requests fail. This flag
+    // causes resolveServer(clientServer) to be called immediately instead.
+    viteEnvironmentApi: true,
+  },
 
   // Override parent's cdnURL to use same-origin proxy approach.
   // This avoids CORS issues in strict browsers (Firefox with privacy settings).

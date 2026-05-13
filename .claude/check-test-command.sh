@@ -37,7 +37,7 @@ fi
 if echo "$PWD" | grep -qE 'monitor-fsm'; then
   IS_DATA_COMMAND=true
 fi
-if echo "$COMMAND" | grep -qE '\bcurl\b.*localhost:8081/api/tests.*/status'; then
+if echo "$COMMAND" | grep -qE '\bcurl\b.*localhost:[0-9]+/api/tests.*/status'; then
   IS_DATA_COMMAND=true
 fi
 if echo "$COMMAND" | grep -qE '\bcurl\b.*circle-artifacts\.com'; then
@@ -69,7 +69,9 @@ if echo "$COMMAND" | grep -qE '^\s*git\b'; then
 fi
 
 # Allow status API POSTs — this IS the correct way to run tests locally.
-if echo "$COMMAND" | grep -qE '\bcurl\b.*-X\s*POST.*localhost:8081/api/tests'; then
+# Port 8081 = main worktree; worktrees use offset ports (e.g. 13081 for slot 1).
+# Match any localhost:<port>/api/tests POST.
+if echo "$COMMAND" | grep -qE '\bcurl\b.*-X\s*POST.*localhost:[0-9]+/api/tests'; then
   IS_DATA_COMMAND=true
 fi
 
@@ -117,11 +119,12 @@ fi
 # Block direct test execution — use the status API instead.
 echo "BLOCKED: Use the status API to run tests locally, not direct test commands." >&2
 echo "" >&2
-echo "  curl -s -X POST http://localhost:8081/api/tests/go" >&2
-echo "  curl -s -X POST http://localhost:8081/api/tests/laravel" >&2
-echo "  curl -s -X POST http://localhost:8081/api/tests/php" >&2
-echo "  curl -s -X POST http://localhost:8081/api/tests/vitest" >&2
-echo "  curl -s -X POST http://localhost:8081/api/tests/playwright" >&2
+echo "  curl -s -X POST http://localhost:<STATUS_PORT>/api/tests/go" >&2
+echo "  curl -s -X POST http://localhost:<STATUS_PORT>/api/tests/laravel" >&2
+echo "  curl -s -X POST http://localhost:<STATUS_PORT>/api/tests/php" >&2
+echo "  curl -s -X POST http://localhost:<STATUS_PORT>/api/tests/vitest" >&2
+echo "  curl -s -X POST http://localhost:<STATUS_PORT>/api/tests/playwright" >&2
+echo "  (main worktree: 8081, worktrees use offset ports e.g. 13081)" >&2
 echo "" >&2
 echo "  Then poll for results:" >&2
 echo "  curl -s http://localhost:8081/api/tests/go/status" >&2

@@ -103,7 +103,7 @@ ln -sf /usr/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 
 # Configure CircleCI runner
 mkdir -p /opt/circleci-runner
 
-# Write config atomically: write to .tmp then mv so start.sh's `until [ -f config ]`
+# Write config atomically: write to .tmp then mv so start.sh's until-loop
 # check only succeeds once the file is complete, eliminating the EOF parse race.
 cat > /opt/circleci-runner/circleci-runner-config.yaml.tmp << 'EOF'
 runner:
@@ -164,16 +164,35 @@ echo 'Acquire::http::Proxy "http://${CACHE_SERVER}:3142";' > /etc/apt/apt.conf.d
 # A running CI job always has freegle compose containers up.
 # When docker compose down runs at job end, containers disappear — starts 10-min timer.
 # This is the PRIMARY cleanup mechanism. The teardown step does not call DELETE.
+#
+# Failure mode: if a job is cancelled mid-run, the CircleCI agent is killed but
+# Docker containers it started remain up. idle-check then sees "active" containers
+# forever and never fires. The absolute-age fallback below catches this case.
 cat > /usr/local/bin/idle-check.sh << 'IDLEEOF'
 #!/bin/bash
 IDLE_MARKER="/tmp/.runner-idle-since"
 VM_ID=\$(curl -sf --max-time 3 "http://169.254.169.254/katapult/v1/vm-id" 2>/dev/null || \
          cat /opt/circleci-runner/vm-id 2>/dev/null || echo "")
 
+UPTIME_SECONDS=\$(awk '{print int(\$1)}' /proc/uptime)
+
+# Absolute-age fallback: a job cancelled mid-run can leave orphaned Docker containers
+# that fool the idle detector. The runner config allows max_run_time: 2h, so use 2.5h
+# (9000s) to avoid killing legitimate long-running jobs.
+if [ "\$UPTIME_SECONDS" -gt 9000 ]; then
+    echo "VM uptime \${UPTIME_SECONDS}s exceeds 2.5-hour maximum — force self-destructing"
+    if [ -n "\$VM_ID" ]; then
+        curl -sf -X DELETE \
+            -H "Authorization: Bearer ${KATAPULT_TOKEN}" \
+            "https://api.katapult.io/core/v1/virtual_machines/\$VM_ID" 2>/dev/null || true
+    fi
+    shutdown -h now
+    exit 0
+fi
+
 # Grace period: don't fire idle-check for first 20 minutes after boot.
 # The CI job may not arrive until several minutes after VM provisioning,
 # so the timer must not start until the VM has had time to receive a job.
-UPTIME_SECONDS=\$(awk '{print int(\$1)}' /proc/uptime)
 if [ "\$UPTIME_SECONDS" -lt 1200 ]; then
     exit 0
 fi

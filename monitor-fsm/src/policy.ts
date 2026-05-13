@@ -64,15 +64,16 @@ export function getPhaseInfo(policy: PolicyConfig = DEFAULT_POLICY, now: Date = 
     }
   }
 
-  const isPeak = lon >= policy.peakHourStart && lon < policy.peakHourEnd
+  // Peak-hour downgrade disabled: Anthropic removed the busy-hour restriction.
+  // Always use analysis phase (Opus brain, Sonnet delegate) regardless of time.
   return {
-    phase: isPeak ? 'implementation' : 'analysis',
+    phase: 'analysis',
     haikuModel: policy.haikuModel,
     heavyModel: policy.heavyModel,
     opusModel: policy.opusModel,
     forced: false,
     londonHour: lon,
-    reason: `London ${lon.toString().padStart(2, '0')}:00 ${isPeak ? 'inside' : 'outside'} peak window ${policy.peakHourStart}-${policy.peakHourEnd}`,
+    reason: `London ${lon.toString().padStart(2, '0')}:00 (peak-hour downgrade disabled)`,
   }
 }
 

@@ -71,8 +71,8 @@ return [
         'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
         'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
-        // Mentors address - help for moderators with group setup.
-        'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
+        // Modbot email — the automated moderator account; excluded from mod-welfare checks.
+        'moderator_email' => env('FREEGLE_MODERATOR_EMAIL', 'modbot@users.ilovefreegle.org'),
         // Trash Nothing domain for incoming mail detection
         'trashnothing_domain' => env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
         // Trash Nothing shared secret for mail authentication (skips spam check)
@@ -89,10 +89,6 @@ return [
     'firebase' => [
         'credentials_path' => env('FIREBASE_CREDENTIALS_PATH', '/etc/firebase.json'),
     ],
-
-    // Avatar server — generates boring-avatars PNGs matching the frontend's GeneratedAvatar component.
-    // In production this must be a publicly accessible URL so email clients can fetch the images.
-    'avatar_server_url' => env('FREEGLE_AVATAR_SERVER_URL', 'https://www.ilovefreegle.org/api/avatar'),
 
     'images' => [
         // Image domain for user profile images
@@ -111,6 +107,11 @@ return [
         'rule_free' => env('FREEGLE_RULE_FREE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-free.png'),
         'rule_nice' => env('FREEGLE_RULE_NICE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-nice.png'),
         'rule_safe' => env('FREEGLE_RULE_SAFE_IMAGE', 'https://www.ilovefreegle.org/emailimages/rule-safe.png'),
+
+        // Placeholder images for posts without photos (digest emails)
+        // These default to the generic placeholder until type-specific SVGs are deployed.
+        'offer_placeholder' => env('FREEGLE_OFFER_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder.jpg'),
+        'wanted_placeholder' => env('FREEGLE_WANTED_PLACEHOLDER', 'https://www.ilovefreegle.org/placeholder.jpg'),
     ],
 
     // GeoIP database for IP country lookups

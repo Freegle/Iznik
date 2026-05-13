@@ -32,6 +32,10 @@ jobs:
             # Dynamic config (setup: true) breaks CircleCI's built-in auto-cancel.
             # Continuation pipelines get new IDs, so CircleCI doesn't recognise them
             # as redundant. We cancel older running pipelines for the same branch manually.
+            #
+            # This step runs early (before VM provisioning) to quickly kill setup jobs
+            # for older builds. A second cancel runs just before continuation/continue
+            # to catch continuation pipelines from builds that finished setup concurrently.
             if [ -z "$CIRCLE_TOKEN" ]; then
               echo "CIRCLE_TOKEN not set — skipping"
               exit 0
@@ -44,7 +48,7 @@ jobs:
 
             echo "Current pipeline: #${THIS_NUMBER} (${THIS_PIPELINE}) on ${BRANCH}"
 
-            # Get recent pipelines for this branch
+            # Get recent pipelines for this branch (both setup and continuation pipelines)
             PIPELINES=$(curl -sf \
               -H "Circle-Token: ${CIRCLE_TOKEN}" \
               "https://circleci.com/api/v2/project/${PROJECT_SLUG}/pipeline?branch=${BRANCH}" 2>/dev/null) || true
@@ -54,9 +58,10 @@ jobs:
               exit 0
             fi
 
-            # Find older pipelines (lower number) that are still running
+            # Cancel all running/on_hold workflows from older pipelines.
+            # No state filter — we want to catch both setup and continuation pipelines.
             echo "$PIPELINES" | jq -r --argjson thisNum "$THIS_NUMBER" \
-              '.items[] | select(.number < $thisNum and .state == "created") | .id' | while read -r PIPELINE_ID; do
+              '.items[] | select(.number < $thisNum) | .id' | while read -r PIPELINE_ID; do
               echo "Checking workflows for pipeline ${PIPELINE_ID}..."
 
               WORKFLOWS=$(curl -sf \
@@ -197,6 +202,49 @@ jobs:
               -d '{"labels":["CI: Running"]}' \
               "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels" 2>/dev/null || true
             echo "Labelled PR #$PR_NUMBER as CI: Running"
+      - run:
+          name: Cancel older redundant pipelines (pre-continuation)
+          when: always
+          command: |
+            # Second pass: by now VM provisioning (~10 min) is done. Any build that was
+            # started concurrently with us will have had time to trigger its continuation
+            # pipeline. Cancel those continuation pipelines so only this (newest) build
+            # proceeds to run tests.
+            if [ -z "$CIRCLE_TOKEN" ]; then
+              echo "CIRCLE_TOKEN not set — skipping"
+              exit 0
+            fi
+
+            BRANCH="<< pipeline.git.branch >>"
+            THIS_NUMBER="<< pipeline.number >>"
+            PROJECT_SLUG="gh/Freegle/Iznik"
+
+            echo "Pre-continuation cancel pass for pipeline #${THIS_NUMBER} on ${BRANCH}"
+
+            PIPELINES=$(curl -sf \
+              -H "Circle-Token: ${CIRCLE_TOKEN}" \
+              "https://circleci.com/api/v2/project/${PROJECT_SLUG}/pipeline?branch=${BRANCH}" 2>/dev/null) || true
+
+            if [ -z "$PIPELINES" ]; then
+              echo "Failed to fetch pipelines — skipping"
+              exit 0
+            fi
+
+            echo "$PIPELINES" | jq -r --argjson thisNum "$THIS_NUMBER" \
+              '.items[] | select(.number < $thisNum) | .id' | while read -r PIPELINE_ID; do
+              WORKFLOWS=$(curl -sf \
+                -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                "https://circleci.com/api/v2/pipeline/${PIPELINE_ID}/workflow" 2>/dev/null) || continue
+
+              echo "$WORKFLOWS" | jq -r '.items[] | select(.status == "running" or .status == "on_hold") | .id' | while read -r WF_ID; do
+                echo "Cancelling workflow ${WF_ID} from older pipeline ${PIPELINE_ID}"
+                curl -sf -X POST \
+                  -H "Circle-Token: ${CIRCLE_TOKEN}" \
+                  "https://circleci.com/api/v2/workflow/${WF_ID}/cancel" 2>/dev/null || true
+              done
+            done
+
+            echo "Done with pre-continuation cancel pass"
       - continuation/continue:
           configuration_path: .circleci/continue-config.yml
           parameters: /tmp/pipeline-params.json

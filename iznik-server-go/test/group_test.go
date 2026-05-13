@@ -260,6 +260,30 @@ func TestGetGroup_WelcomemailModtoolsOnly(t *testing.T) {
 	assert.Equal(t, "Welcome to our group!", grp["welcomemail"], "welcomemail should be returned with modtools=true")
 }
 
+func TestGetGroup_BatchWelcomemailModtoolsOnly(t *testing.T) {
+	prefix := uniquePrefix("grpbchwelc")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	db.Exec("UPDATE `groups` SET welcomemail = 'Batch welcome!' WHERE id = ?", groupID)
+
+	// Batch endpoint without modtools: welcomemail should be absent.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/group/%d?jwt=%s", groupID, modToken), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	var grp map[string]interface{}
+	json2.Unmarshal(rsp(resp), &grp)
+	assert.Empty(t, grp["welcomemail"], "batch: welcomemail should be absent without modtools=true")
+
+	// Batch endpoint with modtools=true: welcomemail should be present.
+	resp, _ = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/group/%d?modtools=true&jwt=%s", groupID, modToken), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+	json2.Unmarshal(rsp(resp), &grp)
+	assert.Equal(t, "Batch welcome!", grp["welcomemail"], "batch: welcomemail should be returned with modtools=true")
+}
+
 func TestListGroups_V2Path(t *testing.T) {
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/apiv2/group", nil))
 	assert.Equal(t, 200, resp.StatusCode)

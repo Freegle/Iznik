@@ -458,6 +458,53 @@ class IncomingMailCommandTest extends TestCase
     }
 
     // ========================================
+    // Log Generation Tests
+    // ========================================
+
+    public function test_received_log_written_when_email_posted(): void
+    {
+        $group = $this->createTestGroup();
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('logtest')]);
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        DB::table('users')->where('id', $user->id)->update([
+            'lastlocation' => $this->createLocation(51.5, -0.1),
+        ]);
+
+        $userEmail = $user->emails->first()->email;
+        // Bare message ID without angle brackets (parser strips them; service appends group ID)
+        $msgId = 'test-log-'.uniqid().'@example.com';
+        $storedMsgId = $msgId.'-'.$group->id;
+
+        $rawEmail = $this->createMinimalEmail([
+            'From' => $userEmail,
+            'To' => $group->nameshort.'@groups.ilovefreegle.org',
+            'Subject' => 'OFFER: Test log item (London)',
+            'Message-ID' => '<'.$msgId.'>',
+        ], 'Test body for log.');
+
+        $this->artisan('mail:incoming', [
+            'sender' => $userEmail,
+            'recipient' => $group->nameshort.'@groups.ilovefreegle.org',
+            '--stdin-content' => $rawEmail,
+        ])->assertSuccessful();
+
+        $message = DB::table('messages')->where('messageid', $storedMsgId)->first();
+        $this->assertNotNull($message, 'Message should have been created');
+
+        $log = DB::table('logs')
+            ->where('type', 'Message')
+            ->where('subtype', 'Received')
+            ->where('msgid', $message->id)
+            ->first();
+
+        $this->assertNotNull($log, 'Message/Received log entry should be written');
+        $this->assertEquals($group->id, $log->groupid);
+        $this->assertEquals($user->id, $log->user);
+        $this->assertEquals($storedMsgId, $log->text);
+    }
+
+    // ========================================
     // Helper Methods
     // ========================================
 

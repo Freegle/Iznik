@@ -205,7 +205,8 @@ class MessageExpiryServiceTest extends TestCase
 
         $message = $this->createTestMessage($user, $group);
 
-        // Pre-existing EXPIRED outcome (e.g. autorepost marked it expired earlier).
+        // Existing EXPIRED outcome (e.g. the deadline-expiry path ran earlier
+        // in the same scheduled batch).
         MessageOutcome::create([
             'msgid' => $message->id,
             'outcome' => MessageOutcome::OUTCOME_EXPIRED,
@@ -223,15 +224,23 @@ class MessageExpiryServiceTest extends TestCase
 
         $this->assertEquals(1, $count);
 
-        // V1 mark(WITHDRAWN, "Auto-expired") adds a *second* outcome alongside EXPIRED.
-        $this->assertDatabaseHas('messages_outcomes', [
-            'msgid' => $message->id,
-            'outcome' => MessageOutcome::OUTCOME_EXPIRED,
-        ]);
+        // V1 mark() does DELETE FROM messages_outcomes before INSERT, so the
+        // Expired row is replaced by the Withdrawn "Auto-expired" — exactly one
+        // outcome row should remain. Leaving both would cause the Go outcome
+        // handler to return 409 when the owner later tries to mark Taken.
+        $this->assertEquals(
+            1,
+            MessageOutcome::where('msgid', $message->id)->count(),
+            'processMessageExpiry must replace existing outcomes, not stack them'
+        );
         $this->assertDatabaseHas('messages_outcomes', [
             'msgid' => $message->id,
             'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
             'comments' => 'Auto-expired',
+        ]);
+        $this->assertDatabaseMissing('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_EXPIRED,
         ]);
 
         // Spatial entry deleted.
@@ -240,15 +249,65 @@ class MessageExpiryServiceTest extends TestCase
         ]);
     }
 
-    public function test_process_expired_from_spatial_index_no_op_without_expired_outcome(): void
+    /**
+     * Regression: a message that hits the deadline-expiry path and then the
+     * spatial-index expiry path in the same scheduled run must end up with
+     * exactly one outcome row. Previously both paths inserted without
+     * deleting first, leaving duplicate (Expired + Withdrawn) rows that
+     * caused the Go API to 409 when the owner tried to mark the post Taken.
+     */
+    public function test_deadline_then_spatial_expiry_leaves_single_outcome(): void
     {
+        Mail::fake();
+
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
         $message = $this->createTestMessage($user, $group);
+        $message->deadline = now()->subDays(1)->format('Y-m-d');
+        $message->save();
 
-        // Spatial index entry but no EXPIRED outcome — V1 processExpiry() is a no-op here.
+        // Spatial index entry — present so the second-phase cleanup picks the
+        // message up after the deadline path marks it Expired.
+        DB::table('messages_spatial')->insert([
+            'msgid' => $message->id,
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'successful' => 0,
+        ]);
+
+        // Phase 1 — deadline expiry inserts the EXPIRED outcome.
+        $stats = $this->service->processDeadlineExpired();
+        $this->assertEquals(1, $stats['processed']);
+
+        // Phase 2 — spatial-index expiry runs next; it finds the message via
+        // the "EXPIRED outcome exists" branch of getExpiredCandidates and must
+        // replace the Expired row rather than appending Withdrawn.
+        $count = $this->service->processExpiredFromSpatialIndex();
+        $this->assertEquals(1, $count);
+
+        $this->assertEquals(
+            1,
+            MessageOutcome::where('msgid', $message->id)->count(),
+            'a message hitting both expiry paths in one run must keep a single outcome row'
+        );
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+            'comments' => 'Auto-expired',
+        ]);
+    }
+
+    public function test_process_expired_from_spatial_index_no_op_for_fresh_message(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        // Default group has no custom settings → expiretime defaults to max(90, 14*11) = 154.
+        // A message with today's arrival is 0 days old, so the virtual-expiry filter doesn't fire.
+        $message = $this->createTestMessage($user, $group);
+
         DB::table('messages_spatial')->insert([
             'msgid' => $message->id,
             'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
@@ -258,14 +317,197 @@ class MessageExpiryServiceTest extends TestCase
         $count = $this->service->processExpiredFromSpatialIndex();
 
         $this->assertEquals(0, $count);
-
-        // No outcome was created, spatial entry untouched.
         $this->assertDatabaseMissing('messages_outcomes', [
             'msgid' => $message->id,
         ]);
         $this->assertDatabaseHas('messages_spatial', [
             'msgid' => $message->id,
         ]);
+    }
+
+    public function test_process_expired_from_spatial_index_virtual_expiry_by_age(): void
+    {
+        $user = $this->createTestUser();
+
+        // Group with maxagetoshow=30 and reposts that yield 3*(5+1)=18 → expiretime = 30.
+        $group = $this->createTestGroup([
+            'settings' => [
+                'maxagetoshow' => 30,
+                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
+            ],
+        ]);
+        $this->createMembership($user, $group);
+
+        // Group arrival 31 days ago → past expiretime.
+        $arrival = now()->subDays(31);
+        $message = $this->createTestMessage($user, $group, ['arrival' => $arrival]);
+
+        DB::table('messages_spatial')->insert([
+            'msgid' => $message->id,
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'successful' => 0,
+        ]);
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        $this->assertEquals(1, $count);
+
+        // V1 inserts only an OUTCOME_WITHDRAWN "Auto-expired"; the virtual EXPIRED is never persisted.
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+            'comments' => 'Auto-expired',
+        ]);
+        $this->assertDatabaseMissing('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_EXPIRED,
+        ]);
+        $this->assertDatabaseMissing('messages_spatial', [
+            'msgid' => $message->id,
+        ]);
+    }
+
+    public function test_process_expired_from_spatial_index_respects_reposts_when_maxagetoshow_zero(): void
+    {
+        $user = $this->createTestUser();
+
+        // maxagetoshow=0 means reposts-based expiry alone: 4*(5+1) = 24 days for Offer.
+        $group = $this->createTestGroup([
+            'settings' => [
+                'maxagetoshow' => 0,
+                'reposts' => ['offer' => 4, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
+            ],
+        ]);
+        $this->createMembership($user, $group);
+
+        $youngMsg = $this->createTestMessage($user, $group, [
+            'type' => Message::TYPE_OFFER,
+            'arrival' => now()->subDays(20),
+        ]);
+        $oldMsg = $this->createTestMessage($user, $group, [
+            'type' => Message::TYPE_OFFER,
+            'arrival' => now()->subDays(25),
+        ]);
+
+        foreach ([$youngMsg, $oldMsg] as $m) {
+            DB::table('messages_spatial')->insert([
+                'msgid' => $m->id,
+                'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+                'successful' => 0,
+            ]);
+        }
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        $this->assertEquals(1, $count);
+        $this->assertDatabaseMissing('messages_outcomes', ['msgid' => $youngMsg->id]);
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $oldMsg->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+            'comments' => 'Auto-expired',
+        ]);
+    }
+
+    public function test_process_expired_from_spatial_index_skips_when_recent_chat_reply(): void
+    {
+        $user = $this->createTestUser();
+        $other = $this->createTestUser();
+        $group = $this->createTestGroup([
+            'settings' => [
+                'maxagetoshow' => 30,
+                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
+            ],
+        ]);
+        $this->createMembership($user, $group);
+
+        $message = $this->createTestMessage($user, $group, ['arrival' => now()->subDays(31)]);
+
+        DB::table('messages_spatial')->insert([
+            'msgid' => $message->id,
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'successful' => 0,
+        ]);
+
+        // A chat room with a recent reply (last 6 days) referencing this msg.
+        $chatid = DB::table('chat_rooms')->insertGetId([
+            'chattype' => 'User2User',
+            'user1' => $user->id,
+            'user2' => $other->id,
+            'latestmessage' => now(),
+        ]);
+        DB::table('chat_messages')->insert([
+            'chatid' => $chatid,
+            'userid' => $other->id,
+            'refmsgid' => $message->id,
+            'type' => 'Default',
+            'message' => 'Interested!',
+            'date' => now()->subDays(1),
+        ]);
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        $this->assertEquals(0, $count);
+        $this->assertDatabaseMissing('messages_outcomes', ['msgid' => $message->id]);
+        $this->assertDatabaseHas('messages_spatial', ['msgid' => $message->id]);
+    }
+
+    public function test_process_expired_from_spatial_index_skips_when_promised(): void
+    {
+        $user = $this->createTestUser();
+        $other = $this->createTestUser();
+        $group = $this->createTestGroup([
+            'settings' => [
+                'maxagetoshow' => 30,
+                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
+            ],
+        ]);
+        $this->createMembership($user, $group);
+
+        $message = $this->createTestMessage($user, $group, ['arrival' => now()->subDays(31)]);
+
+        DB::table('messages_spatial')->insert([
+            'msgid' => $message->id,
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'successful' => 0,
+        ]);
+
+        DB::table('messages_promises')->insert([
+            'msgid' => $message->id,
+            'userid' => $other->id,
+            'promisedat' => now(),
+        ]);
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        $this->assertEquals(0, $count);
+        $this->assertDatabaseMissing('messages_outcomes', ['msgid' => $message->id]);
+        $this->assertDatabaseHas('messages_spatial', ['msgid' => $message->id]);
+    }
+
+    public function test_process_expired_from_spatial_index_dry_run_writes_nothing(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup([
+            'settings' => [
+                'maxagetoshow' => 30,
+                'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
+            ],
+        ]);
+        $this->createMembership($user, $group);
+
+        $message = $this->createTestMessage($user, $group, ['arrival' => now()->subDays(31)]);
+
+        DB::table('messages_spatial')->insert([
+            'msgid' => $message->id,
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'successful' => 0,
+        ]);
+
+        $count = $this->service->processExpiredFromSpatialIndex(true);
+
+        $this->assertEquals(1, $count);
+        $this->assertDatabaseMissing('messages_outcomes', ['msgid' => $message->id]);
+        $this->assertDatabaseHas('messages_spatial', ['msgid' => $message->id]);
     }
 
     public function test_process_expired_from_spatial_index_skips_taken_outcome(): void

@@ -328,19 +328,19 @@ func GetMemberships(c *fiber.Ctx) error {
 	}
 
 	search := c.Query("search", "")
+	filter := c.QueryInt("filter", 0)
+	contextID := uint64(c.QueryInt("context", 0))
 
 	if groupid == 0 {
-		if search == "" {
-			// No group and no search — return empty list.
+		if search == "" && filter == 0 {
+			// No group, no search, no filter — return empty list.
 			return c.JSON([]GetMembershipsMember{})
 		}
-		// search across all of the mod's groups when no group selected.
-		// Fall through to the search logic with groupid=0 handled below.
+		// filter or search with no specific group — fan out to all of mod's groups.
+		// Fall through.
 	} else if !isModOfGroup(myid, groupid) {
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator of this group")
 	}
-	filter := c.QueryInt("filter", 0)
-	contextID := uint64(c.QueryInt("context", 0))
 
 	db := database.DBConn
 
@@ -420,8 +420,8 @@ func GetMemberships(c *fiber.Ctx) error {
 	filterJoin := ""
 	filterWhere := ""
 	switch filter {
-	case 1: // With comments/notes
-		filterJoin = " INNER JOIN users_comments uc ON uc.userid = m.userid AND uc.groupid = m.groupid"
+	case 1: // With comments/notes — use EXISTS to avoid row multiplication from multi-note members
+		filterWhere = " AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid)"
 	case 2: // Moderation team
 		filterWhere = " AND m.role IN ('" + utils.ROLE_OWNER + "', '" + utils.ROLE_MODERATOR + "')"
 	case 3: // Bouncing
@@ -463,7 +463,18 @@ func GetMemberships(c *fiber.Ctx) error {
 		// Cursor-based pagination: m.id is the cursor (auto-increment correlates with join date).
 		// ORDER BY m.id DESC for deterministic per-page slicing consistent with the cursor.
 		contextWhere := ""
-		queryArgs := []interface{}{groupid, collection}
+		var groupCondition string
+		var queryArgs []interface{}
+
+		if groupid == 0 {
+			// All my communities: fan out to every group this mod moderates.
+			groupCondition = "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" + utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')"
+			queryArgs = []interface{}{myid, collection}
+		} else {
+			groupCondition = "m.groupid = ?"
+			queryArgs = []interface{}{groupid, collection}
+		}
+
 		if contextID > 0 {
 			contextWhere = " AND m.id < ?"
 			queryArgs = append(queryArgs, contextID)
@@ -472,7 +483,7 @@ func GetMemberships(c *fiber.Ctx) error {
 
 		result := db.Raw("SELECT "+selectCols+" "+
 			fromClause+filterJoin+" "+
-			"WHERE m.groupid = ? AND m.collection = ?"+filterWhere+contextWhere+
+			"WHERE "+groupCondition+" AND m.collection = ?"+filterWhere+contextWhere+
 			" ORDER BY m.id DESC LIMIT ?",
 			queryArgs...).Scan(&members)
 		if result.Error != nil {
@@ -493,13 +504,22 @@ func GetMemberships(c *fiber.Ctx) error {
 	}
 
 	// When a filter is active, include the total matching count so the UI can display it.
-	if filter > 0 && groupid > 0 {
+	if filter > 0 {
 		var filterCount int64
 
 		countFrom := "FROM memberships m JOIN users u ON u.id = m.userid"
+		var countCondition string
+		var countArgs []interface{}
+		if groupid == 0 {
+			countCondition = "m.groupid IN (SELECT groupid FROM memberships WHERE userid = ? AND role IN ('" + utils.ROLE_MODERATOR + "', '" + utils.ROLE_OWNER + "') AND collection = '" + utils.COLLECTION_APPROVED + "')"
+			countArgs = []interface{}{myid, collection}
+		} else {
+			countCondition = "m.groupid = ?"
+			countArgs = []interface{}{groupid, collection}
+		}
 		db.Raw("SELECT COUNT(DISTINCT m.userid) "+countFrom+filterJoin+
-			" WHERE m.groupid = ? AND m.collection = ?"+filterWhere,
-			groupid, collection).Scan(&filterCount)
+			" WHERE "+countCondition+" AND m.collection = ?"+filterWhere,
+			countArgs...).Scan(&filterCount)
 
 		return c.JSON(fiber.Map{
 			"members":     members,

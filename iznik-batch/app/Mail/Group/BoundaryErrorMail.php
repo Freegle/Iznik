@@ -2,32 +2,47 @@
 
 namespace App\Mail\Group;
 
-use Illuminate\Mail\Mailable;
+use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
-use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 
-class BoundaryErrorMail extends Mailable
+class BoundaryErrorMail extends MjmlMailable
 {
     public function __construct(
         public int $groupId,
         public string $groupName,
         public string $errorMessage,
-    ) {}
+    ) {
+        parent::__construct();
+    }
+
+    protected function getSubject(): string
+    {
+        return "Invalid CGA/DPA for {$this->groupId} {$this->groupName}";
+    }
 
     public function envelope(): Envelope
     {
+        $geeksAddr = config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org');
+
         return new Envelope(
             from: new Address(
                 config('freegle.mail.from_address', 'geeks@ilovefreegle.org')
             ),
-            to: [new Address(config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org'))],
-            subject: "Invalid CGA/DPA for {$this->groupId} {$this->groupName}",
+            to: [new Address($geeksAddr)],
+            subject: $this->getSubject(),
         );
     }
 
-    public function content(): Content
+    public function build(): static
     {
-        return new Content(text: 'emails.plain.boundary-error');
+        $geeksAddr = config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org');
+
+        return $this->mjmlView('emails.mjml.group.boundary-error', [
+            'groupId'      => $this->groupId,
+            'groupName'    => $this->groupName,
+            'errorMessage' => $this->errorMessage,
+            'email'        => $geeksAddr,
+        ]);
     }
 }

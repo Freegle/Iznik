@@ -3120,6 +3120,110 @@ func TestPostMessageOutcomeDuplicate(t *testing.T) {
 	assert.Equal(t, 409, resp.StatusCode)
 }
 
+// Regression: a message with multiple rows in messages_outcomes (Expired left
+// by the deadline-expiry batch plus Withdrawn "Auto-expired" left by the
+// spatial-index expiry batch, which historically appended instead of
+// replacing) must still allow the owner to mark Taken — the user-visible
+// failure that took the owner to the "something went wrong" page.
+func TestPostMessageOutcomeAllowsTakenOverExpiredPlusAutoWithdrawn(t *testing.T) {
+	prefix := uniquePrefix("msgw_out_dup_expauto")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	// Stale duplicate rows from before the batch fix: same shape as the prod
+	// data that produced the 409.
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, comments) VALUES (?, 'Expired', 'Reached deadline')", msgID)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, comments) VALUES (?, 'Withdrawn', 'Auto-expired')", msgID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Taken",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", token)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "owner must be able to mark Taken even when stale duplicate auto-expiry rows exist")
+
+	// Existing rows replaced with a single Taken row.
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&count)
+	assert.Equal(t, int64(1), count, "stale outcome rows should be replaced, not stacked")
+	var dbOutcome string
+	db.Raw("SELECT outcome FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&dbOutcome)
+	assert.Equal(t, "Taken", dbOutcome)
+}
+
+// The owner clicks a chase-up-email "Taken" link after the spatial-index
+// expiry batch has already auto-withdrawn the post. The Auto-expired
+// Withdrawn row is system-generated, so the deliberate user action should
+// override it.
+func TestPostMessageOutcomeAllowsTakenOverAutoExpiredWithdrawn(t *testing.T) {
+	prefix := uniquePrefix("msgw_out_autoexp")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, comments) VALUES (?, 'Withdrawn', 'Auto-expired')", msgID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Taken",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", token)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "owner clicking Taken from an earlier chase-up after auto-expiry must succeed")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&count)
+	assert.Equal(t, int64(1), count)
+	var dbOutcome string
+	db.Raw("SELECT outcome FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&dbOutcome)
+	assert.Equal(t, "Taken", dbOutcome)
+}
+
+// Real Withdrawn (no Auto-expired marker, no Expired sibling) is still a
+// genuine conflict — the user already deliberately withdrew the post.
+func TestPostMessageOutcomeRejectsTakenOverRealWithdrawn(t *testing.T) {
+	prefix := uniquePrefix("msgw_out_dup_realw")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome) VALUES (?, 'Withdrawn')", msgID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Taken",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", token)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 409, resp.StatusCode)
+}
+
 func TestPostMessageOutcomeMessageNotFound(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_nf")
 
@@ -6213,6 +6317,125 @@ func TestListMessagesTnpostid(t *testing.T) {
 
 	firstMsg := msgs[0].(map[string]interface{})
 	assert.Equal(t, "tn-list-001", firstMsg["tnpostid"])
+}
+
+// V1 expiretime = max(maxagetoshow, repostDays * (max+1)) where repostDays
+// comes from reposts.offer or reposts.wanted depending on message type.
+// V1 honours an explicit maxagetoshow=0. Earlier Go code looked for
+// non-existent "wantedreposts" and "reposts.interval" keys and treated 0
+// as "missing" — both regressions are covered here.
+func TestExpiresatRespectsRepostsOfferKey(t *testing.T) {
+	prefix := uniquePrefix("msg_expiresat_offer")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// maxagetoshow explicitly 0 means reposts alone govern expiry.
+	// Offer: 4 * (5+1) = 24 days.
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
+		"'$.maxagetoshow', 0, '$.reposts', JSON_OBJECT('offer', 4, 'wanted', 7, 'max', 5)) "+
+		"WHERE id = ?", groupID)
+
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" Offer", 55.9533, -3.1883)
+
+	var arrival time.Time
+	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrival)
+	require.False(t, arrival.IsZero(), "arrival must be set")
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	expiresatStr, _ := result["expiresat"].(string)
+	expiresat, perr := time.Parse(time.RFC3339, expiresatStr)
+	assert.NoError(t, perr)
+
+	want := arrival.Add(24 * 24 * time.Hour)
+	assert.WithinDuration(t, want, expiresat, time.Minute,
+		"Offer expiresat should be arrival + 24d (offer=4, max=5, maxagetoshow=0)")
+}
+
+func TestExpiresatRespectsRepostsWantedKey(t *testing.T) {
+	prefix := uniquePrefix("msg_expiresat_wanted")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
+		"'$.maxagetoshow', 0, '$.reposts', JSON_OBJECT('offer', 4, 'wanted', 7, 'max', 5)) "+
+		"WHERE id = ?", groupID)
+
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	db.Exec("UPDATE messages SET type = 'Wanted' WHERE id = ?", msgID)
+	db.Exec("UPDATE messages_groups SET msgtype = 'Wanted' WHERE msgid = ?", msgID)
+
+	var arrival time.Time
+	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrival)
+	require.False(t, arrival.IsZero(), "arrival must be set")
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	expiresatStr, _ := result["expiresat"].(string)
+	expiresat, perr := time.Parse(time.RFC3339, expiresatStr)
+	assert.NoError(t, perr)
+
+	want := arrival.Add(42 * 24 * time.Hour)
+	assert.WithinDuration(t, want, expiresat, time.Minute,
+		"Wanted expiresat should be arrival + 42d (wanted=7, max=5, maxagetoshow=0)")
+}
+
+func TestExpiresatMaxagetoshowWins(t *testing.T) {
+	prefix := uniquePrefix("msg_expiresat_maxage")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// maxagetoshow=60 beats repost lifetime of 3*(5+1)=18 for Offer.
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
+		"'$.maxagetoshow', 60, '$.reposts', JSON_OBJECT('offer', 3, 'wanted', 7, 'max', 5)) "+
+		"WHERE id = ?", groupID)
+
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" Offer", 55.9533, -3.1883)
+
+	var arrival time.Time
+	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrival)
+	require.False(t, arrival.IsZero(), "arrival must be set")
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	expiresatStr, _ := result["expiresat"].(string)
+	expiresat, perr := time.Parse(time.RFC3339, expiresatStr)
+	assert.NoError(t, perr)
+
+	want := arrival.Add(60 * 24 * time.Hour)
+	assert.WithinDuration(t, want, expiresat, time.Minute,
+		"expiresat should be arrival + 60d when maxagetoshow > repost lifetime")
 }
 
 func TestListMessagesExpiresat(t *testing.T) {

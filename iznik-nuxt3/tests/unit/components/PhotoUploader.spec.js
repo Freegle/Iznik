@@ -1366,4 +1366,49 @@ describe('PhotoUploader', () => {
       expect(wrapper.vm.photos[0].id).toBe(1)
     })
   })
+
+  // AssertFlip test — Step 1: documents the buggy behaviour (PASSES on current code).
+  // Step 2 (inverted) is below and FAILS until the fix lands.
+  describe('AI image pruning via Uppy upload (web mode) — bug: handleUppySuccess does not remove AI photos', () => {
+    beforeEach(() => {
+      mockMobileStore.isApp = false
+    })
+
+    it('Uppy upload removes AI-generated image once user uploads their own photo', async () => {
+      // BUG: handleUppySuccess (the web/Uppy upload path) does not filter out
+      // AI-generated photos after a real upload, unlike the mobile uploadPhoto path
+      // which calls: photos.value = photos.value.filter((p) => !p.externalmods?.ai)
+      createWrapper({
+        modelValue: [
+          { id: 99, externalmods: { ai: true }, ouruid: 'ai-uid-1' },
+        ],
+      })
+      await flushPromises()
+
+      // Capture the 'complete' handler registered by the component on Uppy
+      const completeCall = mockUppyInstance.on.mock.calls.find(
+        (c) => c[0] === 'complete'
+      )
+      expect(completeCall).toBeDefined()
+      const handleUppySuccess = completeCall[1]
+
+      // Simulate Uppy completing a real photo upload (imageStore.post mock returns id:1)
+      await handleUppySuccess({
+        successful: [
+          {
+            tus: { uploadUrl: 'https://upload.example.com/files/realphoto456' },
+            preview: null,
+          },
+        ],
+      })
+      await flushPromises()
+
+      // After the fix: AI photo should be gone, only the real photo remains.
+      // FAILS on current (buggy) code because handleUppySuccess never filters AI photos.
+      const aiPhotos = wrapper.vm.photos.filter((p) => p.externalmods?.ai)
+      expect(aiPhotos.length).toBe(0)
+      expect(wrapper.vm.photos).toHaveLength(1)
+      expect(wrapper.vm.photos[0].id).toBe(1)
+    })
+  })
 })

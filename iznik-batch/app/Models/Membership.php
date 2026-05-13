@@ -194,43 +194,53 @@ class Membership extends Model implements Auditable
     /**
      * Check if this moderator is "active" (not a backup mod).
      *
-     * Backup mods have settings['active'] = false. Active mods either have
-     * no settings, no 'active' key, or settings['active'] = true.
-     *
-     * Members are always considered active (backup status only applies to mods).
+     * Mirrors V1 User::activeModForGroup: use settings.active if present;
+     * otherwise fall back to legacy settings.showmessages; otherwise default
+     * to active. Members are always considered active.
      */
     public function isActiveMod(): bool
     {
-        // Members don't have backup status - they're always "active".
         if (!$this->isModerator()) {
             return TRUE;
         }
 
-        // No settings means active by default.
         if ($this->settings === NULL) {
             return TRUE;
         }
 
-        // No 'active' key means active by default.
-        if (!array_key_exists('active', $this->settings)) {
-            return TRUE;
+        if (array_key_exists('active', $this->settings)) {
+            return (bool) $this->settings['active'];
         }
 
-        // Explicitly check the active flag.
-        return (bool) $this->settings['active'];
+        if (array_key_exists('showmessages', $this->settings)) {
+            return (bool) $this->settings['showmessages'];
+        }
+
+        return TRUE;
     }
 
     /**
      * Scope to active moderators (not backup mods).
+     *
+     * Active when: settings is null, or settings.active is truthy, or
+     * settings.active is missing and settings.showmessages is missing or
+     * truthy. Matches V1 User::activeModForGroup.
      */
     public function scopeActiveModerators(Builder $query): Builder
     {
         return $query->whereIn('role', [self::ROLE_MODERATOR, self::ROLE_OWNER])
             ->where(function ($q) {
                 $q->whereNull('settings')
-                    ->orWhereRaw("JSON_EXTRACT(settings, '$.active') IS NULL")
                     ->orWhereRaw("JSON_EXTRACT(settings, '$.active') = true")
-                    ->orWhereRaw("JSON_EXTRACT(settings, '$.active') = 1");
+                    ->orWhereRaw("JSON_EXTRACT(settings, '$.active') = 1")
+                    ->orWhere(function ($q2) {
+                        $q2->whereRaw("JSON_EXTRACT(settings, '$.active') IS NULL")
+                            ->where(function ($q3) {
+                                $q3->whereRaw("JSON_EXTRACT(settings, '$.showmessages') IS NULL")
+                                    ->orWhereRaw("JSON_EXTRACT(settings, '$.showmessages') = true")
+                                    ->orWhereRaw("JSON_EXTRACT(settings, '$.showmessages') = 1");
+                            });
+                    });
             });
     }
 }
