@@ -8,6 +8,17 @@
 # SAFETY RULE: only VMs whose name starts with 'circleci-runner-' are ever touched.
 # All other VMs are unconditionally skipped.
 #
+# Deployment: install on the Docker cache VM (185.44.254.6).
+#   sudo cp katapult-reaper.sh /usr/local/bin/katapult-reaper.sh
+#   sudo chmod +x /usr/local/bin/katapult-reaper.sh
+#   sudo tee /etc/katapult-reaper.env <<EOF
+#   export KATAPULT_TOKEN=<token>
+#   export CIRCLE_TOKEN=<token>
+#   EOF
+#   sudo chmod 600 /etc/katapult-reaper.env
+#   echo '* * * * * root . /etc/katapult-reaper.env && /usr/local/bin/katapult-reaper.sh' \
+#     | sudo tee /etc/cron.d/katapult-reaper
+#
 # Logic:
 #   1. Skip VMs younger than 10 minutes (grace period for job dispatch).
 #   2. Extract the CircleCI pipeline number from the VM name.
