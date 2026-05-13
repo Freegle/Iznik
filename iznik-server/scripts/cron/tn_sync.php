@@ -75,9 +75,23 @@ $ratingsCount = 0;
 $changesCount = 0;
 $mergesCount = 0;
 
+# TODO Finnbarr: set this to true when called via local test script.
+$localTesting = FALSE;
+
 do {
-    $url = "https://trashnothing.com/fd/api/ratings?key=" . TNKEY . "&page=$page&per_page=100&date_min=$from&date_max=$to";
-    $ratings = json_decode(file_get_contents($url), TRUE)['ratings'];
+    if ($localTesting) {
+        $ratingsFile = BASE_DIR . "/test/integration/tn_sync/fixtures/ratings_page_{$page}.json";
+        if (file_exists($ratingsFile)) {
+            $ratingsPayload = json_decode(file_get_contents($ratingsFile), TRUE);
+            $ratings = Utils::presdef('ratings', $ratingsPayload, []);
+        } else {
+            error_log("TN-SYNC-TRACE [RATINGS-PAGE] missing fixture file=$ratingsFile");
+            $ratings = [];
+        }
+    } else {
+        $url = "https://trashnothing.com/fd/api/ratings?key=" . TNKEY . "&page=$page&per_page=100&date_min=$from&date_max=$to";
+        $ratings = json_decode(file_get_contents($url), TRUE)['ratings'];
+    }
     $page++;
 
     error_log("TN-SYNC-TRACE [RATINGS-PAGE] page=" . ($page - 1) . " count=" . count($ratings));
@@ -129,8 +143,19 @@ do {
 $page = 1;
 
 do {
-    $url = "https://trashnothing.com/fd/api/user-changes?key=" . TNKEY . "&page=$page&per_page=100&date_min=$from&date_max=$to";
-    $changes = json_decode(file_get_contents($url), TRUE)['changes'];
+    if ($localTesting) {
+        $changesFile = BASE_DIR . "/test/integration/tn_sync/fixtures/user_changes_page_{$page}.json";
+        if (file_exists($changesFile)) {
+            $changesPayload = json_decode(file_get_contents($changesFile), TRUE);
+            $changes = Utils::presdef('changes', $changesPayload, []);
+        } else {
+            error_log("TN-SYNC-TRACE [CHANGES-PAGE] missing fixture file=$changesFile");
+            $changes = [];
+        }
+    } else {
+        $url = "https://trashnothing.com/fd/api/user-changes?key=" . TNKEY . "&page=$page&per_page=100&date_min=$from&date_max=$to";
+        $changes = json_decode(file_get_contents($url), TRUE)['changes'];
+    }
     $page++;
 
     error_log("TN-SYNC-TRACE [CHANGES-PAGE] page=" . ($page - 1) . " count=" . count($changes));
