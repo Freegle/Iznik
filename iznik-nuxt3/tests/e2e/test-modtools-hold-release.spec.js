@@ -57,30 +57,14 @@ test.describe('ModTools hold and release message', () => {
     // Dismiss again in case Vue re-rendered a modal/backdrop
     await dismissAllModals()
 
-    // Select a group that has pending messages.
-    // Work counts load asynchronously, so poll until an option with counts appears.
-    let targetGroupValue = null
-    await expect
-      .poll(
-        async () => {
-          const options = await groupSelect.locator('option').all()
-          for (const option of options) {
-            const text = await option.textContent()
-            const value = await option.getAttribute('value')
-            if (value && value !== '0' && /\(\d+\)/.test(text)) {
-              targetGroupValue = value
-              return true
-            }
-          }
-          return false
-        },
-        {
-          message: 'Waiting for group options with pending message counts',
-          timeout: timeouts.navigation.slowPage,
-        }
-      )
-      .toBe(true)
-    await groupSelect.selectOption(targetGroupValue)
+    // Wait for our test group's option to be loaded in the select, then pick it.
+    // The testEnv fixture guarantees this group has pending messages.
+    // Polling for any group with work counts is fragile: counts load
+    // asynchronously and can exceed the 202s timeout under parallel load.
+    await expect(
+      groupSelect.locator(`option[value="${testEnv.group.id}"]`)
+    ).toBeAttached({ timeout: timeouts.navigation.slowPage })
+    await groupSelect.selectOption(String(testEnv.group.id))
 
     // Wait for message cards to load
     const messageCards = page.locator('.card')
@@ -136,7 +120,9 @@ test.describe('ModTools hold and release message', () => {
     // Step 4: After holding, the Release button should appear within the first card.
     // A held message shows 2 "Release" buttons (warning notice + action button), so
     // use .first() to pick one deterministically and avoid strict-mode violations.
-    const releaseButton = firstCard.locator('button:has-text("Release")').first()
+    const releaseButton = firstCard
+      .locator('button:has-text("Release")')
+      .first()
     await expect(releaseButton).toBeVisible({
       timeout: timeouts.ui.appearance,
     })

@@ -256,6 +256,28 @@ function findOrCreateMessage($dbhr, $dbhm, $subject, $gid, $groupName, $approver
         # Ensure lat/lng/locationid are set (may be missing from earlier test runs).
         $dbhm->preExec("UPDATE messages SET lat = ?, lng = ?, locationid = ? WHERE id = ? AND (lat IS NULL OR lng IS NULL OR locationid IS NULL)", [$lat, $lng, $pcid, $id]);
 
+        # Ensure fromuser points to a valid (non-deleted) user matching senderEmail.
+        # After DB resets or user re-creation, old fromuser IDs become orphaned and are
+        # excluded by the V2 API's INNER JOIN on users + AND u.deleted IS NULL filter.
+        $fromRow = $dbhr->preQuery("SELECT fromuser FROM messages WHERE id = ?", [$id]);
+        $currentFromuid = ($fromRow && count($fromRow) > 0) ? $fromRow[0]['fromuser'] : null;
+        $needsFromuserFix = !$currentFromuid;
+        if (!$needsFromuserFix && $currentFromuid) {
+            $validUser = $dbhr->preQuery("SELECT id FROM users WHERE id = ? AND deleted IS NULL", [(int)$currentFromuid]);
+            $needsFromuserFix = empty($validUser);
+        }
+        if ($needsFromuserFix) {
+            $senderRows = $dbhr->preQuery(
+                "SELECT u.id FROM users u INNER JOIN users_emails ue ON ue.userid = u.id " .
+                "WHERE ue.email = ? AND u.deleted IS NULL LIMIT 1",
+                [$senderEmail]
+            );
+            if ($senderRows && count($senderRows) > 0) {
+                $dbhm->preExec("UPDATE messages SET fromuser = ? WHERE id = ?", [$senderRows[0]['id'], $id]);
+                error_log("Fixed fromuser for message $id (was $currentFromuid, now " . $senderRows[0]['id'] . ")");
+            }
+        }
+
         error_log("Message '$subject' already exists (ID: $id)");
         return $id;
     }
