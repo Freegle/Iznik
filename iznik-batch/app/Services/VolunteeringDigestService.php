@@ -6,6 +6,7 @@ use App\Mail\Volunteering\VolunteeringDigestMail;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -68,6 +69,7 @@ class VolunteeringDigestService
             $volunteerings = DB::table('volunteering')
                 ->leftJoin('volunteering_groups', 'volunteering_groups.volunteeringid', '=', 'volunteering.id')
                 ->leftJoin('volunteering_images', 'volunteering_images.opportunityid', '=', 'volunteering.id')
+                ->leftJoin('volunteering_dates', 'volunteering_dates.volunteeringid', '=', 'volunteering.id')
                 ->where('volunteering.pending', 0)
                 ->where('volunteering.deleted', 0)
                 ->where('volunteering.expired', 0)
@@ -77,6 +79,7 @@ class VolunteeringDigestService
                     'volunteering.location',
                     'volunteering.description',
                     'volunteering.timecommitment',
+                    'volunteering.online',
                     'volunteering.contactname',
                     'volunteering.contactphone',
                     'volunteering.contactemail',
@@ -84,6 +87,8 @@ class VolunteeringDigestService
                     'volunteering_groups.groupid',
                     DB::raw('volunteering_images.id AS photo_id'),
                     DB::raw('volunteering_images.externaluid AS photo_externaluid'),
+                    DB::raw('volunteering_images.externalmods AS photo_externalmods'),
+                    DB::raw('volunteering_dates.applyby AS applyby'),
                 ])
                 ->orderByDesc('volunteering.id')
                 ->get()
@@ -106,30 +111,41 @@ class VolunteeringDigestService
             $volData = $volunteerings->map(function ($v) use ($userSite, $imagesDomain, $tusUploader, $deliveryUrl) {
                 $photoThumb = null;
                 if ($v->photo_id) {
-                    if ($v->photo_externaluid) {
+                    // Prefer externalmods.url (set for Cloudinary/CDN-hosted images)
+                    $mods = $v->photo_externalmods ? json_decode($v->photo_externalmods, true) : [];
+                    if (!empty($mods['url'])) {
+                        $photoThumb = $mods['url'];
+                    } elseif ($v->photo_externaluid) {
                         $p = strrpos($v->photo_externaluid, 'freegletusd-');
                         if ($p !== false) {
                             $fileId = substr($v->photo_externaluid, $p + strlen('freegletusd-'));
                             $source = $tusUploader . '/' . $fileId;
                             $photoThumb = $deliveryUrl
-                                ? $deliveryUrl . '?url=' . urlencode($source) . '&w=80'
+                                ? $deliveryUrl . '?url=' . urlencode($source) . '&w=400'
                                 : $source;
                         }
                     } else {
                         $photoThumb = "{$imagesDomain}/toimg_{$v->photo_id}.jpg";
                     }
                 }
+
+                $applyby = $v->applyby
+                    ? Carbon::parse($v->applyby)->setTimezone('Europe/London')->format('D, jS F Y')
+                    : null;
+
                 return [
                     'id'             => $v->id,
                     'title'          => $v->title,
                     'location'       => $v->location,
                     'description'    => $v->description,
                     'timecommitment' => $v->timecommitment,
+                    'online'         => (bool) $v->online,
                     'contactname'    => $v->contactname,
                     'contactphone'   => $v->contactphone,
                     'contactemail'   => $v->contactemail,
                     'contacturl'     => $v->contacturl,
                     'photo_thumb'    => $photoThumb,
+                    'applyby'        => $applyby,
                     'url'            => "https://{$userSite}/volunteering/{$v->id}",
                 ];
             })->values()->all();

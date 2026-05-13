@@ -19,7 +19,7 @@ class VolunteeringDigestCommandTest extends TestCase
         // Delete inside the current transaction so leaked rows are hidden without affecting
         // other test classes (the DELETE is rolled back with this test's transaction).
         DB::statement('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['volunteering_images', 'volunteering_groups', 'volunteering', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
+        foreach (['volunteering_dates', 'volunteering_images', 'volunteering_groups', 'volunteering', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
             DB::table($table)->delete();
         }
         DB::statement('SET FOREIGN_KEY_CHECKS=1');
@@ -358,5 +358,125 @@ class VolunteeringDigestCommandTest extends TestCase
             ->assertExitCode(0);
 
         Mail::assertNothingSent();
+    }
+
+    public function test_online_field_is_passed_through(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+
+        $volId = DB::table('volunteering')->insertGetId([
+            'title' => 'Online Helper',
+            'location' => 'Anywhere',
+            'description' => 'Remote volunteering.',
+            'online' => 1,
+            'pending' => 0,
+            'deleted' => 0,
+            'expired' => 0,
+            'added' => now(),
+        ]);
+        DB::table('volunteering_groups')->insert([
+            'volunteeringid' => $volId,
+            'groupid' => $group->id,
+        ]);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, [
+            'volunteeringallowed' => 1,
+            'emailfrequency' => 24,
+        ]);
+
+        $this->artisan('mail:volunteering-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+    }
+
+    public function test_applyby_deadline_is_formatted(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $volId = $this->createVolunteering($group->id);
+
+        DB::table('volunteering_dates')->insert([
+            'volunteeringid' => $volId,
+            'applyby' => '2026-06-30 00:00:00',
+        ]);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, [
+            'volunteeringallowed' => 1,
+            'emailfrequency' => 24,
+        ]);
+
+        $this->artisan('mail:volunteering-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+    }
+
+    public function test_contact_fields_are_passed_through(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+
+        DB::table('volunteering')->insertGetId([
+            'title' => 'Contact Test',
+            'location' => 'Town Hall',
+            'description' => 'Contact details test.',
+            'contactname' => 'Jane Smith',
+            'contactphone' => '01234 567890',
+            'contactemail' => 'jane@example.org',
+            'contacturl' => 'https://example.org/volunteer',
+            'pending' => 0,
+            'deleted' => 0,
+            'expired' => 0,
+            'added' => now(),
+        ]);
+        // No volunteering_groups row → global opportunity, shown for all groups
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, [
+            'volunteeringallowed' => 1,
+            'emailfrequency' => 24,
+        ]);
+
+        $this->artisan('mail:volunteering-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
+    }
+
+    public function test_photo_thumb_from_externalmods_url(): void
+    {
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $volId = $this->createVolunteering($group->id);
+
+        DB::table('volunteering_images')->insert([
+            'opportunityid' => $volId,
+            'contenttype' => 'image/jpeg',
+            'externaluid' => null,
+            'externalmods' => json_encode(['url' => 'https://cdn.example.com/image.jpg']),
+        ]);
+
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, [
+            'volunteeringallowed' => 1,
+            'emailfrequency' => 24,
+        ]);
+
+        $this->artisan('mail:volunteering-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        Mail::assertSentCount(1);
     }
 }
