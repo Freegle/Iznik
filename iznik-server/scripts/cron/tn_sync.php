@@ -52,12 +52,12 @@ $queuedTaskId = LaravelQueue::queueTask('tn_sync_command', [
 if (is_null($queuedTaskId)) {
     error_log("[QUEUE] failed to queue tn_sync_command task run_id=$runId");
 } else {
-    $waitOk = LaravelQueue::waitForTaskProcessed($queuedTaskId, 300, 1000);
+    $waitOk = LaravelQueue::waitForTaskProcessed($queuedTaskId, 90, 1000);
 
     if (!$waitOk) {
         error_log("[QUEUE] task $queuedTaskId did not complete successfully before timeout run_id=$runId");
     } else {
-        $completionData = LaravelQueue::waitForTNSyncCompletionData($queuedTaskId, $runId, 300, 1000);
+        $completionData = LaravelQueue::waitForTNSyncCompletionData($queuedTaskId, $runId, 90, 1000);
 
         if (is_null($completionData)) {
             error_log("[QUEUE] task $queuedTaskId completed but tn_sync completion data was not populated before timeout run_id=$runId");

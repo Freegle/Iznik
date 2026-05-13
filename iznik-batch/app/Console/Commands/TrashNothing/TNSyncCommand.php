@@ -65,9 +65,9 @@ class TNSyncCommand extends Command
             return Command::SUCCESS;
         }
 
-        $this->apiKey = config('freegle.trashnothing.api_key');
-        $this->apiBaseUrl = config('freegle.trashnothing.api_base_url');
-        $this->dateFile = config('freegle.trashnothing.sync_date_file');
+        $this->apiKey = (string) config('freegle.trashnothing.api_key', '');
+        $this->apiBaseUrl = (string) config('freegle.trashnothing.api_base_url', '');
+        $this->dateFile = (string) config('freegle.trashnothing.sync_date_file', '');
 
         try {
             $exitCode = $this->runWithLogging(function () {
@@ -502,10 +502,10 @@ class TNSyncCommand extends Command
                         if ($lat !== null && $lng !== null) {
                             $loc = Location::closestPostcode((float) $lat, (float) $lng);
 
-                            if ($loc && $loc['id'] !== $user->lastlocation) {
-                                Log::info("FD #{$change['fd_user_id']} TN lat/lng {$lat},{$lng} has changed  => {$loc['id']} {$loc['name']}");
-                                Log::info("TN-SYNC-TRACE [LOCATION] fd_user_id={$change['fd_user_id']} lat={$lat} lng={$lng} old_loc={$user->lastlocation} new_loc={$loc['id']}");
-                                $user->lastlocation = $loc['id'];
+                            if ($loc && $loc->id !== $user->lastlocation) {
+                                Log::info("FD #{$change['fd_user_id']} TN lat/lng {$lat},{$lng} has changed  => {$loc->id} {$loc->name}");
+                                Log::info("TN-SYNC-TRACE [LOCATION] fd_user_id={$change['fd_user_id']} lat={$lat} lng={$lng} old_loc={$user->lastlocation} new_loc={$loc->id}");
+                                $user->lastlocation = $loc->id;
                             }
                         }
                     }

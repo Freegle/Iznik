@@ -327,11 +327,6 @@ return [
         'secret' => env('LOVE_JUNK_SECRET', ''),
     ],
 
-    'trashnothing' => [
-        'api_base' => env('TN_API_BASE', 'https://trashnothing.com'),
-        'key'      => env('TN_KEY', ''),
-    ],
-
     'geocoder' => env('FREEGLE_GEOCODER_URL', ''),
 
     'whatjobs' => [

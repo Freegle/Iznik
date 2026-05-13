@@ -2147,6 +2147,11 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         // When local_testing is true in the task data, tn:sync must use fixture files
         // and never hit the live TN API. preventStrayRequests() enforces this: any
         // unexpected Http call will throw, failing the test.
+        config([
+            'freegle.trashnothing.api_base_url' => 'https://trashnothing.com/fd/api',
+            'freegle.trashnothing.sync_date_file' => sys_get_temp_dir() . '/tn_sync_test_' . uniqid() . '.txt',
+        ]);
+
         Http::preventStrayRequests();
 
         $taskId = DB::table('background_tasks')->insertGetId([
@@ -2170,6 +2175,11 @@ class ProcessBackgroundTasksCommandTest extends TestCase
     {
         // When local_testing is absent the command must hit the TN API.
         // Fake the Http calls to avoid real network requests.
+        config([
+            'freegle.trashnothing.api_base_url' => 'https://trashnothing.com/fd/api',
+            'freegle.trashnothing.sync_date_file' => sys_get_temp_dir() . '/tn_sync_test_' . uniqid() . '.txt',
+        ]);
+
         Http::fake([
             '*/ratings*' => Http::response(['ratings' => []], 200),
             '*/user-changes*' => Http::response(['changes' => []], 200),
