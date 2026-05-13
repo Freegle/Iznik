@@ -1454,6 +1454,7 @@ func PatchSession(c *fiber.Ctx) error {
 		Deleted            json.RawMessage     `json:"deleted,omitempty"`
 		Marketingconsent   *bool               `json:"marketingconsent,omitempty"`
 		Key                *string             `json:"key,omitempty"`
+		Modtools           FlexBool            `json:"modtools,omitempty"`
 	}
 
 	var req PatchRequest
@@ -1633,7 +1634,7 @@ func PatchSession(c *fiber.Ctx) error {
 	if req.Notifications != nil && req.Notifications.Push != nil {
 		wg.Add(1)
 		apptype := "User"
-		if c.Query("modtools") == "true" || c.Query("modtools") == "1" {
+		if c.Query("modtools") == "true" || c.Query("modtools") == "1" || req.Modtools.Bool() {
 			apptype = "ModTools"
 		}
 		go func() {
