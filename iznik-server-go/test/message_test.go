@@ -3161,6 +3161,42 @@ func TestPostMessageOutcomeAllowsTakenOverExpiredPlusAutoWithdrawn(t *testing.T)
 	assert.Equal(t, "Taken", dbOutcome)
 }
 
+// The owner clicks a chase-up-email "Taken" link after the spatial-index
+// expiry batch has already auto-withdrawn the post. The Auto-expired
+// Withdrawn row is system-generated, so the deliberate user action should
+// override it.
+func TestPostMessageOutcomeAllowsTakenOverAutoExpiredWithdrawn(t *testing.T) {
+	prefix := uniquePrefix("msgw_out_autoexp")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, comments) VALUES (?, 'Withdrawn', 'Auto-expired')", msgID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Taken",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", token)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "owner clicking Taken from an earlier chase-up after auto-expiry must succeed")
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&count)
+	assert.Equal(t, int64(1), count)
+	var dbOutcome string
+	db.Raw("SELECT outcome FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&dbOutcome)
+	assert.Equal(t, "Taken", dbOutcome)
+}
+
 // Real Withdrawn (no Auto-expired marker, no Expired sibling) is still a
 // genuine conflict — the user already deliberately withdrew the post.
 func TestPostMessageOutcomeRejectsTakenOverRealWithdrawn(t *testing.T) {

@@ -3357,19 +3357,27 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// Check for existing outcome (prevent duplicates unless every existing
-	// row is Expired, which the user is allowed to overwrite).
+	// Check for existing outcome. System-generated expiry markers are
+	// overwriteable; anything user-recorded is a real conflict.
 	//
-	// The COUNT approach is deliberate: a stale Scan into a string against a
-	// multi-row result was non-deterministic — if the row that landed in the
-	// scalar was Expired we'd overwrite, but if it was a Withdrawn
-	// "Auto-expired" row inserted by the batch alongside Expired we'd 409.
-	// That was the exact failure mode that blocked a member from marking her
-	// post Taken after the deadline+spatial expiry paths both ran overnight.
-	var existingTotal, expiredCount int64
+	// Overwriteable rows:
+	//   - outcome = 'Expired'                    (deadline-expiry batch)
+	//   - outcome = 'Withdrawn', comments = 'Auto-expired' (spatial-index
+	//     expiry batch — the post was already auto-withdrawn by the system,
+	//     so the owner clicking Taken from a chase-up notification that
+	//     pre-dated the auto-expiry should be accepted)
+	//
+	// Counting instead of scanning into a scalar avoids the older bug where
+	// a multi-row result (Expired + Auto-expired Withdrawn, left by the
+	// batch before the iznik-batch fix) returned a non-deterministic row to
+	// the check and 409'd valid Taken requests.
+	var existingTotal, autoExpiredCount int64
 	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", req.ID).Scan(&existingTotal)
-	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ? AND outcome = ?", req.ID, utils.OUTCOME_EXPIRED).Scan(&expiredCount)
-	if existingTotal > 0 && existingTotal != expiredCount {
+	db.Raw(`SELECT COUNT(*) FROM messages_outcomes
+	        WHERE msgid = ?
+	          AND (outcome = ? OR (outcome = ? AND comments = 'Auto-expired'))`,
+		req.ID, utils.OUTCOME_EXPIRED, utils.OUTCOME_WITHDRAWN).Scan(&autoExpiredCount)
+	if existingTotal > 0 && existingTotal != autoExpiredCount {
 		return fiber.NewError(fiber.StatusConflict, "Outcome already recorded")
 	}
 
