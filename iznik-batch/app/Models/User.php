@@ -1647,22 +1647,24 @@ class User extends Model implements Auditable
         // Notify TN users or email-triggered removals so they know they can no longer see messages.
         if ($byEmail || $this->isTN()) {
             Logger::info("TN-SYNC-TRACE [EMAIL] action=send-farewell user={$this->id} groupid={$groupId} to=" . ($this->email_preferred ?? 'NULL'));
-            // TRACE: commented out for port testing
-            // $group = Group::find($groupId);
-            // $preferredEmail = $this->email_preferred;
-            //
-            // if ($group && $preferredEmail) {
-            //     try {
-            //         \Illuminate\Support\Facades\Mail::raw('Parting is such sweet sorrow.', function ($message) use ($group, $preferredEmail) {
-            //             $message->subject('Farewell from ' . $group->nameshort)
-            //                 ->from($group->getAutoEmail())
-            //                 ->replyTo($group->getModsEmail())
-            //                 ->to($preferredEmail);
-            //         });
-            //     } catch (\Exception $e) {
-            //         Logger::warning("Failed to send farewell email for user {$this->id} on group {$groupId}: " . $e->getMessage());
-            //     }
-            // }
+
+            if (!$dryRun) {
+                $group = Group::find($groupId);
+                $preferredEmail = $this->email_preferred;
+
+                if ($group && $preferredEmail) {
+                    try {
+                        \Illuminate\Support\Facades\Mail::raw('Parting is such sweet sorrow.', function ($message) use ($group, $preferredEmail) {
+                            $message->subject('Farewell from ' . $group->nameshort)
+                                ->from($group->getAutoEmail())
+                                ->replyTo($group->getModsEmail())
+                                ->to($preferredEmail);
+                        });
+                    } catch (\Exception $e) {
+                        Logger::warning("Failed to send farewell email for user {$this->id} on group {$groupId}: " . $e->getMessage());
+                    }
+                }
+            }
         }
 
         if ($ban) {
