@@ -331,10 +331,10 @@ class MessageExpiryServiceTest extends TestCase
 
         // Group with maxagetoshow=30 and reposts that yield 3*(5+1)=18 → expiretime = 30.
         $group = $this->createTestGroup([
-            'settings' => json_encode([
+            'settings' => [
                 'maxagetoshow' => 30,
                 'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
-            ]),
+            ],
         ]);
         $this->createMembership($user, $group);
 
@@ -373,10 +373,10 @@ class MessageExpiryServiceTest extends TestCase
 
         // maxagetoshow=0 means reposts-based expiry alone: 4*(5+1) = 24 days for Offer.
         $group = $this->createTestGroup([
-            'settings' => json_encode([
+            'settings' => [
                 'maxagetoshow' => 0,
                 'reposts' => ['offer' => 4, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
-            ]),
+            ],
         ]);
         $this->createMembership($user, $group);
 
@@ -413,10 +413,10 @@ class MessageExpiryServiceTest extends TestCase
         $user = $this->createTestUser();
         $other = $this->createTestUser();
         $group = $this->createTestGroup([
-            'settings' => json_encode([
+            'settings' => [
                 'maxagetoshow' => 30,
                 'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
-            ]),
+            ],
         ]);
         $this->createMembership($user, $group);
 
@@ -456,10 +456,10 @@ class MessageExpiryServiceTest extends TestCase
         $user = $this->createTestUser();
         $other = $this->createTestUser();
         $group = $this->createTestGroup([
-            'settings' => json_encode([
+            'settings' => [
                 'maxagetoshow' => 30,
                 'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
-            ]),
+            ],
         ]);
         $this->createMembership($user, $group);
 
@@ -488,10 +488,10 @@ class MessageExpiryServiceTest extends TestCase
     {
         $user = $this->createTestUser();
         $group = $this->createTestGroup([
-            'settings' => json_encode([
+            'settings' => [
                 'maxagetoshow' => 30,
                 'reposts' => ['offer' => 3, 'wanted' => 7, 'max' => 5, 'chaseups' => 5],
-            ]),
+            ],
         ]);
         $this->createMembership($user, $group);
 
