@@ -3594,3 +3594,80 @@ func TestPatchMembershipsConfigChange(t *testing.T) {
 		modID, groupID).Scan(&configID2)
 	assert.Equal(t, cfgID2, configID2)
 }
+
+// TestMembersWithNotesFilterNoDuplicates is an AssertFlip test for the membership filter=1
+// (Members with Notes) regression.
+//
+// Bug: GET /membership?filter=1 uses INNER JOIN users_comments without DISTINCT, so a member
+// with N notes in a group appears N times in the raw API response instead of once.
+// When combined with a LIMIT, this means real members can be "pushed off" the page by
+// duplicate rows for a single heavy-note member -- the consumer deduplicates by membership
+// ID but the LIMIT is consumed before all distinct members are reached.
+//
+// STEP 2 (inverted) -- FAILS on unfixed code, PASSES after fix:
+// Assert that GET /membership?filter=1 returns exactly 1 distinct member entry for a group
+// where only 1 member has notes (even when that member has 6 distinct notes).
+func TestMembersWithNotesFilterNoDuplicates(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("members_notes_filter")
+
+	// Moderator who will view the members list.
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Target member who has 6 notes.
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+
+	groupID := CreateTestGroup(t, prefix)
+
+	// Moderator has role in this group.
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	// Target is an approved member of the group.
+	CreateTestMembership(t, targetID, groupID, "Member")
+
+	// Insert 6 distinct notes for the target member in this group.
+	for i := 1; i <= 6; i++ {
+		db.Exec(
+			"INSERT INTO users_comments (userid, groupid, byuserid, user1, date) VALUES (?, ?, ?, ?, NOW())",
+			targetID, groupID, modID, fmt.Sprintf("Note #%d for filter test", i),
+		)
+	}
+
+	// Call the memberships endpoint with filter=1 (Members with Notes).
+	url := fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&filter=1&limit=20&jwt=%s",
+		groupID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	assert.NoError(t, err)
+
+	members, ok := result["members"].([]interface{})
+	assert.True(t, ok, "response must have a members array")
+
+	// STEP 2 (inverted) -- asserts CORRECT behaviour; FAILS on unfixed code:
+	// Only 1 distinct member should be returned regardless of note count.
+	// BUG: INNER JOIN users_comments without DISTINCT returns 6 rows (one per note),
+	// so len(members) == 6 on unfixed code instead of 1.
+	assert.Equal(t, 1, len(members),
+		"filter=1 must return 1 distinct member entry even when that member has 6 notes "+
+			"(bug: INNER JOIN without DISTINCT returns N rows per N notes, consuming the LIMIT)")
+
+	// Each member ID must be unique (no duplicate membership rows in the response).
+	if len(members) > 0 {
+		seen := make(map[float64]bool)
+		for _, m := range members {
+			mm, isMap := m.(map[string]interface{})
+			if !isMap {
+				continue
+			}
+			mid, _ := mm["id"].(float64)
+			assert.False(t, seen[mid],
+				"duplicate membership ID %.0f in filter=1 response -- INNER JOIN without DISTINCT", mid)
+			seen[mid] = true
+		}
+	}
+}
