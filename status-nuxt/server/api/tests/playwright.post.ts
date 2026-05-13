@@ -279,7 +279,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         try {
           execSync(
             `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
-            { encoding: 'utf8', timeout: 30000 }
+            { encoding: 'utf8', timeout: 120000 }
           )
           execSync(
             `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
@@ -293,7 +293,7 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
           // the database invalidates those connections. Restart the container so it
           // starts fresh — otherwise the location typeahead (used by postcode validation
           // in the /give flow) returns empty results and Playwright tests time out.
-          execSync(`docker restart ${pfx}-apiv2`, { encoding: 'utf8', timeout: 30000 })
+          execSync(`docker restart ${pfx}-apiv2`, { encoding: 'utf8', timeout: 60000 })
           // Wait up to 60s for the Go API to be healthy before running tests.
           const apiv2Start = Date.now()
           let apiv2Ready = false
