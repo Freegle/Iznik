@@ -1041,7 +1041,8 @@ class TNSyncCommandTest extends TestCase
         $loki->shouldReceive('logEvent')
             ->once()
             ->with('tn-sync', 'user-merge', \Mockery::on(fn($ctx) =>
-                isset($ctx['merge_to']) && isset($ctx['merge_from'])
+                ($ctx['merge_to'] === $user1->id && $ctx['merge_from'] === $user2->id) ||
+                ($ctx['merge_to'] === $user2->id && $ctx['merge_from'] === $user1->id)
             ));
 
         Http::fake([
