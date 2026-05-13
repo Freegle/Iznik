@@ -98,9 +98,14 @@ test.describe('ModTools hold and release message', () => {
     const firstCard = messageCards.first()
 
     // Ensure clean state: if message was left held by a previous run, release it.
-    const existingRelease = firstCard.locator('button:has-text("Release")')
-    if (await existingRelease.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await existingRelease.click()
+    // A held message shows 2 "Release" buttons (one warning notice, one action button),
+    // so use count() to avoid strict-mode errors when both are present.
+    const existingReleaseCount = await firstCard
+      .locator('button:has-text("Release")')
+      .count()
+      .catch(() => 0)
+    if (existingReleaseCount > 0) {
+      await firstCard.locator('button:has-text("Release")').first().click()
       // Wait for Hold button to reappear after release
       await firstCard
         .locator('button:has-text("Hold")')
@@ -128,8 +133,10 @@ test.describe('ModTools hold and release message', () => {
       // No confirmation needed
     }
 
-    // Step 4: After holding, the Release button should appear within the first card
-    const releaseButton = firstCard.locator('button:has-text("Release")')
+    // Step 4: After holding, the Release button should appear within the first card.
+    // A held message shows 2 "Release" buttons (warning notice + action button), so
+    // use .first() to pick one deterministically and avoid strict-mode violations.
+    const releaseButton = firstCard.locator('button:has-text("Release")').first()
     await expect(releaseButton).toBeVisible({
       timeout: timeouts.ui.appearance,
     })

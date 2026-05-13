@@ -91,7 +91,7 @@ func GetLogs(c *fiber.Ctx) error {
 		if logsubtype != "" {
 			subtypes = []string{logsubtype}
 		} else {
-			subtypes = []string{log.LOG_SUBTYPE_RECEIVED, log.LOG_SUBTYPE_APPROVED, log.LOG_SUBTYPE_REJECTED, log.LOG_SUBTYPE_DELETED, log.LOG_SUBTYPE_AUTO_REPOSTED, log.LOG_SUBTYPE_AUTO_APPROVED, log.LOG_SUBTYPE_OUTCOME, log.LOG_SUBTYPE_HOLD}
+			subtypes = []string{log.LOG_SUBTYPE_RECEIVED, log.LOG_SUBTYPE_APPROVED, log.LOG_SUBTYPE_REJECTED, log.LOG_SUBTYPE_DELETED, log.LOG_SUBTYPE_AUTO_REPOSTED, log.LOG_SUBTYPE_AUTO_APPROVED, log.LOG_SUBTYPE_OUTCOME, log.LOG_SUBTYPE_HOLD, log.LOG_SUBTYPE_RELEASE}
 		}
 	case "memberships":
 		types = []string{log.LOG_TYPE_GROUP, log.LOG_TYPE_USER}

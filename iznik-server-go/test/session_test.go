@@ -2817,7 +2817,7 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 		db.Exec("DELETE FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val)
 	})
 
-	t.Run("stores apptype=ModTools when modtools=true", func(t *testing.T) {
+	t.Run("stores apptype=ModTools when modtools=true query param", func(t *testing.T) {
 		prefix := uniquePrefix("push_modtools")
 		userID := CreateTestUser(t, prefix, "User")
 		_, token := CreateTestSession(t, userID)
@@ -2833,6 +2833,35 @@ func TestPatchSessionPushNotificationApptype(t *testing.T) {
 		})
 
 		req := httptest.NewRequest("PATCH", "/api/session?jwt="+token+"&modtools=true", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var apptype string
+		db.Raw("SELECT apptype FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val).Scan(&apptype)
+		assert.Equal(t, "ModTools", apptype)
+
+		db.Exec("DELETE FROM users_push_notifications WHERE userid = ? AND subscription = ?", userID, token_val)
+	})
+
+	t.Run("stores apptype=ModTools when modtools=true in body (Capacitor app)", func(t *testing.T) {
+		prefix := uniquePrefix("push_modbody")
+		userID := CreateTestUser(t, prefix, "User")
+		_, token := CreateTestSession(t, userID)
+
+		token_val := fmt.Sprintf("fcm-token-modbody-%s", prefix)
+		// Matches what BaseAPI.js sends: modtools in the JSON body, not the URL
+		body, _ := json.Marshal(map[string]interface{}{
+			"modtools": true,
+			"notifications": map[string]interface{}{
+				"push": map[string]interface{}{
+					"type":         "FCMAndroid",
+					"subscription": token_val,
+				},
+			},
+		})
+
+		req := httptest.NewRequest("PATCH", "/api/session?jwt="+token, bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp, _ := getApp().Test(req)
 		assert.Equal(t, 200, resp.StatusCode)

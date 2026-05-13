@@ -151,44 +151,49 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 			continue
 		}
 
-		// Default: 90 days.
+		// Mirror V1 Message::getPublic() (iznik-server Message.php:1106-1110):
+		//   $maxagetoshow = $g->getSetting('maxagetoshow', 90);
+		//   $reposts      = $g->getSetting('reposts', ['offer'=>3,'wanted'=>14,'max'=>10,...]);
+		//   $repost       = $type == Offer ? $reposts['offer'] : $reposts['wanted'];
+		//   $expiretime   = max($repost * ($reposts['max'] + 1), $maxagetoshow);
+		// V1 getSetting honours explicit 0, so we mustn't fall back to the default
+		// when maxagetoshow is set to 0 — Hertford and others use 0 deliberately.
 		maxAgeDays := 90
+		repostDays := 14
+		if msgType == "Offer" {
+			repostDays = 3
+		}
+		maxRepost := 10
 
 		if g.Settings != "" {
 			var s map[string]interface{}
 			if err := json.Unmarshal([]byte(g.Settings), &s); err == nil {
-				// The key depends on message type.
-				settingsKey := "maxagetoshow"
-
-				if v, exists := s[settingsKey]; exists {
-					if fv, ok := v.(float64); ok && fv > 0 {
+				if v, exists := s["maxagetoshow"]; exists {
+					if fv, ok := v.(float64); ok {
 						maxAgeDays = int(fv)
 					}
 				}
 
-				// Also check repost settings — the effective lifetime is
-				// max(maxagetoshow, reposts * (max+1) repost days).
-				repostKey := "reposts"
-				if msgType == "Wanted" {
-					repostKey = "wantedreposts"
-				}
-				if reposts, exists := s[repostKey]; exists {
+				if reposts, exists := s["reposts"]; exists {
 					if rMap, ok := reposts.(map[string]interface{}); ok {
-						maxRepost := 5 // default max reposts
-						repostDays := 3
-						if mx, ok := rMap["max"].(float64); ok {
-							maxRepost = int(mx)
+						typeKey := "wanted"
+						if msgType == "Offer" {
+							typeKey = "offer"
 						}
-						if rd, ok := rMap["interval"].(float64); ok {
+						if rd, ok := rMap[typeKey].(float64); ok {
 							repostDays = int(rd)
 						}
-						repostLifetime := repostDays * (maxRepost + 1)
-						if repostLifetime > maxAgeDays {
-							maxAgeDays = repostLifetime
+						if mx, ok := rMap["max"].(float64); ok {
+							maxRepost = int(mx)
 						}
 					}
 				}
 			}
+		}
+
+		repostLifetime := repostDays * (maxRepost + 1)
+		if repostLifetime > maxAgeDays {
+			maxAgeDays = repostLifetime
 		}
 
 		expires := arrival.Add(time.Duration(maxAgeDays) * 24 * time.Hour)
@@ -3352,10 +3357,27 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// Check for existing outcome (prevent duplicates unless expired).
-	var existingOutcome string
-	db.Raw("SELECT outcome FROM messages_outcomes WHERE msgid = ?", req.ID).Scan(&existingOutcome)
-	if existingOutcome != "" && existingOutcome != utils.OUTCOME_EXPIRED {
+	// Check for existing outcome. System-generated expiry markers are
+	// overwriteable; anything user-recorded is a real conflict.
+	//
+	// Overwriteable rows:
+	//   - outcome = 'Expired'                    (deadline-expiry batch)
+	//   - outcome = 'Withdrawn', comments = 'Auto-expired' (spatial-index
+	//     expiry batch — the post was already auto-withdrawn by the system,
+	//     so the owner clicking Taken from a chase-up notification that
+	//     pre-dated the auto-expiry should be accepted)
+	//
+	// Counting instead of scanning into a scalar avoids the older bug where
+	// a multi-row result (Expired + Auto-expired Withdrawn, left by the
+	// batch before the iznik-batch fix) returned a non-deterministic row to
+	// the check and 409'd valid Taken requests.
+	var existingTotal, autoExpiredCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", req.ID).Scan(&existingTotal)
+	db.Raw(`SELECT COUNT(*) FROM messages_outcomes
+	        WHERE msgid = ?
+	          AND (outcome = ? OR (outcome = ? AND comments = 'Auto-expired'))`,
+		req.ID, utils.OUTCOME_EXPIRED, utils.OUTCOME_WITHDRAWN).Scan(&autoExpiredCount)
+	if existingTotal > 0 && existingTotal != autoExpiredCount {
 		return fiber.NewError(fiber.StatusConflict, "Outcome already recorded")
 	}
 

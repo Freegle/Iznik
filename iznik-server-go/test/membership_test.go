@@ -3594,3 +3594,225 @@ func TestPatchMembershipsConfigChange(t *testing.T) {
 		modID, groupID).Scan(&configID2)
 	assert.Equal(t, cfgID2, configID2)
 }
+
+// TestMembersWithNotesFilterNoDuplicates is an AssertFlip test for the membership filter=1
+// (Members with Notes) regression.
+//
+// Bug: GET /membership?filter=1 uses INNER JOIN users_comments without DISTINCT, so a member
+// with N notes in a group appears N times in the raw API response instead of once.
+// When combined with a LIMIT, this means real members can be "pushed off" the page by
+// duplicate rows for a single heavy-note member -- the consumer deduplicates by membership
+// ID but the LIMIT is consumed before all distinct members are reached.
+//
+// STEP 2 (inverted) -- FAILS on unfixed code, PASSES after fix:
+// Assert that GET /membership?filter=1 returns exactly 1 distinct member entry for a group
+// where only 1 member has notes (even when that member has 6 distinct notes).
+func TestMembersWithNotesFilterNoDuplicates(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("members_notes_filter")
+
+	// Moderator who will view the members list.
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Target member who has 6 notes.
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+
+	groupID := CreateTestGroup(t, prefix)
+
+	// Moderator has role in this group.
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	// Target is an approved member of the group.
+	CreateTestMembership(t, targetID, groupID, "Member")
+
+	// Insert 6 distinct notes for the target member in this group.
+	for i := 1; i <= 6; i++ {
+		db.Exec(
+			"INSERT INTO users_comments (userid, groupid, byuserid, user1, date) VALUES (?, ?, ?, ?, NOW())",
+			targetID, groupID, modID, fmt.Sprintf("Note #%d for filter test", i),
+		)
+	}
+
+	// Call the memberships endpoint with filter=1 (Members with Notes).
+	url := fmt.Sprintf("/api/memberships?groupid=%d&collection=Approved&filter=1&limit=20&jwt=%s",
+		groupID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	assert.NoError(t, err)
+
+	members, ok := result["members"].([]interface{})
+	assert.True(t, ok, "response must have a members array")
+
+	// STEP 2 (inverted) -- asserts CORRECT behaviour; FAILS on unfixed code:
+	// Only 1 distinct member should be returned regardless of note count.
+	// BUG: INNER JOIN users_comments without DISTINCT returns 6 rows (one per note),
+	// so len(members) == 6 on unfixed code instead of 1.
+	assert.Equal(t, 1, len(members),
+		"filter=1 must return 1 distinct member entry even when that member has 6 notes "+
+			"(bug: INNER JOIN without DISTINCT returns N rows per N notes, consuming the LIMIT)")
+
+	// Each member ID must be unique (no duplicate membership rows in the response).
+	if len(members) > 0 {
+		seen := make(map[float64]bool)
+		for _, m := range members {
+			mm, isMap := m.(map[string]interface{})
+			if !isMap {
+				continue
+			}
+			mid, _ := mm["id"].(float64)
+			assert.False(t, seen[mid],
+				"duplicate membership ID %.0f in filter=1 response -- INNER JOIN without DISTINCT", mid)
+			seen[mid] = true
+		}
+	}
+}
+
+// TestNotesFilterAllCommunitiesReturnsMembersWithNotes verifies that GET /memberships?filter=1
+// with groupid=0 (All my communities) returns members who have notes, rather than an empty list.
+//
+// Bug: groupid=0 + no search returns [] immediately before even checking the filter parameter.
+// Members with notes across any of the mod's groups should be returned.
+func TestNotesFilterAllCommunitiesReturnsMembersWithNotes(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("notes_all_communities")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+
+	groupID := CreateTestGroup(t, prefix)
+
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	db.Exec(
+		"INSERT INTO users_comments (userid, groupid, byuserid, user1, date) VALUES (?, ?, ?, ?, NOW())",
+		memberID, groupID, modID, "Note from mod",
+	)
+
+	// groupid=0 = All my communities
+	url := fmt.Sprintf("/api/memberships?groupid=0&collection=Approved&filter=1&limit=20&jwt=%s", modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	assert.NoError(t, err)
+
+	members, ok := result["members"].([]interface{})
+	assert.True(t, ok, "response must have a members array")
+	assert.Equal(t, 1, len(members),
+		"filter=1 with groupid=0 must return members who have notes across all mod groups (got empty list — groupid=0 early-return bug)")
+}
+
+// TestNotesFilterAllCommunitiesExcludesNonModGroups verifies that filter=1 with groupid=0
+// does not return members from groups the requester does not moderate.
+func TestNotesFilterAllCommunitiesExcludesNonModGroups(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("notes_all_excl")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Member in a group the mod moderates — should appear.
+	memberInModGroup := CreateTestUser(t, prefix+"_mine", "User")
+	modGroupID := CreateTestGroup(t, prefix+"_mod_group")
+	CreateTestMembership(t, modID, modGroupID, "Moderator")
+	CreateTestMembership(t, memberInModGroup, modGroupID, "Member")
+	db.Exec(
+		"INSERT INTO users_comments (userid, groupid, byuserid, user1, date) VALUES (?, ?, ?, ?, NOW())",
+		memberInModGroup, modGroupID, modID, "Note in mod group",
+	)
+
+	// Member in a group the mod does NOT moderate — must not appear.
+	otherMod := CreateTestUser(t, prefix+"_othermod", "OtherMod")
+	memberInOtherGroup := CreateTestUser(t, prefix+"_other", "User")
+	otherGroupID := CreateTestGroup(t, prefix+"_other_group")
+	CreateTestMembership(t, otherMod, otherGroupID, "Moderator")
+	CreateTestMembership(t, memberInOtherGroup, otherGroupID, "Member")
+	db.Exec(
+		"INSERT INTO users_comments (userid, groupid, byuserid, user1, date) VALUES (?, ?, ?, ?, NOW())",
+		memberInOtherGroup, otherGroupID, otherMod, "Note in other group",
+	)
+
+	url := fmt.Sprintf("/api/memberships?groupid=0&collection=Approved&filter=1&limit=20&jwt=%s", modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	assert.NoError(t, err)
+
+	members, ok := result["members"].([]interface{})
+	assert.True(t, ok, "response must have a members array")
+	assert.Equal(t, 1, len(members),
+		"filter=1 with groupid=0 must only return members from groups this mod moderates")
+
+	if len(members) == 1 {
+		mm, _ := members[0].(map[string]interface{})
+		uid, _ := mm["userid"].(float64)
+		assert.Equal(t, float64(memberInModGroup), uid,
+			"returned member must be from the mod's own group, not another group")
+	}
+}
+
+// TestNotesFilterAllCommunitiesPagination verifies that cursor-based pagination works for
+// filter=1 with groupid=0 (All my communities).
+func TestNotesFilterAllCommunitiesPagination(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("notes_all_page")
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	// Create 5 members each with a note.
+	var memberIDs []uint64
+	for i := 0; i < 5; i++ {
+		mid := CreateTestUser(t, fmt.Sprintf("%s_m%d", prefix, i), "User")
+		memberIDs = append(memberIDs, mid)
+		CreateTestMembership(t, mid, groupID, "Member")
+		db.Exec(
+			"INSERT INTO users_comments (userid, groupid, byuserid, user1, date) VALUES (?, ?, ?, ?, NOW())",
+			mid, groupID, modID, fmt.Sprintf("Note %d", i),
+		)
+	}
+
+	// Page 1: limit=3
+	url1 := fmt.Sprintf("/api/memberships?groupid=0&collection=Approved&filter=1&limit=3&jwt=%s", modToken)
+	resp1, err := getApp().Test(httptest.NewRequest("GET", url1, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp1.StatusCode)
+
+	var page1 map[string]interface{}
+	json.NewDecoder(resp1.Body).Decode(&page1)
+
+	members1, _ := page1["members"].([]interface{})
+	assert.Equal(t, 3, len(members1), "first page must have 3 members")
+
+	cursor, hasCursor := page1["context"]
+	assert.True(t, hasCursor && cursor != nil, "first page must return a pagination cursor")
+
+	// Page 2: use cursor
+	url2 := fmt.Sprintf("/api/memberships?groupid=0&collection=Approved&filter=1&limit=3&context=%.0f&jwt=%s",
+		cursor.(float64), modToken)
+	resp2, err := getApp().Test(httptest.NewRequest("GET", url2, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	var page2 map[string]interface{}
+	json.NewDecoder(resp2.Body).Decode(&page2)
+
+	members2, _ := page2["members"].([]interface{})
+	assert.Equal(t, 2, len(members2), "second page must have the remaining 2 members")
+}

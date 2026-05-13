@@ -164,16 +164,35 @@ echo 'Acquire::http::Proxy "http://${CACHE_SERVER}:3142";' > /etc/apt/apt.conf.d
 # A running CI job always has freegle compose containers up.
 # When docker compose down runs at job end, containers disappear — starts 10-min timer.
 # This is the PRIMARY cleanup mechanism. The teardown step does not call DELETE.
+#
+# Failure mode: if a job is cancelled mid-run, the CircleCI agent is killed but
+# Docker containers it started remain up. idle-check then sees "active" containers
+# forever and never fires. The absolute-age fallback below catches this case.
 cat > /usr/local/bin/idle-check.sh << 'IDLEEOF'
 #!/bin/bash
 IDLE_MARKER="/tmp/.runner-idle-since"
 VM_ID=\$(curl -sf --max-time 3 "http://169.254.169.254/katapult/v1/vm-id" 2>/dev/null || \
          cat /opt/circleci-runner/vm-id 2>/dev/null || echo "")
 
+UPTIME_SECONDS=\$(awk '{print int(\$1)}' /proc/uptime)
+
+# Absolute-age fallback: a job cancelled mid-run can leave orphaned Docker containers
+# that fool the idle detector. No legitimate job runs longer than 1 hour (3600s),
+# so force self-destruct unconditionally beyond that threshold.
+if [ "\$UPTIME_SECONDS" -gt 3600 ]; then
+    echo "VM uptime \${UPTIME_SECONDS}s exceeds 1-hour maximum — force self-destructing"
+    if [ -n "\$VM_ID" ]; then
+        curl -sf -X DELETE \
+            -H "Authorization: Bearer ${KATAPULT_TOKEN}" \
+            "https://api.katapult.io/core/v1/virtual_machines/\$VM_ID" 2>/dev/null || true
+    fi
+    shutdown -h now
+    exit 0
+fi
+
 # Grace period: don't fire idle-check for first 20 minutes after boot.
 # The CI job may not arrive until several minutes after VM provisioning,
 # so the timer must not start until the VM has had time to receive a job.
-UPTIME_SECONDS=\$(awk '{print int(\$1)}' /proc/uptime)
 if [ "\$UPTIME_SECONDS" -lt 1200 ]; then
     exit 0
 fi

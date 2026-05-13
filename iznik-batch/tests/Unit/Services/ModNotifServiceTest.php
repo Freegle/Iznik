@@ -242,7 +242,7 @@ class ModNotifServiceTest extends TestCase
             'TestGroup' => ['Pending Messages' => 3, 'Members to Review' => 1],
         ];
 
-        $text = $this->service->buildTextSummary($groupWork, 0, 'modtools.org');
+        $text = $this->service->buildTextSummary($groupWork, 0, 'https://modtools.org/modtools/settings');
 
         $this->assertStringContainsString('TestGroup', $text);
         $this->assertStringContainsString('Pending Messages: 3', $text);
@@ -251,16 +251,16 @@ class ModNotifServiceTest extends TestCase
 
     public function test_build_text_summary_includes_chat_review(): void
     {
-        $text = $this->service->buildTextSummary([], 5, 'modtools.org');
+        $text = $this->service->buildTextSummary([], 5, 'https://modtools.org/modtools/settings');
 
         $this->assertStringContainsString('5 chat messages to review', $text);
     }
 
     public function test_build_text_summary_includes_settings_url(): void
     {
-        $text = $this->service->buildTextSummary([], 0, 'modtools.org');
+        $text = $this->service->buildTextSummary([], 0, 'https://modtools.org/modtools/settings');
 
-        $this->assertStringContainsString('modtools.org/settings', $text);
+        $this->assertStringContainsString('https://modtools.org/modtools/settings', $text);
     }
 
     // ===================================================================
@@ -317,71 +317,188 @@ class ModNotifServiceTest extends TestCase
 
     public function test_get_chat_review_count_returns_count_of_pending_review_messages(): void
     {
-        $user1 = $this->createTestUser();
-        $user2 = $this->createTestUser();
-        $room = $this->createTestChatRoom($user1, $user2);
+        $mod = $this->createTestUser();
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($member, $group);
 
-        $this->createTestChatMessage($room, $user1, [
+        $room = $this->createTestChatRoom($mod, $member);
+
+        $this->createTestChatMessage($room, $mod, [
             'reviewrequired' => 1,
-            'reviewedby' => null,
+            'reviewrejected' => 0,
             'date' => now()->subHours(10),
         ]);
 
-        $count = $this->service->getChatReviewCount($user1->id, 0);
+        $count = $this->service->getChatReviewCount($mod->id, 0);
 
-        $this->assertGreaterThanOrEqual(1, $count);
+        $this->assertEquals(1, $count);
     }
 
-    public function test_get_chat_review_count_excludes_already_reviewed_messages(): void
+    public function test_get_chat_review_count_ignores_chats_outside_mod_groups(): void
     {
-        $user1 = $this->createTestUser();
-        $user2 = $this->createTestUser();
-        $reviewer = $this->createTestUser();
-        $room = $this->createTestChatRoom($user1, $user2);
+        // Bug fix: previously this returned a global count across all of Freegle,
+        // so mods were notified about chats they couldn't see in ModTools.
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
 
-        $this->createTestChatMessage($room, $user1, [
+        $author = $this->createTestUser();
+        $stranger = $this->createTestUser();
+        $room = $this->createTestChatRoom($author, $stranger);
+
+        $this->createTestChatMessage($room, $author, [
             'reviewrequired' => 1,
-            'reviewedby' => $reviewer->id,
+            'reviewrejected' => 0,
             'date' => now()->subHours(10),
         ]);
 
-        $beforeCount = $this->service->getChatReviewCount($user1->id, 0);
+        $count = $this->service->getChatReviewCount($mod->id, 0);
 
-        $this->createTestChatMessage($room, $user2, [
+        $this->assertEquals(0, $count);
+    }
+
+    public function test_get_chat_review_count_excludes_already_held_messages(): void
+    {
+        $mod = $this->createTestUser();
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($member, $group);
+
+        $room = $this->createTestChatRoom($mod, $member);
+        $msg = $this->createTestChatMessage($room, $mod, [
             'reviewrequired' => 1,
-            'reviewedby' => null,
+            'reviewrejected' => 0,
             'date' => now()->subHours(10),
         ]);
 
-        $afterCount = $this->service->getChatReviewCount($user2->id, 0);
+        // Mark the message as held by some mod
+        DB::table('chat_messages_held')->insert([
+            'msgid' => $msg->id,
+            'userid' => $mod->id,
+            'timestamp' => now(),
+        ]);
 
-        // Already-reviewed message should not have inflated the count
-        $this->assertEquals(1, $afterCount - $beforeCount);
+        $count = $this->service->getChatReviewCount($mod->id, 0);
+
+        $this->assertEquals(0, $count);
+    }
+
+    public function test_get_chat_review_count_excludes_reviewrejected_chats(): void
+    {
+        $mod = $this->createTestUser();
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($member, $group);
+
+        $room = $this->createTestChatRoom($mod, $member);
+
+        $this->createTestChatMessage($room, $mod, [
+            'reviewrequired' => 1,
+            'reviewrejected' => 1,
+            'date' => now()->subHours(10),
+        ]);
+
+        $count = $this->service->getChatReviewCount($mod->id, 0);
+
+        $this->assertEquals(0, $count);
+    }
+
+    public function test_get_chat_review_count_skips_backup_mods(): void
+    {
+        // Backup mods (settings.active = false) don't get the chat-review queue.
+        $mod = $this->createTestUser();
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, [
+            'role' => Membership::ROLE_MODERATOR,
+            'settings' => ['active' => false],
+        ]);
+        $this->createMembership($member, $group);
+
+        $room = $this->createTestChatRoom($mod, $member);
+        $this->createTestChatMessage($room, $mod, [
+            'reviewrequired' => 1,
+            'reviewrejected' => 0,
+            'date' => now()->subHours(10),
+        ]);
+
+        $count = $this->service->getChatReviewCount($mod->id, 0);
+
+        $this->assertEquals(0, $count);
+    }
+
+    public function test_get_chat_review_count_skips_backup_mod_via_legacy_showmessages(): void
+    {
+        // V1 falls back to legacy showmessages when active is absent. Old
+        // memberships may have showmessages = false and no active key.
+        $mod = $this->createTestUser();
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, [
+            'role' => Membership::ROLE_MODERATOR,
+            'settings' => ['showmessages' => false],
+        ]);
+        $this->createMembership($member, $group);
+
+        $room = $this->createTestChatRoom($mod, $member);
+        $this->createTestChatMessage($room, $mod, [
+            'reviewrequired' => 1,
+            'reviewrejected' => 0,
+            'date' => now()->subHours(10),
+        ]);
+
+        $count = $this->service->getChatReviewCount($mod->id, 0);
+
+        $this->assertEquals(0, $count);
+    }
+
+    public function test_get_chat_review_count_counts_active_mod_via_legacy_showmessages(): void
+    {
+        // Sanity check: showmessages = true with no active key → active.
+        $mod = $this->createTestUser();
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, [
+            'role' => Membership::ROLE_MODERATOR,
+            'settings' => ['showmessages' => true],
+        ]);
+        $this->createMembership($member, $group);
+
+        $room = $this->createTestChatRoom($mod, $member);
+        $this->createTestChatMessage($room, $mod, [
+            'reviewrequired' => 1,
+            'reviewrejected' => 0,
+            'date' => now()->subHours(10),
+        ]);
+
+        $count = $this->service->getChatReviewCount($mod->id, 0);
+
+        $this->assertEquals(1, $count);
     }
 
     public function test_get_chat_review_count_respects_minage_filter(): void
     {
-        $user1 = $this->createTestUser();
-        $user2 = $this->createTestUser();
-        $room = $this->createTestChatRoom($user1, $user2);
+        $mod = $this->createTestUser();
+        $member = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($member, $group);
 
+        $room = $this->createTestChatRoom($mod, $member);
         // Message only 1 hour old, minage = 4 → should not count
-        $msg = $this->createTestChatMessage($room, $user1, [
+        $this->createTestChatMessage($room, $mod, [
             'reviewrequired' => 1,
-            'reviewedby' => null,
+            'reviewrejected' => 0,
             'date' => now()->subHours(1),
         ]);
 
-        $count = $this->service->getChatReviewCount($user1->id, 4);
+        $count = $this->service->getChatReviewCount($mod->id, 4);
 
-        // The message is too recent; count should not include it
-        $this->assertEquals(0, DB::table('chat_messages')
-            ->join('chat_rooms', 'chat_rooms.id', '=', 'chat_messages.chatid')
-            ->where('chat_messages.id', $msg->id)
-            ->where('chat_messages.reviewrequired', 1)
-            ->whereNull('chat_messages.reviewedby')
-            ->where('chat_messages.date', '<', now()->subHours(4))
-            ->count());
+        $this->assertEquals(0, $count);
     }
 
     // ===================================================================
@@ -484,15 +601,19 @@ class ModNotifServiceTest extends TestCase
 
     public function test_chat_review_not_multiplied_for_mod_on_multiple_groups(): void
     {
-        // Regression: getChatReviewCount has no group filter, so using += would
-        // multiply the global count by the number of groups the mod belongs to.
+        // Regression: getChatReviewCount used += in a per-group loop, multiplying
+        // the count by the number of groups the mod belonged to. A mod on N groups
+        // with 1 chat to review would be told they had N to review.
         $mod = $this->createTestUser();
         $group1 = $this->createTestGroup();
         $group2 = $this->createTestGroup();
         $author = $this->createTestUser();
+        $member = $this->createTestUser();
 
         $this->createMembership($mod, $group1, ['role' => Membership::ROLE_MODERATOR]);
         $this->createMembership($mod, $group2, ['role' => Membership::ROLE_MODERATOR]);
+        // Recipient must be on one of the mod's groups for the chat to count
+        $this->createMembership($member, $group1);
 
         // Record recent activity so isModRecentlyActive() passes
         foreach ([$group1, $group2] as $group) {
@@ -513,23 +634,41 @@ class ModNotifServiceTest extends TestCase
             ]);
         }
 
-        // One global chat message flagged for review
-        $user2 = $this->createTestUser();
-        $room = $this->createTestChatRoom($author, $user2);
+        // One chat message flagged for review with recipient on group1
+        $room = $this->createTestChatRoom($author, $member);
         $this->createTestChatMessage($room, $author, [
             'reviewrequired' => 1,
-            'reviewedby' => null,
+            'reviewrejected' => 0,
             'date' => now()->subHours(10),
         ]);
 
-        // 2 pending messages (one per group) + 1 chat review = 3 total
-        // The buggy code would produce 2 + 2 = 4 because it used += per group.
+        // 2 pending messages (one per group) + 1 chat review = 3 total.
+        // The buggy code would count the chat twice (once per group) → 4.
         $result = $this->service->getNotificationsToSend();
         $notif = collect($result)->firstWhere('user_id', $mod->id);
 
         $this->assertNotNull($notif, 'Mod should receive a notification');
         $this->assertEquals(3, $notif['total'],
             'Total should be 2 pending + 1 chat review; chat review must not be counted once per group');
+    }
+
+    public function test_pending_work_excludes_messages_from_deleted_users(): void
+    {
+        // ModTools UI hides messages from deleted users; the notification count
+        // must match or mods chase phantom messages.
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $deletedAuthor = $this->createTestUser(['deleted' => now()]);
+
+        $message = $this->createTestMessage($deletedAuthor, $group);
+        MessageGroup::where('msgid', $message->id)->update([
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now()->subHours(10),
+        ]);
+
+        $work = $this->service->getPendingWork($mod->id, $group->id, 0);
+
+        $this->assertEquals(0, $work['Pending Messages']);
     }
 
     public function test_get_notifications_skips_mod_with_notifications_disabled(): void

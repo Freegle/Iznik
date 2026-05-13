@@ -204,4 +204,84 @@ class MembershipTest extends TestCase
 
         $this->assertCount(0, $activeMods);
     }
+
+    public function test_is_active_mod_falls_back_to_legacy_showmessages_false(): void
+    {
+        // V1 User::activeModForGroup falls back to the legacy showmessages
+        // flag when 'active' is not set. Old memberships may still have this.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $membership = Membership::create([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'role' => Membership::ROLE_MODERATOR,
+            'added' => now(),
+            'settings' => ['showmessages' => false],
+        ]);
+
+        $this->assertFalse($membership->isActiveMod());
+    }
+
+    public function test_is_active_mod_falls_back_to_legacy_showmessages_true(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $membership = Membership::create([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'role' => Membership::ROLE_MODERATOR,
+            'added' => now(),
+            'settings' => ['showmessages' => true],
+        ]);
+
+        $this->assertTrue($membership->isActiveMod());
+    }
+
+    public function test_is_active_mod_prefers_active_over_legacy_showmessages(): void
+    {
+        // If both keys are present, 'active' wins — V1 only consults
+        // 'showmessages' when 'active' is absent.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $membership = Membership::create([
+            'userid' => $user->id,
+            'groupid' => $group->id,
+            'role' => Membership::ROLE_MODERATOR,
+            'added' => now(),
+            'settings' => ['active' => true, 'showmessages' => false],
+        ]);
+
+        $this->assertTrue($membership->isActiveMod());
+    }
+
+    public function test_active_moderators_scope_excludes_mod_with_showmessages_false(): void
+    {
+        $group = $this->createTestGroup();
+
+        $backupMod = $this->createTestUser();
+        $membership = Membership::create([
+            'userid' => $backupMod->id,
+            'groupid' => $group->id,
+            'role' => Membership::ROLE_MODERATOR,
+            'added' => now(),
+            'settings' => ['showmessages' => false],
+        ]);
+
+        $activeMod = $this->createTestUser();
+        Membership::create([
+            'userid' => $activeMod->id,
+            'groupid' => $group->id,
+            'role' => Membership::ROLE_MODERATOR,
+            'added' => now(),
+            'settings' => ['showmessages' => true],
+        ]);
+
+        $activeMods = $group->memberships()->activeModerators()->get();
+
+        $this->assertTrue($activeMods->contains('userid', $activeMod->id));
+        $this->assertFalse($activeMods->contains('userid', $backupMod->id));
+    }
 }

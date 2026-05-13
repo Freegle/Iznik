@@ -4117,3 +4117,110 @@ func TestGetUserInvalidPartnerSeesNoEmail(t *testing.T) {
 	assert.Equal(t, targetID, result.ID)
 	assert.Empty(t, result.Email, "invalid partner key should not expose any email")
 }
+
+// TestRecentWanted_GoAPI_ExcludesNonApproved is an AssertFlip STEP-1 test for the
+// $recentwanted bug (Discourse #9655):
+//
+// Bug: GetUserMessageHistory has no collection='Approved' filter, so Rejected and
+// Pending/Held messages appear in messagehistory and therefore in $recentwanted
+// substitution. The history entries also lack a 'postdate' field; the Go API returns
+// the computed date as 'arrival'. The frontend (ModStdMessageModal.vue) uses
+// msg.postdate, so dayjs(undefined) = current time → wrong rejection timestamp shown.
+//
+// STEP 1 asserts the BUGGY (current) behaviour — this MUST pass on unfixed code.
+// After confirming this passes, the assertions are inverted for STEP 2.
+func TestRecentWanted_GoAPI_ExcludesNonApproved(t *testing.T) {
+	prefix := uniquePrefix("recentwanted_coll")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Approved WANTED — 10 days old, within the 31-day $recentwanted window.
+	approvedSubject := prefix + " WANTED approved item"
+	db.Exec(
+		"INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) "+
+			"VALUES (?, ?, 'body', 'body', 'Wanted', DATE_SUB(NOW(), INTERVAL 10 DAY))",
+		posterID, approvedSubject)
+	var approvedMsgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, approvedSubject).Scan(&approvedMsgID)
+	require.NotZero(t, approvedMsgID, "approved message must be created")
+	db.Exec(
+		"INSERT INTO messages_groups (msgid, groupid, arrival, collection) "+
+			"VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 10 DAY), 'Approved')",
+		approvedMsgID, groupID)
+
+	// Rejected WANTED — 7 days old, also within the window.
+	rejectedSubject := prefix + " WANTED rejected item"
+	db.Exec(
+		"INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) "+
+			"VALUES (?, ?, 'body', 'body', 'Wanted', DATE_SUB(NOW(), INTERVAL 7 DAY))",
+		posterID, rejectedSubject)
+	var rejectedMsgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, rejectedSubject).Scan(&rejectedMsgID)
+	require.NotZero(t, rejectedMsgID, "rejected message must be created")
+	db.Exec(
+		"INSERT INTO messages_groups (msgid, groupid, arrival, collection) "+
+			"VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 7 DAY), 'Rejected')",
+		rejectedMsgID, groupID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", approvedMsgID, rejectedMsgID)
+		db.Exec("DELETE FROM messages WHERE id IN (?, ?)", approvedMsgID, rejectedMsgID)
+	})
+
+	// Fetch the poster as a moderator — must include messagehistory.
+	url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", posterID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var raw map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&raw)
+	require.NoError(t, err)
+
+	history, ok := raw["messagehistory"].([]interface{})
+	require.True(t, ok, "messagehistory must be present for modtools fetch")
+
+	approvedFound := false
+	rejectedFound := false
+	var postdateFieldExists bool
+
+	for _, h := range history {
+		entry, _ := h.(map[string]interface{})
+		id := uint64(entry["id"].(float64))
+		if id == approvedMsgID {
+			approvedFound = true
+		}
+		if id == rejectedMsgID {
+			rejectedFound = true
+		}
+		// Check whether the 'postdate' field exists in any entry.
+		if _, hasPD := entry["postdate"]; hasPD {
+			postdateFieldExists = true
+		}
+	}
+
+	// STEP 2 (inverted) — asserts CORRECT behaviour; FAILS on unfixed code:
+	// (a) Approved WANTED must appear in history (sanity check — passes before and after fix).
+	assert.True(t, approvedFound,
+		"Approved WANTED must appear in messagehistory for $recentwanted")
+	// (b) Rejected WANTED must NOT appear in history.
+	//     FAILS on current code: GetUserMessageHistory has no collection='Approved' filter,
+	//     so Rejected messages leak into $recentwanted substitution.
+	assert.False(t, rejectedFound,
+		"Rejected WANTED must NOT appear in messagehistory (bug: GetUserMessageHistory lacks collection='Approved' filter)")
+	// (c) Each history entry must have a 'postdate' field (the computed best-date the
+	//     frontend's ModStdMessageModal.vue reads as msg.postdate for $recentwanted).
+	//     FAILS on current code: Go API returns the date as 'arrival' only; msg.postdate is
+	//     undefined in the frontend → dayjs(undefined) = NOW = rejection timestamp shown.
+	assert.True(t, postdateFieldExists,
+		"messagehistory entries must include 'postdate' field (bug: Go API returns 'arrival' only; "+
+			"frontend uses msg.postdate → dayjs(undefined) = current time instead of original arrival)")
+}

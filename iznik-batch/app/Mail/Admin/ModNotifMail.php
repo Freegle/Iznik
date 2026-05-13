@@ -10,6 +10,8 @@ class ModNotifMail extends MjmlMailable
 {
     public string $recipientName;
 
+    public string $email;
+
     public string $htmlSummary;
 
     public string $textSummary;
@@ -29,10 +31,11 @@ class ModNotifMail extends MjmlMailable
         parent::__construct();
 
         $this->recipientName = $recipientName;
+        $this->email = $recipientEmail;
         $this->htmlSummary = $htmlSummary;
         $this->textSummary = $textSummary;
         $this->modNotifSubject = $subject;
-        $this->settingsUrl = 'https://' . config('freegle.sites.mod', 'modtools.org') . '/settings';
+        $this->settingsUrl = config('freegle.sites.mod', 'https://modtools.org') . '/modtools/settings';
     }
 
     protected function getSubject(): string
@@ -55,6 +58,7 @@ class ModNotifMail extends MjmlMailable
     {
         $data = [
             'recipientName' => $this->recipientName,
+            'email' => $this->email,
             'htmlSummary' => $this->htmlSummary,
             'settingsUrl' => $this->settingsUrl,
         ];

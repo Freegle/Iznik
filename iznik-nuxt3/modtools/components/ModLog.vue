@@ -99,7 +99,7 @@
               </span>
             </span>
             <span v-else>
-              Received <ModLogMessage :logid="logid" notext tag="to" />
+              Posted <ModLogMessage :logid="logid" notext tag="to" />
             </span>
           </span>
           <span v-else-if="log.subtype === 'Autoreposted'">
