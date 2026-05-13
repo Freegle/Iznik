@@ -3357,10 +3357,19 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// Check for existing outcome (prevent duplicates unless expired).
-	var existingOutcome string
-	db.Raw("SELECT outcome FROM messages_outcomes WHERE msgid = ?", req.ID).Scan(&existingOutcome)
-	if existingOutcome != "" && existingOutcome != utils.OUTCOME_EXPIRED {
+	// Check for existing outcome (prevent duplicates unless every existing
+	// row is Expired, which the user is allowed to overwrite).
+	//
+	// The COUNT approach is deliberate: a stale Scan into a string against a
+	// multi-row result was non-deterministic — if the row that landed in the
+	// scalar was Expired we'd overwrite, but if it was a Withdrawn
+	// "Auto-expired" row inserted by the batch alongside Expired we'd 409.
+	// That was the exact failure mode that blocked a member from marking her
+	// post Taken after the deadline+spatial expiry paths both ran overnight.
+	var existingTotal, expiredCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", req.ID).Scan(&existingTotal)
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ? AND outcome = ?", req.ID, utils.OUTCOME_EXPIRED).Scan(&expiredCount)
+	if existingTotal > 0 && existingTotal != expiredCount {
 		return fiber.NewError(fiber.StatusConflict, "Outcome already recorded")
 	}
 

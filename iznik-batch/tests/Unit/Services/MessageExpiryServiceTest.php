@@ -205,7 +205,8 @@ class MessageExpiryServiceTest extends TestCase
 
         $message = $this->createTestMessage($user, $group);
 
-        // Pre-existing EXPIRED outcome (e.g. autorepost marked it expired earlier).
+        // Existing EXPIRED outcome (e.g. the deadline-expiry path ran earlier
+        // in the same scheduled batch).
         MessageOutcome::create([
             'msgid' => $message->id,
             'outcome' => MessageOutcome::OUTCOME_EXPIRED,
@@ -223,20 +224,77 @@ class MessageExpiryServiceTest extends TestCase
 
         $this->assertEquals(1, $count);
 
-        // V1 mark(WITHDRAWN, "Auto-expired") adds a *second* outcome alongside EXPIRED.
-        $this->assertDatabaseHas('messages_outcomes', [
-            'msgid' => $message->id,
-            'outcome' => MessageOutcome::OUTCOME_EXPIRED,
-        ]);
+        // V1 mark() does DELETE FROM messages_outcomes before INSERT, so the
+        // Expired row is replaced by the Withdrawn "Auto-expired" — exactly one
+        // outcome row should remain. Leaving both would cause the Go outcome
+        // handler to return 409 when the owner later tries to mark Taken.
+        $this->assertEquals(
+            1,
+            MessageOutcome::where('msgid', $message->id)->count(),
+            'processMessageExpiry must replace existing outcomes, not stack them'
+        );
         $this->assertDatabaseHas('messages_outcomes', [
             'msgid' => $message->id,
             'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
             'comments' => 'Auto-expired',
         ]);
+        $this->assertDatabaseMissing('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_EXPIRED,
+        ]);
 
         // Spatial entry deleted.
         $this->assertDatabaseMissing('messages_spatial', [
             'msgid' => $message->id,
+        ]);
+    }
+
+    /**
+     * Regression: a message that hits the deadline-expiry path and then the
+     * spatial-index expiry path in the same scheduled run must end up with
+     * exactly one outcome row. Previously both paths inserted without
+     * deleting first, leaving duplicate (Expired + Withdrawn) rows that
+     * caused the Go API to 409 when the owner tried to mark the post Taken.
+     */
+    public function test_deadline_then_spatial_expiry_leaves_single_outcome(): void
+    {
+        Mail::fake();
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $message = $this->createTestMessage($user, $group);
+        $message->deadline = now()->subDays(1)->format('Y-m-d');
+        $message->save();
+
+        // Spatial index entry — present so the second-phase cleanup picks the
+        // message up after the deadline path marks it Expired.
+        DB::table('messages_spatial')->insert([
+            'msgid' => $message->id,
+            'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+            'successful' => 0,
+        ]);
+
+        // Phase 1 — deadline expiry inserts the EXPIRED outcome.
+        $stats = $this->service->processDeadlineExpired();
+        $this->assertEquals(1, $stats['processed']);
+
+        // Phase 2 — spatial-index expiry runs next; it finds the message via
+        // the "EXPIRED outcome exists" branch of getExpiredCandidates and must
+        // replace the Expired row rather than appending Withdrawn.
+        $count = $this->service->processExpiredFromSpatialIndex();
+        $this->assertEquals(1, $count);
+
+        $this->assertEquals(
+            1,
+            MessageOutcome::where('msgid', $message->id)->count(),
+            'a message hitting both expiry paths in one run must keep a single outcome row'
+        );
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $message->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+            'comments' => 'Auto-expired',
         ]);
     }
 

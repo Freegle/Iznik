@@ -3120,6 +3120,74 @@ func TestPostMessageOutcomeDuplicate(t *testing.T) {
 	assert.Equal(t, 409, resp.StatusCode)
 }
 
+// Regression: a message with multiple rows in messages_outcomes (Expired left
+// by the deadline-expiry batch plus Withdrawn "Auto-expired" left by the
+// spatial-index expiry batch, which historically appended instead of
+// replacing) must still allow the owner to mark Taken — the user-visible
+// failure that took the owner to the "something went wrong" page.
+func TestPostMessageOutcomeAllowsTakenOverExpiredPlusAutoWithdrawn(t *testing.T) {
+	prefix := uniquePrefix("msgw_out_dup_expauto")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	// Stale duplicate rows from before the batch fix: same shape as the prod
+	// data that produced the 409.
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, comments) VALUES (?, 'Expired', 'Reached deadline')", msgID)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, comments) VALUES (?, 'Withdrawn', 'Auto-expired')", msgID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Taken",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", token)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode, "owner must be able to mark Taken even when stale duplicate auto-expiry rows exist")
+
+	// Existing rows replaced with a single Taken row.
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&count)
+	assert.Equal(t, int64(1), count, "stale outcome rows should be replaced, not stacked")
+	var dbOutcome string
+	db.Raw("SELECT outcome FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&dbOutcome)
+	assert.Equal(t, "Taken", dbOutcome)
+}
+
+// Real Withdrawn (no Auto-expired marker, no Expired sibling) is still a
+// genuine conflict — the user already deliberately withdrew the post.
+func TestPostMessageOutcomeRejectsTakenOverRealWithdrawn(t *testing.T) {
+	prefix := uniquePrefix("msgw_out_dup_realw")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome) VALUES (?, 'Withdrawn')", msgID)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Taken",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", token)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 409, resp.StatusCode)
+}
+
 func TestPostMessageOutcomeMessageNotFound(t *testing.T) {
 	prefix := uniquePrefix("msgw_out_nf")
 

@@ -218,11 +218,17 @@ SQL;
 
     /**
      * Delete a spatial row and record OUTCOME_WITHDRAWN "Auto-expired".
-     * Mirrors V1 Message::processExpiry() side-effects.
+     * Mirrors V1 Message::processExpiry() → mark(), which deletes any
+     * existing outcomes before inserting. Skipping the delete previously
+     * left duplicate rows in messages_outcomes whenever this path ran on
+     * a message that already had an Expired row (the deadline-expiry path
+     * runs first in the same scheduled job), which then caused the Go
+     * outcome handler to return 409 when the owner tried to mark Taken.
      */
     protected function processMessageExpiry(int $msgid): void
     {
         DB::table('messages_outcomes_intended')->where('msgid', $msgid)->delete();
+        DB::table('messages_outcomes')->where('msgid', $msgid)->delete();
 
         DB::table('messages_spatial')
             ->where('msgid', $msgid)
