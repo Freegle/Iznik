@@ -60,8 +60,8 @@ class EventsDigestService
                 continue;
             }
 
-            // Find upcoming events for this group (starting within the next 30 days).
-            $events = DB::table('communityevents')
+            // Find upcoming community events for this group (starting within the next 30 days).
+            $rawEvents = DB::table('communityevents')
                 ->join('communityevents_groups', function ($join) use ($groupRow) {
                     $join->on('communityevents_groups.eventid', '=', 'communityevents.id')
                         ->where('communityevents_groups.groupid', '=', $groupRow->id);
@@ -76,13 +76,18 @@ class EventsDigestService
                     'communityevents.id',
                     'communityevents.title',
                     'communityevents.location',
+                    'communityevents.description',
+                    'communityevents.contactname',
+                    'communityevents.contactphone',
+                    'communityevents.contactemail',
+                    'communityevents.contacturl',
                     'communityevents_dates.start',
                     'communityevents_dates.end',
                 ])
                 ->get()
                 ->unique('id');
 
-            if ($events->isEmpty()) {
+            if ($rawEvents->isEmpty()) {
                 if (!$dryRun) {
                     DB::table('groups')->where('id', $groupRow->id)
                         ->update(['lasteventsroundup' => now()]);
@@ -90,21 +95,48 @@ class EventsDigestService
                 continue;
             }
 
-            $groupsProcessed++;
+            // Batch-fetch first non-archived image per event.
+            $eventIds = $rawEvents->pluck('id')->all();
+            $images = DB::table('communityevents_images')
+                ->whereIn('eventid', $eventIds)
+                ->where('archived', 0)
+                ->orderBy('eventid')
+                ->orderBy('id')
+                ->get()
+                ->groupBy('eventid')
+                ->map(fn ($imgs) => $imgs->first());
 
             // Build structured event data for the template.
-            $eventData = $events->map(function ($event) use ($userSite) {
+            $eventData = $rawEvents->map(function ($event) use ($userSite, $images) {
                 $start = Carbon::parse($event->start)->setTimezone('Europe/London')->format('D, jS F g:ia');
-                $end   = Carbon::parse($event->end)->setTimezone('Europe/London')->format('g:ia');
+                $end   = ($event->end && $event->end !== '0000-00-00 00:00:00')
+                    ? Carbon::parse($event->end)->setTimezone('Europe/London')->format('g:ia')
+                    : null;
+
+                $imageUrl = null;
+                if ($images->has($event->id)) {
+                    $img  = $images->get($event->id);
+                    $mods = $img->externalmods ? json_decode($img->externalmods, true) : [];
+                    $imageUrl = $mods['url'] ?? "https://{$userSite}/communityevent/{$event->id}/image/{$img->id}";
+                }
+
                 return [
-                    'id'       => $event->id,
-                    'title'    => $event->title,
-                    'location' => $event->location,
-                    'start'    => $start,
-                    'end'      => $end,
-                    'url'      => "https://{$userSite}/communityevent/{$event->id}",
+                    'id'           => $event->id,
+                    'title'        => $event->title,
+                    'location'     => $event->location,
+                    'description'  => $event->description,
+                    'contactname'  => $event->contactname,
+                    'contactphone' => $event->contactphone,
+                    'contactemail' => $event->contactemail,
+                    'contacturl'   => $event->contacturl,
+                    'start'        => $start,
+                    'end'          => $end,
+                    'imageUrl'     => $imageUrl,
+                    'url'          => "https://{$userSite}/communityevent/{$event->id}",
                 ];
             })->values()->all();
+
+            $groupsProcessed++;
 
             // Find members who have events enabled and are not opted out.
             $members = DB::table('memberships')

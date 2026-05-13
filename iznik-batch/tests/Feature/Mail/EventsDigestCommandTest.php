@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Mail;
 
+use App\Mail\Event\EventsDigestMail;
 use App\Models\Group;
 use App\Models\Membership;
 use Illuminate\Support\Facades\DB;
@@ -19,22 +20,22 @@ class EventsDigestCommandTest extends TestCase
         // Delete inside the current transaction so leaked rows are hidden without affecting
         // other test classes (the DELETE is rolled back with this test's transaction).
         DB::statement('SET FOREIGN_KEY_CHECKS=0');
-        foreach (['communityevents_dates', 'communityevents_groups', 'communityevents', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
+        foreach (['communityevents_images', 'communityevents_dates', 'communityevents_groups', 'communityevents', 'memberships', 'users_emails', 'users', 'groups'] as $table) {
             DB::table($table)->delete();
         }
         DB::statement('SET FOREIGN_KEY_CHECKS=1');
     }
 
-    private function createEvent(int $groupId, string $title = 'Test Event', int $daysFromNow = 7): int
+    private function createEvent(int $groupId, string $title = 'Test Event', int $daysFromNow = 7, array $fields = []): int
     {
-        $eventId = DB::table('communityevents')->insertGetId([
-            'title' => $title,
-            'location' => 'Test Hall, Test Town',
+        $eventId = DB::table('communityevents')->insertGetId(array_merge([
+            'title'       => $title,
+            'location'    => 'Test Hall, Test Town',
             'description' => 'A test event description.',
-            'pending' => 0,
-            'deleted' => 0,
-            'added' => now(),
-        ]);
+            'pending'     => 0,
+            'deleted'     => 0,
+            'added'       => now(),
+        ], $fields));
 
         DB::table('communityevents_groups')->insert([
             'eventid' => $eventId,
@@ -43,11 +44,21 @@ class EventsDigestCommandTest extends TestCase
 
         DB::table('communityevents_dates')->insert([
             'eventid' => $eventId,
-            'start' => now()->addDays($daysFromNow),
-            'end' => now()->addDays($daysFromNow)->addHours(2),
+            'start'   => now()->addDays($daysFromNow),
+            'end'     => now()->addDays($daysFromNow)->addHours(2),
         ]);
 
         return $eventId;
+    }
+
+    private function addEventImage(int $eventId, ?string $externalUrl = null): int
+    {
+        return DB::table('communityevents_images')->insertGetId([
+            'eventid'     => $eventId,
+            'contenttype' => 'image/jpeg',
+            'archived'    => 0,
+            'externalmods' => $externalUrl ? json_encode(['url' => $externalUrl]) : null,
+        ]);
     }
 
     public function test_smoke_no_groups(): void
@@ -351,5 +362,178 @@ class EventsDigestCommandTest extends TestCase
             ->assertExitCode(0);
 
         Mail::assertNothingSent();
+    }
+
+    public function test_event_with_image_populates_image_url(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = $this->createEvent($group->id, 'Photo Event');
+        $this->addEventImage($eventId, 'https://example.com/photo.jpg');
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['imageUrl'] === 'https://example.com/photo.jpg';
+        });
+    }
+
+    public function test_event_without_image_has_null_image_url(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->createEvent($group->id, 'No Photo Event');
+        // No addEventImage call
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['imageUrl'] === null;
+        });
+    }
+
+    public function test_archived_image_is_excluded(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = $this->createEvent($group->id, 'Archived Image Event');
+        DB::table('communityevents_images')->insert([
+            'eventid'     => $eventId,
+            'contenttype' => 'image/jpeg',
+            'archived'    => 1,
+            'externalmods' => json_encode(['url' => 'https://example.com/archived.jpg']),
+        ]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['imageUrl'] === null;
+        });
+    }
+
+    public function test_contact_fields_are_passed_through(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->createEvent($group->id, 'Contactable Event', 7, [
+            'contactname'  => 'Jane Smith',
+            'contactphone' => '01234 567890',
+            'contactemail' => 'jane@example.com',
+            'contacturl'   => 'https://example.com',
+        ]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            $e = $mail->events[0];
+            return $e['contactname']  === 'Jane Smith'
+                && $e['contactphone'] === '01234 567890'
+                && $e['contactemail'] === 'jane@example.com'
+                && $e['contacturl']   === 'https://example.com';
+        });
+    }
+
+    public function test_event_with_no_contact_fields_has_nulls(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->createEvent($group->id, 'Minimal Event');
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            $e = $mail->events[0];
+            return $e['contactname']  === null
+                && $e['contactphone'] === null
+                && $e['contactemail'] === null
+                && $e['contacturl']   === null;
+        });
+    }
+
+    public function test_description_is_passed_through(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $this->createEvent($group->id, 'Described Event', 7, [
+            'description' => 'A detailed description of the event.',
+        ]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['description'] === 'A detailed description of the event.';
+        });
+    }
+
+    public function test_first_image_used_when_multiple_exist(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = $this->createEvent($group->id, 'Multi-image Event');
+        $this->addEventImage($eventId, 'https://example.com/first.jpg');
+        $this->addEventImage($eventId, 'https://example.com/second.jpg');
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['imageUrl'] === 'https://example.com/first.jpg';
+        });
+    }
+
+    public function test_event_with_no_end_time_has_null_end(): void
+    {
+        Mail::fake();
+
+        $group  = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createMembership($member, $group, ['eventsallowed' => 1, 'emailfrequency' => 24]);
+
+        $eventId = DB::table('communityevents')->insertGetId([
+            'title'    => 'No End Time Event',
+            'location' => 'Somewhere',
+            'pending'  => 0,
+            'deleted'  => 0,
+            'added'    => now(),
+        ]);
+        DB::table('communityevents_groups')->insert(['eventid' => $eventId, 'groupid' => $group->id]);
+        DB::table('communityevents_dates')->insert([
+            'eventid' => $eventId,
+            'start'   => now()->addDays(7),
+            'end'     => '0000-00-00 00:00:00',  // sentinel for "no end time" — column is NOT NULL
+        ]);
+
+        $this->artisan('mail:events-digest')->assertExitCode(0);
+
+        Mail::assertSent(EventsDigestMail::class, function (EventsDigestMail $mail) {
+            return $mail->events[0]['end'] === null;
+        });
     }
 }
