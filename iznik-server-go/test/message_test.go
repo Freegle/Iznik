@@ -1319,10 +1319,10 @@ func TestPostMessageRevertEdits(t *testing.T) {
 
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 52.5, -1.8)
 
-	// Mark as edited.
-	db.Exec("UPDATE messages SET editedby = ? WHERE id = ?", posterID, msgID)
-
-	// Create a pending edit.
+	// Simulate the real edit flow: PATCH immediately updates messages with the new text,
+	// then records old/new in messages_edits for mod review.
+	db.Exec("UPDATE messages SET subject = ?, textbody = ?, editedby = ? WHERE id = ?",
+		prefix+" changed subject", "New text", posterID, msgID)
 	db.Exec("INSERT INTO messages_edits (msgid, byuser, oldsubject, newsubject, oldtext, newtext, reviewrequired) VALUES (?, ?, ?, ?, 'Old text', 'New text', 1)",
 		msgID, posterID, prefix+" offer item", prefix+" changed subject")
 
@@ -1343,10 +1343,15 @@ func TestPostMessageRevertEdits(t *testing.T) {
 	db.Raw("SELECT editedby FROM messages WHERE id = ?", msgID).Scan(&editedby)
 	assert.Nil(t, editedby)
 
-	// Verify subject NOT changed (reverted, not applied).
+	// Verify subject restored to original (not the edited value).
 	var subject string
 	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&subject)
 	assert.Equal(t, prefix+" offer item", subject)
+
+	// Verify textbody restored to original.
+	var textbody string
+	db.Raw("SELECT COALESCE(textbody, '') FROM messages WHERE id = ?", msgID).Scan(&textbody)
+	assert.Equal(t, "Old text", textbody)
 
 	// Verify edit marked as reverted with reviewrequired = 0.
 	var revertedCount int64
