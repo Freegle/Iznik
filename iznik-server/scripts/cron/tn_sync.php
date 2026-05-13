@@ -215,8 +215,8 @@ do {
                                     #error_log("...found postcode {$loc['id']} {$loc['name']}");
 
                                     if ($loc['id'] !== $u->getPrivate('lastlocation')) {
-                                        error_log("FD #{$change['fd_user_id']} TN lat/lng $lat,$lng has changed {$u->getPrivate('locationid')} => {$loc['id']} {$loc['name']}");
-                                        error_log("TN-SYNC-TRACE [LOCATION] fd_user_id={$change['fd_user_id']} lat=$lat lng=$lng old_loc={$u->getPrivate('locationid')} new_loc={$loc['id']}");
+                                        error_log("FD #{$change['fd_user_id']} TN lat/lng $lat,$lng has changed {$u->getPrivate('lastlocation')} => {$loc['id']} {$loc['name']}");
+                                        error_log("TN-SYNC-TRACE [LOCATION] fd_user_id={$change['fd_user_id']} lat=$lat lng=$lng old_loc={$u->getPrivate('lastlocation')} new_loc={$loc['id']}");
                                         $u->setPrivate('lastlocation', $loc['id']);
                                     }
                                 }
