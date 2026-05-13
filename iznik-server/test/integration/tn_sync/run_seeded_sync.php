@@ -143,7 +143,7 @@ $dbhm->preExec(
 echo 'Seed complete. Users seeded: ' . count($seedUsers) . "\n";
 echo "Running tn_sync.php with \$localTesting=TRUE...\n";
 
-$command = sprintf('php %s > %s 2>&1', escapeshellarg($rootDir . '/iznik/scripts/cron/tn_sync.php'), escapeshellarg($logFile));
+$command = sprintf('php %s --local-testing > %s 2>&1', escapeshellarg($rootDir . '/iznik/scripts/cron/tn_sync.php'), escapeshellarg($logFile));
 passthru($command, $exitCode);
 
 if ($exitCode !== 0) {

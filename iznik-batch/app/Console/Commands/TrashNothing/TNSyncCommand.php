@@ -29,7 +29,8 @@ class TNSyncCommand extends Command
                             {--from= : Override sync start timestamp (ISO-8601)}
                             {--to= : Override sync end timestamp (ISO-8601)}
                             {--run-id= : Queue run identifier used to update background_tasks JSON completion state}
-                            {--dry-run : Trace DB writes without executing them}';
+                            {--dry-run : Trace DB writes without executing them}
+                            {--local-testing : Load API responses from local fixture files instead of hitting the live TN API}';
 
     protected $description = 'Sync data from TrashNothing, including user data updates, user ratings, posts/messages, and chat messages.';
 
@@ -37,8 +38,7 @@ class TNSyncCommand extends Command
 
     private bool $dryRun;
 
-    // Set to true to load from local fixture files instead of hitting the live TN API.
-    private bool $localTesting = false;
+    private bool $localTesting;
 
     private string $apiKey;
     private string $apiBaseUrl;
@@ -55,6 +55,7 @@ class TNSyncCommand extends Command
     {
         $this->registerShutdownHandlers();
         $this->dryRun = (bool) $this->option('dry-run');
+        $this->localTesting = (bool) $this->option('local-testing');
         $exitCode = Command::FAILURE;
         $errorMessage = null;
 

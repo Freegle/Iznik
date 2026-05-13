@@ -1456,6 +1456,10 @@ class ProcessBackgroundTasksCommand extends Command
             $args['--dry-run'] = true;
         }
 
+        if (isset($data['local_testing']) && (bool) $data['local_testing']) {
+            $args['--local-testing'] = true;
+        }
+
         $exitCode = Artisan::call('tn:sync', $args);
 
         Log::info('Processed tn_sync_command task', [

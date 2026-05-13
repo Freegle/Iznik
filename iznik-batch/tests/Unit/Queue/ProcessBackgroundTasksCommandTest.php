@@ -12,6 +12,7 @@ use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
 use App\Services\PushNotificationService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
 
@@ -2139,6 +2140,56 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertNull($task->processed_at, 'Task with missing user_id should not be processed successfully');
         $this->assertNotNull($task->error_message, 'Task with missing user_id should record an error message');
         $this->assertStringContainsString('user_id', $task->error_message);
+    }
+
+    public function test_tn_sync_command_task_passes_local_testing_flag(): void
+    {
+        // When local_testing is true in the task data, tn:sync must use fixture files
+        // and never hit the live TN API. preventStrayRequests() enforces this: any
+        // unexpected Http call will throw, failing the test.
+        Http::preventStrayRequests();
+
+        $taskId = DB::table('background_tasks')->insertGetId([
+            'task_type' => 'tn_sync_command',
+            'data' => json_encode([
+                'from' => '2026-01-01T00:00:00Z',
+                'to' => '2026-01-02T00:00:00Z',
+                'local_testing' => true,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1]);
+
+        $task = DB::table('background_tasks')->find($taskId);
+        $this->assertNotNull($task->processed_at, 'Task should be processed when local_testing is true');
+        $this->assertNull($task->failed_at, 'Task should not fail when local_testing is true');
+    }
+
+    public function test_tn_sync_command_task_without_local_testing_calls_http(): void
+    {
+        // When local_testing is absent the command must hit the TN API.
+        // Fake the Http calls to avoid real network requests.
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        $taskId = DB::table('background_tasks')->insertGetId([
+            'task_type' => 'tn_sync_command',
+            'data' => json_encode([
+                'from' => '2026-01-01T00:00:00Z',
+                'to' => '2026-01-02T00:00:00Z',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', ['--max-iterations' => 1]);
+
+        $task = DB::table('background_tasks')->find($taskId);
+        $this->assertNotNull($task->processed_at, 'Task should be processed without local_testing');
+        $this->assertNull($task->failed_at, 'Task should not fail without local_testing');
+        Http::assertSent(fn ($request) => str_contains((string) $request->url(), 'ratings'));
     }
 
     /**

@@ -1129,6 +1129,19 @@ class TNSyncCommandTest extends TestCase
         });
     }
 
+    // =========================================================================
+    // Local testing flag
+    // =========================================================================
+
+    public function test_local_testing_flag_loads_from_fixtures_without_http(): void
+    {
+        // Prevent any real or faked Http calls — if the flag is wired correctly
+        // the command loads from fixture files and Http is never touched.
+        Http::preventStrayRequests();
+
+        $this->artisan('tn:sync', ['--local-testing' => true])->assertExitCode(0);
+    }
+
     public function test_mark_queue_run_completed_warns_when_run_id_not_found(): void
     {
         Http::fake([

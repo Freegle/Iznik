@@ -37,6 +37,8 @@ $runId = uniqid('tnsync-', TRUE);
 
 error_log("TN-SYNC-TRACE [START] from=$from to=$to run_id=$runId");
 
+$localTesting = in_array('--local-testing', $argv ?? [], TRUE);
+
 # Run the Laravel tn:sync command first with the exact same timing window, and wait for completion.
 $queuedTaskId = LaravelQueue::queueTask('tn_sync_command', [
     'from' => $from,
@@ -44,6 +46,7 @@ $queuedTaskId = LaravelQueue::queueTask('tn_sync_command', [
     'run_id' => $runId,
     'queued_by' => 'tn_sync.php',
     'dry_run' => true,
+    'local_testing' => $localTesting,
 ]);
 
 if (is_null($queuedTaskId)) {
@@ -74,9 +77,6 @@ $maxChangeDate = null;
 $ratingsCount = 0;
 $changesCount = 0;
 $mergesCount = 0;
-
-# TODO Finnbarr: set this to true when called via local test script.
-$localTesting = FALSE;
 
 do {
     if ($localTesting) {
