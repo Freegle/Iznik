@@ -209,17 +209,24 @@ export const actions: ActionDefinition[] = [
 
   {
     name: 'check_bug_feedback',
-    description: 'For each open/investigating bug in discourse_bug, fetch posts after the original report on that Discourse topic and detect reporter confirmation of a fix (keywords: fixed, works now, confirmed, thanks, resolved, etc.). Marks matching bugs as fixed automatically. Returns {checked, markedFixed: [{topic, post, confirmedBy, confirmText}]}.',
+    description: 'For each open/investigating/deferred bug in discourse_bug, fetch posts after the original report on that Discourse topic. (A) Detects reporter confirmation of a fix — marks confirmed bugs as fixed. (B) Detects Edward_Hibbert posts indicating fix-in-progress, off-topic/expected-behaviour, or applied fix — updates state accordingly. Returns {checked, markedFixed, markedInvestigating, markedOffTopic}.',
     handler: async () => {
       const db = getDb()
+      // Reporter-confirmation scan: open/investigating only
       const bugs = db.prepare(
         "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating')"
       ).all() as Array<{ topic: number; post: number; reporter: string | null }>
 
-      if (bugs.length === 0) return { checked: 0, markedFixed: [] }
+      // Edward-post scan: also include deferred (Edward may post "fix on the way" on a deferred bug)
+      const allActiveBugs = db.prepare(
+        "SELECT topic, post, reporter FROM discourse_bug WHERE state IN ('open','investigating','deferred')"
+      ).all() as Array<{ topic: number; post: number; reporter: string | null }>
 
-      // Build a Python script that checks each bug's topic for post-report confirmations
+      if (allActiveBugs.length === 0) return { checked: 0, markedFixed: [], markedInvestigating: [], markedOffTopic: [] }
+
       const bugsJson = JSON.stringify(bugs)
+      const allBugsJson = JSON.stringify(allActiveBugs)
+
       const script = `
 import json, urllib.request, re, sys, time
 
@@ -231,6 +238,29 @@ CONFIRM_RE = re.compile(
     r'\\b(fixed|works? now|working now|confirmed?|thanks?|all good|resolved?'
     r'|seems? (?:to be )?(?:fixed|working|ok|good)|unlimited now|no (?:longer|more)'
     r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?)\\b',
+    re.IGNORECASE
+)
+
+# Edward's posts indicating he is actively working on a fix
+EDWARD_IN_PROGRESS_RE = re.compile(
+    r'(?:fix|looking|working|will).*(?:on the way|in progress|coming|soon|catch up|next week|look.*into|look.*at this|looking into|working on)'
+    r'|(?:possible fix|fix is on the way|fix on the way|fix coming|on the way)'
+    r'|(?:i can see the (?:problem|bug|issue))'
+    r'|(?:will (?:fix|sort|look at|investigate))',
+    re.IGNORECASE
+)
+
+# Edward's posts indicating he has applied a fix
+EDWARD_FIXED_RE = re.compile(
+    r'(?:should be fixed|please retest|let me know how it is|i.ve fixed|fixed this|fixed now'
+    r'|this should now work|fix applied|should now work|have fixed|has been fixed)',
+    re.IGNORECASE
+)
+
+# Edward's posts indicating this is expected/by-design (not a bug)
+EDWARD_EXPECTED_RE = re.compile(
+    r'(?:this is expected|to be expected|that.s expected|by design|working as (?:intended|designed|expected)'
+    r'|not a bug|expected (?:behavior|behaviour)|this is correct|working correctly)',
     re.IGNORECASE
 )
 
@@ -252,24 +282,23 @@ def fetch(url, retries=3):
             return None
 
 bugs = json.loads('''${bugsJson.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}''')
-results = []
+all_bugs = json.loads('''${allBugsJson.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}''')
 
-for bug in bugs:
-    topic_id = bug['topic']
-    orig_post = bug['post']
-    reporter = bug.get('reporter') or ''
+# Cache topic JSON by topic_id to avoid double-fetching
+topic_cache = {}
+def get_topic(tid):
+    if tid not in topic_cache:
+        topic_cache[tid] = fetch(f'${DISCOURSE_BASE}/t/{tid}.json')
+    return topic_cache[tid]
 
-    d = fetch(f'${DISCOURSE_BASE}/t/{topic_id}.json')
+def get_posts_after(topic_id, orig_post):
+    d = get_topic(topic_id)
     if not d:
-        continue
-
+        return []
     stream = d.get('post_stream', {}).get('stream', [])
-    # stream[N-1] = post_id for post #N; posts after original are at stream[orig_post:]
     new_ids = stream[orig_post:]
     if not new_ids:
-        continue
-
-    # Batch-fetch in groups of 50
+        return []
     new_posts = []
     for i in range(0, len(new_ids), 50):
         batch = new_ids[i:i+50]
@@ -277,11 +306,22 @@ for bug in bugs:
         pd = fetch(f'${DISCOURSE_BASE}/t/{topic_id}/posts.json?{qs}')
         if pd:
             new_posts.extend(pd.get('post_stream', {}).get('posts', []))
+    return new_posts
 
+results = []
+edward_updates = []
+
+# Pass A: reporter confirmations (open/investigating only)
+for bug in bugs:
+    topic_id = bug['topic']
+    orig_post = bug['post']
+    reporter = bug.get('reporter') or ''
+
+    new_posts = get_posts_after(topic_id, orig_post)
     for post in new_posts:
         username = post.get('username', '')
         if username == 'Edward_Hibbert':
-            continue  # skip our own posts
+            continue
         text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
         text = re.sub(r'\\s+', ' ', text).strip()
         if CONFIRM_RE.search(text):
@@ -293,13 +333,38 @@ for bug in bugs:
                 'confirmPostNumber': post.get('post_number'),
                 'confirmText': text[:200],
             })
-            break  # one confirmation per bug is enough
+            break
 
-print(json.dumps(results))
+# Pass B: Edward's posts (open/investigating/deferred)
+for bug in all_bugs:
+    topic_id = bug['topic']
+    orig_post = bug['post']
+
+    new_posts = get_posts_after(topic_id, orig_post)
+    for post in new_posts:
+        if post.get('username') != 'Edward_Hibbert':
+            continue
+        text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
+        text = re.sub(r'\\s+', ' ', text).strip()
+        post_num = post.get('post_number')
+        if EDWARD_EXPECTED_RE.search(text):
+            edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'off_topic', 'postNumber': post_num, 'text': text[:200]})
+            break
+        elif EDWARD_FIXED_RE.search(text):
+            edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
+            break
+        elif EDWARD_IN_PROGRESS_RE.search(text):
+            edward_updates.append({'topic': topic_id, 'post': orig_post, 'action': 'investigating', 'postNumber': post_num, 'text': text[:200]})
+            break
+
+print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 `
 
       const { stdout } = await exec('python3', ['-c', script])
-      const confirmations: Array<{ topic: number; post: number; reporter: string | null; confirmedBy: string; confirmPostNumber: number; confirmText: string }> = JSON.parse(stdout.trim() || '[]')
+      let parsed: { confirmations: Array<any>; edwardUpdates: Array<any> }
+      try { parsed = JSON.parse(stdout.trim() || '{}') } catch { parsed = { confirmations: [], edwardUpdates: [] } }
+      const confirmations = parsed.confirmations ?? []
+      const edwardUpdates = parsed.edwardUpdates ?? []
 
       for (const c of confirmations) {
         db.prepare(
@@ -311,7 +376,33 @@ print(json.dumps(results))
         out(`check_bug_feedback: marked ${c.topic}/${c.post} fixed — confirmed by ${c.confirmedBy}`)
       }
 
-      return { checked: bugs.length, markedFixed: confirmations }
+      const markedInvestigating: Array<{ topic: number; post: number; reason: string }> = []
+      const markedOffTopic: Array<{ topic: number; post: number; reason: string }> = []
+
+      for (const u of edwardUpdates) {
+        const current = db.prepare('SELECT state FROM discourse_bug WHERE topic=? AND post=?').get(u.topic, u.post) as { state: string } | undefined
+        if (!current) continue
+        // Don't downgrade fixed/confirmed/fix-queued bugs
+        if (['fixed', 'confirmed', 'fix-queued'].includes(current.state)) continue
+
+        if (u.action === 'off_topic') {
+          db.prepare(
+            "UPDATE discourse_bug SET state='off-topic', reason=? WHERE topic=? AND post=?"
+          ).run(`Edward (post ${u.postNumber}): "${u.text.slice(0, 120)}"`, u.topic, u.post)
+          markedOffTopic.push({ topic: u.topic, post: u.post, reason: u.text.slice(0, 80) })
+          out(`check_bug_feedback: marked ${u.topic}/${u.post} off-topic — Edward explained expected behaviour`)
+        } else if (u.action === 'investigating') {
+          if (current.state !== 'investigating') {
+            db.prepare(
+              "UPDATE discourse_bug SET state='investigating', reason=? WHERE topic=? AND post=?"
+            ).run(`Edward working on it (post ${u.postNumber}): "${u.text.slice(0, 120)}"`, u.topic, u.post)
+            markedInvestigating.push({ topic: u.topic, post: u.post, reason: u.text.slice(0, 80) })
+            out(`check_bug_feedback: marked ${u.topic}/${u.post} investigating — Edward posted fix-in-progress`)
+          }
+        }
+      }
+
+      return { checked: allActiveBugs.length, markedFixed: confirmations, markedInvestigating, markedOffTopic }
     },
   },
 
@@ -1925,6 +2016,22 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         // Don't downgrade a bug already in fix-queued or fixed state
         const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
         if (existing && ['fix-queued', 'fixed', 'confirmed', 'investigating'].includes(existing.state)) { skipped++; continue }
+
+        // Retest: a follow-up confirmation of an existing bug in the same topic.
+        // Update the existing bug's last_seen_at; do NOT create a second entry for the same problem.
+        if (type === 'retest') {
+          const existingTopicBug = db.prepare(
+            `SELECT topic, post FROM discourse_bug WHERE topic = ? AND post != ? AND state IN ('open','investigating') LIMIT 1`
+          ).get(Number(c.topic), Number(post)) as { topic: number; post: number } | undefined
+          if (existingTopicBug) {
+            db.prepare(`UPDATE discourse_bug SET last_seen_at = datetime('now') WHERE topic = ? AND post = ?`)
+              .run(existingTopicBug.topic, existingTopicBug.post)
+            out(`persist_classifications: ${c.topic}/${post} is retest of existing bug ${existingTopicBug.topic}/${existingTopicBug.post} — updating timestamp, skipping new entry`)
+            skipped++
+            continue
+          }
+          // No existing open bug → treat as potential regression, fall through to persist as 'open'
+        }
         // Parse tags from classification output (TRIAGE emits symptom_tags + code_area)
         const symptomTags: string[] = Array.isArray(c.symptom_tags)
           ? c.symptom_tags.map((t: unknown) => String(t).toLowerCase())
