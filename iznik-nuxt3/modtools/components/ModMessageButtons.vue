@@ -62,6 +62,15 @@
         label="Hold"
       />
       <ModMessageButton
+        v-else
+        :messageid="message.id"
+        :groupid="groupid"
+        variant="success"
+        icon="play"
+        release
+        label="Release"
+      />
+      <ModMessageButton
         :messageid="message.id"
         :groupid="groupid"
         variant="danger"
