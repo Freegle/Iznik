@@ -480,7 +480,7 @@ class IncomingMailCommandTest extends TestCase
             'From' => $userEmail,
             'To' => $group->nameshort.'@groups.ilovefreegle.org',
             'Subject' => 'OFFER: Test log item (London)',
-            'Message-Id' => '<'.$msgId.'>',
+            'Message-ID' => '<'.$msgId.'>',
         ], 'Test body for log.');
 
         $this->artisan('mail:incoming', [
