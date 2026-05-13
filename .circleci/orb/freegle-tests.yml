@@ -312,6 +312,7 @@ commands:
 
       - run:
           name: Build containers
+          no_output_timeout: 25m
           command: |
             # Pre-pull shared base images once before any parallel builds start.
             # freegle-base: used by apiv1, freegle-prod-local, modtools-prod-local, etc.

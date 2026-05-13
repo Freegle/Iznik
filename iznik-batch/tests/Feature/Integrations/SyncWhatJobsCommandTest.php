@@ -320,6 +320,112 @@ class SyncWhatJobsCommandTest extends TestCase
     }
 
     /** @test */
+    public function test_sync_refuses_to_swap_when_zero_jobs_parsed(): void
+    {
+        // Pre-seed the live jobs table with rows that must not be wiped.
+        $srid = config('freegle.srid', 3857);
+        $geom = WhatJobsService::boxPoly(53.8, -1.55, 53.9, -1.45);
+        $before = DB::table('jobs')->count();
+        for ($i = 0; $i < 5; $i++) {
+            DB::statement(
+                'INSERT INTO jobs (job_reference,title,geometry,visible,clickability)
+                 VALUES (?,?,ST_GeomFromText(?,?),1,0)',
+                ["guard-zero-$i", 'Test', $geom, $srid]
+            );
+        }
+
+        $svc = new class extends WhatJobsService {
+            protected function downloadFeed(string $url): ?string
+            {
+                return null; // Simulate 429 / empty
+            }
+            public function swapTables(): void
+            {
+                throw new \RuntimeException('swapTables must not be called when 0 jobs parsed');
+            }
+            public function analyseClickability(): void {}
+            public function updateClickability(): void {}
+        };
+
+        config(['freegle.whatjobs.feed1' => 'http://fake-feed1', 'freegle.whatjobs.feed2' => 'http://fake-feed2']);
+
+        $result = $svc->sync(false);
+
+        $this->assertSame(0, $result['total']);
+        $this->assertTrue($result['skipped_swap'] ?? false);
+        $this->assertSame($before + 5, DB::table('jobs')->count(), 'jobs table must not be wiped');
+
+        DB::table('jobs')->where('job_reference', 'like', 'guard-zero-%')->delete();
+    }
+
+    /** @test */
+    public function test_sync_refuses_to_swap_when_parsed_far_below_existing(): void
+    {
+        // Seed enough rows that the existing-count threshold is met.
+        $srid = config('freegle.srid', 3857);
+        $geom = WhatJobsService::boxPoly(53.8, -1.55, 53.9, -1.45);
+        $existing = WhatJobsService::SWAP_RATIO_MIN_EXISTING + 100;
+        $before = DB::table('jobs')->count();
+        $rows = [];
+        for ($i = 0; $i < $existing; $i++) {
+            $rows[] = ["guard-drop-$i", 'Test', $geom, $srid];
+            if (count($rows) === 500) {
+                $placeholders = implode(',', array_fill(0, count($rows), '(?,?,ST_GeomFromText(?,?),1,0)'));
+                $bindings = [];
+                foreach ($rows as $r) {
+                    array_push($bindings, $r[0], $r[1], $r[2], $r[3]);
+                }
+                DB::statement("INSERT INTO jobs (job_reference,title,geometry,visible,clickability) VALUES $placeholders", $bindings);
+                $rows = [];
+            }
+        }
+        if ($rows) {
+            $placeholders = implode(',', array_fill(0, count($rows), '(?,?,ST_GeomFromText(?,?),1,0)'));
+            $bindings = [];
+            foreach ($rows as $r) {
+                array_push($bindings, $r[0], $r[1], $r[2], $r[3]);
+            }
+            DB::statement("INSERT INTO jobs (job_reference,title,geometry,visible,clickability) VALUES $placeholders", $bindings);
+        }
+
+        // Build a feed that yields only a handful of jobs (well under 50% of existing).
+        $xml = $this->makeFeedXml([
+            ['job_reference' => 'guard-new-1', 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK'],
+            ['job_reference' => 'guard-new-2', 'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK'],
+        ]);
+
+        $svc = new class($xml, $geom) extends WhatJobsService {
+            public function __construct(private string $xml, private string $geom) {}
+            protected function downloadFeed(string $url): ?string
+            {
+                $tmp = tempnam(sys_get_temp_dir(), 'whatjobs_grd_');
+                file_put_contents($tmp, $this->xml);
+                return $tmp;
+            }
+            public function geocodeCityState(string $city, string $state, string $country, array &$cache, string $zip = ''): ?array
+            {
+                return [53.8, -1.55, 53.9, -1.45, $this->geom];
+            }
+            public function swapTables(): void
+            {
+                throw new \RuntimeException('swapTables must not be called when parsed << existing');
+            }
+            public function analyseClickability(): void {}
+            public function updateClickability(): void {}
+        };
+
+        config(['freegle.whatjobs.feed1' => null, 'freegle.whatjobs.feed2' => 'http://fake-feed2']);
+
+        $result = $svc->sync(false);
+
+        $this->assertSame(2, $result['total']);
+        $this->assertTrue($result['skipped_swap'] ?? false);
+        $this->assertSame($before + $existing, DB::table('jobs')->count(), 'jobs table must not be wiped');
+
+        DB::table('jobs')->where('job_reference', 'like', 'guard-drop-%')->delete();
+    }
+
+    /** @test */
     public function test_sync_non_dry_run_inserts_into_jobs_new(): void
     {
         DB::statement('DROP TABLE IF EXISTS jobs_new');

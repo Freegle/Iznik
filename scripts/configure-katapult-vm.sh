@@ -162,12 +162,16 @@ echo 'Acquire::http::Proxy "http://${CACHE_SERVER}:3142";' > /etc/apt/apt.conf.d
 
 # Idle self-destruct: detect active job via Docker containers.
 # A running CI job always has freegle compose containers up.
-# When docker compose down runs at job end, containers disappear — starts 10-min timer.
+# When docker compose down runs at job end, containers disappear — starts idle timer.
 # This is the PRIMARY cleanup mechanism. The teardown step does not call DELETE.
 #
 # Failure mode: if a job is cancelled mid-run, the CircleCI agent is killed but
 # Docker containers it started remain up. idle-check then sees "active" containers
 # forever and never fires. The absolute-age fallback below catches this case.
+#
+# Build phase gap: during docker-compose build, no compose containers are running.
+# On Katapult, a full build takes 10-20 min. The idle timer (2100s = 35 min) must
+# exceed this gap so the idle-check does not fire mid-build.
 cat > /usr/local/bin/idle-check.sh << 'IDLEEOF'
 #!/bin/bash
 IDLE_MARKER="/tmp/.runner-idle-since"
@@ -212,10 +216,10 @@ IDLE_SINCE=\$(cat "\$IDLE_MARKER")
 NOW=\$(date +%s)
 IDLE_SECONDS=\$((NOW - IDLE_SINCE))
 
-# Destroy VM after 10 minutes idle. 10 min is long enough for a queued job to
-# be dispatched and start containers, but short enough to avoid wasting resources.
-# Must exceed the container-less gap during job startup (checkout + build ≈ 420s).
-if [ "\$IDLE_SECONDS" -gt 600 ]; then
+# Destroy VM after 35 minutes idle (2100s). Must exceed the container-less gap
+# during a CI run: checkout + Install system deps + Build containers ≈ 20 min on
+# Katapult. 35 min gives a comfortable margin without wasting excessive resources.
+if [ "\$IDLE_SECONDS" -gt 2100 ]; then
     echo "Runner idle for \${IDLE_SECONDS}s — self-destructing"
     if [ -n "\$VM_ID" ]; then
         curl -sf -X DELETE \

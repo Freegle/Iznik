@@ -13,6 +13,13 @@ class WhatJobsService
     const DISTRIBUTE = 0.0005;
     const SPAM_THRESHOLD = 50;
     const BATCH_SIZE = 500;
+    // Refuse to swap the live `jobs` table when parsed count is < this fraction
+    // of the existing row count, provided the existing table has at least
+    // SWAP_RATIO_MIN_EXISTING rows. Guards against a partial feed failure
+    // (e.g. an HTTP 429 on the WhatJobs feed while the dead clickcast feed
+    // returns 0) silently wiping the live table.
+    const MIN_SWAP_RATIO = 0.5;
+    const SWAP_RATIO_MIN_EXISTING = 1000;
 
     // UK bounding box for geocoder
     const UK_SWLAT = 49.959999905;
@@ -475,6 +482,20 @@ class WhatJobsService
         if ($dryRun) {
             Log::info('WhatJobs dry run', ['total_jobs' => $total]);
             return ['total' => $total, 'inserted' => 0, 'dry_run' => true];
+        }
+
+        // Defensive: swapTables() RENAMEs jobs_new over jobs, so a swap with too few
+        // parsed jobs wipes the live table. Refuse if 0 parsed (feed download likely
+        // 429d/empty) or if the count dropped to less than self::MIN_SWAP_RATIO of
+        // the existing row count (when the existing table is large enough to compare).
+        $existing = (int) DB::table('jobs')->count();
+        if ($total === 0 || ($existing >= self::SWAP_RATIO_MIN_EXISTING && $total < $existing * self::MIN_SWAP_RATIO)) {
+            Log::warning('WhatJobs: refusing to swap — parsed too few jobs', [
+                'parsed' => $total,
+                'existing' => $existing,
+                'min_ratio' => self::MIN_SWAP_RATIO,
+            ]);
+            return ['total' => $total, 'inserted' => 0, 'skipped_swap' => true, 'existing' => $existing];
         }
 
         $this->prepareTempTable();
