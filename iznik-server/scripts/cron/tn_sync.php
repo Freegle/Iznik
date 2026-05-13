@@ -42,7 +42,8 @@ $queuedTaskId = LaravelQueue::queueTask('tn_sync_command', [
     'from' => $from,
     'to' => $to,
     'run_id' => $runId,
-    'queued_by' => 'tn_sync.php'
+    'queued_by' => 'tn_sync.php',
+    'dry_run' => true,
 ]);
 
 if (is_null($queuedTaskId)) {

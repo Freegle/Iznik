@@ -28,13 +28,14 @@ class TNSyncCommand extends Command
     protected $signature = 'tn:sync
                             {--from= : Override sync start timestamp (ISO-8601)}
                             {--to= : Override sync end timestamp (ISO-8601)}
-                            {--run-id= : Queue run identifier used to update background_tasks JSON completion state}';
+                            {--run-id= : Queue run identifier used to update background_tasks JSON completion state}
+                            {--dry-run : Trace DB writes without executing them}';
 
     protected $description = 'Sync data from TrashNothing, including user data updates, user ratings, posts/messages, and chat messages.';
 
     private const PAGE_SIZE = 100;
 
-    private bool $dryRun = true; // TODO Finnbarr: pass in from tn_sync
+    private bool $dryRun;
 
     private string $apiKey;
     private string $apiBaseUrl;
@@ -50,6 +51,7 @@ class TNSyncCommand extends Command
     public function handle(): int
     {
         $this->registerShutdownHandlers();
+        $this->dryRun = (bool) $this->option('dry-run');
         $exitCode = Command::FAILURE;
         $errorMessage = null;
 
