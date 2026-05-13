@@ -228,7 +228,7 @@ do {
                 }
             } catch (\Exception $e) {
                 error_log("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=error");
-                error_log("Ratings sync failed " . $e->getMessage() . " " . var_export($rating, TRUE));
+                error_log("Changes sync failed " . $e->getMessage() . " " . var_export($change, TRUE));
                 \Sentry\captureException($e);
             }
         }

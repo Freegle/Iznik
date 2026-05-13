@@ -355,7 +355,7 @@ class TNSyncCommand extends Command
     {
         $page = 1;
         $count = 0;
-        $maxDate = null;
+        $maxDate = NULL;
 
         do {
             $response = Http::get("{$this->apiBaseUrl}/user-changes", [
