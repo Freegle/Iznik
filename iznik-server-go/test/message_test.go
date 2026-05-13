@@ -6343,6 +6343,7 @@ func TestExpiresatRespectsRepostsOfferKey(t *testing.T) {
 
 	var arrival time.Time
 	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrival)
+	require.False(t, arrival.IsZero(), "arrival must be set")
 
 	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
 	req := httptest.NewRequest("GET", url, nil)
@@ -6381,6 +6382,7 @@ func TestExpiresatRespectsRepostsWantedKey(t *testing.T) {
 
 	var arrival time.Time
 	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrival)
+	require.False(t, arrival.IsZero(), "arrival must be set")
 
 	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
 	req := httptest.NewRequest("GET", url, nil)
@@ -6417,6 +6419,7 @@ func TestExpiresatMaxagetoshowWins(t *testing.T) {
 
 	var arrival time.Time
 	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrival)
+	require.False(t, arrival.IsZero(), "arrival must be set")
 
 	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
 	req := httptest.NewRequest("GET", url, nil)
