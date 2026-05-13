@@ -420,8 +420,8 @@ func GetMemberships(c *fiber.Ctx) error {
 	filterJoin := ""
 	filterWhere := ""
 	switch filter {
-	case 1: // With comments/notes
-		filterJoin = " INNER JOIN users_comments uc ON uc.userid = m.userid AND uc.groupid = m.groupid"
+	case 1: // With comments/notes — use EXISTS to avoid row multiplication from multi-note members
+		filterWhere = " AND EXISTS (SELECT 1 FROM users_comments uc WHERE uc.userid = m.userid AND uc.groupid = m.groupid)"
 	case 2: // Moderation team
 		filterWhere = " AND m.role IN ('" + utils.ROLE_OWNER + "', '" + utils.ROLE_MODERATOR + "')"
 	case 3: // Bouncing

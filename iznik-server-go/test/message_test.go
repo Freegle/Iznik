@@ -6237,10 +6237,9 @@ func TestExpiresatRespectsRepostsOfferKey(t *testing.T) {
 
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" Offer", 55.9533, -3.1883)
 
-	var arrivalStr string
-	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrivalStr)
-	arrival, perr := time.Parse("2006-01-02 15:04:05", arrivalStr)
-	assert.NoError(t, perr)
+	var arrival time.Time
+	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrival)
+	require.False(t, arrival.IsZero(), "arrival must be set")
 
 	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
 	req := httptest.NewRequest("GET", url, nil)
@@ -6277,10 +6276,9 @@ func TestExpiresatRespectsRepostsWantedKey(t *testing.T) {
 	db.Exec("UPDATE messages SET type = 'Wanted' WHERE id = ?", msgID)
 	db.Exec("UPDATE messages_groups SET msgtype = 'Wanted' WHERE msgid = ?", msgID)
 
-	var arrivalStr string
-	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrivalStr)
-	arrival, perr := time.Parse("2006-01-02 15:04:05", arrivalStr)
-	assert.NoError(t, perr)
+	var arrival time.Time
+	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrival)
+	require.False(t, arrival.IsZero(), "arrival must be set")
 
 	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
 	req := httptest.NewRequest("GET", url, nil)
@@ -6315,10 +6313,9 @@ func TestExpiresatMaxagetoshowWins(t *testing.T) {
 
 	msgID := CreateTestMessage(t, userID, groupID, prefix+" Offer", 55.9533, -3.1883)
 
-	var arrivalStr string
-	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrivalStr)
-	arrival, perr := time.Parse("2006-01-02 15:04:05", arrivalStr)
-	assert.NoError(t, perr)
+	var arrival time.Time
+	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrival)
+	require.False(t, arrival.IsZero(), "arrival must be set")
 
 	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
 	req := httptest.NewRequest("GET", url, nil)
