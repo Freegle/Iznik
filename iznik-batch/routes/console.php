@@ -322,16 +322,17 @@ Schedule::command('chats:process-spam')
 //     ->withoutOverlapping()
 //     ->runInBackground();
 
-/*
-// Donation-related commands.
+// Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
     ->dailyAt('09:00')
     ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:donations:thank'))
     ->runInBackground();
 
 Schedule::command('mail:donations:ask')
     ->dailyAt('17:00')
     ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:donations:ask'))
     ->runInBackground();
 
 // Daily donation summary email to fundraising — running total of today's
@@ -344,18 +345,16 @@ Schedule::command('mail:donations:summary')
     ->sendOutputTo(cronLog('mail:donations:summary'))
     ->runInBackground();
 
-// User management commands.
-// (users:update-kudos enabled above.)
-Schedule::command('users:cleanup')
-    ->weekly()
-    ->sundays()
-    ->at('06:00')
-    ->withoutOverlapping()
-    ->runInBackground();
+// User management commands (users:cleanup still parked — no V1 cutover).
+// Schedule::command('users:cleanup')
+//     ->weekly()
+//     ->sundays()
+//     ->at('06:00')
+//     ->withoutOverlapping()
+//     ->runInBackground();
 
 // Email spool processing - runs continuously in daemon mode via supervisor.
 // See docker/supervisor.conf for the mail-spooler program.
-*/
 
 // Background task queue - processes tasks queued by Go API server.
 // Runs continuously with internal looping. Handles push notifications and emails.
