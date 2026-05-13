@@ -668,6 +668,8 @@ async function handleUppySuccess(result) {
         photo.uploading = false
         delete photo.tempId
 
+        photos.value = photos.value.filter((p) => !p.externalmods?.ai)
+
         emit('photoProcessed', ret.id)
       } catch (e) {
         console.error('Image post failed:', e)

@@ -35,8 +35,14 @@ CIRCLE_TOKEN="${CIRCLE_TOKEN:?CIRCLE_TOKEN env var required}"
 CIRCLE_PROJECT="github/Freegle/Iznik"
 LOG="/var/log/katapult-reaper.log"
 
-# VMs younger than this are skipped — gives time for job to be dispatched and start.
-MIN_AGE_SECONDS=600  # 10 minutes
+# VMs younger than this are skipped.
+# 9000s = 2.5h, matching max_run_time in runner config.
+# Runners share a pool and can pick up jobs from any pipeline — a VM named for
+# pipeline N may actually be running pipeline M's job. Setting this to 2.5h means
+# we only delete VMs that have outlasted the maximum legitimate job duration,
+# regardless of which pipeline's job is running on them. The on-VM idle-check
+# handles faster cleanup for normally-completing jobs.
+MIN_AGE_SECONDS=9000  # 2.5 hours
 
 DRY_RUN="${1:-}"  # pass --dry-run to print actions without deleting
 
