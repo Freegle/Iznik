@@ -6215,6 +6215,128 @@ func TestListMessagesTnpostid(t *testing.T) {
 	assert.Equal(t, "tn-list-001", firstMsg["tnpostid"])
 }
 
+// V1 expiretime = max(maxagetoshow, repostDays * (max+1)) where repostDays
+// comes from reposts.offer or reposts.wanted depending on message type.
+// V1 honours an explicit maxagetoshow=0. Earlier Go code looked for
+// non-existent "wantedreposts" and "reposts.interval" keys and treated 0
+// as "missing" — both regressions are covered here.
+func TestExpiresatRespectsRepostsOfferKey(t *testing.T) {
+	prefix := uniquePrefix("msg_expiresat_offer")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// maxagetoshow explicitly 0 means reposts alone govern expiry.
+	// Offer: 4 * (5+1) = 24 days.
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
+		"'$.maxagetoshow', 0, '$.reposts', JSON_OBJECT('offer', 4, 'wanted', 7, 'max', 5)) "+
+		"WHERE id = ?", groupID)
+
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" Offer", 55.9533, -3.1883)
+
+	var arrivalStr string
+	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrivalStr)
+	arrival, perr := time.Parse("2006-01-02 15:04:05", arrivalStr)
+	assert.NoError(t, perr)
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	expiresatStr, _ := result["expiresat"].(string)
+	expiresat, perr := time.Parse(time.RFC3339, expiresatStr)
+	assert.NoError(t, perr)
+
+	want := arrival.Add(24 * 24 * time.Hour)
+	assert.WithinDuration(t, want, expiresat, time.Minute,
+		"Offer expiresat should be arrival + 24d (offer=4, max=5, maxagetoshow=0)")
+}
+
+func TestExpiresatRespectsRepostsWantedKey(t *testing.T) {
+	prefix := uniquePrefix("msg_expiresat_wanted")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
+		"'$.maxagetoshow', 0, '$.reposts', JSON_OBJECT('offer', 4, 'wanted', 7, 'max', 5)) "+
+		"WHERE id = ?", groupID)
+
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	db.Exec("UPDATE messages SET type = 'Wanted' WHERE id = ?", msgID)
+	db.Exec("UPDATE messages_groups SET msgtype = 'Wanted' WHERE msgid = ?", msgID)
+
+	var arrivalStr string
+	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrivalStr)
+	arrival, perr := time.Parse("2006-01-02 15:04:05", arrivalStr)
+	assert.NoError(t, perr)
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	expiresatStr, _ := result["expiresat"].(string)
+	expiresat, perr := time.Parse(time.RFC3339, expiresatStr)
+	assert.NoError(t, perr)
+
+	want := arrival.Add(42 * 24 * time.Hour)
+	assert.WithinDuration(t, want, expiresat, time.Minute,
+		"Wanted expiresat should be arrival + 42d (wanted=7, max=5, maxagetoshow=0)")
+}
+
+func TestExpiresatMaxagetoshowWins(t *testing.T) {
+	prefix := uniquePrefix("msg_expiresat_maxage")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// maxagetoshow=60 beats repost lifetime of 3*(5+1)=18 for Offer.
+	db.Exec("UPDATE `groups` SET settings = JSON_SET(COALESCE(settings, '{}'), "+
+		"'$.maxagetoshow', 60, '$.reposts', JSON_OBJECT('offer', 3, 'wanted', 7, 'max', 5)) "+
+		"WHERE id = ?", groupID)
+
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" Offer", 55.9533, -3.1883)
+
+	var arrivalStr string
+	db.Raw("SELECT arrival FROM messages_groups WHERE msgid = ? LIMIT 1", msgID).Scan(&arrivalStr)
+	arrival, perr := time.Parse("2006-01-02 15:04:05", arrivalStr)
+	assert.NoError(t, perr)
+
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	expiresatStr, _ := result["expiresat"].(string)
+	expiresat, perr := time.Parse(time.RFC3339, expiresatStr)
+	assert.NoError(t, perr)
+
+	want := arrival.Add(60 * 24 * time.Hour)
+	assert.WithinDuration(t, want, expiresat, time.Minute,
+		"expiresat should be arrival + 60d when maxagetoshow > repost lifetime")
+}
+
 func TestListMessagesExpiresat(t *testing.T) {
 	prefix := uniquePrefix("msg_listexpires")
 
