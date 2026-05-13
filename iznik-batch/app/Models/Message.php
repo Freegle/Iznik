@@ -442,12 +442,14 @@ class Message extends Model implements Auditable
      * @param int|null    $happiness  Optional happiness rating.
      * @param int|null    $byUserId  ID of the user performing the withdrawal (null for system/batch).
      */
-    public function withdraw(?string $comment, ?int $happiness, ?int $byUserId = NULL): void
+    public function withdraw(?string $comment, ?int $happiness, ?int $byUserId = NULL, bool $dryRun = false): void
     {
         $intcomment = $this->interestingComment($comment);
 
         Logger::info("TN-SYNC-TRACE [WRITE] table=messages_outcomes_intended op=delete where=msgid={$this->id}");
-        // MessageOutcomeIntended::where('msgid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            MessageOutcomeIntended::where('msgid', $this->id)->get()->each->delete();
+        }
 
         $messageOutcome = new MessageOutcome();
         $messageOutcome->msgid = $this->id;
@@ -455,7 +457,9 @@ class Message extends Model implements Auditable
         $messageOutcome->happiness = $happiness;
         $messageOutcome->comments = $intcomment;
         Logger::info("TN-SYNC-TRACE [WRITE] table=messages_outcomes op=insert set=msgid={$this->id},outcome=" . Message::OUTCOME_WITHDRAWN . ",happiness=" . ($happiness ?? 'NULL') . ",comments=len=" . strlen($intcomment ?? ''));
-        // $messageOutcome->save();  // TRACE: commented out for port testing
+        if (!$dryRun) {
+            $messageOutcome->save();
+        }
 
         $log = new Log();
         $log->timestamp = now();
@@ -466,6 +470,8 @@ class Message extends Model implements Auditable
         $log->byuser = $byUserId;
         $log->text = $intcomment ? "Withdrawn: $comment" : 'Withdrawn';
         Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Message,subtype=Outcome,msgid={$this->id},user={$this->fromuser},byuser=" . ($byUserId ?? 'NULL') . ",text=len=" . strlen($intcomment ? "Withdrawn: $comment" : 'Withdrawn'));
-        // $log->save();  // TRACE: commented out for port testing
+        if (!$dryRun) {
+            $log->save();
+        }
     }
 }

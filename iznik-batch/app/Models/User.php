@@ -398,14 +398,16 @@ class User extends Model implements Auditable
     /**
      * Remove an email address from this user.
      */
-    public function removeEmail(string $email): void
+    public function removeEmail(string $email, bool $dryRun = false): void
     {
         Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=delete where=userid={$this->id},email={$email}");
 
-        UserEmail::where('userid', $this->id)
+        $row = UserEmail::where('userid', $this->id)
             ->where('email', $email)
             ->first();
-            // ?->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            $row?->delete();
+        }
     }
 
     /**
@@ -451,7 +453,7 @@ class User extends Model implements Auditable
         return $email;
     }
 
-    public function addEmail(string $email, int $primary = 1, bool $changeprimary = TRUE): ?int
+    public function addEmail(string $email, int $primary = 1, bool $changeprimary = TRUE, bool $dryRun = false): ?int
     {
         $email = trim($email);
 
@@ -481,17 +483,18 @@ class User extends Model implements Auditable
 
             if ($emails->isEmpty()) {
                 Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=insert where=userid={$this->id}");
-                // TRACE: commented out for port testing
-                // $newEmail = UserEmail::create([
-                //     'userid' => $this->id,
-                //     'email' => $email,
-                //     'preferred' => $primary,
-                //     'canon' => $canon,
-                //     'backwards' => strrev($canon),
-                // ]);
-                // $rc = $newEmail->id;
-
-                $rc = true;
+                if (!$dryRun) {
+                    $newEmail = UserEmail::create([
+                        'userid' => $this->id,
+                        'email' => $email,
+                        'preferred' => $primary,
+                        'canon' => $canon,
+                        'backwards' => strrev($canon),
+                    ]);
+                    $rc = $newEmail->id;
+                } else {
+                    $rc = true;
+                }
 
                 if ($rc && $primary) {
                     Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid={$this->id},id!={$rc} set=preferred=0");
@@ -500,9 +503,11 @@ class User extends Model implements Auditable
                         ->where('id', '!=', $rc)
                         ->where('preferred', '!=', 0)
                         ->get()
-                        ->each(function ($other) {
+                        ->each(function ($other) use ($dryRun) {
                             $other->preferred = 0;
-                            // $other->save(); // TRACE: commented out for port testing
+                            if (!$dryRun) {
+                                $other->save();
+                            }
                         });
                 }
             } else {
@@ -514,7 +519,9 @@ class User extends Model implements Auditable
                     $existing = UserEmail::find($rc);
                     if ($existing) {
                         $existing->preferred = $primary;
-                        // $existing->save(); // TRACE: commented out for port testing
+                        if (!$dryRun) {
+                            $existing->save();
+                        }
                     }
                 }
 
@@ -525,18 +532,20 @@ class User extends Model implements Auditable
                         ->where('id', '!=', $rc)
                         ->where('preferred', '!=', 0)
                         ->get()
-                        ->each(function ($other) {
+                        ->each(function ($other) use ($dryRun) {
                             $other->preferred = 0;
-                            // $other->save(); // TRACE: commented out for port testing
+                            if (!$dryRun) {
+                                $other->save();
+                            }
                         });
 
                     # If we've set an email we might no longer be bouncing.
-                    $this->unbounce($rc);
+                    $this->unbounce($rc, $dryRun);
                 }
             }
         }
 
-        $this->assignUserToToDonation($email, $this->id);
+        $this->assignUserToToDonation($email, $this->id, $dryRun);
 
         return $rc;
     }
@@ -544,27 +553,31 @@ class User extends Model implements Auditable
     /**
      * Haven't ported over logging behavior, add that if needed later.
      */
-    public function unbounce(int $emailid): void
+    public function unbounce(int $emailid, bool $dryRun = false): void
     {
         if ($emailid) {
             Logger::info("TN-SYNC-TRACE [WRITE] table=bounces_emails op=update where=emailid={$emailid} set=reset=1");
             BounceEmail::where('emailid', $emailid)
                 ->where('reset', '!=', 1)
                 ->get()
-                ->each(function ($bounce) {
+                ->each(function ($bounce) use ($dryRun) {
                     $bounce->reset = 1;
-                    // $bounce->save(); // TRACE: commented out for port testing
+                    if (!$dryRun) {
+                        $bounce->save();
+                    }
                 });
         }
 
         Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=bouncing=0");
         if ($this->bouncing != 0) {
             $this->bouncing = 0;
-            // $this->save(); // TRACE: commented out for port testing
+            if (!$dryRun) {
+                $this->save();
+            }
         }
     }
 
-    public function assignUserToToDonation(string $email, int $userid): void
+    public function assignUserToToDonation(string $email, int $userid, bool $dryRun = false): void
     {
         $email = trim($email);
 
@@ -581,7 +594,9 @@ class User extends Model implements Auditable
                 if ($userExists) {
                     Logger::info("TN-SYNC-TRACE [WRITE] table=users_donations op=update where=id={$donation->id} set=userid={$userid}");
                     $donation->userid = $userid;
-                    // $donation->save(); // TRACE: commented out for port testing
+                    if (!$dryRun) {
+                        $donation->save();
+                    }
                 }
             }
         }
@@ -961,7 +976,7 @@ class User extends Model implements Auditable
      * @param int|null $byUserId The user performing the merge (for logging)
      * @return bool TRUE on success, FALSE on failure or if merge is blocked
      */
-    public static function merge(int $id1, int $id2, string $reason, bool $forceMerge = FALSE, ?int $byUserId = NULL): bool
+    public static function merge(int $id1, int $id2, string $reason, bool $forceMerge = FALSE, ?int $byUserId = NULL, bool $dryRun = false): bool
     {
         Logger::info("Merge {$id2} into {$id1}, {$reason}");
 
@@ -1009,7 +1024,9 @@ class User extends Model implements Auditable
                     // id1 is not already a member — just reassign the membership.
                     $id2Memb->userid = $id1;
                     Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=update where=userid={$id2},groupid={$id2Memb->groupid} set=userid={$id1}");
-                    // $id2Memb->save(); // TRACE: commented out for port testing
+                    if (!$dryRun) {
+                        $id2Memb->save();
+                    }
                 } else {
                     // Both are members — merge: take highest role, oldest date, non-NULL attributes.
                     $role = self::roleMax($id1Memb->role, $id2Memb->role);
@@ -1032,7 +1049,9 @@ class User extends Model implements Auditable
                         }
                     }
 
-                    // $id1Memb->save(); // TRACE: commented out for port testing
+                    if (!$dryRun) {
+                        $id1Memb->save();
+                    }
                 }
             }
 
@@ -1073,10 +1092,12 @@ class User extends Model implements Auditable
 
             // Move all id2 emails to id1, clearing preferred.
             Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=update where=userid={$id2} set=userid={$id1},preferred=0");
-            UserEmail::where('userid', $id2)->get()->each(function ($emailRow) use ($id1) {
+            UserEmail::where('userid', $id2)->get()->each(function ($emailRow) use ($id1, $dryRun) {
                 $emailRow->userid = $id1;
                 $emailRow->preferred = 0;
-                // $emailRow->save(); // TRACE: commented out for port testing
+                if (!$dryRun) {
+                    $emailRow->save();
+                }
             });
 
             if ($primary) {
@@ -1084,78 +1105,84 @@ class User extends Model implements Auditable
                 $primaryRow = UserEmail::find($primary);
                 if ($primaryRow) {
                     $primaryRow->preferred = 1;
-                    // $primaryRow->save(); // TRACE: commented out for port testing
+                    if (!$dryRun) {
+                        $primaryRow->save();
+                    }
                 }
             }
 
             // Merge other foreign keys where success is less important.  For some of these there might already
             // be entries, so we do an IGNORE.
-            EloquentUtils::reparentRow(LocationExcluded::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(ChatRoster::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserSession::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(SpamUser::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(SpamUser::class, 'byuserid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserAddress::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRow(UserComment::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRow(UserComment::class, 'byuserid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserDonation::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserImage::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserInvitation::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRow(UserLogin::class, 'userid', $id2, $id1);
+            EloquentUtils::reparentRow(LocationExcluded::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(ChatRoster::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserSession::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(SpamUser::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(SpamUser::class, 'byuserid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserAddress::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRow(UserComment::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRow(UserComment::class, 'byuserid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserDonation::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserImage::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserInvitation::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRow(UserLogin::class, 'userid', $id2, $id1, $dryRun);
             // Update Native login uid to match new userid.
             Logger::info("TN-SYNC-TRACE [WRITE] table=users_logins op=update where=userid={$id1},type=" . self::LOGIN_NATIVE . " set=uid={$id1}");
             UserLogin::where('userid', $id1)
                 ->where('type', self::LOGIN_NATIVE)
                 ->where('uid', '!=', (string) $id1)
                 ->get()
-                ->each(function ($nativeLogin) use ($id1) {
+                ->each(function ($nativeLogin) use ($id1, $dryRun) {
                     try {
                         $nativeLogin->uid = (string) $id1;
-                        // $nativeLogin->save(); // TRACE: commented out for port testing
+                        if (!$dryRun) {
+                            $nativeLogin->save();
+                        }
                     } catch (QueryException $e) {
                         Logger::warning("Native login uid update conflict for {$nativeLogin->getKey()}: " . $e->getMessage());
                     }
                 });
-            EloquentUtils::reparentRowIgnore(UserNearby::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(Notification::class, 'fromuser', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(Notification::class, 'touser', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserNudge::class, 'fromuser', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserNudge::class, 'touser', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserPushNotification::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserRequest::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserRequest::class, 'completedby', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserSearch::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(Newsfeed::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(MessageReneged::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserStory::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserStoryLike::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserStoryRequested::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserThanks::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(ModNotif::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(TeamMember::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserAboutMe::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(Rating::class, 'rater', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(Rating::class, 'ratee', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserReplyTime::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(MessagePromise::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(MessageBy::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(Tryst::class, 'user1', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(Tryst::class, 'user2', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(IsochroneUser::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(Microaction::class, 'userid', $id2, $id1);
+            EloquentUtils::reparentRowIgnore(UserNearby::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(Notification::class, 'fromuser', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(Notification::class, 'touser', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserNudge::class, 'fromuser', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserNudge::class, 'touser', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserPushNotification::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserRequest::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserRequest::class, 'completedby', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserSearch::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(Newsfeed::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(MessageReneged::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserStory::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserStoryLike::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserStoryRequested::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserThanks::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(ModNotif::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(TeamMember::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserAboutMe::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(Rating::class, 'rater', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(Rating::class, 'ratee', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserReplyTime::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(MessagePromise::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(MessageBy::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(Tryst::class, 'user1', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(Tryst::class, 'user2', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(IsochroneUser::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(Microaction::class, 'userid', $id2, $id1, $dryRun);
 
             // --- Handle bans ---
-            EloquentUtils::reparentRowIgnore(UserBanned::class, 'userid', $id2, $id1);
-            EloquentUtils::reparentRowIgnore(UserBanned::class, 'byuser', $id2, $id1);
+            EloquentUtils::reparentRowIgnore(UserBanned::class, 'userid', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRowIgnore(UserBanned::class, 'byuser', $id2, $id1, $dryRun);
 
             // Remove memberships for groups the merged user is banned from.
             $bans = UserBanned::where('userid', $id1)->get();
             foreach ($bans as $ban) {
                 Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$id1},groupid={$ban->groupid}");
-                Membership::where('userid', $id1)
+                $banMembership = Membership::where('userid', $id1)
                     ->where('groupid', $ban->groupid)
                     ->first();
-                    // ?->delete(); // TRACE: commented out for port testing
+                if (!$dryRun) {
+                    $banMembership?->delete();
+                }
             }
 
             // --- Merge chat rooms ---
@@ -1187,28 +1214,34 @@ class User extends Model implements Auditable
                 if ($existing) {
                     // Room already exists for id1 — move messages into it.
                     Logger::info("TN-SYNC-TRACE [WRITE] table=chat_messages op=update where=chatid={$room->id} set=chatid={$existing->id}");
-                    ChatMessage::where('chatid', $room->id)->get()->each(function ($chatMessage) use ($existing) {
+                    ChatMessage::where('chatid', $room->id)->get()->each(function ($chatMessage) use ($existing, $dryRun) {
                         $chatMessage->chatid = $existing->id;
-                        // $chatMessage->save(); // TRACE: commented out for port testing
+                        if (!$dryRun) {
+                            $chatMessage->save();
+                        }
                     });
 
                     // Keep the latest message timestamp.
                     Logger::info("TN-SYNC-TRACE [WRITE] table=chat_rooms op=update where=id={$existing->id} set=latestmessage=" . (is_string($room->latestmessage) && strlen($room->latestmessage) > 50 ? ('len=' . strlen($room->latestmessage)) : $room->latestmessage));
                     if ($room->latestmessage && (!$existing->latestmessage || $room->latestmessage > $existing->latestmessage)) {
                         $existing->latestmessage = $room->latestmessage;
-                        // $existing->save(); // TRACE: commented out for port testing
+                        if (!$dryRun) {
+                            $existing->save();
+                        }
                     }
                 } else {
                     // No existing room — just reassign user reference.
                     $col = ($room->user1 == $id2) ? 'user1' : 'user2';
                     $room->$col = $id1;
                     Logger::info("TN-SYNC-TRACE [WRITE] table=chat_rooms op=update where=id={$room->id} set={$col}={$id1}");
-                    // $room->save(); // TRACE: commented out for port testing
+                    if (!$dryRun) {
+                        $room->save();
+                    }
                 }
             }
 
             // Move all remaining chat messages from id2.
-            EloquentUtils::reparentRow(ChatMessage::class, 'userid', $id2, $id1);
+            EloquentUtils::reparentRow(ChatMessage::class, 'userid', $id2, $id1, $dryRun);
 
             // --- Merge user attributes (keep non-NULL from id2 if id1 is NULL) ---
             // Refresh models after membership changes.
@@ -1217,15 +1250,20 @@ class User extends Model implements Auditable
 
             foreach (['fullname', 'firstname', 'lastname', 'yahooid'] as $att) {
                 $id2Value = $u2->$att;
-                // TRACE: commented out for port testing (to get identical logs as tn_sync)
-                // if ($id2Value === NULL) {
-                //     continue;
-                // }
+
+                // Skip early continue during dry run to get identical logs as tn_sync.
+                if (!$dryRun) {
+                    if ($id2Value === NULL) {
+                        continue;
+                    }
+                }
 
                 // Clear id2's attribute first (unique key safety for yahooid).
                 $u2->$att = NULL;
                 Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id2} set={$att}=NULL");
-                // $u2->save(); // TRACE: commented out for port testing
+                if (!$dryRun) {
+                    $u2->save();
+                }
 
                 // Don't overwrite a name with FBUser or a -owner address.
                 $isDodgyName = $att === 'fullname'
@@ -1234,22 +1272,24 @@ class User extends Model implements Auditable
                 if ($u1->$att === NULL && !$isDodgyName) {
                     $u1->$att = $id2Value;
                     Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=" . ($att !== 'fullname' ? "id={$id1},{$att}=NULL" : "id={$id1}") . " set={$att}=" . (is_string($id2Value) && strlen($id2Value) > 50 ? ('len=' . strlen($id2Value)) : $id2Value));
-                    // $u1->save(); // TRACE: commented out for port testing
+                    if (!$dryRun) {
+                        $u1->save();
+                    }
                 }
 
                 $u1->refresh();
             }
 
             // --- Merge logs ---
-            EloquentUtils::reparentRow(Log::class, 'user', $id2, $id1);
-            EloquentUtils::reparentRow(Log::class, 'byuser', $id2, $id1);
+            EloquentUtils::reparentRow(Log::class, 'user', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRow(Log::class, 'byuser', $id2, $id1, $dryRun);
 
             // --- Merge messages ---
-            EloquentUtils::reparentRow(Message::class, 'fromuser', $id2, $id1);
+            EloquentUtils::reparentRow(Message::class, 'fromuser', $id2, $id1, $dryRun);
 
             // --- Merge history ---
-            EloquentUtils::reparentRow(MessageHistory::class, 'fromuser', $id2, $id1);
-            EloquentUtils::reparentRow(MembershipHistory::class, 'userid', $id2, $id1);
+            EloquentUtils::reparentRow(MessageHistory::class, 'fromuser', $id2, $id1, $dryRun);
+            EloquentUtils::reparentRow(MembershipHistory::class, 'userid', $id2, $id1, $dryRun);
 
             // --- Merge system role (take highest) ---
             $u1->refresh();
@@ -1258,7 +1298,9 @@ class User extends Model implements Auditable
             $mergedSystemRole = self::systemRoleMax($u1->systemrole, $u2->systemrole);
             $u1->systemrole = $mergedSystemRole;
             Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=systemrole={$mergedSystemRole}");
-            // $u1->save(); // TRACE: commented out for port testing
+            if (!$dryRun) {
+                $u1->save();
+            }
 
             // --- Merge added date (keep oldest) ---
             $earlierAdded = ($u1->added < $u2->added) ? $u1->added : $u2->added;
@@ -1266,7 +1308,9 @@ class User extends Model implements Auditable
             Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=added={$earlierAdded}");
             $u1->lastupdated = now();
             Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=lastupdated=NOW()");
-            // $u1->save(); // TRACE: commented out for port testing
+            if (!$dryRun) {
+                $u1->save();
+            }
 
             // --- Merge TN user ID ---
             $tnId1 = $u1->tnuserid;
@@ -1275,10 +1319,14 @@ class User extends Model implements Auditable
             if (!$tnId1 && $tnId2) {
                 $u2->tnuserid = NULL;
                 Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id2} set=tnuserid=NULL");
-                // $u2->save(); // TRACE: commented out for port testing
+                if (!$dryRun) {
+                    $u2->save();
+                }
                 $u1->tnuserid = $tnId2;
                 Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$id1} set=tnuserid={$tnId2}");
-                // $u1->save(); // TRACE: commented out for port testing
+                if (!$dryRun) {
+                    $u1->save();
+                }
             }
 
             // --- Merge gift aid (keep most favourable declaration) ---
@@ -1309,7 +1357,9 @@ class User extends Model implements Auditable
                 foreach ($giftAids as $giftAid) {
                     if ($giftAid->id !== $best->id) {
                         Logger::info("TN-SYNC-TRACE [WRITE] table=giftaid op=delete where=id={$giftAid->id}");
-                        // $giftAid->delete(); // TRACE: commented out for port testing
+                        if (!$dryRun) {
+                            $giftAid->delete();
+                        }
                     }
                 }
 
@@ -1317,7 +1367,9 @@ class User extends Model implements Auditable
                 Logger::info("TN-SYNC-TRACE [WRITE] table=giftaid op=update where=id={$best->id} set=userid={$id1}");
                 if ($best->userid !== $id1) {
                     $best->userid = $id1;
-                    // $best->save(); // TRACE: commented out for port testing
+                    if (!$dryRun) {
+                        $best->save();
+                    }
                 }
             }
 
@@ -1332,7 +1384,9 @@ class User extends Model implements Auditable
             $logId2->byuser = $byUserId;
             $logId2->text = $mergeText;
             Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=User,subtype=Merged,user={$id2},byuser=" . ($byUserId ?? 'NULL') . ",text=len=" . strlen($mergeText));
-            // $logId2->save(); // TRACE: commented out for port testing
+            if (!$dryRun) {
+                $logId2->save();
+            }
 
             $logId1 = new Log();
             $logId1->timestamp = now();
@@ -1342,7 +1396,9 @@ class User extends Model implements Auditable
             $logId1->byuser = $byUserId;
             $logId1->text = $mergeText;
             Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=User,subtype=Merged,user={$id1},byuser=" . ($byUserId ?? 'NULL') . ",text=len=" . strlen($mergeText));
-            // $logId1->save(); // TRACE: commented out for port testing
+            if (!$dryRun) {
+                $logId1->save();
+            }
 
             DB::commit();
         } catch (\Exception $e) {
@@ -1359,12 +1415,16 @@ class User extends Model implements Auditable
         # Make sure we don't pick up an old cached version, as we've just changed it quite a bit.
         try {
             Logger::info("Merged {$id1} < {$id2}, {$reason}");
-            Membership::where('userid', $id2)->get()->each(function ($m) {
+            Membership::where('userid', $id2)->get()->each(function ($m) use ($dryRun) {
                 Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$m->userid},groupid={$m->groupid}");
-                // $m->delete(); // TRACE: commented out for port testing
+                if (!$dryRun) {
+                    $m->delete();
+                }
             });
             Logger::info("TN-SYNC-TRACE [WRITE] table=users op=delete where=id={$id2}");
-            // User::find($id2)?->delete(); // TRACE: commented out for port testing
+            if (!$dryRun) {
+                User::find($id2)?->delete();
+            }
         } catch (\Exception $e) {
             Logger::error("Failed to delete merged user {$id2}: " . $e->getMessage());
             // The merge itself succeeded — the user data is consolidated in id1.
@@ -1396,7 +1456,7 @@ class User extends Model implements Auditable
      *
      * @param string $reason Human-readable reason for the deletion (e.g. 'GDPR request')
      */
-    public function forget(string $reason): void
+    public function forget(string $reason, bool $dryRun = false): void
     {
         // --- Clear personal attributes ---
         Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=firstname=NULL");
@@ -1409,19 +1469,25 @@ class User extends Model implements Auditable
         $this->settings = NULL;
         Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=yahooid=NULL");
         $this->yahooid = NULL;
-        // $this->save();  // TRACE: commented out for port testing
+        if (!$dryRun) {
+            $this->save();
+        }
 
         // --- Delete external emails (keep internal Freegle addresses) ---
         foreach ($this->emails()->get() as $email) {
             if (!self::isInternalEmail($email->email)) {
                 Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=delete where=userid={$this->id},email={$email->email}");
-                // $email->delete();  // TRACE: commented out for port testing
+                if (!$dryRun) {
+                    $email->delete();
+                }
             }
         }
 
         // --- Delete all login credentials ---
         Logger::info("TN-SYNC-TRACE [WRITE] table=users_logins op=delete where=userid={$this->id}");
-        // UserLogin::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            UserLogin::where('userid', $this->id)->get()->each->delete();
+        }
 
         // --- Clear message content and withdraw messages without an outcome ---
         $msgIds = Message::where('fromuser', $this->id)
@@ -1441,24 +1507,30 @@ class User extends Model implements Auditable
             $message->htmlbody = NULL;
             $message->deleted = now();
             Logger::info("TN-SYNC-TRACE [WRITE] table=messages op=update where=id={$msgId} set=fromip=NULL,message=NULL,envelopefrom=NULL,fromname=NULL,fromaddr=NULL,messageid=NULL,textbody=NULL,htmlbody=NULL,deleted=NOW()");
-            // $message->save();  // TRACE: commented out for port testing
+            if (!$dryRun) {
+                $message->save();
+            }
 
             // Mark the message group as deleted
             $messageGroup = MessageGroup::find($msgId);
             $messageGroup->deleted = 1;
             Logger::info("TN-SYNC-TRACE [WRITE] table=messages_groups op=update where=msgid={$msgId} set=deleted=1");
-            // $messageGroup->save();  // TRACE: commented out for port testing
+            if (!$dryRun) {
+                $messageGroup->save();
+            }
 
             // Clear any outcome comments that might contain personal data.
             foreach ($message->outcomes()->get() as $messageOutcome) {
                 $messageOutcome->comments = NULL;
                 Logger::info("TN-SYNC-TRACE [WRITE] table=messages_outcomes op=update where=msgid={$msgId} set=comments=NULL");
-                // $messageOutcome->save();  // TRACE: commented out for port testing
+                if (!$dryRun) {
+                    $messageOutcome->save();
+                }
             }
 
             // Withdraw if no outcome has been recorded yet.
             if (!$message->hasOutcome()) {
-                $message->withdraw('Withdrawn on user unsubscribe', NULL);
+                $message->withdraw('Withdrawn on user unsubscribe', NULL, NULL, $dryRun);
             }
         }
 
@@ -1466,53 +1538,81 @@ class User extends Model implements Auditable
         foreach ($this->chatMessages()->get() as $chatMessage) {
             $chatMessage->message = NULL;
             Logger::info("TN-SYNC-TRACE [WRITE] table=chat_messages op=update where=id={$chatMessage->id} set=message=NULL");
-            // $chatMessage->save();  // TRACE: commented out for port testing
+            if (!$dryRun) {
+                $chatMessage->save();
+            }
         }
 
         // --- Delete user-generated content ---
         Logger::info("TN-SYNC-TRACE [WRITE] table=communityevents op=delete where=userid={$this->id}");
-        // CommunityEvent::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            CommunityEvent::where('userid', $this->id)->get()->each->delete();
+        }
         Logger::info("TN-SYNC-TRACE [WRITE] table=volunteering op=delete where=userid={$this->id}");
-        // Volunteering::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            Volunteering::where('userid', $this->id)->get()->each->delete();
+        }
         Logger::info("TN-SYNC-TRACE [WRITE] table=newsfeed op=delete where=userid={$this->id}");
-        // Newsfeed::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            Newsfeed::where('userid', $this->id)->get()->each->delete();
+        }
         Logger::info("TN-SYNC-TRACE [WRITE] table=users_stories op=delete where=userid={$this->id}");
-        // UserStory::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            UserStory::where('userid', $this->id)->get()->each->delete();
+        }
         Logger::info("TN-SYNC-TRACE [WRITE] table=users_searches op=delete where=userid={$this->id}");
-        // UserSearch::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            UserSearch::where('userid', $this->id)->get()->each->delete();
+        }
         Logger::info("TN-SYNC-TRACE [WRITE] table=users_aboutme op=delete where=userid={$this->id}");
-        // UserAboutMe::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            UserAboutMe::where('userid', $this->id)->get()->each->delete();
+        }
         Logger::info("TN-SYNC-TRACE [WRITE] table=ratings op=delete where=rater={$this->id}");
-        // Rating::where('rater', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            Rating::where('rater', $this->id)->get()->each->delete();
+        }
         Logger::info("TN-SYNC-TRACE [WRITE] table=ratings op=delete where=ratee={$this->id}");
-        // Rating::where('ratee', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            Rating::where('ratee', $this->id)->get()->each->delete();
+        }
 
         // --- Remove all group memberships ---
         $groupIds = collect($this->getMembershipList())->pluck('id');
         foreach ($groupIds as $groupId) {
             Logger::info("TN-SYNC-TRACE [WRITE] table=memberships op=delete where=userid={$this->id},groupid={$groupId}");
-            $this->removeMembership($groupId);
+            $this->removeMembership($groupId, dryRun: $dryRun);
         }
 
         // --- Delete postal addresses and profile images ---
         Logger::info("TN-SYNC-TRACE [WRITE] table=users_addresses op=delete where=userid={$this->id}");
-        // UserAddress::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            UserAddress::where('userid', $this->id)->get()->each->delete();
+        }
         Logger::info("TN-SYNC-TRACE [WRITE] table=users_images op=delete where=userid={$this->id}");
-        // UserImage::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            UserImage::where('userid', $this->id)->get()->each->delete();
+        }
 
         // --- Delete message promises ---
         Logger::info("TN-SYNC-TRACE [WRITE] table=messages_promises op=delete where=userid={$this->id}");
-        // MessagePromise::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            MessagePromise::where('userid', $this->id)->get()->each->delete();
+        }
 
         // --- Mark user as forgotten ---
         $this->forgotten = now();
         $this->tnuserid = NULL;
         Logger::info("TN-SYNC-TRACE [WRITE] table=users op=update where=id={$this->id} set=forgotten=NOW(),tnuserid=NULL");
-        // $this->save();  // TRACE: commented out for port testing
+        if (!$dryRun) {
+            $this->save();
+        }
 
         // --- Delete sessions ---
         Logger::info("TN-SYNC-TRACE [WRITE] table=sessions op=delete where=userid={$this->id}");
-        // UserSession::where('userid', $this->id)->get()->each->delete(); // TRACE: commented out for port testing
+        if (!$dryRun) {
+            UserSession::where('userid', $this->id)->get()->each->delete();
+        }
 
         // --- Log the deletion ---
         $log = new Log();
@@ -1522,7 +1622,9 @@ class User extends Model implements Auditable
         $log->user = $this->id;
         $log->text = $reason;
         Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=User,subtype=Deleted,user={$this->id},text=len=" . strlen($reason));
-        // $log->save();  // TRACE: commented out for port testing
+        if (!$dryRun) {
+            $log->save();
+        }
     }
 
     /**
@@ -1540,7 +1642,7 @@ class User extends Model implements Auditable
      * @param bool $byEmail If TRUE, send a farewell email to the user (also sent to TN users automatically)
      * @return bool TRUE if the membership was deleted (or a ban was recorded)
      */
-    public function removeMembership(int $groupId, bool $ban = FALSE, bool $spam = FALSE, ?int $byUserId = NULL, bool $byEmail = FALSE): bool
+    public function removeMembership(int $groupId, bool $ban = FALSE, bool $spam = FALSE, ?int $byUserId = NULL, bool $byEmail = FALSE, bool $dryRun = false): bool
     {
         // Notify TN users or email-triggered removals so they know they can no longer see messages.
         if ($byEmail || $this->isTN()) {
@@ -1570,7 +1672,9 @@ class User extends Model implements Auditable
             $userBanned->groupid = $groupId;
             $userBanned->byuser = $byUserId;
             Logger::info("TN-SYNC-TRACE [WRITE] table=users_banned op=insert where=userid={$this->id},groupid={$groupId},byuser=" . ($byUserId ?? 'NULL'));
-            // $userBanned->save();  // TRACE: commented out for port testing
+            if (!$dryRun) {
+                $userBanned->save();
+            }
 
             // Withdraw active Offer/Wanted messages on this group that have no outcome yet.
             $msgIds = MessageGroup::join('messages', 'messages_groups.msgid', '=', 'messages.id')
@@ -1583,7 +1687,7 @@ class User extends Model implements Auditable
                 $m = Message::find($msgId);
 
                 if ($m && !$m->hasOutcome()) {
-                    $m->withdraw('Marked as withdrawn by ban', NULL, $byUserId);
+                    $m->withdraw('Marked as withdrawn by ban', NULL, $byUserId, $dryRun);
                 }
             }
         }
@@ -1594,7 +1698,9 @@ class User extends Model implements Auditable
             ->where('groupid', $groupId)
             ->first();
         $deleted = $membership ? 1 : 0;
-        // $membership?->delete();  // TRACE: commented out for port testing
+        if (!$dryRun) {
+            $membership?->delete();
+        }
 
         if ($deleted || $ban) {
             $log = new Log();
@@ -1606,7 +1712,9 @@ class User extends Model implements Auditable
             $log->groupid = $groupId;
             $log->text = $spam ? 'Autoremoved spammer' : ($ban ? 'via ban' : NULL);
             Logger::info("TN-SYNC-TRACE [WRITE] table=logs op=insert set=type=Group,subtype=Left,user={$this->id},byuser=" . ($byUserId ?? 'NULL') . ",groupid={$groupId},text=" . ($spam ? 'Autoremoved spammer' : ($ban ? 'via ban' : 'NULL')));
-            // $log->save();  // TRACE: commented out for port testing
+            if (!$dryRun) {
+                $log->save();
+            }
         }
 
         return $deleted > 0 || $ban;
