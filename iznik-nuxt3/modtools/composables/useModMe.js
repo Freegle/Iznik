@@ -77,9 +77,10 @@ export function useModMe() {
       clearTimeout(miscStore.workTimer)
     }
 
-    // Do not check for work and therefore refresh while any modal is open
+    // Skip refresh while modtools editing is in progress; beep is also skipped
+    // when any modal is open (body overflow:hidden) to avoid iOS audio interruption.
     const bodyoverflow = document.body.style.overflow
-    const oktocheck = bodyoverflow !== 'hidden' && !miscStore.modtoolsediting
+    const oktocheck = !miscStore.modtoolsediting
     if (force || oktocheck) {
       // console.log('========================================')
       console.log(
@@ -111,6 +112,7 @@ export function useModMe() {
         work &&
         totalCount > currentTotal &&
         !skipBeep &&
+        bodyoverflow !== 'hidden' &&
         authStore.user &&
         (!authStore.user.settings ||
           !Object.keys(authStore.user.settings).includes('playbeep') ||
