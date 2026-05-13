@@ -35,7 +35,6 @@ class TNSyncCommandTest extends TestCase
     private const DATE_LATER = '2026-03-20T12:00:00+00:00';
     private const DATE_OLD = '2026-01-01 00:00:00';
 
-    private const DB_WRITES_DISABLED_SKIP_REASON = 'Temporarily skipped: TNSyncCommand write paths are disabled for port testing.';
 
     private string $dateFile;
     private string $apiBaseUrl;
@@ -83,15 +82,8 @@ class TNSyncCommandTest extends TestCase
     // Ratings sync
     // =========================================================================
 
-    private function skipIfTNSyncWritesDisabled(): void
-    {
-        $this->markTestSkipped(self::DB_WRITES_DISABLED_SKIP_REASON);
-    }
-
     public function test_sync_creates_new_rating(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user = $this->createTestUser();
 
         Http::fake([
@@ -115,8 +107,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_sync_updates_existing_rating(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user = $this->createTestUser();
         $tnRatingId = 'tn_r_update_' . uniqid();
 
@@ -148,8 +138,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_sync_deletes_rating_when_null(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user = $this->createTestUser();
         $tnRatingId = 'tn_r_delete_' . uniqid();
 
@@ -225,8 +213,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_sync_account_removed_forgets_user(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user = $this->createTNUser();
 
         Http::fake([
@@ -272,8 +258,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_sync_reply_time_upserts(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user = $this->createTNUser();
 
         Http::fake([
@@ -296,8 +280,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_sync_reply_time_updates_existing(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user = $this->createTNUser();
 
         DB::table('users_replytime')->insert([
@@ -348,8 +330,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_sync_about_me_upserts(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user = $this->createTNUser();
 
         Http::fake([
@@ -394,8 +374,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_sync_name_change_updates_fullname(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user = $this->createTNUser('OldName');
 
         Http::fake([
@@ -417,8 +395,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_sync_name_change_updates_tn_emails(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user = $this->createTNUser('OldName');
 
         // Add a TN-style email with the old name.
@@ -504,7 +480,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_sync_location_change_updates_lastlocation(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
 
         // Only run if we have location data in the test DB.
         if (!DB::table('locations')->where('type', 'Postcode')->whereRaw("LOCATE(' ', name) > 0")->exists()) {
@@ -574,8 +549,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_merge_duplicate_tn_users(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser(['fullname' => 'Alice']);
         $user2 = $this->createTestUser(['fullname' => 'Alice']);
 
@@ -755,8 +728,6 @@ class TNSyncCommandTest extends TestCase
 
     public function test_paginates_through_multiple_rating_pages(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user = $this->createTestUser();
 
         // Page 1: 100 ratings (full page triggers pagination).
