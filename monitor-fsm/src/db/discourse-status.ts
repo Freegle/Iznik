@@ -82,41 +82,46 @@ export function renderStatusPostBody(db: DB): StatusRenderResult {
   const prLink = (n: number | null) =>
     n ? `[#${n}](https://github.com/Freegle/Iznik/pull/${n})` : ''
 
-  // ---- Bugs being investigated / worked on ----
-  const workingStates = ['open', 'investigating', 'fix-queued']
-  const working = open.filter(b => workingStates.includes(b.state))
+  // ---- Bugs with a PR open (actively being fixed) ----
+  const inProgress = open.filter(b => b.state === 'fix-queued' && b.pr_number)
 
-  if (working.length > 0) {
-    lines.push('## Bugs we\'re working on', '')
-
-    // Group by feature_area; bugs with no area go under a catch-all group.
-    const groups = new Map<string, DiscourseBugRow[]>()
-    for (const b of working) {
-      const area = b.feature_area ?? 'Other'
-      if (!groups.has(area)) groups.set(area, [])
-      groups.get(area)!.push(b)
-    }
-
-    for (const [area, bugs] of groups) {
-      lines.push(`### ${area}`, '')
-      lines.push('| Reporter | Issue | PR | Live? |')
-      lines.push('|---|---|---|---|')
-      for (const b of bugs) {
-        const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
-        const excerpt = escapeCell((b.excerpt ?? '').slice(0, 160))
-        const pr = prLink(b.pr_number)
-        let liveStatus = ''
-        if (b.pr_number) {
-          const ds = deployStates.get(b.pr_number)
-          if (ds === 'deployed' || ds === 'live') liveStatus = ':white_check_mark: Live'
-          else if (ds === 'pending_deploy') liveStatus = ':hourglass: Deploying'
-          else liveStatus = ':hammer_and_wrench: In progress'
-        }
-        lines.push(`| [@${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${pr} | ${liveStatus} |`)
+  if (inProgress.length > 0) {
+    lines.push('## Bugs being fixed', '')
+    lines.push('| Area | Reporter | Issue | PR | Status |')
+    lines.push('|---|---|---|---|---|')
+    for (const b of inProgress) {
+      const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
+      const excerpt = escapeCell((b.excerpt ?? '').slice(0, 160))
+      const pr = prLink(b.pr_number)
+      const area = b.feature_area ?? '—'
+      let liveStatus = ':hammer_and_wrench: In progress'
+      if (b.pr_number) {
+        const ds = deployStates.get(b.pr_number)
+        if (ds === 'deployed' || ds === 'live') liveStatus = ':white_check_mark: Live'
+        else if (ds === 'pending_deploy') liveStatus = ':hourglass: Deploying'
       }
-      lines.push('')
+      lines.push(`| ${area} | [@${b.reporter ?? 'reporter'}](${url}) | ${excerpt} | ${pr} | ${liveStatus} |`)
     }
+    lines.push('')
   }
+
+  // ---- Bugs queued for investigation (no PR yet) ----
+  const queued = open.filter(b => ['open', 'investigating'].includes(b.state))
+
+  if (queued.length > 0) {
+    lines.push('## In our queue', '')
+    lines.push('| Area | Reporter | Issue |')
+    lines.push('|---|---|---|')
+    for (const b of queued) {
+      const url = `${DISCOURSE_BASE}/t/${b.topic}/${b.post}`
+      const excerpt = escapeCell((b.excerpt ?? '').slice(0, 160))
+      const area = b.feature_area ?? '—'
+      lines.push(`| ${area} | [@${b.reporter ?? 'reporter'}](${url}) | ${excerpt} |`)
+    }
+    lines.push('')
+  }
+
+  const working = [...inProgress, ...queued]
 
   // ---- Recently fixed ----
   if (recentFixed.length > 0) {

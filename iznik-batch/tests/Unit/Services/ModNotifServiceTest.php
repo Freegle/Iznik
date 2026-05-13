@@ -482,6 +482,56 @@ class ModNotifServiceTest extends TestCase
         $this->assertContains($mod->id, $modIds);
     }
 
+    public function test_chat_review_not_multiplied_for_mod_on_multiple_groups(): void
+    {
+        // Regression: getChatReviewCount has no group filter, so using += would
+        // multiply the global count by the number of groups the mod belongs to.
+        $mod = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $author = $this->createTestUser();
+
+        $this->createMembership($mod, $group1, ['role' => Membership::ROLE_MODERATOR]);
+        $this->createMembership($mod, $group2, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Record recent activity so isModRecentlyActive() passes
+        foreach ([$group1, $group2] as $group) {
+            $msg = $this->createTestMessage($author, $group);
+            MessageGroup::where('msgid', $msg->id)->update([
+                'collection' => MessageGroup::COLLECTION_APPROVED,
+                'approvedby' => $mod->id,
+                'arrival' => now()->subDays(1),
+            ]);
+        }
+
+        // One pending message per group so both groups contribute non-zero work
+        foreach ([$group1, $group2] as $group) {
+            $pending = $this->createTestMessage($author, $group);
+            MessageGroup::where('msgid', $pending->id)->update([
+                'collection' => MessageGroup::COLLECTION_PENDING,
+                'arrival' => now()->subDays(2),
+            ]);
+        }
+
+        // One global chat message flagged for review
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($author, $user2);
+        $this->createTestChatMessage($room, $author, [
+            'reviewrequired' => 1,
+            'reviewedby' => null,
+            'date' => now()->subHours(10),
+        ]);
+
+        // 2 pending messages (one per group) + 1 chat review = 3 total
+        // The buggy code would produce 2 + 2 = 4 because it used += per group.
+        $result = $this->service->getNotificationsToSend();
+        $notif = collect($result)->firstWhere('user_id', $mod->id);
+
+        $this->assertNotNull($notif, 'Mod should receive a notification');
+        $this->assertEquals(3, $notif['total'],
+            'Total should be 2 pending + 1 chat review; chat review must not be counted once per group');
+    }
+
     public function test_get_notifications_skips_mod_with_notifications_disabled(): void
     {
         // Settings on the User (not membership) control minage; -1 = disabled

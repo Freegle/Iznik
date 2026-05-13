@@ -100,9 +100,10 @@ class ModNotifService
                     ];
                 }
 
-                if ($chatReview > 0) {
-                    $modData[$modId]['chat_review'] += $chatReview;
-                }
+                // Use assignment, not accumulation. getChatReviewCount is a global query
+                // with no group filter, so it returns the same value on every group
+                // iteration for the same mod. Using += would multiply it by group count.
+                $modData[$modId]['chat_review'] = $chatReview;
 
                 $nonZeroWork = array_filter($work, fn ($v) => $v > 0);
                 if (!empty($nonZeroWork)) {
