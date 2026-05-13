@@ -1086,6 +1086,8 @@ class TNSyncCommandTest extends TestCase
     // Edge cases and uncovered paths
     // =========================================================================
 
+    // TODO Finnbarr: remove this code when I remove custom flocking with PreventsOverlapping after testing is complete.
+    // At this point, the Laravel scheduler's withoutOverlapping will handle this.
     public function test_exits_early_when_lock_already_held(): void
     {
         // acquireLock() is protected, and partialMock() can't mock protected methods.

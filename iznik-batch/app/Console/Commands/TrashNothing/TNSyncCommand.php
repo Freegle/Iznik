@@ -20,8 +20,10 @@ use Illuminate\Support\Facades\Log;
 class TNSyncCommand extends Command
 {
     use GracefulShutdown;
-    use PreventsOverlapping;
     use LogsBatchJob;
+    
+    // TODO Finnbarr: remove this after testing is complete. The Laravel scheduler's withoutOverlapping will handle locking.
+    use PreventsOverlapping;
 
     protected $signature = 'tn:sync
                             {--from= : Override sync start timestamp (ISO-8601)}
