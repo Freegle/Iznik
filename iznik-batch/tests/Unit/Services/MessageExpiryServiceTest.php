@@ -474,7 +474,7 @@ class MessageExpiryServiceTest extends TestCase
         DB::table('messages_promises')->insert([
             'msgid' => $message->id,
             'userid' => $other->id,
-            'timestamp' => now(),
+            'promisedat' => now(),
         ]);
 
         $count = $this->service->processExpiredFromSpatialIndex();
