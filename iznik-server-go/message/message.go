@@ -2497,6 +2497,35 @@ func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error
 		recordAIDeletions(db, myid, req.ID, req.Attachments, req.BadAIImages)
 
 		if len(req.Attachments) > 0 {
+			// If the keep-list has both AI and non-AI attachments, drop the AI ones.
+			// A user uploading their own photo always supersedes the AI illustration.
+			type attachExtern struct {
+				ID           uint64
+				Externalmods string
+			}
+			var attRows []attachExtern
+			db.Raw("SELECT id, COALESCE(externalmods, '') AS externalmods FROM messages_attachments WHERE id IN (?) AND msgid = ?", req.Attachments, req.ID).Scan(&attRows)
+			externByID := make(map[uint64]string, len(attRows))
+			for _, r := range attRows {
+				externByID[r.ID] = r.Externalmods
+			}
+			hasNonAI := false
+			for _, attid := range req.Attachments {
+				if !strings.Contains(externByID[attid], `"ai":true`) {
+					hasNonAI = true
+					break
+				}
+			}
+			if hasNonAI {
+				var filtered []uint64
+				for _, attid := range req.Attachments {
+					if !strings.Contains(externByID[attid], `"ai":true`) {
+						filtered = append(filtered, attid)
+					}
+				}
+				req.Attachments = filtered
+			}
+
 			for i, attid := range req.Attachments {
 				primary := i == 0
 				db.Exec("UPDATE messages_attachments SET msgid = ?, `primary` = ? WHERE id = ?", req.ID, primary, attid)
