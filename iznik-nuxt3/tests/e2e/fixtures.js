@@ -149,6 +149,15 @@ const test = base.test.extend({
         ...options,
       })
 
+      // Guard: testInfo.attach uses copyFile internally and throws ENOENT if the
+      // source file doesn't exist. In rare CI conditions page.screenshot() can
+      // return without writing the file (e.g. incomplete buffer flush). Skip
+      // attachment rather than failing the test over a diagnostic screenshot.
+      if (!fs.existsSync(screenshotPath)) {
+        console.warn(`Screenshot file missing after page.screenshot() (non-fatal): ${name}`)
+        return screenshotPath
+      }
+
       // Attach to test report for inline viewing
       await testInfo.attach(name, {
         path: screenshotPath,
