@@ -17,8 +17,17 @@ rm -f /var/www/html/bootstrap/cache/packages.php
 # (git clean -fd skips gitignored paths, and /vendor is gitignored). Running
 # composer install unconditionally is fast when nothing changed and ensures
 # newly added packages are always present.
+#
+# --no-scripts: skip composer event hooks (pre-package-uninstall, post-autoload-dump etc.)
+# The pre-package-uninstall hook boots the full Laravel application, which fails when the
+# CI runner's persistent workspace has a stale vendor/ with packages that need removing.
+# We handle cache clearing manually above and run package:discover explicitly below.
 echo "Installing/updating PHP dependencies..."
-composer install --no-interaction --prefer-dist --optimize-autoloader
+composer install --no-interaction --prefer-dist --optimize-autoloader --no-scripts
+
+# Run package discovery manually (replaces post-autoload-dump hook skipped above).
+# This writes bootstrap/cache/packages.php so all package service providers are registered.
+php artisan package:discover --ansi || true
 
 # Wait for database server to be ready (connect without specifying database)
 echo "Waiting for database server..."

@@ -16,17 +16,8 @@ class UserMergeTest extends TestCase
     private const MERGE_REASON = 'Test merge';
     private const OLDER_DATE = '2020-01-01 00:00:00';
 
-    private const DB_WRITES_DISABLED_SKIP_REASON = 'Temporarily skipped: TNSyncCommand-related write paths are disabled for port testing.';
-
-    private function skipIfTNSyncWritesDisabled(): void
-    {
-        $this->markTestSkipped(self::DB_WRITES_DISABLED_SKIP_REASON);
-    }
-
     public function test_merge_consolidates_emails(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
 
@@ -62,8 +53,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_preserves_highest_role(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -103,8 +92,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_transfers_unique_memberships(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
         $group1 = $this->createTestGroup();
@@ -122,8 +109,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_transfers_messages(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -141,8 +126,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_deletes_source_user(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
 
@@ -155,8 +138,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_logs_action(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
 
@@ -174,8 +155,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_preserves_highest_system_role(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser(['systemrole' => User::SYSTEMROLE_USER]);
         $user2 = $this->createTestUser(['systemrole' => User::SYSTEMROLE_SUPPORT]);
 
@@ -187,8 +166,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_transfers_tn_user_id(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser(['tnuserid' => null]);
         $user2 = $this->createTestUser(['tnuserid' => 12345]);
 
@@ -225,8 +202,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_force_bypasses_can_merge(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser(['settings' => ['canmerge' => false]]);
         $user2 = $this->createTestUser();
 
@@ -237,8 +212,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_consolidates_chat_rooms(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
         $other = $this->createTestUser();
@@ -265,8 +238,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_merges_chat_messages_into_existing_room(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser();
         $user2 = $this->createTestUser();
         $other = $this->createTestUser();
@@ -287,8 +258,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_keeps_oldest_added_date(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser(['added' => '2024-06-01 00:00:00']);
         $user2 = $this->createTestUser(['added' => self::OLDER_DATE]);
 
@@ -300,8 +269,6 @@ class UserMergeTest extends TestCase
 
     public function test_merge_takes_non_null_fullname_from_user2(): void
     {
-        $this->skipIfTNSyncWritesDisabled();
-
         $user1 = $this->createTestUser(['fullname' => null]);
         $user2 = $this->createTestUser(['fullname' => 'Real Name']);
 

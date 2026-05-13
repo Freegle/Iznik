@@ -42,7 +42,8 @@ $queuedTaskId = LaravelQueue::queueTask('tn_sync_command', [
     'from' => $from,
     'to' => $to,
     'run_id' => $runId,
-    'queued_by' => 'tn_sync.php'
+    'queued_by' => 'tn_sync.php',
+    'dry_run' => true,
 ]);
 
 if (is_null($queuedTaskId)) {
@@ -230,8 +231,8 @@ do {
                                     #error_log("...found postcode {$loc['id']} {$loc['name']}");
 
                                     if ($loc['id'] !== $u->getPrivate('lastlocation')) {
-                                        error_log("FD #{$change['fd_user_id']} TN lat/lng $lat,$lng has changed {$u->getPrivate('locationid')} => {$loc['id']} {$loc['name']}");
-                                        error_log("TN-SYNC-TRACE [LOCATION] fd_user_id={$change['fd_user_id']} lat=$lat lng=$lng old_loc={$u->getPrivate('locationid')} new_loc={$loc['id']}");
+                                        error_log("FD #{$change['fd_user_id']} TN lat/lng $lat,$lng has changed {$u->getPrivate('lastlocation')} => {$loc['id']} {$loc['name']}");
+                                        error_log("TN-SYNC-TRACE [LOCATION] fd_user_id={$change['fd_user_id']} lat=$lat lng=$lng old_loc={$u->getPrivate('lastlocation')} new_loc={$loc['id']}");
                                         $u->setPrivate('lastlocation', $loc['id']);
                                     }
                                 }
@@ -243,7 +244,7 @@ do {
                 }
             } catch (\Exception $e) {
                 error_log("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=error");
-                error_log("Ratings sync failed " . $e->getMessage() . " " . var_export($rating, TRUE));
+                error_log("Changes sync failed " . $e->getMessage() . " " . var_export($change, TRUE));
                 \Sentry\captureException($e);
             }
         }

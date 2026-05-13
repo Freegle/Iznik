@@ -1452,6 +1452,10 @@ class ProcessBackgroundTasksCommand extends Command
             $args['--run-id'] = (string) $data['run_id'];
         }
 
+        if (isset($data['dry_run']) && (bool) $data['dry_run']) {
+            $args['--dry-run'] = true;
+        }
+
         $exitCode = Artisan::call('tn:sync', $args);
 
         Log::info('Processed tn_sync_command task', [
@@ -1459,6 +1463,7 @@ class ProcessBackgroundTasksCommand extends Command
             'from' => $args['--from'] ?? null,
             'to' => $args['--to'] ?? null,
             'run_id' => $args['--run-id'] ?? null,
+            'dry_run' => $args['--dry-run'] ?? null,
         ]);
 
         if ($exitCode !== 0) {

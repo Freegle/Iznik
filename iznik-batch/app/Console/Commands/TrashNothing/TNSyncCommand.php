@@ -20,17 +20,22 @@ use Illuminate\Support\Facades\Log;
 class TNSyncCommand extends Command
 {
     use GracefulShutdown;
-    use PreventsOverlapping;
     use LogsBatchJob;
+    
+    // TODO Finnbarr: remove this after testing is complete. The Laravel scheduler's withoutOverlapping will handle locking.
+    use PreventsOverlapping;
 
     protected $signature = 'tn:sync
                             {--from= : Override sync start timestamp (ISO-8601)}
                             {--to= : Override sync end timestamp (ISO-8601)}
-                            {--run-id= : Queue run identifier used to update background_tasks JSON completion state}';
+                            {--run-id= : Queue run identifier used to update background_tasks JSON completion state}
+                            {--dry-run : Trace DB writes without executing them}';
 
     protected $description = 'Sync data from TrashNothing, including user data updates, user ratings, posts/messages, and chat messages.';
 
     private const PAGE_SIZE = 100;
+
+    private bool $dryRun;
 
     private string $apiKey;
     private string $apiBaseUrl;
@@ -46,6 +51,7 @@ class TNSyncCommand extends Command
     public function handle(): int
     {
         $this->registerShutdownHandlers();
+        $this->dryRun = (bool) $this->option('dry-run');
         $exitCode = Command::FAILURE;
         $errorMessage = null;
 
@@ -236,7 +242,7 @@ class TNSyncCommand extends Command
     {
         Log::info("TN-SYNC-TRACE [WRITE] op=file-write path={$this->dateFile} set=date={$date}");
 
-        if (file_put_contents($this->dateFile, $date) !== false) {
+        if (@file_put_contents($this->dateFile, $date) !== false) {
             Log::info("Stored max change date to {$this->dateFile}: {$date}");
         } else {
             Log::error("Failed to store max change date to {$this->dateFile}");
@@ -303,7 +309,9 @@ class TNSyncCommand extends Command
                         $ratingModel->rating = $rating['rating'];
                         $ratingModel->timestamp = $rating['date'];
                         Log::info("TN-SYNC-TRACE [WRITE] table=ratings op=upsert where=tn_rating_id={$rating['rating_id']} set=ratee={$rating['ratee_fd_user_id']},rating={$rating['rating']},timestamp={$rating['date']},visible=1");
-                        // $ratingModel->save();  // TRACE: commented out for port testing
+                        if (!$this->dryRun) {
+                            $ratingModel->save();
+                        }
                         $this->loki->logEvent('tn-sync', 'rating-upsert', [
                             'action' => $isNew ? 'insert' : 'update',
                             'tn_rating_id' => $rating['rating_id'],
@@ -315,7 +323,9 @@ class TNSyncCommand extends Command
                             ->where('tn_rating_id', $rating['rating_id'])
                             ->first();
                         if ($existing) {
-                            // $existing->delete();  // TRACE: commented out for port testing
+                            if (!$this->dryRun) {
+                                $existing->delete();
+                            }
                             $this->loki->logEvent('tn-sync', 'rating-delete', [
                                 'tn_rating_id' => $rating['rating_id'],
                                 'user_id' => $rating['ratee_fd_user_id'],
@@ -345,7 +355,7 @@ class TNSyncCommand extends Command
     {
         $page = 1;
         $count = 0;
-        $maxDate = null;
+        $maxDate = NULL;
 
         do {
             $response = Http::get("{$this->apiBaseUrl}/user-changes", [
@@ -388,7 +398,7 @@ class TNSyncCommand extends Command
                     if (!empty($change['account_removed'])) {
                         Log::info("FD #{$change['fd_user_id']} TN account removed");
                         Log::info("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=account-removed");
-                        $user->forget('TN account removed');
+                        $user->forget('TN account removed', $this->dryRun);
                         $this->loki->logEvent('tn-sync', 'user-forget', [
                             'user_id' => $change['fd_user_id'],
                         ]);
@@ -401,7 +411,9 @@ class TNSyncCommand extends Command
                         $replyTime->replytime = $change['reply_time'];
                         $replyTime->timestamp = $change['date'];
                         Log::info("TN-SYNC-TRACE [WRITE] table=users_replytime op=replace where=userid={$change['fd_user_id']} set=replytime={$change['reply_time']},timestamp={$change['date']}");
-                        // $replyTime->save();  // TRACE: commented out for port testing
+                        if (!$this->dryRun) {
+                            $replyTime->save();
+                        }
                         $this->loki->logEvent('tn-sync', 'user-reply-time-upsert', [
                             'action' => $isNew ? 'insert' : 'update',
                             'user_id' => $change['fd_user_id'],
@@ -415,7 +427,9 @@ class TNSyncCommand extends Command
                             $aboutMe->timestamp = $change['date'];
                             $aboutMe->text = $change['about_me'];
                             Log::info("TN-SYNC-TRACE [WRITE] table=users_aboutme op=replace where=userid={$change['fd_user_id']} set=timestamp={$change['date']},text=len=" . strlen($change['about_me']));
-                            // $aboutMe->save();  // TRACE: commented out for port testing
+                            if (!$this->dryRun) {
+                                $aboutMe->save();
+                            }
                             $this->loki->logEvent('tn-sync', 'user-about-me-upsert', [
                                 'action' => $isNew ? 'insert' : 'update',
                                 'user_id' => $change['fd_user_id'],
@@ -441,9 +455,9 @@ class TNSyncCommand extends Command
                             foreach ($emails as $email) {
                                 if (str_contains($email, "{$oldname}-")) {
                                     $newEmail = str_replace("{$oldname}-", "{$change['username']}-", $email);
-                                    $user->removeEmail($email);
+                                    $user->removeEmail($email, $this->dryRun);
                                     Log::info("...{$email} => {$newEmail}");
-                                    $user->addEmail($newEmail);
+                                    $user->addEmail($newEmail, dryRun: $this->dryRun);
                                     $this->loki->logEvent('tn-sync', 'user-email-rename', [
                                         'user_id' => $change['fd_user_id'],
                                         'old_email' => $email,
@@ -470,7 +484,9 @@ class TNSyncCommand extends Command
                         }
                     }
 
-                    // $user->save();  // TRACE: commented out for port testing
+                    if (!$this->dryRun) {
+                        $user->save();
+                    }
                     $this->loki->logEvent('tn-sync', 'user-update', [
                         'user_id' => $change['fd_user_id'],
                     ]);
@@ -526,7 +542,7 @@ class TNSyncCommand extends Command
                     if ($userId != $mergeTo) {
                         Log::info("Merging {$userId} into {$mergeTo}");
                         Log::info("TN-SYNC-TRACE [MERGE] from={$userId} into={$mergeTo}");
-                        User::merge($mergeTo, $userId, "Duplicate TN user created accidentally");
+                        User::merge($mergeTo, $userId, "Duplicate TN user created accidentally", dryRun: $this->dryRun);
                         $this->loki->logEvent('tn-sync', 'user-merge', [
                             'merge_to' => $mergeTo,
                             'merge_from' => $userId,

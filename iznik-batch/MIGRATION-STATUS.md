@@ -54,6 +54,8 @@ All email-related commands use the `mail:` prefix. Other batch commands use desc
 | `groups:update-counts` | Update group member/moderator counts |
 | `chats:update-counts` | Update chat message counts, reopen closed User2Mod |
 | `chats:process-incoming` | Process pending chat messages (processingrequired=1): spam check, roster update |
+| `chats:send-tryst-reminders` | Send calendar invites and chat reminders for arranged handover trysts |
+| `noticeboards:thank-users` | Send thank-you emails to users who added noticeboards |
 | `memberships:process` | Process pending membership history: per-group welcome emails, flag reviewed members |
 | `users:update-lastaccess` | Fallback update of user last access timestamps |
 | `users:update-support-roles` | Grant/remove support tools access |
@@ -164,6 +166,8 @@ These commands are active in `routes/console.php` and running in production:
 | - | `data:update-cpi` | Monthly | CPI inflation data from ONS |
 | `spool.php` | `mail:spool:process --cleanup` | Daily 04:00 | Clean up old sent emails |
 | `git_summary_ai.php` | `data:git-summary` | Weekly Wed 18:00 | Git summary for Discourse |
+| `tryst.php` | `chats:send-tryst-reminders` | Every minute | Calendar invites + chat reminders for handover trysts |
+| `noticeboards.php` | `noticeboards:thank-users` | Daily 15:30 | Thank-you emails for users who added noticeboards |
 
 ## Code Written (Scheduler Disabled)
 
@@ -217,6 +221,8 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | `jobs_illustrations.php` | `jobs:generate-illustrations` | - | AI illustrations for canonical job categories |
 | `messages_illustrations.php` | `messages:generate-illustrations` | - | AI illustrations for messages without photos |
 | `whatjobs_spam.php` | `cleanup:whatjobs-spam` | - | Delete spammy WhatJobs postings |
+| `archive_attachments.php` | `cleanup:archive-profile-images` | - | Delete older duplicate profile images, keeping only the most recent per user |
+| `newsfeed_link_previews.php` | `newsfeed:generate-link-previews` | - | Fetch and cache link previews for URLs in recent newsfeed posts (also covers `previews.php`) |
 
 ## Code Written - Running via CircleCI (Not Scheduler)
 
@@ -238,7 +244,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 
 | Original Script | Artisan Command | Notes |
 |-----------------|-----------------|-------|
-| `get_app_release_versions.php` | - | Needs migration - fetches app versions for dashboard display |
+| ~~`get_app_release_versions.php`~~ | ~~`data:fetch-app-versions`~~ | ~~Migrated, scheduled every 6 hours~~ |
 
 ---
 
@@ -249,15 +255,15 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `background.php` | Every 1 min | High | Background job processor — **Covered: `queue:background-tasks` (Go API background tasks)** |
 | ~~`chat_process.php`~~ | ~~Every 1 min~~ | ~~High~~ | ~~Chat message processing~~ — **Migrated: `chats:process-incoming`** |
 | `admins.php` | Every 1 min | Medium | Admin notifications — **Covered: `mail:admin:copy` + `mail:admin:send` + `mail:admin:chase`** |
-| `tryst.php` | Every 1 min | Medium | Meeting coordination |
+| ~~`tryst.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Meeting coordination~~ — **Migrated: `chats:send-tryst-reminders`** |
 | ~~`memberships_processing.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Membership processing~~ — **Migrated: `memberships:process`** |
 | ~~`donations_ads_target.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Donation ad targeting~~ — **Migrated: `donations:update-ads-target`** |
-| `user_exhort.php` | Every 1 min | Medium | User encouragement (parameterized one-off tool, not a regular cron) |
+| ~~`user_exhort.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~User encouragement~~ — **Skip: parameterized CLI tool (`-u url -l title -x text -s since`), not a scheduled cron** |
 | ~~`lovejunk.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~LoveJunk integration~~ — **Migrated: `integrations:sync-lovejunk`** |
 | ~~`exports.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Data exports~~ — **Migrated: `users:process-exports`** |
 | ~~`notification_chaseup.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Notification reminders~~ — **Migrated: `mail:notifications:chaseup`** |
-| `previews.php` | Every 5 min | Medium | Link preview generation |
-| `check_cgas.php` | Every 5 min | Low | CGA checking |
+| ~~`previews.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Link preview generation~~ — **Covered: `newsfeed:generate-link-previews`** |
+| ~~`check_cgas.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~CGA checking~~ — **Migrated: `groups:check-boundaries`** |
 | ~~`message_spatial.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Spatial index updates~~ — **Migrated: `messages:update-spatial-index` — PR #398** |
 | ~~`messages_illustrations.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Message illustrations~~ — **Migrated: `messages:generate-illustrations`** |
 | ~~`messages_remap.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~Message remapping~~ — **Migrated: `messages:remap-subjects`** |
@@ -265,10 +271,10 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`chat_spam.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Chat spam detection~~ — **Migrated: `chats:process-spam` — PR #397** |
 | ~~`check_spammers.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Spam detection~~ — **Migrated: `users:remove-spammers` — PR #395** |
 | ~~`users_modmails.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Mod mail processing~~ — **Migrated: `users:update-modmails` — PR #392** |
-| `visualise.php` | Every 5 min | Low | Data visualisation |
-| `microvolunteering.php` | Every 5 min | Low | Micro-volunteering — **Migrated: `microvolunteering:score`** |
-| `newsfeed_link_previews.php` | Every 1 min | Low | Newsfeed link previews |
-| `tn_sync.php` | Every 1 min | Medium | Trash Nothing sync |
+| ~~`visualise.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~Data visualisation~~ — **Migrated: `messages:update-visualise`** |
+| ~~`microvolunteering.php`~~ | ~~Every 5 min~~ | ~~Low~~ | ~~Micro-volunteering~~ — **Migrated: `microvolunteering:score`** |
+| ~~`newsfeed_link_previews.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Newsfeed link previews~~ — **Covered: `newsfeed:generate-link-previews` (PR #405)** |
+| `tn_sync.php` | Every 1 min | Medium | Trash Nothing sync — **Deferred: removed from PR #405; will be handled in a separate in-progress PR** |
 
 ## Medium Frequency Scripts (Every 10-60 min) - Not Started
 
@@ -282,7 +288,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`jobs_illustrations.php`~~ | ~~Every 30 min~~ | ~~Low~~ | ~~Job illustrations~~ — **Migrated: `jobs:generate-illustrations`** |
 | ~~`message_unindexed.php`~~ | ~~Every 30 min~~ | ~~Low~~ | ~~Unindexed messages~~ — **Migrated: `messages:update-index` — PR #393** |
 | ~~`chat_latestmessage.php`~~ | ~~Every 60 min~~ | ~~Low~~ | ~~Chat latest message~~ — **Migrated: `chats:update-counts`** |
-| `pledge.php` | Every 60 min | Low | Pledges |
+| ~~`pledge.php`~~ | ~~Every 60 min~~ | ~~Low~~ | ~~Pledges~~ — **Skip: retired** |
 | ~~`lastacces.php`~~ | ~~Every 59 min~~ | ~~Low~~ | ~~Last access tracking~~ — **Migrated: `users:update-lastaccess`** |
 | ~~`mod_notifs.php`~~ | ~~Every 60 min~~ | ~~Medium~~ | ~~Moderator notifications~~ — **Migrated: `mail:mod-notifs` — PR #391** |
 | ~~`supporttools.php`~~ | ~~Every 60 min~~ | ~~Low~~ | ~~Support tools~~ — **Migrated: `users:update-support-roles`** |
@@ -304,7 +310,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `chat_chaseupmods.php` | 15:30 | Medium | Moderator chat chase-up |
 | `newsfeed_digest.php` | 15:30 | Low | Newsfeed digest |
 | `newsfeed_modnotif.php` | 13:30 | Low | Newsfeed mod notifications |
-| `noticeboards.php` | 15:30 | Low | Noticeboards |
+| ~~`noticeboards.php`~~ | ~~15:30~~ | ~~Low~~ | ~~Noticeboards~~ — **Migrated: `noticeboards:thank-users`** |
 | `group_welcomereview.php` | 01:00, 15:00 | Low | Group welcome review |
 | ~~`message_deindex.php`~~ | ~~01:00~~ | ~~Low~~ | ~~Message de-indexing~~ — **Migrated: `messages:deindex` — PR #393** |
 | ~~`group_stats.php`~~ | ~~02:00~~ | ~~Low~~ | ~~Group statistics~~ — **Migrated: `groups:update-stats`** |
@@ -313,19 +319,19 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`purge_sessions.php`~~ | ~~03:00~~ | ~~Low~~ | ~~Session purging~~ — **Migrated: `purge:sessions`** |
 | ~~`purge_logs.php`~~ | ~~04:00~~ | ~~Low~~ | ~~Log purging~~ — **Migrated: `purge:logs`** |
 | ~~`email_validate.php`~~ | ~~04:00~~ | ~~Low~~ | ~~Email validation~~ — **Migrated: `emails:validate`** |
-| `messages_popular.php` | 05:00 | Low | Popular messages |
+| ~~`messages_popular.php`~~ | ~~05:00~~ | ~~Low~~ | ~~Popular messages~~ — **Skip: `Group::findPopularMessages()` not implemented in iznik-server** |
 | ~~`users_remap.php`~~ | ~~05:00~~ | ~~Low~~ | ~~User remapping~~ — **Migrated: `users:remap-locations`** |
 | ~~`locations_skewwhiff.php`~~ | ~~05:00~~ | ~~Low~~ | ~~Location fixes~~ — **Migrated: `locations:fix-skewed`** |
 | `nearby.php` | 14:05 | Medium | Nearby items |
 | `chat_review.php` | 11:00 | Medium | Chat review queue |
 | `engage.php` | 16:00 | Medium | User engagement emails |
 | `user_askdonation.php` | 17:00 | Medium | Donation requests |
-| `facebook_chaseup.php` | 18:00 | Low | Facebook chase-up |
-| `whatjobs.php` | Hourly 08:00-22:00 | Low | WhatJobs |
-| `microactions_score.php` | 23:00 | Low | Microactions scoring |
-| `restartproject.php` | 23:00 | Low | Restart project |
-| `repaircafewales.php` | 23:00 | Low | Repair Cafe Wales |
-| `archive_attachments.php` | 22:30 | Low | Attachment archiving |
+| ~~`facebook_chaseup.php`~~ | ~~18:00~~ | ~~Low~~ | ~~Facebook chase-up~~ — **Skip: file not found (retired)** |
+| ~~`whatjobs.php`~~ | ~~Hourly 08:00-22:00~~ | ~~Low~~ | ~~WhatJobs~~ — **Migrated: `integrations:sync-whatjobs`** |
+| ~~`microactions_score.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Microactions scoring~~ — **Covered: `microvolunteering:score`** |
+| ~~`restartproject.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Restart project~~ — **Migrated: `integrations:sync-restartproject` (PR #408)** |
+| ~~`repaircafewales.php`~~ | ~~23:00~~ | ~~Low~~ | ~~Repair Cafe Wales~~ — **Migrated: `integrations:sync-repaircafewales` (PR #408)** |
+| ~~`archive_attachments.php`~~ | ~~22:30~~ | ~~Low~~ | ~~Attachment archiving~~ — **Migrated: `cleanup:archive-profile-images` (PR #405)** |
 
 ## Weekly Scripts - Not Started
 
@@ -334,8 +340,8 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `events.php` | Thu 23:00 | Low | Community events email |
 | `volunteering.php` | Mon 23:00 | Low | Volunteering opportunities email |
 | `stories.php` | Sat 11:00 | Low | Success story requests |
-| `groups_closed.php` | Sun 08:00 | Low | Closed groups check |
-| `stories_tocentral.php` | Fri 14:00 | Low | Stories to central |
+| ~~`groups_closed.php`~~ | ~~Sun 08:00~~ | ~~Low~~ | ~~Closed groups check~~ — **Skip: COVID-era group closure reminder; body references "Closed for COVID-19" — retired** |
+| ~~`stories_tocentral.php`~~ | ~~Fri 14:00~~ | ~~Low~~ | ~~Stories to central~~ — **Migrated: `stories:send-to-central`** |
 | ~~`domains_common.php`~~ | ~~Fri 07:00~~ | ~~Low~~ | ~~Common domains~~ — **Migrated: `domains:update-common`** |
 | `mod_active.php` | Mon 15:00 | Low | Active moderators |
 
@@ -362,6 +368,8 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `sms.php` | Retired |
 | `badnumber.php` | Retired |
 | `spam_toddlers.php` | Commented out |
+| `groups_closed.php` | COVID-era group closure reminder — body hardcodes "Closed for COVID-19" message |
+| `user_exhort.php` | Parameterized CLI tool, not a scheduled cron |
 
 ## Known Issues
 

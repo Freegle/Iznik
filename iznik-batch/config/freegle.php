@@ -25,6 +25,7 @@ return [
         'name' => env('FREEGLE_SITE_NAME', 'Freegle'),
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
         'wallpaper_url' => env('FREEGLE_WALLPAPER_URL', 'https://www.ilovefreegle.org/wallpaper.png'),
+        'modtools_logo_url' => env('MODTOOLS_LOGO_URL', 'https://modtools.org/icon_modtools.png'),
     ],
 
     'mail' => [
@@ -64,8 +65,14 @@ return [
         'partnerships_addr' => env('FREEGLE_PARTNERSHIPS_ADDR', 'partnerships@ilovefreegle.org'),
         // Info address for donation notifications and general admin emails.
         'info_addr' => env('FREEGLE_INFO_ADDR', 'info@ilovefreegle.org'),
+        // Fundraising address — receives the daily donation summary email.
+        'fundraising_addr' => env('FREEGLE_FUNDRAISING_ADDR', 'info@ilovefreegle.org'),
+        // Mentors address — volunteer support team who handle escalations.
+        'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
         'donation_cc_addr' => env('FREEGLE_DONATION_CC_ADDR', 'log@ehibbert.org.uk'),
+        // Mentors address - help for moderators with group setup.
+        'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
         // Trash Nothing domain for incoming mail detection
         'trashnothing_domain' => env('FREEGLE_TRASHNOTHING_DOMAIN', 'trashnothing.com'),
         // Trash Nothing shared secret for mail authentication (skips spam check)
@@ -318,5 +325,17 @@ return [
     'lovejunk' => [
         'api' => env('LOVE_JUNK_API', 'https://elmer.api-lovejunk.com/elmer/v1'),
         'secret' => env('LOVE_JUNK_SECRET', ''),
+    ],
+
+    'trashnothing' => [
+        'api_base' => env('TN_API_BASE', 'https://trashnothing.com'),
+        'key'      => env('TN_KEY', ''),
+    ],
+
+    'geocoder' => env('FREEGLE_GEOCODER_URL', ''),
+
+    'whatjobs' => [
+        'feed1' => env('WHATJOBS_FEED1', ''),
+        'feed2' => env('WHATJOBS_FEED2', ''),
     ],
 ];
