@@ -235,7 +235,7 @@ api_key = p['auth_pairs'][0]['user_api_key']
 headers = {'User-Api-Key': api_key, 'Api-Username': 'Edward_Hibbert'}
 
 CONFIRM_RE = re.compile(
-    r'\\b(fixed|works? now|working now|confirmed?|thanks?|all good|resolved?'
+    r'\\b(fixed|works? now|working now|confirmed?|thanks?|thankyou|all good|resolved?'
     r'|seems? (?:to be )?(?:fixed|working|ok|good)|unlimited now|no (?:longer|more)'
     r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?)\\b',
     re.IGNORECASE
@@ -2131,11 +2131,12 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const pendingBugs = classifications.filter(c => (c.type === 'bug' || c.type === 'retest') && !fixedKeys.has(`${c.topic}.${c.post}`))
 
       // Always check DB for open bugs regardless of phase.
+      // Note: 'investigating' means Edward has posted a fix — FSM should not duplicate that work.
       const db = getDb()
       const dbOpenBugs = (db.prepare(`
         SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle, pr_rejections AS prRejections
         FROM discourse_bug
-        WHERE state IN ('open', 'investigating') AND pr_number IS NULL
+        WHERE state = 'open' AND pr_number IS NULL
       `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
 
       // Bugs whose PRs have been rejected once need human review — escalate them.
