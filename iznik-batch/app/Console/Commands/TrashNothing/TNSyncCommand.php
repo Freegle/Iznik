@@ -37,6 +37,9 @@ class TNSyncCommand extends Command
 
     private bool $dryRun;
 
+    // Set to true to load from local fixture files instead of hitting the live TN API.
+    private bool $localTesting = false;
+
     private string $apiKey;
     private string $apiBaseUrl;
     private string $dateFile;
@@ -262,22 +265,33 @@ class TNSyncCommand extends Command
         $maxDate = NULL;
 
         do {
-            $response = Http::get("{$this->apiBaseUrl}/ratings", [
-                'key' => $this->apiKey,
-                'page' => $page,
-                'per_page' => self::PAGE_SIZE,
-                'date_min' => $from,
-                'date_max' => $to,
-            ]);
-
-            if (!$response->successful()) {
-                Log::error("TN sync: ratings API failed on page {$page}", [
-                    'status' => $response->status(),
+            if ($this->localTesting) {
+                $ratingsFile = base_path("tests/fixtures/tn_sync/ratings_page_{$page}.json");
+                if (file_exists($ratingsFile)) {
+                    $ratingsPayload = json_decode(file_get_contents($ratingsFile), true);
+                    $ratings = is_array($ratingsPayload) ? ($ratingsPayload['ratings'] ?? []) : [];
+                } else {
+                    Log::info("TN-SYNC-TRACE [RATINGS-PAGE] missing fixture file={$ratingsFile}");
+                    $ratings = [];
+                }
+            } else {
+                $response = Http::get("{$this->apiBaseUrl}/ratings", [
+                    'key' => $this->apiKey,
+                    'page' => $page,
+                    'per_page' => self::PAGE_SIZE,
+                    'date_min' => $from,
+                    'date_max' => $to,
                 ]);
-                break;
-            }
 
-            $ratings = $response->json('ratings', []);
+                if (!$response->successful()) {
+                    Log::error("TN sync: ratings API failed on page {$page}", [
+                        'status' => $response->status(),
+                    ]);
+                    break;
+                }
+
+                $ratings = $response->json('ratings', []);
+            }
             $page++;
 
             Log::info("TN-SYNC-TRACE [RATINGS-PAGE] page=" . ($page - 1) . " count=" . count($ratings));
@@ -358,22 +372,33 @@ class TNSyncCommand extends Command
         $maxDate = NULL;
 
         do {
-            $response = Http::get("{$this->apiBaseUrl}/user-changes", [
-                'key' => $this->apiKey,
-                'page' => $page,
-                'per_page' => self::PAGE_SIZE,
-                'date_min' => $from,
-                'date_max' => $to,
-            ]);
-
-            if (!$response->successful()) {
-                Log::error("TN sync: user-changes API failed on page {$page}", [
-                    'status' => $response->status(),
+            if ($this->localTesting) {
+                $changesFile = base_path("tests/fixtures/tn_sync/user_changes_page_{$page}.json");
+                if (file_exists($changesFile)) {
+                    $changesPayload = json_decode(file_get_contents($changesFile), true);
+                    $changes = is_array($changesPayload) ? ($changesPayload['changes'] ?? []) : [];
+                } else {
+                    Log::info("TN-SYNC-TRACE [CHANGES-PAGE] missing fixture file={$changesFile}");
+                    $changes = [];
+                }
+            } else {
+                $response = Http::get("{$this->apiBaseUrl}/user-changes", [
+                    'key' => $this->apiKey,
+                    'page' => $page,
+                    'per_page' => self::PAGE_SIZE,
+                    'date_min' => $from,
+                    'date_max' => $to,
                 ]);
-                break;
-            }
 
-            $changes = $response->json('changes', []);
+                if (!$response->successful()) {
+                    Log::error("TN sync: user-changes API failed on page {$page}", [
+                        'status' => $response->status(),
+                    ]);
+                    break;
+                }
+
+                $changes = $response->json('changes', []);
+            }
             $page++;
 
             Log::info("TN-SYNC-TRACE [CHANGES-PAGE] page=" . ($page - 1) . " count=" . count($changes));
