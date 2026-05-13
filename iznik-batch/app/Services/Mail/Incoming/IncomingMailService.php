@@ -2599,6 +2599,17 @@ class IncomingMailService
                 'msgid' => $message->id,
             ]);
 
+            // Log receipt — matches Go API logMessageReceived() and V1 Message::submit().
+            DB::table('logs')->insert([
+                'timestamp' => now(),
+                'type' => 'Message',
+                'subtype' => 'Received',
+                'groupid' => $group->id,
+                'user' => $user->id,
+                'msgid' => $message->id,
+                'text' => $messageId,
+            ]);
+
             // Note: messages_spatial is added when message is APPROVED, not at creation.
             // The spatial index is populated during the approval step.
 
