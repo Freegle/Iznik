@@ -114,12 +114,17 @@
         <b-card variant="white" class="mt-2">
           <b-card-text>
             <h3>Members</h3>
-            <p>Here you can see how many members there are.</p>
-            <GChart
-              type="LineChart"
-              :data="memberData"
-              :options="memberOptions"
-            />
+            <template v-if="hasMemberData">
+              <p>Here you can see how many members there are.</p>
+              <GChart
+                type="LineChart"
+                :data="memberData"
+                :options="memberOptions"
+              />
+            </template>
+            <p v-else class="text-muted">
+              Member counts are only available to moderators.
+            </p>
           </b-card-text>
         </b-card>
         <p class="mt-2">
@@ -153,6 +158,10 @@ import {
   getBenefitPerTonne,
   CO2_PER_TONNE,
 } from '~/composables/useReuseBenefit'
+import {
+  DASHBOARD_CHART_HEADER,
+  hasChartDataRows,
+} from '~/composables/useAuthoritySearch'
 
 const GroupHeader = defineAsyncComponent(() =>
   import('~/components/GroupHeader.vue')
@@ -377,7 +386,7 @@ const wantedOutcomeData = computed(() => {
 })
 
 const memberData = computed(() => {
-  const ret = [['Date', 'Count']]
+  const ret = [DASHBOARD_CHART_HEADER]
   const members = statsStore.ApprovedMemberCount
 
   if (members) {
@@ -390,7 +399,7 @@ const memberData = computed(() => {
 })
 
 const weightData = computed(() => {
-  const ret = [['Date', 'Count']]
+  const ret = [DASHBOARD_CHART_HEADER]
   const activity = statsStore.Weight
   let lastmon = null
   let count = 0
@@ -418,6 +427,8 @@ const weightData = computed(() => {
 
   return ret
 })
+
+const hasMemberData = computed(() => hasChartDataRows(memberData.value))
 
 // Computed page title based on financial year parameter
 const pageTitle = computed(() => {
@@ -605,6 +616,7 @@ onMounted(async () => {
     systemwide: groupid.value === null,
     start: start.value.format('YYYY-MM-DD'),
     end: end.value.format('YYYY-MM-DD'),
+    components: 'Weight,MessageBreakdown,Outcomes,ApprovedMemberCount',
   })
 
   loading.value = false
