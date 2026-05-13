@@ -143,3 +143,32 @@ describe('useModMe checkWork beep behavior', () => {
     expect(mockAudioPlay).not.toHaveBeenCalled()
   })
 })
+
+describe('useModMe document.title refresh after mod action', () => {
+  it('clears title count when checkWork is called after mod action while modal is open', async () => {
+    const { useModMe } = await import('~/modtools/composables/useModMe')
+    const { checkWork } = useModMe()
+
+    // Establish initial state: 2 pending items → title becomes "(2) ModTools"
+    mockFetchMe.mockImplementationOnce(async () => {
+      globalThis.__mockAuthStore.work = { total: 2 }
+    })
+    await checkWork(true)
+    expect(global.document.title).toBe('(2) ModTools')
+
+    // Mod action completes: queue clears, but modal is still open (body overflow:hidden).
+    // checkWorkDeferGetMessages() calls checkWork() WITHOUT force.
+    // Guard in checkWork: bodyoverflow==='hidden' && !force → skips the entire update block,
+    // so document.title is never refreshed with the new zero count.
+    global.document.body.style.overflow = 'hidden'
+    mockFetchMe.mockImplementation(async () => {
+      globalThis.__mockAuthStore.work = { total: 0 }
+    })
+    await checkWork() // no force — reproduces checkWorkDeferGetMessages() call path
+
+    // Title must update to 'ModTools' when work queue empties after a mod action.
+    // FAILS on buggy code: guard blocks title refresh when body overflow is 'hidden'
+    // and force is not passed, leaving stale '(2) ModTools' as the tab title.
+    expect(global.document.title).toBe('ModTools')
+  })
+})
