@@ -1477,9 +1477,7 @@ class User extends Model implements Auditable
         foreach ($this->emails()->get() as $email) {
             if (!self::isInternalEmail($email->email)) {
                 Logger::info("TN-SYNC-TRACE [WRITE] table=users_emails op=delete where=userid={$this->id},email={$email->email}");
-                if (!$dryRun) {
-                    $email->delete();
-                }
+                $this->removeEmail($email->email, $dryRun);
             }
         }
 
