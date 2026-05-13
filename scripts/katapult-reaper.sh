@@ -9,7 +9,7 @@
 # All other VMs are unconditionally skipped.
 #
 # Logic:
-#   1. Skip VMs younger than 30 minutes (grace period for job dispatch).
+#   1. Skip VMs younger than 10 minutes (grace period for job dispatch).
 #   2. Extract the CircleCI pipeline number from the VM name.
 #   3. Check whether that pipeline has any workflow in 'running' state.
 #   4. If not → delete the VM.
@@ -25,7 +25,7 @@ CIRCLE_PROJECT="github/Freegle/Iznik"
 LOG="/var/log/katapult-reaper.log"
 
 # VMs younger than this are skipped — gives time for job to be dispatched and start.
-MIN_AGE_SECONDS=1800  # 30 minutes
+MIN_AGE_SECONDS=600  # 10 minutes
 
 DRY_RUN="${1:-}"  # pass --dry-run to print actions without deleting
 

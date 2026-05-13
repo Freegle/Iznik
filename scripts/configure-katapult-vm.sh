@@ -177,10 +177,10 @@ VM_ID=\$(curl -sf --max-time 3 "http://169.254.169.254/katapult/v1/vm-id" 2>/dev
 UPTIME_SECONDS=\$(awk '{print int(\$1)}' /proc/uptime)
 
 # Absolute-age fallback: a job cancelled mid-run can leave orphaned Docker containers
-# that fool the idle detector. No legitimate job runs longer than 3 hours (10800s),
+# that fool the idle detector. No legitimate job runs longer than 1 hour (3600s),
 # so force self-destruct unconditionally beyond that threshold.
-if [ "\$UPTIME_SECONDS" -gt 10800 ]; then
-    echo "VM uptime \${UPTIME_SECONDS}s exceeds 3-hour maximum — force self-destructing"
+if [ "\$UPTIME_SECONDS" -gt 3600 ]; then
+    echo "VM uptime \${UPTIME_SECONDS}s exceeds 1-hour maximum — force self-destructing"
     if [ -n "\$VM_ID" ]; then
         curl -sf -X DELETE \
             -H "Authorization: Bearer ${KATAPULT_TOKEN}" \
