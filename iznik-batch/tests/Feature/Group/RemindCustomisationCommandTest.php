@@ -48,7 +48,8 @@ class RemindCustomisationCommandTest extends TestCase
         $this->artisan('groups:remind-customisation')
             ->assertExitCode(0);
 
-        Mail::assertSentCount(1);
+        // 1 mod + 1 mentors CC = 2 emails
+        Mail::assertSentCount(2);
     }
 
     public function test_skips_group_with_all_attrs_set(): void
@@ -78,7 +79,8 @@ class RemindCustomisationCommandTest extends TestCase
         $this->artisan('groups:remind-customisation')
             ->assertExitCode(0);
 
-        Mail::assertSentCount(1);
+        // 1 mod + 1 mentors CC = 2 emails
+        Mail::assertSentCount(2);
     }
 
     public function test_skips_non_freegle_group(): void
@@ -139,7 +141,7 @@ class RemindCustomisationCommandTest extends TestCase
         Mail::assertNothingSent();
     }
 
-    public function test_sends_one_email_per_qualifying_group(): void
+    public function test_sends_mod_and_mentors_emails_for_each_qualifying_group(): void
     {
         $group1 = $this->createTestGroup();
         $this->createModForGroup($group1);
@@ -150,6 +152,7 @@ class RemindCustomisationCommandTest extends TestCase
         $this->artisan('groups:remind-customisation')
             ->assertExitCode(0);
 
-        Mail::assertSentCount(2);
+        // 2 groups × (1 mod + 1 mentors CC) = 4 emails
+        Mail::assertSentCount(4);
     }
 }
