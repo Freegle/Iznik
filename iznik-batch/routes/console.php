@@ -666,6 +666,14 @@ Schedule::command('locations:fix-skewed')
     ->sendOutputTo(cronLog('locations:fix-skewed'))
     ->runInBackground();
 
+// V1: cron/locations_pgsql (locations_pgsql_update.php + locations_pgsql_map.php)
+// Full sync of MySQL locations to PostgreSQL/PostGIS, then remap postcodes to areas.
+Schedule::command('locations:sync-pgsql')
+    ->dailyAt('01:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('locations:sync-pgsql'))
+    ->runInBackground();
+
 // V1: cron/user_ratings.php
 Schedule::command('users:update-ratings')
     ->everyTenMinutes()
