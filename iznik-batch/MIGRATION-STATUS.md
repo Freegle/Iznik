@@ -357,7 +357,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 
 | Script | Schedule | Priority | Description |
 |--------|----------|----------|-------------|
-| `stories_newsletter.php` | 12th 23:00 | Low | Stories newsletter |
+| ~~`stories_newsletter.php`~~ | ~~12th 23:00~~ | ~~Low~~ | ~~Stories newsletter~~ — **Migrated: `stories:newsletter`** |
 | ~~`lovejunk_tn_invoice.php`~~ | ~~1st 15:00~~ | ~~Low~~ | ~~LoveJunk/TN invoice~~ — **Migrated: `lovejunk:send-tn-invoice`** |
 
 ## Scripts to Skip

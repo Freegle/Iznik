@@ -117,8 +117,12 @@ class PushNotificationService
                     'error' => $errorMsg,
                 ]);
 
-                // Remove invalid/unregistered tokens
+                // Remove permanently invalid tokens (UNREGISTERED = app uninstalled,
+                // NOT_FOUND = instance deleted, SENDER_ID_MISMATCH = wrong Firebase project)
                 if (str_contains($errorMsg, 'UNREGISTERED') ||
+                    str_contains($errorMsg, 'NOT_FOUND') ||
+                    str_contains($errorMsg, 'SENDER_ID_MISMATCH') ||
+                    str_contains($errorMsg, 'Requested entity was not found') ||
                     str_contains($errorMsg, 'Invalid registration token') ||
                     str_contains($errorMsg, 'not a valid FCM registration token')) {
                     DB::table('users_push_notifications')
