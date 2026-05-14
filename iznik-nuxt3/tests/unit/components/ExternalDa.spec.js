@@ -43,9 +43,13 @@ vi.mock('~/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
 }))
 
-vi.mock('#app', () => ({
-  useRuntimeConfig: () => mockRuntimeConfig,
-}))
+vi.mock('#app', async () => {
+  const actual = await vi.importActual('vue')
+  return {
+    ...actual,
+    useRuntimeConfig: () => mockRuntimeConfig,
+  }
+})
 
 vi.hoisted(() => {
   vi.resetModules()
