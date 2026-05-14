@@ -75,6 +75,10 @@ class GroupCustomisationService
                 foreach ($modEmails as $modEmail) {
                     Mail::send(new CustomisationReminderMail($modEmail, $group->nameshort, $missing));
                 }
+                $mentorsAddr = config('freegle.mail.mentors_addr', 'mentors@ilovefreegle.org');
+                if ($mentorsAddr) {
+                    Mail::send(new CustomisationReminderMail($mentorsAddr, $group->nameshort, $missing));
+                }
             }
 
             $sent++;

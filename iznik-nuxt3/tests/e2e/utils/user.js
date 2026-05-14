@@ -174,7 +174,16 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
 
     if (isDesktopVisible) {
       console.log('Clicking desktop logout button')
-      await desktopLogout.click()
+      try {
+        // Use a bounded timeout so a non-actionable element (e.g. animating
+        // navbar under CI CPU load) doesn't burn the full action timeout.
+        await desktopLogout.click({ timeout: timeouts.ui.interaction })
+      } catch {
+        // Element is visible but failed actionability — JS click bypasses
+        // stability checks while still dispatching the click event.
+        console.log('Standard click timed out, falling back to JS click')
+        await desktopLogout.evaluate((el) => el.click())
+      }
     } else if (isMobileVisible) {
       console.log('Clicking mobile logout button')
       await mobileLogout.click()
