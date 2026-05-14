@@ -1143,6 +1143,10 @@ func generateRandomKey(length int) string {
 	return string(b)
 }
 
+func ReverseString(s string) string {
+	return reverseString(s)
+}
+
 func reverseString(s string) string {
 	runes := []rune(s)
 	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
@@ -1873,8 +1877,8 @@ func PutUser(c *fiber.Ctx) error {
 
 	// Add email.
 	canon := CanonicalizeEmail(email)
-	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon) VALUES (?, ?, 1, NOW(), ?)",
-		newUserID, email, canon)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 1, NOW(), ?, ?)",
+		newUserID, email, canon, reverseString(canon))
 
 	// Generate random password if none provided (for email-only signup).
 	// The client shows this to the user in the welcome modal.
