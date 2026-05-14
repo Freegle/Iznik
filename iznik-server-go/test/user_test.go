@@ -896,6 +896,11 @@ func TestPutUser(t *testing.T) {
 	// Verify login credentials exist.
 	db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = 'Native'", userID).Scan(&count)
 	assert.Equal(t, int64(1), count)
+
+	// Verify backwards column is populated (enables indexed domain-suffix search).
+	var backwards string
+	db.Raw("SELECT backwards FROM users_emails WHERE userid = ? AND email = ?", userID, email).Scan(&backwards)
+	assert.Equal(t, reverseString(email), backwards, "backwards should be REVERSE(email)")
 }
 
 // TestPutUserAuthenticatedDoesNotReturnAuthTokens verifies that when an authenticated

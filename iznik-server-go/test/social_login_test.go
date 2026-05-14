@@ -72,6 +72,11 @@ func TestGoogleLoginNewUser(t *testing.T) {
 	db.Raw("SELECT userid FROM users_logins WHERE type = 'Google' AND uid = ?", "google-uid-"+prefix).Scan(&userID)
 	assert.NotEqual(t, uint64(0), userID)
 
+	// Verify backwards column is populated (enables indexed domain-suffix search).
+	var backwards string
+	db.Raw("SELECT backwards FROM users_emails WHERE userid = ? AND email = ?", userID, email).Scan(&backwards)
+	assert.Equal(t, reverseString(email), backwards, "backwards should be REVERSE(email)")
+
 	// Cleanup.
 	db.Exec("DELETE FROM users_logins WHERE userid = ?", userID)
 	db.Exec("DELETE FROM users_emails WHERE userid = ?", userID)
