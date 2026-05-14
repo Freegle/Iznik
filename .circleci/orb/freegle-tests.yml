@@ -3274,6 +3274,7 @@ jobs:
           command: |
             sed -i 's/org\.ilovefreegle\.direct/org.ilovefreegle.modtools/g' android/app/build.gradle
             sed -i 's/>Freegle</>ModTools</g' android/app/src/main/res/values/strings.xml
+            sed -i 's/@drawable\/fr_icon/@drawable\/ic_stat_modtools/g' android/app/src/main/AndroidManifest.xml
             echo "✅ ModTools identity configured"
       - run:
           name: Set ModTools Launcher Icons
@@ -3478,6 +3479,7 @@ jobs:
           command: |
             sed -i 's/org\.ilovefreegle\.direct/org.ilovefreegle.modtools/g' android/app/build.gradle
             sed -i 's/>Freegle</>ModTools</g' android/app/src/main/res/values/strings.xml
+            sed -i 's/@drawable\/fr_icon/@drawable\/ic_stat_modtools/g' android/app/src/main/AndroidManifest.xml
             echo "✅ ModTools identity configured"
       - run:
           name: Set ModTools Launcher Icons
