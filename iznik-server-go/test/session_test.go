@@ -418,6 +418,46 @@ func TestGetSessionAppliesSettingsDefaults(t *testing.T) {
 	assert.Equal(t, 200, resp3.StatusCode)
 }
 
+// TestGetSessionLatLngPrefersMyLocation verifies V1/V2 parity for me.lat/me.lng:
+// when settings.mylocation has lat/lng, those must be used in preference to
+// lastlocation (which is updated by posting a draft on a remote group).
+// V1 User::getLatLngs() always preferred settings.mylocation; V2 was only reading
+// lastlocation, causing the distance shown in chat to jump to the draft's location.
+func TestGetSessionLatLngPrefersMyLocation(t *testing.T) {
+	prefix := uniquePrefix("sess_latlng")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Create two distinct locations: the user's home postcode and a remote location.
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Postcode', 56.2, -3.2)", prefix+"_home")
+	db.Exec("INSERT INTO locations (name, type, lat, lng) VALUES (?, 'Postcode', 57.9, -6.8)", prefix+"_remote")
+	var homeLocID, remoteLocID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? LIMIT 1", prefix+"_home").Scan(&homeLocID)
+	db.Raw("SELECT id FROM locations WHERE name = ? LIMIT 1", prefix+"_remote").Scan(&remoteLocID)
+	if homeLocID == 0 || remoteLocID == 0 {
+		t.Skip("Could not create test locations")
+	}
+	defer db.Exec("DELETE FROM locations WHERE id IN (?, ?)", homeLocID, remoteLocID)
+
+	// settings.mylocation points to home; lastlocation points to the remote draft location.
+	homeSettings := fmt.Sprintf(`{"mylocation":{"id":%d,"name":"%s_home","lat":56.2,"lng":-3.2}}`, homeLocID, prefix)
+	db.Exec("UPDATE users SET settings = ?, lastlocation = ? WHERE id = ?", homeSettings, remoteLocID, userID)
+
+	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	me, ok := result["me"].(map[string]interface{})
+	assert.True(t, ok, "me should be a map")
+
+	// Must use settings.mylocation (home), NOT lastlocation (remote draft).
+	assert.InDelta(t, 56.2, me["lat"], 0.001, "me.lat should come from settings.mylocation, not lastlocation")
+	assert.InDelta(t, -3.2, me["lng"], 0.001, "me.lng should come from settings.mylocation, not lastlocation")
+}
+
 func TestGetSessionNotLoggedIn(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/session", nil)
 	resp, _ := getApp().Test(req)

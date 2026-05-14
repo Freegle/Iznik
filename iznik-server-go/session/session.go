@@ -1265,9 +1265,30 @@ func GetSession(c *fiber.Ctx) error {
 	// Wait for discourse fetch to complete.
 	discourseWg.Wait()
 
-	// Fetch location if available (depends on userRow).
+	// Fetch location for me.lat/me.lng — V1 parity: prefer settings.mylocation, fall back to lastlocation.
+	// V1 User::getLatLngs() uses settings.mylocation.lat/lng as primary (the postcode the user typed in
+	// their settings) and only falls back to lastlocation when mylocation is absent. lastlocation is
+	// updated by every draft post, so without this preference a draft on a remote group would shift
+	// me.lat/me.lng (and therefore chat distances) to that group's location.
 	var loc *LocationRow
-	if userRow.Lastlocation != nil && *userRow.Lastlocation > 0 {
+	if len(userRow.Settings) > 0 {
+		var parsed struct {
+			Mylocation *struct {
+				Lat  float64 `json:"lat"`
+				Lng  float64 `json:"lng"`
+				Name string  `json:"name"`
+			} `json:"mylocation"`
+		}
+		if json.Unmarshal(userRow.Settings, &parsed) == nil && parsed.Mylocation != nil &&
+			(parsed.Mylocation.Lat != 0 || parsed.Mylocation.Lng != 0) {
+			loc = &LocationRow{
+				Lat:  parsed.Mylocation.Lat,
+				Lng:  parsed.Mylocation.Lng,
+				Name: parsed.Mylocation.Name,
+			}
+		}
+	}
+	if loc == nil && userRow.Lastlocation != nil && *userRow.Lastlocation > 0 {
 		var locRow LocationRow
 		db.Raw("SELECT name, lat, lng FROM locations WHERE id = ?", *userRow.Lastlocation).Scan(&locRow)
 		if locRow.Name != "" {
