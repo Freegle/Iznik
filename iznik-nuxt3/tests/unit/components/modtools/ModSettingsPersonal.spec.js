@@ -6,11 +6,18 @@ import ModSettingsPersonal from '~/modtools/components/ModSettingsPersonal.vue'
 const mockAuthStore = {
   saveAndGet: vi.fn(),
   saveEmail: vi.fn(),
+  savePushId: vi.fn(),
 }
 
 const mockMiscStore = {
   get: vi.fn(),
   set: vi.fn(),
+}
+
+const mockMobileStore = {
+  isApp: false,
+  mobilePushId: null,
+  acceptedMobilePushId: null,
 }
 
 const mockMe = {
@@ -30,6 +37,10 @@ vi.mock('~/stores/auth', () => ({
 
 vi.mock('@/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
+}))
+
+vi.mock('~/stores/mobile', () => ({
+  useMobileStore: () => mockMobileStore,
 }))
 
 vi.mock('~/composables/useMe', () => ({
@@ -120,6 +131,7 @@ describe('ModSettingsPersonal', () => {
     vi.clearAllMocks()
     mockAuthStore.saveAndGet.mockResolvedValue()
     mockAuthStore.saveEmail.mockResolvedValue({ ret: 0 })
+    mockAuthStore.savePushId.mockResolvedValue()
     mockMiscStore.get.mockReturnValue(false)
     mockMiscStore.set.mockResolvedValue()
 
@@ -132,6 +144,11 @@ describe('ModSettingsPersonal', () => {
       modnotifs: 4,
       backupmodnotifs: 12,
     }
+
+    // Reset mobile store mock
+    mockMobileStore.isApp = false
+    mockMobileStore.mobilePushId = null
+    mockMobileStore.acceptedMobilePushId = null
   })
 
   describe('rendering', () => {
@@ -520,6 +537,94 @@ describe('ModSettingsPersonal', () => {
       const callback = vi.fn()
       // Should not throw
       await expect(wrapper.vm.saveEmail(callback)).rejects.toThrow()
+    })
+  })
+
+  describe('push notification debug section', () => {
+    it('hides debug section when isApp is false', () => {
+      mockMobileStore.isApp = false
+      const wrapper = mountComponent()
+      expect(wrapper.text()).not.toContain('Push Notifications (App Debug)')
+    })
+
+    it('shows debug section when isApp is true', () => {
+      mockMobileStore.isApp = true
+      const wrapper = mountComponent()
+      expect(wrapper.text()).toContain('Push Notifications (App Debug)')
+    })
+
+    it('shows current FCM token when mobilePushId is set', () => {
+      mockMobileStore.isApp = true
+      mockMobileStore.mobilePushId = 'test-fcm-token-123'
+      const wrapper = mountComponent()
+      expect(wrapper.text()).toContain('test-fcm-token-123')
+    })
+
+    it('shows placeholder when mobilePushId is null', () => {
+      mockMobileStore.isApp = true
+      mockMobileStore.mobilePushId = null
+      const wrapper = mountComponent()
+      expect(wrapper.text()).toContain('None (not yet registered)')
+    })
+
+    it('shows placeholder when acceptedMobilePushId is null', () => {
+      mockMobileStore.isApp = true
+      mockMobileStore.acceptedMobilePushId = null
+      const wrapper = mountComponent()
+      expect(wrapper.text()).toContain('None (not yet sent)')
+    })
+
+    it('shows token mismatch message when tokens differ', () => {
+      mockMobileStore.isApp = true
+      mockMobileStore.mobilePushId = 'token-a'
+      mockMobileStore.acceptedMobilePushId = 'token-b'
+      const wrapper = mountComponent()
+      expect(wrapper.text()).toContain('No — server has stale or no token')
+    })
+
+    it('shows token match message when tokens are equal', () => {
+      mockMobileStore.isApp = true
+      mockMobileStore.mobilePushId = 'same-token'
+      mockMobileStore.acceptedMobilePushId = 'same-token'
+      const wrapper = mountComponent()
+      expect(wrapper.text()).toContain('Yes — server has current token')
+    })
+
+    describe('resendPushToken', () => {
+      it('shows error when no FCM token is available', async () => {
+        mockMobileStore.isApp = true
+        mockMobileStore.mobilePushId = null
+        const wrapper = mountComponent()
+        const callback = vi.fn()
+        await wrapper.vm.resendPushToken(callback)
+        expect(wrapper.vm.pushResult).toContain('No token available')
+        expect(mockAuthStore.savePushId).not.toHaveBeenCalled()
+        expect(callback).toHaveBeenCalled()
+      })
+
+      it('clears acceptedMobilePushId and calls savePushId when token exists', async () => {
+        mockMobileStore.isApp = true
+        mockMobileStore.mobilePushId = 'test-token'
+        mockMobileStore.acceptedMobilePushId = 'old-token'
+        const wrapper = mountComponent()
+        const callback = vi.fn()
+        await wrapper.vm.resendPushToken(callback)
+        expect(mockMobileStore.acceptedMobilePushId).toBeNull()
+        expect(mockAuthStore.savePushId).toHaveBeenCalled()
+        expect(wrapper.vm.pushResult).toContain('Sent OK')
+        expect(callback).toHaveBeenCalled()
+      })
+
+      it('shows error message when savePushId throws', async () => {
+        mockAuthStore.savePushId.mockRejectedValue(new Error('Network error'))
+        mockMobileStore.isApp = true
+        mockMobileStore.mobilePushId = 'test-token'
+        const wrapper = mountComponent()
+        const callback = vi.fn()
+        await wrapper.vm.resendPushToken(callback)
+        expect(wrapper.vm.pushResult).toContain('Error')
+        expect(callback).toHaveBeenCalled()
+      })
     })
   })
 })
