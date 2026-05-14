@@ -5,10 +5,11 @@ on:
 
 jobs:
   retry:
-    # Only fire for CircleCI build-and-test infrastructure failures
+    # Only fire for CircleCI build-and-test infrastructure failures.
+    # CircleCI sets state='error' (not 'failure') for infrastructure_fail jobs.
     if: |
       github.event.context == 'ci/circleci: build-and-test' &&
-      github.event.state == 'failure' &&
+      (github.event.state == 'error' || github.event.state == 'failure') &&
       contains(github.event.description, 'infrastructure problem')
     runs-on: ubuntu-latest
     steps:
