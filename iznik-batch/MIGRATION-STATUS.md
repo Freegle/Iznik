@@ -66,6 +66,7 @@ All email-related commands use the `mail:` prefix. Other batch commands use desc
 | `cleanup:chat-duplicates` | Remove duplicate consecutive chat messages |
 | `emails:validate` | Validate emails and delete invalid ones |
 | `locations:fix-skewed` | Fix swapped lat/lng coordinates |
+| `locations:sync-pgsql` | Sync locations to PostgreSQL/PostGIS and remap postcodes to areas |
 | `users:update-ratings` | Update rating visibility based on chat interactions |
 | `memberships:process` | Process membership history entries (send welcome emails, flag mod comments) |
 | `users:process-exports` | Process GDPR data export requests + purge old export data |
@@ -369,7 +370,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | `cron_checker_iznik.php` | Monitoring - external tool |
 | `discourse_checkusers.php` | Discourse integration - separate system |
 | `discourse_not_signed_up.php` | Discourse integration - separate system |
-| `locations_pgsql` | PostgreSQL locations - external |
+| ~~`locations_pgsql`~~ | ~~PostgreSQL locations~~ — **Migrated: `locations:sync-pgsql`** |
 | `doogal` | External data import script |
 | `eximlogs.php` | Mail server logs - external |
 | `facebook_share.php` | Disabled in crontab |
