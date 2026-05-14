@@ -64,7 +64,7 @@ class SafeMailTest extends TestCase
         $user = $this->createTestUser();
         $email = $user->emails->first()->email;
         $emailId = $user->emails->first()->id;
-        DB::table('users_emails')->where('id', $emailId)->update(['bounced' => 0]);
+        DB::table('users_emails')->where('id', $emailId)->update(['bounced' => null]);
 
         Mail::shouldReceive('to')->once()->andReturnSelf();
         Mail::shouldReceive('send')->once()->andThrow(new SymfonyTransportException(
@@ -76,9 +76,9 @@ class SafeMailTest extends TestCase
         try {
             SafeMail::send($this->makeFakeMailable(), $email);
         } finally {
-            // Even though it threw, bounced must NOT have been incremented.
+            // Even though it threw, bounced must NOT have been set.
             $bounced = DB::table('users_emails')->where('id', $emailId)->value('bounced');
-            $this->assertEquals(0, $bounced, 'transient failure must NOT mark email as bouncing');
+            $this->assertNull($bounced, 'transient failure must NOT mark email as bouncing');
         }
     }
 
