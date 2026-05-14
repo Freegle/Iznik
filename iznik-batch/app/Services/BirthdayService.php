@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Mail\Birthday\BirthdayMail;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -145,8 +146,11 @@ class BirthdayService
             return false;
         }
 
-        // Skip users inactive for more than 6 months (matches V1 Engage::USER_INACTIVE).
-        if (!$user->lastaccess || (time() - strtotime($user->lastaccess)) > 183 * 24 * 60 * 60) {
+        // Skip users inactive for more than User::USER_INACTIVE_DAYS days
+        // (matches V1 Engage::USER_INACTIVE). Single source of truth on the
+        // User model so this stays in step with the bulk-mail digests.
+        if (!$user->lastaccess
+            || (time() - strtotime($user->lastaccess)) > User::USER_INACTIVE_DAYS * 24 * 60 * 60) {
             return false;
         }
 

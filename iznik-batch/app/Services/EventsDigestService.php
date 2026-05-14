@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Mail\Event\EventsDigestMail;
 use App\Models\Group;
 use App\Models\Membership;
+use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -139,8 +140,15 @@ class EventsDigestService
             $groupsProcessed++;
 
             // Find members who have events enabled and are not opted out.
-            $members = DB::table('memberships')
-                ->join('users', 'users.id', '=', 'memberships.userid')
+            // Activity / holiday / bouncing / simplemail filters live on
+            // User::scopeReceivingOurMails so events + volunteering digests +
+            // any future bulk-mail batch job share the same definition of
+            // "deliverable" — V1 events.php enforced these via sendOurMails()
+            // per recipient, and skipping them inflated the V2 dry-run from
+            // ~49k (V1 baseline) to 722k sends.
+            $members = User::query()
+                ->select(['users_emails.email', 'users.id as userId'])
+                ->join('memberships', 'memberships.userid', '=', 'users.id')
                 ->join('users_emails', function ($join) {
                     $join->on('users_emails.userid', '=', 'memberships.userid')
                         ->where('users_emails.preferred', '=', 1);
@@ -149,9 +157,8 @@ class EventsDigestService
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED)
                 ->where('memberships.eventsallowed', 1)
                 ->where('memberships.emailfrequency', '!=', 0)
-                ->whereNull('users.deleted')
                 ->whereNotNull('users_emails.email')
-                ->select(['users_emails.email', 'users.id as userId'])
+                ->receivingOurMails()
                 ->get();
 
             foreach ($members as $member) {
