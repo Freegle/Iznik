@@ -536,46 +536,51 @@ class TNSyncCommand extends Command
 
     private function mergeDuplicateTNUsers(): int
     {
-        $duplicates = UserEmail::selectRaw("COUNT(DISTINCT(userid)) AS count, REGEXP_REPLACE(email, '(.*)-g[0-9]+@user\\.trashnothing\\.com', '$1') AS username")
-            ->where('email', 'LIKE', '%@user.trashnothing.com')
-            ->groupBy('username')
-            ->having('count', '>', 1)
+        // Use the `backwards` index (REVERSE(email)) to avoid a full table scan.
+        // LIKE '%@user.trashnothing.com' can't use the email index (leading wildcard),
+        // but the reversed suffix is a prefix match — O(log n) range scan instead of O(n).
+        $reversedSuffix = strrev('@user.trashnothing.com');
+
+        $rows = UserEmail::select('userid', 'email')
+            ->where('backwards', 'LIKE', $reversedSuffix . '%')
             ->get();
 
-        if ($duplicates->isEmpty()) {
+        if ($rows->isEmpty()) {
             return 0;
         }
 
-        Log::info('Found ' . $duplicates->count() . ' duplicate TN users');
-        Log::info("TN-SYNC-TRACE [DUP-SCAN] count=" . count($duplicates));
+        // Group by TN username in PHP — avoids slow REGEXP_REPLACE GROUP BY in MySQL.
+        $groups = [];
+        foreach ($rows as $row) {
+            $username = preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row->email);
+            $groups[$username][] = (int) $row->userid;
+        }
+
+        $duplicateGroups = array_filter($groups, fn($ids) => count(array_unique($ids)) > 1);
+
+        if (empty($duplicateGroups)) {
+            return 0;
+        }
+
+        Log::info('Found ' . count($duplicateGroups) . ' duplicate TN users');
+        Log::info("TN-SYNC-TRACE [DUP-SCAN] count=" . count($duplicateGroups));
         $merged = 0;
 
-        foreach ($duplicates as $dup) {
-            Log::info("Look for dups for {$dup->username}");
+        foreach ($duplicateGroups as $username => $userIds) {
+            $uniqueIds = array_values(array_unique($userIds));
+            Log::info('Found ' . count($uniqueIds) . " users for {$username}");
 
-            $userIds = UserEmail::selectRaw("DISTINCT(userid) as userid")
-                ->whereRaw("REGEXP_REPLACE(email, '(.*)-g[0-9]+@user\\.trashnothing\\.com', '$1') = ?", [$dup->username])
-                ->where('email', 'LIKE', '%@user.trashnothing.com')
-                ->pluck('userid')
-                ->toArray();
+            $mergeTo = $uniqueIds[0];
 
-            Log::info('Found ' . count($userIds) . " users for {$dup->username}");
-
-            if (count($userIds) > 1) {
-                $mergeTo = $userIds[0];
-
-                foreach ($userIds as $userId) {
-                    if ($userId != $mergeTo) {
-                        Log::info("Merging {$userId} into {$mergeTo}");
-                        Log::info("TN-SYNC-TRACE [MERGE] from={$userId} into={$mergeTo}");
-                        User::merge($mergeTo, $userId, "Duplicate TN user created accidentally", dryRun: $this->dryRun);
-                        $this->loki->logEvent('tn-sync', 'user-merge', [
-                            'merge_to' => $mergeTo,
-                            'merge_from' => $userId,
-                        ]);
-                        $merged++;
-                    }
-                }
+            foreach (array_slice($uniqueIds, 1) as $userId) {
+                Log::info("Merging {$userId} into {$mergeTo}");
+                Log::info("TN-SYNC-TRACE [MERGE] from={$userId} into={$mergeTo}");
+                User::merge($mergeTo, $userId, "Duplicate TN user created accidentally", dryRun: $this->dryRun);
+                $this->loki->logEvent('tn-sync', 'user-merge', [
+                    'merge_to' => $mergeTo,
+                    'merge_from' => $userId,
+                ]);
+                $merged++;
             }
         }
 

@@ -558,12 +558,14 @@ class TNSyncCommandTest extends TestCase
         DB::table('users_emails')->insert([
             'userid' => $user1->id,
             'email' => "{$tnBase}-g101@user.trashnothing.com",
+            'backwards' => strrev("{$tnBase}-g101@user.trashnothing.com"),
             'preferred' => 0,
             'added' => now(),
         ]);
         DB::table('users_emails')->insert([
             'userid' => $user2->id,
             'email' => "{$tnBase}-g202@user.trashnothing.com",
+            'backwards' => strrev("{$tnBase}-g202@user.trashnothing.com"),
             'preferred' => 0,
             'added' => now(),
         ]);
@@ -591,15 +593,19 @@ class TNSyncCommandTest extends TestCase
         $user2 = $this->createTestUser();
 
         // Different TN base usernames — these are NOT duplicates.
+        $email1 = 'unique1_' . uniqid() . '-g101@user.trashnothing.com';
+        $email2 = 'unique2_' . uniqid() . '-g202@user.trashnothing.com';
         DB::table('users_emails')->insert([
             'userid' => $user1->id,
-            'email' => 'unique1_' . uniqid() . '-g101@user.trashnothing.com',
+            'email' => $email1,
+            'backwards' => strrev($email1),
             'preferred' => 0,
             'added' => now(),
         ]);
         DB::table('users_emails')->insert([
             'userid' => $user2->id,
-            'email' => 'unique2_' . uniqid() . '-g202@user.trashnothing.com',
+            'email' => $email2,
+            'backwards' => strrev($email2),
             'preferred' => 0,
             'added' => now(),
         ]);
@@ -1026,12 +1032,14 @@ class TNSyncCommandTest extends TestCase
         DB::table('users_emails')->insert([
             'userid' => $user1->id,
             'email' => "{$tnBase}-g101@user.trashnothing.com",
+            'backwards' => strrev("{$tnBase}-g101@user.trashnothing.com"),
             'preferred' => 0,
             'added' => now(),
         ]);
         DB::table('users_emails')->insert([
             'userid' => $user2->id,
             'email' => "{$tnBase}-g202@user.trashnothing.com",
+            'backwards' => strrev("{$tnBase}-g202@user.trashnothing.com"),
             'preferred' => 0,
             'added' => now(),
         ]);

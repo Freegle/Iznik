@@ -52,6 +52,15 @@ class UserEmail extends Model implements Auditable
     protected $guarded = ['id'];
     public $timestamps = false;
 
+    protected static function booted(): void
+    {
+        static::saving(function (UserEmail $record) {
+            if ($record->isDirty('email') || is_null($record->backwards)) {
+                $record->backwards = strrev(strtolower((string) $record->email));
+            }
+        });
+    }
+
     protected $casts = [
         'added' => 'datetime',
         'validated' => 'datetime',
