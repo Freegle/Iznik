@@ -264,6 +264,13 @@ workflows:
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
+      - freegle/build-android-modtools-debug:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              only:
+                - feat/modtools-capacitor-app
 
   # Build iOS for TestFlight from any branch
   testflight-branch:
