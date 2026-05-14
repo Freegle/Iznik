@@ -145,6 +145,7 @@ class User extends Model implements Auditable
      * filters and damages the sending domain reputation.
      */
     public const USER_INACTIVE_DAYS = 182;
+    public const USER_INACTIVE = self::USER_INACTIVE_DAYS * 86400;
 
     // Gift aid period weights for merge comparison (lower = more favourable).
     public const GIFTAID_PERIOD_PAST_4_YEARS_AND_FUTURE = 'Past4YearsAndFuture';
@@ -495,7 +496,7 @@ class User extends Model implements Auditable
                         'email' => $email,
                         'preferred' => $primary,
                         'canon' => $canon,
-                        'backwards' => strrev($canon),
+                        'backwards' => strrev(strtolower($email)),
                     ]);
                     $rc = $newEmail->id;
                 } else {

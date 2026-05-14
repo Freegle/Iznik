@@ -128,7 +128,7 @@ class UserEmailTest extends TestCase
 
         $this->assertNotNull($record->canon);
         $this->assertNotNull($record->backwards);
-        $this->assertEquals(strrev($record->canon), $record->backwards);
+        $this->assertEquals(strrev(strtolower($record->email)), $record->backwards);
     }
 
     public function test_add_email_non_primary(): void
