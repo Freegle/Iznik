@@ -312,20 +312,117 @@ class PushNotificationService
     }
 
     /**
-     * Send FCM notification to a device.
+     * Send a forced-visible test push to all of a user's registered devices for the given app.
+     *
+     * Bypasses the work-count payload entirely: always includes a notification block so the
+     * push lands in the system tray on Android and iOS, and uses badge = max(realWork, 1)
+     * so a real pending count is never overwritten with a smaller number.
      */
-    private function sendFcm(int $userId, string $type, string $token, array $payload): void
+    public function notifyTest(int $userId, bool $modtools): int
+    {
+        if (! $this->messaging) {
+            Log::debug('Firebase not configured, skipping test push notification', [
+                'user_id' => $userId,
+            ]);
+
+            return 0;
+        }
+
+        $apptype = $modtools ? self::APPTYPE_MODTOOLS : 'User';
+        $notifs = DB::select(
+            "SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?",
+            [$userId, $apptype]
+        );
+
+        $appLabel = $modtools ? 'ModTools' : 'Freegle';
+        $realCount = $modtools ? $this->getBadgeCount($userId) : 0;
+        $badge = max($realCount, 1);
+
+        $payload = [
+            'badge' => (string) $badge,
+            'count' => (string) $badge,
+            'chatcount' => '0',
+            'notifcount' => (string) $badge,
+            'title' => "$appLabel test notification",
+            'message' => 'Push test from iznik-batch — if you can see this, push notifications are working.',
+            'chatids' => '',
+            'content-available' => '1',
+            'image' => $modtools ? 'www/images/modtools_logo.png' : 'www/images/user_logo.png',
+            'modtools' => $modtools ? '1' : '0',
+            'sound' => 'default',
+            'route' => $modtools ? '/modtools' : '/',
+            'notId' => (string) $userId,
+            'test' => '1',
+        ];
+
+        $count = 0;
+        foreach ($notifs as $notif) {
+            if (! in_array($notif->type, [self::PUSH_FCM_ANDROID, self::PUSH_FCM_IOS])) {
+                continue;
+            }
+
+            try {
+                $this->sendFcm($userId, $notif->type, $notif->subscription, $payload, true);
+
+                DB::table('users_push_notifications')
+                    ->where('userid', $userId)
+                    ->where('subscription', $notif->subscription)
+                    ->update(['lastsent' => now()]);
+
+                $count++;
+            } catch (\Throwable $e) {
+                $errorMsg = $e->getMessage();
+                Log::warning('Test push notification failed', [
+                    'user_id' => $userId,
+                    'type' => $notif->type,
+                    'error' => $errorMsg,
+                ]);
+
+                if (str_contains($errorMsg, 'UNREGISTERED') ||
+                    str_contains($errorMsg, 'Invalid registration token') ||
+                    str_contains($errorMsg, 'not a valid FCM registration token')) {
+                    DB::table('users_push_notifications')
+                        ->where('userid', $userId)
+                        ->where('subscription', $notif->subscription)
+                        ->delete();
+
+                    Log::info('Removed invalid push subscription', [
+                        'user_id' => $userId,
+                        'subscription' => substr($notif->subscription, 0, 20) . '...',
+                    ]);
+                }
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * Send FCM notification to a device.
+     *
+     * When $forceVisible is true, includes a notification block so the push appears in the
+     * system tray even if the app is killed (used by the test command).
+     */
+    private function sendFcm(int $userId, string $type, string $token, array $payload, bool $forceVisible = false): void
     {
         if ($type === self::PUSH_FCM_ANDROID) {
-            // Android: data-only message (no notification block)
-            $message = CloudMessage::fromArray([
+            $androidMessage = [
                 'token' => $token,
                 'data' => $payload,
-            ]);
+            ];
+
+            if ($forceVisible && ! empty($payload['title'])) {
+                $androidMessage['notification'] = [
+                    'title' => $payload['title'],
+                    'body' => $payload['message'] ?: $payload['title'],
+                ];
+            }
+
+            $message = CloudMessage::fromArray($androidMessage);
 
             $message = $message->withAndroidConfig([
                 'ttl' => '3600s',
-                'priority' => 'normal',
+                'priority' => $forceVisible ? 'high' : 'normal',
             ]);
         } else {
             // iOS: include notification block for display

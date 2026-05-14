@@ -15,7 +15,7 @@ class SendTestPushCommandTest extends TestCase
         $this->createTestPushNotification($user->id, 'ModTools');
 
         $service = $this->createMock(PushNotificationService::class);
-        $service->expects($this->once())->method('notify')
+        $service->expects($this->once())->method('notifyTest')
             ->with($user->id, true)
             ->willReturn(1);
         $this->app->instance(PushNotificationService::class, $service);
@@ -38,7 +38,7 @@ class SendTestPushCommandTest extends TestCase
         $this->createTestPushNotification($user->id, 'User');
 
         $service = $this->createMock(PushNotificationService::class);
-        $service->expects($this->once())->method('notify')
+        $service->expects($this->once())->method('notifyTest')
             ->with($user->id, false)
             ->willReturn(1);
         $this->app->instance(PushNotificationService::class, $service);
@@ -59,7 +59,7 @@ class SendTestPushCommandTest extends TestCase
         $this->createTestPushNotification($user->id, 'ModTools');
 
         $service = $this->createMock(PushNotificationService::class);
-        $service->method('notify')->willReturn(1);
+        $service->method('notifyTest')->willReturn(1);
         $this->app->instance(PushNotificationService::class, $service);
 
         $this->artisan('push:test-notification', [
@@ -120,7 +120,7 @@ class SendTestPushCommandTest extends TestCase
         $this->createTestPushNotification($user->id, 'ModTools');
 
         $service = $this->createMock(PushNotificationService::class);
-        $service->expects($this->once())->method('notify')
+        $service->expects($this->once())->method('notifyTest')
             ->with($user->id, true)
             ->willReturn(1);
         $this->app->instance(PushNotificationService::class, $service);
@@ -139,7 +139,7 @@ class SendTestPushCommandTest extends TestCase
         $this->createTestPushNotification($user->id, 'ModTools');
 
         $service = $this->createMock(PushNotificationService::class);
-        $service->method('notify')->willReturn(1);
+        $service->method('notifyTest')->willReturn(1);
         $this->app->instance(PushNotificationService::class, $service);
 
         $this->artisan('push:test-notification', [
@@ -158,7 +158,7 @@ class SendTestPushCommandTest extends TestCase
         $this->createTestPushNotification($user->id, 'ModTools');
 
         $service = $this->createMock(PushNotificationService::class);
-        $service->method('notify')->willReturn(0);
+        $service->method('notifyTest')->willReturn(0);
         $this->app->instance(PushNotificationService::class, $service);
 
         $this->artisan('push:test-notification', [
