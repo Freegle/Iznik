@@ -804,6 +804,13 @@ Schedule::command('messages:update-index')
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
 
+// Volunteering opportunity roundup — weekly to group members.
+// V1: cron/volunteering.php (weekly Mon 23:00)
+Schedule::command('mail:volunteering-digest')
+    ->weeklyOn(1, '23:00')  // Monday at 11pm
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:volunteering-digest'))
+    ->runInBackground();
 // Notify group mods about recent chitchat (newsfeed) posts from their members.
 // V1: cron/newsfeed_modnotif.php (daily 13:30)
 Schedule::command('mail:newsfeed-mod-notif')

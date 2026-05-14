@@ -3736,10 +3736,12 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ?", msgID).Scan(&candidates)
 	}
 
+	foundAI := false
 	for _, att := range candidates {
 		if att.Externaluid == "" || !isAIAttachment(att.Externalmods) {
 			continue
 		}
+		foundAI = true
 		var aiImageID uint64
 		db.Raw("SELECT id FROM ai_images WHERE externaluid = ? LIMIT 1", att.Externaluid).Scan(&aiImageID)
 		if aiImageID > 0 {
@@ -3749,6 +3751,11 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 				microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
 			}
 		}
+	}
+	// Mirror V1 (Message.php:3974–3989): whenever an AI attachment is removed,
+	// protect the message from the illustrations cron re-injecting a cached image.
+	if foundAI {
+		db.Exec("INSERT IGNORE INTO messages_ai_declined (msgid) VALUES (?)", msgID)
 	}
 }
 
