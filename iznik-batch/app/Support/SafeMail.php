@@ -57,21 +57,40 @@ class SafeMail
             return true;
         } catch (\Throwable $e) {
             $classifier = app(SmtpFailureClassifier::class);
+            $msg = $e->getMessage();
 
-            if ($classifier->isPermanent($e->getMessage())) {
-                $classifier->recordPermanentBounce($email, $e->getMessage());
+            if ($classifier->isPermanent($msg)) {
+                // Bad address (non-ASCII local-part, 5xx etc) — mark bouncing
+                // and skip. Log::warning so it doesn't escalate to Sentry.
+                $classifier->recordPermanentBounce($email, $msg);
 
                 Log::warning('Skipped permanent-failure recipient and marked as bouncing', [
                     'mailable'  => get_class($mailable),
                     'recipient' => $email,
-                    'error'     => $e->getMessage(),
+                    'error'     => $msg,
                 ]);
 
                 return false;
             }
 
-            // Not a permanent failure — let it propagate so transient/unknown
-            // errors still stop the job loudly.
+            if ($classifier->isTransient($msg)) {
+                // Connection reset / timed-out / closed-unexpectedly — mail-host
+                // hiccup, NOT the recipient's fault. Skip this one and let the
+                // surrounding loop keep moving so a single SMTP blip doesn't
+                // kill (e.g.) a 50k-recipient engage run. Log::warning so it
+                // doesn't escalate to Sentry as an error.
+                Log::warning('Skipped recipient on transient SMTP failure', [
+                    'mailable'  => get_class($mailable),
+                    'recipient' => $email,
+                    'error'     => $msg,
+                ]);
+
+                return false;
+            }
+
+            // Unknown class of failure — let it propagate so it gets noticed
+            // (Sentry / cron-log stack trace) instead of being silently
+            // swallowed.
             throw $e;
         }
     }

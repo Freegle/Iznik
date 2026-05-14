@@ -2880,8 +2880,8 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 
 	// Add email.
 	canon := user.CanonicalizeEmail(email)
-	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon) VALUES (?, ?, 1, NOW(), ?)",
-		newUserID, email, canon)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 1, NOW(), ?, ?)",
+		newUserID, email, canon, user.ReverseString(canon))
 
 	// Create session. series must be a random numeric value (bigint
 	// unsigned); using userID collided across every session for the same
