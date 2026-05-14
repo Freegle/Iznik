@@ -79,18 +79,28 @@ class DonationSummaryService
             // UK local because it ran on a Europe/London-locale host; preserve
             // that here so a 10:03 UTC PayPal IPN shows as 11:03 BST in the
             // fundraising email, not 10:03.
+            //
+            // Drop the date — every row in a daily summary is today already —
+            // so the time column doesn't push the payer column off-screen on
+            // mobile. Keep the TZ name so DST transitions are obvious at a
+            // glance.
             $localTs = Carbon::parse($donation->timestamp, 'UTC')
                 ->setTimezone('Europe/London')
-                ->format('Y-m-d H:i:s T');
+                ->format('H:i:s T');
 
-            // Cell padding/border are inline because the MJML <mj-table>
-            // wrapper doesn't propagate per-cell styling.
-            $cell = 'style="padding:4px 8px;border-bottom:1px solid #eee;text-align:left;"';
-            $rowsHtml .= "<tr>"
-                . "<td {$cell}>{$localTs}</td>"
-                . "<td {$cell}><b>&pound;{$amount}</b></td>"
-                . "<td {$cell}>{$payer}</td>"
-                . "<td {$cell}>{$statusCell}</td>"
+            // Cell styling is inline because MJML's <mj-table> doesn't
+            // propagate per-cell rules. The donation-row class is what the
+            // template's media query targets to tighten padding + font on
+            // narrow screens.
+            $td       = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;"';
+            $tdTime   = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap;"';
+            $tdAmount = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;"';
+            $tdPayer  = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;word-break:break-word;"';
+            $rowsHtml .= "<tr class=\"donation-row\">"
+                . "<td {$tdTime}>{$localTs}</td>"
+                . "<td {$tdAmount}><b>&pound;{$amount}</b></td>"
+                . "<td {$tdPayer}>{$payer}</td>"
+                . "<td {$td}>{$statusCell}</td>"
                 . "</tr>\n";
         }
 
