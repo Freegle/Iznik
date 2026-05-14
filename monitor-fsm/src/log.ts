@@ -135,6 +135,10 @@ export function summarizeActionResult(action: string, result: unknown): string {
       const name = r.latestRun?.name ?? r.latestRun?.conclusion ?? ''
       return failing ? `master FAILING${name ? ' (' + name + ')' : ''}` : 'master green'
     }
+    case 'check_production_ci': {
+      const failing = r.failing === true
+      return failing ? `production FAILING (${r.sha?.slice(0, 9) ?? '?'})` : `production green`
+    }
     case 'check_my_open_pr_ci': {
       const red = Array.isArray(r.redPRs) ? r.redPRs.length : 0
       const pending = Array.isArray(r.pendingPRs) ? r.pendingPRs.length : 0
@@ -286,6 +290,7 @@ const ACTION_LABELS: Record<string, string> = {
   fetch_discourse: 'fetch Discourse posts',
   git_log_today: 'check recent commits',
   check_master_ci: 'check master tests',
+  check_production_ci: 'check production tests',
   check_my_open_pr_ci: 'check my PR tests',
   check_sentry: 'check Sentry',
   read_user_feedback: 'read reviewer feedback',

@@ -1215,6 +1215,24 @@ print(urllib.request.urlopen(req).read().decode())
   },
 
   {
+    name: 'check_production_ci',
+    description: 'Check CircleCI status on the latest production branch commit of Freegle/Iznik. Returns {sha, overallState, circleCiStatuses: [{context, state}], failing: bool}. Use this to detect red production so the FSM can prioritise fixing it.',
+    handler: async () => {
+      const headRes = await sh('gh', ['api', 'repos/Freegle/Iznik/commits/production/status'])
+      if (headRes.code !== 0) return { error: headRes.stderr, failing: false }
+      const data = JSON.parse(headRes.stdout) as { state: string; sha: string; statuses: Array<{ context: string; state: string; target_url: string }> }
+      const circleCiStatuses = data.statuses.filter(s => s.context.startsWith('ci/circleci'))
+      const failingStatuses = circleCiStatuses.filter(s => s.state === 'failure' || s.state === 'error')
+      return {
+        sha: data.sha,
+        overallState: data.state,
+        circleCiStatuses: circleCiStatuses.map(s => ({ context: s.context, state: s.state, url: s.target_url })),
+        failing: failingStatuses.length > 0,
+      }
+    },
+  },
+
+  {
     name: 'fetch_ci_failure_logs',
     description: 'Fetch log tail from failing jobs of a GitHub Actions / CircleCI run on Freegle/Iznik. Uses `gh run view --log-failed`. Params: {runId: number, maxChars?: number}. Returns {jobs: [{name, conclusion}], logTail: string}.',
     paramsSchema: {
@@ -1896,14 +1914,17 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
   {
     name: 'ci_router_decide',
-    description: 'Phase A router logic. No LLM — pure branch based on CHECK_CI results + iteration context. Returns {_transition: "FIX_MASTER_CI" | "FIX_OPEN_PR_CI" | "FETCH_DISCOURSE" | "COVERAGE_GATE", pickedPR?}.',
+    description: 'Phase A router logic. No LLM — pure branch based on CHECK_CI results + iteration context. Priority: (1) master red → FIX_MASTER_CI; (2) production red → FIX_PRODUCTION_CI; (3) drain if pending PRs; (4) fix focus PR. Returns {_transition: "FIX_MASTER_CI" | "FIX_PRODUCTION_CI" | "PARALLEL_ANALYZE_AND_FIX" | "WRAP_UP"}.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as any
       const master = ctx?._action_check_master_ci ?? {}
+      const production = ctx?._action_check_production_ci ?? {}
       const prCheck = ctx?._action_check_my_open_pr_ci ?? {}
       const masterFailing = master.failing === true
+      const productionFailing = production.failing === true
       const masterFixAttempted = ctx?.masterFixAttempted === true
+      const productionFixAttempted = ctx?.productionFixAttempted === true
       const redPRs: Array<{ number: number }> = Array.isArray(prCheck.redPRs) ? prCheck.redPRs : []
       const attempts: Array<{ prNumber: number; terminal?: boolean }> = Array.isArray(ctx?.openPRFixAttempts) ? ctx.openPRFixAttempts : []
       // Allow re-picking a PR whose latest attempt did not push a commit —
@@ -1931,6 +1952,13 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       // Priority 1: master red
       if (masterFailing && !masterFixAttempted) {
         return { _transition: 'FIX_MASTER_CI', reason: `master CI failing on run ${master.latestRun?.databaseId ?? '?'}` }
+      }
+      // Priority 1.5: production red — production branch has a failing CI run.
+      // Production is auto-promoted from master; fixes should generally target master
+      // (so they get auto-promoted) unless the failure is production-specific config.
+      if (productionFailing && !productionFixAttempted) {
+        out(`ci_router_decide: production CI failing (sha=${production.sha?.slice(0, 9) ?? '?'})`)
+        return { _transition: 'FIX_PRODUCTION_CI', reason: `production CI failing on sha ${production.sha?.slice(0, 9) ?? '?'}` }
       }
       // Priority 2: drain mode — if ANY PR has pending CI, don't push new commits.
       // With a single self-hosted runner, pushing to multiple PRs simultaneously

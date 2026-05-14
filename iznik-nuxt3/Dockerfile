@@ -5,6 +5,8 @@ WORKDIR /app
 ENV IZNIK_API_V1=http://freegle-apiv1:80/api \
     IZNIK_API_V2=http://freegle-apiv2:8192/api
 
+RUN apt-get update && apt-get install -y --no-install-recommends libvips-dev && rm -rf /var/lib/apt/lists/*
+
 COPY package*.json setup-hooks.* ./
 COPY patches/ ./patches/
 RUN npm install --legacy-peer-deps

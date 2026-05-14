@@ -108,7 +108,7 @@ class WelcomeMailTest extends TestCase
         $this->assertNotNull($replyTo, 'replyTo address must be set');
 
         $domain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
-        $this->assertSame("{$group->nameshort}-auto@{$domain}", $from->getAddress());
-        $this->assertSame("{$group->nameshort}-volunteers@{$domain}", $replyTo->getAddress());
+        $this->assertSame("{$group->nameshort}-auto@{$domain}", $from->address);
+        $this->assertSame("{$group->nameshort}-volunteers@{$domain}", $replyTo->address);
     }
 }
