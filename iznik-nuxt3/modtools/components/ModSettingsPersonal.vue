@@ -135,6 +135,48 @@
         variant="modgreen"
       />
     </b-form-group>
+    <div v-if="mobileStore.isApp" class="mt-3">
+      <h5>Push Notifications (App Debug)</h5>
+      <b-form-group label="Current FCM token">
+        <b-form-text class="mb-1">
+          The push notification token registered with this device.
+        </b-form-text>
+        <div class="font-monospace small text-break border rounded p-2 bg-light">
+          {{ mobileStore.mobilePushId || 'None (not yet registered)' }}
+        </div>
+      </b-form-group>
+      <b-form-group label="Token sent to server">
+        <div class="font-monospace small text-break border rounded p-2 bg-light">
+          {{ mobileStore.acceptedMobilePushId || 'None (not yet sent)' }}
+        </div>
+      </b-form-group>
+      <b-form-group label="Token matches">
+        <span
+          :class="
+            mobileStore.mobilePushId &&
+            mobileStore.mobilePushId === mobileStore.acceptedMobilePushId
+              ? 'text-success'
+              : 'text-danger'
+          "
+        >
+          {{
+            mobileStore.mobilePushId &&
+            mobileStore.mobilePushId === mobileStore.acceptedMobilePushId
+              ? 'Yes — server has current token'
+              : 'No — server has stale or no token'
+          }}
+        </span>
+      </b-form-group>
+      <SpinButton
+        variant="primary"
+        icon-name="bell"
+        label="Send token to server now"
+        @handle="resendPushToken"
+      />
+      <div v-if="pushResult" class="mt-2 small" :class="pushResultClass">
+        {{ pushResult }}
+      </div>
+    </div>
     <h5 class="mt-3">Useful Links</h5>
     <p>
       <ExternalLink
@@ -158,11 +200,37 @@
 import { ref, computed } from 'vue'
 import { useAuthStore } from '~/stores/auth'
 import { useMiscStore } from '@/stores/misc'
+import { useMobileStore } from '~/stores/mobile'
 import { useMe } from '~/composables/useMe'
 
 const authStore = useAuthStore()
 const miscStore = useMiscStore()
+const mobileStore = useMobileStore()
 const { me } = useMe()
+
+const pushResult = ref(null)
+const pushResultClass = ref('')
+
+async function resendPushToken(callback) {
+  pushResult.value = null
+  try {
+    if (!mobileStore.mobilePushId) {
+      pushResult.value = 'No token available — push notifications may not be enabled.'
+      pushResultClass.value = 'text-danger'
+      callback()
+      return
+    }
+    // Force resend by clearing the accepted token.
+    mobileStore.acceptedMobilePushId = null
+    await authStore.savePushId()
+    pushResult.value = 'Sent OK — server now has the current token.'
+    pushResultClass.value = 'text-success'
+  } catch (e) {
+    pushResult.value = 'Error: ' + (e?.message || String(e))
+    pushResultClass.value = 'text-danger'
+  }
+  callback()
+}
 
 const showEmailConfirmModal = ref(false)
 
