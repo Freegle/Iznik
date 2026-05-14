@@ -1,0 +1,51 @@
+name: Retry CircleCI infrastructure failures
+
+on:
+  status:
+
+jobs:
+  retry:
+    # Only fire for CircleCI build-and-test infrastructure failures
+    if: |
+      github.event.context == 'ci/circleci: build-and-test' &&
+      github.event.state == 'failure' &&
+      contains(github.event.description, 'infrastructure problem')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger fresh CircleCI pipeline
+        env:
+          CIRCLE_TOKEN: ${{ secrets.CIRCLECI_TOKEN }}
+        run: |
+          BRANCH="${{ github.event.branches[0].name }}"
+          if [ -z "$BRANCH" ]; then
+            echo "No branch in status event — skipping"
+            exit 0
+          fi
+
+          echo "Infrastructure failure detected on: $BRANCH"
+
+          # Guard against cascading retries: if the most recent pipeline for this
+          # branch already has a running workflow, a fresh retry is in flight.
+          PIPELINES=$(curl -sf \
+            -H "Circle-Token: $CIRCLE_TOKEN" \
+            "https://circleci.com/api/v2/project/gh/Freegle/Iznik/pipeline?branch=${BRANCH}")
+
+          LATEST_PIPELINE_ID=$(echo "$PIPELINES" | jq -r '.items[0].id // ""')
+          if [ -n "$LATEST_PIPELINE_ID" ]; then
+            RUNNING=$(curl -sf \
+              -H "Circle-Token: $CIRCLE_TOKEN" \
+              "https://circleci.com/api/v2/pipeline/${LATEST_PIPELINE_ID}/workflow" \
+              | jq -r '.items[] | select(.status == "running") | .id' | head -1)
+            if [ -n "$RUNNING" ]; then
+              echo "Workflow $RUNNING already running for $BRANCH — skipping retry"
+              exit 0
+            fi
+          fi
+
+          echo "No running pipeline found — triggering fresh pipeline for $BRANCH..."
+          curl -sf -X POST \
+            -H "Circle-Token: $CIRCLE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"branch\":\"${BRANCH}\"}" \
+            "https://circleci.com/api/v2/project/gh/Freegle/Iznik/pipeline"
+          echo "Done"
