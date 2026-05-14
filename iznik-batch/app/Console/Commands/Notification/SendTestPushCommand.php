@@ -101,10 +101,10 @@ class SendTestPushCommand extends Command
             $this->line("  - Type: {$sub->type}, Token: $truncatedToken");
         }
 
-        // Send the notification
+        // Send a forced-visible test notification (always shows in tray + badge >= 1)
         $this->line('');
         $this->info('Sending notification...');
-        $count = $pushService->notify($userId, $modtools);
+        $count = $pushService->notifyTest($userId, $modtools);
 
         if ($count === 0) {
             $this->error("Failed to send notifications (count: $count)");
