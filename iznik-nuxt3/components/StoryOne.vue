@@ -14,7 +14,7 @@
         </span>
         <b-button
           v-if="loggedIn && !story.liked"
-          variant="secondary"
+          variant="outline-light"
           size="sm"
           @click="love"
         >
@@ -23,14 +23,14 @@
         </b-button>
         <b-button
           v-if="loggedIn && story.liked"
-          variant="secondary"
+          variant="outline-light"
           size="sm"
           @click="unlove"
         >
           <v-icon icon="heart" class="text-danger" />
           <span class="d-none d-sm-inline"> Unlove</span>
         </b-button>
-        <b-button variant="secondary" size="sm" @click="share(story)">
+        <b-button variant="outline-light" size="sm" @click="share(story)">
           <v-icon icon="share-alt" />
         </b-button>
       </div>

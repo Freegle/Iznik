@@ -855,6 +855,14 @@ Schedule::command('stories:send-to-central')
     ->sendOutputTo(cronLog('stories:send-to-central'))
     ->runInBackground();
 
+// Send the stories newsletter to all eligible Freegle members.
+// V1: cron/stories_newsletter.php (monthly, 12th 23:00)
+Schedule::command('stories:newsletter')
+    ->monthlyOn(12, '23:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stories:newsletter'))
+    ->runInBackground();
+
 // =============================================================================
 // GIT SUMMARY
 // =============================================================================
