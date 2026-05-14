@@ -15,9 +15,15 @@
 
     <mj-section background-color="#ffffff" padding="0 20px 20px">
       <mj-column>
-        <mj-raw>
+        {{-- <mj-table> emits its own <table>/<tbody>, so $htmlContent is just
+             the <tr>…</tr> rows. Using <mj-raw> here used to nest a full
+             <table> inside the column's layout <tbody>, which Gmail/Outlook
+             sanitised away — leaving the email with the header total but
+             no donations list. --}}
+        <mj-table cellpadding="0" cellspacing="0" font-size="14px"
+                  line-height="1.4" border="0" width="100%">
           {!! $htmlContent !!}
-        </mj-raw>
+        </mj-table>
       </mj-column>
     </mj-section>
 
