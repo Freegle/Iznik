@@ -253,8 +253,17 @@ commands:
             # Ensure COMPOSE_PROFILES is set for all docker-compose commands
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
 
-            # Clean up any existing containers first
-            docker-compose down --remove-orphans || true
+            # Clean up any existing containers first.
+            # On Katapult VMs also wipe named volumes (MySQL data etc.) so each job
+            # starts with a clean database — without this, a reused VM retains MySQL
+            # state from the previous pipeline and create-test-env.php can fail when
+            # chat rooms or other objects already exist. The WSL2 self-hosted runner
+            # preserves volumes across jobs for speed (GeoIP data, migrations).
+            if [ "${IS_KATAPULT_VM:-}" = "true" ]; then
+              docker-compose down --remove-orphans --volumes || true
+            else
+              docker-compose down --remove-orphans || true
+            fi
             # On self-hosted runner, also clean up containers from old CI runs that used
             # COMPOSE_PROJECT_NAME=freegle (before we switched to freegle-ci)
             if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
