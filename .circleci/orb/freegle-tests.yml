@@ -3005,17 +3005,12 @@ jobs:
             # Calling DELETE here caused ghost VMs: Katapult's async deletion (10-30 min)
             # left live runners that grabbed new jobs, then died mid-job.
             if [ ! -f "/opt/circleci-runner/vm-id" ]; then exit 0; fi
-            # Bring containers down so idle-check can detect the idle state.
-            # Without this, containers from the completed job stay up indefinitely
-            # and the idle-check never fires (it waits for freegle-ci containers to go away).
-            docker compose down --remove-orphans 2>/dev/null || true
-            # Fallback: stop any freegle-ci containers still running (handles COMPOSE_FILE mismatch)
-            STILL_RUNNING=$(docker ps -q --filter 'label=com.docker.compose.project=freegle-ci' 2>/dev/null || true)
-            if [ -n "$STILL_RUNNING" ]; then
-              echo "Stopping remaining freegle-ci containers..."
-              docker stop $STILL_RUNNING 2>/dev/null || true
-            fi
-            echo "Katapult VM $(cat /opt/circleci-runner/vm-id) will self-destruct via idle-check after 10 min idle"
+            # No explicit docker cleanup needed: new jobs rebuild containers from scratch,
+            # and the VM is deleted by the idle-check uptime limit regardless. Running
+            # docker compose down here raced with the idle-check (containers stopping during
+            # tests triggered the countdown early), killing the VM mid-step and producing
+            # infrastructure_fail even when all tests passed.
+            echo "Katapult VM $(cat /opt/circleci-runner/vm-id) — leaving containers for idle-check/VM deletion"
 
   # === App Build Jobs ===
 
