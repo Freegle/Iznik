@@ -52,12 +52,12 @@ $queuedTaskId = LaravelQueue::queueTask('tn_sync_command', [
 if (is_null($queuedTaskId)) {
     error_log("[QUEUE] failed to queue tn_sync_command task run_id=$runId");
 } else {
-    $waitOk = LaravelQueue::waitForTaskProcessed($queuedTaskId, 90, 1000);
+    $waitOk = LaravelQueue::waitForTaskProcessed($queuedTaskId, 150, 1000);
 
     if (!$waitOk) {
         error_log("[QUEUE] task $queuedTaskId did not complete successfully before timeout run_id=$runId");
     } else {
-        $completionData = LaravelQueue::waitForTNSyncCompletionData($queuedTaskId, $runId, 90, 1000);
+        $completionData = LaravelQueue::waitForTNSyncCompletionData($queuedTaskId, $runId, 150, 1000);
 
         if (is_null($completionData)) {
             error_log("[QUEUE] task $queuedTaskId completed but tn_sync completion data was not populated before timeout run_id=$runId");
@@ -262,34 +262,41 @@ do {
 
 # Spot any duplicate FD users we have created for TN users.  This should no longer happen given the locking code in
 # Message::parse and so could be retired once we're convinced it is fixed.
-$users = $dbhr->preQuery("SELECT COUNT(DISTINCT(userid)) AS count, REGEXP_REPLACE(email, '(.*)-g[0-9]+@user\.trashnothing\.com', '$1') AS username FROM users_emails WHERE email LIKE '%@user.trashnothing.com' GROUP BY username HAVING count > 1;");
+#
+# Use the backwards index (prefix scan on reversed email) to avoid a full table scan.
+# LIKE '%@user.trashnothing.com' requires a full scan; LIKE '<reversed-suffix>%' uses the index.
+$reversedSuffix = strrev('@user.trashnothing.com');
+$rows = $dbhr->preQuery(
+    "SELECT userid, email FROM users_emails WHERE backwards LIKE ?",
+    [$reversedSuffix . '%']
+);
 
-if (count($users) > 0) {
-    error_log("Found " . count($users) . " duplicate TN users");
-    error_log("TN-SYNC-TRACE [DUP-SCAN] count=" . count($users));
+# Group by TN username in PHP — avoids slow REGEXP_REPLACE GROUP BY in MySQL.
+$groups = [];
+foreach ($rows as $row) {
+    $username = preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row['email']);
+    $groups[$username][] = (int) $row['userid'];
+}
+
+$duplicateGroups = array_filter($groups, function($ids) {
+    return count(array_unique($ids)) > 1;
+});
+
+if (count($duplicateGroups) > 0) {
+    error_log("Found " . count($duplicateGroups) . " duplicate TN users");
+    error_log("TN-SYNC-TRACE [DUP-SCAN] count=" . count($duplicateGroups));
     $u = User::get($dbhr, $dbhm);
 
-    foreach ($users as $user) {
-        error_log("Look for dups for {$user['username']}");
-        $userids = $dbhr->preQuery(
-            "SELECT DISTINCT(userid) FROM users_emails WHERE REGEXP_REPLACE(email, '(.*)-g[0-9]+@user\.trashnothing\.com', '$1') = ? AND email LIKE '%@user.trashnothing.com';",
-            [
-                $user['username']
-            ]
-        );
+    foreach ($duplicateGroups as $username => $userIds) {
+        $uniqueIds = array_values(array_unique($userIds));
+        error_log("Found " . count($uniqueIds) . " users for $username");
+        $mergeto = $uniqueIds[0];
 
-        error_log("Found " . count($userids) . " users for {$user['username']}");
-        if (count($userids) > 1) {
-            $mergeto = $userids[0]['userid'];
-
-            foreach ($userids as $userid) {
-                if ($userid['userid'] != $mergeto) {
-                    error_log("Merging {$userid['userid']} into $mergeto");
-                    error_log("TN-SYNC-TRACE [MERGE] from={$userid['userid']} into=$mergeto");
-                    $u->merge($mergeto, $userid['userid'], "Duplicate TN user created accidentally");
-                    $mergesCount++;
-                }
-            }
+        foreach (array_slice($uniqueIds, 1) as $userId) {
+            error_log("Merging $userId into $mergeto");
+            error_log("TN-SYNC-TRACE [MERGE] from=$userId into=$mergeto");
+            $u->merge($mergeto, $userId, "Duplicate TN user created accidentally");
+            $mergesCount++;
         }
     }
 }

@@ -73,6 +73,14 @@ class TNSyncCommand extends Command
             $exitCode = $this->runWithLogging(function () {
                 $this->info('Starting TN sync...');
 
+                // When dry-run is used as a queue health-check from tn_sync.php, skip all real
+                // work — API fetches and the duplicate-merge DB scan are both expensive and
+                // serve no purpose when we're not going to write anything.
+                if ($this->dryRun && !$this->localTesting) {
+                    Log::info('TN-SYNC-TRACE [SKIP] dry-run queue health-check: no API calls or DB work');
+                    return Command::SUCCESS;
+                }
+
                 $from = $this->resolveFromDate();
                 $to = $this->resolveToDate();
 
