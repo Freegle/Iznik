@@ -151,44 +151,49 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 			continue
 		}
 
-		// Default: 90 days.
+		// Mirror V1 Message::getPublic() (iznik-server Message.php:1106-1110):
+		//   $maxagetoshow = $g->getSetting('maxagetoshow', 90);
+		//   $reposts      = $g->getSetting('reposts', ['offer'=>3,'wanted'=>14,'max'=>10,...]);
+		//   $repost       = $type == Offer ? $reposts['offer'] : $reposts['wanted'];
+		//   $expiretime   = max($repost * ($reposts['max'] + 1), $maxagetoshow);
+		// V1 getSetting honours explicit 0, so we mustn't fall back to the default
+		// when maxagetoshow is set to 0 — Hertford and others use 0 deliberately.
 		maxAgeDays := 90
+		repostDays := 14
+		if msgType == "Offer" {
+			repostDays = 3
+		}
+		maxRepost := 10
 
 		if g.Settings != "" {
 			var s map[string]interface{}
 			if err := json.Unmarshal([]byte(g.Settings), &s); err == nil {
-				// The key depends on message type.
-				settingsKey := "maxagetoshow"
-
-				if v, exists := s[settingsKey]; exists {
-					if fv, ok := v.(float64); ok && fv > 0 {
+				if v, exists := s["maxagetoshow"]; exists {
+					if fv, ok := v.(float64); ok {
 						maxAgeDays = int(fv)
 					}
 				}
 
-				// Also check repost settings — the effective lifetime is
-				// max(maxagetoshow, reposts * (max+1) repost days).
-				repostKey := "reposts"
-				if msgType == "Wanted" {
-					repostKey = "wantedreposts"
-				}
-				if reposts, exists := s[repostKey]; exists {
+				if reposts, exists := s["reposts"]; exists {
 					if rMap, ok := reposts.(map[string]interface{}); ok {
-						maxRepost := 5 // default max reposts
-						repostDays := 3
-						if mx, ok := rMap["max"].(float64); ok {
-							maxRepost = int(mx)
+						typeKey := "wanted"
+						if msgType == "Offer" {
+							typeKey = "offer"
 						}
-						if rd, ok := rMap["interval"].(float64); ok {
+						if rd, ok := rMap[typeKey].(float64); ok {
 							repostDays = int(rd)
 						}
-						repostLifetime := repostDays * (maxRepost + 1)
-						if repostLifetime > maxAgeDays {
-							maxAgeDays = repostLifetime
+						if mx, ok := rMap["max"].(float64); ok {
+							maxRepost = int(mx)
 						}
 					}
 				}
 			}
+		}
+
+		repostLifetime := repostDays * (maxRepost + 1)
+		if repostLifetime > maxAgeDays {
+			maxAgeDays = repostLifetime
 		}
 
 		expires := arrival.Add(time.Duration(maxAgeDays) * 24 * time.Hour)
@@ -1884,10 +1889,34 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
 	}
 
-	// Clear the editedby flag.
-	db.Exec("UPDATE messages SET editedby = NULL WHERE id = ?", req.ID)
+	// Restore the original text from the most recent pending edit before marking it reverted.
+	// The PATCH edit flow immediately writes the new text into messages, so we must explicitly
+	// restore the old values here — otherwise the edited text stays visible after rejection.
+	type editOldValues struct {
+		Oldsubject *string
+		Oldtext    *string
+	}
+	var old editOldValues
+	db.Raw("SELECT oldsubject, oldtext FROM messages_edits WHERE msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL ORDER BY id DESC LIMIT 1", req.ID).Scan(&old)
+	if old.Oldsubject != nil || old.Oldtext != nil {
+		clauses := []string{"editedby = NULL"}
+		args := []interface{}{}
+		if old.Oldsubject != nil {
+			clauses = append(clauses, "subject = ?")
+			args = append(args, *old.Oldsubject)
+		}
+		if old.Oldtext != nil {
+			clauses = append(clauses, "textbody = ?")
+			args = append(args, *old.Oldtext)
+		}
+		args = append(args, req.ID)
+		db.Exec("UPDATE messages SET "+strings.Join(clauses, ", ")+" WHERE id = ?", args...)
+	} else {
+		// No recorded old values — just clear the editedby flag.
+		db.Exec("UPDATE messages SET editedby = NULL WHERE id = ?", req.ID)
+	}
 
-	// Mark all pending edits as reverted (set reviewrequired=0 for).
+	// Mark all pending edits as reverted.
 	db.Exec("UPDATE messages_edits SET reviewrequired = 0, revertedat = NOW() WHERE msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL",
 		req.ID)
 
@@ -2497,6 +2526,35 @@ func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error
 		recordAIDeletions(db, myid, req.ID, req.Attachments, req.BadAIImages)
 
 		if len(req.Attachments) > 0 {
+			// If the keep-list has both AI and non-AI attachments, drop the AI ones.
+			// A user uploading their own photo always supersedes the AI illustration.
+			type attachExtern struct {
+				ID           uint64
+				Externalmods string
+			}
+			var attRows []attachExtern
+			db.Raw("SELECT id, COALESCE(externalmods, '') AS externalmods FROM messages_attachments WHERE id IN (?) AND msgid = ?", req.Attachments, req.ID).Scan(&attRows)
+			externByID := make(map[uint64]string, len(attRows))
+			for _, r := range attRows {
+				externByID[r.ID] = r.Externalmods
+			}
+			hasNonAI := false
+			for _, attid := range req.Attachments {
+				if !strings.Contains(externByID[attid], `"ai":true`) {
+					hasNonAI = true
+					break
+				}
+			}
+			if hasNonAI {
+				var filtered []uint64
+				for _, attid := range req.Attachments {
+					if !strings.Contains(externByID[attid], `"ai":true`) {
+						filtered = append(filtered, attid)
+					}
+				}
+				req.Attachments = filtered
+			}
+
 			for i, attid := range req.Attachments {
 				primary := i == 0
 				db.Exec("UPDATE messages_attachments SET msgid = ?, `primary` = ? WHERE id = ?", req.ID, primary, attid)
@@ -3352,10 +3410,27 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		}
 	}
 
-	// Check for existing outcome (prevent duplicates unless expired).
-	var existingOutcome string
-	db.Raw("SELECT outcome FROM messages_outcomes WHERE msgid = ?", req.ID).Scan(&existingOutcome)
-	if existingOutcome != "" && existingOutcome != utils.OUTCOME_EXPIRED {
+	// Check for existing outcome. System-generated expiry markers are
+	// overwriteable; anything user-recorded is a real conflict.
+	//
+	// Overwriteable rows:
+	//   - outcome = 'Expired'                    (deadline-expiry batch)
+	//   - outcome = 'Withdrawn', comments = 'Auto-expired' (spatial-index
+	//     expiry batch — the post was already auto-withdrawn by the system,
+	//     so the owner clicking Taken from a chase-up notification that
+	//     pre-dated the auto-expiry should be accepted)
+	//
+	// Counting instead of scanning into a scalar avoids the older bug where
+	// a multi-row result (Expired + Auto-expired Withdrawn, left by the
+	// batch before the iznik-batch fix) returned a non-deterministic row to
+	// the check and 409'd valid Taken requests.
+	var existingTotal, autoExpiredCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", req.ID).Scan(&existingTotal)
+	db.Raw(`SELECT COUNT(*) FROM messages_outcomes
+	        WHERE msgid = ?
+	          AND (outcome = ? OR (outcome = ? AND comments = 'Auto-expired'))`,
+		req.ID, utils.OUTCOME_EXPIRED, utils.OUTCOME_WITHDRAWN).Scan(&autoExpiredCount)
+	if existingTotal > 0 && existingTotal != autoExpiredCount {
 		return fiber.NewError(fiber.StatusConflict, "Outcome already recorded")
 	}
 
@@ -3661,10 +3736,12 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ?", msgID).Scan(&candidates)
 	}
 
+	foundAI := false
 	for _, att := range candidates {
 		if att.Externaluid == "" || !isAIAttachment(att.Externalmods) {
 			continue
 		}
+		foundAI = true
 		var aiImageID uint64
 		db.Raw("SELECT id FROM ai_images WHERE externaluid = ? LIMIT 1", att.Externaluid).Scan(&aiImageID)
 		if aiImageID > 0 {
@@ -3674,6 +3751,11 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 				microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
 			}
 		}
+	}
+	// Mirror V1 (Message.php:3974–3989): whenever an AI attachment is removed,
+	// protect the message from the illustrations cron re-injecting a cached image.
+	if foundAI {
+		db.Exec("INSERT IGNORE INTO messages_ai_declined (msgid) VALUES (?)", msgID)
 	}
 }
 

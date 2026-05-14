@@ -36,7 +36,7 @@ class ChatSpamService
      *
      * @return int Number of warning emails sent.
      */
-    public function warnInnocentUsers(): int
+    public function warnInnocentUsers(bool $dryRun = false): int
     {
         $since = now()->subDays(7)->toDateTimeString();
 
@@ -82,16 +82,18 @@ class ChatSpamService
             [$replyTo, $replyName, $subject] = $this->findReplyDetails($room->id, $innocent);
 
             try {
-                $mail = new SpamWarningMail($innocent, $spammerName, $subject, $replyTo, $replyName);
-                Mail::to($innocent->email_preferred)->send($mail);
+                if (!$dryRun) {
+                    $mail = new SpamWarningMail($innocent, $spammerName, $subject, $replyTo, $replyName);
+                    Mail::to($innocent->email_preferred)->send($mail);
 
-                DB::update('UPDATE chat_rooms SET flaggedspam = 1 WHERE id = ?', [$room->id]);
+                    DB::update('UPDATE chat_rooms SET flaggedspam = 1 WHERE id = ?', [$room->id]);
 
-                Log::info('Chat spam warning sent', [
-                    'chat_id'    => $room->id,
-                    'innocent'   => $innocentId,
-                    'spammer'    => $room->spammer_id,
-                ]);
+                    Log::info('Chat spam warning sent', [
+                        'chat_id'    => $room->id,
+                        'innocent'   => $innocentId,
+                        'spammer'    => $room->spammer_id,
+                    ]);
+                }
 
                 $sent++;
             } catch (\Throwable $e) {
@@ -114,7 +116,7 @@ class ChatSpamService
      *
      * @return int Number of messages auto-marked as spam.
      */
-    public function autoMarkSpam(): int
+    public function autoMarkSpam(bool $dryRun = false): int
     {
         $start = now()->subDays(self::SPAM_LOOKBACK_DAYS)->toDateString();
 
@@ -169,19 +171,21 @@ class ChatSpamService
                 continue;
             }
 
-            DB::update(
-                "UPDATE chat_messages
-                 SET reviewrequired = 0, processingrequired = 0, processingsuccessful = 0,
-                     reviewrejected = 1, reviewedby = NULL
-                 WHERE userid = ? AND reviewrequired = 1 AND reviewedby IS NULL",
-                [$user->userid]
-            );
+            if (!$dryRun) {
+                DB::update(
+                    "UPDATE chat_messages
+                     SET reviewrequired = 0, processingrequired = 0, processingsuccessful = 0,
+                         reviewrejected = 1, reviewedby = NULL
+                     WHERE userid = ? AND reviewrequired = 1 AND reviewedby IS NULL",
+                    [$user->userid]
+                );
 
-            Log::info('Auto-marked chat messages as spam', [
-                'userid'  => $user->userid,
-                'count'   => $pending,
-                'rejects' => $user->count,
-            ]);
+                Log::info('Auto-marked chat messages as spam', [
+                    'userid'  => $user->userid,
+                    'count'   => $pending,
+                    'rejects' => $user->count,
+                ]);
+            }
 
             $count += $pending;
         }
@@ -218,8 +222,10 @@ class ChatSpamService
             $msg = Message::find($refMsg);
             if ($msg) {
                 $subject = $msg->subject;
+                // messages_groups has no `id` column (PK is composite (msgid, groupid)).
+                // Use `arrival` to pick the most recent attachment if multiple exist.
                 $groupId = MessageGroup::where('msgid', $msg->id)
-                    ->orderByDesc('id')
+                    ->orderByDesc('arrival')
                     ->value('groupid');
 
                 if ($groupId) {

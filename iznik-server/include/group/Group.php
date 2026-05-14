@@ -413,8 +413,9 @@ class Group extends Entity
             # Exclude messages routed to system, for which there must be a good reason.
             #
             # See also MessageCollection.
-            $pendingspamcounts = $this->dbhr->preQuery("SELECT messages_groups.groupid, COUNT(*) AS count, messages_groups.collection, messages.heldby IS NOT NULL AS held FROM messages 
-    INNER JOIN messages_groups ON messages.id = messages_groups.msgid AND messages_groups.groupid IN $groupq AND messages_groups.collection IN (?) AND messages_groups.deleted = 0 AND messages.deleted IS NULL AND messages.fromuser IS NOT NULL AND messages_groups.arrival >= '$earliestmsg' AND (messages.lastroute IS NULL OR messages.lastroute != ?) 
+            $pendingspamcounts = $this->dbhr->preQuery("SELECT messages_groups.groupid, COUNT(*) AS count, messages_groups.collection, messages.heldby IS NOT NULL AS held FROM messages
+    INNER JOIN messages_groups ON messages.id = messages_groups.msgid AND messages_groups.groupid IN $groupq AND messages_groups.collection IN (?) AND messages_groups.deleted = 0 AND messages.deleted IS NULL AND messages.fromuser IS NOT NULL AND messages_groups.arrival >= '$earliestmsg' AND (messages.lastroute IS NULL OR messages.lastroute != ?)
+    INNER JOIN users ON users.id = messages.fromuser AND users.deleted IS NULL
     GROUP BY messages_groups.groupid, messages_groups.collection, held;", [
                 MessageCollection::PENDING,
                 MailRouter::TO_SYSTEM

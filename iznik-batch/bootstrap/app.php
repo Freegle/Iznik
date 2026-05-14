@@ -14,7 +14,7 @@ $app = Application::configure(basePath: dirname(__DIR__))
         //
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        \Sentry\Laravel\Integration::handles($exceptions);
     })->create();
 
 // ParaTest support: use per-worker bootstrap cache to prevent race conditions.

@@ -5,6 +5,7 @@ namespace App\Console\Commands\Mail;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\ModNotifMail;
 use App\Services\ModNotifService;
+use App\Support\SafeMail;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -78,8 +79,15 @@ class SendModNotifsCommand extends Command
                     $notif['text_summary']
                 );
 
-                Mail::to($notif['email'], $notif['name'])->send($mail);
-                $service->recordSent($notif['user_id'], $notif['text_summary']);
+                // SafeMail catches permanent address-rejection failures (non-ASCII
+                // local-part, 5xx etc), marks the recipient as bouncing via
+                // BounceService, and returns false so the loop continues with the
+                // next mod instead of crashing the whole job.
+                $delivered = SafeMail::send($mail, $notif['email'], $notif['name']);
+
+                if ($delivered) {
+                    $service->recordSent($notif['user_id'], $notif['text_summary']);
+                }
             }
 
             $this->info("  [{$notif['user_id']}] {$notif['email']} — {$notif['subject']}");

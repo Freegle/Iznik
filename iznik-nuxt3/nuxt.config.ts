@@ -1,7 +1,6 @@
 import eslintPlugin from 'vite-plugin-eslint2'
 import { VitePWA } from 'vite-plugin-pwa'
 import { sentryVitePlugin } from '@sentry/vite-plugin'
-import { splitVendorChunkPlugin } from 'vite'
 import config from './config'
 
 // Mobile version change:
@@ -122,7 +121,7 @@ export default defineNuxtConfig({
   // 404 errors during prerendering when the crawler tried to access build metadata from the CDN.
   $production: {
     app: {
-      cdnURL: process.env.DEPLOY_URL,
+      cdnURL: process.env.URL,
     },
   },
 
@@ -468,7 +467,10 @@ export default defineNuxtConfig({
             // Include some CSS in all components.
             // There are some other Bootstrap files we'd like to include, but doing this breaks the colours in a way
             // I don't understand and can't fix.
-            '@import "@/assets/css/_color-vars.scss";',
+            '@use "@/assets/css/_color-vars.scss" as *;',
+          // Silence @import deprecation warnings from Bootstrap and legacy SCSS files.
+          // The proper fix is migrating all @import to @use/@forward, but that's a large refactor.
+          silenceDeprecations: ['import'],
         },
       },
     },
@@ -478,8 +480,6 @@ export default defineNuxtConfig({
         ? []
         : config.ISAPP && production
         ? [
-            // App builds with Sentry: include chunk splitting for better loading
-            splitVendorChunkPlugin(),
             sentryVitePlugin({
               org: 'freegle',
               project: 'capacitor',
@@ -500,21 +500,25 @@ export default defineNuxtConfig({
             }),
           ]
         : config.ISAPP
-        ? [
-            // App builds without Sentry: still need chunk splitting
-            splitVendorChunkPlugin(),
-          ]
+        ? []
         : [
-            splitVendorChunkPlugin(),
             VitePWA({
               registerType: 'autoUpdate',
               workbox: {
                 maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB
               },
             }),
-            eslintPlugin({
-              exclude: ['**/node_modules/**', '**/dist/**', '**/.nuxt/**'],
-            }),
+            ...(!production
+              ? [
+                  eslintPlugin({
+                    exclude: [
+                      '**/node_modules/**',
+                      '**/dist/**',
+                      '**/.nuxt/**',
+                    ],
+                  }),
+                ]
+              : []),
             sentryVitePlugin({
               org: 'freegle',
               // ModTools layer overrides this to 'modtools', base config uses 'nuxt3'

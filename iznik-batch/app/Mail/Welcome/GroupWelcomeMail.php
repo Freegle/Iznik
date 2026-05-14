@@ -39,9 +39,23 @@ class GroupWelcomeMail extends MjmlMailable
 
     public function envelope(): Envelope
     {
-        $groupName = $this->group->namefull ?? $this->group->nameshort ?? config('freegle.branding.name');
-        $autoEmail = $this->group->autoemail ?? config('freegle.mail.noreply_addr');
-        $modsEmail = $this->group->modsemail ?? config('freegle.mail.support');
+        // Derive the per-group "auto" and "volunteers" addresses the same way
+        // V1's Group::getAutoEmail()/getModsEmail() do: {nameshort}-auto@ and
+        // {nameshort}-volunteers@ at the configured group domain. The `groups`
+        // table has no `autoemail`/`modsemail` columns, so the previous
+        // `$this->group->modsemail ?? config('freegle.mail.support')` resolved
+        // to null (config key didn't exist either) and Address::__construct
+        // threw "Argument #1 must be of type string, null given" for every
+        // group welcome, breaking mod-welcomes silently in laravel.log.
+        $groupName  = $this->group->namefull ?? $this->group->nameshort ?? config('freegle.branding.name');
+        $nameshort  = $this->group->nameshort ?? '';
+        $domain     = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+        $autoEmail  = $nameshort !== ''
+            ? "{$nameshort}-auto@{$domain}"
+            : config('freegle.mail.noreply_addr');
+        $modsEmail  = $nameshort !== ''
+            ? "{$nameshort}-volunteers@{$domain}"
+            : config('freegle.mail.support_addr', $autoEmail);
 
         return new Envelope(
             from: new Address($autoEmail, "{$groupName} Volunteers"),

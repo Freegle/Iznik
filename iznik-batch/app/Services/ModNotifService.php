@@ -100,9 +100,10 @@ class ModNotifService
                     ];
                 }
 
-                if ($chatReview > 0) {
-                    $modData[$modId]['chat_review'] += $chatReview;
-                }
+                // Use assignment, not accumulation. getChatReviewCount is a global query
+                // with no group filter, so it returns the same value on every group
+                // iteration for the same mod. Using += would multiply it by group count.
+                $modData[$modId]['chat_review'] = $chatReview;
 
                 $nonZeroWork = array_filter($work, fn ($v) => $v > 0);
                 if (!empty($nonZeroWork)) {
@@ -112,9 +113,10 @@ class ModNotifService
         }
 
         $modtoolsUrl = config('freegle.sites.mod', 'https://modtools.org');
+        $settingsUrl = rtrim($modtoolsUrl, '/') . '/modtools/settings';
 
         foreach ($modData as $modId => $data) {
-            $textSummary = $this->buildTextSummary($data['groups'], $data['chat_review'], $modtoolsUrl);
+            $textSummary = $this->buildTextSummary($data['groups'], $data['chat_review'], $settingsUrl);
             $htmlSummary = $this->buildHtmlSummary($data['groups'], $data['chat_review']);
 
             if (!$this->shouldSend($modId, $textSummary)) {
@@ -198,9 +200,14 @@ class ModNotifService
         $now = now();
         $earliest = now()->subDays(31)->startOfDay();
 
-        // Pending messages
+        // Pending messages — exclude messages from deleted users (ModTools UI hides
+        // these already, so the email count needs to match).
         $pendingMessages = DB::table('messages')
             ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+            ->join('users', function ($j) {
+                $j->on('users.id', '=', 'messages.fromuser')
+                    ->whereNull('users.deleted');
+            })
             ->where('messages_groups.groupid', $groupId)
             ->where('messages_groups.collection', MessageGroup::COLLECTION_PENDING)
             ->where('messages_groups.deleted', 0)
@@ -265,25 +272,83 @@ class ModNotifService
 
     /**
      * Count chat messages awaiting review by this moderator.
+     *
+     * Mirrors V1 ChatMessage::getReviewCount: a chat counts for this mod when
+     * the recipient (the chat member who isn't the message sender) is a
+     * member of a Freegle group the mod actively moderates, the chat hasn't
+     * been rejected, and the message hasn't been held.
+     *
+     * Without these filters the query returned a global count across all of
+     * Freegle, so every mod was told about every chat in the queue regardless
+     * of whether they could see it in ModTools.
      */
     public function getChatReviewCount(int $modId, int $minage): int
     {
-        $minageFilter = $minage > 0 ? now()->subHours($minage) : null;
+        // Active moderatorships on Freegle groups. Mirrors V1 activeModForGroup:
+        // settings.active wins if present; otherwise fall back to legacy
+        // settings.showmessages; otherwise default to active. Backup mods
+        // (active = false, or active missing and showmessages = false) don't
+        // get the chat-review queue.
+        $modGroupIds = DB::table('memberships')
+            ->join('groups', 'groups.id', '=', 'memberships.groupid')
+            ->where('memberships.userid', $modId)
+            ->whereIn('memberships.role', [Membership::ROLE_MODERATOR, Membership::ROLE_OWNER])
+            ->where('groups.type', 'Freegle')
+            ->where(function ($q) {
+                $q->whereNull('memberships.settings')
+                    ->orWhereRaw("JSON_EXTRACT(memberships.settings, '$.active') = true")
+                    ->orWhereRaw("JSON_EXTRACT(memberships.settings, '$.active') = 1")
+                    ->orWhere(function ($q2) {
+                        $q2->whereRaw("JSON_EXTRACT(memberships.settings, '$.active') IS NULL")
+                            ->where(function ($q3) {
+                                $q3->whereRaw("JSON_EXTRACT(memberships.settings, '$.showmessages') IS NULL")
+                                    ->orWhereRaw("JSON_EXTRACT(memberships.settings, '$.showmessages') = true")
+                                    ->orWhereRaw("JSON_EXTRACT(memberships.settings, '$.showmessages') = 1");
+                            });
+                    });
+            })
+            ->pluck('memberships.groupid')
+            ->all();
 
-        $count = DB::table('chat_messages')
-            ->join('chat_rooms', 'chat_rooms.id', '=', 'chat_messages.chatid')
-            ->where('chat_messages.reviewrequired', 1)
-            ->whereNull('chat_messages.reviewedby')
-            ->when($minageFilter, fn ($q) => $q->where('chat_messages.date', '<', $minageFilter))
-            ->count();
+        if (empty($modGroupIds)) {
+            return 0;
+        }
 
-        return $count;
+        $minageFilter = $minage > 0 ? now()->subHours($minage)->format('Y-m-d H:i:s') : null;
+        $earliest = now()->subDays(31)->startOfDay()->format('Y-m-d H:i:s');
+
+        $placeholders = implode(',', array_fill(0, count($modGroupIds), '?'));
+
+        $sql = "SELECT COUNT(DISTINCT chat_messages.id) AS count
+                FROM chat_messages
+                LEFT JOIN chat_messages_held ON chat_messages_held.msgid = chat_messages.id
+                INNER JOIN chat_rooms ON chat_rooms.id = chat_messages.chatid
+                INNER JOIN memberships
+                  ON memberships.userid = (CASE WHEN chat_messages.userid = chat_rooms.user1 THEN chat_rooms.user2 ELSE chat_rooms.user1 END)
+                  AND memberships.groupid IN ($placeholders)
+                INNER JOIN `groups` ON memberships.groupid = groups.id AND groups.type = 'Freegle'
+                WHERE chat_messages.reviewrequired = 1
+                  AND chat_messages.reviewrejected = 0
+                  AND chat_messages_held.userid IS NULL
+                  AND chat_messages.date > ?";
+
+        $bindings = $modGroupIds;
+        $bindings[] = $earliest;
+
+        if ($minageFilter !== null) {
+            $sql .= ' AND chat_messages.date <= ?';
+            $bindings[] = $minageFilter;
+        }
+
+        $row = DB::selectOne($sql, $bindings);
+
+        return (int) ($row->count ?? 0);
     }
 
     /**
      * Build plain-text summary of pending work.
      */
-    public function buildTextSummary(array $groupWork, int $chatReview, string $modtoolsUrl): string
+    public function buildTextSummary(array $groupWork, int $chatReview, string $settingsUrl): string
     {
         $text = "There's stuff to do on ModTools:\r\n\r\n";
 
@@ -300,7 +365,7 @@ class ModNotifService
             }
         }
 
-        $text .= "\r\nYou can control how often you get these mails or turn them off entirely from https://{$modtoolsUrl}/settings\r\n";
+        $text .= "\r\nYou can control how often you get these mails or turn them off entirely from {$settingsUrl}\r\n";
 
         return $text;
     }

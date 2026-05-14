@@ -132,12 +132,12 @@ Schedule::command('cleanup:sessions')
     ->runInBackground();
 
 // Remove spam members from groups and clean up their content.
-// V1: cron/check_spammers.php — disabled pending sign-off
-// Schedule::command('users:remove-spammers')
-//     ->everyFiveMinutes()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('users:remove-spammers'))
-//     ->runInBackground();
+// V1: cron/check_spammers.php (every 5 minutes)
+Schedule::command('users:remove-spammers')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('users:remove-spammers'))
+    ->runInBackground();
 
 // Process bounced emails — mark as invalid.
 // V1: cron/bounce.php + bounce_users.php
@@ -149,12 +149,12 @@ Schedule::command('mail:bounced')
 
 // Moderator work notifications — tells mods about pending messages, events, etc.
 // Only runs 08:00–21:00; deduplicates against last sent summary.
-// V1: cron/mod_notifs.php — disabled pending sign-off
-// Schedule::command('mail:mod-notifs')
-//     ->hourly()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('mail:mod-notifs'))
-//     ->runInBackground();
+// V1: cron/mod_notifs.php (hourly)
+Schedule::command('mail:mod-notifs')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:mod-notifs'))
+    ->runInBackground();
 
 // Email health monitor — alerts if incoming or outgoing email flow drops below
 // configurable thresholds during daytime hours.
@@ -253,90 +253,108 @@ Schedule::command('chats:send-tryst-reminders')
     ->sendOutputTo(cronLog('chats:send-tryst-reminders'))
     ->runInBackground();
 
+// Chase up mods about User2Mod chats with no mod reply older than 6.55 days.
+// V1: cron/chat_chaseupmods.php (daily 15:30)
+Schedule::command('chats:chaseup-mods')
+    ->dailyAt('15:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:chaseup-mods'))
+    ->runInBackground();
+
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
-// V1: cron/chat_spam.php — disabled pending sign-off
-// Schedule::command('chats:process-spam')
-//     ->everyFiveMinutes()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('chats:process-spam'))
-//     ->runInBackground();
+// V1: cron/chat_spam.php (every 5 minutes)
+Schedule::command('chats:process-spam')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:process-spam'))
+    ->runInBackground();
 
 // =============================================================================
 // DISABLED COMMANDS (to be enabled when ready)
 // =============================================================================
 
-/*
-// Immediate digests (-1) - run every minute.
-Schedule::command('mail:digest -1')
-    ->everyMinute()
-    ->withoutOverlapping()
-    ->runInBackground();
+// Digest and immediate mail are still handled by V1 (cron/digest.php on
+// bulk3-internal). Per MIGRATION-STATUS.md, digest emails are "Code written"
+// not "Live". Keep these scheduled commands disabled until the V1 cron is
+// retired and we cut over here, to avoid duplicate sends.
+//
+// Schedule::command('mail:digest 1')
+//     ->hourly()
+//     ->withoutOverlapping()
+//     ->runInBackground();
+//
+// Schedule::command('mail:digest 2')
+//     ->everyTwoHours()
+//     ->withoutOverlapping()
+//     ->runInBackground();
+//
+// Schedule::command('mail:digest 4')
+//     ->everyFourHours()
+//     ->withoutOverlapping()
+//     ->runInBackground();
+//
+// Schedule::command('mail:digest 8')
+//     ->cron('0 0,8,16 * * *')
+//     ->withoutOverlapping()
+//     ->runInBackground();
+//
+// Daily digests — V1 ran two parallel workers sharded by MOD(groupid, 2)
+// (cron/digest.php -i 24 -m 2 -v 0 / -v 1). Preserved as two entries so a
+// re-enable keeps the throughput.
+// Schedule::command('mail:digest 24 --mod=2 --val=0')
+//     ->dailyAt('08:00')
+//     ->withoutOverlapping()
+//     ->runInBackground();
+// Schedule::command('mail:digest 24 --mod=2 --val=1')
+//     ->dailyAt('08:00')
+//     ->withoutOverlapping()
+//     ->runInBackground();
+//
+// Unified digest - one email per user covering all their communities.
+// Schedule::command('mail:digest:unified --mode=daily')
+//     ->dailyAt('08:00')
+//     ->withoutOverlapping()
+//     ->runInBackground();
+//
+// Immediate mode - notifications for users who want instant alerts.
+// Schedule::command('mail:digest:unified --mode=immediate')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->runInBackground();
 
-// Hourly digests - run every hour.
-Schedule::command('mail:digest 1')
-    ->hourly()
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Every 2 hours digests.
-Schedule::command('mail:digest 2')
-    ->everyTwoHours()
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Every 4 hours digests.
-Schedule::command('mail:digest 4')
-    ->everyFourHours()
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Every 8 hours digests (3 times per day).
-Schedule::command('mail:digest 8')
-    ->cron('0 0,8,16 * * *')
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Daily digests.
-Schedule::command('mail:digest 24')
-    ->dailyAt('08:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-// Unified digest - replaces per-group digests.
-// Daily mode - sends one digest per user with posts from all their communities.
-Schedule::command('mail:digest:unified --mode=daily')
-    ->dailyAt('08:00')
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Immediate mode - sends notifications for users who want instant alerts.
-Schedule::command('mail:digest:unified --mode=immediate')
-    ->everyMinute()
-    ->withoutOverlapping()
-    ->runInBackground();
-
-// Donation-related commands.
+// Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
     ->dailyAt('09:00')
     ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:donations:thank'))
     ->runInBackground();
 
 Schedule::command('mail:donations:ask')
     ->dailyAt('17:00')
     ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:donations:ask'))
     ->runInBackground();
 
-// User management commands.
-// (users:update-kudos enabled above.)
-Schedule::command('users:cleanup')
-    ->weekly()
-    ->sundays()
-    ->at('06:00')
+// Daily donation summary email to fundraising — running total of today's
+// donations. V1 (cron/donations_email.php) ran hourly 06:00-22:00 so the
+// team gets intraday visibility; matching that here.
+Schedule::command('mail:donations:summary')
+    ->hourly()
+    ->between('06:00', '22:00')
     ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:donations:summary'))
     ->runInBackground();
+
+// User management commands (users:cleanup still parked — no V1 cutover).
+// Schedule::command('users:cleanup')
+//     ->weekly()
+//     ->sundays()
+//     ->at('06:00')
+//     ->withoutOverlapping()
+//     ->runInBackground();
 
 // Email spool processing - runs continuously in daemon mode via supervisor.
 // See docker/supervisor.conf for the mail-spooler program.
-*/
 
 // Background task queue - processes tasks queued by Go API server.
 // Runs continuously with internal looping. Handles push notifications and emails.
@@ -357,6 +375,59 @@ Schedule::command('mail:cleanup-archive')
     ->hourly()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('mail:cleanup-archive'))
+    ->runInBackground();
+
+// Send birthday emails to members of groups founded on today's date.
+// V1: cron/birthday.php (daily 12:00)
+Schedule::command('birthday:send-emails')
+    ->dailyAt('12:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('birthday:send-emails'))
+    ->runInBackground();
+
+// Check for inactive mods and notify group owners / mentors.
+// V1: cron/mod_active.php (Monday 15:00)
+Schedule::command('groups:check-mod-welfare')
+    ->weeklyOn(1, '15:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:check-mod-welfare'))
+    ->runInBackground();
+
+// Send a copy of each group's welcome mail to mods once a year for review.
+// V1: cron/group_welcomereview.php (daily 15:00; service dedupes by
+// groups.welcomereview timestamp so each group only fires on its anniversary).
+// V1 had a second identical crontab entry at 01:00 — likely accidental
+// duplicate; not preserved here since the service is idempotent across runs
+// on the same day.
+Schedule::command('groups:welcome-review')
+    ->dailyAt('15:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:welcome-review'))
+    ->runInBackground();
+
+// Calculate and send the monthly LoveJunk/TrashNothing invoice split to TN.
+// V1: cron/lovejunk_tn_invoice.php (1st of month at 15:00)
+Schedule::command('lovejunk:send-tn-invoice')
+    ->monthlyOn(1, '15:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('lovejunk:send-tn-invoice'))
+    ->runInBackground();
+
+// Engagement emails to at-risk and inactive users.
+// V1: cron/engage.php (daily 16:00). Slow by design — pulls every user with
+// engagement='Inactive' and runs per-user eligibility queries.
+Schedule::command('mail:engage')
+    ->dailyAt('16:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:engage'))
+    ->runInBackground();
+
+// Ask eligible users with outcomes/offers to share their Freegle story.
+// V1: cron/stories.php (weekly Saturday 11:00)
+Schedule::command('stories:ask')
+    ->weeklyOn(6, '11:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stories:ask'))
     ->runInBackground();
 
 // =============================================================================
@@ -634,6 +705,14 @@ Schedule::command('groups:remind-closed')
     ->sendOutputTo(cronLog('groups:remind-closed'))
     ->runInBackground();
 
+// V1: cron/group_customisation.php — script existed in scripts/cron/ but no
+// crontab entry, so it never ran in V1. Migrating to Laravel adds the schedule.
+Schedule::command('groups:remind-customisation')
+    ->monthlyOn(1, '08:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:remind-customisation'))
+    ->runInBackground();
+
 // V1: cron/donations_thank.php
 // Schedule::command('mail:donations:thank')
 //     ->dailyAt('09:00')
@@ -666,12 +745,12 @@ Schedule::command('ai:usage-counts:update')
 
 // Update gift aid data: identify postcodes, houses, consented donations.
 // Also sends one-off chase-up emails to eligible donors (2-30 days ago, PayPal/Stripe).
-// V1: cron/donations_giftaid.php — disabled pending sign-off
-// Schedule::command('donations:update-giftaid')
-//     ->everyTenMinutes()
-//     ->withoutOverlapping()
-//     ->sendOutputTo(cronLog('donations:update-giftaid'))
-//     ->runInBackground();
+// V1: cron/donations_giftaid.php (every 10 minutes)
+Schedule::command('donations:update-giftaid')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('donations:update-giftaid'))
+    ->runInBackground();
 
 // =============================================================================
 // VECTOR SEARCH EMBEDDINGS
@@ -725,6 +804,21 @@ Schedule::command('messages:update-index')
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
 
+// Volunteering opportunity roundup — weekly to group members.
+// V1: cron/volunteering.php (weekly Mon 23:00)
+Schedule::command('mail:volunteering-digest')
+    ->weeklyOn(1, '23:00')  // Monday at 11pm
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:volunteering-digest'))
+    ->runInBackground();
+// Notify group mods about recent chitchat (newsfeed) posts from their members.
+// V1: cron/newsfeed_modnotif.php (daily 13:30)
+Schedule::command('mail:newsfeed-mod-notif')
+    ->dailyAt('13:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:newsfeed-mod-notif'))
+    ->runInBackground();
+
 // =============================================================================
 // NEWSFEED
 // =============================================================================
@@ -747,6 +841,18 @@ Schedule::command('noticeboards:thank-users')
     ->dailyAt('15:30')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('noticeboards:thank-users'))
+    ->runInBackground();
+
+// =============================================================================
+// STORIES
+// =============================================================================
+
+// Send unreviewed stories to central team for newsletter voting.
+// V1: cron/stories_tocentral.php (weekly, Friday 14:00)
+Schedule::command('stories:send-to-central')
+    ->weeklyOn(5, '14:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stories:send-to-central'))
     ->runInBackground();
 
 // =============================================================================
@@ -773,4 +879,13 @@ Schedule::command('chats:review-pending')
     ->dailyAt('09:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('chats:review-pending'))
+    ->runInBackground();
+
+// Alert geeks about Freegle groups that have not received messages in 7+ days.
+// V1: cron/groups_nomessages.php — script existed in scripts/cron/ but no
+// crontab entry, so it never ran in V1. Migrating to Laravel adds the schedule.
+Schedule::command('groups:alert-no-messages')
+    ->dailyAt('07:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('groups:alert-no-messages'))
     ->runInBackground();

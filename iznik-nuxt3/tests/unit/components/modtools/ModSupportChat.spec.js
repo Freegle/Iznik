@@ -423,6 +423,42 @@ describe('ModSupportChat', () => {
     })
   })
 
+  describe('batch-fetch contract: no individual user fetch at render time', () => {
+    it('does NOT call userStore.fetch for User2Mod chat', () => {
+      mountComponent({}, { ...defaultChat, chattype: 'User2Mod' })
+      expect(mockUserStore.fetch).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call userStore.fetch for Mod2Mod chat', () => {
+      mountComponent({}, { ...defaultChat, chattype: 'Mod2Mod' })
+      expect(mockUserStore.fetch).not.toHaveBeenCalled()
+    })
+
+    it('does NOT call userStore.fetch for User2User chat (reads store only)', () => {
+      mockUserStore.byId.mockReturnValue({ id: 2, displayname: 'Alice' })
+      mountComponent({ chatid: 123, pov: 1 }, { ...defaultChat, chattype: 'User2User' })
+      expect(mockUserStore.fetch).not.toHaveBeenCalled()
+    })
+
+    it('shows displayname from store when user is pre-populated', () => {
+      mockUserStore.byId.mockReturnValue({ id: 2, displayname: 'Alice' })
+      const wrapper = mountComponent(
+        { chatid: 123, pov: 1 },
+        { ...defaultChat, chattype: 'User2User', user1: 1, user2: 2 }
+      )
+      expect(wrapper.find('.name').text()).toContain('Alice')
+    })
+
+    it('falls back to chat.name when user is not yet in store', () => {
+      mockUserStore.byId.mockReturnValue(null)
+      const wrapper = mountComponent(
+        { chatid: 123, pov: 1 },
+        { ...defaultChat, chattype: 'User2User', name: 'Fallback Name' }
+      )
+      expect(wrapper.find('.name').text()).toContain('Fallback Name')
+    })
+  })
+
   describe('time display', () => {
     it('shows time in span with title attribute for datetime', async () => {
       const wrapper = mountComponent(

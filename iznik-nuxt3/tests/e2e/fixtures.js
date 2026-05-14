@@ -138,25 +138,24 @@ const test = base.test.extend({
   // Add screenshot helper that automatically attaches to test report
   takeScreenshot: async ({ page }, use, testInfo) => {
     const screenshotHelper = async (name, options = {}) => {
-      // Generate filename
-      const filename = `${name.replace(/[^a-zA-Z0-9-]/g, '_')}.png`
-      const screenshotPath = getScreenshotPath(filename)
-
-      // Take the screenshot
-      await page.screenshot({
-        path: screenshotPath,
-        fullPage: options.fullPage !== false, // Default to fullPage
-        ...options,
-      })
-
-      // Attach to test report for inline viewing
-      await testInfo.attach(name, {
-        path: screenshotPath,
-        contentType: 'image/png',
-      })
-
-      console.log(`Screenshot taken and attached: ${name}`)
-      return screenshotPath
+      try {
+        // Use Buffer instead of writing to shared SCREENSHOTS_DIR. Multiple
+        // parallel workers share that directory; a worker running test.afterAll
+        // → cleanupScreenshots() can delete the file between page.screenshot()
+        // and testInfo.attach(), causing ENOENT. Buffers have no shared state.
+        const { path: _ignoredPath, ...screenshotOptions } = options
+        const buffer = await page.screenshot({
+          fullPage: screenshotOptions.fullPage !== false,
+          ...screenshotOptions,
+        })
+        await testInfo.attach(name, {
+          body: buffer,
+          contentType: 'image/png',
+        })
+        console.log(`Screenshot taken and attached: ${name}`)
+      } catch (err) {
+        console.warn(`Screenshot failed (non-fatal): ${name}: ${err.message}`)
+      }
     }
 
     await use(screenshotHelper)
@@ -534,7 +533,10 @@ const test = base.test.extend({
       // document.documentElement may be null when addInitScript runs before HTML
       // is parsed (early navigation events). Guard against the TypeError.
       if (document.documentElement) {
-        obs.observe(document.documentElement, { childList: true, subtree: true })
+        obs.observe(document.documentElement, {
+          childList: true,
+          subtree: true,
+        })
       } else {
         window.addEventListener('DOMContentLoaded', () => {
           if (document.documentElement) {
@@ -723,7 +725,9 @@ const test = base.test.extend({
                 timeout: 15000,
               })
             } catch (ssErr) {
-              console.warn(`[gotoAndVerify] error-page screenshot failed: ${ssErr.message}`)
+              console.warn(
+                `[gotoAndVerify] error-page screenshot failed: ${ssErr.message}`
+              )
             }
 
             // Extract the "Error was" text if present
@@ -733,7 +737,9 @@ const test = base.test.extend({
             )
             if (errorWasMatch) {
               errorDetails = ` - Error was: ${errorWasMatch[1].trim()}`
-              console.log(`[gotoAndVerify] Error details: ${errorWasMatch[1].trim()}`)
+              console.log(
+                `[gotoAndVerify] Error details: ${errorWasMatch[1].trim()}`
+              )
             }
 
             throw new Error(
@@ -753,7 +759,9 @@ const test = base.test.extend({
                 timeout: 15000,
               })
             } catch (ssErr) {
-              console.warn(`[gotoAndVerify] 404-page screenshot failed: ${ssErr.message}`)
+              console.warn(
+                `[gotoAndVerify] 404-page screenshot failed: ${ssErr.message}`
+              )
             }
             throw new Error(
               `Page loaded with '404 page not found' error message at ${path}`
@@ -761,7 +769,10 @@ const test = base.test.extend({
           }
         } catch (error) {
           console.error(
-            `[gotoAndVerify] FAILED step='${failStep}' path='${path}' attempt=${attempt}/${maxRetries}: ${error.message.substring(0, 300)}`
+            `[gotoAndVerify] FAILED step='${failStep}' path='${path}' attempt=${attempt}/${maxRetries}: ${error.message.substring(
+              0,
+              300
+            )}`
           )
 
           // Take a screenshot if navigation fails — bounded so this can't hang indefinitely
@@ -803,7 +814,10 @@ const test = base.test.extend({
             error.message.includes('ERR_SOCKET_NOT_CONNECTED') ||
             error.message.includes('ERR_NETWORK_CHANGED') ||
             error.message.includes('net::ERR_') ||
-            error.message.includes('Execution context was destroyed')
+            error.message.includes('Execution context was destroyed') ||
+            error.message.includes(
+              'Target page, context or browser has been closed'
+            )
 
           if (isRetryable && attempt < maxRetries) {
             console.log(
@@ -924,7 +938,11 @@ const test = base.test.extend({
         // Take a screenshot if network doesn't become idle — guarded with
         // a timeout because page.screenshot() also hangs on an unresponsive renderer.
         await Promise.race([
-          page.screenshot({ path: getScreenshotPath(`teardown-warning-${Date.now()}.png`) }).catch(() => {}),
+          page
+            .screenshot({
+              path: getScreenshotPath(`teardown-warning-${Date.now()}.png`),
+            })
+            .catch(() => {}),
           new Promise((resolve) => setTimeout(resolve, 5000)),
         ])
         return false
@@ -959,16 +977,16 @@ const test = base.test.extend({
     await logoutIfLoggedIn(loggingPage)
     console.log('Ensured user is logged out for fresh test state')
 
-    // Freeze-detection heartbeat. Sends a trivial page.evaluate() every 5s with a
-    // 10s timeout. If the renderer stops responding the spec file is appended to
+    // Freeze-detection heartbeat. Sends a trivial page.evaluate() every 8s with a
+    // 35s timeout. If the renderer stops responding the spec file is appended to
     // /tmp/playwright-freeze-specs.txt so the status container can re-run it in a
     // fresh Playwright process, and the page is closed to abort the frozen test in
     // seconds rather than waiting for the 600s test timeout.
     //
-    // The timeout is 10s (not 3s) to avoid false positives: page.evaluate() can
-    // legitimately block while a slow navigation completes (e.g. Explore page
-    // loading hundreds of posts). Genuine V8 renderer freezes are indefinite, so
-    // 10s is still far more than enough to catch them.
+    // The timeout is 35s to avoid false positives: page.evaluate() can legitimately
+    // block for >20s under heavy parallel load (11 workers competing for CPU).
+    // Genuine V8 renderer freezes are indefinite, so 35s is still enough to
+    // distinguish real freezes from transient CPU starvation.
     const FREEZE_SPECS_FILE = '/tmp/playwright-freeze-specs.txt'
     let heartbeatTimer = null
     let heartbeatBusy = false
@@ -979,17 +997,17 @@ const test = base.test.extend({
         heartbeatTimer = null
         return
       }
-      if (heartbeatBusy) return  // previous check still in flight — skip this tick
+      if (heartbeatBusy) return // previous check still in flight — skip this tick
       heartbeatBusy = true
       try {
         await Promise.race([
           page.evaluate(() => 1),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('freeze')), 10000)
+          new Promise((_resolve, reject) =>
+            setTimeout(() => reject(new Error('freeze')), 35000)
           ),
         ])
       } catch (err) {
-        // Only treat as a renderer freeze if the race was won by OUR 10s timeout
+        // Only treat as a renderer freeze if the race was won by OUR 35s timeout
         // sentinel. page.evaluate() can also throw immediately (e.g. "Execution
         // context was destroyed" during a navigation) — that is healthy renderer
         // behaviour, not a freeze. Treating any exception as a freeze produces
@@ -1012,7 +1030,7 @@ const test = base.test.extend({
       } finally {
         heartbeatBusy = false
       }
-    }, 5000)
+    }, 8000)
 
     // Wrap the use() call in a try-catch block to add automatic screenshot capturing
     try {
@@ -1027,7 +1045,9 @@ const test = base.test.extend({
     } catch (error) {
       // Take a full page screenshot on any test failure — bounded timeout prevents hang on unresponsive renderer
       const screenshotPath = getScreenshotPath(`test-failure-${Date.now()}.png`)
-      await loggingPage.screenshot({ path: screenshotPath, fullPage: true, timeout: 15000 }).catch(() => {})
+      await loggingPage
+        .screenshot({ path: screenshotPath, fullPage: true, timeout: 15000 })
+        .catch(() => {})
 
       // Log the navigation history on failure for debugging
       console.log('Navigation history:')
@@ -1057,7 +1077,9 @@ const test = base.test.extend({
       // entire afterEach hook indefinitely (same failure mode as clearSessionData).
       if (coverageStarted) {
         try {
-          const coverageTimeout = new Promise((resolve) => setTimeout(resolve, 10000))
+          const coverageTimeout = new Promise((resolve) =>
+            setTimeout(resolve, 10000)
+          )
           const coverageResult = await Promise.race([
             Promise.all([
               page.coverage.stopJSCoverage(),
@@ -1076,7 +1098,9 @@ const test = base.test.extend({
               console.log(`Collected ${coverage.length} coverage entries`)
             }
           } else {
-            console.warn('Coverage collection timed out (renderer unresponsive) — skipping')
+            console.warn(
+              'Coverage collection timed out (renderer unresponsive) — skipping'
+            )
           }
         } catch (error) {
           console.warn('Failed to collect coverage data:', error.message)
@@ -1138,7 +1162,10 @@ const testWithFixtures = test.extend({
 
         // Skip the photo upload step
         const skipLink = page.locator('button').filter({ hasText: /skip/i })
-        await skipLink.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+        await skipLink.waitFor({
+          state: 'visible',
+          timeout: timeouts.ui.appearance,
+        })
         await skipLink.click()
 
         // Fill item and description on the details page
@@ -1147,7 +1174,10 @@ const testWithFixtures = test.extend({
         })
 
         const mobileItemInput = page.locator('#item-name')
-        await mobileItemInput.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+        await mobileItemInput.waitFor({
+          state: 'visible',
+          timeout: timeouts.ui.appearance,
+        })
         await mobileItemInput.fill(item)
 
         const mobileDescInput = page.locator('#description')
@@ -1155,7 +1185,10 @@ const testWithFixtures = test.extend({
 
         // Click Next to proceed to whereami (postcode + email + submit on one page)
         const mobileNextBtn = page.locator('button.btn', { hasText: 'Next' })
-        await mobileNextBtn.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+        await mobileNextBtn.waitFor({
+          state: 'visible',
+          timeout: timeouts.ui.appearance,
+        })
         await mobileNextBtn.click()
 
         await page.waitForURL(/\/find\/mobile\/whereami/, {
@@ -1396,11 +1429,13 @@ const testWithFixtures = test.extend({
       const emailScreenshotTimestamp = new Date()
         .toISOString()
         .replace(/[:.]/g, '-')
-      await page.screenshot({
-        path: `playwright-screenshots/email-filled-${emailScreenshotTimestamp}.png`,
-        fullPage: true,
-        timeout: 10000,
-      }).catch(() => {})
+      await page
+        .screenshot({
+          path: `playwright-screenshots/email-filled-${emailScreenshotTimestamp}.png`,
+          fullPage: true,
+          timeout: 10000,
+        })
+        .catch(() => {})
 
       // Wait for validation to complete and the button to appear using web assertions
       console.log(
@@ -1606,11 +1641,13 @@ const testWithFixtures = test.extend({
 
       // Take a screenshot of the success — bounded timeout prevents hang on unresponsive renderer
       const screenshotTimestamp = new Date().toISOString().replace(/[:.]/g, '-')
-      await page.screenshot({
-        path: `playwright-screenshots/item-post-success-${screenshotTimestamp}.png`,
-        fullPage: true,
-        timeout: 10000,
-      }).catch(() => {})
+      await page
+        .screenshot({
+          path: `playwright-screenshots/item-post-success-${screenshotTimestamp}.png`,
+          fullPage: true,
+          timeout: 10000,
+        })
+        .catch(() => {})
 
       // Check for the posted item
       // Look for the message card which uses .message-card class (with hyphen)
@@ -2320,7 +2357,9 @@ const testWithFixtures = test.extend({
               freshConsoleMessages.join('\n  ')
             )
           } else {
-            console.log('No relevant console messages captured from fresh context')
+            console.log(
+              'No relevant console messages captured from fresh context'
+            )
           }
         } catch {}
         await freshContext.close()

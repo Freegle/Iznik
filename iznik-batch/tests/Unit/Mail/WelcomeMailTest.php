@@ -81,4 +81,34 @@ class WelcomeMailTest extends TestCase
         // The user should be loaded since we passed userId.
         $this->assertEquals($user->id, $mail->userId);
     }
+
+    /**
+     * Regression: the `groups` table has no `autoemail`/`modsemail` columns
+     * and the previous fallback `config('freegle.mail.support')` did not exist
+     * (the actual key is `support_addr`). The envelope() therefore handed null
+     * to Address::__construct() and threw, silently breaking every group
+     * welcome with "Argument #1 ($address) must be of type string, null given".
+     *
+     * Verify GroupWelcomeMail::envelope() now constructs valid addresses from
+     * the group's nameshort + configured group_domain.
+     */
+    public function test_group_welcome_mail_envelope_handles_missing_email_columns(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+
+        $mail = new \App\Mail\Welcome\GroupWelcomeMail($user, $group);
+        // Must not throw.
+        $envelope = $mail->envelope();
+
+        $from = $envelope->from;
+        $replyTo = $envelope->replyTo[0] ?? null;
+
+        $this->assertNotNull($from, 'from address must be set');
+        $this->assertNotNull($replyTo, 'replyTo address must be set');
+
+        $domain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');
+        $this->assertSame("{$group->nameshort}-auto@{$domain}", $from->getAddress());
+        $this->assertSame("{$group->nameshort}-volunteers@{$domain}", $replyTo->getAddress());
+    }
 }

@@ -341,9 +341,15 @@ class IncomingMailService
                             'newslettersallowed' => 0,
                         ]);
 
-                    // Turn off notification emails and engagement in user settings
-                    $settings = json_decode($user->settings ?? '{}', TRUE) ?: [];
-                    if (! isset($settings['notifications'])) {
+                    // Turn off notification emails and engagement in user settings.
+                    // The User model has a `settings => array` cast so $user->settings
+                    // is already an array (or null). Calling json_decode on it would throw
+                    // "Argument #1 ($json) must be of type string, array given".
+                    $settings = $user->settings ?? [];
+                    if (!is_array($settings)) {
+                        $settings = [];
+                    }
+                    if (!isset($settings['notifications']) || !is_array($settings['notifications'])) {
                         $settings['notifications'] = [];
                     }
                     $settings['notifications']['email'] = FALSE;
@@ -943,8 +949,12 @@ class IncomingMailService
             return $this->dropped("User not found for notification mails off");
         }
 
-        // Get current settings JSON
-        $settings = json_decode($user->settings ?? '{}', true) ?: [];
+        // Get current settings. $user is an Eloquent User model with a
+        // settings => array cast, so $user->settings is already an array (or null).
+        $settings = $user->settings ?? [];
+        if (!is_array($settings)) {
+            $settings = [];
+        }
 
         // Only update if not already off
         if (($settings['notificationmails'] ?? true) === true) {
@@ -2597,6 +2607,17 @@ class IncomingMailService
                 'prunedsubject' => $this->pruneSubject($email->subject),
                 'messageid' => $messageId,
                 'msgid' => $message->id,
+            ]);
+
+            // Log receipt — matches Go API logMessageReceived() and V1 Message::submit().
+            DB::table('logs')->insert([
+                'timestamp' => now(),
+                'type' => 'Message',
+                'subtype' => 'Received',
+                'groupid' => $group->id,
+                'user' => $user->id,
+                'msgid' => $message->id,
+                'text' => $messageId,
             ]);
 
             // Note: messages_spatial is added when message is APPROVED, not at creation.

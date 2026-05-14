@@ -30,7 +30,7 @@ cd "$(dirname "$0")"
 # Load parent project env vars (DISCOURSE_URL, etc.) if not already set
 PARENT_ENV="$(dirname "$0")/../.env"
 if [ -f "$PARENT_ENV" ]; then
-  set -a; source "$PARENT_ENV"; set +a
+  set -a; { source "$PARENT_ENV"; } 2>/dev/null || true; set +a
 fi
 
 # ── Single-instance guard ─────────────────────────────────────────────────────

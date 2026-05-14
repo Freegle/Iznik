@@ -3,10 +3,14 @@
 namespace App\Mail\Admin;
 
 use App\Mail\MjmlMailable;
+use Illuminate\Mail\Mailables\Address;
+use Illuminate\Mail\Mailables\Envelope;
 
 class ModNotifMail extends MjmlMailable
 {
     public string $recipientName;
+
+    public string $email;
 
     public string $htmlSummary;
 
@@ -27,10 +31,11 @@ class ModNotifMail extends MjmlMailable
         parent::__construct();
 
         $this->recipientName = $recipientName;
+        $this->email = $recipientEmail;
         $this->htmlSummary = $htmlSummary;
         $this->textSummary = $textSummary;
         $this->modNotifSubject = $subject;
-        $this->settingsUrl = 'https://' . config('freegle.sites.mod', 'modtools.org') . '/settings';
+        $this->settingsUrl = config('freegle.sites.mod', 'https://modtools.org') . '/modtools/settings';
     }
 
     protected function getSubject(): string
@@ -38,10 +43,22 @@ class ModNotifMail extends MjmlMailable
         return $this->modNotifSubject;
     }
 
+    public function envelope(): Envelope
+    {
+        return new Envelope(
+            from: new Address(
+                config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'),
+                'ModTools'
+            ),
+            subject: $this->getSubject(),
+        );
+    }
+
     public function build(): static
     {
         $data = [
             'recipientName' => $this->recipientName,
+            'email' => $this->email,
             'htmlSummary' => $this->htmlSummary,
             'settingsUrl' => $this->settingsUrl,
         ];

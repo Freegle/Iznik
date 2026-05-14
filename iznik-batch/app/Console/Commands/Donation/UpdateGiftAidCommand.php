@@ -25,24 +25,26 @@ class UpdateGiftAidCommand extends Command
         }
 
         try {
-            if ($this->option('dry-run')) {
-                $this->info('DRY RUN — no changes will be made.');
+            $dryRun = (bool) $this->option('dry-run');
 
-                return Command::SUCCESS;
+            if ($dryRun) {
+                $this->info('DRY RUN — no changes will be made.');
             }
 
-            $postcodes = $service->identifyPostcodes();
-            $houses = $service->identifyHouseNumbers();
-            $identified = $service->identifyGiftAidedDonations();
+            $postcodes = $service->identifyPostcodes($dryRun);
+            $houses = $service->identifyHouseNumbers($dryRun);
+            $identified = $service->identifyGiftAidedDonations($dryRun);
 
-            $sent = $service->sendGiftAidChaseUps();
+            $sent = $service->sendGiftAidChaseUps($dryRun);
 
-            $this->info("donations:update-giftaid complete — postcodes: {$postcodes}, houses: {$houses}, identified: {$identified}, chaseups: {$sent}");
+            $verb = $dryRun ? 'would' : 'did';
+            $this->info("donations:update-giftaid {$verb} — postcodes: {$postcodes}, houses: {$houses}, identified: {$identified}, chaseups: {$sent}");
             Log::info('donations:update-giftaid complete', [
                 'postcodes' => $postcodes,
                 'houses' => $houses,
                 'identified' => $identified,
                 'chaseups' => $sent,
+                'dry_run' => $dryRun,
             ]);
 
             return Command::SUCCESS;

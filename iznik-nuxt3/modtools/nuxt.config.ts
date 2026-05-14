@@ -13,6 +13,12 @@ export default defineNuxtConfig({
   extends: ['../'],
   sourcemap: { client: true },
   compatibilityDate: '2024-11-26',
+  experimental: {
+    // With ssr:false, vite:serverCreated never fires with ctx.isServer=true, so
+    // NUXT_VITE_NODE_OPTIONS is never set and all dev requests fail. This flag
+    // causes resolveServer(clientServer) to be called immediately instead.
+    viteEnvironmentApi: true,
+  },
 
   // Override parent's cdnURL to use same-origin proxy approach.
   // This avoids CORS issues in strict browsers (Firefox with privacy settings).
@@ -43,7 +49,8 @@ export default defineNuxtConfig({
             // Include some CSS in all components.
             // There are some other Bootstrap files we'd like to include, but doing this breaks the colours in a way
             // I don't understand and can't fix.
-            '@import "@/assets/css/_color-vars.scss";',
+            '@use "@/assets/css/_color-vars.scss" as *;',
+          silenceDeprecations: ['import'],
         },
       },
     },
