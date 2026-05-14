@@ -8,7 +8,7 @@ class FeatureFlagsTest extends TestCase
 {
     use \App\Mail\Traits\FeatureFlags;
 
-    private const ALL_EMAIL_TYPES = 'Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk';
+    private const ALL_EMAIL_TYPES = 'Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,StoriesNewsletter';
 
     public function test_email_type_enabled_when_in_config(): void
     {
