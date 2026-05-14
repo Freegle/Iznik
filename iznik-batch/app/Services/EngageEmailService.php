@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Mail\Engage\EngageMail;
 use App\Models\Group;
 use App\Models\User;
+use App\Support\SafeMail;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -111,14 +112,21 @@ class EngageEmailService
 
                 $unsubscribeUrl = config('freegle.sites.user') . '/unsubscribe';
 
-                Mail::send(new EngageMail(
-                    recipientName: $user->display_name,
-                    recipientEmail: $user->email_preferred,
-                    emailSubject: $mail->subject,
-                    template: $mail->template,
-                    engageId: $engageId,
-                    unsubscribeUrl: $unsubscribeUrl,
-                ));
+                // SafeMail::sendMailable catches permanent address-rejection
+                // failures (non-ASCII local-part etc) and records a bounce
+                // against the recipient instead of crashing the whole engage
+                // run. The EngageMail's own envelope() sets the to: address.
+                SafeMail::sendMailable(
+                    new EngageMail(
+                        recipientName: $user->display_name,
+                        recipientEmail: $user->email_preferred,
+                        emailSubject: $mail->subject,
+                        template: $mail->template,
+                        engageId: $engageId,
+                        unsubscribeUrl: $unsubscribeUrl,
+                    ),
+                    $user->email_preferred,
+                );
             }
 
             $count++;

@@ -134,6 +134,48 @@ class ChatSpamServiceTest extends TestCase
         $this->assertEquals(0, $sent);
     }
 
+    /**
+     * Regression: messages_groups has no `id` column (PK is composite (msgid, groupid)).
+     * Using ->orderByDesc('id') previously threw SQLSTATE[42S22] for any reply path
+     * where a chat_message had a refmsgid pointing at a real message, causing
+     * chats:process-spam to fail every 5 minutes in prod.
+     */
+    public function test_warn_innocent_users_with_refmsgid_does_not_throw_on_messages_groups_lookup(): void
+    {
+        $spammer = $this->createTestUser();
+        $innocent = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $msg = $this->createTestMessage($spammer, $group, [
+            'subject' => 'OFFER: Test (Town)',
+        ]);
+        $room = $this->createTestChatRoom($spammer, $innocent, [
+            'latestmessage' => now()->subDays(3),
+            'flaggedspam'   => 0,
+        ]);
+
+        DB::table('spam_users')->insert([
+            'userid'     => $spammer->id,
+            'collection' => 'Spammer',
+            'added'      => now(),
+        ]);
+
+        // Visible chat message that references the offer — exercises the
+        // findReplyDetails path that queries messages_groups for the group.
+        $this->createTestChatMessage($room, $spammer, [
+            'refmsgid'             => $msg->id,
+            'reviewrequired'       => 0,
+            'reviewrejected'       => 0,
+            'processingsuccessful' => 1,
+        ]);
+
+        Mail::fake();
+
+        $sent = $this->service->warnInnocentUsers();
+
+        $this->assertEquals(1, $sent);
+        Mail::assertSent(SpamWarningMail::class);
+    }
+
     public function test_warn_innocent_users_identifies_innocent_when_user2_is_spammer(): void
     {
         $innocent = $this->createTestUser();
