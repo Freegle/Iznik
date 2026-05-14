@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Mail\Digest\UnifiedDigest;
 use App\Mail\Traits\FeatureFlags;
+use App\Models\Group;
+use App\Models\GroupDigest;
 use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageGroup;
@@ -33,6 +35,7 @@ class UnifiedDigestService
      */
     public const MODE_IMMEDIATE = 'immediate';
     public const MODE_DAILY = 'daily';
+    public const MODE_GROUP = 'group';
 
     /**
      * Send unified digests to users who want them.
@@ -362,6 +365,114 @@ class UnifiedDigestService
             ->pluck('nameshort');
 
         return 'Posted to: ' . $groupNames->implode(', ');
+    }
+
+    /**
+     * Send per-group digests to members subscribed at a given frequency.
+     *
+     * Unlike the user-centric sendDigests(), this sends one email per member
+     * containing only posts from the given group, using the GroupDigest tracker
+     * to track progress per-group rather than per-user.
+     *
+     * @param Group $group The group to digest.
+     * @param int $frequency emailfrequency value (e.g. 1 = hourly, 24 = daily).
+     * @param bool $dryRun If true, count would-be emails but do not send.
+     * @return array Statistics: emails_sent, members_processed.
+     */
+    public function sendGroupDigests(Group $group, int $frequency, bool $dryRun = false): array
+    {
+        $stats = ['emails_sent' => 0, 'members_processed' => 0];
+
+        // Skip closed groups.
+        $settings = is_array($group->settings) ? $group->settings : json_decode($group->settings ?? '{}', true);
+        if (!empty($settings['closed'])) {
+            return $stats;
+        }
+
+        $tracker = GroupDigest::where('groupid', $group->id)->where('frequency', $frequency)->first();
+        $posts   = $this->getPostsForGroup($group, $tracker);
+
+        if ($posts->isEmpty()) {
+            return $stats;
+        }
+
+        $members = $this->getMembersForGroup($group, $frequency);
+
+        foreach ($members as $member) {
+            $stats['members_processed']++;
+
+            $memberPosts = $posts->filter(fn($post) => $post->fromuser !== $member->userid);
+
+            if ($memberPosts->isEmpty()) {
+                continue;
+            }
+
+            $user = User::find($member->userid);
+
+            if (!$user || !$user->email_preferred) {
+                continue;
+            }
+
+            $wrappedPosts = $memberPosts->values()->map(fn($post) => [
+                'message'       => $post,
+                'postedToGroups' => [$group->id],
+            ]);
+
+            if (!$dryRun) {
+                Mail::send(new UnifiedDigest($user, $wrappedPosts, self::MODE_GROUP));
+            }
+
+            $stats['emails_sent']++;
+        }
+
+        if (!$dryRun) {
+            $lastPost = $posts->last();
+            GroupDigest::updateOrCreate(
+                ['groupid' => $group->id, 'frequency' => $frequency],
+                [
+                    'msgid'   => $lastPost->id,
+                    'msgdate' => $lastPost->arrival,
+                    'started' => now(),
+                    'ended'   => now(),
+                ]
+            );
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Get approved members of a group subscribed at the given emailfrequency.
+     */
+    protected function getMembersForGroup(Group $group, int $frequency): Collection
+    {
+        return Membership::where('groupid', $group->id)
+            ->where('emailfrequency', $frequency)
+            ->where('collection', Membership::COLLECTION_APPROVED)
+            ->get();
+    }
+
+    /**
+     * Get approved messages posted to a group since the last digest.
+     */
+    protected function getPostsForGroup(Group $group, ?GroupDigest $tracker = null): Collection
+    {
+        $query = Message::select('messages.*', 'messages_groups.arrival')
+            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+            ->where('messages_groups.groupid', $group->id)
+            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages_groups.deleted', 0)
+            ->whereNull('messages.deleted')
+            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
+            ->orderBy('messages_groups.arrival', 'asc');
+
+        if ($tracker && $tracker->msgdate) {
+            $query->where('messages_groups.arrival', '>', $tracker->msgdate);
+        } else {
+            $query->where('messages_groups.arrival', '>=', now()->subDay());
+        }
+
+        return $query->get();
     }
 
     /**
