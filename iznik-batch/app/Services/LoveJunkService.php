@@ -120,8 +120,13 @@ class LoveJunkService
                 return true;
             }
 
-            Log::error("LoveJunk: failed to send message $msgId", ['status' => $response->status()]);
-            $this->recordResult(false, $msgId, $response->status() . ' ' . $response->body());
+            // 409 Conflict means LoveJunk already has this draft — it's an idempotency
+            // signal, not a failure worth alerting on. Log at warning level so it stays
+            // visible in laravel.log but stops being escalated to Sentry as an error.
+            $status = $response->status();
+            $logger = $status === 409 ? 'warning' : 'error';
+            Log::$logger("LoveJunk: failed to send message $msgId", ['status' => $status]);
+            $this->recordResult(false, $msgId, $status . ' ' . $response->body());
         } catch (\Exception $e) {
             Log::error("LoveJunk: exception sending message $msgId: " . $e->getMessage());
             $this->recordResult(false, $msgId, $e->getMessage());

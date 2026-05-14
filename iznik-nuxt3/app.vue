@@ -147,7 +147,7 @@ import { useLogoStore } from './stores/logo'
 import { useLocationStore } from './stores/location'
 import { useShortlinkStore } from './stores/shortlinks'
 import { useMiscStore } from './stores/misc'
-import { computed, useRoute } from '#imports'
+import { computed, onMounted, useRoute } from '#imports'
 // polyfills
 import 'core-js/actual/array/to-sorted'
 import { useConfigStore } from '~/stores/config'
@@ -261,9 +261,12 @@ const shouldShowNavbar = computed(() => {
 //   }
 // })
 
-try {
+// Impersonation link: /?u=<userid>&k=<key>
+// Must run onMounted (not in <script setup>) because pre-rendered pages restore the
+// router to the SSR payload path (no query params) before setup runs — route.query
+// is only populated with the real URL after hydration completes.
+onMounted(async () => {
   if (route.query.u && route.query.k) {
-    // We are impersonating.
     try {
       // Clear the related list.  This avoids accidentally flagging members as related if people forget to close
       // an incognito tab while impersonating.
@@ -274,15 +277,12 @@ try {
         u: route.query.u,
         k: route.query.k,
       })
-      console.log(performance.now())
     } catch (e) {
       // Login failed.  Usually this is because they're logged in as someone else. Ignore it.
       console.log('Login failed', e)
     }
   }
-} catch (e) {
-  console.error('Error fetching user', e)
-}
+})
 
 if (process.client) {
   if (typeof window !== 'undefined') {

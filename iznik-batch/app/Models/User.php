@@ -2,8 +2,9 @@
 
 namespace App\Models;
 
-use App\Support\NameSanitiser;
 use App\Support\EloquentUtils;
+use App\Support\NameSanitiser;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -136,9 +137,14 @@ class User extends Model implements Auditable
     // Login types.
     public const LOGIN_NATIVE = 'Native';
 
-    // Inactivity threshold — matches Engage::USER_INACTIVE (365 * 24 * 60 * 60 / 2 = ~182.5 days).
-    // (Could move this to Engage if it gets ported to Laravel.)
-    public const USER_INACTIVE = 365 * 24 * 60 * 60 / 2;
+    /**
+     * Skip users who haven't accessed in this many days when sending bulk
+     * notification emails. Matches V1's Engage::USER_INACTIVE
+     * (365*24*60*60/2 ≈ 182.5 days). Filtering on this protects deliverability:
+     * a sustained send to a large dormant-mailbox population trips spam
+     * filters and damages the sending domain reputation.
+     */
+    public const USER_INACTIVE_DAYS = 182;
 
     // Gift aid period weights for merge comparison (lower = more favourable).
     public const GIFTAID_PERIOD_PAST_4_YEARS_AND_FUTURE = 'Past4YearsAndFuture';
@@ -665,6 +671,56 @@ class User extends Model implements Auditable
     {
         $settings = $this->settings ?? [];
         return $settings['simplemail'] ?? null;
+    }
+
+    /**
+     * Apply the same filters V1's User::sendOurMails() applies, as SQL clauses
+     * suitable for joining onto bulk-mail queries (events digest, volunteering
+     * digest, etc). Restricts to:
+     *
+     *   - not soft-deleted
+     *   - lastaccess within USER_INACTIVE_DAYS (default 182)
+     *   - simplemail (in users.settings JSON) != 'None'
+     *   - $checkHoliday: onholidaytill is null or in the past
+     *   - $checkBouncing: bouncing = 0
+     *
+     * Use as a `whereHas` predicate or chained after a `join('users', …)`.
+     * The simplemail check uses JSON_UNQUOTE/JSON_EXTRACT so it filters at the
+     * database without materialising every user row in PHP.
+     *
+     * IMPORTANT: requires the join to alias the users table as `users`
+     * (or use the qualified column names). For ambiguous joins, scope each
+     * filter explicitly with `users.<column>`.
+     */
+    public function scopeReceivingOurMails(
+        Builder $query,
+        bool $checkHoliday = TRUE,
+        bool $checkBouncing = TRUE,
+    ): Builder {
+        $query
+            ->whereNull('users.deleted')
+            ->where('users.lastaccess', '>=', now()->subDays(self::USER_INACTIVE_DAYS))
+            ->where(function (Builder $q) {
+                // simplemail in settings JSON is either absent (default = TRUE)
+                // or any value other than 'None'.
+                $q->whereRaw("JSON_EXTRACT(users.settings, '$.simplemail') IS NULL")
+                    ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(users.settings, '$.simplemail')) != ?", [
+                        self::SIMPLE_MAIL_NONE,
+                    ]);
+            });
+
+        if ($checkHoliday) {
+            $query->where(function (Builder $q) {
+                $q->whereNull('users.onholidaytill')
+                    ->orWhere('users.onholidaytill', '<', now());
+            });
+        }
+
+        if ($checkBouncing) {
+            $query->where('users.bouncing', 0);
+        }
+
+        return $query;
     }
 
     /**

@@ -88,8 +88,8 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		// Add email if provided.
 		if email != "" {
 			canon := user.CanonicalizeEmail(email)
-			db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon) VALUES (?, ?, 0, NOW(), ?)",
-				userID, email, canon)
+			db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 0, NOW(), ?, ?)",
+				userID, email, canon, user.ReverseString(canon))
 		}
 
 		// Add social login record.
@@ -100,8 +100,8 @@ func socialMatchOrCreate(loginType, uid, email, firstname, lastname, fullname st
 		if email != "" && emailUserID == 0 {
 			// They logged in via social UID but we don't have this email yet.
 			canon := user.CanonicalizeEmail(email)
-			db.Exec("INSERT IGNORE INTO users_emails (userid, email, preferred, validated, canon) VALUES (?, ?, 0, NOW(), ?)",
-				userID, email, canon)
+			db.Exec("INSERT IGNORE INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 0, NOW(), ?, ?)",
+				userID, email, canon, user.ReverseString(canon))
 		}
 
 		if loginUserID == 0 {

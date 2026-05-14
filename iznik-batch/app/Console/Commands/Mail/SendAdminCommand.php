@@ -38,11 +38,9 @@ class SendAdminCommand extends Command
      */
     private const ADMIN_AGE_DAYS = 7;
 
-    /**
-     * Days threshold for "active" users (for activeonly admins).
-     * Matches V1's Engage::USER_INACTIVE (365 * 24 * 60 * 60 / 2 = ~182.5 days).
-     */
-    private const USER_INACTIVE_DAYS = 182;
+    // USER_INACTIVE_DAYS lives on User::USER_INACTIVE_DAYS — single source of
+    // truth so this command, the events/volunteering digests, BirthdayService
+    // etc. all agree on what "recently active" means.
 
     /**
      * Chunk size for batch-loading User models to avoid N+1 queries.
@@ -270,7 +268,7 @@ class SendAdminCommand extends Command
             ])
             ->cursor();
 
-        $activeThreshold = now()->subDays(self::USER_INACTIVE_DAYS);
+        $activeThreshold = now()->subDays(User::USER_INACTIVE_DAYS);
         $adminArr = (array) $admin;
 
         $interrupted = FALSE;

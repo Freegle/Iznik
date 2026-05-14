@@ -452,9 +452,13 @@ export const useMobileStore = defineStore({
           return
         }
 
-        // Only process new-style notifications (with channel_id).
-        // Legacy notifications without channel_id are for older app versions.
+        // Only process new-style notifications (with channel_id) for routing/refresh.
+        // Without channel_id (e.g. modtools pushes that don't set $category on the
+        // server), still update the badge from aps.badge so the iOS icon stays in sync.
         if (!data.channel_id) {
+          if (data.badge !== undefined) {
+            this.setBadgeCount(parseInt(data.badge), Badge)
+          }
           console.log('--- Ignoring legacy notification without channel_id')
           dbg()?.warn('Ignoring legacy notification without channel_id', data)
           return

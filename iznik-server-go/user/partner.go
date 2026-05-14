@@ -99,7 +99,9 @@ func CreatePartnerUser(db *gorm.DB, tnuserid uint64, email string) (uint64, erro
 	}
 
 	// Add email.
-	db.Exec("INSERT INTO users_emails (userid, email, preferred, added) VALUES (?, ?, 1, NOW())", userid, email)
+	canon := CanonicalizeEmail(email)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, added, canon, backwards) VALUES (?, ?, 1, NOW(), ?, ?)",
+		userid, email, canon, reverseString(canon))
 
 	return userid, nil
 }

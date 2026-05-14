@@ -3,6 +3,7 @@ import { useChatStore } from '@/stores/chat'
 import { useMiscStore } from '@/stores/misc'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
+import { useMobileStore } from '~/stores/mobile'
 
 // Skip beep on the first checkWork() call after page load. The first call
 // establishes the baseline work count; beeping at that point would interrupt
@@ -77,9 +78,10 @@ export function useModMe() {
       clearTimeout(miscStore.workTimer)
     }
 
-    // Do not check for work and therefore refresh while any modal is open
+    // Skip refresh while modtools editing is in progress; beep is also skipped
+    // when any modal is open (body overflow:hidden) to avoid iOS audio interruption.
     const bodyoverflow = document.body.style.overflow
-    const oktocheck = bodyoverflow !== 'hidden' && !miscStore.modtoolsediting
+    const oktocheck = !miscStore.modtoolsediting
     if (force || oktocheck) {
       // console.log('========================================')
       console.log(
@@ -111,6 +113,7 @@ export function useModMe() {
         work &&
         totalCount > currentTotal &&
         !skipBeep &&
+        bodyoverflow !== 'hidden' &&
         authStore.user &&
         (!authStore.user.settings ||
           !Object.keys(authStore.user.settings).includes('playbeep') ||
@@ -121,6 +124,9 @@ export function useModMe() {
       }
       const title = totalCount > 0 ? `(${totalCount}) ModTools` : 'ModTools'
       document.title = title
+
+      const mobileStore = useMobileStore()
+      mobileStore.setBadgeCount(totalCount ?? 0)
     }
     miscStore.deferGetMessages = false
     miscStore.workTimer = setTimeout(checkWork, 30000)

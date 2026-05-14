@@ -174,7 +174,16 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
 
     if (isDesktopVisible) {
       console.log('Clicking desktop logout button')
-      await desktopLogout.click()
+      try {
+        // Use a bounded timeout so a non-actionable element (e.g. animating
+        // navbar under CI CPU load) doesn't burn the full action timeout.
+        await desktopLogout.click({ timeout: timeouts.ui.interaction })
+      } catch {
+        // Element is visible but failed actionability — JS click bypasses
+        // stability checks while still dispatching the click event.
+        console.log('Standard click timed out, falling back to JS click')
+        await desktopLogout.evaluate((el) => el.click())
+      }
     } else if (isMobileVisible) {
       console.log('Clicking mobile logout button')
       await mobileLogout.click()
@@ -1029,12 +1038,18 @@ async function loginViaHomepage(
 
   console.log('About to take screenshot before submitting...')
 
-  // Take a screenshot before submitting
+  // Take a screenshot before submitting — bounded to 8s to avoid hanging on an
+  // unresponsive renderer. Uses Buffer (no file I/O) to avoid shared-dir races.
   try {
-    console.log('Skipping screenshot to avoid hang - will investigate later')
-    console.log('Screenshot taken successfully (skipped)')
+    await Promise.race([
+      page.screenshot({ fullPage: false }),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error('screenshot-timeout')), 8000)
+      ),
+    ])
+    console.log('Screenshot taken successfully')
   } catch (screenshotError) {
-    console.log(`Screenshot failed: ${screenshotError.message}`)
+    console.log(`Screenshot skipped (non-fatal): ${screenshotError.message}`)
   }
 
   // Find and click the submit button (text varies by mode)

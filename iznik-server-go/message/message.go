@@ -1889,10 +1889,34 @@ func handleRevertEdits(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this message")
 	}
 
-	// Clear the editedby flag.
-	db.Exec("UPDATE messages SET editedby = NULL WHERE id = ?", req.ID)
+	// Restore the original text from the most recent pending edit before marking it reverted.
+	// The PATCH edit flow immediately writes the new text into messages, so we must explicitly
+	// restore the old values here — otherwise the edited text stays visible after rejection.
+	type editOldValues struct {
+		Oldsubject *string
+		Oldtext    *string
+	}
+	var old editOldValues
+	db.Raw("SELECT oldsubject, oldtext FROM messages_edits WHERE msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL ORDER BY id DESC LIMIT 1", req.ID).Scan(&old)
+	if old.Oldsubject != nil || old.Oldtext != nil {
+		clauses := []string{"editedby = NULL"}
+		args := []interface{}{}
+		if old.Oldsubject != nil {
+			clauses = append(clauses, "subject = ?")
+			args = append(args, *old.Oldsubject)
+		}
+		if old.Oldtext != nil {
+			clauses = append(clauses, "textbody = ?")
+			args = append(args, *old.Oldtext)
+		}
+		args = append(args, req.ID)
+		db.Exec("UPDATE messages SET "+strings.Join(clauses, ", ")+" WHERE id = ?", args...)
+	} else {
+		// No recorded old values — just clear the editedby flag.
+		db.Exec("UPDATE messages SET editedby = NULL WHERE id = ?", req.ID)
+	}
 
-	// Mark all pending edits as reverted (set reviewrequired=0 for).
+	// Mark all pending edits as reverted.
 	db.Exec("UPDATE messages_edits SET reviewrequired = 0, revertedat = NOW() WHERE msgid = ? AND reviewrequired = 1 AND approvedat IS NULL AND revertedat IS NULL",
 		req.ID)
 
@@ -2856,8 +2880,8 @@ func findOrCreateUserForDraft(db *gorm.DB, email string) (uint64, string, fiber.
 
 	// Add email.
 	canon := user.CanonicalizeEmail(email)
-	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon) VALUES (?, ?, 1, NOW(), ?)",
-		newUserID, email, canon)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated, canon, backwards) VALUES (?, ?, 1, NOW(), ?, ?)",
+		newUserID, email, canon, user.ReverseString(canon))
 
 	// Create session. series must be a random numeric value (bigint
 	// unsigned); using userID collided across every session for the same
@@ -3712,10 +3736,12 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 		db.Raw("SELECT id, COALESCE(externaluid, '') AS externaluid, externalmods FROM messages_attachments WHERE msgid = ?", msgID).Scan(&candidates)
 	}
 
+	foundAI := false
 	for _, att := range candidates {
 		if att.Externaluid == "" || !isAIAttachment(att.Externalmods) {
 			continue
 		}
+		foundAI = true
 		var aiImageID uint64
 		db.Raw("SELECT id FROM ai_images WHERE externaluid = ? LIMIT 1", att.Externaluid).Scan(&aiImageID)
 		if aiImageID > 0 {
@@ -3725,6 +3751,11 @@ func recordAIDeletions(db *gorm.DB, userID uint64, msgID uint64, keepList []uint
 				microvolunteering.RecordAIAttachmentDeletion(db, userID, aiImageID)
 			}
 		}
+	}
+	// Mirror V1 (Message.php:3974–3989): whenever an AI attachment is removed,
+	// protect the message from the illustrations cron re-injecting a cached image.
+	if foundAI {
+		db.Exec("INSERT IGNORE INTO messages_ai_declined (msgid) VALUES (?)", msgID)
 	}
 }
 

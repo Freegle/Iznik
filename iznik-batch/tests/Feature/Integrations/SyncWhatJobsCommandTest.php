@@ -38,19 +38,24 @@ class SyncWhatJobsCommandTest extends TestCase
                 $srid = config('freegle.srid', 3857);
                 $geocodeCache = [];
                 // Match production sync(): feed1 → format 1, feed2 → format 2.
-                $jobs = $this->parseFeed($this->file1, 1, $geocodeCache);
-                if ($this->file2) {
-                    $jobs = array_merge($jobs, $this->parseFeed($this->file2, 2, $geocodeCache));
-                }
-                $total = count($jobs);
+                // parseFeed is now a generator; stream both feeds through
+                // insertJobs() so peak memory is O(BATCH_SIZE) instead of O(all).
+                $stream = function () use (&$geocodeCache): \Generator {
+                    yield from $this->parseFeed($this->file1, 1, $geocodeCache);
+                    if ($this->file2) {
+                        yield from $this->parseFeed($this->file2, 2, $geocodeCache);
+                    }
+                };
                 if ($dryRun) {
+                    $total = 0;
+                    foreach ($stream() as $_) { $total++; }
                     return ['total' => $total, 'inserted' => 0, 'dry_run' => true];
                 }
                 $this->prepareTempTable();
-                $inserted = $this->insertJobs($jobs, $srid);
+                $inserted = $this->insertJobs($stream(), $srid);
                 $this->deleteSpammyJobs();
                 $this->swapTables();
-                return ['total' => $total, 'inserted' => $inserted, 'dry_run' => false];
+                return ['total' => $inserted, 'inserted' => $inserted, 'dry_run' => false];
             }
         };
     }
@@ -130,7 +135,8 @@ class SyncWhatJobsCommandTest extends TestCase
         $xml = $this->makeFeedXml([['job_reference' => 'low-cpc', 'cpc' => '0.05']]);
         $tmp = $this->writeTmpXml($xml);
         $cache = [];
-        $jobs = (new WhatJobsService())->parseFeed($tmp, 2, $cache);
+        // parseFeed is a Generator — materialise to an array for assertEmpty().
+        $jobs = iterator_to_array((new WhatJobsService())->parseFeed($tmp, 2, $cache));
         @unlink($tmp);
         $this->assertEmpty($jobs);
     }
@@ -141,7 +147,7 @@ class SyncWhatJobsCommandTest extends TestCase
         $xml = $this->makeFeedXml([['job_reference' => 'old', 'posted_at' => date('Y-m-d', strtotime('-30 days'))]]);
         $tmp = $this->writeTmpXml($xml);
         $cache = [];
-        $jobs = (new WhatJobsService())->parseFeed($tmp, 2, $cache);
+        $jobs = iterator_to_array((new WhatJobsService())->parseFeed($tmp, 2, $cache));
         @unlink($tmp);
         $this->assertEmpty($jobs);
     }
@@ -154,7 +160,7 @@ class SyncWhatJobsCommandTest extends TestCase
         $xml   = $this->makeFeedXml([['job_reference' => 'no-geo', 'city' => 'UnknownCity', 'state' => '', 'country' => 'UK']]);
         $tmp   = $this->writeTmpXml($xml);
         $cache = [];
-        $jobs  = (new WhatJobsService())->parseFeed($tmp, 2, $cache);
+        $jobs  = iterator_to_array((new WhatJobsService())->parseFeed($tmp, 2, $cache));
         @unlink($tmp);
         $this->assertEmpty($jobs);
     }
@@ -263,7 +269,9 @@ class SyncWhatJobsCommandTest extends TestCase
                 $tmp   = tempnam(sys_get_temp_dir(), 'whatjobs_dr_');
                 file_put_contents($tmp, $this->xml);
                 $cache = [];
-                $jobs  = $this->parseFeed($tmp, 2, $cache);
+                // parseFeed is a Generator; materialise for this single-feed
+                // test so we can both count and re-use across dryRun/real paths.
+                $jobs  = iterator_to_array($this->parseFeed($tmp, 2, $cache));
                 @unlink($tmp);
                 if ($dryRun) {
                     return ['total' => count($jobs), 'inserted' => 0, 'dry_run' => true];

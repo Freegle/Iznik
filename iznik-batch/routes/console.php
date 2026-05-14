@@ -331,16 +331,17 @@ Schedule::command('chats:process-spam')
 //     ->withoutOverlapping()
 //     ->runInBackground();
 
-/*
-// Donation-related commands.
+// Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
     ->dailyAt('09:00')
     ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:donations:thank'))
     ->runInBackground();
 
 Schedule::command('mail:donations:ask')
     ->dailyAt('17:00')
     ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:donations:ask'))
     ->runInBackground();
 
 // Daily donation summary email to fundraising — running total of today's
@@ -353,18 +354,16 @@ Schedule::command('mail:donations:summary')
     ->sendOutputTo(cronLog('mail:donations:summary'))
     ->runInBackground();
 
-// User management commands.
-// (users:update-kudos enabled above.)
-Schedule::command('users:cleanup')
-    ->weekly()
-    ->sundays()
-    ->at('06:00')
-    ->withoutOverlapping()
-    ->runInBackground();
+// User management commands (users:cleanup still parked — no V1 cutover).
+// Schedule::command('users:cleanup')
+//     ->weekly()
+//     ->sundays()
+//     ->at('06:00')
+//     ->withoutOverlapping()
+//     ->runInBackground();
 
 // Email spool processing - runs continuously in daemon mode via supervisor.
 // See docker/supervisor.conf for the mail-spooler program.
-*/
 
 // Background task queue - processes tasks queued by Go API server.
 // Runs continuously with internal looping. Handles push notifications and emails.
@@ -813,6 +812,25 @@ Schedule::command('messages:update-index')
 //     ->withoutOverlapping()
 //     ->sendOutputTo(cronLog('donations:update-giftaid'))
 //     ->runInBackground();
+
+// Volunteering opportunity roundup — weekly to group members.
+// V1: cron/volunteering.php (weekly Mon 23:00, two mod-2 shards on bulk3 —
+// disabled there 2026-05-12 when this Laravel command took over).
+Schedule::command('mail:volunteering-digest')
+    ->weeklyOn(1, '23:00')  // Monday at 11pm
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:volunteering-digest'))
+    ->runInBackground();
+
+// Community events roundup — weekly to group members.
+// V1: cron/events.php (weekly Thu 23:00, two mod-2 shards on bulk3 —
+// disabled there 2026-05-12). Single-threaded here; the streaming /
+// activity-filtered query keeps the working set well below V1's count.
+Schedule::command('mail:events-digest')
+    ->weeklyOn(4, '23:00')  // Thursday at 11pm
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:events-digest'))
+    ->runInBackground();
 
 // Notify group mods about recent chitchat (newsfeed) posts from their members.
 // V1: cron/newsfeed_modnotif.php (daily 13:30)

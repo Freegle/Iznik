@@ -12,6 +12,8 @@ const mockMiscStore = {
   modtoolsediting: false,
 }
 
+const mockSetBadgeCount = vi.fn()
+
 vi.mock('@/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
 }))
@@ -31,6 +33,13 @@ vi.mock('~/composables/useMe', () => ({
   }),
 }))
 
+vi.mock('~/stores/mobile', () => ({
+  useMobileStore: () => ({
+    isApp: true,
+    setBadgeCount: mockSetBadgeCount,
+  }),
+}))
+
 // --- Audio mock ---
 
 let mockAudioPlay
@@ -38,6 +47,7 @@ let mockAudioPlay
 beforeEach(() => {
   vi.useFakeTimers()
   mockAudioPlay = vi.fn().mockResolvedValue(undefined)
+  mockSetBadgeCount.mockReset()
   global.Audio = class MockAudio {
     constructor(_src) {}
     play() {
@@ -123,6 +133,30 @@ describe('useModMe checkWork beep behavior', () => {
     expect(mockAudioPlay).not.toHaveBeenCalled()
   })
 
+  it('calls setBadgeCount with work total after checkWork', async () => {
+    mockFetchMe.mockImplementation(async () => {
+      globalThis.__mockAuthStore.work = { total: 4 }
+    })
+
+    const { useModMe } = await import('~/modtools/composables/useModMe')
+    const { checkWork } = useModMe()
+    await checkWork(true)
+
+    expect(mockSetBadgeCount).toHaveBeenCalledWith(4)
+  })
+
+  it('calls setBadgeCount with 0 when no pending work', async () => {
+    mockFetchMe.mockImplementation(async () => {
+      globalThis.__mockAuthStore.work = { total: 0 }
+    })
+
+    const { useModMe } = await import('~/modtools/composables/useModMe')
+    const { checkWork } = useModMe()
+    await checkWork(true)
+
+    expect(mockSetBadgeCount).toHaveBeenCalledWith(0)
+  })
+
   it('respects playbeep=false user setting on subsequent checks', async () => {
     globalThis.__mockAuthStore.user = { settings: { playbeep: false } }
     // First call: baseline
@@ -141,5 +175,34 @@ describe('useModMe checkWork beep behavior', () => {
     await checkWork(true)
 
     expect(mockAudioPlay).not.toHaveBeenCalled()
+  })
+})
+
+describe('useModMe document.title refresh after mod action', () => {
+  it('clears title count when checkWork is called after mod action while modal is open', async () => {
+    const { useModMe } = await import('~/modtools/composables/useModMe')
+    const { checkWork } = useModMe()
+
+    // Establish initial state: 2 pending items → title becomes "(2) ModTools"
+    mockFetchMe.mockImplementationOnce(async () => {
+      globalThis.__mockAuthStore.work = { total: 2 }
+    })
+    await checkWork(true)
+    expect(global.document.title).toBe('(2) ModTools')
+
+    // Mod action completes: queue clears, but modal is still open (body overflow:hidden).
+    // checkWorkDeferGetMessages() calls checkWork() WITHOUT force.
+    // Guard in checkWork: bodyoverflow==='hidden' && !force → skips the entire update block,
+    // so document.title is never refreshed with the new zero count.
+    global.document.body.style.overflow = 'hidden'
+    mockFetchMe.mockImplementation(async () => {
+      globalThis.__mockAuthStore.work = { total: 0 }
+    })
+    await checkWork() // no force — reproduces checkWorkDeferGetMessages() call path
+
+    // Title must update to 'ModTools' when work queue empties after a mod action.
+    // FAILS on buggy code: guard blocks title refresh when body overflow is 'hidden'
+    // and force is not passed, leaving stale '(2) ModTools' as the tab title.
+    expect(global.document.title).toBe('ModTools')
   })
 })

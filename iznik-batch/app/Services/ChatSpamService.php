@@ -222,8 +222,10 @@ class ChatSpamService
             $msg = Message::find($refMsg);
             if ($msg) {
                 $subject = $msg->subject;
+                // messages_groups has no `id` column (PK is composite (msgid, groupid)).
+                // Use `arrival` to pick the most recent attachment if multiple exist.
                 $groupId = MessageGroup::where('msgid', $msg->id)
-                    ->orderByDesc('id')
+                    ->orderByDesc('arrival')
                     ->value('groupid');
 
                 if ($groupId) {
