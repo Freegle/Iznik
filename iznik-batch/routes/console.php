@@ -889,3 +889,11 @@ Schedule::command('groups:alert-no-messages')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('groups:alert-no-messages'))
     ->runInBackground();
+
+// Sync Reach Volunteering opportunities.
+// V1: cron/reachvolunteering.php (daily at 21:00)
+Schedule::command('integrations:sync-reachvolunteering')
+    ->dailyAt('21:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('integrations:sync-reachvolunteering'))
+    ->runInBackground();
