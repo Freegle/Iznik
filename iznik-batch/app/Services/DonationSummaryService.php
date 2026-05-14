@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Mail\Donation\DonationSummaryMail;
 use App\Models\Group;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -73,11 +74,20 @@ class DonationSummaryService
             $amount     = number_format((float) $donation->GrossAmount, 2);
             $payer      = htmlspecialchars((string) ($donation->Payer ?? ''), ENT_QUOTES);
 
+            // users_donations.timestamp is stored in UTC (the batch container's
+            // MySQL session and PHP both run UTC). V1's mail implicitly showed
+            // UK local because it ran on a Europe/London-locale host; preserve
+            // that here so a 10:03 UTC PayPal IPN shows as 11:03 BST in the
+            // fundraising email, not 10:03.
+            $localTs = Carbon::parse($donation->timestamp, 'UTC')
+                ->setTimezone('Europe/London')
+                ->format('Y-m-d H:i:s T');
+
             // Cell padding/border are inline because the MJML <mj-table>
             // wrapper doesn't propagate per-cell styling.
             $cell = 'style="padding:4px 8px;border-bottom:1px solid #eee;text-align:left;"';
             $rowsHtml .= "<tr>"
-                . "<td {$cell}>{$donation->timestamp}</td>"
+                . "<td {$cell}>{$localTs}</td>"
                 . "<td {$cell}><b>&pound;{$amount}</b></td>"
                 . "<td {$cell}>{$payer}</td>"
                 . "<td {$cell}>{$statusCell}</td>"
