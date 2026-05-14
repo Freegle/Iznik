@@ -101,12 +101,19 @@ class StoriesNewsletterService
                     ?: null;
             }
 
-            $profileUrl = DB::table('users_images')
+            $profileImg = DB::table('users_images')
                 ->where('userid', $story->userid)
-                ->orderByDesc('id')
-                ->value('turl');
-            if ($profileUrl && str_contains($profileUrl, 'defaultprofile.png')) {
-                $profileUrl = null;
+                ->orderByDesc('default')
+                ->orderBy('id')
+                ->first(['id', 'url']);
+            $profileUrl = null;
+            if ($profileImg) {
+                if (!empty($profileImg->url) && !str_contains($profileImg->url, 'defaultprofile.png')) {
+                    $profileUrl = $profileImg->url;
+                } elseif (empty($profileImg->url)) {
+                    $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
+                    $profileUrl = "{$imagesDomain}/tuimg_{$profileImg->id}.jpg";
+                }
             }
 
             $storyData[] = [
