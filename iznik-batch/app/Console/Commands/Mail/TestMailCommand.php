@@ -12,6 +12,7 @@ use App\Mail\Message\AutoRepostWarning;
 use App\Mail\Message\ChaseUp;
 use App\Mail\Message\ChaseUpPromised;
 use App\Mail\Message\DeadlineReached;
+use App\Mail\Stories\StoriesNewsletterMail;
 use App\Mail\Welcome\WelcomeMail;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
@@ -20,6 +21,7 @@ use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
+use App\Services\StoriesNewsletterService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
@@ -65,6 +67,7 @@ class TestMailCommand extends Command
         'chaseup' => 'Chase-up email (What happened to: subject)',
         'chaseup-promised' => 'Chase-up promised email (promised variant)',
         'deadline-reached' => 'Deadline reached notification',
+        'stories-newsletter' => 'Monthly stories newsletter (real stories from DB, or sample data if none found)',
     ];
 
     /**
@@ -353,6 +356,7 @@ class TestMailCommand extends Command
             'chaseup' => $this->buildChaseUp(false),
             'chaseup-promised' => $this->buildChaseUp(true),
             'deadline-reached' => $this->buildDeadlineReached(),
+            'stories-newsletter' => $this->buildStoriesNewsletter(),
             default => null,
         };
     }
@@ -919,6 +923,152 @@ class TestMailCommand extends Command
         }
 
         return [$user, $message, $group];
+    }
+
+    /**
+     * Build a stories newsletter test email.
+     *
+     * Requires --to=email (used as the recipient — no DB user lookup needed).
+     * Uses real approved stories from the DB; falls back to synthetic samples if fewer than 3 found.
+     */
+    protected function buildStoriesNewsletter(): ?StoriesNewsletterMail
+    {
+        $toEmail = $this->option('to');
+        if (! $toEmail) {
+            $this->error('Please specify --to=email to set the recipient address');
+
+            return null;
+        }
+
+        $userSite    = rtrim(config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
+        $imageDomain = rtrim(config('freegle.images.domain', ''), '/');
+        $tusUploader = rtrim(config('freegle.tus_uploader', ''), '/');
+
+        // Try to find the user in the DB for their ID (used for unsubscribe links etc.).
+        $dbUser = User::whereHas('emails', fn ($q) => $q->where('email', $toEmail))->first();
+        $userId = $dbUser?->id ?? 0;
+        $name   = $dbUser?->displayname ?? 'Freegle Member';
+
+        // Attempt to pull real approved stories (including photos where available).
+        $rawStories = DB::table('users_stories')
+            ->leftJoin('users_stories_images', 'users_stories_images.storyid', '=', 'users_stories.id')
+            ->where('users_stories.newsletterreviewed', 1)
+            ->where('users_stories.newsletter', 1)
+            ->select(['users_stories.id'])
+            ->selectRaw('users_stories_images.id AS photoid')
+            ->groupBy('users_stories.id', 'users_stories_images.id')
+            ->inRandomOrder()
+            ->limit(StoriesNewsletterService::MAX_STORIES)
+            ->get();
+
+        $storyData = [];
+        foreach ($rawStories as $row) {
+            $story = DB::table('users_stories')->where('id', $row->id)->first();
+            if (! $story) {
+                continue;
+            }
+
+            $groupName = DB::table('memberships')
+                ->join('groups', 'groups.id', '=', 'memberships.groupid')
+                ->where('memberships.userid', $story->userid)
+                ->where('groups.type', Group::TYPE_FREEGLE)
+                ->selectRaw('COALESCE(groups.namefull, groups.nameshort) AS namedisplay')
+                ->value('namedisplay');
+
+            $photoUrl = null;
+            if ($row->photoid) {
+                $image = DB::table('users_stories_images')->where('id', $row->photoid)->first();
+                if ($image) {
+                    if (! empty($image->externaluid) && str_contains($image->externaluid, 'freegletusd-')) {
+                        $suffix   = substr($image->externaluid, strlen('freegletusd-'));
+                        $photoUrl = "{$tusUploader}/{$suffix}/";
+                    } else {
+                        $photoUrl = "{$imageDomain}/simg_{$image->id}.jpg";
+                    }
+                }
+            }
+
+            $storyData[] = [
+                'id'        => $row->id,
+                'headline'  => $story->headline ?? 'A freegling story',
+                'story'     => $story->story ?? 'What a wonderful freegling experience!',
+                'groupname' => $groupName,
+                'photo'     => $photoUrl,
+            ];
+        }
+
+        if (count($storyData) < StoriesNewsletterService::MIN_STORIES) {
+            $this->warn('Fewer than '.StoriesNewsletterService::MIN_STORIES.' approved stories in DB — using sample data.');
+            $needed    = StoriesNewsletterService::MIN_STORIES - count($storyData);
+            $samples   = array_slice($this->getSampleStories(), 0, $needed);
+            $storyData = array_merge($storyData, $samples);
+        }
+
+        $imgNumber      = rand(1, 5);
+        $headerImageUrl = "{$userSite}/images/story{$imgNumber}.png";
+        $preview        = 'This is a selection of recent stories from other freeglers. '
+            ."If you can't read the HTML version, have a look at {$userSite}/stories";
+
+        $this->info("Building stories newsletter for {$toEmail} with ".count($storyData).' stories');
+
+        return new StoriesNewsletterMail(
+            userId: $userId,
+            recipientName: $name,
+            recipientEmail: $toEmail,
+            stories: $storyData,
+            headerImageUrl: $headerImageUrl,
+            tellUrl: "{$userSite}/stories?src=storynewsletter",
+            giveUrl: "{$userSite}/give?src=storynewsletter",
+            findUrl: "{$userSite}/find?src=storynewsletter",
+            previewText: $preview,
+            unsubscribeUrl: "{$userSite}/unsubscribe",
+            settingsUrl: "{$userSite}/settings",
+        );
+    }
+
+    /**
+     * Synthetic story data used when the DB has fewer than MIN_STORIES approved stories.
+     */
+    protected function getSampleStories(): array
+    {
+        return [
+            [
+                'id'         => 0,
+                'headline'   => 'A sofa found a new home',
+                'story'      => "I was dreading how to dispose of our old sofa until a neighbour on Freegle came to the rescue! Within an hour it was gone, the new owners were over the moon, and I felt great knowing it didn't go to landfill.",
+                'groupname'  => 'FreegleBristol',
+                'photo'      => null,
+                'username'   => 'Sarah M',
+                'profileurl' => null,
+            ],
+            [
+                'id'         => 0,
+                'headline'   => 'Baby clothes passed on with love',
+                'story'      => "My little one outgrew her clothes so fast. Thanks to Freegle I found a mum with a newborn who needed exactly what we had. It was so lovely to meet her and know the clothes will be used again.",
+                'groupname'  => 'FreegleManchester',
+                'photo'      => 'https://www.ilovefreegle.org/images/story1.png',
+                'username'   => 'Jo K',
+                'profileurl' => 'https://www.ilovefreegle.org/icon.png',
+            ],
+            [
+                'id'         => 0,
+                'headline'   => 'Kitchen equipment to the rescue',
+                'story'      => "I put up a request for a slow cooker and had three offers within the day! People on here are so generous. My cooking has improved no end and I've saved loads of money too.",
+                'groupname'  => 'FreegleLondonN',
+                'photo'      => null,
+                'username'   => 'Marcus T',
+                'profileurl' => null,
+            ],
+            [
+                'id'         => 0,
+                'headline'   => 'Garden tools with a second life',
+                'story'      => "Clearing out my late father's shed was emotional, but I'm glad his tools went to someone who'll use them. The new owner sent me a photo of his first vegetable patch — it was beautiful.",
+                'groupname'  => 'FreegleYork',
+                'photo'      => null,
+                'username'   => 'David R',
+                'profileurl' => null,
+            ],
+        ];
     }
 
     /**
