@@ -128,7 +128,7 @@ class LokiService
     public function logIncomingEmail(
         string $envelopeFrom,
         string $envelopeTo,
-        string $fromAddress,
+        ?string $fromAddress,
         string $subject,
         string $messageId,
         string $routingOutcome,
@@ -141,7 +141,11 @@ class LokiService
         $message = [
             'envelope_from' => $envelopeFrom,
             'envelope_to' => $envelopeTo,
-            'from_address' => $fromAddress,
+            // Bounce mail (MAILER-DAEMON etc) and other malformed messages
+            // often have no parseable From header — store as empty string in
+            // the Loki entry rather than crashing the whole incoming-mail
+            // pipeline (which is what the strict string typehint used to do).
+            'from_address' => $fromAddress ?? '',
             'subject' => $subject,
             'message_id' => $messageId,
             'routing_outcome' => $routingOutcome,
