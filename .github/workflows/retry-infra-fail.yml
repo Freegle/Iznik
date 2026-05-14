@@ -5,10 +5,11 @@ on:
 
 jobs:
   retry:
-    # Only fire for CircleCI build-and-test infrastructure failures
+    # Only fire for CircleCI build-and-test infrastructure failures.
+    # CircleCI sets state='error' (not 'failure') for infrastructure_fail jobs.
     if: |
       github.event.context == 'ci/circleci: build-and-test' &&
-      github.event.state == 'failure' &&
+      (github.event.state == 'error' || github.event.state == 'failure') &&
       contains(github.event.description, 'infrastructure problem')
     runs-on: ubuntu-latest
     steps:
@@ -26,16 +27,18 @@ jobs:
 
           # Guard against cascading retries: if the most recent pipeline for this
           # branch already has a running workflow, a fresh retry is in flight.
-          PIPELINES=$(curl -sf \
+          # Use -s (not -sf) so API errors don't abort the script — if the guard
+          # fails, err on the side of triggering rather than silently skipping.
+          PIPELINES=$(curl -s \
             -H "Circle-Token: $CIRCLE_TOKEN" \
-            "https://circleci.com/api/v2/project/gh/Freegle/Iznik/pipeline?branch=${BRANCH}")
+            "https://circleci.com/api/v2/project/gh/Freegle/Iznik/pipeline?branch=${BRANCH}" 2>/dev/null || echo "")
 
-          LATEST_PIPELINE_ID=$(echo "$PIPELINES" | jq -r '.items[0].id // ""')
+          LATEST_PIPELINE_ID=$(echo "$PIPELINES" | jq -r '.items[0].id // ""' 2>/dev/null || echo "")
           if [ -n "$LATEST_PIPELINE_ID" ]; then
-            RUNNING=$(curl -sf \
+            RUNNING=$(curl -s \
               -H "Circle-Token: $CIRCLE_TOKEN" \
-              "https://circleci.com/api/v2/pipeline/${LATEST_PIPELINE_ID}/workflow" \
-              | jq -r '.items[] | select(.status == "running") | .id' | head -1)
+              "https://circleci.com/api/v2/pipeline/${LATEST_PIPELINE_ID}/workflow" 2>/dev/null \
+              | jq -r '.items[] | select(.status == "running") | .id' 2>/dev/null | head -1 || echo "")
             if [ -n "$RUNNING" ]; then
               echo "Workflow $RUNNING already running for $BRANCH — skipping retry"
               exit 0
@@ -43,9 +46,9 @@ jobs:
           fi
 
           echo "No running pipeline found — triggering fresh pipeline for $BRANCH..."
-          curl -sf -X POST \
+          RESULT=$(curl -s -X POST \
             -H "Circle-Token: $CIRCLE_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"branch\":\"${BRANCH}\"}" \
-            "https://circleci.com/api/v2/project/gh/Freegle/Iznik/pipeline"
-          echo "Done"
+            "https://circleci.com/api/v2/project/gh/Freegle/Iznik/pipeline" 2>/dev/null || echo "")
+          echo "Result: $RESULT"
