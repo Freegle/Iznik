@@ -581,6 +581,14 @@ describe('ModChatPane', () => {
   })
 
   describe('lifecycle hooks', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
     it('sets up scroll timer on mount', async () => {
       const wrapper = await mountComponent()
       await flushPromises()
