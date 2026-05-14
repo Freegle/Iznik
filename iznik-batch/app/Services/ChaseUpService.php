@@ -407,7 +407,12 @@ class ChaseUpService
                 $stats['chased'] += $groupStats['chased'];
                 $stats['skipped'] += $groupStats['skipped'];
             } catch (\Exception $e) {
-                Log::error("Error processing chase-up for group #{$group->id}: " . $e->getMessage());
+                // Transient SMTP failures (mail-host:25 connection refused/timed out)
+                // during container-startup ordering shouldn't escalate to Sentry —
+                // log them at warning level. Genuine errors still hit Log::error.
+                $level = app(\App\Services\Mail\SmtpFailureClassifier::class)
+                    ->isTransient($e->getMessage()) ? 'warning' : 'error';
+                Log::$level("Error processing chase-up for group #{$group->id}: " . $e->getMessage());
                 $stats['errors']++;
             }
         }

@@ -18,6 +18,15 @@ class SyncWhatJobsCommand extends Command
     {
         $dryRun = (bool) $this->option('dry-run');
 
+        // The WhatJobs XML feed currently parses ~180k jobs into memory
+        // before insertJobs() flushes them in chunks (parseFeed builds the
+        // full $jobs[] array and returns it). At PHP's default 512M, this
+        // tips into a FatalError as soon as the second (clickcast) feed is
+        // merged in. Raise the ceiling here so the run completes; the
+        // longer-term fix is to convert parseFeed to a generator and stream
+        // straight into insertJobs (TODO tracked in the service).
+        ini_set('memory_limit', '1536M');
+
         $lock = Cache::lock('sync-whatjobs', 3600);
         if (!$lock->get()) {
             $this->warn('Another integrations:sync-whatjobs is already running, skipping.');

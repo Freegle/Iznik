@@ -93,7 +93,11 @@ class AutoRepostService
                 $stats['warned'] += $groupStats['warned'];
                 $stats['skipped'] += $groupStats['skipped'];
             } catch (\Exception $e) {
-                Log::error("Error processing auto-repost for group #{$group->id}: " . $e->getMessage());
+                // Transient SMTP failures during container-startup ordering shouldn't
+                // escalate to Sentry — log them at warning level instead.
+                $level = app(\App\Services\Mail\SmtpFailureClassifier::class)
+                    ->isTransient($e->getMessage()) ? 'warning' : 'error';
+                Log::$level("Error processing auto-repost for group #{$group->id}: " . $e->getMessage());
                 $stats['errors']++;
             }
         }

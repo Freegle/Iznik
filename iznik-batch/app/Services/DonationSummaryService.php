@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Mail\Donation\DonationSummaryMail;
 use App\Models\Group;
+use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 
@@ -32,8 +33,8 @@ class DonationSummaryService
             return ['donations' => 0, 'total' => 0.0, 'sent' => false];
         }
 
-        $total = 0.0;
-        $rows  = '';
+        $total    = 0.0;
+        $rowsHtml = '';
 
         foreach ($donations as $donation) {
             $total += (float) $donation->GrossAmount;
@@ -73,18 +74,49 @@ class DonationSummaryService
             $amount     = number_format((float) $donation->GrossAmount, 2);
             $payer      = htmlspecialchars((string) ($donation->Payer ?? ''), ENT_QUOTES);
 
-            $rows .= "<tr>"
-                . "<td>{$donation->timestamp}</td>"
-                . "<td><b>&pound;{$amount}</b></td>"
-                . "<td>{$payer}</td>"
-                . "<td>{$statusCell}</td>"
+            // users_donations.timestamp is stored in UTC (the batch container's
+            // MySQL session and PHP both run UTC). V1's mail implicitly showed
+            // UK local because it ran on a Europe/London-locale host; preserve
+            // that here so a 10:03 UTC PayPal IPN shows as 11:03 BST in the
+            // fundraising email, not 10:03.
+            //
+            // Drop the date — every row in a daily summary is today already —
+            // so the time column doesn't push the payer column off-screen on
+            // mobile. Keep the TZ name so DST transitions are obvious at a
+            // glance.
+            $localTs = Carbon::parse($donation->timestamp, 'UTC')
+                ->setTimezone('Europe/London')
+                ->format('H:i:s T');
+
+            // Cell styling is inline because MJML's <mj-table> doesn't
+            // propagate per-cell rules. The donation-row class is what the
+            // template's media query targets to tighten padding + font on
+            // narrow screens.
+            $td       = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;"';
+            $tdTime   = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;white-space:nowrap;"';
+            $tdAmount = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;white-space:nowrap;"';
+            $tdPayer  = 'style="padding:4px 6px;border-bottom:1px solid #eee;text-align:left;word-break:break-word;"';
+            $rowsHtml .= "<tr class=\"donation-row\">"
+                . "<td {$tdTime}>{$localTs}</td>"
+                . "<td {$tdAmount}><b>&pound;{$amount}</b></td>"
+                . "<td {$tdPayer}>{$payer}</td>"
+                . "<td {$td}>{$statusCell}</td>"
                 . "</tr>\n";
         }
 
-        $html = "<table><tbody>{$rows}</tbody></table>";
-
         if (!$dryRun) {
-            Mail::send(new DonationSummaryMail(recipientEmail: $fundraisingAddr, htmlContent: $html, total: $total));
+            // Pass only the row HTML — the template uses <mj-table> which
+            // emits its own <table><tbody>. Previously we passed a full
+            // <table><tbody>...</table> through <mj-raw>, which MJML injected
+            // straight into the column's layout <tbody>, producing
+            // <tbody><table>...</table></tbody>. That's invalid HTML and
+            // most email clients (Gmail, Outlook) sanitised it away, which is
+            // why the rendered email arrived without the donations list.
+            Mail::send(new DonationSummaryMail(
+                recipientEmail: $fundraisingAddr,
+                htmlContent: $rowsHtml,
+                total: $total,
+            ));
         }
 
         return [

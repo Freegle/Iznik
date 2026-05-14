@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\UserEmail;
 use App\Services\Mail\Incoming\BounceService;
+use App\Services\Mail\SmtpFailureClassifier;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailer;
 use Illuminate\Support\Facades\Log;
@@ -533,84 +534,30 @@ class EmailSpoolerService
     /**
      * Determine if an SMTP error is permanent (will never succeed on retry).
      *
-     * These are errors where the recipient address itself is invalid or the
-     * remote server has permanently rejected delivery. Retrying is pointless.
+     * Delegates to SmtpFailureClassifier so direct-send paths (mail:mod-notifs,
+     * mail:engage, mail:donations:*) classify failures consistently with the
+     * spool processor.
      */
     protected function isPermanentSmtpFailure(string $errorMessage): bool
     {
-        $patterns = [
-            // RFC 5321 permanent failure codes (5xx).
-            '/\b550\b/',                          // Mailbox unavailable
-            '/\b551\b/',                          // User not local
-            '/\b552\b/',                          // Exceeded storage allocation
-            '/\b553\b/',                          // Mailbox name not allowed
-            '/\b554\b/',                          // Transaction failed
-            '/\b501\s+5\.1\.3\b/',                // Bad recipient address syntax
-            '/\b5\.[01]\.[13]\b/',                // Bad destination / address syntax
-            '/\b5\.2\.1\b/',                      // Mailbox disabled
-            // Address format errors (caught before SMTP).
-            '/non-ASCII characters/i',
-            '/Invalid address/i',
-            '/Bad recipient address syntax/i',
-        ];
-
-        foreach ($patterns as $pattern) {
-            if (preg_match($pattern, $errorMessage)) {
-                return true;
-            }
-        }
-
-        return false;
+        return app(SmtpFailureClassifier::class)->isPermanent($errorMessage);
     }
 
     /**
-     * Record an SMTP-time bounce via the BounceService.
-     *
-     * Looks up the recipient in users_emails and records a permanent bounce,
-     * which may trigger user suspension via the existing bounce thresholds.
+     * Record an SMTP-time bounce via the BounceService. Delegates to
+     * SmtpFailureClassifier for the actual record-and-suspend logic so
+     * direct-send paths share the same implementation.
      */
     protected function recordSmtpBounce(array $data, string $errorMessage): void
     {
-        try {
-            $recipientEmail = $data['to'][0]['address'] ?? null;
-
-            if ($recipientEmail === null) {
-                return;
-            }
-
-            $userEmail = UserEmail::where('email', $recipientEmail)->first();
-
-            if ($userEmail === null) {
-                Log::debug('SMTP bounce recipient not in users_emails', [
-                    'email' => $recipientEmail,
-                ]);
-                return;
-            }
-
-            $bounceService = app(BounceService::class);
-
-            // All SMTP-time rejections we classify as permanent are hard bounces.
-            $bounceService->recordBounce($userEmail->id, 'SMTP rejection: ' . $errorMessage, true);
-
-            // Update email tracking if we have a trace ID.
-            $traceId = $data['headers']['X-Freegle-Trace-Id'] ?? null;
-            $bounceService->updateEmailTracking($traceId, $recipientEmail);
-
-            // Check and suspend user if thresholds met.
-            $suspended = $bounceService->checkAndSuspendUser($userEmail->userid);
-
-            Log::info('Recorded SMTP bounce', [
-                'email' => $recipientEmail,
-                'user_id' => $userEmail->userid,
-                'suspended' => $suspended,
-            ]);
-        } catch (\Throwable $e) {
-            // Don't let bounce recording failure prevent the email from being moved to failed.
-            Log::error('Failed to record SMTP bounce', [
-                'error' => $e->getMessage(),
-                'recipient' => $data['to'][0]['address'] ?? 'unknown',
-            ]);
+        $recipientEmail = $data['to'][0]['address'] ?? null;
+        if ($recipientEmail === null) {
+            return;
         }
+
+        $traceId = $data['headers']['X-Freegle-Trace-Id'] ?? null;
+        app(SmtpFailureClassifier::class)
+            ->recordPermanentBounce($recipientEmail, $errorMessage, $traceId);
     }
 
     protected function generateId(): string

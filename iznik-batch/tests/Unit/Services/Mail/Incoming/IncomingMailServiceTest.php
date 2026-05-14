@@ -4255,6 +4255,50 @@ class IncomingMailServiceTest extends TestCase
         $this->assertFalse($settings['engagement']);
     }
 
+    /**
+     * Regression: User model has settings => array cast, so $user->settings is
+     * already an array. Calling json_decode on it threw
+     * "Argument #1 ($json) must be of type string, array given" and broke FBL
+     * processing for any user with non-empty settings.
+     */
+    public function test_fbl_handles_user_with_existing_settings_array(): void
+    {
+        $user = $this->createTestUser(['email_preferred' => $this->uniqueEmail('fbl-with-settings')]);
+        $userEmail = $user->emails->first()->email;
+
+        // Pre-populate user settings so the Eloquent cast returns an array,
+        // exposing the json_decode-on-array bug.
+        DB::table('users')->where('id', $user->id)->update([
+            'settings' => json_encode([
+                'notifications' => ['email' => true, 'emailmine' => true],
+                'notificationmails' => true,
+                'engagement' => true,
+                'someotherkey' => 'preserved',
+            ]),
+        ]);
+
+        $rawMessage = "From: fbl@hotmail.com\r\n"
+            . "To: fbl@ilovefreegle.org\r\n"
+            . "Subject: Feedback Loop Report\r\n"
+            . "Original-Rcpt-To: {$userEmail}\r\n"
+            . "\r\nFBL report content";
+
+        $parsed = $this->parser->parse($rawMessage, 'fbl@hotmail.com', 'fbl@ilovefreegle.org');
+
+        // Must not throw — prior bug was a TypeError on json_decode(array).
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::TO_SYSTEM, $result);
+
+        $updated = DB::table('users')->where('id', $user->id)->first();
+        $settings = json_decode($updated->settings, true);
+        $this->assertFalse($settings['notifications']['email']);
+        $this->assertFalse($settings['notifications']['emailmine']);
+        $this->assertFalse($settings['notificationmails']);
+        $this->assertFalse($settings['engagement']);
+        $this->assertSame('preserved', $settings['someotherkey'], 'unrelated settings keys should be preserved');
+    }
+
     public function test_fbl_sends_notification_email(): void
     {
         Mail::fake();

@@ -2050,6 +2050,20 @@ jobs:
         default: machine-executor
     executor: << parameters.use-executor >>
     steps:
+      - run:
+          name: Reset idle-check on Katapult VMs
+          command: |
+            # Katapult runner VMs provisioned before the 80e4a3eff fix (2026-05-13) have
+            # a 600s idle threshold instead of the current 2100s. A stale idle marker from
+            # before job dispatch causes the old idle-check to fire ~10 min into the job,
+            # destroying the VM and producing heartbeat-timeout / infrastructure_fail.
+            # Patch in-place and clear the marker so every job starts with a clean slate.
+            if [ ! -f /usr/local/bin/idle-check.sh ]; then exit 0; fi
+            sudo rm -f /tmp/.runner-idle-since
+            sudo sed -i -E 's/IDLE_SECONDS" -gt [0-9]+/IDLE_SECONDS" -gt 2100/' /usr/local/bin/idle-check.sh
+            sudo sed -i -E 's/UPTIME_SECONDS" -gt [0-9]+/UPTIME_SECONDS" -gt 9000/' /usr/local/bin/idle-check.sh
+            echo "Idle-check: cleared idle marker, patched thresholds (idle=2100s abs-age=9000s)"
+
       # Fix ownership of root-owned files BEFORE checkout so git can write
       - run:
           name: Fix file ownership before checkout

@@ -2,7 +2,7 @@
   "id": "freegle-monitor-v2",
   "name": "Freegle Monitor",
   "version": "2",
-  "description": "FSM-enforced freegle-monitor iteration. Fully parallel architecture: CHECK_CI gathers master CI status, red PRs, and active Discourse topics in one tool node, then CI_ROUTER dispatches to either FIX_MASTER_CI (master red) or PARALLEL_ANALYZE_AND_FIX (master green). PARALLEL_ANALYZE_AND_FIX launches all PR fixes, all Discourse topic analyses, and Sentry analysis simultaneously in isolated worktrees. COLLATE_RESULTS merges classifications and Sentry data, then routes to WORK_ROUTER for bug/Sentry/coverage dispatch. Bug fixes use a TDD pipeline: DIAGNOSE_BUG (Opus writes structured brief) → REPRODUCE_BUG (sub-agent writes failing test) → REVIEW_REPRODUCTION (Opus gate: test matches symptom?) → IMPLEMENT_FIX (sub-agent makes test pass, pushes PR) → VERIFY_DISCOURSE_BATCH (adversarial review). Reaching END requires passing COVERAGE_GATE (at least one PR since iterationStartTs).",
+  "description": "FSM-enforced freegle-monitor iteration. Fully parallel architecture: CHECK_CI gathers master CI status, production CI status, red PRs, and active Discourse topics in one tool node, then CI_ROUTER dispatches: master red → FIX_MASTER_CI; production red → FIX_PRODUCTION_CI; both green → PARALLEL_ANALYZE_AND_FIX. PARALLEL_ANALYZE_AND_FIX launches all PR fixes, all Discourse topic analyses, and Sentry analysis simultaneously in isolated worktrees. COLLATE_RESULTS merges classifications and Sentry data, then routes to WORK_ROUTER for bug/Sentry/coverage dispatch. Bug fixes use a TDD pipeline: DIAGNOSE_BUG (Opus writes structured brief) → REPRODUCE_BUG (sub-agent writes failing test) → REVIEW_REPRODUCTION (Opus gate: test matches symptom?) → IMPLEMENT_FIX (sub-agent makes test pass, pushes PR) → VERIFY_DISCOURSE_BATCH (adversarial review). Reaching END requires passing COVERAGE_GATE (at least one PR since iterationStartTs).",
   "initialState": "LOAD_STATE",
   "guardrails": "You are running inside an FSM. You MUST return JSON matching the LLMDecision schema exactly. The response MUST be a single JSON object with these keys: reasoning (string), contextUpdates (OBJECT, not a string — use {} for no updates, NEVER write \"contextUpdates\": \"{...}\"), actions (ARRAY, not a string — use [] for no actions), proposedTransition (string or null). Do NOT wrap the whole response in markdown code fences. Do NOT JSON-stringify nested fields. You may only call actions listed for the current state, and may only propose transitions listed as 'Valid Next States'. You cannot bypass the PR gate: reaching END requires a PR (bug-fix or coverage) to have been created this iteration, verified by verify_pr_created. Do not lie about actions you have not taken. HARD INVARIANT — NEVER DISMISS A RED CHECK: A failing CI run, failing test, or red status check on ANY PR @me authored is ALWAYS a real bug that must be investigated to root cause and fixed. It does NOT matter whether the failure looks related to the change or not. You MUST NOT describe a failure as 'flaky', 'environmental', 'transient', 'pre-existing', 'unrelated', 'infrastructure timing', 'polluted test data', or any equivalent. You MUST NOT 'rerun and hope'. You MUST NOT mark such a failure as 'deferred'. Deferred is reserved EXCLUSIVELY for Discourse bugs and Sentry issues that need external information (reporter clarification, hardware the host cannot access, a user judgment call). CI failures never qualify — they are always within reach and must be driven to green.",
   "states": {
@@ -18,17 +18,18 @@
       "writeActions": []
     },
     "CHECK_CI": {
-      "description": "Pre-parallel discovery: check master CI, red PRs, and which Discourse topics have new posts. All three run in this single tool node before the parallel dispatch. Results feed CI_ROUTER.",
+      "description": "Pre-parallel discovery: check master CI, production CI, red PRs, and which Discourse topics have new posts. All four run in this single tool node before the parallel dispatch. Results feed CI_ROUTER.",
       "nodeType": "tool",
       "readActions": [
         "check_master_ci",
+        "check_production_ci",
         "check_my_open_pr_ci",
         "discover_active_topics"
       ],
       "writeActions": []
     },
     "CI_ROUTER": {
-      "description": "Dispatch based on master CI status. Tool node — ci_router_decide returns _transition deterministically. Priority: (1) master red → FIX_MASTER_CI; (2) master green → PARALLEL_ANALYZE_AND_FIX (red PRs are fixed in parallel alongside Discourse/Sentry analysis).",
+      "description": "Dispatch based on CI status. Tool node — ci_router_decide returns _transition deterministically. Priority: (1) master red → FIX_MASTER_CI; (2) production red → FIX_PRODUCTION_CI; (3) drain if pending PRs; (4) master+production green → PARALLEL_ANALYZE_AND_FIX.",
       "nodeType": "tool",
       "readActions": [
         "ci_router_decide"
@@ -39,6 +40,19 @@
       "description": "Fix a failing master CI run. Direct-push to master permitted (CI-failure exception). Exactly one job: diagnose, fix, push, mark done. Returns to CHECK_CI to re-verify before Phase A can exit.",
       "nodeType": "agent",
       "prompt": "Master CI is failing on runId context._action_check_master_ci.latestRun.databaseId. (1) Call fetch_ci_failure_logs with that runId to get the failure. (2) Call delegate_to_coder with a task describing the failure and asking it to diagnose, fix, and push directly to master. Include the log tail and the sha. The subagent MUST identify a concrete root cause — never accept 'flake', 'transient', 'environmental', or 'unrelated' as a fix. (3) When delegate_to_coder returns, call create_pr if a PR was opened OR set contextUpdates.masterFixAttempted = true if pushed direct to master. Propose transition to CHECK_CI so Phase A re-reads CI status before deciding whether to advance.",
+      "readActions": [
+        "fetch_ci_failure_logs",
+        "search_code"
+      ],
+      "writeActions": [
+        "delegate_to_coder",
+        "create_pr"
+      ]
+    },
+    "FIX_PRODUCTION_CI": {
+      "description": "Fix a failing production CI run. Production is auto-promoted from master; fixes should target master unless the failure is production-specific (e.g. a workflow only run on the production branch). Direct-push to master permitted. Returns to CHECK_CI to re-verify.",
+      "nodeType": "agent",
+      "prompt": "Production CI is failing. Context: context._action_check_production_ci = {sha, overallState, circleCiStatuses, failing}.\n\n(1) Use the failing circleCiStatuses URLs to identify the CircleCI job. For CircleCI use the v1.1 API with CIRCLECI_TOKEN from ~/.circleci/cli.yml per .circleci/README.md. Call fetch_ci_failure_logs if you can determine a GitHub Actions runId, otherwise read the CircleCI job URL directly from circleCiStatuses[].url.\n\n(2) Determine whether the failure is production-specific (a workflow or config that only runs on the production branch) or a regression that was already on master:\n  - If production-specific: fix directly on the production branch by calling delegate_to_coder with task to push directly to production.\n  - If the bug is in shared code: fix on master (so it gets auto-promoted). Push to master.\n  In both cases the subagent MUST identify a concrete root cause — never accept 'flake', 'transient', 'environmental', or 'unrelated'.\n\n(3) When delegate_to_coder returns, call create_pr if a PR was opened OR set contextUpdates.productionFixAttempted = true if pushed direct to master or production. Propose transition to CHECK_CI so Phase A re-reads CI status before deciding whether to advance.",
       "readActions": [
         "fetch_ci_failure_logs",
         "search_code"
@@ -215,11 +229,25 @@
       "label": "master red"
     },
     {
+      "id": "t_ci_router_to_production_fix",
+      "from": "CI_ROUTER",
+      "to": "FIX_PRODUCTION_CI",
+      "trigger": "llm_decision",
+      "label": "production red"
+    },
+    {
+      "id": "t_production_fix_to_ci",
+      "from": "FIX_PRODUCTION_CI",
+      "to": "CHECK_CI",
+      "trigger": "llm_decision",
+      "label": "production fix attempted, re-verify"
+    },
+    {
       "id": "t_ci_router_to_parallel",
       "from": "CI_ROUTER",
       "to": "PARALLEL_ANALYZE_AND_FIX",
       "trigger": "llm_decision",
-      "label": "master green — dispatch PRs + topics + sentry in parallel"
+      "label": "master+production green — dispatch PRs + topics + sentry in parallel"
     },
     {
       "id": "t_parallel_to_collate",

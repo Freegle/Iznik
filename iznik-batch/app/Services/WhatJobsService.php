@@ -426,36 +426,86 @@ class WhatJobsService
         $feed2 = config('freegle.whatjobs.feed2');
 
         $geocodeCache = [];
-        $jobs = [];
 
         // V1 (cron/whatjobs.php → Jobs::scanToCSV) uses format=1 for the WhatJobs
         // feed and format=2 for the clickcast feed. parseFeed's format=1 branch
         // expects WhatJobs field names (locations->location->location, urlDeeplink,
         // company->name, custom->CPC, id, timePosted), and format=2 expects the
-        // clickcast names. The format codes used to be swapped here, which made
-        // parseFeed yield 0 jobs and would have caused swapTables() to replace the
-        // live jobs table with an empty one.
-        if ($feed1) {
-            $tmp1 = $this->downloadFeed($feed1);
+        // clickcast names.
+        //
+        // parseFeed yields each job as it parses the XML, so we stream straight
+        // from XML → DB. Holding the full ~180k-job result in PHP memory used
+        // to FatalError at 512M; this keeps peak memory at one batch (~200 rows).
+        $tmp1 = $feed1 ? $this->downloadFeed($feed1) : null;
+        $tmp2 = $feed2 ? $this->downloadFeed($feed2) : null;
+
+        // Build a single generator that yields from both feeds in sequence so
+        // insertJobs() sees one continuous stream (and the second feed's geocode
+        // lookups can still hit the cache populated by the first).
+        $streamJobs = function () use ($tmp1, $tmp2, &$geocodeCache): \Generator {
             if ($tmp1) {
-                $jobs = array_merge($jobs, $this->parseFeed($tmp1, 1, $geocodeCache));
-                @unlink($tmp1);
+                yield from $this->parseFeed($tmp1, 1, $geocodeCache);
             }
-        }
-
-        if ($feed2) {
-            $tmp2 = $this->downloadFeed($feed2);
             if ($tmp2) {
-                $jobs = array_merge($jobs, $this->parseFeed($tmp2, 2, $geocodeCache));
-                @unlink($tmp2);
+                yield from $this->parseFeed($tmp2, 2, $geocodeCache);
             }
+        };
+
+        if ($dryRun) {
+            // Walk the generator to populate dropStats but don't write anything.
+            $total = 0;
+            foreach ($streamJobs() as $_) {
+                $total++;
+            }
+            if ($tmp1) { @unlink($tmp1); }
+            if ($tmp2) { @unlink($tmp2); }
+            $this->logParseStats($total);
+            Log::info('WhatJobs dry run', ['total_jobs' => $total]);
+            return ['total' => $total, 'inserted' => 0, 'dry_run' => true];
         }
 
-        $total = count($jobs);
+        // Real run: stream jobs into jobs_new in batches, then decide whether
+        // to swap based on the inserted row count.
+        $this->prepareTempTable();
+        $inserted = $this->insertJobs($streamJobs(), $srid);
+        if ($tmp1) { @unlink($tmp1); }
+        if ($tmp2) { @unlink($tmp2); }
+        $this->logParseStats($inserted);
 
-        // Boil the per-tuple frequencies down into a compact summary the log
-        // can show without ballooning: distinct-tuple count + top-20 most-frequent
-        // tuples per reason. Tells us how "concentrated" each failure bucket is.
+        // Defensive: swapTables() RENAMEs jobs_new over jobs, so a swap with too
+        // few parsed jobs wipes the live table. Refuse if 0 parsed (feed
+        // download likely 429d/empty) or if the count dropped to less than
+        // self::MIN_SWAP_RATIO of the existing row count (when the existing
+        // table is large enough to compare). The check moves AFTER insert
+        // now — we need the count, and counting jobs_new is cheap.
+        $existing = (int) DB::table('jobs')->count();
+        if ($inserted === 0 || ($existing >= self::SWAP_RATIO_MIN_EXISTING && $inserted < $existing * self::MIN_SWAP_RATIO)) {
+            Log::warning('WhatJobs: refusing to swap — parsed too few jobs', [
+                'parsed' => $inserted,
+                'existing' => $existing,
+                'min_ratio' => self::MIN_SWAP_RATIO,
+            ]);
+            DB::statement('DROP TABLE IF EXISTS jobs_new');
+            return ['total' => $inserted, 'inserted' => 0, 'skipped_swap' => true, 'existing' => $existing];
+        }
+
+        $this->deleteSpammyJobs();
+        $this->swapTables();
+        $this->analyseClickability();
+        $this->updateClickability();
+
+        Log::info('WhatJobs sync complete', ['total' => $inserted, 'inserted' => $inserted]);
+
+        return ['total' => $inserted, 'inserted' => $inserted, 'dry_run' => false];
+    }
+
+    /**
+     * Emit the per-tuple geocode/drop summary collected during parsing.
+     * Pulled out of sync() so both dryRun and real-run paths use the same
+     * format.
+     */
+    protected function logParseStats(int $kept): void
+    {
         $tupleSummary = [];
         foreach (($this->dropStats['geocode_tuple_freq'] ?? []) as $reason => $freq) {
             arsort($freq);
@@ -467,7 +517,7 @@ class WhatJobsService
         }
 
         Log::info('WhatJobs parse drop stats', [
-            'kept'                => $total,
+            'kept'                => $kept,
             'low_cpc'             => $this->dropStats['low_cpc']      ?? 0,
             'too_old'             => $this->dropStats['too_old']      ?? 0,
             'geocode_fail'        => $this->dropStats['geocode_fail'] ?? 0,
@@ -478,36 +528,6 @@ class WhatJobsService
             'geocode_by_reason'   => $this->dropStats['geocode_by_reason']   ?? [],
             'geocode_tuples'      => $tupleSummary,
         ]);
-
-        if ($dryRun) {
-            Log::info('WhatJobs dry run', ['total_jobs' => $total]);
-            return ['total' => $total, 'inserted' => 0, 'dry_run' => true];
-        }
-
-        // Defensive: swapTables() RENAMEs jobs_new over jobs, so a swap with too few
-        // parsed jobs wipes the live table. Refuse if 0 parsed (feed download likely
-        // 429d/empty) or if the count dropped to less than self::MIN_SWAP_RATIO of
-        // the existing row count (when the existing table is large enough to compare).
-        $existing = (int) DB::table('jobs')->count();
-        if ($total === 0 || ($existing >= self::SWAP_RATIO_MIN_EXISTING && $total < $existing * self::MIN_SWAP_RATIO)) {
-            Log::warning('WhatJobs: refusing to swap — parsed too few jobs', [
-                'parsed' => $total,
-                'existing' => $existing,
-                'min_ratio' => self::MIN_SWAP_RATIO,
-            ]);
-            return ['total' => $total, 'inserted' => 0, 'skipped_swap' => true, 'existing' => $existing];
-        }
-
-        $this->prepareTempTable();
-        $inserted = $this->insertJobs($jobs, $srid);
-        $this->deleteSpammyJobs();
-        $this->swapTables();
-        $this->analyseClickability();
-        $this->updateClickability();
-
-        Log::info('WhatJobs sync complete', ['total' => $total, 'inserted' => $inserted]);
-
-        return ['total' => $total, 'inserted' => $inserted, 'dry_run' => false];
     }
 
     protected function downloadFeed(string $url): ?string
@@ -547,16 +567,24 @@ class WhatJobsService
         }
     }
 
-    public function parseFeed(string $filePath, int $format, array &$geocodeCache): array
+    /**
+     * Parse a WhatJobs / Clickcast XML feed.
+     *
+     * Yields job arrays one at a time so callers can stream them into
+     * insertJobs() without holding the full ~180k-job result in memory
+     * (which used to FatalError at 512M).
+     *
+     * @return \Generator<array<string,mixed>>
+     */
+    public function parseFeed(string $filePath, int $format, array &$geocodeCache): \Generator
     {
         $now    = now()->format('Y-m-d H:i:s');
         $cutoff = now()->subDays(self::MAX_AGE_DAYS)->timestamp;
-        $jobs   = [];
 
         $reader = new \XMLReader();
         if (!$reader->open($filePath)) {
             Log::warning('WhatJobs: failed to open feed file', ['path' => $filePath]);
-            return [];
+            return;
         }
 
         $count   = 0;
@@ -654,7 +682,7 @@ class WhatJobsService
             $body = $this->cleanBody($description);
             $titleClean = $title ? html_entity_decode($title, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null;
 
-            $jobs[] = [
+            yield [
                 'location'        => $location ? html_entity_decode($location, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null,
                 'title'           => $titleClean,
                 'city'            => $city ? html_entity_decode($city, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null,
@@ -684,8 +712,6 @@ class WhatJobsService
         }
 
         $reader->close();
-
-        return $jobs;
     }
 
     // ISO 3166-2 two/three-letter subdivision codes used by some feeds
@@ -1061,17 +1087,32 @@ class WhatJobsService
         DB::statement('CREATE TABLE jobs_new LIKE jobs');
     }
 
-    public function insertJobs(array $jobs, int $srid = 3857): int
+    /**
+     * Insert jobs into the jobs_new temp table, buffering BATCH_SIZE rows
+     * between INSERTs so peak PHP memory is O(BATCH_SIZE), not O(all jobs).
+     *
+     * Accepts either an array (back-compat for direct callers and tests) or
+     * any iterable — including the Generator returned by parseFeed(), which
+     * is what lets sync() stream straight from XML into the DB without
+     * holding ~180k job dicts in memory at once.
+     */
+    public function insertJobs(iterable $jobs, int $srid = 3857): int
     {
         // Preserve existing auto-increment IDs so email links (e.g. /jobs/12345) don't break
         $existingIds = DB::table('jobs')->pluck('id', 'job_reference')->all();
 
         $inserted = 0;
-        foreach (array_chunk($jobs, self::BATCH_SIZE) as $batch) {
+        $buffer   = [];
+
+        $flush = function () use (&$buffer, &$inserted, $existingIds, $srid): void {
+            if (empty($buffer)) {
+                return;
+            }
+
             $placeholders = [];
             $bindings     = [];
 
-            foreach ($batch as $j) {
+            foreach ($buffer as $j) {
                 $id             = $existingIds[$j['job_reference']] ?? null;
                 $placeholders[] = '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,ST_GeomFromText(?,?),?,?,?,?,?)';
                 array_push(
@@ -1094,8 +1135,18 @@ class WhatJobsService
                 VALUES ' . implode(',', $placeholders);
 
             DB::statement($sql, $bindings);
-            $inserted += count($batch);
+            $inserted += count($buffer);
+            $buffer = [];
+        };
+
+        foreach ($jobs as $job) {
+            $buffer[] = $job;
+            if (count($buffer) >= self::BATCH_SIZE) {
+                $flush();
+            }
         }
+        $flush();
+
         return $inserted;
     }
 

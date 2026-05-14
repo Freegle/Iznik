@@ -7,6 +7,14 @@
     li { margin: 0.5em 0; }
     @if(!empty($styles)){!! $styles !!}@endif
   </mj-style>
+  @if(!empty($mediaStyles))
+    {{-- Non-inline block — used for @media queries, which can't be inlined
+         onto elements. Lands in a <style> tag in the compiled HTML, which
+         most mobile mail apps honour (Gmail mobile, Apple Mail, iOS Mail). --}}
+    <mj-style>
+      {!! $mediaStyles !!}
+    </mj-style>
+  @endif
   <mj-attributes>
     {{-- Modern system font stack: San Francisco (Apple), Segoe UI (Windows), Roboto (Android) --}}
     <mj-all font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"></mj-all>
