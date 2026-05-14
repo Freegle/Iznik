@@ -280,7 +280,7 @@ class StoriesNewsletterCommandTest extends TestCase
     public function test_skips_groups_with_newsletter_disabled_in_settings(): void
     {
         $this->minStories();
-        $group = $this->createTestGroup(['publish' => 1, 'settings' => json_encode(['newsletter' => 0])]);
+        $group = $this->createTestGroup(['publish' => 1, 'settings' => ['newsletter' => 0]]);
         $user  = $this->createTestUser(['newslettersallowed' => 1]);
         $this->createMembership($user, $group);
 
