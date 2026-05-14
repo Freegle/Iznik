@@ -56,10 +56,13 @@ class SafeMailTest extends TestCase
     }
 
     /**
-     * Transient failures (connect refused, timeouts) must NOT be silently
-     * swallowed — they should propagate so the cron run surfaces them.
+     * Transient SMTP failures (mail-host hiccup mid-send: closed-unexpectedly,
+     * connect-refused, timed-out) must be swallowed at WARNING level — they
+     * are not the recipient's fault and one blip during a 50k-recipient run
+     * shouldn't crash the whole job or trigger Sentry. The recipient is NOT
+     * marked as bouncing because the address itself is fine.
      */
-    public function test_transient_failure_propagates_and_does_not_record_bounce(): void
+    public function test_transient_failure_logs_warning_skips_recipient_no_bounce(): void
     {
         $user = $this->createTestUser();
         $email = $user->emails->first()->email;
@@ -68,18 +71,39 @@ class SafeMailTest extends TestCase
 
         Mail::shouldReceive('to')->once()->andReturnSelf();
         Mail::shouldReceive('send')->once()->andThrow(new SymfonyTransportException(
-            'Connection to "mail-host:25" timed out.'
+            'Connection to "mail-host:25" has been closed unexpectedly.'
         ));
 
-        $this->expectException(SymfonyTransportException::class);
+        Log::spy();
 
-        try {
-            SafeMail::send($this->makeFakeMailable(), $email);
-        } finally {
-            // Even though it threw, bounced must NOT have been set.
-            $bounced = DB::table('users_emails')->where('id', $emailId)->value('bounced');
-            $this->assertNull($bounced, 'transient failure must NOT mark email as bouncing');
-        }
+        $delivered = SafeMail::send($this->makeFakeMailable(), $email);
+
+        $this->assertFalse($delivered, 'transient failure must return false, not throw');
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($msg, $ctx = []) => str_contains((string) $msg, 'transient SMTP failure'));
+        Log::shouldNotHaveReceived('error');
+
+        $bounced = DB::table('users_emails')->where('id', $emailId)->value('bounced');
+        $this->assertNull($bounced, 'transient failure must NOT mark email as bouncing');
+    }
+
+    /**
+     * Anything not classified as permanent OR transient must still propagate —
+     * unknown failure modes should be loud, not silently swallowed.
+     */
+    public function test_unknown_failure_propagates(): void
+    {
+        $user = $this->createTestUser();
+        $email = $user->emails->first()->email;
+
+        Mail::shouldReceive('to')->once()->andReturnSelf();
+        Mail::shouldReceive('send')->once()->andThrow(new \RuntimeException(
+            'Something nobody has seen before'
+        ));
+
+        $this->expectException(\RuntimeException::class);
+        SafeMail::send($this->makeFakeMailable(), $email);
     }
 
     /**
