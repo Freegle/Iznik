@@ -151,8 +151,18 @@ class VolunteeringDigestService
             })->values()->all();
 
             // Find members who have volunteering enabled and are not opted out.
-            $members = DB::table('memberships')
-                ->join('users', 'users.id', '=', 'memberships.userid')
+            // Activity / holiday / bouncing / simplemail filters come from
+            // User::scopeReceivingOurMails so this query matches the V1
+            // sendOurMails() criteria. Without those, the V2 dry-run was
+            // 1.34× V1's send count (149k vs 111k).
+            $members = User::query()
+                ->select([
+                    'users_emails.email',
+                    'users.id as userId',
+                    'locations.lat',
+                    'locations.lng',
+                ])
+                ->join('memberships', 'memberships.userid', '=', 'users.id')
                 ->join('users_emails', function ($join) {
                     $join->on('users_emails.userid', '=', 'memberships.userid')
                         ->where('users_emails.preferred', '=', 1);
@@ -162,9 +172,8 @@ class VolunteeringDigestService
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED)
                 ->where('memberships.volunteeringallowed', 1)
                 ->where('memberships.emailfrequency', '!=', 0)
-                ->whereNull('users.deleted')
                 ->whereNotNull('users_emails.email')
-                ->select(['users_emails.email', 'users.id as userId', 'locations.lat', 'locations.lng'])
+                ->receivingOurMails()
                 ->get();
 
             foreach ($members as $member) {
