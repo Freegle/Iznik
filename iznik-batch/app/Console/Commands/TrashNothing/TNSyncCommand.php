@@ -165,7 +165,7 @@ class TNSyncCommand extends Command
 
             $data['tn_sync_finished'] = true;
             $data['tn_sync_status'] = $exitCode === Command::SUCCESS ? 'success' : 'failed';
-            $data['tn_sync_finished_at'] = gmdate('c');
+            $data['tn_sync_finished_at'] = gmdate('Y-m-d\TH:i:s\Z');
             $data['tn_sync_exit_code'] = $exitCode;
 
             if ($errorMessage) {
@@ -214,7 +214,7 @@ class TNSyncCommand extends Command
         $max = Rating::whereNotNull('tn_rating_id')
             ->max('timestamp');
 
-        $from = $max ? gmdate('c', strtotime($max)) : gmdate('c', strtotime('-1 day'));
+        $from = $max ? gmdate('Y-m-d\TH:i:s\Z', strtotime($max)) : gmdate('Y-m-d\TH:i:s\Z', strtotime('-1 day'));
         Log::info("No stored sync date found, using max rating timestamp: {$from}");
 
         return $from;
@@ -239,7 +239,7 @@ class TNSyncCommand extends Command
             return $override;
         }
 
-        return gmdate('c');
+        return gmdate('Y-m-d\TH:i:s\Z');
     }
 
     private function storeSyncDate(string $date): void
