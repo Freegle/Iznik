@@ -6,76 +6,13 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sync"
-	"sync/atomic"
-	"time"
+	"strconv"
+	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
+	"github.com/peterstace/simplefeatures/geom"
 )
-
-type server struct {
-	mu         sync.RWMutex
-	idx        *Index
-	mysqlDB    *sql.DB
-	idxPath    string
-	rebuilding atomic.Bool
-}
-
-func (s *server) getIndex() *Index {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.idx
-}
-
-func (s *server) swapIndex(newIdx *Index) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	old := s.idx
-	s.idx = newIdx
-	if old != nil {
-		old.Close()
-	}
-}
-
-// rebuild builds a fresh index from MySQL and atomically replaces the live one.
-// Returns immediately with an error if another rebuild is already in progress.
-func (s *server) rebuild() error {
-	if !s.rebuilding.CompareAndSwap(false, true) {
-		return fmt.Errorf("rebuild already in progress")
-	}
-	defer s.rebuilding.Store(false)
-
-	start := time.Now()
-	tmpPath := s.idxPath + ".building"
-	os.Remove(tmpPath)
-
-	newIdx, err := CreateIndex(tmpPath)
-	if err != nil {
-		return fmt.Errorf("create index: %w", err)
-	}
-
-	if err := LoadFromMySQL(s.mysqlDB, newIdx); err != nil {
-		newIdx.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("load from mysql: %w", err)
-	}
-	newIdx.Close()
-
-	if err := os.Rename(tmpPath, s.idxPath); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("rename index: %w", err)
-	}
-
-	live, err := OpenIndex(s.idxPath)
-	if err != nil {
-		return fmt.Errorf("reopen index after rebuild: %w", err)
-	}
-
-	s.swapIndex(live)
-	log.Printf("knn-server: index rebuilt and swapped in %s", time.Since(start).Round(time.Millisecond))
-	return nil
-}
 
 func main() {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
@@ -92,97 +29,263 @@ func main() {
 	}
 	defer mysqlDB.Close()
 
-	forceRebuild := flag.Bool("rebuild", false, "force a full index rebuild from MySQL on startup, ignoring any existing index file")
+	forceRebuild := flag.Bool("rebuild", false, "force a full index rebuild from MySQL on startup")
 	flag.Parse()
 
-	idxPath := getenv("KNN_INDEX_PATH", "/data/knn-locations.db")
+	idxDir := getenv("SPATIAL_INDEX_DIR", "/data")
 
-	srv := &server{
-		mysqlDB: mysqlDB,
-		idxPath: idxPath,
+	allDatasets := []Dataset{
+		&LocationsDataset{},
+		&MessagesDataset{},
+		&NewsfeedDataset{},
+		&UserApproxLocsDataset{},
+		&GroupsDataset{},
+		&JobsDataset{},
 	}
 
-	// Open existing index unless --rebuild was requested.
-	if !*forceRebuild {
-		if existing, err := OpenIndex(idxPath); err == nil {
-			srv.idx = existing
-			log.Printf("knn-server: opened existing index from %s", idxPath)
-		} else {
-			log.Printf("knn-server: no usable index at %s (%v), building from MySQL...", idxPath, err)
-			if err := srv.rebuild(); err != nil {
-				log.Fatalf("initial build failed: %v", err)
-			}
-		}
-	} else {
-		log.Printf("knn-server: --rebuild requested, building fresh index from MySQL...")
-		if err := srv.rebuild(); err != nil {
-			log.Fatalf("forced rebuild failed: %v", err)
-		}
-	}
+	srv := newServer(mysqlDB, idxDir, allDatasets)
+	srv.startupLoad(*forceRebuild)
+	srv.startScheduler()
 
-	go scheduledRebuild(srv)
-
-	// Public API: /knn and /health.
+	// Public API
 	api := fiber.New(fiber.Config{DisableStartupMessage: true})
 
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
-	api.Get("/knn", func(c *fiber.Ctx) error {
+	// GET /v1/datasets
+	api.Get("/v1/datasets", func(c *fiber.Ctx) error {
+		type datasetInfo struct {
+			Name  string `json:"name"`
+			Count int64  `json:"count"`
+			Ready bool   `json:"ready"`
+		}
+		var infos []datasetInfo
+		for name, state := range srv.datasets {
+			idx := state.getIndex()
+			info := datasetInfo{Name: name, Ready: idx != nil}
+			if idx != nil {
+				if n, err := idx.CountRows(); err == nil {
+					info.Count = n
+				}
+			}
+			infos = append(infos, info)
+		}
+		return c.JSON(fiber.Map{"datasets": infos})
+	})
+
+	// GET /v1/:dataset/status
+	api.Get("/v1/:dataset/status", func(c *fiber.Ctx) error {
+		name := c.Params("dataset")
+		state, ok := srv.getDataset(name)
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+		idx := state.getIndex()
+		if idx == nil {
+			return c.JSON(fiber.Map{"ready": false, "count": 0})
+		}
+		n, err := idx.CountRows()
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{
+			"ready":     true,
+			"count":     n,
+			"last_sync": state.lastSync,
+		})
+	})
+
+	// GET /v1/:dataset/knn
+	api.Get("/v1/:dataset/knn", func(c *fiber.Ctx) error {
+		name := c.Params("dataset")
+		state, ok := srv.getDataset(name)
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+
 		lng := c.QueryFloat("lng", 0)
 		lat := c.QueryFloat("lat", 0)
 		if lng == 0 && lat == 0 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "lng and lat required"})
 		}
-		idx := srv.getIndex()
-		id, err := FindNearestArea(idx, lng, lat)
+		limitStr := c.Query("limit", "1")
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil || limit < 1 || limit > 1000 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "limit must be 1–1000"})
+		}
+
+		params := QueryParams{
+			Lng:        lng,
+			Lat:        lat,
+			Limit:      limit,
+			TypeFilter: c.Query("type"),
+		}
+
+		if polygonWKT := c.Query("polygon"); polygonWKT != "" {
+			pg, err := parsePolygonParam(polygonWKT)
+			if err != nil {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+			}
+			params.Polygon = pg
+		}
+
+		idx := state.getIndex()
+		if idx == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+
+		results, err := state.ds.Query(idx, params)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
-		return c.JSON(fiber.Map{"locationid": id})
+		return c.JSON(fiber.Map{"results": results})
 	})
 
-	// Admin API: /rebuild on a separate port, not exposed externally.
+	// GET /v1/:dataset/within
+	api.Get("/v1/:dataset/within", func(c *fiber.Ctx) error {
+		name := c.Params("dataset")
+		state, ok := srv.getDataset(name)
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+
+		polygonWKT := c.Query("polygon")
+		if polygonWKT == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "polygon parameter required"})
+		}
+		pg, err := parsePolygonParam(polygonWKT)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		idx := state.getIndex()
+		if idx == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+
+		ids, err := state.ds.Within(idx, QueryParams{Polygon: pg})
+		if err == ErrTooManyResults {
+			return c.Status(fiber.StatusRequestEntityTooLarge).JSON(fiber.Map{
+				"error": ErrTooManyResults.Error(),
+			})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"ids": ids})
+	})
+
+	// Serve OpenAPI spec.
+	api.Get("/openapi.yaml", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "application/yaml")
+		return c.SendFile("/app/openapi.yaml")
+	})
+
+	// Admin API
 	admin := fiber.New(fiber.Config{DisableStartupMessage: true})
 
-	admin.Post("/rebuild", func(c *fiber.Ctx) error {
-		if srv.rebuilding.Load() {
+	// POST /v1/:dataset/rebuild
+	admin.Post("/v1/:dataset/rebuild", func(c *fiber.Ctx) error {
+		name := c.Params("dataset")
+		if _, ok := srv.getDataset(name); !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+		state := srv.datasets[name]
+		if state.rebuilding.Load() {
 			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "rebuild already in progress"})
 		}
 		go func() {
-			if err := srv.rebuild(); err != nil {
-				log.Printf("knn-server: async rebuild failed: %v", err)
+			if err := srv.rebuild(name); err != nil {
+				log.Printf("spatial-server: async rebuild of %s failed: %v", name, err)
 			}
 		}()
-		return c.JSON(fiber.Map{"status": "rebuilding"})
+		return c.JSON(fiber.Map{"status": "rebuilding", "dataset": name})
 	})
 
-	port := getenv("KNN_PORT", "8194")
-	adminPort := getenv("KNN_ADMIN_PORT", "8195")
+	// POST /v1/rebuild — rebuild all datasets
+	admin.Post("/v1/rebuild", func(c *fiber.Ctx) error {
+		go func() {
+			srv.rebuildAll()
+		}()
+		return c.JSON(fiber.Map{"status": "rebuilding_all"})
+	})
+
+	// POST /v1/:dataset/remove — remove specific IDs (incremental hard-delete)
+	admin.Post("/v1/:dataset/remove", func(c *fiber.Ctx) error {
+		name := c.Params("dataset")
+		state, ok := srv.getDataset(name)
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+
+		var req struct {
+			IDs []int64 `json:"ids"`
+		}
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		}
+		if len(req.IDs) == 0 {
+			return c.JSON(fiber.Map{"removed": 0})
+		}
+
+		idx := state.getIndex()
+		if idx == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+
+		var removed int
+		for _, id := range req.IDs {
+			if err := idx.DeleteByExtID(id); err != nil {
+				log.Printf("spatial-server: remove %s id=%d: %v", name, id, err)
+			} else {
+				removed++
+			}
+		}
+		return c.JSON(fiber.Map{"removed": removed})
+	})
+
+	port := getenv("SPATIAL_PORT", "8194")
+	adminPort := getenv("SPATIAL_ADMIN_PORT", "8195")
 
 	go func() {
-		log.Printf("knn-server: admin listening on :%s", adminPort)
+		log.Printf("spatial-server: admin listening on :%s", adminPort)
 		if err := admin.Listen(":" + adminPort); err != nil {
 			log.Fatalf("admin listener failed: %v", err)
 		}
 	}()
 
-	log.Printf("knn-server: listening on :%s", port)
+	log.Printf("spatial-server: listening on :%s", port)
 	log.Fatal(api.Listen(":" + port))
 }
 
-// scheduledRebuild triggers a nightly index rebuild at 03:00 UTC,
-// matching the V1 nightly PostgreSQL sync cadence.
-func scheduledRebuild(srv *server) {
-	for {
-		now := time.Now().UTC()
-		next := time.Date(now.Year(), now.Month(), now.Day()+1, 3, 0, 0, 0, time.UTC)
-		time.Sleep(time.Until(next))
-		if err := srv.rebuild(); err != nil {
-			log.Printf("knn-server: scheduled rebuild failed: %v", err)
-		}
+// parsePolygonParam validates and parses a WKT polygon query parameter.
+// Returns HTTP 400 if the WKT is malformed, too large, or has too many vertices.
+func parsePolygonParam(wkt string) (*geom.Geometry, error) {
+	if len(wkt) > 100*1024 {
+		return nil, fmt.Errorf("polygon parameter exceeds 100 KB limit")
 	}
+	// Count vertices as proxy (each coordinate pair is separated by a comma).
+	vertexCount := strings.Count(wkt, ",") + 1
+	if vertexCount > 10_000 {
+		return nil, fmt.Errorf("polygon has too many vertices (max 10000)")
+	}
+
+	var g geom.Geometry
+	var parseErr error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				parseErr = fmt.Errorf("invalid polygon WKT: %v", r)
+			}
+		}()
+		g, parseErr = geom.UnmarshalWKT(wkt, geom.NoValidate{})
+	}()
+	if parseErr != nil {
+		return nil, fmt.Errorf("invalid polygon WKT: %w", parseErr)
+	}
+	return &g, nil
 }
 
 func getenv(key, def string) string {

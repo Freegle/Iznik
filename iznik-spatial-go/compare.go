@@ -1,3 +1,5 @@
+//go:build ignore
+
 // compare.go — one-off tool to compare KNN server vs PostGIS results.
 // Build: go build -o compare compare.go
 // Run:   ./compare

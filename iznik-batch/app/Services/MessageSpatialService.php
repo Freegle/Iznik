@@ -13,6 +13,13 @@ class MessageSpatialService
     private const RECENT_DAYS = 31;
     private const SRID = 3857;
 
+    private SpatialAdminService $spatialAdmin;
+
+    public function __construct(SpatialAdminService $spatialAdmin)
+    {
+        $this->spatialAdmin = $spatialAdmin;
+    }
+
     public function updateSpatialIndex(bool $dryRun = false): array
     {
         $stats = [
@@ -112,10 +119,12 @@ class MessageSpatialService
             ->get();
 
         $count = 0;
+        $deletedMsgids = [];
         foreach ($msgs as $msg) {
             if ($msg->outcome === Message::OUTCOME_WITHDRAWN || $msg->outcome === Message::OUTCOME_EXPIRED) {
                 if (!$dryRun) {
                     DB::table('messages_spatial')->where('id', $msg->id)->delete();
+                    $deletedMsgids[] = $msg->msgid;
                 }
                 $count++;
             } elseif ($msg->outcome === Message::OUTCOME_TAKEN || $msg->outcome === Message::OUTCOME_RECEIVED) {
@@ -145,12 +154,16 @@ class MessageSpatialService
             }
         }
 
+        if (!empty($deletedMsgids)) {
+            $this->spatialAdmin->removeItems('messages', $deletedMsgids);
+        }
+
         return $count;
     }
 
     private function removeDeletedMessages(bool $dryRun = false): int
     {
-        $ids = DB::table('messages_spatial')
+        $rows = DB::table('messages_spatial')
             ->join('messages', 'messages_spatial.msgid', '=', 'messages.id')
             ->leftJoin('users', 'users.id', '=', 'messages.fromuser')
             ->where(function ($q) {
@@ -158,55 +171,61 @@ class MessageSpatialService
                     ->orWhereNotNull('messages.deleted')
                     ->orWhereNotNull('users.deleted');
             })
-            ->pluck('messages_spatial.id');
+            ->select('messages_spatial.id', 'messages_spatial.msgid')
+            ->get();
 
-        if ($ids->isEmpty()) {
+        if ($rows->isEmpty()) {
             return 0;
         }
 
         if (!$dryRun) {
-            DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+            DB::table('messages_spatial')->whereIn('id', $rows->pluck('id'))->delete();
+            $this->spatialAdmin->removeItems('messages', $rows->pluck('msgid')->all());
         }
 
-        return $ids->count();
+        return $rows->count();
     }
 
     private function removeOldMessages(bool $dryRun = false): int
     {
         $cutoff = date('Y-m-d', strtotime('Midnight ' . self::RECENT_DAYS . ' days ago'));
 
-        $ids = DB::table('messages_spatial')
+        $rows = DB::table('messages_spatial')
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_spatial.msgid')
             ->where('messages_groups.arrival', '<', $cutoff)
-            ->pluck('messages_spatial.id');
+            ->select('messages_spatial.id', 'messages_spatial.msgid')
+            ->get();
 
-        if ($ids->isEmpty()) {
+        if ($rows->isEmpty()) {
             return 0;
         }
 
         if (!$dryRun) {
-            DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+            DB::table('messages_spatial')->whereIn('id', $rows->pluck('id'))->delete();
+            $this->spatialAdmin->removeItems('messages', $rows->pluck('msgid')->all());
         }
 
-        return $ids->count();
+        return $rows->count();
     }
 
     private function removeNonApprovedMessages(bool $dryRun = false): int
     {
-        $ids = DB::table('messages_spatial')
+        $rows = DB::table('messages_spatial')
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages_spatial.msgid')
             ->where('messages_groups.collection', '!=', MessageGroup::COLLECTION_APPROVED)
-            ->pluck('messages_spatial.id');
+            ->select('messages_spatial.id', 'messages_spatial.msgid')
+            ->get();
 
-        if ($ids->isEmpty()) {
+        if ($rows->isEmpty()) {
             return 0;
         }
 
         if (!$dryRun) {
-            DB::table('messages_spatial')->whereIn('id', $ids)->delete();
+            DB::table('messages_spatial')->whereIn('id', $rows->pluck('id'))->delete();
+            $this->spatialAdmin->removeItems('messages', $rows->pluck('msgid')->all());
         }
 
-        return $ids->count();
+        return $rows->count();
     }
 
     /**

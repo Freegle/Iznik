@@ -1,4 +1,4 @@
-module knn-server
+module spatial-server
 
 go 1.23
 

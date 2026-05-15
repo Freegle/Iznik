@@ -10,7 +10,7 @@ ENV MYSQL_USER=root \
     MYSQL_DBNAME=iznik \
     SPATIAL_PORT=8194 \
     SPATIAL_ADMIN_PORT=8195 \
-    SPATIAL_INDEX_PATH=/data/spatial-locations.db
+    SPATIAL_INDEX_DIR=/data
 
 COPY go.mod go.sum ./
 RUN go mod download
