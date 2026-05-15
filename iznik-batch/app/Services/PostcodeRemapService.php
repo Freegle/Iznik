@@ -338,22 +338,39 @@ class PostcodeRemapService
     private function syncAllLocations(): void
     {
         $pgsql = DB::connection('pgsql');
-        $uniq = '_' . uniqid();
+        // uniqid(more_entropy=true) -> 23 hex chars; pure uniqid() can repeat
+        // within the same microsecond, and we want the suffix to be unique
+        // across any concurrent / racing invocation.
+        $uniq = '_' . uniqid('', true);
+        // PG identifiers can't contain '.', which more_entropy adds.
+        $uniq = str_replace('.', '_', $uniq);
+        $tableName = "locations_tmp{$uniq}";
+        $indexName = "idx_loc_tmp{$uniq}";
 
         // Defensive cleanup of orphan tmp tables left behind by crashed
         // previous runs (e.g. OOM during the streaming insert). Each run uses
         // a uniq() suffix so any locations_tmp_* sitting in pg_tables is not
-        // ours and is safe to drop. Without this, repeated failures slowly
-        // accumulate dead tables and disk usage.
+        // ours and is safe to drop. Skip our own table for paranoia — even
+        // though uniqid() collisions are astronomically unlikely, the
+        // 2026-05-15 01:06 failure ("relation does not exist" on first chunk
+        // INSERT) had no other plausible explanation we could nail down.
         foreach ($pgsql->select(
             "SELECT table_name FROM information_schema.tables
-             WHERE table_schema = 'public' AND table_name LIKE 'locations_tmp_%'"
+             WHERE table_schema = 'public' AND table_name LIKE 'locations_tmp_%'
+               AND table_name <> ?",
+            [$tableName],
         ) as $t) {
             $pgsql->statement("DROP TABLE IF EXISTS \"{$t->table_name}\"");
         }
 
-        $pgsql->statement("DROP TABLE IF EXISTS locations_tmp{$uniq}");
-        $pgsql->statement("CREATE TABLE locations_tmp{$uniq} (
+        // Single CREATE UNLOGGED TABLE — the previous CREATE-then-ALTER-SET-UNLOGGED
+        // sequence rewrites the table on disk and is the most plausible trigger
+        // of the catalog-visibility error seen on 2026-05-15 01:06. UNLOGGED is
+        // safe for this temp staging table because we DROP/rename it as part of
+        // the swap before the run ends, so crash-recovery truncation never
+        // matters.
+        $pgsql->statement("DROP TABLE IF EXISTS \"{$tableName}\"");
+        $pgsql->statement("CREATE UNLOGGED TABLE \"{$tableName}\" (
             id serial PRIMARY KEY,
             locationid bigint UNIQUE NOT NULL,
             name text,
@@ -361,7 +378,6 @@ class PostcodeRemapService
             area numeric,
             location geometry
         )");
-        $pgsql->statement("ALTER TABLE locations_tmp{$uniq} SET UNLOGGED");
 
         // Fetch non-excluded polygon locations from MySQL in id-keyed chunks.
         // ST_AsText output for complex polygons runs to many KB each, and the
@@ -380,14 +396,14 @@ class PostcodeRemapService
             );
 
         $syncedCount = 0;
-        $locQuery->orderBy('locations.id')->chunkById(500, function ($locations) use (&$syncedCount, $pgsql, $uniq) {
+        $locQuery->orderBy('locations.id')->chunkById(500, function ($locations) use (&$syncedCount, $pgsql, $tableName) {
             foreach ($locations as $loc) {
                 if (! $loc->geom) {
                     continue;
                 }
 
                 $pgsql->insert(
-                    "INSERT INTO locations_tmp{$uniq} (locationid, name, type, area, location)
+                    "INSERT INTO \"{$tableName}\" (locationid, name, type, area, location)
                      VALUES (?, ?, ?, ST_Area(ST_GeomFromText(?, ?)), ST_GeomFromText(?, ?))",
                     [$loc->id, $loc->name, $loc->type, $loc->geom, $this->srid, $loc->geom, $this->srid],
                 );
@@ -396,14 +412,15 @@ class PostcodeRemapService
         }, 'locations.id', 'id');
 
         // Build index on temp table before swap.
-        $pgsql->statement("CREATE INDEX idx_loc_tmp{$uniq} ON locations_tmp{$uniq} USING gist (location)");
+        $pgsql->statement("CREATE INDEX \"{$indexName}\" ON \"{$tableName}\" USING gist (location)");
 
         // Atomic swap: rename current to old, temp to current, drop old.
-        $pgsql->statement("ALTER TABLE IF EXISTS locations RENAME TO locations_old{$uniq}");
-        $pgsql->statement("ALTER TABLE locations_tmp{$uniq} RENAME TO locations");
+        $oldTable = "locations_old{$uniq}";
+        $pgsql->statement("ALTER TABLE IF EXISTS locations RENAME TO \"{$oldTable}\"");
+        $pgsql->statement("ALTER TABLE \"{$tableName}\" RENAME TO locations");
         $pgsql->statement("DROP INDEX IF EXISTS idx_locations_location");
-        $pgsql->statement("ALTER INDEX idx_loc_tmp{$uniq} RENAME TO idx_locations_location");
-        $pgsql->statement("DROP TABLE IF EXISTS locations_old{$uniq}");
+        $pgsql->statement("ALTER INDEX \"{$indexName}\" RENAME TO idx_locations_location");
+        $pgsql->statement("DROP TABLE IF EXISTS \"{$oldTable}\"");
 
         Log::info("PostcodeRemapService: synced {$syncedCount} locations to PostgreSQL");
     }
