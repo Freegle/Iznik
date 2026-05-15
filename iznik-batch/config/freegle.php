@@ -79,6 +79,12 @@ return [
         'trashnothing_secret' => env('FREEGLE_TRASHNOTHING_SECRET', ''),
     ],
 
+    'trashnothing' => [
+        'api_key' => env('FREEGLE_TN_API_KEY', ''),
+        'api_base_url' => env('FREEGLE_TN_API_BASE_URL', 'https://trashnothing.com/fd/api'),
+        'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
+    ],
+
     // Firebase Cloud Messaging for push notifications
     'firebase' => [
         'credentials_path' => env('FIREBASE_CREDENTIALS_PATH', '/etc/firebase.json'),
@@ -87,6 +93,8 @@ return [
     'images' => [
         // Image domain for user profile images
         'domain' => env('FREEGLE_IMAGES_DOMAIN', 'https://images.ilovefreegle.org'),
+        // Domain for legacy archived images (Azure blob storage)
+        'archived_domain' => env('FREEGLE_IMAGES_ARCHIVED_DOMAIN', 'https://freegle.blob.core.windows.net'),
 
         // Base URLs for source images
         'welcome1' => env('FREEGLE_WELCOME_IMAGE1', 'https://www.ilovefreegle.org/images/welcome1.jpg'),
@@ -318,11 +326,6 @@ return [
     'lovejunk' => [
         'api' => env('LOVE_JUNK_API', 'https://elmer.api-lovejunk.com/elmer/v1'),
         'secret' => env('LOVE_JUNK_SECRET', ''),
-    ],
-
-    'trashnothing' => [
-        'api_base' => env('TN_API_BASE', 'https://trashnothing.com'),
-        'key'      => env('TN_KEY', ''),
     ],
 
     'geocoder' => env('FREEGLE_GEOCODER_URL', ''),
