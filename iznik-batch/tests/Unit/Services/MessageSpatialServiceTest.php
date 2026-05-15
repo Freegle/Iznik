@@ -15,7 +15,7 @@ class MessageSpatialServiceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->service = new MessageSpatialService();
+        $this->service = $this->app->make(MessageSpatialService::class);
         DB::statement('DELETE FROM messages_spatial');
     }
 
