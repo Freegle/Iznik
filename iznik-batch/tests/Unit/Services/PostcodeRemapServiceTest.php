@@ -101,4 +101,47 @@ class PostcodeRemapServiceTest extends TestCase
         // Should return 0 since no postcodes match the scope.
         $this->assertEquals(0, $result);
     }
+
+    /**
+     * After a full sync, no `locations_tmp_%` tables should remain — the temp
+     * table is renamed to `locations` and the old table is dropped. A residual
+     * tmp would accumulate over time and indicate the swap didn't complete.
+     */
+    public function test_sync_all_locations_leaves_no_orphan_tmp_tables(): void
+    {
+        $this->service->ensurePostgresSchema();
+        $this->service->remapPostcodes();
+
+        $count = (int) DB::connection('pgsql')->selectOne(
+            "SELECT COUNT(*) AS n FROM information_schema.tables
+             WHERE table_schema = 'public' AND table_name LIKE 'locations_tmp_%'"
+        )->n;
+
+        $this->assertSame(0, $count, 'syncAllLocations should not leave residual tmp tables');
+    }
+
+    /**
+     * Sanity check that an orphan tmp table from a prior crashed run gets cleaned
+     * up at the start of the next sync — without dropping the in-flight table.
+     */
+    public function test_sync_all_locations_cleans_up_prior_orphan_tmp_tables(): void
+    {
+        $this->service->ensurePostgresSchema();
+
+        // Plant an orphan tmp table that a previous crashed run would have left.
+        DB::connection('pgsql')->statement(
+            'CREATE TABLE "locations_tmp_oldorphan" (id serial PRIMARY KEY)'
+        );
+
+        $this->service->remapPostcodes();
+
+        $exists = DB::connection('pgsql')->selectOne(
+            "SELECT EXISTS (
+                 SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = 'public' AND table_name = 'locations_tmp_oldorphan'
+             ) AS e"
+        );
+
+        $this->assertFalse((bool) $exists->e, 'Orphan tmp tables should be cleaned up at start of sync');
+    }
 }
