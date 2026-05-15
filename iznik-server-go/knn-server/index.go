@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 
 	_ "modernc.org/sqlite"
@@ -29,6 +31,11 @@ type LocationRow struct {
 // CreateIndex creates a new SQLite database at path with the required schema.
 // Pass ":memory:" for an ephemeral in-memory index (useful for tests).
 func CreateIndex(path string) (*Index, error) {
+	if path != ":memory:" {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return nil, fmt.Errorf("create data dir %q: %w", filepath.Dir(path), err)
+		}
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %q: %w", path, err)
