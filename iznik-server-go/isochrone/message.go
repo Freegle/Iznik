@@ -62,13 +62,14 @@ func Messages(c *fiber.Ctx) error {
 				msgIDs, err := spatial.Within("messages", iso.Polygon)
 				if err == nil && len(msgIDs) > 0 {
 					placeholders := make([]string, len(msgIDs))
+					// SQL bind order: userid, type (for messages_likes JOIN), then msgid list, then lng/lat (for postvisibility).
 					args := make([]any, len(msgIDs)+4)
+					args[0] = myid
+					args[1] = utils.MESSAGE_LIKES_VIEW
 					for i, id := range msgIDs {
 						placeholders[i] = "?"
-						args[i] = id
+						args[i+2] = id
 					}
-					args[len(msgIDs)] = myid
-					args[len(msgIDs)+1] = utils.MESSAGE_LIKES_VIEW
 					args[len(msgIDs)+2] = latlng.Lng
 					args[len(msgIDs)+3] = latlng.Lat
 

@@ -310,7 +310,9 @@ func LatLng(c *fiber.Ctx) error {
 	lng, _ := strconv.ParseFloat(c.Query("lng"), 32)
 
 	loc := ClosestPostcode(float32(lat), float32(lng))
-	loc.GroupsNear = ClosestGroups(float64(loc.Lat), float64(loc.Lng), NEARBY, 10)
+	if loc.ID > 0 {
+		loc.GroupsNear = ClosestGroups(float64(loc.Lat), float64(loc.Lng), NEARBY, 10)
+	}
 
 	return c.JSON(loc)
 }
