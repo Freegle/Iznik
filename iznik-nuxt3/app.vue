@@ -262,21 +262,21 @@ const shouldShowNavbar = computed(() => {
 // })
 
 // Impersonation link: /?u=<userid>&k=<key>
-// Must run onMounted (not in <script setup>) because pre-rendered pages restore the
-// router to the SSR payload path (no query params) before setup runs — route.query
-// is only populated with the real URL after hydration completes.
+// Must use window.location.search (not route.query) because on pre-rendered pages the
+// Vue Router syncs with the real URL asynchronously — route.query is still {} when
+// onMounted fires, causing the login check to silently skip.
 onMounted(async () => {
-  if (route.query.u && route.query.k) {
+  const params = new URLSearchParams(window.location.search)
+  const u = params.get('u')
+  const k = params.get('k')
+  if (u && k) {
     try {
       // Clear the related list.  This avoids accidentally flagging members as related if people forget to close
       // an incognito tab while impersonating.
       await authStore.clearRelated()
 
       // Log in using the username and key.
-      await authStore.login({
-        u: route.query.u,
-        k: route.query.k,
-      })
+      await authStore.login({ u, k })
     } catch (e) {
       // Login failed.  Usually this is because they're logged in as someone else. Ignore it.
       console.log('Login failed', e)
