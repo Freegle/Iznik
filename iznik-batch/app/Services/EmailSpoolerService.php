@@ -103,8 +103,19 @@ class EmailSpoolerService
             $data['text'] = $this->htmlToPlainText($data['html']);
         }
 
+        // Write atomically: temp file in the same dir, then rename. The
+        // processor's glob() picks up *.json in pendingDir on each tick, and
+        // a direct file_put_contents() to the destination path is NOT atomic
+        // — if the processor's glob/read interleaves with the writer, it
+        // sees a partial file and json_decode() returns null, which we used
+        // to log as "Invalid spool file" and move to failed/ (one such case
+        // 14 May 23:16:54 UTC after a container restart raced the spooler).
+        // rename() within the same filesystem IS atomic, so the destination
+        // path is either absent or a complete file — never partial.
         $path = $this->pendingDir . '/' . $filename;
-        file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT));
+        $tmp  = $path . '.tmp';
+        file_put_contents($tmp, json_encode($data, JSON_PRETTY_PRINT));
+        rename($tmp, $path);
 
         Log::info('Email spooled', [
             'id' => $id,
