@@ -1,7 +1,6 @@
 package newsfeed
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	stdlog "log"
@@ -17,6 +16,7 @@ import (
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/queue"
+	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -103,147 +103,25 @@ type Newsfeed struct {
 }
 
 func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, float64, float64) {
-	// We want to calculate a distance which includes at least some other people who have posted a message.
-	// Start at fairly close and keep doubling until we reach that, or get too far away.
-	//
-	// Because this is Go we can fire off these requests in parallel and just stop when we get enough results.
-	// This reduces latency significantly, even though it's a bit mean to the database server.  To cancel the queries
-	// properly we need to use the Pool.
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	done := false
-
-	dist := float64(1)
-	ret := float64(0)
-	var retnelat, retnelng, retswlat, retswlng float64
-
-	max := float64(248)
-	count := 0
-
-	for {
-		if dist >= max {
-			break
-		}
-
-		dist *= 2
-		count++
-	}
-
-	dist = 1
-	limit := 10
-	now := time.Now()
-	then := now.AddDate(0, 0, -31)
+	const nearbyLimit = 10
 
 	latlng := user.GetLatLng(uid)
-
-	var cancels []context.CancelFunc
-
-	if latlng.Lat > 0 || latlng.Lng > 0 {
-		type Nearby struct {
-			Userid uint64 `json:"userid"`
-		}
-
-		wg.Add(1)
-
-		for {
-			// Use a timeout context - partly so that we don't wait for too long, and partly so that we can
-			// cancel queries if we get enough results.
-			timeoutContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			cancels = append(cancels, cancel)
-
-			go func(dist float64) {
-				var nelat, nelng, swlat, swlng float64
-				var nearbys []Nearby
-
-				// Get an exclusive connection.
-				db, err := database.Pool.Conn(timeoutContext)
-
-				if err != nil {
-					return
-				}
-
-				p := geo.NewPoint(float64(latlng.Lat), float64(latlng.Lng))
-				ne := p.PointAtDistanceAndBearing(dist, 45)
-				nelat = ne.Lat()
-				nelng = ne.Lng()
-				sw := p.PointAtDistanceAndBearing(dist, 225)
-				swlat = sw.Lat()
-				swlng = sw.Lng()
-
-				nelats := fmt.Sprint(nelat)
-				nelngs := fmt.Sprint(nelng)
-				swlats := fmt.Sprint(swlat)
-				swlngs := fmt.Sprint(swlng)
-
-				sql := "SELECT DISTINCT userid FROM newsfeed FORCE INDEX (position) WHERE " +
-					"MBRContains(ST_SRID(POLYGON(LINESTRING(" +
-					"POINT(" + swlngs + ", " + swlats + "), " +
-					"POINT(" + swlngs + ", " + nelats + "), " +
-					"POINT(" + nelngs + ", " + nelats + "), " +
-					"POINT(" + nelngs + ", " + swlats + "), " +
-					"POINT(" + swlngs + ", " + swlats + "))), " + fmt.Sprint(utils.SRID) + "), position) AND " +
-					"replyto IS NULL AND type != '" + utils.NEWSFEED_TYPE_ALERT + "' AND timestamp >= '" + then.Format("2006-01-02") +
-					"' LIMIT " + fmt.Sprint(limit+1)
-
-				rows, err := db.QueryContext(timeoutContext, sql)
-
-				// Return the connection to the pool.
-				defer db.Close()
-
-				// We might be cancelled/timed out, in which case we have no rows to process.
-				if err == nil {
-					defer rows.Close()
-
-					for rows.Next() {
-						var nearby Nearby
-						err = rows.Scan(&nearby.Userid)
-
-						if err != nil {
-							break
-						}
-
-						nearbys = append(nearbys, nearby)
-					}
-				}
-
-				mu.Lock()
-				defer mu.Unlock()
-
-				if !done {
-					count--
-
-					if len(nearbys) >= limit || count == 0 {
-						// Either we found enough or we have finished looking.  Either way, stop and take the best we
-						// have found.
-						ret = dist
-						retnelat = nelat
-						retnelng = nelng
-						retswlat = swlat
-						retswlng = swlng
-						done = true
-						defer wg.Done()
-					}
-				}
-			}(dist)
-
-			dist *= 2
-
-			if dist >= max {
-				break
-			}
-		}
+	if latlng.Lat == 0 && latlng.Lng == 0 {
+		return 0, latlng, 0, 0, 0, 0
 	}
 
-	wg.Wait()
-
-	// Cancel any outstanding ops.
-	for _, cancel := range cancels {
-		defer func() {
-			go cancel()
-		}()
+	results, err := spatial.KNN("newsfeed", float64(latlng.Lng), float64(latlng.Lat), nearbyLimit+1, "")
+	if err != nil || len(results) < nearbyLimit {
+		return 0, latlng, 0, 0, 0, 0
 	}
 
-	return ret, latlng, retnelat, retnelng, retswlat, retswlng
+	// Use the 10th result's distance (decimal degrees → km, 1 degree ≈ 111 km).
+	distKm := results[nearbyLimit-1].Distance * 111.0
+	p := geo.NewPoint(float64(latlng.Lat), float64(latlng.Lng))
+	ne := p.PointAtDistanceAndBearing(distKm, 45)
+	sw := p.PointAtDistanceAndBearing(distKm, 225)
+
+	return distKm, latlng, ne.Lat(), ne.Lng(), sw.Lat(), sw.Lng()
 }
 
 func Feed(c *fiber.Ctx) error {

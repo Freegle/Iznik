@@ -1,19 +1,24 @@
 package isochrone
 
 import (
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/spatial"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
-	"sync"
-	"time"
 )
 
 type IsochronesUsers struct {
 	ID          uint64 `json:"id" gorm:"primary_key"`
 	Userid      uint64 `json:"userid"`
 	Isochroneid uint64 `json:"isochroneid"`
+	Polygon     string `json:"polygon" gorm:"column:polygon"`
 }
 
 func Messages(c *fiber.Ctx) error {
@@ -28,77 +33,92 @@ func Messages(c *fiber.Ctx) error {
 	var isochrones []IsochronesUsers
 	res := []message.MessageSummary{}
 
-	// The optional postvisibility property of a group indicates the area within which members must lie for a post
-	// on that group to be visible.
 	latlng := user.GetLatLng(myid)
 
-	db.Where("userid = ?", myid).Find(&isochrones)
-	if len(isochrones) > 0 {
-		// We've got the isochrones for this user.  We want to find the message ids in each.
-		// We might have multiple - if so then get them in parallel.
-		var mu sync.Mutex
+	// Fetch isochrones including polygon WKT for spatial server queries.
+	db.Raw(
+		"SELECT isochrones_users.id, isochrones_users.userid, isochrones_users.isochroneid, "+
+			"ST_AsText(isochrones.polygon) AS polygon "+
+			"FROM isochrones_users "+
+			"JOIN isochrones ON isochrones.id = isochrones_users.isochroneid "+
+			"WHERE isochrones_users.userid = ?",
+		myid,
+	).Scan(&isochrones)
 
+	if len(isochrones) > 0 {
+		var mu sync.Mutex
 		var wg sync.WaitGroup
 
-		for _, isochrone := range isochrones {
+		for _, iso := range isochrones {
 			wg.Add(1)
 
-			go func(isochrone IsochronesUsers) {
+			go func(iso IsochronesUsers) {
 				defer wg.Done()
 
 				msgs := []message.MessageSummary{}
-
-				// Include messages from messages_spatial that are within the isochrone
-				// AND user's own messages (even if not in messages_spatial yet) that are within the isochrone
 				start := time.Now().AddDate(0, 0, -utils.OPEN_AGE).Format("2006-01-02")
-				
-				db.Raw("SELECT * FROM ("+
-					"SELECT ST_Y(point) AS lat, "+
-					"ST_X(point) AS lng, "+
-					"messages_spatial.msgid AS id, "+
-					"messages_spatial.successful, "+
-					"messages_spatial.promised, "+
-					"messages_spatial.groupid, "+
-					"messages_spatial.msgtype AS type, "+
-					"messages_spatial.arrival, "+
-					"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
-					"FROM messages_spatial "+
-					"INNER JOIN isochrones ON ST_Contains(isochrones.polygon, point) "+
-					"INNER JOIN `groups` ON groups.id = messages_spatial.groupid "+
-					"LEFT JOIN messages_likes ON messages_likes.msgid = messages_spatial.msgid AND messages_likes.userid = ? AND messages_likes.type = ? "+
-					"WHERE isochrones.id = ? "+
-					"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
-					"UNION "+
-					"SELECT messages.lat, messages.lng, messages.id, "+
-					"(CASE WHEN messages_outcomes.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
-					"(CASE WHEN messages_promises.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
-					"messages_groups.groupid, "+
-					"messages.type,"+
-					"messages_groups.arrival, "+
-					"CASE WHEN messages_likes.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
-					"FROM messages "+
-					"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
-					"INNER JOIN `groups` ON groups.id = messages_groups.groupid "+
-					"INNER JOIN isochrones ON ST_Contains(isochrones.polygon, ST_SRID(POINT(messages.lng, messages.lat), ?)) "+
-					"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id "+
-					"LEFT JOIN messages_promises ON messages_promises.msgid = messages.id "+
-					"LEFT JOIN messages_likes ON messages_likes.msgid = messages.id AND messages_likes.userid = ? AND messages_likes.type = ? "+
-					"WHERE fromuser IS NOT NULL AND fromuser = ? AND messages_groups.arrival >= ? AND isochrones.id = ? "+
-					"AND (CASE WHEN postvisibility IS NULL OR ST_Contains(postvisibility, ST_SRID(POINT(?, ?),?)) THEN 1 ELSE 0 END) = 1 "+
-					"AND messages_outcomes.id IS NULL "+
-					") t "+
-					"ORDER BY unseen DESC, arrival DESC, id DESC;", myid, utils.MESSAGE_LIKES_VIEW, isochrone.Isochroneid, latlng.Lng, latlng.Lat, utils.SRID, utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED, utils.SRID, myid, utils.MESSAGE_LIKES_VIEW, myid, start, isochrone.Isochroneid, latlng.Lng, latlng.Lat, utils.SRID).Scan(&msgs)
+
+				// Use spatial server to find message IDs within the isochrone polygon.
+				msgIDs, err := spatial.Within("messages", iso.Polygon)
+				if err == nil && len(msgIDs) > 0 {
+					placeholders := make([]string, len(msgIDs))
+					args := make([]any, len(msgIDs)+4)
+					for i, id := range msgIDs {
+						placeholders[i] = "?"
+						args[i] = id
+					}
+					args[len(msgIDs)] = myid
+					args[len(msgIDs)+1] = utils.MESSAGE_LIKES_VIEW
+					args[len(msgIDs)+2] = latlng.Lng
+					args[len(msgIDs)+3] = latlng.Lat
+
+					db.Raw(fmt.Sprintf(
+						"SELECT ST_Y(ms.point) AS lat, ST_X(ms.point) AS lng, "+
+							"ms.msgid AS id, ms.successful, ms.promised, ms.groupid, "+
+							"ms.msgtype AS type, ms.arrival, "+
+							"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
+							"FROM messages_spatial ms "+
+							"INNER JOIN `groups` g ON g.id = ms.groupid "+
+							"LEFT JOIN messages_likes ml ON ml.msgid = ms.msgid AND ml.userid = ? AND ml.type = ? "+
+							"WHERE ms.msgid IN (%s) "+
+							"AND (g.postvisibility IS NULL OR ST_Contains(g.postvisibility, ST_SRID(POINT(?,?), %d))) = 1",
+						strings.Join(placeholders, ","), utils.SRID,
+					), args...).Scan(&msgs)
+				}
+
+				// Also include user's own messages within the isochrone that may not yet be in messages_spatial.
+				var ownMsgs []message.MessageSummary
+				db.Raw(
+					"SELECT m.lat, m.lng, m.id, "+
+						"(CASE WHEN mo.outcome IN (?, ?) THEN 1 ELSE 0 END) AS successful, "+
+						"(CASE WHEN mp.id IS NOT NULL THEN 1 ELSE 0 END) AS promised, "+
+						"mg.groupid, m.type, mg.arrival, "+
+						"CASE WHEN ml.msgid IS NULL THEN 1 ELSE 0 END AS unseen "+
+						"FROM messages m "+
+						"INNER JOIN messages_groups mg ON mg.msgid = m.id "+
+						"INNER JOIN `groups` g ON g.id = mg.groupid "+
+						"INNER JOIN isochrones iso ON ST_Contains(iso.polygon, ST_SRID(POINT(m.lng, m.lat), ?)) "+
+						"LEFT JOIN messages_outcomes mo ON mo.msgid = m.id "+
+						"LEFT JOIN messages_promises mp ON mp.msgid = m.id "+
+						"LEFT JOIN messages_likes ml ON ml.msgid = m.id AND ml.userid = ? AND ml.type = ? "+
+						"WHERE m.fromuser = ? AND mg.arrival >= ? AND iso.id = ? "+
+						"AND (g.postvisibility IS NULL OR ST_Contains(g.postvisibility, ST_SRID(POINT(?,?), ?))) = 1 "+
+						"AND mo.id IS NULL",
+					utils.OUTCOME_TAKEN, utils.OUTCOME_RECEIVED,
+					utils.SRID, myid, utils.MESSAGE_LIKES_VIEW, myid, start, iso.Isochroneid,
+					latlng.Lng, latlng.Lat, utils.SRID,
+				).Scan(&ownMsgs)
 
 				mu.Lock()
 				defer mu.Unlock()
 				res = append(res, msgs...)
-			}(isochrone)
+				res = append(res, ownMsgs...)
+			}(iso)
 		}
 
 		wg.Wait()
 
 		for ix, r := range res {
-			// Protect anonymity of poster a bit.
 			res[ix].Lat, res[ix].Lng = utils.Blur(r.Lat, r.Lng, utils.BLUR_USER)
 		}
 	}
