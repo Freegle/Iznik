@@ -269,18 +269,19 @@ onMounted(async () => {
   const params = new URLSearchParams(window.location.search)
   const u = params.get('u')
   const k = params.get('k')
+  console.log('[impersonation] onMounted fired, u=', u, 'k=', k ? k.slice(0, 6) + '...' : null)
   if (u && k) {
     try {
-      // Clear the related list.  This avoids accidentally flagging members as related if people forget to close
-      // an incognito tab while impersonating.
+      console.log('[impersonation] calling clearRelated')
       await authStore.clearRelated()
-
-      // Log in using the username and key.
+      console.log('[impersonation] clearRelated done, calling login')
       await authStore.login({ u, k })
+      console.log('[impersonation] login done, loginCount=', authStore.loginCount)
     } catch (e) {
-      // Login failed.  Usually this is because they're logged in as someone else. Ignore it.
-      console.log('Login failed', e)
+      console.log('[impersonation] login failed', e?.message ?? e, e?.response?.status, e?.response?.data)
     }
+  } else {
+    console.log('[impersonation] no u/k params, skipping')
   }
 })
 
