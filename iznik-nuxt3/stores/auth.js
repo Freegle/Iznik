@@ -226,12 +226,15 @@ export const useAuthStore = defineStore({
           params.modtools = true
         }
 
+        console.log('[auth.login] calling $api.session.login, params keys=', Object.keys(params))
         const res = await this.$api.session.login(params, false)
+        console.log('[auth.login] got response, persistent=', res?.persistent, 'jwt=', res?.jwt ? 'present' : 'missing')
 
         const { persistent, jwt } = res
         this.setAuth(jwt, persistent)
         await this.fetchUser()
       } catch (e) {
+        console.log('[auth.login] caught error', e?.message, e?.response?.status, e?.response?.data)
         if (e instanceof LoginError) {
           throw e
         }
