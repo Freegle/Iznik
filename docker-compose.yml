@@ -720,11 +720,9 @@ services:
       # Model cache volume is shared with embedding-sidecar so no re-download needed.
       - EMBEDDING_ONNX_MODEL_PATH=${EMBEDDING_ONNX_MODEL_PATH:-}
       - EMBEDDING_TOKENIZER_PATH=${EMBEDDING_TOKENIZER_PATH:-}
-      - KNN_INDEX_PATH=/data/knn-locations.db
-      - KNN_ADMIN_PORT=8195
+      - SPATIAL_SERVER_URL=http://spatial:8194
     volumes:
       - apiv2_logs:/var/log/freegle
-      - knn_data:/data
       - embedding_model_cache:/app/model-cache
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8192/apiv2/online || exit 1"]
@@ -747,6 +745,39 @@ services:
       # Retry middleware for connection resilience
       - "traefik.http.middlewares.retry-api.retry.attempts=3"
       - "traefik.http.middlewares.retry-api.retry.initialinterval=100ms"
+
+  spatial:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial
+    profiles:
+      - frontend
+    networks:
+      default:
+        aliases:
+          - spatial.localhost
+    build:
+      context: ./iznik-spatial-go
+      network: host
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - MYSQL_HOST=percona
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      - SPATIAL_INDEX_PATH=/data/spatial-locations.db
+      - SPATIAL_PORT=8194
+      - SPATIAL_ADMIN_PORT=8195
+    volumes:
+      - spatial_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8194/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
 
   # V2 API with LIVE production database via tunnel
   # Start with: docker compose --profile prod-live up -d apiv2-live
@@ -1712,7 +1743,7 @@ volumes:
     driver: local
   loki-data:
     name: ${LOKI_VOLUME:-loki-data}
-  knn_data:
+  spatial_data:
     driver: local
   apiv2_logs:
     driver: local
