@@ -145,12 +145,12 @@ class StatsGenerationServiceTest extends TestCase
         $u1 = $this->createTestUser();
         $u2 = $this->createTestUser();
 
-        DB::table('chat_rooms')->insert([
-            ['chattype' => ChatRoom::TYPE_USER2MOD, 'user1' => $u1->id, 'groupid' => $group->id, 'created' => $this->date.' 10:00:00'],
-            ['chattype' => ChatRoom::TYPE_USER2MOD, 'user1' => $u2->id, 'groupid' => $group->id, 'created' => $this->date.' 11:00:00'],
-            // Wrong chattype.
-            ['chattype' => ChatRoom::TYPE_USER2USER, 'user1' => $u1->id, 'user2' => $u2->id, 'groupid' => $group->id, 'created' => $this->date.' 12:00:00'],
-        ]);
+        // Separate inserts because bulk insert builds column list from first row;
+        // mixing null/non-null user2 across rows causes a column count mismatch.
+        DB::table('chat_rooms')->insert(['chattype' => ChatRoom::TYPE_USER2MOD, 'user1' => $u1->id, 'groupid' => $group->id, 'created' => $this->date.' 10:00:00']);
+        DB::table('chat_rooms')->insert(['chattype' => ChatRoom::TYPE_USER2MOD, 'user1' => $u2->id, 'groupid' => $group->id, 'created' => $this->date.' 11:00:00']);
+        // Wrong chattype - should not be counted.
+        DB::table('chat_rooms')->insert(['chattype' => ChatRoom::TYPE_USER2USER, 'user1' => $u1->id, 'user2' => $u2->id, 'groupid' => $group->id, 'created' => $this->date.' 12:00:00']);
 
         $this->service->generate($group->id, $this->date);
 
