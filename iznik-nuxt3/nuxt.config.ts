@@ -575,6 +575,13 @@ export default defineNuxtConfig({
       title: "Freegle - Don't throw it away, give it away!",
       script: [
         {
+          // Capture URL search params before Nuxt router hydration strips them.
+          // The router calls history.replaceState('/') during hydration (before onMounted),
+          // wiping any ?u=&k= impersonation params from window.location.search.
+          type: 'text/javascript',
+          innerHTML: `window.__initSearch=window.location.search`,
+        },
+        {
           // This is a polyfill for Safari12.  Can't get it to work using modernPolyfills - needs to happen very
           // early.  Safari12 doesn't work well, but this makes it functional.
           type: 'text/javascript',
