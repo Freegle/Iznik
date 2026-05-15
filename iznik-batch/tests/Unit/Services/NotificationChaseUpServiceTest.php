@@ -388,6 +388,45 @@ class NotificationChaseUpServiceTest extends TestCase
         $this->assertEquals(0, $updated->mailed);
     }
 
+    /**
+     * Transient SMTP failures (mail-host timeout/closed-unexpectedly) must NOT
+     * abort the per-user loop — SafeMail catches them and the next user still
+     * gets processed. Without this, the 2026-05-15 07:31 mail-host timeout
+     * killed the whole chaseup run.
+     */
+    public function test_transient_smtp_failure_does_not_abort_run(): void
+    {
+        // Two eligible users with pending notifications.
+        $u1 = $this->createTestUser(['lastaccess' => now()]);
+        $u2 = $this->createTestUser(['lastaccess' => now()]);
+        $sender = $this->createTestUser();
+        $this->createNotification($u1, $sender);
+        $this->createNotification($u2, $sender);
+
+        // Stub the Mail facade to throw a transient TransportException on the
+        // first send call and succeed on the second. Mail::fake() short-circuits
+        // the whole pipeline, so we mock the manager directly.
+        $pending = \Mockery::mock(\Illuminate\Mail\PendingMail::class);
+        $pending->shouldReceive('send')
+            ->andReturnUsing(function () {
+                static $first = true;
+                if ($first) {
+                    $first = false;
+                    throw new \Symfony\Component\Mailer\Exception\TransportException(
+                        'Connection to "mail-host:25" timed out.'
+                    );
+                }
+            });
+
+        Mail::shouldReceive('to')->andReturn($pending);
+
+        // Should not throw — SafeMail handles the transient failure and the
+        // second user gets processed.
+        $count = $this->service->sendEmails();
+
+        $this->assertEquals(2, $count, 'both users should be counted as attempted');
+    }
+
     // -----------------------------------------------------------------------
     // Subject line generation
     // -----------------------------------------------------------------------
