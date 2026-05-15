@@ -698,12 +698,23 @@ Schedule::command('groups:check-boundaries')
     ->runInBackground();
 
 // Update group stats: fix repost settings, polyindex, activity/funding, mod counts, stats_outcomes.
-// V1: cron/group_stats.php (daily at 02:00)
-// Note: V1 also generates per-group stats (Stats::generate) and syncs TrashNothing groups — those parts are not migrated here.
+// V1: cron/group_stats.php (daily at 02:00) — metadata-maintenance portion only.
+// The per-day per-type Stats::generate() rows come from stats:generate-daily below.
+// TrashNothing group sync is intentionally not migrated (V1 keyed off TNKEY constant).
 Schedule::command('groups:update-stats')
     ->dailyAt('02:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('groups:update-stats'))
+    ->runInBackground();
+
+// Per-group daily stats (Outcomes, Approved/Spam counts, feedback, breakdowns, replies, weight, ...).
+// V1: cron/group_stats.php Stats::generate(yesterday) loop. Runs after groups:update-stats so the
+// activity/funding rollup it does in the 02:00 job uses today's freshly-written ApprovedMessageCount
+// rows on the NEXT day's run (V1 had the same one-day-stale property).
+Schedule::command('stats:generate-daily')
+    ->dailyAt('02:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stats:generate-daily'))
     ->runInBackground();
 
 // V1: cron/groups_closed.php
