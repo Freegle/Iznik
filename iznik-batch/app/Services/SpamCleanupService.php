@@ -157,21 +157,31 @@ class SpamCleanupService
      */
     public function rejectSpamChatMessages(bool $dryRun = false): int
     {
+        $idsQuery = DB::table('chat_messages')
+            ->whereIn('userid', function ($q) {
+                $q->select('userid')->from('spam_users')->where('collection', self::SPAMMER_COLLECTION);
+            })
+            ->where('reviewrejected', '!=', 1);
+
         if ($dryRun) {
-            return (int) DB::table('chat_messages')
-                ->whereIn('userid', function ($q) {
-                    $q->select('userid')->from('spam_users')->where('collection', self::SPAMMER_COLLECTION);
-                })
-                ->where('reviewrejected', '!=', 1)
-                ->count();
+            return (int) $idsQuery->count();
         }
-        return (int) DB::update(
-            "UPDATE chat_messages
-             SET reviewrejected = 1, reviewrequired = 0
-             WHERE userid IN (SELECT userid FROM spam_users WHERE collection = ?)
-               AND reviewrejected != 1",
-            [self::SPAMMER_COLLECTION]
-        );
+
+        // Per-PK update — the original consolidated
+        // `UPDATE chat_messages … WHERE userid IN (subquery)` locked every
+        // matching row at once and could deadlock against the per-message
+        // UPDATEs in the chat notification pipeline (same class of failure
+        // we hit at 02:08 UTC 15 May in ChatExpectedService). Updating by
+        // single id keeps each statement's lock window to milliseconds.
+        $updated = 0;
+        foreach ($idsQuery->pluck('id') as $id) {
+            $updated += DB::update(
+                'UPDATE chat_messages SET reviewrejected = 1, reviewrequired = 0 WHERE id = ?',
+                [$id],
+            );
+        }
+
+        return $updated;
     }
 
     /**

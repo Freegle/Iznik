@@ -51,26 +51,33 @@ class ChatExpectedService
     {
         $since = now()->subDay()->toDateTimeString();
 
+        $idsQuery = DB::table('chat_messages')
+            ->where('replyexpected', 1)
+            ->where('replyreceived', 0)
+            ->whereIn('userid', function ($q) use ($since) {
+                $q->select('id')->from('users')->whereNotNull('deleted')->where('deleted', '>=', $since);
+            });
+
         if ($dryRun) {
-            return DB::table('chat_messages')
-                ->where('replyexpected', 1)
-                ->where('replyreceived', 0)
-                ->whereIn('userid', function ($q) use ($since) {
-                    $q->select('id')->from('users')->whereNotNull('deleted')->where('deleted', '>=', $since);
-                })
-                ->count();
+            return $idsQuery->count();
         }
 
-        return DB::update(
-            "UPDATE chat_messages
-             SET replyexpected = 0
-             WHERE replyexpected = 1
-               AND replyreceived = 0
-               AND userid IN (
-                   SELECT id FROM users WHERE deleted IS NOT NULL AND deleted >= ?
-               )",
-            [$since]
-        );
+        // V2 originally collapsed this into one big `UPDATE … WHERE userid IN
+        // (SELECT …)`. That locks every chat_messages row matching the
+        // subquery at once and deadlocked against the per-message UPDATEs
+        // that mail:chat:user2user runs every minute (caught in production
+        // 02:08 UTC, retry-after-3 gave up). Match V1 chat_expected.php
+        // instead: fetch the ids, then UPDATE one row at a time by PK so
+        // each statement holds a single-row lock for milliseconds.
+        $updated = 0;
+        foreach ($idsQuery->pluck('id') as $id) {
+            $updated += DB::update(
+                'UPDATE chat_messages SET replyexpected = 0 WHERE id = ?',
+                [$id],
+            );
+        }
+
+        return $updated;
     }
 
     /**
@@ -81,25 +88,29 @@ class ChatExpectedService
      */
     public function tidySpamUsersReplies(bool $dryRun = false): int
     {
+        $idsQuery = DB::table('chat_messages')
+            ->where('replyexpected', 1)
+            ->where('replyreceived', 0)
+            ->whereIn('userid', function ($q) {
+                $q->select('userid')->from('spam_users')->where('collection', 'Spammer');
+            });
+
         if ($dryRun) {
-            return DB::table('chat_messages')
-                ->where('replyexpected', 1)
-                ->where('replyreceived', 0)
-                ->whereIn('userid', function ($q) {
-                    $q->select('userid')->from('spam_users')->where('collection', 'Spammer');
-                })
-                ->count();
+            return $idsQuery->count();
         }
 
-        return DB::update(
-            "UPDATE chat_messages
-             SET replyexpected = 0
-             WHERE replyexpected = 1
-               AND replyreceived = 0
-               AND userid IN (
-                   SELECT userid FROM spam_users WHERE collection = 'Spammer'
-               )"
-        );
+        // Same per-PK pattern as tidyDeletedUsersReplies — avoids the
+        // wide-range lock that previously deadlocked against concurrent
+        // chat_messages writers.
+        $updated = 0;
+        foreach ($idsQuery->pluck('id') as $id) {
+            $updated += DB::update(
+                'UPDATE chat_messages SET replyexpected = 0 WHERE id = ?',
+                [$id],
+            );
+        }
+
+        return $updated;
     }
 
     /**
