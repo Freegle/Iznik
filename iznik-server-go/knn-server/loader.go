@@ -95,11 +95,14 @@ func LoadFromMySQL(mysqlDB *sql.DB, idx *Index) error {
 	})
 }
 
-// stripSRIDPrefix removes the 4-byte SRID header that MySQL prepends to WKB values
-// returned by ST_AsWKB(). Byte 4 of a valid WKB is always the byte-order marker
-// (0x00 big-endian or 0x01 little-endian), so we use that as a detection signal.
+// stripSRIDPrefix removes the 4-byte SRID header that MySQL's internal geometry
+// format prepends to WKB.  The SRID prefix is four little-endian bytes
+// (e.g. E6100000 for SRID 4326) followed by a WKB byte-order marker (0x00 or
+// 0x01).  ST_AsWKB() on MySQL 8 already returns clean WKB (byte 0 is the
+// byte-order marker), so we only strip when byte 0 is NOT a valid byte-order
+// marker — meaning the first 4 bytes are the SRID.
 func stripSRIDPrefix(b []byte) []byte {
-	if len(b) > 4 && (b[4] == 0x00 || b[4] == 0x01) {
+	if len(b) > 4 && b[0] != 0x00 && b[0] != 0x01 && (b[4] == 0x00 || b[4] == 0x01) {
 		return b[4:]
 	}
 	return b
