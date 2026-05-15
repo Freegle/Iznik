@@ -2499,7 +2499,13 @@ type messagesResponse struct {
 // swagger:route POST /message message postMessage
 // Message actions
 //
-// Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View
+// Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View,
+// Approve, Reject, Delete, Spam, Hold, Release, ApproveEdits, RevertEdits, PartnerConsent,
+// Reply, JoinAndPost, Move, BackToPending, RejectToDraft.
+//
+// When tnpostid is supplied instead of id, the action is applied to ALL Freegle messages
+// sharing that TN post ID (a TN post can be submitted to multiple Freegle groups, each
+// producing a separate Freegle message row).
 //
 // security:
 // - BearerAuth: []
@@ -2509,6 +2515,7 @@ type messagesResponse struct {
 //	200: successResponse
 //	400: errorResponse
 //	401: errorResponse
+//	404: errorResponse
 
 // swagger:route PATCH /message message patchMessage
 // Update message
@@ -2544,10 +2551,12 @@ type messagesResponse struct {
 //	403: errorResponse
 
 // swagger:route PATCH /message/tn/{tnpostid} message patchMessageByTN
-// Update message by TN post ID
+// Update all messages by TN post ID
 //
-// Updates a message using its Trash Nothing post ID. For partner integrations
-// where the Freegle message ID is not yet known (e.g. post held for moderation).
+// Updates ALL Freegle messages sharing the given Trash Nothing post ID. A single TN post
+// can be submitted to multiple Freegle groups, each producing a separate Freegle message
+// row — this endpoint updates every one of them in a single call. Used by partner
+// integrations where the Freegle message ID is not yet known (e.g. post held for moderation).
 //
 // Parameters:
 //   + name: tnpostid

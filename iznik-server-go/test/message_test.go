@@ -7849,3 +7849,172 @@ func TestPatchMessageByTnPostidNotFound(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 404, resp.StatusCode)
 }
+
+// TestPatchMessageByTnPostidUpdatesAllMessages verifies that PATCH /message/tn/:tnpostid
+// updates ALL Freegle messages sharing the same tnpostid (not just the first one).
+func TestPatchMessageByTnPostidUpdatesAllMessages(t *testing.T) {
+	prefix := uniquePrefix("patchtn_multi")
+	db := database.DBConn
+
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, group1ID, "Member")
+	CreateTestMembership(t, ownerID, group2ID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88801, ownerID)
+
+	tnpostid := fmt.Sprintf("tn-multi-%s", prefix)
+	msg1ID := CreateTestMessage(t, ownerID, group1ID, prefix+" Offer G1", 55.9533, -3.1883)
+	msg2ID := CreateTestMessage(t, ownerID, group2ID, prefix+" Offer G2", 55.9533, -3.1883)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", tnpostid, msg1ID, msg2ID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{"subject": "TN Multi Updated Subject"}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=88801&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var subject1, subject2 string
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msg1ID).Scan(&subject1)
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msg2ID).Scan(&subject2)
+	assert.Equal(t, "TN Multi Updated Subject", subject1, "first message should be updated")
+	assert.Equal(t, "TN Multi Updated Subject", subject2, "second message should also be updated")
+}
+
+// TestPostMessageByTnPostidUpdatesAllMessages verifies that POST /message with tnpostid
+// applies the action to ALL Freegle messages sharing the same tnpostid.
+func TestPostMessageByTnPostidUpdatesAllMessages(t *testing.T) {
+	prefix := uniquePrefix("posttn_multi")
+	db := database.DBConn
+
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, group1ID, "Member")
+	CreateTestMembership(t, ownerID, group2ID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88802, ownerID)
+
+	tnpostid := fmt.Sprintf("tn-post-multi-%s", prefix)
+	msg1ID := CreateTestMessage(t, ownerID, group1ID, "OFFER: "+prefix+" Item1", 55.9533, -3.1883)
+	msg2ID := CreateTestMessage(t, ownerID, group2ID, "OFFER: "+prefix+" Item2", 55.9533, -3.1883)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", tnpostid, msg1ID, msg2ID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{
+		"tnpostid": tnpostid,
+		"action":   "OutcomeIntended",
+		"outcome":  "Taken",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message?partner=%s&tnuserid=88802&email=%s@tn.com", key, prefix+"_owner")
+	req := httptest.NewRequest("POST", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var count1, count2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes_intended WHERE msgid = ? AND outcome = 'Taken'", msg1ID).Scan(&count1)
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes_intended WHERE msgid = ? AND outcome = 'Taken'", msg2ID).Scan(&count2)
+	assert.Equal(t, int64(1), count1, "first message should have outcome intended")
+	assert.Equal(t, int64(1), count2, "second message should also have outcome intended")
+}
+
+// TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection verifies that when
+// a TN user removes an AI attachment via PATCH /message/tn/:tnpostid, ALL Freegle messages
+// sharing that tnpostid get a messages_ai_declined row (preventing the cron from
+// re-adding an AI illustration to any of them).
+func TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection(t *testing.T) {
+	prefix := uniquePrefix("patchtn_ai_multi")
+	db := database.DBConn
+
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, group1ID, "Member")
+	CreateTestMembership(t, ownerID, group2ID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88803, ownerID)
+
+	tnpostid := fmt.Sprintf("tn-ai-multi-%s", prefix)
+	msg1ID := CreateTestMessage(t, ownerID, group1ID, prefix+" AI Msg1", 55.0, -3.0)
+	msg2ID := CreateTestMessage(t, ownerID, group2ID, prefix+" AI Msg2", 55.0, -3.0)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", tnpostid, msg1ID, msg2ID)
+
+	aiUID1 := "freegletusd-ai-m1-" + prefix
+	aiUID2 := "freegletusd-ai-m2-" + prefix
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, '{\"ai\":true}', 1)", msg1ID, aiUID1)
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, '{\"ai\":true}', 1)", msg2ID, aiUID2)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_attachments WHERE msgid IN (?, ?)", msg1ID, msg2ID)
+		db.Exec("DELETE FROM messages_ai_declined WHERE msgid IN (?, ?)", msg1ID, msg2ID)
+	})
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{"attachments": []uint64{}}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=88803&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var dec1, dec2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msg1ID).Scan(&dec1)
+	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msg2ID).Scan(&dec2)
+	assert.Equal(t, int64(1), dec1, "first message should be protected from AI re-injection")
+	assert.Equal(t, int64(1), dec2, "second message should also be protected from AI re-injection")
+
+	var att1, att2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ?", msg1ID).Scan(&att1)
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ?", msg2ID).Scan(&att2)
+	assert.Equal(t, int64(0), att1, "first message should have no attachments")
+	assert.Equal(t, int64(0), att2, "second message should have no attachments")
+}
+
+// TestMessageAttachmentHasAIField verifies that the API returns an "ai" boolean field
+// on each attachment so that TN can determine which attachments were AI-generated.
+func TestMessageAttachmentHasAIField(t *testing.T) {
+	prefix := uniquePrefix("attach_ai_field")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" AI Field Test", 55.0, -3.0)
+	aiUID := "freegletusd-test-ai-field-" + prefix
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, '{\"ai\":true}', 1)", msgID, aiUID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+	})
+
+	reqURL := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	req := httptest.NewRequest("GET", reqURL, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	attachments, ok := result["attachments"].([]interface{})
+	assert.True(t, ok, "response should have attachments array")
+	assert.Equal(t, 1, len(attachments), "should have one attachment")
+	firstAttach, ok := attachments[0].(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, true, firstAttach["ai"], "AI attachment should have ai:true field")
+}
