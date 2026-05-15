@@ -24,11 +24,7 @@ func LoadFromMySQL(mysqlDB *sql.DB, idx *Index) error {
 			locations.name,
 			locations.type,
 			ST_Area(COALESCE(ourgeometry, geometry))                  AS area,
-			ST_AsWKB(COALESCE(ourgeometry, geometry))                 AS wkb,
-			ST_MinX(COALESCE(ourgeometry, geometry))                  AS min_lng,
-			ST_MaxX(COALESCE(ourgeometry, geometry))                  AS max_lng,
-			ST_MinY(COALESCE(ourgeometry, geometry))                  AS min_lat,
-			ST_MaxY(COALESCE(ourgeometry, geometry))                  AS max_lat
+			ST_AsWKB(COALESCE(ourgeometry, geometry))                 AS wkb
 		FROM locations
 		LEFT JOIN locations_excluded le ON locations.id = le.locationid
 		WHERE le.locationid IS NULL
@@ -49,18 +45,24 @@ func LoadFromMySQL(mysqlDB *sql.DB, idx *Index) error {
 	for rows.Next() {
 		var lr LocationRow
 		var wkbRaw []byte
-		if err := rows.Scan(
-			&lr.LocationID, &lr.Name, &lr.Type, &lr.Area,
-			&wkbRaw, &lr.MinLng, &lr.MaxLng, &lr.MinLat, &lr.MaxLat,
-		); err != nil {
+		if err := rows.Scan(&lr.LocationID, &lr.Name, &lr.Type, &lr.Area, &wkbRaw); err != nil {
 			return fmt.Errorf("scan: %w", err)
 		}
 		lr.WKB = stripSRIDPrefix(wkbRaw)
-		// Validate before storing — skip geometries that can't be parsed.
-		if _, err := geom.UnmarshalWKB(lr.WKB); err != nil {
+		// Parse geometry to validate and extract bounding box for the R-tree index.
+		g, err := geom.UnmarshalWKB(lr.WKB, geom.NoValidate{})
+		if err != nil {
 			skipped++
 			continue
 		}
+		env := g.Envelope()
+		min, max, ok := env.MinMaxXYs()
+		if !ok {
+			skipped++
+			continue
+		}
+		lr.MinLng, lr.MaxLng = min.X, max.X
+		lr.MinLat, lr.MaxLat = min.Y, max.Y
 		locs = append(locs, lr)
 		scanned++
 		if scanned%10000 == 0 {
