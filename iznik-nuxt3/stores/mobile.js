@@ -262,6 +262,7 @@ export const useMobileStore = defineStore({
         // Delete old channels
         await PushNotifications.deleteChannel({ id: 'PushDefaultForeground' })
         await PushNotifications.deleteChannel({ id: 'NewPosts' })
+        await PushNotifications.deleteChannel({ id: 'modtools' }) // recreate below with correct settings
 
         // Create notification channels matching server-side categories
         // Channel IDs must match what the server sends in android.notification.channel_id
@@ -324,6 +325,18 @@ export const useMobileStore = defineStore({
           lights: false,
           lightColor: '#5ECA24',
           vibration: false,
+        })
+
+        // ModTools - HIGH importance for mod work items and chat
+        await PushNotifications.createChannel({
+          id: 'modtools',
+          name: 'ModTools Alerts',
+          description: 'Pending messages, mod chat, and moderation work items',
+          importance: 4, // HIGH - heads-up notification
+          visibility: 1,
+          lights: true,
+          lightColor: '#0077CC',
+          vibration: true,
         })
 
         dbg()?.info('Android notification channels created')
