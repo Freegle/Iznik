@@ -163,9 +163,16 @@ class ReachVolunteeringService
             }
         }
 
-        // Mark stale records as deleted.
+        // Mark stale records as deleted. Only look at rows that aren't already
+        // deleted or expired — V1's reachvolunteering.php scanned every
+        // reach-% row including the 9k+ already-deleted ones, producing huge
+        // no-op UPDATE batches and a misleading "deleted: N" count. With
+        // this filter the count reflects real new deletes only and the
+        // command does proportional work to the live set.
         $existings = DB::table('volunteering')
             ->where('externalid', 'LIKE', 'reach-%')
+            ->where('deleted', 0)
+            ->where('expired', 0)
             ->get(['id', 'externalid', 'contacturl']);
 
         foreach ($existings as $e) {
