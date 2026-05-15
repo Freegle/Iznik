@@ -266,22 +266,19 @@ const shouldShowNavbar = computed(() => {
 // Vue Router syncs with the real URL asynchronously — route.query is still {} when
 // onMounted fires, causing the login check to silently skip.
 onMounted(async () => {
-  const params = new URLSearchParams(window.location.search)
+  // Read from __initSearch (set by inline head script) because Nuxt router
+  // calls history.replaceState('/') during hydration before onMounted fires,
+  // wiping window.location.search. The inline script captures it first.
+  const params = new URLSearchParams(window.__initSearch || '')
   const u = params.get('u')
   const k = params.get('k')
-  console.log('[impersonation] onMounted fired, u=', u, 'k=', k ? k.slice(0, 6) + '...' : null)
   if (u && k) {
     try {
-      console.log('[impersonation] calling clearRelated')
       await authStore.clearRelated()
-      console.log('[impersonation] clearRelated done, calling login')
       await authStore.login({ u, k })
-      console.log('[impersonation] login done, loginCount=', authStore.loginCount)
     } catch (e) {
-      console.log('[impersonation] login failed', e?.message ?? e, e?.response?.status, e?.response?.data)
+      console.log('Impersonation login failed', e?.message ?? e)
     }
-  } else {
-    console.log('[impersonation] no u/k params, skipping')
   }
 })
 
