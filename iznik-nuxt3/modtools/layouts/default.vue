@@ -258,8 +258,9 @@
         <div>
           <a href="#" class="ps-1" @click="logOut"> Logout </a>
         </div>
-        <div v-if="inMTapp" id="mtinfo" :title="inMTapp">
-          MT app {{ inMTapp }}
+        <div v-if="mobileStore.isApp" class="mt-2 ps-1 small text-muted">
+          <div>Build: {{ buildDate }}</div>
+          <NuxtLink to="/applog" @click="mobilehidemenu">App Log</NuxtLink>
         </div>
       </div>
       <div class="ml-0 pl-0 pl-sm-1 pr-0 pr-sm-1 pageContent w-100">
@@ -352,6 +353,7 @@ if (!ready.value) {
 }
 
 const runtimeConfig = useRuntimeConfig()
+const buildDate = runtimeConfig.public.BUILD_DATE || 'unknown'
 useHead(
   buildHead(
     route,
