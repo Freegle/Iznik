@@ -19,7 +19,7 @@ parameters:
     description: "Set to true to run tests on a Katapult cloud runner (freegle/katapult-runner)"
 
 orbs:
-  freegle: freegle/tests@1.1.299
+  freegle: freegle/tests@1.1.302
 
 jobs:
   mark-ci-passed:

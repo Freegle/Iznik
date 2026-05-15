@@ -2569,6 +2569,13 @@ jobs:
 
               echo "[${elapsed_min}m] iznik-batch: $LARAVEL_DISPLAY | Go: $GO_DISPLAY | Playwright: $PLAYWRIGHT_DISPLAY | Vitest: $VITEST_DISPLAY"
 
+              # Every 5 minutes, dump Vitest output so a hang is diagnosable
+              if [ "$VITEST_STATUS" = "running" ] && [ $elapsed_min -gt 0 ] && [ $((elapsed_min % 5)) -eq 0 ] && [ $((elapsed % 60)) -lt 10 ]; then
+                echo "--- Vitest output @ ${elapsed_min}m (last 40 lines of ~/test-output/vitest.out) ---"
+                tail -40 ~/test-output/vitest.out 2>/dev/null || echo "(no vitest output yet)"
+                echo "---"
+              fi
+
               # Check for any failures (fail-fast)
               if [ "$LARAVEL_STATUS" = "fail" ]; then
                 echo "❌ FAIL-FAST: iznik-batch tests failed - stopping all tests"
