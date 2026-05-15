@@ -3766,6 +3766,75 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals($replierEmail, $storedMsg->fromaddr);
     }
 
+    /**
+     * If a sibling process already wrote the raw email (same Message-ID from a
+     * duplicate webhook fire or Postfix retry), insertOrIgnore returns 0 and
+     * we now look up the existing messages.id so this chat message still gets
+     * the moderator-visible link. Before this fix, the second process
+     * deadlock-retried 3× then threw — produced 16 ERROR logs/day on prod.
+     */
+    public function test_replyto_links_to_existing_messages_row_on_messageid_collision(): void
+    {
+        $poster = $this->createTestUser(['email_preferred' => $this->uniqueEmail('poster')]);
+        $replier = $this->createTestUser(['email_preferred' => $this->uniqueEmail('replier')]);
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        $replierEmail = $replier->emails->first()->email;
+        $sharedMessageId = '<race-condition-test@example.com>';
+
+        // Simulate the sibling-process win: a `messages` row with this
+        // Message-ID already exists when our handler runs.
+        $existingId = DB::table('messages')->insertGetId([
+            'date' => now(),
+            'source' => 'Email',
+            'fromuser' => $replier->id,
+            'fromaddr' => $replierEmail,
+            'envelopefrom' => $replierEmail,
+            'envelopeto' => "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org",
+            'subject' => 'Re: '.$message->subject,
+            'messageid' => $sharedMessageId,
+            'message' => 'pre-existing raw',
+            'textbody' => 'pre-existing',
+        ]);
+
+        $rawEmail = $this->createMinimalEmail([
+            'From' => $replierEmail,
+            'To' => "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org",
+            'Subject' => 'Re: '.$message->subject,
+            'Message-ID' => $sharedMessageId,
+        ], 'second-process body');
+
+        $parsed = $this->parser->parse(
+            $rawEmail,
+            $replierEmail,
+            "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org"
+        );
+
+        $this->service->route($parsed);
+
+        $chatMsg = DB::table('chat_messages')
+            ->where('userid', $replier->id)
+            ->where('type', ChatMessage::TYPE_INTERESTED)
+            ->orderBy('id', 'desc')
+            ->first();
+        $this->assertNotNull($chatMsg);
+
+        $byEmail = DB::table('chat_messages_byemail')
+            ->where('chatmsgid', $chatMsg->id)
+            ->first();
+        $this->assertNotNull(
+            $byEmail,
+            'chat_messages_byemail should be linked to the pre-existing messages row, not skipped'
+        );
+        $this->assertEquals($existingId, $byEmail->msgid);
+
+        // No duplicate `messages` row written.
+        $count = DB::table('messages')->where('messageid', $sharedMessageId)->count();
+        $this->assertEquals(1, $count, 'should not have written a duplicate messages row');
+    }
+
     public function test_notify_reply_stores_raw_email_in_messages_and_chat_messages_byemail(): void
     {
         $user1 = $this->createTestUser(['email_preferred' => $this->uniqueEmail('user1')]);
