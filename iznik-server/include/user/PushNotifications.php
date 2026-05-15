@@ -30,6 +30,7 @@ class PushNotifications
     const CATEGORY_COLLECTION = 'COLLECTION';
     const CATEGORY_EVENT_SUMMARY = 'EVENT_SUMMARY';
     const CATEGORY_EXHORT = 'EXHORT';
+    const CATEGORY_MODTOOLS = 'MODTOOLS';
 
     // Category configuration: iOS interruption level, Android channel ID, Android priority
     const CATEGORIES = [
@@ -77,6 +78,11 @@ class PushNotifications
             'ios_interruption' => 'passive',
             'android_channel' => 'tips',
             'android_priority' => 'normal'
+        ],
+        self::CATEGORY_MODTOOLS => [
+            'ios_interruption' => 'active',
+            'android_channel' => 'modtools',
+            'android_priority' => 'high'
         ]
     ];
 
