@@ -128,7 +128,6 @@ describe('ModSettingsPersonal', () => {
     vi.clearAllMocks()
     mockAuthStore.saveAndGet.mockResolvedValue()
     mockAuthStore.saveEmail.mockResolvedValue({ ret: 0 })
-    mockAuthStore.savePushId.mockResolvedValue()
     mockMiscStore.get.mockReturnValue(false)
     mockMiscStore.set.mockResolvedValue()
 
