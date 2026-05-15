@@ -1,5 +1,4 @@
 import fs from 'fs'
-import config from '../config'
 
 const packageJson = fs.readFileSync('./package.json', 'utf8')
 const version = JSON.parse(packageJson).version || 0
@@ -43,6 +42,14 @@ export default defineNuxtConfig({
       VERSION: version,
       BUILD_DATE: new Date().toLocaleString('en-GB'),
       SITE: 'MT',
+      // Hardcoded production endpoints. The CircleCI project-level
+      // TUS_UPLOADER env var is set to https://tusd.tusdemo.net/files/
+      // (the public TUS demo server), which leaks into the modtools APK
+      // debug build and breaks image rendering. Until the project env
+      // is fixed, override here so the modtools layer always bakes in
+      // the right value regardless of build env.
+      TUS_UPLOADER: 'https://uploads.ilovefreegle.org:8080',
+      IMAGE_DELIVERY: 'https://delivery.ilovefreegle.org',
     },
   },
   vite: {
@@ -78,8 +85,9 @@ export default defineNuxtConfig({
     },
     weserv: {
       provider: 'weserv',
-      baseURL: config.TUS_UPLOADER.replace(':8080', ''),
-      weservURL: config.IMAGE_DELIVERY,
+      // Hardcoded — see runtimeConfig note above (CircleCI env leakage).
+      baseURL: 'https://uploads.ilovefreegle.org',
+      weservURL: 'https://delivery.ilovefreegle.org',
     },
     densities: [1, 2],
     screens: {
