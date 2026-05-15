@@ -3,73 +3,38 @@
 namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Remaps postcodes to their nearest enclosing area using PostGIS KNN queries.
+ * Remaps postcodes to their nearest enclosing area using the spatial server.
  *
  * When a location area's geometry is created or modified, postcodes within
  * that geometry need to be reassigned to the correct (smallest, nearest) area.
  * This mirrors the V1 PHP Location::remapPostcodes() logic.
  *
- * Uses PostgreSQL/PostGIS for efficient K-nearest-neighbor spatial queries,
- * and MySQL for reading/writing the canonical locations data.
+ * Queries the iznik-spatial-go service (HTTP) instead of PostgreSQL/PostGIS.
+ * The spatial server maintains its own SQLite R-tree index built from MySQL
+ * and uses the same 12-level progressive buffer expansion algorithm as V1.
  */
 class PostcodeRemapService
 {
-    /**
-     * SRID used for spatial operations (Web Mercator).
-     */
-    private int $srid;
+    private string $spatialServerUrl;
 
     public function __construct()
     {
-        $this->srid = (int) config('freegle.srid', 3857);
+        $this->spatialServerUrl = config('freegle.spatial_server_url', 'http://localhost:8194');
     }
 
     /**
      * Remap postcodes within a given WKT polygon to their nearest area.
      *
-     * Syncs the affected location to PostgreSQL first, then queries PostGIS
-     * KNN to find the best area for each postcode.
-     *
-     * @param int|null $locationId The location that was modified (for incremental sync).
+     * @param int|null $locationId The location that was modified (unused, kept for interface compatibility).
      * @param string|null $polygon WKT polygon to scope the remap. NULL = remap all.
      * @return int Number of postcodes remapped.
      */
     public function remapPostcodes(?int $locationId = NULL, ?string $polygon = NULL): int
     {
-        if (! $this->postgresAvailable()) {
-            Log::warning('PostcodeRemapService: PostgreSQL connection not available, skipping remap');
-
-            return 0;
-        }
-
-        // Ensure PostgreSQL schema exists and sync location data.
-        $this->ensurePostgresSchema();
-
-        if ($polygon) {
-            // Sync all locations within the polygon scope to PostgreSQL.
-            // This is critical: the location_id in the task is the location that was edited,
-            // but other locations within the polygon (e.g. newly created areas) may also need
-            // syncing. V1 synced the edited location inline in setGeometry() before calling
-            // remapPostcodes(), and relied on a nightly cron for everything else. We do better
-            // by syncing all locations in the affected area.
-            $this->syncLocationsInPolygon($polygon);
-        } elseif ($locationId) {
-            $this->syncSingleLocation($locationId);
-        } else {
-            $this->syncAllLocations();
-        }
-
-        // Build the postcode selector as a Builder and stream it in id-keyed
-        // chunks via chunkById(). MySQL's default PDO buffer mode loads the
-        // entire result set into client memory at execute() time, so a plain
-        // cursor() on this query still tips past 1.6 GB — chunkById() runs
-        // many small LIMIT queries instead, keeping peak memory at one batch.
-        // Per-postcode-row 1:1 with locations_spatial in practice, so the
-        // DISTINCT on the upstream query is dropped here without changing
-        // the iterated set.
         $pcQuery = DB::table('locations_spatial')
             ->join('locations', 'locations_spatial.locationid', '=', 'locations.id')
             ->where('locations.type', 'Postcode')
@@ -84,21 +49,17 @@ class PostcodeRemapService
             );
 
         if ($polygon) {
-            // Include postcodes that either fall within the polygon OR currently point at
-            // the affected location via areaid. The latter catches postcodes whose areaid
-            // was assigned by KNN (buffered intersection / nearest-neighbour) rather than
-            // strict containment — those sit outside the polygon but still need remapping
-            // when the location they reference is excluded or its geometry changes.
+            $srid = (int) config('freegle.srid', 3857);
             if ($locationId) {
-                $pcQuery->where(function ($q) use ($polygon, $locationId) {
+                $pcQuery->where(function ($q) use ($polygon, $locationId, $srid) {
                     $q->whereRaw(
-                        "ST_Contains(ST_GeomFromText(?, {$this->srid}), locations_spatial.geometry)",
+                        "ST_Contains(ST_GeomFromText(?, {$srid}), locations_spatial.geometry)",
                         [$polygon],
                     )->orWhere('locations.areaid', $locationId);
                 });
             } else {
                 $pcQuery->whereRaw(
-                    "ST_Contains(ST_GeomFromText(?, {$this->srid}), locations_spatial.geometry)",
+                    "ST_Contains(ST_GeomFromText(?, {$srid}), locations_spatial.geometry)",
                     [$polygon],
                 );
             }
@@ -107,9 +68,6 @@ class PostcodeRemapService
         $count   = 0;
         $updated = 0;
 
-        // chunkById issues `WHERE locations.id > $last LIMIT N` queries until
-        // exhausted. 1000 rows / batch keeps each query's result buffer well
-        // under 1 MB while still amortising round-trip cost.
         $pcQuery->orderBy('locations.id')->chunkById(1000, function ($postcodes) use (&$count, &$updated) {
             foreach ($postcodes as $pc) {
                 $newAreaId = $this->findNearestArea($pc->lng, $pc->lat);
@@ -136,10 +94,7 @@ class PostcodeRemapService
     }
 
     /**
-     * Find the nearest area location for a given point using PostGIS KNN.
-     *
-     * Uses expanding buffer intersection levels (matching V1 algorithm) to find
-     * the smallest area that contains or is very close to the point.
+     * Find the nearest area for a given point via the spatial server.
      *
      * @param float $lng Longitude
      * @param float $lat Latitude
@@ -147,295 +102,17 @@ class PostcodeRemapService
      */
     public function findNearestArea(float $lng, float $lat): ?int
     {
-        $result = DB::connection('pgsql')->select("
-            WITH ourpoint AS (
-                SELECT ST_MakePoint(?, ?) AS p
-            )
-            SELECT locationid FROM (
-                SELECT
-                    locationid,
-                    ST_Area(location) AS area,
-                    CASE
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.00015625), ?)) THEN 1
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.0003125), ?)) THEN 2
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.000625), ?)) THEN 3
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.00125), ?)) THEN 4
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.0025), ?)) THEN 5
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.005), ?)) THEN 6
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.01), ?)) THEN 7
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.02), ?)) THEN 8
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.04), ?)) THEN 9
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.08), ?)) THEN 10
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.16), ?)) THEN 11
-                        WHEN ST_Intersects(location, ST_SetSRID(ST_Buffer((SELECT p FROM ourpoint), 0.32), ?)) THEN 12
-                    END AS intersects
-                FROM (
-                    SELECT locationid,
-                           location,
-                           location <-> ST_SetSRID((SELECT p FROM ourpoint), ?) AS dist
-                    FROM locations
-                    WHERE ST_Area(location) BETWEEN 0.00001 AND 0.15
-                    ORDER BY location <-> ST_SetSRID((SELECT p FROM ourpoint), ?)
-                    LIMIT 10
-                ) q
-            ) candidates
-            WHERE intersects IS NOT NULL
-            ORDER BY intersects ASC, area ASC
-            LIMIT 1
-        ", [
-            $lng, $lat,
-            // 12 SRID params for the buffer intersections
-            $this->srid, $this->srid, $this->srid, $this->srid,
-            $this->srid, $this->srid, $this->srid, $this->srid,
-            $this->srid, $this->srid, $this->srid, $this->srid,
-            // 2 SRID params for the KNN subquery
-            $this->srid, $this->srid,
+        $response = Http::get("{$this->spatialServerUrl}/knn", [
+            'lng' => $lng,
+            'lat' => $lat,
         ]);
 
-        if (count($result) > 0) {
-            return (int) $result[0]->locationid;
+        if ($response->successful()) {
+            $locationid = $response->json('locationid');
+            return $locationid !== null ? (int) $locationid : null;
         }
 
-        return NULL;
-    }
-
-    /**
-     * Ensure the PostgreSQL locations table and indexes exist.
-     */
-    public function ensurePostgresSchema(): void
-    {
-        $pgsql = DB::connection('pgsql');
-
-        $pgsql->statement('CREATE EXTENSION IF NOT EXISTS postgis');
-        $pgsql->statement('CREATE EXTENSION IF NOT EXISTS btree_gist');
-
-        // Create the location_type enum if it doesn't exist.
-        $typeExists = $pgsql->selectOne("SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'location_type')");
-        if (! $typeExists->exists) {
-            $pgsql->statement("CREATE TYPE location_type AS ENUM('Road','Polygon','Line','Point','Postcode')");
-        }
-
-        // Create the locations table if it doesn't exist.
-        $tableExists = $pgsql->selectOne("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'locations')");
-        if (! $tableExists->exists) {
-            $pgsql->statement('CREATE TABLE locations (
-                id serial PRIMARY KEY,
-                locationid bigint UNIQUE NOT NULL,
-                name text,
-                type location_type,
-                area numeric,
-                location geometry
-            )');
-            $pgsql->statement('CREATE INDEX idx_locations_location ON locations USING gist (location)');
-        }
-    }
-
-    /**
-     * Sync a single location from MySQL to PostgreSQL (upsert).
-     *
-     * Matches V1's per-location sync in setGeometry() — fast for single updates.
-     */
-    private function syncSingleLocation(int $locationId): void
-    {
-        $loc = DB::selectOne("
-            SELECT locations.id, name, type,
-                   ST_AsText(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END) AS geom
-            FROM locations
-            LEFT JOIN locations_excluded le ON locations.id = le.locationid
-            WHERE locations.id = ?
-            AND le.locationid IS NULL
-            AND ST_Dimension(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END) = 2
-            AND type != 'Postcode'
-        ", [$locationId]);
-
-        if (! $loc || ! $loc->geom) {
-            return;
-        }
-
-        DB::connection('pgsql')->statement(
-            "INSERT INTO locations (locationid, name, type, area, location)
-             VALUES (?, ?, ?, ST_Area(ST_GeomFromText(?, ?)), ST_GeomFromText(?, ?))
-             ON CONFLICT (locationid) DO UPDATE SET
-                 name = EXCLUDED.name,
-                 type = EXCLUDED.type,
-                 area = EXCLUDED.area,
-                 location = EXCLUDED.location",
-            [$loc->id, $loc->name, $loc->type, $loc->geom, $this->srid, $loc->geom, $this->srid]
-        );
-    }
-
-    /**
-     * Sync all non-postcode polygon locations within a WKT polygon to PostgreSQL.
-     *
-     * When a location is created or its geometry is changed, the remap task carries
-     * the polygon scope. We need to sync all locations intersecting that scope —
-     * not just the edited location — because newly created or recently modified
-     * locations in the area may not yet be in PostgreSQL.
-     */
-    private function syncLocationsInPolygon(string $polygon): void
-    {
-        // First remove any now-excluded locations within the polygon scope from PostgreSQL.
-        // Without this, a location excluded after being synced would remain in PG's KNN
-        // index until the nightly syncAllLocations table-swap rebuilds from scratch,
-        // meaning exclusions wouldn't take effect for postcode remapping until then.
-        $excludedInScope = DB::select("
-            SELECT DISTINCT le.locationid
-            FROM locations_excluded le
-            INNER JOIN locations_spatial ls ON ls.locationid = le.locationid
-            WHERE ST_Intersects(ls.geometry, ST_GeomFromText(?, {$this->srid}))
-        ", [$polygon]);
-
-        if (!empty($excludedInScope)) {
-            $ids = array_map(fn ($r) => (int) $r->locationid, $excludedInScope);
-            DB::connection('pgsql')->delete(
-                'DELETE FROM locations WHERE locationid IN (' . implode(',', $ids) . ')'
-            );
-            Log::info('PostcodeRemapService: removed ' . count($ids) . ' excluded locations from PostgreSQL within polygon scope');
-        }
-
-        $locations = DB::select("
-            SELECT locations.id, locations.name, locations.type,
-                   ST_AsText(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE ls.geometry END) AS geom
-            FROM locations_spatial ls
-            INNER JOIN locations ON ls.locationid = locations.id
-            LEFT JOIN locations_excluded le ON locations.id = le.locationid
-            WHERE le.locationid IS NULL
-            AND ST_Intersects(ls.geometry, ST_GeomFromText(?, {$this->srid}))
-            AND ST_Dimension(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE ls.geometry END) = 2
-            AND locations.type != 'Postcode'
-        ", [$polygon]);
-
-        $synced = 0;
-
-        foreach ($locations as $loc) {
-            if (! $loc->geom) {
-                continue;
-            }
-
-            DB::connection('pgsql')->statement(
-                "INSERT INTO locations (locationid, name, type, area, location)
-                 VALUES (?, ?, ?, ST_Area(ST_GeomFromText(?, ?)), ST_GeomFromText(?, ?))
-                 ON CONFLICT (locationid) DO UPDATE SET
-                     name = EXCLUDED.name,
-                     type = EXCLUDED.type,
-                     area = EXCLUDED.area,
-                     location = EXCLUDED.location",
-                [$loc->id, $loc->name, $loc->type, $loc->geom, $this->srid, $loc->geom, $this->srid]
-            );
-
-            $synced++;
-        }
-
-        Log::info("PostcodeRemapService: synced {$synced} locations in polygon scope to PostgreSQL");
-    }
-
-    /**
-     * Full sync of all non-postcode polygon locations from MySQL to PostgreSQL.
-     *
-     * Uses a temp table + atomic swap matching V1's copyLocationsToPostgresql().
-     * Used when no specific location ID is provided (full remap).
-     */
-    private function syncAllLocations(): void
-    {
-        $pgsql = DB::connection('pgsql');
-        // uniqid(more_entropy=true) -> 23 hex chars; pure uniqid() can repeat
-        // within the same microsecond, and we want the suffix to be unique
-        // across any concurrent / racing invocation.
-        $uniq = '_' . uniqid('', true);
-        // PG identifiers can't contain '.', which more_entropy adds.
-        $uniq = str_replace('.', '_', $uniq);
-        $tableName = "locations_tmp{$uniq}";
-        $indexName = "idx_loc_tmp{$uniq}";
-
-        // Defensive cleanup of orphan tmp tables left behind by crashed
-        // previous runs (e.g. OOM during the streaming insert). Each run uses
-        // a uniq() suffix so any locations_tmp_* sitting in pg_tables is not
-        // ours and is safe to drop. Skip our own table for paranoia — even
-        // though uniqid() collisions are astronomically unlikely, the
-        // 2026-05-15 01:06 failure ("relation does not exist" on first chunk
-        // INSERT) had no other plausible explanation we could nail down.
-        foreach ($pgsql->select(
-            "SELECT table_name FROM information_schema.tables
-             WHERE table_schema = 'public' AND table_name LIKE 'locations_tmp_%'
-               AND table_name <> ?",
-            [$tableName],
-        ) as $t) {
-            $pgsql->statement("DROP TABLE IF EXISTS \"{$t->table_name}\"");
-        }
-
-        // Single CREATE UNLOGGED TABLE — the previous CREATE-then-ALTER-SET-UNLOGGED
-        // sequence rewrites the table on disk and is the most plausible trigger
-        // of the catalog-visibility error seen on 2026-05-15 01:06. UNLOGGED is
-        // safe for this temp staging table because we DROP/rename it as part of
-        // the swap before the run ends, so crash-recovery truncation never
-        // matters.
-        $pgsql->statement("DROP TABLE IF EXISTS \"{$tableName}\"");
-        $pgsql->statement("CREATE UNLOGGED TABLE \"{$tableName}\" (
-            id serial PRIMARY KEY,
-            locationid bigint UNIQUE NOT NULL,
-            name text,
-            type location_type,
-            area numeric,
-            location geometry
-        )");
-
-        // Fetch non-excluded polygon locations from MySQL in id-keyed chunks.
-        // ST_AsText output for complex polygons runs to many KB each, and the
-        // full set is ~50k rows — a single buffered SELECT tips past 512M.
-        // chunkById() paginates via LIMIT so peak memory stays at one batch.
-        $locQuery = DB::table('locations')
-            ->leftJoin('locations_excluded as le', 'locations.id', '=', 'le.locationid')
-            ->whereNull('le.locationid')
-            ->whereRaw("ST_Dimension(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END) = 2")
-            ->where('locations.type', '!=', 'Postcode')
-            ->select(
-                'locations.id',
-                'locations.name',
-                'locations.type',
-                DB::raw('ST_AsText(CASE WHEN ourgeometry IS NOT NULL THEN ourgeometry ELSE geometry END) AS geom'),
-            );
-
-        $syncedCount = 0;
-        $locQuery->orderBy('locations.id')->chunkById(500, function ($locations) use (&$syncedCount, $pgsql, $tableName) {
-            foreach ($locations as $loc) {
-                if (! $loc->geom) {
-                    continue;
-                }
-
-                $pgsql->insert(
-                    "INSERT INTO \"{$tableName}\" (locationid, name, type, area, location)
-                     VALUES (?, ?, ?, ST_Area(ST_GeomFromText(?, ?)), ST_GeomFromText(?, ?))",
-                    [$loc->id, $loc->name, $loc->type, $loc->geom, $this->srid, $loc->geom, $this->srid],
-                );
-                $syncedCount++;
-            }
-        }, 'locations.id', 'id');
-
-        // Build index on temp table before swap.
-        $pgsql->statement("CREATE INDEX \"{$indexName}\" ON \"{$tableName}\" USING gist (location)");
-
-        // Atomic swap: rename current to old, temp to current, drop old.
-        $oldTable = "locations_old{$uniq}";
-        $pgsql->statement("ALTER TABLE IF EXISTS locations RENAME TO \"{$oldTable}\"");
-        $pgsql->statement("ALTER TABLE \"{$tableName}\" RENAME TO locations");
-        $pgsql->statement("DROP INDEX IF EXISTS idx_locations_location");
-        $pgsql->statement("ALTER INDEX \"{$indexName}\" RENAME TO idx_locations_location");
-        $pgsql->statement("DROP TABLE IF EXISTS \"{$oldTable}\"");
-
-        Log::info("PostcodeRemapService: synced {$syncedCount} locations to PostgreSQL");
-    }
-
-    /**
-     * Check if the PostgreSQL connection is available.
-     */
-    public function postgresAvailable(): bool
-    {
-        try {
-            DB::connection('pgsql')->getPdo();
-
-            return TRUE;
-        } catch (\Throwable $e) {
-            return FALSE;
-        }
+        Log::warning("PostcodeRemapService: spatial server returned {$response->status()} for lng={$lng} lat={$lat}");
+        return null;
     }
 }
