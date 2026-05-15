@@ -269,6 +269,15 @@ Schedule::command('chats:process-spam')
     ->sendOutputTo(cronLog('chats:process-spam'))
     ->runInBackground();
 
+// Sync data from TrashNothing.
+// This command can be called more frequently if the "kick" API is called by TN,
+// e.g. to reduce latency by requesting an immediate sync after sending a chat message.
+// TRACE: commented out for port testing. Instead called in iznik-server/tn_sync.php
+// Schedule::command('tn:sync')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->runInBackground();
+
 // =============================================================================
 // DISABLED COMMANDS (to be enabled when ready)
 // =============================================================================
@@ -360,7 +369,7 @@ Schedule::command('mail:donations:summary')
 // Runs continuously with internal looping. Handles push notifications and emails.
 Schedule::command('queue:background-tasks --max-iterations=60 --spool')
     ->everyMinute()
-    ->sendOutputTo(cronLog('queue:background-tasks'))
+    ->appendOutputTo(cronLog('queue:background-tasks'))
     ->runInBackground();
 
 // Clean up old sent emails - run daily.
