@@ -106,7 +106,8 @@ export const useMobileStore = defineStore({
             dbg()?.debug('No background push log entries')
           }
         } catch (e) {
-          dbg()?.warn('Failed to read background push log', e.message)
+          // getBackgroundPushLog is not implemented on all Android plugin versions — not actionable
+          dbg()?.debug('Background push log unavailable', e.message)
         }
       }
 
