@@ -11,6 +11,10 @@ export default defineNuxtConfig({
   // target: 'static',
   ssr: false,
   extends: ['../'],
+  // Explicitly declare @nuxt/image — module registration from parent layers can
+  // fail to propagate to the child static build, leaving <NuxtPicture> emitting
+  // no <img> tag at all (image silently missing rather than broken).
+  modules: ['@nuxt/image'],
   sourcemap: { client: true },
   compatibilityDate: '2024-11-26',
   experimental: {

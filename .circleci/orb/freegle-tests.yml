@@ -3223,6 +3223,8 @@ jobs:
             export NODE_OPTIONS="--max-old-space-size=3584"
             export IZNIK_NUXT3_IS_APP=true
             export APP_ENV=development
+            export TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
+            export IMAGE_DELIVERY=https://delivery.ilovefreegle.org
             echo "🔧 Building ModTools debug version"
             cd modtools && npm run generate
             cd ..
