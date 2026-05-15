@@ -455,8 +455,9 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 					message.Textbody = ep.ReplaceAllString(message.Textbody, "***")
 				}
 
-				// Get the paths.
+				// Get the paths and compute AI field.
 				for i, a := range message.MessageAttachments {
+					message.MessageAttachments[i].ComputeAI()
 					if a.Externaluid != "" {
 						message.MessageAttachments[i].Ouruid = a.Externaluid
 						message.MessageAttachments[i].Externalmods = a.Externalmods
@@ -2307,8 +2308,9 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
 	return myid, nil
 }
 
-// applyPatchMessage performs the edit on a message after auth and ID are resolved.
-func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
+// applyPatchMessageCore performs the edit on a message without writing the HTTP response.
+// Returns non-nil on failure. Callers are responsible for writing the success response.
+func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
 	db := database.DBConn
 
 	// Check ownership or mod permission.
@@ -2699,6 +2701,14 @@ func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error
 		}
 	}
 
+	return nil
+}
+
+// applyPatchMessage performs the edit on a message after auth and ID are resolved.
+func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
+	if err := applyPatchMessageCore(c, myid, req); err != nil {
+		return err
+	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
@@ -2766,9 +2776,9 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	var msgID uint64
-	db.Raw("SELECT id FROM messages WHERE tnpostid = ? LIMIT 1", tnpostid).Scan(&msgID)
-	if msgID == 0 {
+	var msgIDs []uint64
+	db.Raw("SELECT id FROM messages WHERE tnpostid = ?", tnpostid).Scan(&msgIDs)
+	if len(msgIDs) == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found for that TN post ID")
 	}
 
@@ -2784,8 +2794,13 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		req.Type = req.Messagetype
 	}
 
-	req.ID = msgID
-	return applyPatchMessage(c, myid, req)
+	for _, msgID := range msgIDs {
+		req.ID = msgID
+		if err := applyPatchMessageCore(c, myid, req); err != nil {
+			return err
+		}
+	}
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
 // DeleteMessageEndpoint handles DELETE /message/:id.
@@ -3202,16 +3217,35 @@ func PostMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
 
-	// Resolve message ID from tnpostid when id is absent.
+	// When tnpostid is provided, apply the action to ALL Freegle messages with that TN post ID.
 	if req.ID == 0 && req.Tnpostid != nil && *req.Tnpostid != "" {
 		db := database.DBConn
-		db.Raw("SELECT id FROM messages WHERE tnpostid = ? LIMIT 1", *req.Tnpostid).Scan(&req.ID)
+		var msgIDs []uint64
+		db.Raw("SELECT id FROM messages WHERE tnpostid = ?", *req.Tnpostid).Scan(&msgIDs)
+		if len(msgIDs) == 0 {
+			return fiber.NewError(fiber.StatusNotFound, "Message not found for that TN post ID")
+		}
+		for i, msgID := range msgIDs {
+			req.ID = msgID
+			if err := dispatchPostMessageAction(c, myid, req); err != nil {
+				if i == 0 {
+					return err
+				}
+				log.Printf("tnpostid %s: failed to apply %s to message %d: %v", *req.Tnpostid, req.Action, msgID, err)
+			}
+		}
+		return nil
 	}
 
 	if req.ID == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "id is required")
 	}
 
+	return dispatchPostMessageAction(c, myid, req)
+}
+
+// dispatchPostMessageAction routes a POST /message action to the correct handler.
+func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	switch req.Action {
 	case "Promise":
 		return handlePromise(c, myid, req)
