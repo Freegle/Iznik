@@ -2159,6 +2159,15 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 		}
 	}
 
+	// Refuse to promote a draft that would land in the group with no subject.
+	// This catches pre-validation drafts created before PUT /message required
+	// item, and any other path that leaves subject empty by submit time.
+	var finalSubject string
+	db.Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&finalSubject)
+	if strings.TrimSpace(finalSubject) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Item is required")
+	}
+
 	// Save deadline and deliverypossible if provided.
 	if req.Deadline != nil && *req.Deadline != "" {
 		db.Exec("UPDATE messages SET deadline = ? WHERE id = ?", *req.Deadline, req.ID)

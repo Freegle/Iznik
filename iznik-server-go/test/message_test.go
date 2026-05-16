@@ -1848,6 +1848,44 @@ func TestJoinAndPostForcePendingFalseDoesNotOverride(t *testing.T) {
 	assert.Equal(t, "Pending", collection, "forcepending=false must not override MODERATED status")
 }
 
+// TestJoinAndPostRejectsEmptyDraft verifies that a draft with no item, no
+// subject and no body — possible for drafts created before PUT /message
+// required item — is rejected at submit time rather than landing in the
+// group as an empty Pending Offer.
+func TestJoinAndPostRejectsEmptyDraft(t *testing.T) {
+	prefix := uniquePrefix("msgmod_jap_empty")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	// Simulate a stale pre-validation draft: empty subject, empty textbody,
+	// no row in messages_items, no locationid.
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', '', '', '', NOW(), NOW(), 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)", msgID, groupID, userID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "JoinAndPost",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode, "Empty draft must not be promotable")
+
+	// Confirm the draft was NOT routed to the group.
+	var msgGroupCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&msgGroupCount)
+	assert.Equal(t, int64(0), msgGroupCount, "Empty draft must not produce a messages_groups row")
+}
+
 // --- Test: PatchMessage ---
 
 func TestPatchMessage(t *testing.T) {

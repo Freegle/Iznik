@@ -3782,7 +3782,12 @@ class IncomingMailServiceTest extends TestCase
         $message = $this->createTestMessage($poster, $group);
 
         $replierEmail = $replier->emails->first()->email;
-        $sharedMessageId = '<race-condition-test@example.com>';
+        // Header form (what the email carries) vs storage form (what
+        // MailParserService normalizes to before writing to `messages`):
+        // the parser strips angle brackets, so the pre-existing row must
+        // store the stripped form for the unique-index race to fire.
+        $headerMessageId = '<race-condition-test@example.com>';
+        $storedMessageId = trim($headerMessageId, '<>');
 
         // Simulate the sibling-process win: a `messages` row with this
         // Message-ID already exists when our handler runs.
@@ -3794,7 +3799,7 @@ class IncomingMailServiceTest extends TestCase
             'envelopefrom' => $replierEmail,
             'envelopeto' => "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org",
             'subject' => 'Re: '.$message->subject,
-            'messageid' => $sharedMessageId,
+            'messageid' => $storedMessageId,
             'message' => 'pre-existing raw',
             'textbody' => 'pre-existing',
         ]);
@@ -3803,7 +3808,7 @@ class IncomingMailServiceTest extends TestCase
             'From' => $replierEmail,
             'To' => "replyto-{$message->id}-{$replier->id}@users.ilovefreegle.org",
             'Subject' => 'Re: '.$message->subject,
-            'Message-ID' => $sharedMessageId,
+            'Message-ID' => $headerMessageId,
         ], 'second-process body');
 
         $parsed = $this->parser->parse(
@@ -3831,7 +3836,7 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals($existingId, $byEmail->msgid);
 
         // No duplicate `messages` row written.
-        $count = DB::table('messages')->where('messageid', $sharedMessageId)->count();
+        $count = DB::table('messages')->where('messageid', $storedMessageId)->count();
         $this->assertEquals(1, $count, 'should not have written a duplicate messages row');
     }
 
