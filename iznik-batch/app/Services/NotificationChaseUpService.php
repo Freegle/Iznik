@@ -7,10 +7,10 @@ use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Notification;
 use App\Models\User;
+use App\Support\SafeMail;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
 class NotificationChaseUpService
 {
@@ -142,13 +142,22 @@ class NotificationChaseUpService
         }
 
         if (! $dryRun) {
-            // Mark as mailed before sending (like V1).
+            // Mark as mailed before sending (like V1). On transient SMTP
+            // failure the notification stays marked as mailed and we accept
+            // losing this one chaseup rather than retry-storming on a flaky
+            // mail-host — matches V1's "fire and move on" behaviour.
             $notifIds = array_column($notifData, 'id');
             DB::table('users_notifications')
                 ->whereIn('id', $notifIds)
                 ->update(['mailed' => 1]);
 
-            Mail::to($email)->send(new ChaseUpMail($user, $notifData, $subject));
+            // SafeMail catches permanent (bad address) and transient (mail-host
+            // hiccup) failures so one bad recipient or one closed connection
+            // doesn't kill the per-user loop above. Without it, the
+            // 2026-05-15 07:31 mail-host timeout aborted the whole chaseup
+            // run — same class of failure we hit in mail:engage and
+            // mail:events-digest.
+            SafeMail::send(new ChaseUpMail($user, $notifData, $subject), $email);
         }
 
         return 1;

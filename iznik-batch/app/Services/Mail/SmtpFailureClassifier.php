@@ -48,7 +48,13 @@ class SmtpFailureClassifier
      */
     private const TRANSIENT_PATTERNS = [
         '/Connection refused/i',
-        '/Connection (?:to|with) [^"]+ timed out/i',
+        // Symfony's TransportException formats the host as `"%s"`, e.g.
+        //   `Connection to "mail-host:25" timed out.`
+        // The previous `[^"]+` required at least one non-quote char between
+        // `to ` and the host, so the regex didn't match and the exception
+        // re-threw — production hit this on 2026-05-15 07:31 and 08:01.
+        // Match the quoted host explicitly.
+        '/Connection (?:to|with) "[^"]+" timed out/i',
         '/Connection could not be established/i',
         '/stream_socket_client\(\): Unable to connect/i',
         '/Connection reset by peer/i',

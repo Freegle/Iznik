@@ -269,6 +269,15 @@ Schedule::command('chats:process-spam')
     ->sendOutputTo(cronLog('chats:process-spam'))
     ->runInBackground();
 
+// Sync data from TrashNothing.
+// This command can be called more frequently if the "kick" API is called by TN,
+// e.g. to reduce latency by requesting an immediate sync after sending a chat message.
+// TRACE: commented out for port testing. Instead called in iznik-server/tn_sync.php
+// Schedule::command('tn:sync')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->runInBackground();
+
 // =============================================================================
 // DISABLED COMMANDS (to be enabled when ready)
 // =============================================================================
@@ -360,7 +369,7 @@ Schedule::command('mail:donations:summary')
 // Runs continuously with internal looping. Handles push notifications and emails.
 Schedule::command('queue:background-tasks --max-iterations=60 --spool')
     ->everyMinute()
-    ->sendOutputTo(cronLog('queue:background-tasks'))
+    ->appendOutputTo(cronLog('queue:background-tasks'))
     ->runInBackground();
 
 // Clean up old sent emails - run daily.
@@ -666,6 +675,14 @@ Schedule::command('locations:fix-skewed')
     ->sendOutputTo(cronLog('locations:fix-skewed'))
     ->runInBackground();
 
+// V1: cron/locations_pgsql (locations_pgsql_update.php + locations_pgsql_map.php)
+// Full sync of MySQL locations to PostgreSQL/PostGIS, then remap postcodes to areas.
+Schedule::command('locations:sync-pgsql')
+    ->dailyAt('01:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('locations:sync-pgsql'))
+    ->runInBackground();
+
 // V1: cron/user_ratings.php
 Schedule::command('users:update-ratings')
     ->everyTenMinutes()
@@ -690,12 +707,23 @@ Schedule::command('groups:check-boundaries')
     ->runInBackground();
 
 // Update group stats: fix repost settings, polyindex, activity/funding, mod counts, stats_outcomes.
-// V1: cron/group_stats.php (daily at 02:00)
-// Note: V1 also generates per-group stats (Stats::generate) and syncs TrashNothing groups — those parts are not migrated here.
+// V1: cron/group_stats.php (daily at 02:00) — metadata-maintenance portion only.
+// The per-day per-type Stats::generate() rows come from stats:generate-daily below.
+// TrashNothing group sync is intentionally not migrated (V1 keyed off TNKEY constant).
 Schedule::command('groups:update-stats')
     ->dailyAt('02:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('groups:update-stats'))
+    ->runInBackground();
+
+// Per-group daily stats (Outcomes, Approved/Spam counts, feedback, breakdowns, replies, weight, ...).
+// V1: cron/group_stats.php Stats::generate(yesterday) loop. Runs after groups:update-stats so the
+// activity/funding rollup it does in the 02:00 job uses today's freshly-written ApprovedMessageCount
+// rows on the NEXT day's run (V1 had the same one-day-stale property).
+Schedule::command('stats:generate-daily')
+    ->dailyAt('02:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stats:generate-daily'))
     ->runInBackground();
 
 // V1: cron/groups_closed.php
@@ -865,6 +893,14 @@ Schedule::command('stories:send-to-central')
     ->weeklyOn(5, '14:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('stories:send-to-central'))
+    ->runInBackground();
+
+// Send the stories newsletter to all eligible Freegle members.
+// V1: cron/stories_newsletter.php (monthly, 12th 23:00)
+Schedule::command('stories:newsletter')
+    ->monthlyOn(12, '23:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stories:newsletter'))
     ->runInBackground();
 
 // =============================================================================

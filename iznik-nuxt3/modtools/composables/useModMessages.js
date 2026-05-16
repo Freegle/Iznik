@@ -67,6 +67,34 @@ const messages = computed(() => {
   if (listingIds.value.size > 0) {
     messages = messages.filter((m) => listingIds.value.has(m.id))
   }
+
+  // Defensive collection filter: a concurrent refetch (e.g. watch(expanded) in
+  // ModMessage.vue) can re-add an approved message to the store with
+  // collection='Approved' after messageStore.approve() already called remove().
+  // listingIds is only reset by a full getMessages(), so the resurrected message
+  // stays in listingIds and would render with the wrong buttons.  Filter it out.
+  //
+  // Only applies to views whose name matches a real messages_groups.collection
+  // value (Pending, PendingOther, Approved, Spam, Rejected). The Edits view
+  // is virtual — its messages are Approved on the group with a pending row
+  // in messages_edits — so a string-equality filter would strip everything.
+  const REAL_COLLECTIONS = ['Pending', 'Approved', 'Spam', 'Rejected']
+  if (collection.value && REAL_COLLECTIONS.includes(collection.value)) {
+    const allowed =
+      collection.value === 'Pending'
+        ? ['Pending', 'PendingOther']
+        : [collection.value]
+    const contextGid = groupid.value ? parseInt(groupid.value) : null
+    messages = messages.filter((m) => {
+      if (!m.groups?.length) return true
+      if (contextGid) {
+        const g = m.groups.find((g) => parseInt(g.groupid) === contextGid)
+        return g ? allowed.includes(g.collection) : true
+      }
+      return m.groups.some((g) => allowed.includes(g.collection))
+    })
+  }
+
   // console.log('---messages groupid:', groupid.value, 'messages:', messages.length)
   if (listingIdOrder.value.length > 0) {
     // Vector search: sort by score order (position in listingIdOrder)

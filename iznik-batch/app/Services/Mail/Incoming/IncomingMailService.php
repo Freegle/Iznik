@@ -1919,7 +1919,15 @@ class IncomingMailService
             // Ensure we have a message ID for the unique key constraint.
             $messageId = $email->messageId ?? (microtime(TRUE).'@'.config('freegle.mail.user_domain', 'users.ilovefreegle.org'));
 
-            $msgId = DB::table('messages')->insertGetId([
+            // Use insertOrIgnore: if the email was already stored by a
+            // concurrent process (same Message-ID from a duplicate webhook /
+            // Postfix retry), insertOrIgnore is a clean no-op instead of
+            // racing on the `message-id` unique index. We were seeing 16/day
+            // deadlock-retry-exhausted ERRORs from concurrent insertGetId()
+            // calls hitting the same key — InnoDB picks a victim, retries
+            // re-synchronize, exhaust 3 attempts, throw. insertOrIgnore
+            // serializes through the index without that contention.
+            $inserted = DB::table('messages')->insertOrIgnore([
                 'date' => now(),
                 'source' => Message::SOURCE_EMAIL,
                 'sourceheader' => $this->determineSourceHeader($email),
@@ -1935,11 +1943,27 @@ class IncomingMailService
                 'textbody' => $email->textBody,
             ]);
 
-            if ($msgId) {
+            if ($inserted > 0) {
+                $msgId = DB::getPdo()->lastInsertId();
                 DB::table('chat_messages_byemail')->insert([
                     'chatmsgid' => $chatMsg->id,
                     'msgid' => $msgId,
                 ]);
+            } else {
+                // Sibling process already stored this raw email — look up
+                // its msgid so this chat message still gets the moderator-
+                // visible link. Without the lookup the chat message exists
+                // but ModTools wouldn't be able to show the original SMTP
+                // source.
+                $existingId = DB::table('messages')
+                    ->where('messageid', $messageId)
+                    ->value('id');
+                if ($existingId) {
+                    DB::table('chat_messages_byemail')->insertOrIgnore([
+                        'chatmsgid' => $chatMsg->id,
+                        'msgid' => $existingId,
+                    ]);
+                }
             }
         } catch (\Exception $e) {
             // Non-fatal - don't fail chat message creation if email storage fails.

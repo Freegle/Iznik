@@ -933,7 +933,7 @@ func SetupRoutes(app *fiber.App) {
 		// Message Actions (POST)
 		// @Router /message [post]
 		// @Summary Message actions
-		// @Description Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View
+		// @Description Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View, Approve, Reject, Delete, Spam, Hold, Release, ApproveEdits, RevertEdits, PartnerConsent, Reply, JoinAndPost, Move, BackToPending, RejectToDraft. When tnpostid is supplied instead of id, the action is applied to ALL Freegle messages sharing that TN post ID.
 		// @Tags message
 		// @Accept json
 		// @Produce json
@@ -943,8 +943,8 @@ func SetupRoutes(app *fiber.App) {
 		rg.Patch("/message", message.PatchMessage)
 
 		// @Router /message/tn/{tnpostid} [patch]
-		// @Summary Update a message by TN post ID
-		// @Description Edit a message using its Trash Nothing post ID. For partner integrations when the Freegle message ID is unknown.
+		// @Summary Update all messages by TN post ID
+		// @Description Edit ALL Freegle messages that share the given Trash Nothing post ID. Used by partner integrations when a TN post is submitted to multiple Freegle groups.
 		// @Tags message
 		// @Accept json
 		// @Produce json

@@ -117,8 +117,12 @@ class PushNotificationService
                     'error' => $errorMsg,
                 ]);
 
-                // Remove invalid/unregistered tokens
+                // Remove permanently invalid tokens (UNREGISTERED = app uninstalled,
+                // NOT_FOUND = instance deleted, SENDER_ID_MISMATCH = wrong Firebase project)
                 if (str_contains($errorMsg, 'UNREGISTERED') ||
+                    str_contains($errorMsg, 'NOT_FOUND') ||
+                    str_contains($errorMsg, 'SENDER_ID_MISMATCH') ||
+                    str_contains($errorMsg, 'Requested entity was not found') ||
                     str_contains($errorMsg, 'Invalid registration token') ||
                     str_contains($errorMsg, 'not a valid FCM registration token')) {
                     DB::table('users_push_notifications')
@@ -282,6 +286,7 @@ class PushNotificationService
                 'modtools' => '1',
                 'sound' => 'default',
                 'route' => '/modtools',
+                'channel_id' => 'modtools',
             ];
         }
 
@@ -301,6 +306,7 @@ class PushNotificationService
             'modtools' => '1',
             'sound' => 'default',
             'route' => '/modtools/messages/pending',
+            'channel_id' => 'modtools',
             // Fixed notId per user so each new notification replaces the previous one
             // on Android instead of stacking multiple "N pending" badges.
             'notId' => (string) $userId,
@@ -349,6 +355,7 @@ class PushNotificationService
             'route' => $modtools ? '/modtools' : '/',
             'notId' => (string) $userId,
             'test' => '1',
+            'channel_id' => $modtools ? 'modtools' : 'chat_messages',
         ];
 
         $count = 0;
@@ -416,9 +423,10 @@ class PushNotificationService
 
             $message = CloudMessage::fromArray($androidMessage);
 
+            $isModtools = ($payload['channel_id'] ?? '') === 'modtools';
             $message = $message->withAndroidConfig([
                 'ttl' => '3600s',
-                'priority' => $forceVisible ? 'high' : 'normal',
+                'priority' => ($forceVisible || $isModtools) ? 'high' : 'normal',
             ]);
         } else {
             // iOS: include notification block for display

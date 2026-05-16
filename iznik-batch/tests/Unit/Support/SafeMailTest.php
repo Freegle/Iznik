@@ -89,6 +89,32 @@ class SafeMailTest extends TestCase
     }
 
     /**
+     * The "timed out" variant of the same TransportException class —
+     * production hit this on 2026-05-15 07:31/08:01 with the actual message
+     * `Connection to "mail-host:25" timed out.` and the old `[^"]+` regex
+     * didn't match the quoted host, so SafeMail re-threw.
+     */
+    public function test_transient_failure_timeout_variant_is_caught(): void
+    {
+        $user = $this->createTestUser();
+        $email = $user->emails->first()->email;
+        $emailId = $user->emails->first()->id;
+        DB::table('users_emails')->where('id', $emailId)->update(['bounced' => null]);
+
+        Mail::shouldReceive('to')->once()->andReturnSelf();
+        Mail::shouldReceive('send')->once()->andThrow(new SymfonyTransportException(
+            'Connection to "mail-host:25" timed out.'
+        ));
+
+        $delivered = SafeMail::send($this->makeFakeMailable(), $email);
+
+        $this->assertFalse($delivered, 'timed-out variant must be classified transient, not re-thrown');
+
+        $bounced = DB::table('users_emails')->where('id', $emailId)->value('bounced');
+        $this->assertNull($bounced, 'transient timeout must NOT mark email as bouncing');
+    }
+
+    /**
      * Anything not classified as permanent OR transient must still propagate —
      * unknown failure modes should be loud, not silently swallowed.
      */
