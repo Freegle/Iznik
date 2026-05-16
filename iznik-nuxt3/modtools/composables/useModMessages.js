@@ -73,7 +73,13 @@ const messages = computed(() => {
   // collection='Approved' after messageStore.approve() already called remove().
   // listingIds is only reset by a full getMessages(), so the resurrected message
   // stays in listingIds and would render with the wrong buttons.  Filter it out.
-  if (collection.value) {
+  //
+  // Only applies to views whose name matches a real messages_groups.collection
+  // value (Pending, PendingOther, Approved, Spam, Rejected). The Edits view
+  // is virtual — its messages are Approved on the group with a pending row
+  // in messages_edits — so a string-equality filter would strip everything.
+  const REAL_COLLECTIONS = ['Pending', 'Approved', 'Spam', 'Rejected']
+  if (collection.value && REAL_COLLECTIONS.includes(collection.value)) {
     const allowed =
       collection.value === 'Pending'
         ? ['Pending', 'PendingOther']
