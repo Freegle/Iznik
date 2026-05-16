@@ -8056,3 +8056,65 @@ func TestMessageAttachmentHasAIField(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, true, firstAttach["ai"], "AI attachment should have ai:true field")
 }
+
+// Anonymous GET /api/message/:id masks 4+ digit sequences and email addresses
+// in the body (defence against scraping phone numbers / contacts). A valid
+// partner key is a trusted integration (e.g. Trash Nothing) and must see the
+// full body so messages can be round-tripped between platforms.
+func TestMessagePartnerKeyBypassesBodyMasking(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("msg_partner_mask")
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" Mask Test", 55.0, -3.0)
+
+	// Set a body that exercises both masking rules — a phone-like 11-digit
+	// number and an email address.
+	body := "Call me on 07700900123 or email someone@example.com"
+	db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", body, body, msgID)
+
+	// Register a partner key.
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+	})
+
+	// 1. Anonymous request: body must be masked.
+	resp, err := getApp().Test(httptest.NewRequest("GET", "/api/message/"+fmt.Sprint(msgID), nil), -1)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var anon map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&anon))
+	anonBody, _ := anon["textbody"].(string)
+	assert.Contains(t, anonBody, "***",
+		"Anonymous caller must see masked digits/emails")
+	assert.NotContains(t, anonBody, "07700900123",
+		"Anonymous caller must not see raw phone number")
+	assert.NotContains(t, anonBody, "someone@example.com",
+		"Anonymous caller must not see raw email address")
+
+	// 2. Partner request: body must be returned unmasked.
+	resp, err = getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/message/%d?partner=%s", msgID, partnerKey), nil), -1)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var partner map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&partner))
+	partnerBody, _ := partner["textbody"].(string)
+	assert.Equal(t, body, partnerBody,
+		"Valid partner key must return the textbody verbatim — no masking")
+
+	// 3. Invalid partner key: must still mask (we don't fail the request,
+	// we just treat the caller as anonymous).
+	resp, err = getApp().Test(httptest.NewRequest("GET",
+		"/api/message/"+fmt.Sprint(msgID)+"?partner=not_a_real_key_xyz", nil), -1)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var bogus map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&bogus))
+	bogusBody, _ := bogus["textbody"].(string)
+	assert.NotContains(t, bogusBody, "07700900123",
+		"Invalid partner key must not bypass masking")
+}

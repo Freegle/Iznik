@@ -208,9 +208,15 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 func GetMessages(c *fiber.Ctx) error {
 	ids := strings.Split(c.Params("ids"), ",")
 	myid := user.WhoAmI(c)
+	isPartner := false
+	if key := c.Query("partner"); key != "" {
+		if _, _, _, err := user.ValidatePartnerKey(database.DBConn, key); err == nil {
+			isPartner = true
+		}
+	}
 
 	if len(ids) < 20 {
-		messages := GetMessagesByIds(myid, ids)
+		messages := GetMessagesByIds(myid, ids, isPartner)
 
 		if len(ids) == 1 {
 			if len(messages) == 1 {
@@ -226,7 +232,7 @@ func GetMessages(c *fiber.Ctx) error {
 	}
 }
 
-func GetMessagesByIds(myid uint64, ids []string) []Message {
+func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	db := database.DBConn
 	archiveDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
 	imageDomain := os.Getenv("IMAGE_DOMAIN")
@@ -449,7 +455,11 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 					}
 				}
 
-				if myid == 0 {
+				// Strip potential phone numbers and email addresses for anonymous
+				// callers. Skip when authenticated by a valid partner key — partners
+				// are trusted integrations (e.g. Trash Nothing) that need the full
+				// body to round-trip messages between platforms.
+				if myid == 0 && !isPartner {
 					// Remove confidential info.
 					message.Textbody = er.ReplaceAllString(message.Textbody, "***@***.com")
 					message.Textbody = ep.ReplaceAllString(message.Textbody, "***")

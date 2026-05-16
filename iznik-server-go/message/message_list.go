@@ -557,12 +557,18 @@ func ListMessagesMT(c *fiber.Ctx) error {
 func GetMessagesWithHistory(c *fiber.Ctx) error {
 	ids := strings.Split(c.Params("ids"), ",")
 	myid := user.WhoAmI(c)
+	isPartner := false
+	if key := c.Query("partner"); key != "" {
+		if _, _, _, err := user.ValidatePartnerKey(database.DBConn, key); err == nil {
+			isPartner = true
+		}
+	}
 
 	if len(ids) >= 20 {
 		return fiber.NewError(fiber.StatusBadRequest, "Steady on")
 	}
 
-	messages := GetMessagesByIds(myid, ids)
+	messages := GetMessagesByIds(myid, ids, isPartner)
 
 	if len(ids) == 1 {
 		if len(messages) == 1 {
