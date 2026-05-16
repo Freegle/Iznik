@@ -1178,6 +1178,13 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
 		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
 
+	// Record in memberships_history with processingrequired=1 so the
+	// Laravel batch (memberships:process) sends the group welcome email,
+	// runs spam checks, and applies review flags. Without this row the
+	// cron has nothing to do and welcomes are silently dropped.
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
+		userid, groupid, utils.COLLECTION_APPROVED)
+
 	logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, userid, "via partner")
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
@@ -1213,6 +1220,13 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
 
 	if result.RowsAffected > 0 {
+		// Record in memberships_history with processingrequired=1 so the
+		// Laravel batch (memberships:process) sends the group welcome email,
+		// runs spam checks, and applies review flags. Without this row the
+		// cron has nothing to do and welcomes are silently dropped.
+		db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
+			userid, groupid, utils.COLLECTION_APPROVED)
+
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, byuser, "")
 	}
 
