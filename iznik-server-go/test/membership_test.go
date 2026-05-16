@@ -60,6 +60,42 @@ func TestPutMembershipsJoinGroup(t *testing.T) {
 	assert.Equal(t, int64(1), logCount, "PUT /memberships should log a Joined event")
 }
 
+// TestPutMembershipsJoinGroupQueuesWelcome verifies that a new JWT-authed join
+// inserts a memberships_history row with processingrequired=1, which is what
+// the Laravel batch (memberships:process) picks up to send the per-group
+// welcome email, run spam checks, and apply review flags.
+//
+// Regression: between the memberships_processing cron's PHP→Laravel migration
+// (2026-05-08) and the membership.go fix (2026-05-16), addMemberToGroup
+// inserted into memberships but not memberships_history, so the cron found
+// 0 rows every minute and no group welcomes went out for ~8 days.
+func TestPutMembershipsJoinGroupQueuesWelcome(t *testing.T) {
+	prefix := uniquePrefix("mem_join_welcome")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+
+	body := map[string]interface{}{
+		"userid":  userID,
+		"groupid": groupID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/memberships?jwt=%s", token)
+	req := httptest.NewRequest("PUT", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// memberships_history row exists with processingrequired=1.
+	var pendingCount int64
+	db.Raw("SELECT COUNT(*) FROM memberships_history WHERE userid = ? AND groupid = ? AND collection = 'Approved' AND processingrequired = 1",
+		userID, groupID).Scan(&pendingCount)
+	assert.Equal(t, int64(1), pendingCount, "join must queue a memberships_history row with processingrequired=1 so the batch sends the welcome email")
+}
+
 func TestPutMembershipsGoBannedCannotRejoin(t *testing.T) {
 	// Regression: banned member should not be able to rejoin via PUT /memberships.
 	// V1 approach: ban is stored in users_banned only (no memberships row).
@@ -3379,6 +3415,13 @@ func TestPutMembershipsPartnerAutoCreate(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
 		uint64(fduserid.(float64)), groupID).Scan(&count)
 	assert.Equal(t, int64(1), count)
+
+	// memberships_history row exists with processingrequired=1 so the batch
+	// will send the welcome email — same regression as the JWT-join path.
+	var pendingCount int64
+	db.Raw("SELECT COUNT(*) FROM memberships_history WHERE userid = ? AND groupid = ? AND collection = 'Approved' AND processingrequired = 1",
+		uint64(fduserid.(float64)), groupID).Scan(&pendingCount)
+	assert.Equal(t, int64(1), pendingCount, "partner join must queue a memberships_history row with processingrequired=1")
 }
 
 func TestPutMembershipsPartnerWrongDomain(t *testing.T) {
