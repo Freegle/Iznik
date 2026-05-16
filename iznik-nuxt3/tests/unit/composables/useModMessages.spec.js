@@ -518,4 +518,32 @@ describe('useModMessages collection filter (approve-race defence)', () => {
 
     expect(messages.value.map((m) => m.id)).toEqual([])
   })
+
+  it('does not strip Approved-on-group messages when listing the Edit view', async () => {
+    // The Edit view is virtual: an edited message stays Approved on its
+    // group, with a pending row in messages_edits. The defensive filter
+    // would compare 'Edit' against the group's 'Approved' collection and
+    // strip every result — breaking the moderator edits page.
+    const msg = {
+      id: 1,
+      arrival: '2026-01-05',
+      groups: [
+        { groupid: 10, arrival: '2026-01-05', collection: 'Approved' },
+      ],
+    }
+
+    mockGetByGroup.mockReturnValue([msg])
+    mockAll.value = [msg]
+    mockFetchMessagesMT.mockResolvedValue([1])
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { getMessages, collection, groupid, messages } = setupModMessages(true)
+    collection.value = 'Edit'
+    groupid.value = 10
+    await getMessages()
+
+    expect(messages.value.map((m) => m.id)).toEqual([1])
+  })
 })
