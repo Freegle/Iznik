@@ -401,6 +401,34 @@ class PushNotificationService
     }
 
     /**
+     * Build the array passed to CloudMessage::fromArray for an Android push.
+     *
+     * Extracted so we can assert on the wire-level structure in tests without
+     * standing up a Firebase mock. Adds a `notification` block when the push
+     * is for ModTools or has been explicitly marked forceVisible — otherwise
+     * FCM hands the data-only message to the app's listener and it never
+     * appears in the system tray.
+     */
+    protected function buildAndroidFcmMessage(string $token, array $payload, bool $forceVisible): array
+    {
+        $isModtools = ($payload['channel_id'] ?? '') === 'modtools';
+
+        $androidMessage = [
+            'token' => $token,
+            'data' => $payload,
+        ];
+
+        if (($forceVisible || $isModtools) && ! empty($payload['title'])) {
+            $androidMessage['notification'] = [
+                'title' => $payload['title'],
+                'body' => $payload['message'] ?: $payload['title'],
+            ];
+        }
+
+        return $androidMessage;
+    }
+
+    /**
      * Send FCM notification to a device.
      *
      * When $forceVisible is true, includes a notification block so the push appears in the
@@ -409,21 +437,11 @@ class PushNotificationService
     private function sendFcm(int $userId, string $type, string $token, array $payload, bool $forceVisible = false): void
     {
         if ($type === self::PUSH_FCM_ANDROID) {
-            $androidMessage = [
-                'token' => $token,
-                'data' => $payload,
-            ];
+            $isModtools = ($payload['channel_id'] ?? '') === 'modtools';
 
-            if ($forceVisible && ! empty($payload['title'])) {
-                $androidMessage['notification'] = [
-                    'title' => $payload['title'],
-                    'body' => $payload['message'] ?: $payload['title'],
-                ];
-            }
-
+            $androidMessage = $this->buildAndroidFcmMessage($token, $payload, $forceVisible);
             $message = CloudMessage::fromArray($androidMessage);
 
-            $isModtools = ($payload['channel_id'] ?? '') === 'modtools';
             $message = $message->withAndroidConfig([
                 'ttl' => '3600s',
                 'priority' => ($forceVisible || $isModtools) ? 'high' : 'normal',
