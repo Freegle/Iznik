@@ -85,7 +85,7 @@ func TestMessages(t *testing.T) {
 
 	// Get the message as the sender
 	midArray := []string{fmt.Sprint(mid)}
-	msgDetails := message.GetMessagesByIds(userID, midArray)[0]
+	msgDetails := message.GetMessagesByIds(userID, midArray, false)[0]
 	assert.Equal(t, mid, msgDetails.ID)
 }
 
