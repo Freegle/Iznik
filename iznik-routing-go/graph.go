@@ -33,10 +33,33 @@ type Edge struct {
 	Seconds [3]float32 // walk, cycle, drive travel time in seconds; -1 = not usable
 }
 
+// gridRes is the grid cell size in degrees (~1km per cell at UK latitudes).
+const gridRes = 0.01
+
+// Grid is a 2D spatial index for fast nearest-node lookup.
+type Grid struct {
+	cells map[[2]int16][]NodeID
+}
+
+func newGrid() *Grid {
+	return &Grid{cells: make(map[[2]int16][]NodeID, 200_000)}
+}
+
+func (gr *Grid) add(lat, lng float64, id NodeID) {
+	key := [2]int16{int16(lat / gridRes), int16(lng / gridRes)}
+	gr.cells[key] = append(gr.cells[key], id)
+}
+
+func (gr *Grid) get(lat, lng float64) []NodeID {
+	key := [2]int16{int16(lat / gridRes), int16(lng / gridRes)}
+	return gr.cells[key]
+}
+
 // Graph is an in-memory road network.
 type Graph struct {
 	Nodes map[NodeID]Node
 	Edges map[NodeID][]Edge
+	Grid  *Grid
 }
 
 // speed in m/s for each highway type × mode.
@@ -158,6 +181,12 @@ func BuildGraph(pbfPath string) (*Graph, error) {
 				g.Edges[to] = append(g.Edges[to], Edge{To: from, Seconds: secs})
 			}
 		}
+	}
+
+	// Build spatial grid for O(1) nearest-node lookup.
+	g.Grid = newGrid()
+	for id, n := range g.Nodes {
+		g.Grid.add(n.Lat, n.Lng, id)
 	}
 
 	return g, nil
