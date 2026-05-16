@@ -1309,8 +1309,13 @@ func DeleteMemberships(c *fiber.Ctx) error {
 	result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
 		userid, req.Groupid, utils.COLLECTION_APPROVED)
 
-	if result.RowsAffected == 0 {
-		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	if result.RowsAffected > 0 {
+		// V1 parity: User::removeMembership() always logs Group/Left when the
+		// DELETE affects rows (User.php:1085-1095). Both self-leave and
+		// mod-removes-other need this — otherwise the moderator audit views
+		// (which query logs for type=Group/subtype=Left) lose every voluntary
+		// leave and every non-ban moderator removal.
+		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, userid, myid, "")
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1348,8 +1353,15 @@ func deleteMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) erro
 	}
 
 	// Remove the membership.
-	db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
+	result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
 		userid, groupid, utils.COLLECTION_APPROVED)
+
+	if result.RowsAffected > 0 {
+		// V1 parity: User::removeMembership() always logs Group/Left when the
+		// DELETE affects rows. byuser = the leaving user (no session in the
+		// partner path).
+		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, groupid, userid, userid, "via partner")
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid})
 }

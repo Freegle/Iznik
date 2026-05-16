@@ -270,6 +270,15 @@ func TestDeleteMembershipsLeaveGroup(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
 		userID, groupID).Scan(&count)
 	assert.Equal(t, int64(0), count)
+
+	// V1 parity: User::removeMembership logs Group/Left whenever the DELETE
+	// affects rows. Without this log, moderator audit views (which query
+	// type=Group/subtype=Left) lose every voluntary leave.
+	leftLog := findLog(db, "Group", "Left", userID)
+	assert.NotNil(t, leftLog, "self-leave must log Group/Left so audit/stats can see it")
+	if leftLog != nil {
+		assert.Equal(t, groupID, *leftLog.Groupid)
+	}
 }
 
 func TestDeleteMembershipsNotMember(t *testing.T) {
@@ -351,6 +360,12 @@ func TestDeleteMembershipsModRemovesMember(t *testing.T) {
 
 	// Verify log entry.
 	assert.NotNil(t, findLog(db, "User", "Deleted", memberID), "Mod removing member should create a Deleted log entry")
+
+	// V1 parity: User::removeMembership also logs Group/Left for the removed
+	// user when the DELETE affects rows. Mod audit views key off Group/Left,
+	// so the User/Deleted entry alone is not enough.
+	leftLog := findLog(db, "Group", "Left", memberID)
+	assert.NotNil(t, leftLog, "Mod removing member must also log Group/Left for audit parity with V1")
 }
 
 func TestPatchMembershipsNotLoggedIn(t *testing.T) {
@@ -3477,6 +3492,16 @@ func TestDeleteMembershipsPartnerUnsubscribe(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?",
 		userID, groupID).Scan(&count)
 	assert.Equal(t, int64(0), count)
+
+	// V1 parity: partner-driven unsubscribe must also log Group/Left.
+	leftLog := findLog(db, "Group", "Left", userID)
+	assert.NotNil(t, leftLog, "partner unsubscribe must log Group/Left for audit parity with V1")
+	if leftLog != nil {
+		assert.NotNil(t, leftLog.Text)
+		if leftLog.Text != nil {
+			assert.Equal(t, "via partner", *leftLog.Text)
+		}
+	}
 }
 
 func TestDeleteMembershipsPartnerUserNotFound(t *testing.T) {
