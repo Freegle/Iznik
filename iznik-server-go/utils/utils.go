@@ -108,7 +108,11 @@ const SPAM_COLLECTION_SPAMMER = "Spammer"
 const SPAM_COLLECTION_PENDING_ADD = "PendingAdd"
 const SPAM_COLLECTION_PENDING_REMOVE = "PendingRemove"
 
-const EMAIL_REGEXP = "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\b"
+// `\\b` is the regex engine's word-boundary. A single `\b` in a normal Go
+// string literal is the backspace character (0x08), which would never match
+// trailing text — leaving email masking inert. Use `\\b` so the regex engine
+// receives `\b` and anonymous callers see emails masked as intended.
+const EMAIL_REGEXP = "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b"
 const PHONE_REGEXP = "[0-9]{4,}"
 const TN_REGEXP = "^([\\s\\S]*)-g[0-9]+$"
 

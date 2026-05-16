@@ -294,4 +294,92 @@ class PushNotificationServiceTest extends TestCase
 
         $this->assertEquals(0, $count, 'Non-pending volunteering op must not count towards badge');
     }
+
+    /**
+     * ModTools Android pushes must include a `notification` block.
+     *
+     * Without it, FCM hands a data-only push to the app's listener and the
+     * notification never appears in the system tray — the bug that made
+     * real mod-work pushes invisible while the forceVisible test push worked.
+     */
+    public function test_buildAndroidFcmMessage_includes_notification_block_for_modtools(): void
+    {
+        $payload = [
+            'title' => '3 messages pending',
+            'message' => '3 pending',
+            'channel_id' => 'modtools',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok-mt', $payload, false);
+
+        $this->assertArrayHasKey('notification', $arr,
+            'ModTools Android push must include a notification block so Android raises it in the tray');
+        $this->assertSame('3 messages pending', $arr['notification']['title']);
+        $this->assertSame('3 pending', $arr['notification']['body']);
+        $this->assertSame('tok-mt', $arr['token']);
+        $this->assertSame($payload, $arr['data'],
+            'Existing data payload (channel_id, badge, etc.) must still be present');
+    }
+
+    /**
+     * Non-modtools Android pushes without forceVisible stay data-only.
+     *
+     * This protects the user-app chat path (notifyIndividualMessages) which
+     * relies on data-only messages with action buttons built by the app.
+     */
+    public function test_buildAndroidFcmMessage_omits_notification_block_for_non_modtools(): void
+    {
+        $payload = [
+            'title' => 'New chat message',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok-chat', $payload, false);
+
+        $this->assertArrayNotHasKey('notification', $arr,
+            'Non-modtools push (no forceVisible) must remain data-only');
+    }
+
+    /**
+     * forceVisible (used by the test-push command) always adds the block,
+     * regardless of channel.
+     */
+    public function test_buildAndroidFcmMessage_forceVisible_adds_notification_block(): void
+    {
+        $payload = [
+            'title' => 'Test',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok', $payload, true);
+
+        $this->assertArrayHasKey('notification', $arr);
+    }
+
+    /**
+     * Empty-title payload (e.g. zero-count modtools push to clear the badge)
+     * must NOT add a notification block — we don't want an empty tray entry.
+     */
+    public function test_buildAndroidFcmMessage_skips_notification_block_when_title_empty(): void
+    {
+        $payload = [
+            'title' => '',
+            'message' => '',
+            'channel_id' => 'modtools',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok', $payload, false);
+
+        $this->assertArrayNotHasKey('notification', $arr,
+            'Zero-count clear-badge pushes have empty title and must not show in the tray');
+    }
+
+    private function invokeBuildAndroidFcmMessage(string $token, array $payload, bool $forceVisible): array
+    {
+        $method = new \ReflectionMethod($this->service, 'buildAndroidFcmMessage');
+        $method->setAccessible(true);
+        return $method->invoke($this->service, $token, $payload, $forceVisible);
+    }
 }
