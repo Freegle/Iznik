@@ -31,11 +31,11 @@ func (q *pq) Pop() interface{}   { old := *q; n := len(old); it := old[n-1]; *q 
 func modeMaxSpeed(mode Mode) float64 {
 	switch mode {
 	case Walk:
-		return 3.0 // brisk walk
+		return 3.0  // brisk walk (1.4 m/s typical + some margin)
 	case Cycle:
-		return 15.0 // fast cycle
+		return 12.0 // fast cycle
 	default:
-		return 40.0 // ~140 km/h, above any legal UK road speed
+		return 32.0 // ~115 km/h — above 70mph (31.3 m/s) national speed limit
 	}
 }
 
