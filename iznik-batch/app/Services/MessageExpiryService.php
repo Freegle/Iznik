@@ -199,7 +199,6 @@ WHERE ms.successful = 0
           WHEN 'Offer' THEN COALESCE(JSON_EXTRACT(g.settings, '$.reposts.offer')  + 0, 3)
                           * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 10) + 1)
           ELSE          COALESCE(JSON_EXTRACT(g.settings, '$.reposts.wanted') + 0, 14)
-                          * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 10) + 1)
         END
       )
       AND NOT EXISTS (
