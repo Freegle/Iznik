@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import ProfileSection from '~/components/settings/ProfileSection.vue'
 
 const { mockMe, mockMyid } = vi.hoisted(() => {
@@ -598,6 +598,35 @@ describe('ProfileSection', () => {
       wrapper.vm.uploading = true
       await wrapper.vm.$nextTick()
       expect(wrapper.findAll('.rotate-btn').length).toBe(0)
+    })
+  })
+
+  // AssertFlip test for bug #9679 — profile picture change not persisting in ModTools.
+  // Fails on buggy code; passes after the fix adds saveAndGet({ profileid }) to the watcher.
+  describe('profile photo upload - AssertFlip (#9679)', () => {
+    it('calls saveAndGet with the new profileid when OurUploader completes an upload', async () => {
+      mockImagePost.mockResolvedValue({
+        id: 999,
+        url: '/new-profile.jpg',
+        uid: 'freegletusd-new-uid',
+      })
+      mockFetchMe.mockResolvedValue(undefined)
+
+      const wrapper = createWrapper()
+
+      // Simulate OurUploader completing an upload and writing to currentAtts
+      wrapper.vm.currentAtts = [
+        {
+          id: 999,
+          path: '/new-profile.jpg',
+          ouruid: 'freegletusd-new-uid',
+          externalmods: {},
+        },
+      ]
+      await flushPromises()
+
+      // The watcher must persist the new attachment ID to the user record via PATCH /user
+      expect(mockSaveAndGet).toHaveBeenCalledWith({ profileid: 999 })
     })
   })
 })
