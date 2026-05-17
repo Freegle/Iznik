@@ -1,3 +1,4 @@
 testdata/*.pbf
 testdata/*.osm
 routing-server
+data/

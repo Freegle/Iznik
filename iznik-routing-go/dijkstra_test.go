@@ -11,7 +11,7 @@ func getBristolGraph(t *testing.T) *Graph {
 	if bristolGraph != nil {
 		return bristolGraph
 	}
-	g, err := BuildGraph(bristolPBF)
+	g, err := BuildGraph(bristolPBF, nil)
 	if err != nil {
 		t.Fatalf("BuildGraph: %v", err)
 	}
@@ -21,7 +21,6 @@ func getBristolGraph(t *testing.T) *Graph {
 
 func TestIsochrone_Walk15min(t *testing.T) {
 	g := getBristolGraph(t)
-	// Bristol city centre
 	result := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
 
 	if len(result.ReachedNodes) < 100 {
@@ -29,7 +28,6 @@ func TestIsochrone_Walk15min(t *testing.T) {
 	}
 	t.Logf("15-min walk: %d nodes reachable", len(result.ReachedNodes))
 
-	// All returned times must be ≤ limit
 	for id, secs := range result.ReachedNodes {
 		if secs > 15*60+1 {
 			t.Errorf("node %d has time %f > limit", id, secs)
@@ -83,13 +81,14 @@ func TestNearestNode_CloseToTemplateMeads(t *testing.T) {
 	g := getBristolGraph(t)
 	// Bristol Temple Meads station
 	id := nearestNodeForMode(g, 51.4491, -2.5832, Walk)
-	if id == 0 {
-		t.Fatal("nearestNode returned 0")
+	if id == noNode {
+		t.Fatal("nearestNode returned noNode")
 	}
 	n := g.Nodes[id]
-	d := haversineM(51.4491, -2.5832, n.Lat, n.Lng)
+	d := haversineM(51.4491, -2.5832, float64(n.Lat), float64(n.Lng))
 	if d > 200 {
 		t.Errorf("nearest node is %fm away from query, expected <200m", d)
 	}
-	t.Logf("nearest node to Temple Meads: id=%d lat=%.5f lng=%.5f dist=%.0fm", id, n.Lat, n.Lng, d)
+	t.Logf("nearest node to Temple Meads: id=%d lat=%.5f lng=%.5f dist=%.0fm",
+		id, n.Lat, n.Lng, d)
 }

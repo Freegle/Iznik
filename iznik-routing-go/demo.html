@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Freegle Fairness Isochrone Explorer</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+#map { position: absolute; inset: 0; }
+
+/* ── Control panel ─────────────────────────────────────────────────── */
+#panel {
+  position: absolute; top: 10px; right: 10px;
+  background: #fff; border-radius: 10px;
+  box-shadow: 0 3px 12px rgba(0,0,0,.25);
+  width: 290px; z-index: 1000; overflow: hidden;
+}
+#panel-header {
+  background: #e8380d; color: #fff; padding: 12px 16px;
+  font-weight: 700; font-size: 15px; letter-spacing: .3px;
+  display: flex; align-items: center; gap: 8px;
+}
+#panel-header img { width: 24px; height: 24px; border-radius: 4px; }
+#panel-body { padding: 14px 16px 16px; }
+
+/* Search */
+#search-wrap { position: relative; margin-bottom: 12px; }
+#search-box {
+  width: 100%; padding: 8px 10px; border: 1px solid #ccc;
+  border-radius: 6px; font-size: 13px; outline: none;
+}
+#search-box:focus { border-color: #e8380d; }
+#search-results {
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: #fff; border: 1px solid #ccc; border-top: none;
+  border-radius: 0 0 6px 6px; list-style: none;
+  margin: 0; padding: 0; z-index: 10; max-height: 180px;
+  overflow-y: auto; box-shadow: 0 4px 8px rgba(0,0,0,.1);
+}
+#search-results li {
+  padding: 7px 10px; cursor: pointer; font-size: 12px;
+  border-bottom: 1px solid #f0f0f0; line-height: 1.3;
+}
+#search-results li:hover { background: #fff5f3; }
+#search-results li:last-child { border-bottom: none; }
+
+/* Mode buttons */
+.mode-row { display: flex; gap: 6px; margin-bottom: 14px; }
+.mode-btn {
+  flex: 1; padding: 7px 4px; border: 1.5px solid #ddd;
+  border-radius: 6px; background: #fafafa; cursor: pointer;
+  font-size: 12px; font-weight: 500; color: #555; transition: all .15s;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.mode-btn .icon { font-size: 18px; }
+.mode-btn:hover { border-color: #e8380d; color: #e8380d; background: #fff5f3; }
+.mode-btn.active { border-color: #e8380d; background: #e8380d; color: #fff; }
+
+/* Sliders */
+.slider-row { margin-bottom: 12px; }
+.slider-label {
+  display: flex; justify-content: space-between;
+  font-size: 12px; color: #666; margin-bottom: 4px; font-weight: 500;
+}
+.slider-label .val { color: #222; font-weight: 700; }
+input[type=range] {
+  width: 100%; height: 4px; accent-color: #e8380d; cursor: pointer;
+}
+
+/* Fairness slider gradient track hint */
+.fairness-track {
+  height: 6px; border-radius: 3px; margin-bottom: 6px;
+  background: linear-gradient(to right, #888 0%, #d73027 50%, #d73027 100%);
+  opacity: .25; pointer-events: none;
+}
+
+/* Tip text */
+.tip {
+  font-size: 11px; color: #888; margin-top: 8px;
+  padding-top: 8px; border-top: 1px solid #f0f0f0;
+}
+
+/* Stats */
+#stats { margin-top: 12px; }
+#stats table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+#stats td, #stats th {
+  padding: 4px 6px; text-align: left;
+}
+#stats th { color: #888; font-weight: 500; font-size: 11px; }
+#stats tr:nth-child(even) { background: #fafafa; }
+.q-dot {
+  display: inline-block; width: 10px; height: 10px;
+  border-radius: 50%; margin-right: 4px; vertical-align: middle;
+}
+.score-row {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-top: 8px; padding-top: 8px; border-top: 1px solid #f0f0f0;
+  font-size: 12px;
+}
+.score-bar-wrap {
+  flex: 1; margin: 0 8px; height: 8px;
+  background: #1a9850; border-radius: 4px; overflow: hidden;
+}
+.score-bar { height: 100%; background: #d73027; border-radius: 4px; }
+.score-val { font-weight: 700; font-size: 13px; color: #d73027; }
+
+/* Status */
+#status {
+  position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+  background: rgba(0,0,0,.65); color: #fff; padding: 6px 14px;
+  border-radius: 20px; font-size: 13px; z-index: 1000;
+  pointer-events: none; transition: opacity .3s;
+}
+#status.hidden { opacity: 0; }
+
+/* Legend */
+#legend {
+  position: absolute; bottom: 10px; left: 10px;
+  background: rgba(255,255,255,.92); border-radius: 8px;
+  padding: 10px 12px; font-size: 11px; z-index: 1000;
+  box-shadow: 0 2px 6px rgba(0,0,0,.15);
+}
+#legend h4 { margin: 0 0 6px; font-size: 11px; color: #555; }
+.leg-item {
+  display: flex; align-items: center; gap: 6px; margin: 3px 0;
+}
+.leg-swatch {
+  width: 14px; height: 10px; border-radius: 2px; flex-shrink: 0;
+}
+
+/* Loading spinner */
+.spinner {
+  display: inline-block; width: 14px; height: 14px;
+  border: 2px solid #f3f3f3; border-top: 2px solid #e8380d;
+  border-radius: 50%; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="panel">
+  <div id="panel-header">
+    <span>🗺</span>
+    Freegle Fairness Explorer
+  </div>
+  <div id="panel-body">
+
+    <div id="search-wrap">
+      <input id="search-box" type="text" placeholder="Search UK location…" autocomplete="off">
+      <ul id="search-results"></ul>
+    </div>
+
+    <div class="mode-row">
+      <button class="mode-btn active" data-mode="walk">
+        <span class="icon">🚶</span>Walk
+      </button>
+      <button class="mode-btn" data-mode="cycle">
+        <span class="icon">🚴</span>Cycle
+      </button>
+      <button class="mode-btn" data-mode="drive">
+        <span class="icon">🚗</span>Drive
+      </button>
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-label">
+        <span>Time budget</span>
+        <span class="val"><span id="time-val">15</span> min</span>
+      </div>
+      <input type="range" id="time-slider" min="5" max="60" step="5" value="15">
+    </div>
+
+    <div class="slider-row">
+      <div class="slider-label">
+        <span>Fairness weight</span>
+        <span class="val"><span id="fairness-val">50</span>%</span>
+      </div>
+      <input type="range" id="fairness-slider" min="0" max="100" step="5" value="50">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#aaa;margin-top:2px">
+        <span>Distance only</span><span>Maximise reach to deprived</span>
+      </div>
+    </div>
+
+    <div id="stats">
+      <div class="tip">Click on the map or search to set an offer location.</div>
+    </div>
+
+  </div>
+</div>
+
+<div id="legend">
+  <h4>Deprivation quintile</h4>
+  <div class="leg-item"><div class="leg-swatch" style="background:#d73027;opacity:.7"></div> Q1 — most deprived</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#fc8d59;opacity:.7"></div> Q2</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#fee08b;opacity:.7;border:1px solid #ccc"></div> Q3</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#91cf60;opacity:.7"></div> Q4</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#1a9850;opacity:.7"></div> Q5 — least deprived</div>
+  <div class="leg-item" style="margin-top:5px;padding-top:5px;border-top:1px solid #eee">
+    <div class="leg-swatch" style="background:#6699cc;opacity:.35;border:1px solid #6699cc"></div> Standard reach
+  </div>
+  <div class="leg-item">
+    <div class="leg-swatch" style="background:repeating-linear-gradient(45deg,#999 0,#999 2px,transparent 2px,transparent 6px);opacity:.6;border:1px dashed #999"></div> Fairness islands
+  </div>
+</div>
+
+<div id="status" class="hidden">Loading…</div>
+
+<script>
+const QCOLORS = ['', '#d73027', '#fc8d59', '#fee08b', '#91cf60', '#1a9850'];
+const QNAMES  = ['', 'Q1 (most deprived)', 'Q2', 'Q3', 'Q4', 'Q5 (least deprived)'];
+
+// ── Map ──────────────────────────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: true }).setView([52.5, -1.8], 7);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap © CartoDB',
+  subdomains: 'abcd', maxZoom: 19
+}).addTo(map);
+
+// ── State ────────────────────────────────────────────────────────────────────
+let currentLat = null, currentLng = null;
+let currentMode = 'walk';
+let marker = null;
+let layers = {};
+let debounceTimer = null;
+
+// ── Mode buttons ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentMode = btn.dataset.mode;
+    if (currentLat !== null) scheduleUpdate();
+  });
+});
+
+// ── Sliders ──────────────────────────────────────────────────────────────────
+const timeSlider     = document.getElementById('time-slider');
+const fairnessSlider = document.getElementById('fairness-slider');
+
+timeSlider.addEventListener('input', () => {
+  document.getElementById('time-val').textContent = timeSlider.value;
+  if (currentLat !== null) scheduleUpdate();
+});
+fairnessSlider.addEventListener('input', () => {
+  document.getElementById('fairness-val').textContent = fairnessSlider.value;
+  if (currentLat !== null) scheduleUpdate();
+});
+
+// ── Nominatim search ─────────────────────────────────────────────────────────
+const searchBox     = document.getElementById('search-box');
+const searchResults = document.getElementById('search-results');
+let searchTimer = null;
+
+searchBox.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = searchBox.value.trim();
+  if (q.length < 2) { searchResults.innerHTML = ''; return; }
+  searchTimer = setTimeout(() => nominatimSearch(q), 400);
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('#search-wrap')) searchResults.innerHTML = '';
+});
+
+function nominatimSearch(q) {
+  fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6&countrycodes=gb&addressdetails=0`)
+    .then(r => r.json())
+    .then(results => {
+      searchResults.innerHTML = '';
+      results.forEach(r => {
+        const li = document.createElement('li');
+        const parts = r.display_name.split(', ');
+        li.textContent = parts.slice(0, 4).join(', ');
+        li.title = r.display_name;
+        li.addEventListener('click', () => {
+          searchResults.innerHTML = '';
+          searchBox.value = parts[0];
+          setLocation(parseFloat(r.lat), parseFloat(r.lon), true);
+        });
+        searchResults.appendChild(li);
+      });
+    })
+    .catch(() => { searchResults.innerHTML = '<li style="color:#aaa">Search unavailable</li>'; });
+}
+
+// ── Map click ────────────────────────────────────────────────────────────────
+map.on('click', e => setLocation(e.latlng.lat, e.latlng.lng, false));
+
+function setLocation(lat, lng, fly) {
+  currentLat = lat;
+  currentLng = lng;
+  if (marker) map.removeLayer(marker);
+  marker = L.circleMarker([lat, lng], {
+    radius: 8, color: '#e8380d', weight: 3,
+    fillColor: '#fff', fillOpacity: 1
+  }).addTo(map).bindTooltip('Offer location').openTooltip();
+  if (fly) map.flyTo([lat, lng], Math.max(map.getZoom(), 13));
+  updateIsochrone();
+}
+
+// ── Update ───────────────────────────────────────────────────────────────────
+function scheduleUpdate() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(updateIsochrone, 350);
+}
+
+function clearLayers() {
+  Object.values(layers).forEach(l => { if (map.hasLayer(l)) map.removeLayer(l); });
+  layers = {};
+}
+
+function showStatus(msg, loading) {
+  const el = document.getElementById('status');
+  el.innerHTML = loading ? `<span class="spinner"></span> ${msg}` : msg;
+  el.classList.remove('hidden');
+  if (!loading) setTimeout(() => el.classList.add('hidden'), 2000);
+}
+
+function updateIsochrone() {
+  if (currentLat === null) return;
+  const minutes  = parseInt(timeSlider.value);
+  const fairness = parseInt(fairnessSlider.value) / 100;
+  const url = `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}&minutes=${minutes}&mode=${currentMode}&fairness=${fairness}`;
+
+  showStatus('Computing isochrone…', true);
+
+  fetch(url)
+    .then(r => { if (!r.ok) throw new Error(`Server error ${r.status}`); return r.json(); })
+    .then(data => {
+      clearLayers();
+      drawPolygons(data);
+      updateStats(data);
+      showStatus('Done', false);
+    })
+    .catch(err => {
+      showStatus('Error: ' + err.message, false);
+      document.getElementById('stats').innerHTML = `<div class="tip" style="color:#c00">${err.message}</div>`;
+    });
+}
+
+// geo: GeoJSON [lng, lat] → Leaflet [lat, lng]
+function geoToLeaflet(coords) {
+  return coords.map(([lng, lat]) => [lat, lng]);
+}
+
+function drawPolygons(data) {
+  const fairness = parseInt(fairnessSlider.value) / 100;
+
+  // ── Standard isochrone — translucent blue fill, drawn first (bottom layer) ──
+  if (hasRing(data.standard)) {
+    layers.standard = L.polygon(geoToLeaflet(data.standard.geometry.coordinates[0]), {
+      color: '#6699cc',
+      weight: 1.5,
+      fillColor: '#6699cc',
+      fillOpacity: 0.20,
+    }).addTo(map)
+      .bindTooltip('Standard isochrone (no fairness adjustment)');
+  }
+
+  // ── Per-quintile polygons ─────────────────────────────────────────────────
+  // Draw affluent first (bottom), deprived last (top) when fairness > 0.
+  const order = fairness > 0 ? [5, 4, 3, 2, 1] : [1, 2, 3, 4, 5];
+  order.forEach(q => {
+    const qr = data.quintiles && data.quintiles[q];
+    if (!qr) return;
+
+    // Main contiguous polygon for this quintile.
+    if (hasRing(qr.polygon)) {
+      layers[`q${q}`] = L.polygon(geoToLeaflet(qr.polygon.geometry.coordinates[0]), {
+        color: QCOLORS[q],
+        weight: 1.5,
+        fillColor: QCOLORS[q],
+        fillOpacity: fairness > 0 ? 0.40 : 0.25,
+      }).addTo(map)
+        .bindTooltip(`${QNAMES[q]}: ${qr.count.toLocaleString()} nodes · ${qr.time_budget_min.toFixed(1)} min budget`);
+    }
+
+    // Disconnected islands (fairness-reach areas beyond the standard isochrone).
+    // Drawn with dashed border and slightly lower opacity to distinguish them.
+    if (qr.islands && qr.islands.length > 0) {
+      qr.islands.forEach((island, i) => {
+        if (!hasRing(island)) return;
+        layers[`q${q}_island_${i}`] = L.polygon(geoToLeaflet(island.geometry.coordinates[0]), {
+          color: QCOLORS[q],
+          weight: 1.5,
+          dashArray: '5 4',
+          fillColor: QCOLORS[q],
+          fillOpacity: 0.25,
+        }).addTo(map)
+          .bindTooltip(`${QNAMES[q]}: fairness island`);
+      });
+    }
+  });
+}
+
+function hasRing(poly) {
+  return poly && poly.geometry && poly.geometry.coordinates &&
+         poly.geometry.coordinates[0] && poly.geometry.coordinates[0].length >= 4;
+}
+
+function updateStats(data) {
+  const statsEl = document.getElementById('stats');
+  const qs = data.quintiles || [];
+  const fairness = parseInt(fairnessSlider.value) / 100;
+  const hasFairness = data.fairness_score !== undefined && data.fairness_score >= 0;
+
+  let html = '';
+
+  if (!hasFairness) {
+    html = `<div class="tip">No deprivation data available for this area (e.g. Scotland, Wales, NI).</div>`;
+    statsEl.innerHTML = html;
+    return;
+  }
+
+  html += '<table><tr><th></th><th>Quintile</th><th>Nodes</th><th>Budget</th></tr>';
+  let anyData = false;
+  for (let q = 1; q <= 5; q++) {
+    const qr = qs[q] || {};
+    if (!qr.count) continue;
+    anyData = true;
+    const mins = qr.time_budget_min ? qr.time_budget_min.toFixed(1) : '—';
+    const islandCount = (qr.islands || []).length;
+    const islandSuffix = islandCount > 0 ? ` <span style="color:#999;font-size:10px">(+${islandCount} island${islandCount>1?'s':''})</span>` : '';
+    html += `<tr>
+      <td><span class="q-dot" style="background:${QCOLORS[q]}"></span></td>
+      <td>${QNAMES[q]}${islandSuffix}</td>
+      <td>${(qr.count || 0).toLocaleString()}</td>
+      <td>${mins} min</td>
+    </tr>`;
+  }
+  html += '</table>';
+
+  if (!anyData) {
+    html = `<div class="tip">No deprivation-tagged nodes in this area.</div>`;
+  } else if (fairness > 0) {
+    const pct = Math.round(data.fairness_score * 100);
+    const affluent = 100 - pct;
+    html += `
+      <div class="score-row">
+        <span>Deprived Q1–Q3</span>
+        <div class="score-bar-wrap">
+          <div class="score-bar" style="width:${pct}%"></div>
+        </div>
+        <span class="score-val">${pct}%</span>
+      </div>
+      <div style="font-size:10px;color:#999;text-align:right;margin-top:2px">${affluent}% affluent Q4–Q5</div>`;
+  }
+
+  statsEl.innerHTML = html;
+}
+</script>
+</body>
+</html>

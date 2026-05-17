@@ -4,6 +4,8 @@ import (
 	"context"
 	"math"
 	"os"
+	"runtime"
+	"sort"
 
 	"github.com/paulmach/osm"
 	"github.com/paulmach/osm/osmpbf"
@@ -18,13 +20,16 @@ const (
 	Drive Mode = iota
 )
 
-// NodeID is an OSM node ID.
-type NodeID = osm.NodeID
+// NodeID is a sequential 1-based node index (0 = noNode sentinel).
+type NodeID = uint32
 
-// Node is a graph vertex.
+// noNode is the zero value meaning "no node found".
+const noNode NodeID = 0
+
+// Node is a graph vertex with geographic coordinates and deprivation quintile.
 type Node struct {
-	Lat float64
-	Lng float64
+	Lat, Lng float32
+	Quintile Quintile
 }
 
 // Edge is a directed graph edge.
@@ -50,22 +55,26 @@ func (gr *Grid) add(lat, lng float64, id NodeID) {
 	gr.cells[key] = append(gr.cells[key], id)
 }
 
-func (gr *Grid) get(lat, lng float64) []NodeID {
-	key := [2]int16{int16(lat / gridRes), int16(lng / gridRes)}
-	return gr.cells[key]
-}
-
-// Graph is an in-memory road network.
+// Graph is an in-memory road network in CSR format.
+// Nodes are 1-indexed; index 0 is an unused sentinel.
 type Graph struct {
-	Nodes map[NodeID]Node
-	Edges map[NodeID][]Edge
-	Grid  *Grid
+	Nodes       []Node  // Nodes[id] = node at sequential ID (1-indexed)
+	EdgeStart   []int32 // EdgeStart[id] = start index in Edges for node id
+	Edges       []Edge  // flat edge list in CSR order
+	Grid        *Grid
+	Deprivation *DeprivationIndex
 }
 
-// speed in m/s for each highway type × mode.
-// -1 means the mode cannot use that highway type.
+// NodeCount returns the number of valid nodes (excluding sentinel at index 0).
+func (g *Graph) NodeCount() int { return len(g.Nodes) - 1 }
+
+// EdgesFrom returns the edges outgoing from node id.
+func (g *Graph) EdgesFrom(id NodeID) []Edge {
+	return g.Edges[g.EdgeStart[id]:g.EdgeStart[id+1]]
+}
+
+// speed in m/s for each highway type × mode; -1 = mode cannot use this type.
 var highwaySpeed = map[string][3]float32{
-	// walk m/s, cycle m/s, drive m/s
 	"motorway":       {-1, -1, 27.8},
 	"motorway_link":  {-1, -1, 22.2},
 	"trunk":          {-1, -1, 22.2},
@@ -88,105 +97,171 @@ var highwaySpeed = map[string][3]float32{
 	"track":          {1.2, 2.8, -1},
 }
 
-// BuildGraph reads an OSM PBF file and returns a routing graph.
-func BuildGraph(pbfPath string) (*Graph, error) {
+// BuildGraph reads an OSM PBF file and returns a compact routing graph.
+// dep is optional; if non-nil, each node's Quintile is populated from it.
+func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 	f, err := os.Open(pbfPath)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
-	g := &Graph{
-		Nodes: make(map[NodeID]Node),
-		Edges: make(map[NodeID][]Edge),
+	// ── Pass 1: collect routable ways and the OSM node IDs they reference ─────
+	type wayRecord struct {
+		nodeOSMIDs []int64
+		speeds     [3]float32
+		oneway     bool
 	}
+	var ways []wayRecord
+	refSet := make(map[int64]struct{})
 
-	// First pass: collect node IDs referenced by routable ways.
-	scanner := osmpbf.New(context.Background(), f, 4)
-	scanner.SkipRelations = true
-
-	routeNodeIDs := make(map[NodeID]bool)
-	type wayData struct {
-		nodes  []NodeID
-		speeds [3]float32
-		oneway bool
-	}
-	var ways []wayData
-
-	for scanner.Scan() {
-		obj := scanner.Object()
-		switch o := obj.(type) {
-		case *osm.Way:
-			speeds, oneway := waySpeedsAndOneway(o)
-			// skip ways with no usable mode
-			if speeds[0] < 0 && speeds[1] < 0 && speeds[2] < 0 {
-				continue
-			}
-			if len(o.Nodes) < 2 {
-				continue
-			}
-			nodeRefs := make([]NodeID, len(o.Nodes))
-			for i, n := range o.Nodes {
-				nodeRefs[i] = n.ID
-				routeNodeIDs[n.ID] = true
-			}
-			ways = append(ways, wayData{nodeRefs, speeds, oneway})
+	sc1 := osmpbf.New(context.Background(), f, 4)
+	sc1.SkipRelations = true
+	for sc1.Scan() {
+		w, ok := sc1.Object().(*osm.Way)
+		if !ok || len(w.Nodes) < 2 {
+			continue
 		}
+		speeds, oneway := waySpeedsAndOneway(w)
+		if speeds[0] < 0 && speeds[1] < 0 && speeds[2] < 0 {
+			continue
+		}
+		refs := make([]int64, len(w.Nodes))
+		for i, n := range w.Nodes {
+			refs[i] = int64(n.ID)
+			refSet[int64(n.ID)] = struct{}{}
+		}
+		ways = append(ways, wayRecord{refs, speeds, oneway})
 	}
-	if err := scanner.Err(); err != nil {
+	if err := sc1.Err(); err != nil {
 		return nil, err
 	}
 
-	// Second pass: collect lat/lng for referenced nodes.
+	// Replace the hash set with a sorted slice for O(log n) lookups.
+	rawIDs := make([]int64, 0, len(refSet))
+	for id := range refSet {
+		rawIDs = append(rawIDs, id)
+	}
+	sort.Slice(rawIDs, func(i, j int) bool { return rawIDs[i] < rawIDs[j] })
+	refSet = nil
+	runtime.GC()
+
+	// nodeSeq converts an OSM node ID to a 1-based sequential NodeID.
+	nodeSeq := func(osmID int64) (NodeID, bool) {
+		i := sort.Search(len(rawIDs), func(j int) bool { return rawIDs[j] >= osmID })
+		if i >= len(rawIDs) || rawIDs[i] != osmID {
+			return noNode, false
+		}
+		return NodeID(i + 1), true
+	}
+
+	N := len(rawIDs)
+	nodes := make([]Node, N+1) // [0] = unused sentinel
+
+	// ── Pass 2: populate node coordinates ─────────────────────────────────────
 	if _, err := f.Seek(0, 0); err != nil {
 		return nil, err
 	}
-	scanner2 := osmpbf.New(context.Background(), f, 4)
-	scanner2.SkipWays = true
-	scanner2.SkipRelations = true
-
-	for scanner2.Scan() {
-		obj := scanner2.Object()
-		if n, ok := obj.(*osm.Node); ok {
-			if routeNodeIDs[n.ID] {
-				g.Nodes[n.ID] = Node{Lat: n.Lat, Lng: n.Lon}
-			}
+	sc2 := osmpbf.New(context.Background(), f, 4)
+	sc2.SkipWays = true
+	sc2.SkipRelations = true
+	for sc2.Scan() {
+		nd, ok := sc2.Object().(*osm.Node)
+		if !ok {
+			continue
+		}
+		id, found := nodeSeq(int64(nd.ID))
+		if found {
+			nodes[id] = Node{Lat: float32(nd.Lat), Lng: float32(nd.Lon)}
 		}
 	}
-	if err := scanner2.Err(); err != nil {
+	if err := sc2.Err(); err != nil {
 		return nil, err
 	}
 
-	// Build edges from ways.
+	// Assign deprivation quintiles.
+	if dep != nil {
+		for i := NodeID(1); i <= NodeID(N); i++ {
+			nd := &nodes[i]
+			if nd.Lat != 0 || nd.Lng != 0 {
+				nd.Quintile = dep.Lookup(float64(nd.Lat), float64(nd.Lng))
+			}
+		}
+	}
+
+	// ── Build flat edge list ───────────────────────────────────────────────────
+	type tempEdge struct {
+		from, to NodeID
+		secs     [3]float32
+	}
+	var tempEdges []tempEdge
 	for _, w := range ways {
-		for i := 0; i < len(w.nodes)-1; i++ {
-			from := w.nodes[i]
-			to := w.nodes[i+1]
-			nFrom, ok1 := g.Nodes[from]
-			nTo, ok2 := g.Nodes[to]
+		for i := 0; i < len(w.nodeOSMIDs)-1; i++ {
+			from, ok1 := nodeSeq(w.nodeOSMIDs[i])
+			to, ok2 := nodeSeq(w.nodeOSMIDs[i+1])
 			if !ok1 || !ok2 {
 				continue
 			}
-			dist := haversineM(nFrom.Lat, nFrom.Lng, nTo.Lat, nTo.Lng)
+			nf, nt := nodes[from], nodes[to]
+			if nf.Lat == 0 && nf.Lng == 0 {
+				continue
+			}
+			if nt.Lat == 0 && nt.Lng == 0 {
+				continue
+			}
+			distM := haversineM(float64(nf.Lat), float64(nf.Lng), float64(nt.Lat), float64(nt.Lng))
 			var secs [3]float32
 			for m := 0; m < 3; m++ {
 				if w.speeds[m] < 0 {
 					secs[m] = -1
 				} else {
-					secs[m] = float32(dist) / w.speeds[m]
+					secs[m] = float32(distM) / w.speeds[m]
 				}
 			}
-			g.Edges[from] = append(g.Edges[from], Edge{To: to, Seconds: secs})
+			tempEdges = append(tempEdges, tempEdge{from, to, secs})
 			if !w.oneway {
-				g.Edges[to] = append(g.Edges[to], Edge{To: from, Seconds: secs})
+				tempEdges = append(tempEdges, tempEdge{to, from, secs})
 			}
 		}
+	}
+	ways = nil
+	rawIDs = nil
+	runtime.GC()
+
+	// Sort edges by source for CSR construction.
+	sort.Slice(tempEdges, func(i, j int) bool { return tempEdges[i].from < tempEdges[j].from })
+
+	// Build CSR: EdgeStart[id] is the index in Edges of the first edge from node id.
+	edgeStart := make([]int32, N+2)
+	edges := make([]Edge, len(tempEdges))
+	{
+		pos := 0
+		for id := NodeID(1); id <= NodeID(N); id++ {
+			edgeStart[id] = int32(pos)
+			for pos < len(tempEdges) && tempEdges[pos].from == id {
+				edges[pos] = Edge{To: tempEdges[pos].to, Seconds: tempEdges[pos].secs}
+				pos++
+			}
+		}
+		edgeStart[N+1] = int32(pos)
+	}
+	tempEdges = nil
+	runtime.GC()
+
+	g := &Graph{
+		Nodes:       nodes,
+		EdgeStart:   edgeStart,
+		Edges:       edges,
+		Deprivation: dep,
 	}
 
 	// Build spatial grid for O(1) nearest-node lookup.
 	g.Grid = newGrid()
-	for id, n := range g.Nodes {
-		g.Grid.add(n.Lat, n.Lng, id)
+	for i := NodeID(1); i <= NodeID(N); i++ {
+		nd := nodes[i]
+		if nd.Lat != 0 || nd.Lng != 0 {
+			g.Grid.add(float64(nd.Lat), float64(nd.Lng), i)
+		}
 	}
 
 	return g, nil
@@ -201,7 +276,6 @@ func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool) {
 		return [3]float32{-1, -1, -1}, false
 	}
 
-	// Apply access overrides.
 	if tags["foot"] == "no" {
 		speeds[Walk] = -1
 	}
@@ -221,8 +295,6 @@ func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool) {
 	if tags["motor_vehicle"] == "no" || tags["vehicle"] == "no" || tags["access"] == "no" {
 		speeds[Drive] = -1
 	}
-
-	// Driving speed from maxspeed tag.
 	if ms := tags["maxspeed"]; ms != "" && speeds[Drive] > 0 {
 		if s := parseMaxspeed(ms); s > 0 {
 			speeds[Drive] = s
@@ -233,13 +305,11 @@ func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool) {
 	if tags["junction"] == "roundabout" {
 		oneway = true
 	}
-
 	return speeds, oneway
 }
 
-// parseMaxspeed parses maxspeed tag value into m/s. Returns 0 if unparseable.
+// parseMaxspeed parses a maxspeed tag value into m/s. Returns 0 if unparseable.
 func parseMaxspeed(s string) float32 {
-	// Common UK values.
 	switch s {
 	case "20 mph", "20":
 		return 8.9
@@ -261,7 +331,7 @@ func parseMaxspeed(s string) float32 {
 	return 0
 }
 
-// haversineM returns the distance in metres between two lat/lng points.
+// haversineM returns the great-circle distance in metres between two lat/lng points.
 func haversineM(lat1, lng1, lat2, lng2 float64) float64 {
 	const R = 6371000.0
 	dLat := (lat2 - lat1) * math.Pi / 180

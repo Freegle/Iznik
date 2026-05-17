@@ -16,12 +16,11 @@ type geoGeometry struct {
 	Coordinates [][][2]float64 `json:"coordinates"`
 }
 
-// IsochronePolygon converts a set of reachable nodes into a GeoJSON polygon.
-// It rasterises the nodes onto a grid, then traces the outer boundary of the
-// filled cells to produce a concave polygon that follows the road network.
-func IsochronePolygon(g *Graph, reached map[NodeID]float32, resolution float64) GeoJSONPolygon {
+// buildIsochroneRings rasterises the reached nodes onto a grid and traces all
+// boundary rings, returning them sorted by area (largest first).
+func buildIsochroneRings(g *Graph, reached map[NodeID]float32, resolution float64) [][][2]float64 {
 	if len(reached) == 0 {
-		return emptyPolygon()
+		return nil
 	}
 
 	// Find bounding box.
@@ -29,21 +28,22 @@ func IsochronePolygon(g *Graph, reached map[NodeID]float32, resolution float64) 
 	maxLat, maxLng := -math.MaxFloat64, -math.MaxFloat64
 	for id := range reached {
 		n := g.Nodes[id]
-		if n.Lat < minLat {
-			minLat = n.Lat
+		lat, lng := float64(n.Lat), float64(n.Lng)
+		if lat < minLat {
+			minLat = lat
 		}
-		if n.Lat > maxLat {
-			maxLat = n.Lat
+		if lat > maxLat {
+			maxLat = lat
 		}
-		if n.Lng < minLng {
-			minLng = n.Lng
+		if lng < minLng {
+			minLng = lng
 		}
-		if n.Lng > maxLng {
-			maxLng = n.Lng
+		if lng > maxLng {
+			maxLng = lng
 		}
 	}
 
-	// Add one cell of padding.
+	// One cell of padding.
 	minLat -= resolution
 	minLng -= resolution
 	maxLat += resolution
@@ -59,25 +59,27 @@ func IsochronePolygon(g *Graph, reached map[NodeID]float32, resolution float64) 
 	}
 	for id := range reached {
 		n := g.Nodes[id]
-		row := int((n.Lat - minLat) / resolution)
-		col := int((n.Lng - minLng) / resolution)
+		row := int((float64(n.Lat) - minLat) / resolution)
+		col := int((float64(n.Lng) - minLng) / resolution)
 		if row >= 0 && row < rows && col >= 0 && col < cols {
 			grid[row][col] = true
 		}
 	}
 
-	// Trace the boundary of the filled cells.
-	ring := traceBoundary(grid, rows, cols, minLat, minLng, resolution)
+	return traceBoundary(grid, rows, cols, minLat, minLng, resolution)
+}
+
+// IsochronePolygon converts a set of reachable nodes into a GeoJSON polygon
+// representing the largest contiguous area.
+func IsochronePolygon(g *Graph, reached map[NodeID]float32, resolution float64) GeoJSONPolygon {
+	rings := buildIsochroneRings(g, reached, resolution)
+	if len(rings) == 0 {
+		return emptyPolygon()
+	}
+	ring := removeCollinear(rings[0])
 	if len(ring) < 4 {
 		return emptyPolygon()
 	}
-
-	// Remove redundant collinear points (axis-aligned steps).
-	ring = removeCollinear(ring)
-	if len(ring) < 4 {
-		return emptyPolygon()
-	}
-
 	return GeoJSONPolygon{
 		Type: "Feature",
 		Geometry: geoGeometry{
@@ -87,12 +89,33 @@ func IsochronePolygon(g *Graph, reached map[NodeID]float32, resolution float64) 
 	}
 }
 
-// traceBoundary extracts the outer boundary of the filled cells as a closed ring.
-// Edges are oriented CCW (filled region is to the left of travel direction).
+// IsochroneIslands returns all non-dominant polygon rings (disconnected islands)
+// as separate GeoJSON polygons, sorted by area descending.
+func IsochroneIslands(g *Graph, reached map[NodeID]float32, resolution float64) []GeoJSONPolygon {
+	rings := buildIsochroneRings(g, reached, resolution)
+	if len(rings) <= 1 {
+		return nil
+	}
+	var result []GeoJSONPolygon
+	for _, ring := range rings[1:] {
+		ring = removeCollinear(ring)
+		if len(ring) < 4 {
+			continue
+		}
+		result = append(result, GeoJSONPolygon{
+			Type: "Feature",
+			Geometry: geoGeometry{
+				Type:        "Polygon",
+				Coordinates: [][][2]float64{ring},
+			},
+		})
+	}
+	return result
+}
+
+// traceBoundary extracts all boundary rings from the grid, sorted by area (largest first).
 // row=0 is the southernmost row; col=0 is the westernmost column.
-// If the filled cells form multiple disconnected islands, all rings are traced
-// and the largest by area is returned.
-func traceBoundary(grid [][]bool, rows, cols int, minLat, minLng, res float64) [][2]float64 {
+func traceBoundary(grid [][]bool, rows, cols int, minLat, minLng, res float64) [][][2]float64 {
 	// corner(r, c) gives the [lng, lat] of the SW corner of cell (r, c).
 	corner := func(r, c int) [2]float64 {
 		return [2]float64{minLng + float64(c)*res, minLat + float64(r)*res}
@@ -100,12 +123,7 @@ func traceBoundary(grid [][]bool, rows, cols int, minLat, minLng, res float64) [
 
 	type edge struct{ from, to [2]float64 }
 
-	// Collect boundary edges. For each filled cell, emit directed edges along sides
-	// that are adjacent to empty/missing cells. Orientation: filled region to the LEFT.
-	//   South boundary of (r,c): SW→SE (west to east)
-	//   East boundary of (r,c):  SE→NE (south to north)
-	//   North boundary of (r,c): NE→NW (east to west)
-	//   West boundary of (r,c):  NW→SW (north to south)
+	// Collect boundary edges with CCW orientation (filled region to the LEFT).
 	var edges []edge
 	for r := 0; r < rows; r++ {
 		for c := 0; c < cols; c++ {
@@ -135,7 +153,6 @@ func traceBoundary(grid [][]bool, rows, cols int, minLat, minLng, res float64) [
 		return nil
 	}
 
-	// Build adjacency map: start-point → list of edge indices.
 	fromMap := make(map[[2]float64][]int, len(edges))
 	for i, e := range edges {
 		fromMap[e.from] = append(fromMap[e.from], i)
@@ -143,7 +160,6 @@ func traceBoundary(grid [][]bool, rows, cols int, minLat, minLng, res float64) [
 
 	used := make([]bool, len(edges))
 
-	// traceOneRing traces a single closed ring starting from the given edge index.
 	traceOneRing := func(startIdx int) [][2]float64 {
 		ring := make([][2]float64, 0, 32)
 		used[startIdx] = true
@@ -157,9 +173,6 @@ func traceBoundary(grid [][]bool, rows, cols int, minLat, minLng, res float64) [
 			dx := cur[0] - prev[0]
 			dy := cur[1] - prev[1]
 
-			// Among unused outgoing edges, take the most counterclockwise (leftmost) turn.
-			// This keeps the filled region to the LEFT and traces the exterior.
-			// Cross product dx*cdy - dy*cdx: positive = left (CCW), negative = right (CW).
 			bestIdx := -1
 			bestCross := -math.MaxFloat64
 			for _, i := range fromMap[cur] {
@@ -185,7 +198,6 @@ func traceBoundary(grid [][]bool, rows, cols int, minLat, minLng, res float64) [
 		return ring
 	}
 
-	// ringArea2D computes the absolute area via the shoelace formula.
 	ringArea2D := func(ring [][2]float64) float64 {
 		n := len(ring)
 		area := 0.0
@@ -200,10 +212,8 @@ func traceBoundary(grid [][]bool, rows, cols int, minLat, minLng, res float64) [
 		return area / 2.0
 	}
 
-	// Trace all distinct rings (exterior boundaries of each connected island).
-	// Return the ring with the largest area.
-	var best [][2]float64
-	bestArea := 0.0
+	// Trace all rings.
+	var allRings [][][2]float64
 	for i := range edges {
 		if used[i] {
 			continue
@@ -212,16 +222,18 @@ func traceBoundary(grid [][]bool, rows, cols int, minLat, minLng, res float64) [
 		if len(ring) < 4 {
 			continue
 		}
-		if area := ringArea2D(ring); area > bestArea {
-			bestArea = area
-			best = ring
-		}
+		allRings = append(allRings, ring)
 	}
-	return best
+
+	// Sort by area, largest first.
+	sort.Slice(allRings, func(i, j int) bool {
+		return ringArea2D(allRings[i]) > ringArea2D(allRings[j])
+	})
+
+	return allRings
 }
 
-// removeCollinear removes redundant points where three consecutive points are
-// collinear (all same X or all same Y — axis-aligned segments).
+// removeCollinear removes redundant collinear points from a closed ring.
 func removeCollinear(pts [][2]float64) [][2]float64 {
 	n := len(pts) - 1 // last == first (closed ring)
 	if n < 3 {

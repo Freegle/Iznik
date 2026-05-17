@@ -5,9 +5,8 @@ import (
 	"math"
 )
 
-// IsochroneResult is the set of nodes reachable within the time budget.
+// IsochroneResult is the set of nodes reachable within a time budget.
 type IsochroneResult struct {
-	// ReachedNodes maps node ID → travel time in seconds from origin.
 	ReachedNodes map[NodeID]float32
 }
 
@@ -26,30 +25,28 @@ func (q pq) Swap(i, j int)       { q[i], q[j] = q[j], q[i]; q[i].idx = i; q[j].i
 func (q *pq) Push(x interface{}) { it := x.(*item); it.idx = len(*q); *q = append(*q, it) }
 func (q *pq) Pop() interface{}   { old := *q; n := len(old); it := old[n-1]; *q = old[:n-1]; return it }
 
-// modeMaxSpeed returns the maximum physically possible speed in m/s for a mode,
-// used to compute a geographic bounding radius for Dijkstra pruning.
+// modeMaxSpeed returns the maximum physically possible speed in m/s for a mode.
 func modeMaxSpeed(mode Mode) float64 {
 	switch mode {
 	case Walk:
-		return 3.0  // brisk walk (1.4 m/s typical + some margin)
+		return 3.0
 	case Cycle:
-		return 12.0 // fast cycle
+		return 12.0
 	default:
-		return 32.0 // ~115 km/h — above 70mph (31.3 m/s) national speed limit
+		return 32.0
 	}
 }
 
-// Isochrone runs Dijkstra from the node nearest to (lat, lng) that has at
-// least one edge usable by mode, and returns all nodes reachable within
-// limitSeconds.
+// Isochrone runs Dijkstra from the node nearest to (lat, lng) and returns all
+// nodes reachable within limitSeconds for the given mode.
 func Isochrone(g *Graph, lat, lng float64, limitSeconds float32, mode Mode) IsochroneResult {
 	origin := nearestNodeForMode(g, lat, lng, mode)
-	if origin == 0 {
+	if origin == noNode {
 		return IsochroneResult{ReachedNodes: map[NodeID]float32{}}
 	}
 
-	startLat := g.Nodes[origin].Lat
-	startLng := g.Nodes[origin].Lng
+	startLat := float64(g.Nodes[origin].Lat)
+	startLng := float64(g.Nodes[origin].Lng)
 	maxReachM := modeMaxSpeed(mode) * float64(limitSeconds)
 
 	dist := make(map[NodeID]float32)
@@ -61,24 +58,22 @@ func Isochrone(g *Graph, lat, lng float64, limitSeconds float32, mode Mode) Isoc
 	for q.Len() > 0 {
 		cur := heap.Pop(q).(*item)
 		if cur.cost > dist[cur.id] {
-			continue // stale entry
+			continue
 		}
 		if cur.cost > limitSeconds {
 			break
 		}
-		for _, e := range g.Edges[cur.id] {
+		for _, e := range g.EdgesFrom(cur.id) {
 			edgeCost := e.Seconds[mode]
 			if edgeCost < 0 {
-				continue // mode cannot use this edge
+				continue
 			}
 			newCost := cur.cost + edgeCost
 			if newCost > limitSeconds {
 				continue
 			}
-			// Geographic pruning: any node further than max_speed × limit from
-			// the origin is physically unreachable regardless of the road network.
 			n := g.Nodes[e.To]
-			if haversineM(startLat, startLng, n.Lat, n.Lng) > maxReachM {
+			if haversineM(startLat, startLng, float64(n.Lat), float64(n.Lng)) > maxReachM {
 				continue
 			}
 			if prev, seen := dist[e.To]; !seen || newCost < prev {
@@ -91,9 +86,7 @@ func Isochrone(g *Graph, lat, lng float64, limitSeconds float32, mode Mode) Isoc
 	return IsochroneResult{ReachedNodes: dist}
 }
 
-// nearestNodeForMode returns the NodeID closest to (lat, lng) that has at
-// least one outgoing edge usable by mode.
-// Uses the grid index when available, falls back to linear scan.
+// nearestNodeForMode returns the NodeID closest to (lat, lng) with an edge usable by mode.
 func nearestNodeForMode(g *Graph, lat, lng float64, mode Mode) NodeID {
 	if g.Grid != nil {
 		return nearestNodeGrid(g, lat, lng, mode)
@@ -101,8 +94,7 @@ func nearestNodeForMode(g *Graph, lat, lng float64, mode Mode) NodeID {
 	return nearestNodeLinear(g, lat, lng, mode)
 }
 
-// nearestNodeGrid searches the spatial grid, expanding outward until a
-// mode-valid node is found.
+// nearestNodeGrid searches the spatial grid, expanding outward until a valid node is found.
 func nearestNodeGrid(g *Graph, lat, lng float64, mode Mode) NodeID {
 	baseRow := int16(lat / gridRes)
 	baseCol := int16(lng / gridRes)
@@ -113,7 +105,6 @@ func nearestNodeGrid(g *Graph, lat, lng float64, mode Mode) NodeID {
 	for radius := int16(0); radius <= 10; radius++ {
 		for dr := -radius; dr <= radius; dr++ {
 			for dc := -radius; dc <= radius; dc++ {
-				// Only visit the border of the expanding square.
 				if dr != -radius && dr != radius && dc != -radius && dc != radius {
 					continue
 				}
@@ -123,7 +114,7 @@ func nearestNodeGrid(g *Graph, lat, lng float64, mode Mode) NodeID {
 						continue
 					}
 					n := g.Nodes[id]
-					d := haversineM(lat, lng, n.Lat, n.Lng)
+					d := haversineM(lat, lng, float64(n.Lat), float64(n.Lng))
 					if d < bestDist {
 						bestDist = d
 						best = id
@@ -131,22 +122,23 @@ func nearestNodeGrid(g *Graph, lat, lng float64, mode Mode) NodeID {
 				}
 			}
 		}
-		if best != 0 {
+		if best != noNode {
 			break
 		}
 	}
 	return best
 }
 
-// nearestNodeLinear is the fallback O(N) scan used when no grid is present.
+// nearestNodeLinear is the O(N) fallback scan when no grid is present.
 func nearestNodeLinear(g *Graph, lat, lng float64, mode Mode) NodeID {
 	var best NodeID
 	bestDist := math.MaxFloat64
-	for id, n := range g.Nodes {
+	for id := NodeID(1); id < NodeID(len(g.Nodes)); id++ {
 		if !hasEdgeForMode(g, id, mode) {
 			continue
 		}
-		d := haversineM(lat, lng, n.Lat, n.Lng)
+		n := g.Nodes[id]
+		d := haversineM(lat, lng, float64(n.Lat), float64(n.Lng))
 		if d < bestDist {
 			bestDist = d
 			best = id
@@ -156,7 +148,7 @@ func nearestNodeLinear(g *Graph, lat, lng float64, mode Mode) NodeID {
 }
 
 func hasEdgeForMode(g *Graph, id NodeID, mode Mode) bool {
-	for _, e := range g.Edges[id] {
+	for _, e := range g.EdgesFrom(id) {
 		if e.Seconds[mode] >= 0 {
 			return true
 		}
