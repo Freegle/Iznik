@@ -39,6 +39,12 @@ class SmtpFailureClassifier
         '/non-ASCII characters/i',
         '/Invalid address/i',
         '/Bad recipient address syntax/i',
+        // Symfony's Mime\RfcComplianceException: thrown for addresses with
+        // mojibake leading characters (e.g. U+200F RTL mark prefixed onto a
+        // gmail address). Production hit this on 2026-05-16 16:50 in
+        // mail:engage — the address would never deliver, so mark bouncing
+        // and skip instead of crashing the per-user loop.
+        '/does not comply with addr-spec of RFC 2822/i',
     ];
 
     /**
