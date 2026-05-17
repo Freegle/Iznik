@@ -1,4 +1,5 @@
 testdata/*.pbf
 testdata/*.osm
 routing-server
+iznik-routing-go
 data/
