@@ -137,11 +137,7 @@ function setDeep(obj, path, val, setrecursively = false) {
   path.reduce((a, b) => {
     level++
 
-    if (
-      setrecursively &&
-      typeof a[b] === 'undefined' &&
-      level !== path.length
-    ) {
+    if (setrecursively && a[b] == null && level !== path.length) {
       a[b] = {}
       return a[b]
     }
@@ -150,6 +146,7 @@ function setDeep(obj, path, val, setrecursively = false) {
       a[b] = val
       return val
     } else {
+      if (a[b] == null) a[b] = {}
       return a[b]
     }
   }, obj)
