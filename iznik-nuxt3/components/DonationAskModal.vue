@@ -30,8 +30,7 @@
             :raised="raised"
             :target-met="targetMet"
             :donated="donated"
-            :amounts="[1, 5, 10]"
-            :default="1"
+            :default="tenureDefault"
             @score="score"
             @success="thankyou = true"
             @cancel="hide"
@@ -122,6 +121,16 @@ const targetMet = computed(() => {
   return groupId.value && raised.value > target.value
 })
 
+const tenureDefault = computed(() => {
+  const me = authStore.user
+  if (!me?.added) return 2
+  const msPerYear = 1000 * 60 * 60 * 24 * 365
+  const years = (Date.now() - new Date(me.added).getTime()) / msPerYear
+  if (years >= 2) return 5
+  if (years >= 0.5) return 3
+  return 2
+})
+
 function score(value) {
   const runtimeConfig = useRuntimeConfig()
   const api = Api(runtimeConfig)
@@ -139,6 +148,8 @@ const donated = computed(() => {
   return me?.donated ? dateshort(me.donated) : null
 })
 show()
+
+defineExpose({ tenureDefault, score, groupName, targetMet, donated, hide })
 </script>
 
 <style scoped lang="scss">

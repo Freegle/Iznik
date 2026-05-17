@@ -275,18 +275,20 @@ onMounted(async () => {
         // Handle legacy 'stripe' variant - map it to traditional-5
         if (!chosen.variant.includes('-')) {
           variation.value = 'traditional'
-          testAmount.value = 5
-          selectedAmount.value = 5
-          price.value = 5
+          const flooredAmount = Math.max(5, props.default)
+          testAmount.value = flooredAmount
+          selectedAmount.value = flooredAmount
+          price.value = flooredAmount
         } else {
           const parts = chosen.variant.split('-')
           const amount = parseFloat(parts[parts.length - 1])
           const varType = parts.slice(0, -1).join('-')
+          const flooredAmount = Math.max(amount, props.default)
 
           variation.value = varType
-          testAmount.value = amount
-          selectedAmount.value = amount
-          price.value = amount
+          testAmount.value = flooredAmount
+          selectedAmount.value = flooredAmount
+          price.value = flooredAmount
         }
       }
 

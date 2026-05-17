@@ -246,6 +246,31 @@ describe('DonationAskStripe', () => {
     })
   })
 
+  describe('tenure floor applied to bandit amount', () => {
+    it('uses bandit amount when it exceeds the tenure default', async () => {
+      // Bandit says 5, tenure default is 2 → should show 5
+      mockApi.bandit.choose.mockResolvedValue({ variant: 'minimal-friction-5' })
+      const wrapper = createWrapper({ default: 2 })
+      await flushPromises()
+      expect(wrapper.find('.amount-value').text()).toBe('£5.00')
+    })
+
+    it('uses tenure default when bandit amount is below it', async () => {
+      // Bandit says 2, tenure default is 5 (2yr+ user) → should show 5
+      mockApi.bandit.choose.mockResolvedValue({ variant: 'minimal-friction-2' })
+      const wrapper = createWrapper({ default: 5 })
+      await flushPromises()
+      expect(wrapper.find('.amount-value').text()).toBe('£5.00')
+    })
+
+    it('uses tenure default when bandit returns no variant', async () => {
+      mockApi.bandit.choose.mockResolvedValue({ variant: null })
+      const wrapper = createWrapper({ default: 5 })
+      await flushPromises()
+      expect(wrapper.find('.amount-value').text()).toBe('£5.00')
+    })
+  })
+
   describe('events', () => {
     it('emits cancel on Not now click', async () => {
       const wrapper = createWrapper()

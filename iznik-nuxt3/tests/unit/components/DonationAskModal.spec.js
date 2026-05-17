@@ -100,7 +100,7 @@ describe('DonationAskModal', () => {
     mockGroupId.value = 123
     mockRaised.value = 500
     mockTarget.value = 1000
-    mockAuthStore.user = { donated: null }
+    mockAuthStore.user = { donated: null, added: null }
   })
 
   async function createWrapper() {
@@ -262,6 +262,50 @@ describe('DonationAskModal', () => {
         variant: 'test-variant',
         score: 5,
       })
+    })
+  })
+
+  describe('tenure-based default donation amount', () => {
+    function yearsAgo(years) {
+      const d = new Date()
+      d.setFullYear(d.getFullYear() - years)
+      return d.toISOString()
+    }
+
+    function monthsAgo(months) {
+      const d = new Date()
+      d.setMonth(d.getMonth() - months)
+      return d.toISOString()
+    }
+
+    it('uses default of 2 when user has no added date', async () => {
+      mockAuthStore.user = { donated: null, added: null }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.tenureDefault).toBe(2)
+    })
+
+    it('uses default of 2 for users added less than 6 months ago', async () => {
+      mockAuthStore.user = { donated: null, added: monthsAgo(3) }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.tenureDefault).toBe(2)
+    })
+
+    it('uses default of 3 for users added 6 months to 2 years ago', async () => {
+      mockAuthStore.user = { donated: null, added: monthsAgo(12) }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.tenureDefault).toBe(3)
+    })
+
+    it('uses default of 5 for users added 2 or more years ago', async () => {
+      mockAuthStore.user = { donated: null, added: yearsAgo(3) }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.tenureDefault).toBe(5)
+    })
+
+    it('uses default of 5 for long-tenured users (5+ years)', async () => {
+      mockAuthStore.user = { donated: null, added: yearsAgo(6) }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.tenureDefault).toBe(5)
     })
   })
 
