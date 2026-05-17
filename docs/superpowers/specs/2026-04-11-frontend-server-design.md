@@ -1,288 +1,185 @@
-# Frontend Server Design
+# Image Host Server Design
 
-Retire the existing bare-metal image/tile/geocode servers and replace them with a new Katapult server running FreegleDocker's `frontend` profile.
+Move image upload (`uploads.ilovefreegle.org`) and image delivery (`delivery.ilovefreegle.org`) off `app1-internal` and onto a new Katapult VM running FreegleDocker with a new `image-host` Compose profile. This is the first stage of retiring `app1-internal`.
 
-## Background
+Tiles, geocoding, photon, and the legacy `images.ilovefreegle.org` PHP path are out of scope for this design and stay where they are.
 
-The current production setup for latency-sensitive non-API services is spread across **two servers** running a mix of bare-metal processes and standalone Docker containers:
+## Why images first
 
-**bulk3** (this machine — tiles, geocoding, batch work):
-- **Tile server** (`overv/openstreetmap-tile-server` Docker container, named `confident_curran`) — renderd + Apache + mod_tile, ~50K requests/day, fronted by nginx (`tiles.ilovefreegle.org`)
-- **Photon geocoder** (bare metal Java) — `photon-0.5.0.jar` on port 2322, fronted by nginx (`geocode.ilovefreegle.org`), ~3GB RAM, ~11K real requests/day (was 1.9M/day before rate limiting — 99% was a single scraper bot)
-- **ORS** (Docker container) — unused, zero traffic, 4GB RAM allocated, to be dropped
-- Also runs batch containers (batch-prod, loki, mjml, redis, postfix, spamassassin, rspamd)
+- Largest single workload on app1-internal: ~100K delivery requests/day at ~92% cache hit, plus all resumable image uploads.
+- Self-contained — delivery and tusd have no app1-side database or PHP coupling. The image store is on a Katapult NFS share that the new VM can mount the same way.
+- app1-internal is being retired and there is no live failover for tusd today. Standing up the new VM removes a single point of failure at the same time as it removes a retirement blocker.
 
-**app1-internal** (delivery, uploads, API):
-- **TuSD** (bare metal) — resumable image uploads on port 8080 (no nginx proxy, applb routes directly), writes to NFS share (`/images/`, 768GB used / 5TB, mounted from `nfs2.nlc.storage.katapult.io`)
-- **Delivery nginx** — caches transformed images at `/wsrv_cache` (41GB), proxies cache misses to **wsrv.nl** (external free service), which fetches originals back from tusd over the public internet. 92% cache hit rate, ~100K requests/day
-- **images.ilovefreegle.org** — legacy PHP image serving (rewrites `/img_*.jpg` etc. to `api/image.php` via PHP-FPM on port 9000). Some delivery requests still reference these URLs
-- No Docker installed — everything is bare metal (nginx, tusd, PHP-FPM, MySQL)
-- Disk: 158GB total, 110GB used (74%), delivery cache is largest consumer
+## Current state (the starting point)
 
-Problems:
-- Dependency on wsrv.nl (external free service with quotas)
-- Mix of bare metal and containerised services across two servers
-- Tiles/geocoding co-located with batch work on bulk3 (wrong server tier)
-- Geocoder was unprotected against abuse (rate limiting now added but needs to be in the new config)
-- No Docker on app1-internal — migration will containerise delivery+tusd for the first time
-- Servers need replacing with a clean install
+### app1-internal (10.220.0.45)
 
-## Architecture
+- **TuSD** runs bare-metal as `/var/www/tusd/tusd -upload-dir=images -behind-proxy -base-path / -disable-cors` on port 8080, started with `cwd=/`. The `-upload-dir=images` argument therefore resolves to **`/images/`, the NFS mount** (verified via `/proc/<pid>/cwd` and an open FD on `/images/.nfs*`). The local directory `/var/www/tusd/images/` exists but is unrelated leftover.
+- **NFS mount** at `/images` from `nfs2.nlc.storage.katapult.io:/katapult/fsv_5ivInYUXp22oVueE` (NFS v3, TCP, 1MB rsize/wsize) — this is the canonical image store. **~823GB used of 4.9TB**, served directly by tusd as the upload directory.
+- **Delivery nginx** at `delivery.ilovefreegle.org` with `proxy_cache_path /wsrv_cache levels=1:2 keys_zone=wsrv_cache:100m max_size=40g inactive=30d use_temp_path=off`, ~41GB on disk. Cache misses proxy to `https://wsrv.nl` (external free service), which fetches originals back from tusd over the public internet. Default cache key (`$scheme$proxy_host$request_uri`, no explicit `proxy_cache_key`). `proxy_intercept_errors on` plus a `@handle_redirect` location for 301/302/307 from wsrv.nl. Measured hit rate ~92%.
+- `images.ilovefreegle.org` (legacy PHP image serving, ~557 req/day, 0.06% of image traffic) stays on app1-internal — out of scope.
+- No Docker installed. No process supervision beyond `nohup` + a monit-driven `checktusd` script that polls `https://wsrv.nl/quota`.
 
-### Service Tier Model
+### HAProxy on ha-internal (10.220.0.172)
 
-| Server | Profile | Services |
-|--------|---------|----------|
-| **Batch (bulk3)** | `batch` | batch, mjml, redis, spamassassin, rspamd |
-| **Frontend (new)** | `frontend` | frontend-nginx, delivery, tusd, photon, tile-server |
-| **API servers** | *(bare metal, no Docker)* | apiv1, apiv2, co-located with database |
+- TLS termination for all `*.ilovefreegle.org` hostnames using per-domain certs in `/etc/haproxy/*.pem`.
+- Three frontends matter here:
+  - `http_frontend` binds `*:80` — plain HTTP, redirects to HTTPS.
+  - `https_frontend` binds `*:443` with the cert-list, contains the host-based ACLs.
+  - `tusd_frontend` binds `*:8080` only (with `uploads.ilovefreegle.org.pem`) — dedicated to tus uploads on the alt port.
+- Routing for the hostnames in scope:
+  - `uploads.ilovefreegle.org:443` → matched by `acl uploader hdr(host) -i uploads.ilovefreegle.org` inside `https_frontend` → `tusd_backend`.
+  - `uploads.ilovefreegle.org:8080` → `tusd_frontend` → `tusd_backend` (no ACL — the whole frontend is for tusd).
+  - `delivery.ilovefreegle.org:443` → ACL inside `https_frontend` → `http_backend_cache`.
+  - `images.ilovefreegle.org:443` → default `http_backend`.
+- **`http_backend_cache` is shared** by three ACLs: `delivery`, `uploadcare-cache.ilovefreegle.org`, and `uploadcare-proxy-cache.ilovefreegle.org`. All three currently land on `server app1 10.220.0.45:80 send-proxy check` with stale `server app4 10.220.0.188:80 send-proxy check backup`. The new VM cannot reuse this backend without also taking the uploadcare ACLs with it — a new backend is needed (see "The changes").
+- **`tusd_backend`** lists `server app1 10.220.0.45:8080 check` plus the stale `server app4 10.220.0.188:8080 check backup`. HAProxy adds `X-Forwarded-Proto: https`, `X-Forwarded-For`, and all tus-related CORS response headers here. Plain HTTP to the backend (no `send-proxy`).
+- **`http_backend` and `http_backend_cache` both use `send-proxy`** to the `:80` of app1/app4 (PROXY protocol). The app1 delivery vhost itself listens with plain `listen 80;` (no `proxy_protocol`), so it relies on whatever main-server config terminates PROXY ahead of the vhost — keep that detail in mind when validating the new VM's nginx (we either accept PROXY on the delivery listener or drop `send-proxy` on the new backend).
+- **app4 is retired**. Every `server app4 …` line — in `tusd_backend`, `http_backend`, and `http_backend_cache` — is dead config. They should be cleaned up at cutover, not just the tusd one.
+- Operators version `haproxy.cfg.*` with date suffixes (e.g. `haproxy.cfg.bak.20260515-pre8194`). The cutover edit follows the same convention.
 
-### Profile Strategy
+### FreegleDocker repo
 
-```
-Profile       Local Dev   CircleCI   Yesterday   Batch (bulk3)   Frontend (new)
-────────────────────────────────────────────────────────────────────────────────
-(default)     ✓           ✓          ✓           ✓               -
-frontend      -           -          -           -               ✓
-batch         ✓           ✓          -           ✓               -
-ci            -           ✓          -           -               -
-dev           ✓           -          ✓           -               -
-infra-db      ✓           ✓          ✓           -               -
-```
+- `delivery` and `tusd` services already exist in `docker-compose.yml`. Both carry the `frontend` profile.
+- The `frontend` profile is already in use as "web-facing APIs" (`apiv1, apiv2, delivery, tusd, redis, beanstalkd`) and is part of the default local-dev profile set in `.env.example` and CircleCI's orb. It is **not** a free name for the image-only VM.
+- No `frontend-nginx` service or `frontend-nginx.conf` exists.
 
-The frontend server runs **only** the `frontend` profile — no default services (no redis, beanstalkd, etc.). It is a pure proxy/cache/serve tier with no application logic.
+## The changes
 
-## Request Flow
+### 1. Compose: new `image-host` profile
 
-```
-applb (TLS termination, 185.199.221.13)
-  │
-  ▼ HTTP
-frontend-nginx :80
-  │
-  ├── delivery.ilovefreegle.org ──▶ [40GB disk cache, 30d]
-  │     cache miss ──▶ delivery (weserv) :80 ──▶ tusd :8080 ──▶ /images/ (NFS)
-  │
-  ├── uploads.ilovefreegle.org ──▶ tusd :8080 ──▶ /images/ (NFS)
-  │
-  ├── tiles.ilovefreegle.org ──▶ [tile cache, configurable size/TTL]
-  │     cache miss ──▶ tile-server :80
-  │
-  ├── geocode.ilovefreegle.org ──▶ [rate limit: 10r/s per IP, burst 20]
-  │     ──▶ photon :2322
-  │
-  └── images.ilovefreegle.org ──▶ (legacy, see notes)
-```
-
-- **applb** handles TLS termination and forwards HTTP to the frontend server
-- **frontend-nginx** routes by hostname, with disk caching for delivery and tiles
-- **weserv** fetches originals from tusd over the internal Docker network (no external round-trip, eliminates wsrv.nl dependency)
-- **tusd** reads/writes to NFS mount
-- **geocode** rate-limited to prevent bot abuse (single IP was responsible for 99% of traffic pre-limiting)
-
-## Services
-
-### Docker Compose Profile: `frontend`
-
-| Service | Image | Role |
-|---------|-------|------|
-| `frontend-nginx` | `nginx:alpine` | Reverse proxy + disk caching |
-| `delivery` | `ghcr.io/weserv/images:5.x` | Image transforms (libvips) |
-| `tusd` | `tusproject/tusd:latest` | Resumable image uploads |
-| `photon` | `rtuszik/photon-docker` | Geocoding API |
-| `tile-server` | `overv/openstreetmap-tile-server` | Raster map tiles |
-
-The existing `delivery` and `tusd` services get the `frontend` profile added alongside their current default profile, so they run in both local dev and production frontend.
-
-### New Service Definitions
+Add `image-host` alongside the existing `frontend` profile on `delivery` and `tusd`. Define a new `frontend-nginx` service in `image-host` only.
 
 ```yaml
+delivery:
+  profiles:
+    - frontend
+    - image-host
+  # …existing config unchanged…
+
+tusd:
+  profiles:
+    - frontend
+    - image-host
+  # …existing config unchanged, EXCEPT:
+  command: -upload-dir=/srv/tusd-data -behind-proxy -base-path / -disable-cors
+  volumes:
+    - tusd-data:/srv/tusd-data
+  # …on the new VM only, tusd-data is bind-mounted to the NFS share
+  #   (see "NFS mount on the new VM" below). In local dev tusd-data
+  #   remains a Docker volume.
+
 frontend-nginx:
   image: nginx:alpine
-  profiles: [frontend]
+  profiles:
+    - image-host
   ports:
     - "80:80"
+    - "8080:8080"
   volumes:
     - ./frontend-nginx.conf:/etc/nginx/nginx.conf:ro
-    - delivery-cache:/var/cache/nginx/delivery
-    - tile-cache:/var/cache/nginx/tiles
+    - delivery-cache:/var/cache/nginx/wsrv_cache
   depends_on:
     - delivery
     - tusd
-    - photon
-    - tile-server
 
-photon:
-  image: rtuszik/photon-docker:latest
-  profiles: [frontend]
-  volumes:
-    - photon-data:/photon/data
-  environment:
-    - UPDATE_STRATEGY=DISABLED
-
-tile-server:
-  image: overv/openstreetmap-tile-server
-  profiles: [frontend]
-  volumes:
-    - osm-data:/data/database/
-    - osm-tiles:/data/tiles/
-  shm_size: 192m
-```
-
-### nginx Configuration
-
-`frontend-nginx.conf` with server blocks and cache zones:
-
-```
-proxy_cache_path /var/cache/nginx/delivery levels=1:2 keys_zone=delivery:100m max_size=40g inactive=30d use_temp_path=off;
-proxy_cache_path /var/cache/nginx/tiles keys_zone=tiles:10m max_size=10g inactive=30d;
-limit_req_zone $binary_remote_addr zone=geocode_limit:10m rate=10r/s;
-```
-
-Separate caches because delivery (large variable-size images, 40GB) and tiles (predictable 256x256 PNGs) have different eviction characteristics.
-
-**Delivery cache key**: The live config on app1-internal uses nginx's **default cache key** (`$scheme$proxy_host$request_uri`) — no explicit `proxy_cache_key` is set. The live config also uses `levels=1:2`, `keys_zone` size of `100m`, and `use_temp_path=off`. The `frontend-nginx.conf` must replicate these settings exactly for the migrated 41GB cache to be recognised.
-
-**Delivery URL patterns**: The live delivery logs show two distinct URL patterns that weserv must handle:
-- Old format: `/?url=https://uploads.ilovefreegle.org:8080/{hash}/&w=200&h=200` (includes tusd port 8080)
-- New format: `/?filename={hash}&we&w=768&h=768&output=webp&fit=cover&url=https://uploads.ilovefreegle.org/{hash}` (no port, with webp)
-
-The weserv container's `url=` parameter points at `uploads.ilovefreegle.org` — internally, this must resolve to the tusd container, not go out to the public internet. Options: Docker network alias, or nginx rewrite in the delivery server block.
-
-**Delivery redirect handling**: The live config includes `proxy_intercept_errors on` with a `@handle_redirect` location to follow 301/302/307 responses from wsrv.nl. The weserv Docker container may not need this (direct internal access), but it should be tested.
-
-**Geocode rate limiting**: Required. The geocoder was getting 1.9M requests/day from a single scraper bot (IP `185.53.57.149`). Rate limit config: `limit_req zone=geocode_limit burst=20 nodelay` with `limit_req_status 429`.
-
-**Tile server CORS**: The live config on bulk3 includes `Access-Control-Allow-Origin *` and other CORS headers. These must be replicated in the tiles server block.
-
-## Data and Volumes
-
-### Migrated from two source servers
-
-**From bulk3** (tiles, geocoding):
-
-| Volume | Contents | Size | Source |
-|--------|----------|------|--------|
-| `osm-data` | PostGIS tile database | 56GB | Docker volume `osm-data` (container `confident_curran`) |
-| `osm-tiles` | Rendered tile cache | 43GB | Docker volume `osm-tiles` (container `confident_curran`) |
-| `photon-data` | Geocoding index | 6.3GB | `/var/www/photon/photon_data/` (bare metal) |
-
-**From app1-internal** (delivery, uploads):
-
-| Volume | Contents | Size | Source |
-|--------|----------|------|--------|
-| `delivery-cache` | nginx image transform cache | 41GB | `/wsrv_cache` |
-
-Total transfer: ~146GB from two servers. All data migrated so nothing starts cold.
-
-### NFS mount
-
-TuSD storage via bind mount:
-```yaml
 volumes:
-  - /mnt/nfs/images:/srv/tusd-data
+  delivery-cache:
+  tusd-data:
 ```
 
-The NFS share is on Katapult's network (`nfs2.nlc.storage.katapult.io:/katapult/fsv_5ivInYUXp22oVueE`), currently mounted at `/images` on app1-internal. NFS v3, TCP, 1MB read/write size. Same provider as the new server — no special connectivity requirements.
+Local dev is unaffected — `image-host` is not in the default `COMPOSE_PROFILES` set, so `frontend-nginx` does not start unless an operator opts in. The `frontend` profile keeps its existing meaning and members.
 
-**TuSD upload directory**: On app1-internal, tusd runs with `-upload-dir=images` from `/var/www/tusd/`, so images land in `/var/www/tusd/images/`. This is a local directory, **not** the NFS mount at `/images`. The relationship between these two paths needs clarifying during migration — likely the NFS mount is the canonical store and the local dir is a small working area (only 84KB).
+The new VM sets `COMPOSE_PROFILES=image-host` only — apiv1/apiv2/redis/beanstalkd do not start there.
 
-### Cache characteristics
+### 2. nginx config: `frontend-nginx.conf`
 
-| Cache | Max size | Retention | Hit rate | Requests/day |
-|-------|----------|-----------|----------|--------------|
-| Delivery | 40GB | 30d inactive | 92% (41K HIT / 3.4K MISS per half-day) | ~100K |
-| Tiles | configurable | configurable | not cached by nginx currently | ~50K |
-| Geocode | n/a (proxy_cache on bulk3) | 10d | high (Photon responses cached by nginx) | ~11K (real) |
+The new nginx in front of weserv replaces the bare-metal `delivery` nginx on app1. Key requirements:
 
-Delivery cache warms quickly due to `messages_spatial` concentrating requests on active posts, but pre-warming from the copied cache eliminates the transition period entirely.
+- Same `proxy_cache_path` settings so the transferred 41GB cache is readable: `levels=1:2 keys_zone=wsrv_cache:100m max_size=40g inactive=30d use_temp_path=off`.
+- Same cache key as today. Since the live cache was written with `$proxy_host=wsrv.nl` and the new upstream is a local container, set `proxy_cache_key "https://wsrv.nl$request_uri"` explicitly — this preserves the warm cache regardless of the local upstream choice.
+- Mirror the `@handle_redirect` location for wsrv-style 301/302/307s (weserv may rarely return them; keep parity).
+- `uploads.ilovefreegle.org` server block on both `:80` and `:8080`, `proxy_pass http://tusd:8080`, `client_max_body_size 100M`, `proxy_request_buffering off`, `proxy_buffering off`, `proxy_http_version 1.1`, forward `Host` and `X-Forwarded-*` headers (tusd is `-behind-proxy`).
 
-## Migration Plan
+The `:8080` binding on `frontend-nginx` (and the matching `tusd_frontend` on HAProxy) stays indefinitely: the `:8080` URL form (`?url=https://uploads.ilovefreegle.org:8080/{hash}/`) is in active live traffic — observed in current delivery access logs from clients including third-party apps like Freebie Alerts — not just from 30-day-old cache entries. Dropping `:8080` requires a separate piece of work to identify and update every source that constructs the `:8080` form (frontend Vue/Nuxt code, V1 PHP `TUS_UPLOADER` env, anything that persists URLs into the DB or external client caches).
 
-### Phase 1: Provision and transfer
-- Provision new server on Katapult
-- Mount NFS share at `/mnt/nfs/images` (same Katapult NFS: `nfs2.nlc.storage.katapult.io`)
-- Clone FreegleDocker repo, configure `.env` with `COMPOSE_PROFILES=frontend`
-- Transfer data from **bulk3**: tile Docker volumes (~99GB), photon data (6.3GB)
-- Transfer data from **app1-internal**: delivery cache (~41GB)
+### 3. NFS mount on the new VM
 
-### Phase 2: Validate
-- `docker compose --profile frontend up -d`
-- Test each service directly (bypass applb) using Host headers
-- Verify delivery serves cached images without hitting weserv
-- Verify tusd serves existing images from NFS
-- Verify tiles render from copied cache/DB
-- Verify Photon responds to geocode queries
+The new VM mounts the same Katapult NFS share that app1-internal uses today:
 
-### Phase 3: Cutover
-- Update applb backend targets for all four domains to point at new server
-- Monitor for errors
-- Keep old server running for rollback (a few days)
-- Once confident, decommission old server and drop ORS
+```
+nfs2.nlc.storage.katapult.io:/katapult/fsv_5ivInYUXp22oVueE  /srv/tusd-data  nfs  vers=3,tcp,rsize=1048576,wsize=1048576,hard  0  0
+```
 
-Cutover is instant from the user's perspective — applb config change, no DNS propagation.
+(Mounted at `/srv/tusd-data` on the host so the bind mount into the tusd container is direct.)
 
-## What Changes in Local Dev
+Because NFS is shared, both app1 and the new VM can mount it simultaneously during cutover. There is no data copy step for the 823GB image store — only an HAProxy backend switch.
 
-Nothing. Local dev continues to use traefik for routing to delivery/tusd (default profile). The `frontend-nginx`, `photon`, and `tile-server` services only start with `--profile frontend`. Tiles and geocoding continue to point at the live servers via env vars (`OSM_TILE`, `GEOCODE`).
+### 4. HAProxy edit on ha-internal
 
-## Live Server Audit (2026-04-11)
+In `/etc/haproxy/haproxy.cfg`:
 
-Findings from inspecting bulk3 and app1-internal:
+- In `backend tusd_backend`: replace `server app1 10.220.0.45:8080 check` with the new VM's IP on port 8080. Delete the stale `server app4 10.220.0.188:8080 check backup` line.
+- **Add a new `backend delivery_backend`** (don't repoint `http_backend_cache` — it's shared with the uploadcare ACLs). Same mode/balance/stick-table shape as `http_backend_cache`. Point its `server` line at the new VM. Since the new VM's `frontend-nginx` will read client IPs from `X-Forwarded-For` (set by HAProxy), the new server line can drop `send-proxy` — simpler than enabling `proxy_protocol` listener config on the new nginx. Decide explicitly during cutover, document the choice.
+- Change `use_backend http_backend_cache if delivery` to `use_backend delivery_backend if delivery`. Uploadcare ACLs continue to point at `http_backend_cache` and are unaffected.
+- Optional housekeeping (not required for cutover): remove the stale `server app4 …` lines from `http_backend` and `http_backend_cache` while we're in the file.
+- Snapshot the file as `haproxy.cfg.bak.YYYYMMDD-pre-image-host` first (matches existing operator convention).
 
-### Resolved from deferred items
-- **Delivery cache key**: Uses nginx default (`$scheme$proxy_host$request_uri`), no explicit `proxy_cache_key`. Config uses `levels=1:2`, `keys_zone=wsrv_cache:100m`, `use_temp_path=off`. Replicate exactly.
-- **Tile traffic**: ~50K requests/day. Currently no nginx caching layer on bulk3 — nginx just proxies to Apache/renderd on port 8080. Adding a cache layer in frontend-nginx is a new optimisation.
-- **Geocode traffic**: ~11K real requests/day after filtering out bot. Rate limiting is essential — added to bulk3 nginx as interim fix.
+Single `systemctl reload haproxy` applies all changes atomically.
 
-### images.ilovefreegle.org (legacy — negligible traffic)
-Traffic audit shows ~557 requests/day (vs ~100K/day for delivery) — 0.06% of image traffic. Mostly legacy links from emails, trashnothing fallback URLs, and wsrv.nl's own image fetcher. 67% have no referer. The `/img_*.jpg` requests mostly return 302 redirects already. The only meaningful case is `/defaultprofile.png` (~12 req/day, used as a fallback by trashnothing).
+### 5. Decommission on app1-internal
 
-**Recommendation**: Do not migrate the PHP image serving stack. Instead, configure applb to serve a static `/defaultprofile.png` and return 404 or redirect for everything else on `images.ilovefreegle.org`. The remaining traffic will decay naturally as cached links age out.
+After ~1 week of clean operation on the new VM:
 
-### uploads.ilovefreegle.org port 8080
-TuSD currently listens on port 8080 with no nginx proxy — applb routes directly. Old delivery URLs include `:8080` in the `url=` parameter. After migration, tusd is behind frontend-nginx on port 80. Either:
-1. frontend-nginx also listens on 8080 for backwards compatibility, or
-2. Old cached URLs with `:8080` are accepted (they'll age out of the delivery cache over 30 days)
+- Stop bare-metal tusd and remove its monit entry (`checktusd` no longer needed once we are off wsrv.nl).
+- Disable `delivery` and `iznik_delivery` sites in `/etc/nginx/sites-enabled/`.
+- Delete `/wsrv_cache` (~41GB), bringing app1 disk usage from ~75% to ~48%.
+- Unmount `/images` on app1 (it stays mounted on the new VM).
 
-### app1-internal post-migration
-After the frontend server takes over delivery and uploads, app1-internal retains:
-- API servers (apiv1, apiv2)
-- Database (MySQL)
-- images.ilovefreegle.org (legacy PHP)
-- PHP-FPM
+`images.ilovefreegle.org` (legacy PHP serving) stays on app1 until the wider app1 retirement work.
 
-The delivery nginx config and `/wsrv_cache` can be removed from app1-internal after cutover, freeing ~41GB (bringing disk usage from 74% to ~48%).
+## Cutover sequence
 
-## Graceful Degradation
+In order, with a real but brief upload outage (no live failover today):
 
-The frontend server is a single point of failure. During maintenance (patching, restarts), all four services go down simultaneously. The goal is **no Sentry floods and no "something went wrong" errors** — degraded visuals are acceptable.
+1. Provision the new Katapult VM on the same internal network (10.220.0.0/22). Add to ha-internal `/etc/hosts`.
+2. Mount the NFS share at `/srv/tusd-data`. Verify with `ls /srv/tusd-data | head` against `ls /images | head` on app1 — same contents.
+3. Clone FreegleDocker, set `COMPOSE_PROFILES=image-host`, `docker compose up -d`.
+4. `rsync` `/wsrv_cache` from app1 to the new VM's `delivery-cache` volume directory. Run incrementally; final delta sync happens just before the HAProxy switch.
+5. Validate the new VM by bypassing HAProxy with Host headers:
+   - `curl -H 'Host: delivery.ilovefreegle.org' http://<new-vm>/?url=https://uploads.ilovefreegle.org/<known-hash>&w=200&h=200` — expect a 200 with `X-Cache-Status: HIT` for a cached entry.
+   - `curl -H 'Host: uploads.ilovefreegle.org' -X OPTIONS http://<new-vm>/` — expect tus capability headers.
+6. Stop tusd on app1 (`pkill tusd`). In-flight uploads pause; tus is resumable, so clients resume against the new backend on retry.
+7. Final `rsync` delta for `/wsrv_cache`.
+8. Edit `haproxy.cfg`, snapshot first, reload. The new VM is now serving both hostnames.
+9. Watch the new VM's `delivery.access.log` (look for `MISS` rates spiking — the cache key should be preserved), HAProxy stats, and Sentry for image-load failures.
 
-### Current frontend behaviour (from code audit)
+## Rollback
 
-| Service down | What happens | Sentry? | User sees |
-|-------------|-------------|---------|-----------|
-| **Delivery** | `OurUploadedImage.vue` catches `@error`, hides image, shows placeholder | **Yes — `Sentry.captureMessage` per failed image** | Placeholders / hidden images |
-| **Uploads** | Uppy TUS upload fails | Likely (unhandled) | Upload error in modal |
-| **Tiles** | Leaflet shows blank white area | No | Blank map background |
-| **Geocoding** | Autocomplete returns no results, console.log only | No | Empty dropdown, postcode search still works (uses API) |
+While app1's tusd binary and nginx site config are still in place: revert `haproxy.cfg` from the snapshot, restart bare-metal tusd on app1 via `/var/www/tusd/starttusd`, `systemctl reload haproxy`. NFS is shared so app1 sees the same files when it comes back.
 
-Most of this is already graceful. Two problems need fixing:
+Once app1 is decommissioned this rollback target is gone, and standing up a second image-host VM becomes the only failure recovery option. Decide whether to provision two image-host VMs from the start (one primary, one HAProxy `backup`) based on the cost vs the appetite for running on a single VM during the watch period.
 
-### Fix 1: Suppress Sentry flood from image failures (required)
+## Local-dev behaviour
 
-`OurUploadedImage.vue` (line ~160) calls `Sentry.captureMessage('Failed to fetch image ' + props.src)` for every broken image. During a maintenance window, every page load would fire dozens of Sentry events. This needs either:
-- **Rate-limiting**: Track recent failures and only report the first N per session
-- **Removal**: Image load failures aren't actionable errors — the placeholder behaviour is correct. Remove the Sentry call entirely and rely on delivery monitoring instead
+Unchanged. Local dev uses traefik to route to the existing `delivery` and `tusd` containers via the `frontend` profile. `frontend-nginx` is in `image-host` only and does not start in the default local-dev profile set.
 
-Recommended: remove the Sentry call. A delivery outage should be detected by infrastructure monitoring (applb health checks, uptime monitoring), not by individual image load failures in the browser.
+To smoke-test the new path locally before cutover, an operator can opt in with `COMPOSE_PROFILES=image-host docker compose up -d frontend-nginx` in an isolated worktree (ports remapped to avoid clashing with traefik).
 
-### Fix 2: Fallback tile URL (optional, low priority)
+## Risks and watch items
 
-Configure a fallback tile source in the Leaflet tile layer so maps show OSM public tiles instead of blank white during outages. This is cosmetic — blank maps don't generate errors — but improves the experience. Can be done later.
+- **Cache key preservation**: if `proxy_cache_key` doesn't exactly match what the live nginx produces, the transferred 41GB cache rewarms from cold and wsrv.nl gets a traffic spike during warmup. Validate with a single sample URL on the staged VM before cutover.
+- **NFS performance on the new VM**: Katapult NFS is the same provider/network, but verify read/write latency from the new VM matches app1's before assuming parity. A degraded NFS read time would surface as slower tusd serves and a lower delivery hit ratio.
+- **No live failover during cutover**: app4 is retired. A single VM provision means a single-VM-outage risk window between cutover and the next provisioning step. The two-VM option (above) closes this.
+- **CORS source**: tusd CORS headers come from HAProxy today. Confirm HAProxy continues to add them to the new VM's responses, or move the headers into `frontend-nginx.conf` to remove the HAProxy coupling.
+- **Sentry image-failure flood**: `OurUploadedImage.vue` calls `Sentry.captureMessage('Failed to fetch image …')` per broken image. During any maintenance window on the new VM this fires per image per page. Remove the Sentry call (placeholder behaviour is already correct) or rate-limit it, and rely on infrastructure monitoring for delivery health instead.
 
-## Deferred
+## Open questions
 
-- Photon update strategy (manual updates for now, can enable auto-update later)
-- Determine whether ORS should be reprovisioned on the new server or permanently dropped
-- Clarify tusd upload-dir vs NFS mount relationship on app1-internal before migration
+- **One image-host VM or two?** Cost vs redundancy. Recommendation: two, with HAProxy primary/backup.
+- **PROXY protocol on the delivery listener?** Two ways for the new VM's `frontend-nginx` to see real client IPs:
+  - HAProxy keeps `send-proxy` on the new `delivery_backend` server line; `frontend-nginx` listens with `proxy_protocol` on its delivery server block.
+  - HAProxy drops `send-proxy` and relies on `X-Forwarded-For` (which it already sets); `frontend-nginx` listens plain. Simpler — recommended unless something downstream needs the real source IP at TCP level.
+- **`:8080` retirement (separate work, not blocking)**: identifying everything that constructs `https://uploads.ilovefreegle.org:8080/` URLs (Vue components, V1 `TUS_UPLOADER`, persisted DB columns, third-party apps) and migrating them to the no-port form. Until that's done, the `:8080` listener stays in both HAProxy and `frontend-nginx`.
+- **CORS at HAProxy or at `frontend-nginx`?** Status-quo (HAProxy tusd_backend response-headers) is simpler but couples this design to a config we don't own. Move-into-nginx is cleaner but is an extra change to validate during cutover.
+- **Clean up stale `app4` lines in `http_backend` and `http_backend_cache` as part of this cutover, or as separate housekeeping?** They're not in our path but they're dead config in the same file we're editing.
