@@ -4294,3 +4294,100 @@ func TestAllSeenIsolatedAcrossUsers(t *testing.T) {
 	db.Raw("SELECT lastmsgseen FROM chat_roster WHERE chatid = ? AND userid = ?", chatID, userAID).Scan(&aSeenAfter)
 	assert.Equal(t, userAKnownSeen, aSeenAfter, "AllSeen for userB must not modify userA's lastmsgseen")
 }
+
+// TestModeratorUnreadCountClearedByMarkAllRead is an AssertFlip test for bug 9675:
+// a moderator's unread badge is stuck at 99+ after joining new groups.
+//
+// Root cause: handleAllSeen only updates existing chat_roster rows (UPDATE … WHERE userid = ?).
+// countUnseenMT counts all moderator-visible chats via a LEFT JOIN; for chats where the
+// moderator has no roster entry, COALESCE(lastmsgseen, 0) = 0 so every message in those
+// chats is perpetually unread.  Newly-joined groups' chats have no roster entry for the
+// moderator, so handleAllSeen cannot clear them and the count stays > 0.
+//
+// AssertFlip Step 2 (inverted): assert count == 0 after markAllRead.
+// This FAILS on current code because handleAllSeen skips chats with no roster entry.
+func TestModeratorUnreadCountClearedByMarkAllRead(t *testing.T) {
+	prefix := uniquePrefix("unread9675")
+	db := database.DBConn
+
+	// Create a fresh moderator with no pre-existing memberships.
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	// Member who will post messages into the mod's visible chats.
+	memberID := CreateTestUser(t, prefix+"_mbr", "User")
+
+	// Create 100 groups and User2Mod chats that the moderator can see (via membership)
+	// but for which the moderator has NO chat_roster entry — simulating chats that
+	// pre-existed before the mod joined the group (or were never explicitly opened).
+	numChats := 100
+	var chatIDs []uint64
+	for i := 0; i < numChats; i++ {
+		groupID := CreateTestGroup(t, fmt.Sprintf("%s_g%d", prefix, i))
+		CreateTestMembership(t, modID, groupID, "Moderator")
+		CreateTestMembership(t, memberID, groupID, "Member")
+
+		// Insert the chat room without a roster entry for the moderator.
+		db.Exec(
+			"INSERT INTO chat_rooms (user1, groupid, chattype, latestmessage) VALUES (?, ?, ?, NOW())",
+			memberID, groupID, utils.CHAT_TYPE_USER2MOD,
+		)
+		var chatID uint64
+		db.Raw("SELECT id FROM chat_rooms WHERE user1 = ? AND groupid = ? ORDER BY id DESC LIMIT 1",
+			memberID, groupID).Scan(&chatID)
+		chatIDs = append(chatIDs, chatID)
+
+		// Add a message from the member that countUnseenMT will pick up.
+		db.Exec(
+			"INSERT INTO chat_messages (chatid, userid, message, type, date, reviewrequired, reviewrejected, processingrequired, processingsuccessful) VALUES (?, ?, ?, 'Default', NOW(), 0, 0, 0, 1)",
+			chatID, memberID, fmt.Sprintf("unread msg %d", i),
+		)
+		db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatID)
+
+		// Add member to roster so the chat is fully set up — but NOT the moderator.
+		db.Exec("INSERT IGNORE INTO chat_roster (chatid, userid) VALUES (?, ?)", chatID, memberID)
+	}
+
+	t.Cleanup(func() {
+		for _, chatID := range chatIDs {
+			db.Exec("DELETE FROM chat_messages WHERE chatid = ?", chatID)
+			db.Exec("DELETE FROM chat_roster WHERE chatid = ?", chatID)
+			db.Exec("DELETE FROM chat_rooms WHERE id = ?", chatID)
+		}
+		db.Exec("DELETE FROM memberships WHERE userid IN (?, ?)", modID, memberID)
+		db.Exec("DELETE FROM users WHERE id IN (?, ?)", modID, memberID)
+	})
+
+	// Verify unread count > 0 before mark-all-read.
+	req := httptest.NewRequest("GET",
+		fmt.Sprintf("/api/chatrooms?count=true&chattypes=User2Mod&jwt=%s", modToken), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+	var beforeResult map[string]interface{}
+	json2.Unmarshal(rsp(resp), &beforeResult)
+	countBefore := int64(beforeResult["count"].(float64))
+	assert.GreaterOrEqual(t, countBefore, int64(numChats),
+		"should have at least %d unread messages before markAllRead", numChats)
+
+	// Call mark-all-read (POST /chatrooms with action=AllSeen).
+	payload := map[string]interface{}{"action": "AllSeen"}
+	s, _ := json2.Marshal(payload)
+	req2 := httptest.NewRequest("POST", "/api/chatrooms?jwt="+modToken, bytes.NewBuffer(s))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, _ := getApp().Test(req2)
+	assert.Equal(t, fiber.StatusOK, resp2.StatusCode)
+
+	// AssertFlip Step 2 (inverted — FAILS on buggy code):
+	// After markAllRead the unread count must be 0.  The bug: handleAllSeen only runs
+	// UPDATE chat_roster … WHERE userid = ?, so chats with no roster entry for the mod
+	// are never touched, and countUnseenMT still sees them as fully unread.
+	req3 := httptest.NewRequest("GET",
+		fmt.Sprintf("/api/chatrooms?count=true&chattypes=User2Mod&jwt=%s", modToken), nil)
+	resp3, _ := getApp().Test(req3)
+	assert.Equal(t, 200, resp3.StatusCode)
+	var afterResult map[string]interface{}
+	json2.Unmarshal(rsp(resp3), &afterResult)
+	countAfter := int64(afterResult["count"].(float64))
+
+	assert.Equal(t, int64(0), countAfter,
+		"after markAllRead, unread count must be 0 (got %d: handleAllSeen skips chats with no roster entry)", countAfter)
+}
