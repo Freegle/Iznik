@@ -264,13 +264,17 @@ watch(
   async (newVal) => {
     uploading.value = false
     if (newVal?.length) {
-      const atts = {
-        externaluid: newVal[0].ouruid,
-        externalmods: newVal[0].externalmods,
-        imgtype: 'User',
-        msgid: me?.value.id,
+      if (newVal[0].id) {
+        await authStore.saveAndGet({ profileid: newVal[0].id })
+      } else if (newVal[0].ouruid) {
+        const atts = {
+          externaluid: newVal[0].ouruid,
+          externalmods: newVal[0].externalmods,
+          imgtype: 'User',
+          msgid: me?.value.id,
+        }
+        await imageStore.post(atts)
       }
-      await imageStore.post(atts)
     }
     await fetchMe(true)
     emit('update')
