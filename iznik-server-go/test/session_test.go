@@ -288,6 +288,31 @@ func TestGetSessionReturnsDonorFields(t *testing.T) {
 	db.Exec("DELETE FROM users_donations WHERE userid = ?", userID)
 }
 
+func TestGetSessionReturnsEngagementLevel(t *testing.T) {
+	// Session endpoint must return engagementlevel so the frontend can
+	// personalise the suggested donation amount without a separate API call.
+	prefix := uniquePrefix("sess_eng")
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Set engagement level directly — normally maintained by the V1 Engage.php cron.
+	db.Exec("UPDATE users SET engagement = 'Obsessed' WHERE id = ?", userID)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/session?jwt="+token, nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	me, ok := result["me"].(map[string]interface{})
+	assert.True(t, ok, "me should be a map")
+	assert.Equal(t, "Obsessed", me["engagementlevel"], "me.engagementlevel should reflect users.engagement")
+
+	// Clean up.
+	db.Exec("UPDATE users SET engagement = NULL WHERE id = ?", userID)
+}
+
 func TestGetSessionEmailsHaveOurdomainFlag(t *testing.T) {
 	prefix := uniquePrefix("sess_ourd")
 	db := database.DBConn

@@ -30,8 +30,7 @@
             :raised="raised"
             :target-met="targetMet"
             :donated="donated"
-            :amounts="[1, 5, 10]"
-            :default="1"
+            :default="suggestedDonationDefault"
             @score="score"
             @success="thankyou = true"
             @cancel="hide"
@@ -122,6 +121,13 @@ const targetMet = computed(() => {
   return groupId.value && raised.value > target.value
 })
 
+const suggestedDonationDefault = computed(() => {
+  const level = authStore.user?.engagementlevel
+  if (level === 'Obsessed') return 5
+  if (level === 'Frequent' || level === 'Occasional') return 3
+  return 2
+})
+
 function score(value) {
   const runtimeConfig = useRuntimeConfig()
   const api = Api(runtimeConfig)
@@ -139,6 +145,8 @@ const donated = computed(() => {
   return me?.donated ? dateshort(me.donated) : null
 })
 show()
+
+defineExpose({ suggestedDonationDefault, score, groupName, targetMet, donated, hide })
 </script>
 
 <style scoped lang="scss">
