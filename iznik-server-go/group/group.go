@@ -638,6 +638,7 @@ type PatchGroupRequest struct {
 	Mentored              *int     `json:"mentored"`
 	Ontn                  *int     `json:"ontn"`
 	Onlovejunk            *int              `json:"onlovejunk"`
+	Profile               *uint64           `json:"profile"`
 	Settings              *json.RawMessage  `json:"settings"`
 	Rules                 *json.RawMessage  `json:"rules"`
 	// Admin/Support only fields
@@ -727,6 +728,10 @@ func PatchGroup(c *fiber.Ctx) error {
 	}
 	if req.Onlovejunk != nil {
 		db.Exec("UPDATE `groups` SET onlovejunk = ? WHERE id = ?", *req.Onlovejunk, req.ID)
+	}
+	if req.Profile != nil {
+		db.Exec("UPDATE `groups` SET profile = ? WHERE id = ?", *req.Profile, req.ID)
+		logGroupEdit(req.ID, myid, "Profile")
 	}
 	if req.Settings != nil {
 		db.Exec("UPDATE `groups` SET settings = ? WHERE id = ?", string(*req.Settings), req.ID)

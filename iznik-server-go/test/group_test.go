@@ -1052,3 +1052,37 @@ func TestTnKeyInfoOmittedWhenNil(t *testing.T) {
 	_, ok := raw["tnkey"]
 	assert.False(t, ok, "tnkey should be omitted when nil")
 }
+
+// TestPatchGroupProfileImage verifies that PATCH /group persists the profile image ID.
+// Before the fix, PatchGroupRequest had no profile field so the update was silently
+// dropped — the group picture "briefly appeared" (upload succeeded) but never stuck.
+func TestPatchGroupProfileImage(t *testing.T) {
+	prefix := uniquePrefix("grpw_profile")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_mod", "User")
+	_, token := CreateTestSession(t, userID)
+	CreateTestMembership(t, userID, groupID, "Moderator")
+
+	// Seed a groups_images row to act as the uploaded profile image.
+	// groups.profile FKs to groups_images.id, not users_images.
+	result := db.Exec("INSERT INTO groups_images (groupid, contenttype, archived) VALUES (?, 'image/jpeg', 0)", groupID)
+	require.NoError(t, result.Error)
+	var imageID uint64
+	db.Raw("SELECT id FROM groups_images WHERE groupid = ? ORDER BY id DESC LIMIT 1", groupID).Scan(&imageID)
+	require.NotZero(t, imageID, "seed image must be created")
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":      groupID,
+		"profile": imageID,
+	})
+	req := httptest.NewRequest("PATCH", fmt.Sprintf("/api/group?jwt=%s", token), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var savedProfile uint64
+	db.Raw("SELECT COALESCE(profile, 0) FROM `groups` WHERE id = ?", groupID).Scan(&savedProfile)
+	assert.Equal(t, imageID, savedProfile, "group profile image ID must be persisted after PATCH")
+}
