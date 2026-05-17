@@ -17,9 +17,13 @@ parameters:
     type: boolean
     default: false
     description: "Set to true to run tests on a Katapult cloud runner (freegle/katapult-runner)"
+  build_modtools_production:
+    type: boolean
+    default: false
+    description: "Set to true to manually build and publish ModTools to Play Store / TestFlight"
 
 orbs:
-  freegle: freegle/tests@1.1.302
+  freegle: freegle/tests@1.1.303
 
 jobs:
   mark-ci-passed:
@@ -169,12 +173,14 @@ workflows:
               only:
                 - feat/modtools-capacitor-app
 
-  # Deploy apps when production branch is pushed
+  # Deploy apps when production branch is pushed — Freegle app only.
+  # ModTools is published separately via the manual modtools-production workflow.
   deploy-apps:
     when:
       and:
         - not: << pipeline.parameters.run_manual_promote >>
         - not: << pipeline.parameters.build_testflight >>
+        - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - freegle/increment-version:
           filters:
@@ -195,20 +201,6 @@ workflows:
             branches:
               only:
                 - production
-      - freegle/build-android-modtools:
-          requires:
-            - freegle/increment-version
-          filters:
-            branches:
-              only:
-                - production
-      - freegle/build-ios-modtools:
-          requires:
-            - freegle/increment-version
-          filters:
-            branches:
-              only:
-                - production
       - freegle/check-hotfix-promote:
           requires:
             - freegle/build-android
@@ -217,6 +209,20 @@ workflows:
             branches:
               only:
                 - production
+
+  # Manually-triggered ModTools production build and Play Store / TestFlight upload.
+  # Trigger by setting build_modtools_production: true in the CircleCI pipeline parameters UI.
+  # Does not run automatically — ModTools updates are infrequent and manually controlled.
+  modtools-production:
+    when: << pipeline.parameters.build_modtools_production >>
+    jobs:
+      - freegle/increment-version-modtools
+      - freegle/build-android-modtools:
+          requires:
+            - freegle/increment-version-modtools
+      - freegle/build-ios-modtools:
+          requires:
+            - freegle/increment-version-modtools
 
   # Manual promotion trigger
   manual-promote-submit:

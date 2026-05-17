@@ -3043,6 +3043,28 @@ jobs:
           paths:
             - .new_version
 
+  increment-version-modtools:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - run:
+          name: Increment ModTools Version Number
+          command: |
+            CURRENT_VERSION="${CURRENT_MODTOOLS_VERSION:-1.0.0}"
+            echo "Current ModTools version: $CURRENT_VERSION"
+            major=$(echo "$CURRENT_VERSION" | cut -d. -f1)
+            minor=$(echo "$CURRENT_VERSION" | cut -d. -f2)
+            patch=$(echo "$CURRENT_VERSION" | cut -d. -f3)
+            NEW_PATCH=$((patch + 1))
+            NEW_VERSION="$major.$minor.$NEW_PATCH"
+            echo "New ModTools version: $NEW_VERSION"
+            echo "$NEW_VERSION" > .new_version
+            cat .new_version
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .new_version
+
   build-android-debug:
     executor: android-executor
     working_directory: ~/project/iznik-nuxt3
@@ -3519,6 +3541,24 @@ jobs:
           name: Make gradlew executable
           command: chmod +x android/gradlew
       - run:
+          name: Setup ModTools Android Release Signing
+          command: |
+            # Prefer ModTools-specific keystore vars; fall back to shared Freegle ones.
+            # build.gradle reads ANDROID_KEYSTORE_BASE64 directly from the environment.
+            MT_KEYSTORE="${MODTOOLS_ANDROID_KEYSTORE_BASE64:-$ANDROID_KEYSTORE_BASE64}"
+            MT_STORE_PASS="${MODTOOLS_ANDROID_KEYSTORE_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+            MT_KEY_ALIAS="${MODTOOLS_ANDROID_KEY_ALIAS:-$ANDROID_KEY_ALIAS}"
+            MT_KEY_PASS="${MODTOOLS_ANDROID_KEY_PASSWORD:-$ANDROID_KEY_PASSWORD}"
+            if [ -n "$MT_KEYSTORE" ]; then
+              echo "ANDROID_KEYSTORE_BASE64=$MT_KEYSTORE" >> $BASH_ENV
+              echo "ANDROID_KEYSTORE_PASSWORD=$MT_STORE_PASS" >> $BASH_ENV
+              echo "ANDROID_KEY_ALIAS=$MT_KEY_ALIAS" >> $BASH_ENV
+              echo "ANDROID_KEY_PASSWORD=$MT_KEY_PASS" >> $BASH_ENV
+              echo "✅ Android release signing configured for ModTools"
+            else
+              echo "⚠️  No release keystore set — AAB will be unsigned"
+            fi
+      - run:
           name: Configure Gradle Plugin Portal
           command: |
             mkdir -p ~/.gradle/init.d
@@ -3586,6 +3626,24 @@ jobs:
           paths:
             - ~/.gradle/caches
             - ~/.gradle/wrapper
+      - run:
+          name: Update CircleCI ModTools Version Variable
+          command: |
+            if [ ! -f .new_version ]; then
+              echo "⚠️  .new_version file not found - skipping version update"
+              exit 0
+            fi
+            NEW_VERSION=$(cat .new_version)
+            echo "📝 Updating CURRENT_MODTOOLS_VERSION to: ${NEW_VERSION}"
+            curl -X DELETE \
+              -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
+            curl -X POST \
+              -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+            echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
       - store_artifacts:
           path: android/app/build/outputs/bundle/release/
           destination: modtools-android-bundle
