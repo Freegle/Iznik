@@ -543,6 +543,65 @@ class MessageExpiryServiceTest extends TestCase
         $this->assertEquals(90, MessageExpiryService::EXPIRE_LOOKBACK_DAYS);
     }
 
+    /**
+     * Regression: WANTED posts older than maxagetoshow (90 days) must expire
+     * at the same threshold as OFFER posts.
+     *
+     * Bug: getExpiredCandidates() computes the WANTED expiretime as
+     *   GREATEST(maxagetoshow=90, reposts.wanted=14 * (max=10+1)) = GREATEST(90,154) = 154 days
+     * so a 95-day-old WANTED post is never returned as a candidate and is never
+     * auto-expired, even though it is past the maxagetoshow threshold that
+     * governs display and OFFER expiry alike.
+     */
+    public function test_wanted_post_expires_after_maxagetoshow_threshold(): void
+    {
+        $user = $this->createTestUser();
+        // Default group (no custom settings) → maxagetoshow=90, reposts.offer=3,
+        // reposts.wanted=14, max=10.
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        // Both posts are 95 days old — past maxagetoshow (90) but before the
+        // inflated WANTED threshold (14*11 = 154).
+        $arrival = now()->subDays(95);
+
+        $offer = $this->createTestMessage($user, $group, [
+            'type' => Message::TYPE_OFFER,
+            'arrival' => $arrival,
+        ]);
+        $wanted = $this->createTestMessage($user, $group, [
+            'type' => Message::TYPE_WANTED,
+            'subject' => 'WANTED: Some Item (TestLocation)',
+            'arrival' => $arrival,
+        ]);
+
+        foreach ([$offer, $wanted] as $m) {
+            DB::table('messages_spatial')->insert([
+                'msgid' => $m->id,
+                'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+                'successful' => 0,
+            ]);
+        }
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        // Both OFFER and WANTED must be expired after crossing maxagetoshow.
+        $this->assertEquals(2, $count);
+
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $offer->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+            'comments' => 'Auto-expired',
+        ]);
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $wanted->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+            'comments' => 'Auto-expired',
+        ]);
+        $this->assertDatabaseMissing('messages_spatial', ['msgid' => $offer->id]);
+        $this->assertDatabaseMissing('messages_spatial', ['msgid' => $wanted->id]);
+    }
+
     public function test_process_expired_from_spatial_index_logs_progress(): void
     {
         $user = $this->createTestUser();
