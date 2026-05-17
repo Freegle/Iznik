@@ -306,7 +306,7 @@ class PushNotificationServiceTest extends TestCase
     {
         $payload = [
             'title' => '3 messages pending',
-            'message' => '3 pending',
+            'message' => 'Open ModTools to review',
             'channel_id' => 'modtools',
         ];
 
@@ -315,7 +315,7 @@ class PushNotificationServiceTest extends TestCase
         $this->assertArrayHasKey('notification', $arr,
             'ModTools Android push must include a notification block so Android raises it in the tray');
         $this->assertSame('3 messages pending', $arr['notification']['title']);
-        $this->assertSame('3 pending', $arr['notification']['body']);
+        $this->assertSame('Open ModTools to review', $arr['notification']['body']);
         $this->assertSame('tok-mt', $arr['token']);
         $this->assertSame($payload, $arr['data'],
             'Existing data payload (channel_id, badge, etc.) must still be present');

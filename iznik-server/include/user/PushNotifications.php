@@ -210,7 +210,15 @@ class PushNotifications
                             }
                         }
 
-                        $data['notId'] = (string)floor(microtime(TRUE));
+                        $category = Utils::presdef('category', $payload, NULL);
+
+                        # ModTools uses a fixed notId (userid) so each new push replaces the
+                        # previous notification. Other types use a timestamp so they stack normally.
+                        if ($category === PushNotifications::CATEGORY_MODTOOLS) {
+                            $data['notId'] = (string)$userid;
+                        } else {
+                            $data['notId'] = (string)floor(microtime(TRUE));
+                        }
 
                         #error_log("Data is " . var_export($data, TRUE));
 
@@ -230,8 +238,6 @@ class PushNotifications
                                 'ttl' => '3600s',
                                 'priority' => 'normal'
                             ];
-
-                            $category = Utils::presdef('category', $payload, NULL);
 
                             if ($category && isset(self::CATEGORIES[$category])) {
                                 $categoryConfig = self::CATEGORIES[$category];

@@ -287,11 +287,12 @@ class PushNotificationService
                 'sound' => 'default',
                 'route' => '/modtools',
                 'channel_id' => 'modtools',
+                'notId' => (string) $userId,
             ];
         }
 
         $title = "$total message" . ($total > 1 ? 's' : '') . " pending";
-        $message = "$total pending";
+        $message = "Open ModTools to review";
 
         return [
             'badge' => (string) $total,
@@ -442,10 +443,18 @@ class PushNotificationService
             $androidMessage = $this->buildAndroidFcmMessage($token, $payload, $forceVisible);
             $message = CloudMessage::fromArray($androidMessage);
 
-            $message = $message->withAndroidConfig([
+            $androidConfig = [
                 'ttl' => '3600s',
                 'priority' => ($forceVisible || $isModtools) ? 'high' : 'normal',
-            ]);
+            ];
+
+            // Per-user tag causes Android to replace the existing notification
+            // rather than stack a new one alongside it.
+            if ($isModtools) {
+                $androidConfig['notification'] = ['tag' => "modtools-{$userId}"];
+            }
+
+            $message = $message->withAndroidConfig($androidConfig);
         } else {
             // iOS: include notification block for display
             $ios = [
