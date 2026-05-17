@@ -100,7 +100,7 @@ describe('DonationAskModal', () => {
     mockGroupId.value = 123
     mockRaised.value = 500
     mockTarget.value = 1000
-    mockAuthStore.user = { donated: null }
+    mockAuthStore.user = { donated: null, engagementlevel: null }
   })
 
   async function createWrapper() {
@@ -246,6 +246,50 @@ describe('DonationAskModal', () => {
       mockAuthStore.user = { donated: null }
       const wrapper = await createWrapper()
       expect(wrapper.text()).not.toContain("You've already donated")
+    })
+  })
+
+  describe('engagement-based suggested donation amount', () => {
+    it('defaults to 2 when engagementlevel is null', async () => {
+      mockAuthStore.user = { donated: null, engagementlevel: null }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.suggestedDonationDefault).toBe(2)
+    })
+
+    it('defaults to 2 for New users', async () => {
+      mockAuthStore.user = { donated: null, engagementlevel: 'New' }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.suggestedDonationDefault).toBe(2)
+    })
+
+    it('defaults to 2 for Inactive users', async () => {
+      mockAuthStore.user = { donated: null, engagementlevel: 'Inactive' }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.suggestedDonationDefault).toBe(2)
+    })
+
+    it('defaults to 2 for Dormant users', async () => {
+      mockAuthStore.user = { donated: null, engagementlevel: 'Dormant' }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.suggestedDonationDefault).toBe(2)
+    })
+
+    it('defaults to 3 for Occasional users', async () => {
+      mockAuthStore.user = { donated: null, engagementlevel: 'Occasional' }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.suggestedDonationDefault).toBe(3)
+    })
+
+    it('defaults to 3 for Frequent users', async () => {
+      mockAuthStore.user = { donated: null, engagementlevel: 'Frequent' }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.suggestedDonationDefault).toBe(3)
+    })
+
+    it('defaults to 5 for Obsessed users', async () => {
+      mockAuthStore.user = { donated: null, engagementlevel: 'Obsessed' }
+      const wrapper = await createWrapper()
+      expect(wrapper.findComponent(DonationAskModal).vm.suggestedDonationDefault).toBe(5)
     })
   })
 
