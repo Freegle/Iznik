@@ -1053,9 +1053,12 @@ func TestTnKeyInfoOmittedWhenNil(t *testing.T) {
 	assert.False(t, ok, "tnkey should be omitted when nil")
 }
 
-// TestPatchGroupProfileImage verifies that PATCH /group persists the profile image ID.
+// TestPatchGroupProfileImage verifies that PATCH /group persists the profile image ID,
+// and that GET /group returns the correct profile URL using groups.profile (not groupid join).
 // Before the fix, PatchGroupRequest had no profile field so the update was silently
 // dropped — the group picture "briefly appeared" (upload succeeded) but never stuck.
+// A second bug: GET used Preload("GroupProfile") joining on groupid, ignoring groups.profile,
+// so even after fixing PATCH the correct image was not returned on GET.
 func TestPatchGroupProfileImage(t *testing.T) {
 	prefix := uniquePrefix("grpw_profile")
 	db := database.DBConn
@@ -1064,12 +1067,12 @@ func TestPatchGroupProfileImage(t *testing.T) {
 	_, token := CreateTestSession(t, userID)
 	CreateTestMembership(t, userID, groupID, "Moderator")
 
-	// Seed a groups_images row to act as the uploaded profile image.
-	// groups.profile FKs to groups_images.id, not users_images.
-	result := db.Exec("INSERT INTO groups_images (groupid, contenttype, archived) VALUES (?, 'image/jpeg', 0)", groupID)
+	// Seed a groups_images row with groupid=NULL (simulating OurUploader without groupid prop).
+	// groups.profile stores the groups_images.id directly; GET must resolve by id not by groupid.
+	result := db.Exec("INSERT INTO groups_images (groupid, contenttype, archived) VALUES (NULL, 'image/jpeg', 0)")
 	require.NoError(t, result.Error)
 	var imageID uint64
-	db.Raw("SELECT id FROM groups_images WHERE groupid = ? ORDER BY id DESC LIMIT 1", groupID).Scan(&imageID)
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&imageID)
 	require.NotZero(t, imageID, "seed image must be created")
 
 	body, _ := json.Marshal(map[string]interface{}{
@@ -1085,4 +1088,15 @@ func TestPatchGroupProfileImage(t *testing.T) {
 	var savedProfile uint64
 	db.Raw("SELECT COALESCE(profile, 0) FROM `groups` WHERE id = ?", groupID).Scan(&savedProfile)
 	assert.Equal(t, imageID, savedProfile, "group profile image ID must be persisted after PATCH")
+
+	// Verify GET /group returns the profile URL derived from groups.profile (not groupid join).
+	getReq := httptest.NewRequest("GET", fmt.Sprintf("/api/group/%d?jwt=%s", groupID, token), nil)
+	getResp, err := getApp().Test(getReq, 10000)
+	require.NoError(t, err)
+	assert.Equal(t, 200, getResp.StatusCode)
+
+	var getBody map[string]interface{}
+	json.NewDecoder(getResp.Body).Decode(&getBody)
+	profileStr, _ := getBody["profile"].(string)
+	assert.Contains(t, profileStr, fmt.Sprintf("gimg_%d", imageID), "GET must return profile URL for the specific image ID stored in groups.profile")
 }

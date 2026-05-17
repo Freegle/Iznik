@@ -45,8 +45,9 @@ type Group struct {
 	Lng                  float32          `json:"lng"`
 	Altlat               float32          `json:"altlat"`
 	Altlng               float32          `json:"altlng"`
-	GroupProfile         GroupProfile     `gorm:"ForeignKey:groupid" json:"-"`
-	GroupProfileStr      string           `json:"profile"`
+	GroupProfile         GroupProfile     `gorm:"-" json:"-"`
+	Profile              uint64           `gorm:"column:profile" json:"-"`
+	GroupProfileStr      string           `json:"profile" gorm:"-"`
 	Onmap                int              `json:"onmap"`
 	Tagline              string           `json:"tagline"`
 	Description          string           `json:"description"`
@@ -196,7 +197,7 @@ func GetGroup(c *fiber.Ctx) error {
 
 		// Return the group even if publish = 0 or onhere = 0 because they have the actual id, so they must really
 		// want it.  This can happen if a user has a message on a group that is then set to publish = 0, for example.
-		q := db.Preload("GroupProfile")
+		q := db.Session(&gorm.Session{})
 
 		if !wantFilteredSponsors && wantSponsors {
 			// Load all sponsors via GORM Preload (no date/visible filtering) - backward compatible default.
@@ -207,8 +208,11 @@ func GetGroup(c *fiber.Ctx) error {
 		found = !errors.Is(err, gorm.ErrRecordNotFound)
 
 		if found {
-			if group.GroupProfile.ID > 0 {
-				group.GroupProfileStr = "https://" + os.Getenv("IMAGE_DOMAIN") + "/gimg_" + strconv.FormatUint(group.GroupProfile.ID, 10) + ".jpg"
+			if group.Profile > 0 {
+				db.Where("id = ?", group.Profile).First(&group.GroupProfile)
+				if group.GroupProfile.ID > 0 {
+					group.GroupProfileStr = "https://" + os.Getenv("IMAGE_DOMAIN") + "/gimg_" + strconv.FormatUint(group.GroupProfile.ID, 10) + ".jpg"
+				}
 			}
 
 			if len(group.Namefull) > 0 {
@@ -368,7 +372,7 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 			defer wg.Done()
 
 			var g Group
-			err := db.Preload("GroupProfile").Preload("GroupSponsors").
+			err := db.Preload("GroupSponsors").
 				Raw("SELECT `groups`.*, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox FROM `groups` WHERE id = ?", gid).
 				First(&g).Error
 
@@ -376,8 +380,11 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 				return
 			}
 
-			if g.GroupProfile.ID > 0 {
-				g.GroupProfileStr = "https://" + os.Getenv("IMAGE_DOMAIN") + "/gimg_" + strconv.FormatUint(g.GroupProfile.ID, 10) + ".jpg"
+			if g.Profile > 0 {
+				db.Where("id = ?", g.Profile).First(&g.GroupProfile)
+				if g.GroupProfile.ID > 0 {
+					g.GroupProfileStr = "https://" + os.Getenv("IMAGE_DOMAIN") + "/gimg_" + strconv.FormatUint(g.GroupProfile.ID, 10) + ".jpg"
+				}
 			}
 
 			if len(g.Namefull) > 0 {

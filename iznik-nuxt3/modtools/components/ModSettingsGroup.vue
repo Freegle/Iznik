@@ -197,6 +197,7 @@
                 v-if="uploadingProfile"
                 v-model="profileAtts"
                 type="Group"
+                :groupid="groupid"
               />
             </b-form-group>
             <ModGroupSetting
