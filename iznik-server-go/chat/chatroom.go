@@ -1427,6 +1427,21 @@ func handleAllSeen(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 		)
 		WHERE userid = ?`, myid)
 
+	// countUnseenMT uses LEFT JOIN chat_roster with COALESCE(lastmsgseen, 0), so
+	// moderator-visible chats without a roster row are treated as fully unread.
+	// When a moderator joins new groups, those groups' chats have no roster entry for
+	// the mod yet. Insert a seen pointer for any such chats so they are cleared.
+	modChatIDs := getModeratorChatIDs(db, myid, []string{utils.CHAT_TYPE_USER2MOD, utils.CHAT_TYPE_MOD2MOD}, "", 0)
+	if len(modChatIDs) > 0 {
+		idlist := joinIDs(modChatIDs)
+		db.Exec(`INSERT INTO chat_roster (chatid, userid, lastmsgseen, date)
+			SELECT cr.id, ?, COALESCE((SELECT MAX(id) FROM chat_messages WHERE chatid = cr.id), 0), NOW()
+			FROM chat_rooms cr
+			WHERE cr.id IN (`+idlist+`)
+			AND NOT EXISTS (SELECT 1 FROM chat_roster r2 WHERE r2.chatid = cr.id AND r2.userid = ?)`,
+			myid, myid)
+	}
+
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
