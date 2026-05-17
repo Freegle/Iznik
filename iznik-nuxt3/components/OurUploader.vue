@@ -1,45 +1,67 @@
 <template>
   <client-only>
     <div class="wrapper" @dragenter="onDragEnter">
-      <div class="d-flex flex-column justify-content-around">
-        <v-icon
-          v-if="!busy"
-          :size="iconSize"
-          icon="camera"
-          class="camera text-faded"
-        />
+      <template v-if="useNativeInput">
         <Spinner v-if="busy" :size="50" class="fadein" />
-        <div
-          v-else-if="multiple || !modelValue.length"
-          class="d-flex justify-content-around"
-        >
+        <div v-else>
+          <input
+            ref="nativeFileInput"
+            type="file"
+            accept="image/*"
+            class="d-none"
+            @change="handleNativeFileChange"
+          />
           <b-button
-            :id="uploaderUid"
             variant="primary"
             :size="buttonSize"
-            @click="openModal"
+            @click="nativeFileInput?.click()"
           >
             {{ label }}
           </b-button>
-          &nbsp;
-          <b-button v-if="isApp" variant="primary" @click="choosePhoto">
-            {{ chooselabel }}
-          </b-button>
-          <p v-if="isApp">{{ loading }}</p>
+          <p v-if="loading" class="mt-1 small">{{ loading }}</p>
         </div>
-      </div>
-      <DashboardModal
-        v-if="!isApp"
-        ref="dashboard"
-        :uppy="uppy"
-        :open="modalOpen"
-        :props="{
-          onRequestCloseModal: closeModal,
-          waitForThumbnailsBeforeUpload: true,
-          closeAfterFinish: true,
-          showNativePhotoCameraButton: true,
-        }"
-      />
+      </template>
+      <template v-else>
+        <div class="d-flex flex-column justify-content-around">
+          <v-icon
+            v-if="!busy"
+            :size="iconSize"
+            icon="camera"
+            class="camera text-faded"
+          />
+          <Spinner v-if="busy" :size="50" class="fadein" />
+          <div
+            v-else-if="multiple || !modelValue.length"
+            class="d-flex justify-content-around"
+          >
+            <b-button
+              :id="uploaderUid"
+              variant="primary"
+              :size="buttonSize"
+              @click="openModal"
+            >
+              {{ label }}
+            </b-button>
+            &nbsp;
+            <b-button v-if="isApp" variant="primary" @click="choosePhoto">
+              {{ chooselabel }}
+            </b-button>
+            <p v-if="isApp">{{ loading }}</p>
+          </div>
+        </div>
+        <DashboardModal
+          v-if="!isApp"
+          ref="dashboard"
+          :uppy="uppy"
+          :open="modalOpen"
+          :props="{
+            onRequestCloseModal: closeModal,
+            waitForThumbnailsBeforeUpload: true,
+            closeAfterFinish: true,
+            showNativePhotoCameraButton: true,
+          }"
+        />
+      </template>
     </div>
   </client-only>
 </template>
@@ -142,6 +164,11 @@ const props = defineProps({
     required: false,
     default: false,
   },
+  useNativeInput: {
+    type: Boolean,
+    required: false,
+    default: false,
+  },
 })
 
 const miscStore = useMiscStore()
@@ -217,11 +244,24 @@ function closeModal() {
 }
 
 const uploaderUid = ref(uid('uploader'))
+const nativeFileInput = ref(null)
 
 const loading = ref('')
 const emit = defineEmits(['update:modelValue', 'closed', 'photoProcessed'])
 const uploadedPhotos = ref([])
 const busy = ref(false)
+
+async function handleNativeFileChange(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  busy.value = true
+  try {
+    await uploadOneFile(file)
+  } finally {
+    busy.value = false
+    if (nativeFileInput.value) nativeFileInput.value.value = ''
+  }
+}
 
 const label = computed(() => {
   if (props.label) {

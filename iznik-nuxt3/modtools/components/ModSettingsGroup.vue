@@ -197,6 +197,7 @@
                 v-if="uploadingProfile"
                 v-model="profileAtts"
                 type="Group"
+                use-native-input
               />
             </b-form-group>
             <ModGroupSetting

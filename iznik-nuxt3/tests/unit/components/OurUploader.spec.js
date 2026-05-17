@@ -1377,4 +1377,78 @@ describe('OurUploader', () => {
       vi.useRealTimers()
     })
   })
+
+  describe('useNativeInput mode', () => {
+    it('renders a native file input when useNativeInput is true', async () => {
+      const wrapper = await createWrapper({ useNativeInput: true })
+      expect(wrapper.find('input[type="file"]').exists()).toBe(true)
+    })
+
+    it('does not render DashboardModal when useNativeInput is true', async () => {
+      const wrapper = await createWrapper({ useNativeInput: true })
+      expect(wrapper.find('.uppy-dashboard-modal').exists()).toBe(false)
+    })
+
+    it('shows a button that triggers the native file input', async () => {
+      const wrapper = await createWrapper({ useNativeInput: true })
+      expect(wrapper.find('.b-button').exists()).toBe(true)
+    })
+
+    it('accepts image/* files via native input', async () => {
+      const wrapper = await createWrapper({ useNativeInput: true })
+      const input = wrapper.find('input[type="file"]')
+      expect(input.attributes('accept')).toBe('image/*')
+    })
+
+    it('hides native input element visually', async () => {
+      const wrapper = await createWrapper({ useNativeInput: true })
+      const input = wrapper.find('input[type="file"]')
+      expect(input.classes()).toContain('d-none')
+    })
+
+    it('emits update:modelValue after native file upload completes', async () => {
+      mockImageStorePost.mockResolvedValue({
+        id: 42,
+        url: '/images/profile.jpg',
+        uid: 'img-42',
+        info: {},
+      })
+
+      const wrapper = await createWrapper({
+        useNativeInput: true,
+        modelValue: [],
+      })
+
+      const uploaderComp = wrapper.findComponent(OurUploader)
+      const input = wrapper.find('input[type="file"]')
+
+      const mockFile = new File(['data'], 'photo.jpg', { type: 'image/jpeg' })
+      Object.defineProperty(input.element, 'files', {
+        value: [mockFile],
+        writable: false,
+      })
+
+      // Trigger the tus upload success path manually via the tus mock
+      const tus = await import('tus-js-client')
+      tus.Upload.mockImplementationOnce((file, options) => {
+        return {
+          abort: vi.fn(),
+          findPreviousUploads: vi.fn().mockResolvedValue([]),
+          resumeFromPreviousUpload: vi.fn(),
+          start: vi.fn().mockImplementation(async () => {
+            await options.onSuccess()
+          }),
+          url: 'https://tus.example.com/files/profile123',
+          options,
+        }
+      })
+
+      await input.trigger('change')
+      await flushPromises()
+
+      const emitted = uploaderComp.emitted('update:modelValue')
+      expect(emitted).toBeTruthy()
+      expect(emitted[0][0][0].id).toBe(42)
+    })
+  })
 })
