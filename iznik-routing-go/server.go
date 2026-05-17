@@ -132,7 +132,7 @@ func startServer(g *Graph, addr string) {
 		return c.Send(demoHTML)
 	})
 
-	log.Printf("routing-server: listening on %s (%d nodes, deprivation=%v)",
+	log.Printf("spatial-server: listening on %s (%d nodes, deprivation=%v)",
 		addr, g.NodeCount(), g.Deprivation != nil)
 	log.Fatal(app.Listen(addr))
 }

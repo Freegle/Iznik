@@ -10,8 +10,8 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o /usr/local/bin/routing-server .
+RUN go build -o /usr/local/bin/spatial-server .
 
 EXPOSE 8196
 
-CMD ["routing-server"]
+CMD ["spatial-server"]

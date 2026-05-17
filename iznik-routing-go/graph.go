@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"math"
 	"os"
 	"runtime"
@@ -107,13 +108,14 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 	defer f.Close()
 
 	// ── Pass 1: collect routable ways and the OSM node IDs they reference ─────
+	log.Printf("spatial-server: pass 1 (ways scan)")
 	type wayRecord struct {
 		nodeOSMIDs []int64
 		speeds     [3]float32
 		oneway     bool
 	}
 	var ways []wayRecord
-	refSet := make(map[int64]struct{})
+	refSet := make(map[int64]struct{}, 65_000_000)
 
 	sc1 := osmpbf.New(context.Background(), f, 4)
 	sc1.SkipRelations = true
@@ -137,6 +139,8 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 		return nil, err
 	}
 
+	log.Printf("spatial-server: pass 1 done: %d ways, %d unique node refs", len(ways), len(refSet))
+
 	// Replace the hash set with a sorted slice for O(log n) lookups.
 	rawIDs := make([]int64, 0, len(refSet))
 	for id := range refSet {
@@ -158,6 +162,7 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 	N := len(rawIDs)
 	nodes := make([]Node, N+1) // [0] = unused sentinel
 
+	log.Printf("spatial-server: pass 2 (node coordinates, N=%d)", N)
 	// ── Pass 2: populate node coordinates ─────────────────────────────────────
 	if _, err := f.Seek(0, 0); err != nil {
 		return nil, err
@@ -189,6 +194,7 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 		}
 	}
 
+	log.Printf("spatial-server: building edges")
 	// ── Build flat edge list ───────────────────────────────────────────────────
 	type tempEdge struct {
 		from, to NodeID
@@ -255,14 +261,33 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 		Deprivation: dep,
 	}
 
-	// Build spatial grid for O(1) nearest-node lookup.
-	g.Grid = newGrid()
+	// Build spatial grid using two-pass construction to avoid GC pressure
+	// from millions of small append-induced slice reallocations.
+	log.Printf("spatial-server: building spatial grid")
+	g.Grid = &Grid{cells: make(map[[2]int16][]NodeID, 600_000)}
+	// Pass A: count nodes per cell.
+	cellCount := make(map[[2]int16]int32, 600_000)
 	for i := NodeID(1); i <= NodeID(N); i++ {
 		nd := nodes[i]
 		if nd.Lat != 0 || nd.Lng != 0 {
-			g.Grid.add(float64(nd.Lat), float64(nd.Lng), i)
+			key := [2]int16{int16(nd.Lat / gridRes), int16(nd.Lng / gridRes)}
+			cellCount[key]++
 		}
 	}
+	// Pre-allocate each cell slice to its exact size.
+	for key, cnt := range cellCount {
+		g.Grid.cells[key] = make([]NodeID, 0, cnt)
+	}
+	cellCount = nil
+	// Pass B: fill node IDs.
+	for i := NodeID(1); i <= NodeID(N); i++ {
+		nd := nodes[i]
+		if nd.Lat != 0 || nd.Lng != 0 {
+			key := [2]int16{int16(nd.Lat / gridRes), int16(nd.Lng / gridRes)}
+			g.Grid.cells[key] = append(g.Grid.cells[key], i)
+		}
+	}
+	log.Printf("spatial-server: grid built (%d cells)", len(g.Grid.cells))
 
 	return g, nil
 }
