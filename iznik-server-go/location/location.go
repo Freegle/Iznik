@@ -44,18 +44,54 @@ type Location struct {
 
 func ClosestPostcode(lat float32, lng float32) Location {
 	results, err := spatial.KNN("locations", float64(lng), float64(lat), 1, "Postcode")
-	if err != nil || len(results) == 0 {
-		return Location{}
+	if err == nil && len(results) > 0 {
+		id := results[0].ID
+		var loc Location
+		database.DBConn.Raw(
+			"SELECT l1.id, l1.name, l1.type, l1.lat, l1.lng, l1.areaid, l2.name AS areaname "+
+				"FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.id = ?",
+			id,
+		).Scan(&loc)
+		return loc
 	}
 
-	id := results[0].ID
-	var loc Location
-	database.DBConn.Raw(
-		"SELECT l1.id, l1.name, l1.type, l1.lat, l1.lng, l1.areaid, l2.name AS areaname "+
-			"FROM locations l1 LEFT JOIN locations l2 ON l2.id = l1.areaid WHERE l1.id = ?",
-		id,
-	).Scan(&loc)
-	return loc
+	// Fallback: spatial server unavailable or no polygon postcodes loaded (e.g. test environment).
+	// Use MySQL spatial query against locations_spatial which stores postcode point/polygon geometries.
+	return closestPostcodeMySQL(lat, lng)
+}
+
+func closestPostcodeMySQL(lat float32, lng float32) Location {
+	var scan = float32(0.00001953125)
+	db := database.DBConn
+
+	for {
+		swlat := lat - scan
+		swlng := lng - scan
+		nelat := lat + scan
+		nelng := lng + scan
+
+		var locs []Location
+		db.Raw("SELECT l1.id, l1.name, l1.areaid, l1.lat, l1.lng, l1.type, l2.name as areaname, "+
+			"ST_distance(locations_spatial.geometry, ST_SRID(POINT(?, ?), ?)) AS dist "+
+			"FROM locations_spatial INNER JOIN locations l1 ON l1.id = locations_spatial.locationid "+
+			"LEFT JOIN locations l2 ON l2.id = l1.areaid "+
+			"WHERE MBRContains(ST_Envelope(ST_SRID(POLYGON(LINESTRING(POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?), POINT(?, ?))), ?)), locations_spatial.geometry) AND "+
+			"l1.type = ? "+
+			"ORDER BY dist ASC, CASE WHEN ST_Dimension(locations_spatial.geometry) < 2 THEN 0 ELSE ST_AREA(locations_spatial.geometry) END ASC LIMIT 1;",
+			lng, lat, utils.SRID,
+			swlng, swlat, swlng, nelat, nelng, nelat, nelng, swlat, swlng, swlat,
+			utils.SRID, utils.LOCATION_TYPE_POSTCODE,
+		).Scan(&locs)
+
+		if len(locs) > 0 {
+			return locs[0]
+		}
+		scan = scan * 2
+		if scan > 0.2 {
+			break
+		}
+	}
+	return Location{}
 }
 
 type ClosestGroup struct {
