@@ -307,6 +307,29 @@ func handleLostPassword(c *fiber.Ctx, email string) error {
 		})
 	}
 
+	// Check whether the account has a native password. OAuth-only accounts (e.g.
+	// Google/Facebook signups) have no Native row in users_logins; sending them a
+	// password-reset link would be confusing and unhelpful — tell the frontend to
+	// redirect to social sign-in instead.
+	//
+	// Note: users with no login rows at all (email-only, never set a password) are
+	// allowed through — they can use the reset link to set their first password.
+	var nativeCount int64
+	db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = ?",
+		userID, utils.LOGIN_TYPE_NATIVE).Scan(&nativeCount)
+	if nativeCount == 0 {
+		var socialCount int64
+		db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type IN (?, ?)",
+			userID, utils.LOGIN_TYPE_GOOGLE, utils.LOGIN_TYPE_FACEBOOK).Scan(&socialCount)
+		if socialCount > 0 {
+			return c.JSON(fiber.Map{
+				"ret":          1,
+				"status":       "This account uses social sign-in. Please sign in with Google, Facebook, or Yahoo.",
+				"socialSignin": true,
+			})
+		}
+	}
+
 	// Get or create the auto-login key for this user.
 	key, err := getOrCreateLoginKey(userID)
 	if err != nil {
