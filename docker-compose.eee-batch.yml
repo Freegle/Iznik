@@ -16,7 +16,7 @@ services:
     restart: "no"
     environment:
       - APP_NAME=Freegle EEE Batch
-      - APP_KEY=base64:/9sYlNDiNQ27/09jvTm4G+bs2x/1bY8/QGktENKPy4k=
+      - APP_KEY=${EEE_APP_KEY}
       - APP_ENV=local
       - APP_DEBUG=true
       - RUN_MIGRATIONS=false
