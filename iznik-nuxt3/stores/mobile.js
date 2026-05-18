@@ -495,7 +495,14 @@ export const useMobileStore = defineStore({
         data.count = parseInt(data.badge)
 
         if (data.count === 0) {
-          console.log('clearAllNotifications TODO')
+          // Zero-count push is the silent badge-clear from iznik-batch. Clear
+          // any leftover tray entries for this app so a stale "N pending"
+          // notification doesn't linger after the work has been handled.
+          try {
+            await PushNotifications.removeAllDeliveredNotifications()
+          } catch (e) {
+            console.log('removeAllDeliveredNotifications failed', e?.message)
+          }
         }
         console.log('handleNotification badgeCount', data.count)
         this.setBadgeCount(data.count, Badge)
