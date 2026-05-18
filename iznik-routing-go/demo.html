@@ -160,8 +160,8 @@ input[type=range] {
   position: absolute;
   top: 10px; left: 50%; transform: translateX(-50%);
   background: rgba(255,255,255,.95);
-  border-radius: 10px; padding: 10px 20px 8px;
-  z-index: 1000; min-width: 480px;
+  border-radius: 10px; padding: 10px 24px 12px;
+  z-index: 1000; min-width: 520px;
   box-shadow: 0 3px 10px rgba(0,0,0,.22);
   pointer-events: none;
 }
@@ -173,7 +173,8 @@ input[type=range] {
 #tl-track {
   position: relative; height: 8px;
   background: #e0e0e0; border-radius: 4px;
-  margin-bottom: 20px;
+  margin: 0 8px 22px; /* side margin so edge labels don't clip */
+  overflow: visible;
 }
 #tl-fill {
   position: absolute; left: 0; top: 0; height: 100%;
@@ -188,14 +189,15 @@ input[type=range] {
   transition: left 0.25s ease-out;
   box-shadow: 0 1px 5px rgba(0,0,0,.3);
 }
+/* Edge-aware label alignment: first tick left-aligns, last right-aligns */
 .tl-tick {
   position: absolute; transform: translateX(-50%);
-  top: 10px; font-size: 10px; color: #888;
+  top: 12px; font-size: 10px; color: #888;
   white-space: nowrap; font-weight: 500;
 }
-.tl-tick.expansion {
-  color: #c44; font-weight: 700;
-}
+.tl-tick.tl-edge-left  { transform: translateX(0); }
+.tl-tick.tl-edge-right { transform: translateX(-100%); }
+.tl-tick.expansion { color: #c44; font-weight: 700; }
 .tl-tick-mark {
   position: absolute; width: 1px; height: 6px;
   background: #bbb; top: 1px;
@@ -282,6 +284,12 @@ input[type=range] {
     </div>
     <div id="freegler-bar" class="hidden">
       <span style="color:#e8380d;font-size:14px">●</span> Freeglers within reach
+    </div>
+
+    <!-- Groups section -->
+    <div id="groups-section" style="margin-top:10px;padding-top:10px;border-top:1px solid #f0f0f0;display:none">
+      <div style="font-size:11px;font-weight:600;color:#555;margin-bottom:5px">Freegle groups</div>
+      <div id="groups-list" style="font-size:11px;color:#666;line-height:1.7"></div>
     </div>
 
   </div>
@@ -766,7 +774,23 @@ async function fetchAndDrawGroups(lat, lng) {
 function drawGroupsOverlay() {
   groupLayers.forEach(l => map.removeLayer(l));
   groupLayers = [];
-  groupFeatures.forEach(f => {
+  const listEl = document.getElementById('groups-list');
+  const sectionEl = document.getElementById('groups-section');
+  listEl.innerHTML = '';
+
+  if (groupFeatures.length === 0) {
+    sectionEl.style.display = 'none';
+    return;
+  }
+  sectionEl.style.display = '';
+
+  // Home groups first, then adjacent sorted alphabetically
+  const sorted = [...groupFeatures].sort((a, b) => {
+    if (a.properties.contains !== b.properties.contains) return a.properties.contains ? -1 : 1;
+    return (a.properties.nameshort || '').localeCompare(b.properties.nameshort || '');
+  });
+
+  sorted.forEach(f => {
     const coords = f.geometry && f.geometry.coordinates && f.geometry.coordinates[0];
     if (!coords || coords.length < 4) return;
     const latlngs = coords.map(([lng, lat]) => [lat, lng]);
@@ -782,6 +806,13 @@ function drawGroupsOverlay() {
       { sticky: true }
     );
     groupLayers.push(lyr);
+
+    const item = document.createElement('div');
+    item.style.cssText = 'display:flex;align-items:center;gap:5px;padding:1px 0';
+    item.innerHTML = `<span style="width:10px;height:10px;border-radius:50%;background:${isHome ? '#005bb5' : '#0099cc'};flex-shrink:0;display:inline-block"></span>` +
+      `<span>${isHome ? '<b>' : ''}${f.properties.nameshort || '(unnamed)'}${isHome ? '</b>' : ''}</span>` +
+      (isHome ? ' <span style="color:#888;font-size:10px">(home)</span>' : '');
+    listEl.appendChild(item);
   });
 }
 
@@ -804,8 +835,8 @@ function checkCrossPosting(isoRing) {
   return null;
 }
 
-// Stamp the timeline with a cross-posting marker at the given elapsed hours.
-function markCrossPosting(hours, groupName) {
+// Stamp the timeline with a cross-posting marker and briefly pause animation.
+function markCrossPosting(hours, groupName, hitFeature) {
   const pct = Math.min(100, (hours / MAX_HOURS) * 100);
   const track = document.getElementById('tl-track');
 
@@ -822,13 +853,31 @@ function markCrossPosting(hours, groupName) {
 
   document.getElementById('tl-elapsed').textContent =
     formatElapsed(hours) + ' — cross-posting begins (' + (groupName || 'adjacent group') + ')';
+
+  // Flash the hit group boundary orange for 2 seconds so the user sees which group
+  if (hitFeature) {
+    const coords = hitFeature.geometry && hitFeature.geometry.coordinates && hitFeature.geometry.coordinates[0];
+    if (coords) {
+      const flashLyr = L.polygon(coords.map(([lng, lat]) => [lat, lng]), {
+        color: '#e07000', weight: 3, fillColor: '#e07000', fillOpacity: 0.18,
+      }).addTo(map);
+      setTimeout(() => { if (map.hasLayer(flashLyr)) map.removeLayer(flashLyr); drawGroupsOverlay(); }, 2500);
+    }
+  }
+
+  // Pause animation for 2 seconds so the user can read the marker
+  if (ripplePlaying) {
+    clearTimeout(rippleTimer);
+    rippleTimer = setTimeout(stepRipple, 2000);
+  }
 }
 
 // ── Timeline helpers ──────────────────────────────────────────────────────────
-// Empirical expansion schedule (hours since post) derived from hazard analysis
-// of 303,491 production messages. Hazard decays steeply h0-h6 then goes flat.
-const EXPANSION_HOURS = [0, 1, 3, 6, 12, 24, 48];
-const MAX_HOURS = 48;
+// Empirical expansion schedule: h0-h48 from hazard analysis (303,491 messages).
+// After h48 hazard is flat ~0.65%/hr; expansion continues in the flat regime
+// until the item is taken or the group-boundary ceiling is reached.
+const EXPANSION_HOURS = [0, 1, 3, 6, 12, 24, 48, 72, 120, 168];
+const MAX_HOURS = 168; // 7 days
 let timelineBuilt = false;
 
 function frameToHours(frameIdx, totalFrames) {
@@ -839,28 +888,34 @@ function formatElapsed(hours) {
   if (hours < 0.083) return 'Just posted';
   if (hours < 1) return Math.round(hours * 60) + 'm elapsed';
   const h = Math.floor(hours);
-  const m = Math.round((hours - h) * 60);
-  const mStr = m ? ' ' + m + 'm' : '';
-  if (h < 24) return h + 'h' + mStr + ' elapsed';
+  if (h < 24) return h + 'h elapsed';
   const d = Math.floor(h / 24);
   const hr = h % 24;
-  return d + 'd ' + (hr ? hr + 'h' : '') + ' elapsed';
+  return d + 'd' + (hr ? ' ' + hr + 'h' : '') + ' elapsed';
 }
 
 function buildTimeline(totalFrames) {
   if (timelineBuilt) return;
   timelineBuilt = true;
   const track = document.getElementById('tl-track');
-  EXPANSION_HOURS.forEach(h => {
+  const n = EXPANSION_HOURS.length;
+  EXPANSION_HOURS.forEach((h, idx) => {
     const pct = (h / MAX_HOURS) * 100;
+    const isFirst = idx === 0;
+    const isLast  = idx === n - 1;
+
     const mark = document.createElement('div');
     mark.className = 'tl-tick-mark' + (h > 0 ? ' expansion' : '');
     mark.style.left = pct + '%';
     track.appendChild(mark);
+
     const label = document.createElement('div');
-    label.className = 'tl-tick' + (h > 0 ? ' expansion' : '');
+    let cls = 'tl-tick' + (h > 0 ? ' expansion' : '');
+    if (isFirst) cls += ' tl-edge-left';
+    else if (isLast) cls += ' tl-edge-right';
+    label.className = cls;
     label.style.left = pct + '%';
-    label.textContent = h === 0 ? 'Post' : h < 24 ? h + 'h' : (h / 24) + 'd';
+    label.textContent = h === 0 ? 'Post' : h < 24 ? h + 'h' : (h % 24 === 0 ? (h/24) + 'd' : h + 'h');
     track.appendChild(label);
   });
 }
@@ -938,6 +993,7 @@ async function startRipple() {
 
 function stopRipple() {
   ripplePlaying = false;
+  crossPostingDetected = false;
   clearTimeout(rippleTimer);
   const btn = document.getElementById('ripple-btn');
   btn.textContent = '▶ Animate ripple';
@@ -983,7 +1039,7 @@ function stepRipple() {
       if (hit) {
         crossPostingDetected = true;
         const hours = frameToHours(rippleStep, rippleFrames.length);
-        markCrossPosting(hours, hit.properties.nameshort);
+        markCrossPosting(hours, hit.properties.nameshort, hit);
       }
     }
 
