@@ -172,6 +172,11 @@ class MessageExpiryService
      * Defaults match V1 Message::getPublic() (reposts: offer=3, wanted=14, max=10;
      * maxagetoshow: 90). Real groups carry their own settings; the defaults only
      * apply when settings are missing or null.
+     *
+     * OFFER uses reposts.offer × (max+1) — the full repost-cycle length.
+     * WANTED uses reposts.wanted directly (no multiplier): WANTED posts repost on
+     * a fixed cadence without the max-repost concept, matching V1 behaviour.
+     * GREATEST() with maxagetoshow ensures posts visible past that age always expire.
      */
     protected function getExpiredCandidates(): \Illuminate\Support\Collection
     {
