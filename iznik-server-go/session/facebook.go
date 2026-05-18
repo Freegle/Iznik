@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/auth"
+	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
@@ -212,7 +213,14 @@ func completeFacebookLogin(c *fiber.Ctx, fbID, email, firstName, lastName, fullN
 		})
 	}
 
-	saveProfileImage(userID, pictureURL)
+	// Only save the Facebook profile picture when no avatar exists yet.
+	// A new INSERT would become the effective avatar (ORDER BY id DESC LIMIT 1),
+	// overwriting any custom upload the user has set.
+	var avatarCount int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM users_images WHERE userid = ?", userID).Scan(&avatarCount)
+	if avatarCount == 0 {
+		saveProfileImage(userID, pictureURL)
+	}
 
 	persistent, jwtString, err := auth.CreateSessionAndJWT(userID)
 	if err != nil {
