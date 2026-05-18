@@ -47,8 +47,11 @@ func main() {
 	srv.startupLoad(*forceRebuild)
 	srv.startScheduler()
 
-	// Public API
-	api := fiber.New(fiber.Config{DisableStartupMessage: true})
+	// Public API — 256 KB read buffer to accommodate large polygon WKT query params.
+	api := fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+		ReadBufferSize:        256 * 1024,
+	})
 
 	api.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
