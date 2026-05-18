@@ -2273,6 +2273,36 @@ func TestDeleteMessageMod(t *testing.T) {
 	assert.NotNil(t, deleted, "Message should be soft-deleted by mod")
 }
 
+// TestDeleteMessageModCreatesAuditLog asserts that deleting a message via the DELETE
+// /message/:id endpoint as a moderator produces an audit-log entry in the logs table.
+// AssertFlip step 2: this assertion is INVERTED — it will FAIL on the buggy code because
+// DeleteMessageEndpoint does not call logModAction, leaving no logs row.
+func TestDeleteMessageModCreatesAuditLog(t *testing.T) {
+	prefix := uniquePrefix("msgmod_del_log")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// A mod deletion must create an audit-log row so volunteers' actions are traceable.
+	// On the buggy code DeleteMessageEndpoint never calls logModAction, so this fails.
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND msgid = ? AND byuser = ?",
+		log.LOG_TYPE_MESSAGE, log.LOG_SUBTYPE_DELETED, msgID, modID).Scan(&logCount)
+	assert.GreaterOrEqual(t, logCount, int64(1), "DeleteMessage by a moderator must write an audit-log entry (type=Message, subtype=Deleted)")
+}
+
 func TestDeleteMessageNotOwnerNotMod(t *testing.T) {
 	prefix := uniquePrefix("msgmod_delfail")
 
