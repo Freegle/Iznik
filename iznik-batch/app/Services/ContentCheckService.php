@@ -198,6 +198,33 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
+    // Fuzzy keyword matching — V1 WorryWords parity.
+    // Splits the haystack into tokens and accepts a token if its levenshtein
+    // distance from the keyword is ≤ 1 AND its length is within ±25% of the
+    // keyword length. This catches plurals and single-character typos without
+    // the false positives of bare str_contains (e.g. "hash" vs "hashtagging").
+    // -------------------------------------------------------------------------
+
+    private function matchesFuzzy(string $haystack, string $keyword): bool
+    {
+        $kwLower = strtolower($keyword);
+        $kwLen   = strlen($kwLower);
+        if ($kwLen === 0) {
+            return false;
+        }
+
+        foreach (preg_split('/\s+/', $haystack, -1, PREG_SPLIT_NO_EMPTY) as $token) {
+            $tokLen = strlen($token);
+            $ratio  = $tokLen / $kwLen;
+            if ($ratio >= 0.75 && $ratio <= 1.25 && levenshtein($token, $kwLower) <= 1) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // -------------------------------------------------------------------------
     // Concern keywords — unified table replacing worrywords + spam_keywords.
     // Supports match_mode (fuzzy/literal/regex), global + per-group scope,
     // exclude patterns, and category-specific frontend guidance.
@@ -227,7 +254,7 @@ class ContentCheckService
             $matched = match ($kw->match_mode) {
                 'regex'  => @preg_match('/' . $word . '/i', $original) === 1,
                 'literal' => preg_match('/\b' . preg_quote(strtolower($word), '/') . '\b/', $haystack) === 1,
-                default  => str_contains($haystack, strtolower($word)), // fuzzy
+                default  => $this->matchesFuzzy($haystack, $word),
             };
 
             if (!$matched) {

@@ -164,6 +164,72 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // checkConcernKeywords — fuzzy match_mode (levenshtein, V1 parity)
+    // -------------------------------------------------------------------------
+
+    public function test_fuzzy_match_catches_plural(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testfuzzy_cc',
+            'category'   => 'substance_medicine',
+            'action'     => 'flag',
+            'match_mode' => 'fuzzy',
+        ]);
+
+        $exact = $this->service->checkConcernKeywords('OFFER: testfuzzy_cc tablets', '', $group->id);
+        $this->assertNotNull($exact, 'exact keyword must match');
+
+        // plural adds one character → levenshtein distance 1 ≤ 1
+        $plural = $this->service->checkConcernKeywords('OFFER: testfuzzy_ccs for sale', '', $group->id);
+        $this->assertNotNull($plural, 'plural form must match via fuzzy');
+    }
+
+    public function test_fuzzy_match_catches_single_char_typo(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testfuzzy2_cc',
+            'category'   => 'substance_medicine',
+            'action'     => 'flag',
+            'match_mode' => 'fuzzy',
+        ]);
+
+        // one substitution → levenshtein distance 1 ≤ 1
+        $typo = $this->service->checkConcernKeywords('OFFER: testfuzzy2_cd items', '', $group->id);
+        $this->assertNotNull($typo, 'single-char typo must match via fuzzy');
+    }
+
+    public function test_fuzzy_match_rejects_substring_of_much_longer_word(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testhash_cc',
+            'category'   => 'substance_regulated',
+            'action'     => 'flag',
+            'match_mode' => 'fuzzy',
+        ]);
+
+        // length ratio (testhash_ccextended / testhash_cc) = 22/11 = 2.0 > 1.25 → no match
+        $noMatch = $this->service->checkConcernKeywords('OFFER: testhash_ccextended', '', $group->id);
+        $this->assertNull($noMatch, 'compound word much longer than keyword must not match');
+    }
+
+    public function test_fuzzy_match_rejects_completely_different_word(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'testfuzzy3_cc',
+            'category'   => 'review',
+            'action'     => 'flag',
+            'match_mode' => 'fuzzy',
+        ]);
+
+        $noMatch = $this->service->checkConcernKeywords('OFFER: completely different text', '', $group->id);
+        $this->assertNull($noMatch, 'unrelated word must not match');
+    }
+
+    // -------------------------------------------------------------------------
     // checkVagueItem
     // -------------------------------------------------------------------------
 
