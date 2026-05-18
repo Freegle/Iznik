@@ -123,4 +123,33 @@ class WorryWordsTest extends IznikTestCase
 //            var_export($w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody()), TRUE)
 //        );
 //    }
+
+    public function testPluralKeywordMatch()
+    {
+        # Insert a singular keyword; setUp() cleans up UTtest* entries before each run.
+        $this->dbhm->preExec("INSERT INTO worrywords (keyword, type) VALUES (?, ?);", [
+            'UTtestsupplement',
+            WorryWords::TYPE_REPORTABLE
+        ]);
+
+        $w = new WorryWords($this->dbhr, $this->dbhm);
+
+        # Sanity: exact match (levenshtein distance 0 < 1) must always be flagged.
+        $m = new Message($this->dbhr, $this->dbhm);
+        $mid = $m->createDraft();
+        $m = new Message($this->dbhr, $this->dbhm, $mid);
+        $m->setPrivate('subject', 'OFFER: UTtestsupplement (Somewhere)');
+        $m->setPrivate('textbody', 'A body');
+        $this->assertNotNull($w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody()));
+
+        # Plural: 'UTtestsupplements' has levenshtein distance 1 from 'UTtestsupplement'.
+        # Bug: the comparator uses strict < so distance 1 with threshold 1 → 1<1=false → no match.
+        # Fix: change < to <= so distance 1 with threshold 1 → 1<=1=true → match.
+        $m = new Message($this->dbhr, $this->dbhm);
+        $mid = $m->createDraft();
+        $m = new Message($this->dbhr, $this->dbhm, $mid);
+        $m->setPrivate('subject', 'OFFER: UTtestsupplements (Somewhere)');
+        $m->setPrivate('textbody', 'A body');
+        $this->assertNotNull($w->checkMessage($m->getID(), $m->getFromuser(), $m->getSubject(), $m->getTextbody()));
+    }
 }
