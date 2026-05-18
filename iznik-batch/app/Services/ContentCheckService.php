@@ -254,7 +254,7 @@ class ContentCheckService
             $matched = match ($kw->match_mode) {
                 'regex'  => @preg_match('/' . $word . '/i', $original) === 1,
                 'literal' => preg_match('/\b' . preg_quote(strtolower($word), '/') . '\b/', $haystack) === 1,
-                default  => str_contains($haystack, strtolower($word)), // fuzzy — BUG: replaced by matchesFuzzy in next commit
+                default  => $this->matchesFuzzy($haystack, $word),
             };
 
             if (!$matched) {
