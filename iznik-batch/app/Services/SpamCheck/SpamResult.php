@@ -47,7 +47,7 @@ class SpamResult
      */
     public static function fromRspamd(array $response): self
     {
-        $score = $response['score'] ?? 0.0;
+        $score = (float) ($response['score'] ?? 0.0);
         $isSpam = ($response['action'] ?? 'no action') === 'reject';
         $symbols = [];
         $error = null;
@@ -55,7 +55,7 @@ class SpamResult
         // Extract symbol names
         if (isset($response['symbols']) && is_array($response['symbols'])) {
             foreach ($response['symbols'] as $name => $data) {
-                $symbolScore = $data['score'] ?? 0;
+                $symbolScore = (float) ($data['score'] ?? 0.0);
                 $symbols[] = sprintf('%s(%.1f)', $name, $symbolScore);
             }
         }
