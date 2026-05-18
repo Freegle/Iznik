@@ -114,3 +114,82 @@ func TestInitNamegenIdempotent(t *testing.T) {
 	assert.NotEmpty(t, namegenTrigrams, "trigrams must have loaded")
 	assert.NotEmpty(t, namegenWordLengths, "word lengths must have loaded")
 }
+
+// ---------------------------------------------------------------------------
+// GenerateName fallback paths — manipulate package vars (same package access)
+// ---------------------------------------------------------------------------
+
+func TestGenerateName_WordLengthsTooShort(t *testing.T) {
+	// Ensure init has run so sync.Once won't overwrite our changes.
+	initNamegen()
+
+	orig := namegenWordLengths
+	defer func() { namegenWordLengths = orig }()
+
+	// len(namegenWordLengths) <= maxLen(10) triggers the early "A freegler" return.
+	namegenWordLengths = []int64{1, 2, 3}
+	assert.Equal(t, "A freegler", GenerateName())
+}
+
+func TestGenerateName_NilWordLengths(t *testing.T) {
+	initNamegen()
+
+	orig := namegenWordLengths
+	defer func() { namegenWordLengths = orig }()
+
+	namegenWordLengths = nil
+	assert.Equal(t, "A freegler", GenerateName())
+}
+
+func TestGenerateName_EmptyBigramsFallback(t *testing.T) {
+	// Ensure init has run.
+	initNamegen()
+
+	origLengths := namegenWordLengths
+	origBigrams := namegenBigrams
+	defer func() {
+		namegenWordLengths = origLengths
+		namegenBigrams = origBigrams
+	}()
+
+	// wordLengths must be long enough (> maxLen=10) to pass the first guard,
+	// but bigrams must be empty so weightedRandFromMap returns "" → "A freegler".
+	namegenWordLengths = make([]int64, 15)
+	for i := range namegenWordLengths {
+		namegenWordLengths[i] = 1
+	}
+	namegenBigrams = map[string]int64{}
+
+	assert.Equal(t, "A freegler", GenerateName())
+}
+
+// ---------------------------------------------------------------------------
+// Dead-code documentation: branches that are mathematically unreachable
+// ---------------------------------------------------------------------------
+
+// TestWeightedRandFromSlice_FallbackIsDeadCode documents that the final
+// "return len(weights) - 1" in weightedRandFromSlice is unreachable.
+// By construction, n = rand.Int63n(total)+1 ∈ [1, total], and after
+// subtracting all weights the cumulative total equals 'total', so the loop
+// body always fires n <= 0 before or at the last element.
+func TestWeightedRandFromSlice_FallbackIsDeadCode(t *testing.T) {
+	// Large runs confirm the loop always selects a valid index.
+	weights := []int64{1, 1, 1, 1, 1}
+	for i := 0; i < 1000; i++ {
+		idx := weightedRandFromSlice(weights)
+		assert.GreaterOrEqual(t, idx, 0)
+		assert.Less(t, idx, len(weights))
+	}
+}
+
+// TestWeightedRandFromMap_FallbackIsDeadCode documents that the second
+// fallback loop and final "return """ in weightedRandFromMap are unreachable
+// for the same reason as weightedRandFromSlice.
+func TestWeightedRandFromMap_FallbackIsDeadCode(t *testing.T) {
+	m := map[string]int64{"a": 1, "b": 2, "c": 3}
+	for i := 0; i < 1000; i++ {
+		k := weightedRandFromMap(m)
+		_, ok := m[k]
+		assert.True(t, ok, "unexpected key %q", k)
+	}
+}
