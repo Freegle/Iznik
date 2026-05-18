@@ -55,6 +55,10 @@ services:
     ports:
       - "${PORT_APIV2_LIVE:-8194}:8192"
 
+  routing-live:
+    ports:
+      - "0.0.0.0:${PORT_ROUTING_LIVE:-8197}:8196"
+
   freegle-dev-local:
     ports:
       - "0.0.0.0:${PORT_FREEGLE_DEV_LOCAL:-3002}:3002"

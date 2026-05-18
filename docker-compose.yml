@@ -895,6 +895,52 @@ services:
       - "traefik.http.middlewares.apiv2-live-retry.retry.initialinterval=100ms"
       - "traefik.http.services.apiv2-live.loadbalancer.server.port=8192"
 
+  # Routing server with LIVE production database via tunnel
+  # Start with: docker compose --profile prod-live up -d routing-live
+  # Requires: SSH tunnel to production DB on local port ${LIVE_DB_PORT:-1234}
+  # WARNING: This connects to the REAL production database!
+  routing-live:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-routing-live
+    profiles:
+      - prod-live
+    networks:
+      default:
+        aliases:
+          - routing-live.localhost
+    build:
+      context: ./iznik-routing-go
+      network: host
+    extra_hosts:
+      - "db-live:host-gateway"
+    depends_on:
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - ROUTING_PORT=8196
+      - OSM_PBF_PATH=/data/england-latest.osm.pbf
+      - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
+      - MYSQL_HOST=db-live
+      - MYSQL_PORT=${LIVE_DB_PORT:-1234}
+      - MYSQL_USER=${LIVE_DB_USER:-root}
+      - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
+      - MYSQL_DBNAME=iznik
+      - JWT_SECRET=${JWT_SECRET:-secret}
+    volumes:
+      - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8196/health || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.routing-live.rule=Host(`routing-live.localhost`)"
+      - "traefik.http.routers.routing-live.entrypoints=web"
+      - "traefik.http.services.routing-live.loadbalancer.server.port=8196"
+
   # Development build with local APIs - standard dev workflow
   freegle-dev-local:
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-dev-local
@@ -1168,6 +1214,7 @@ services:
       - "0.0.0.0:${PORT_MODTOOLS_DEV_LIVE:-3006}:3000"
     extra_hosts:
       - "apiv2-live.localhost:host-gateway"
+      - "routing-live.localhost:host-gateway"
     build:
       context: .
       dockerfile: ./iznik-nuxt3/modtools/Dockerfile
@@ -1192,6 +1239,7 @@ services:
       - NUXT_SSR_LOG=false
       - NODE_ENV=development
       - NUXT_BUILD_MODE=development
+      - SPATIAL_SERVER_URL=http://routing-live.localhost:${PORT_TRAEFIK_HTTP:-80}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.modtools-dev-live.rule=Host(`modtools-dev-live.localhost`)"
