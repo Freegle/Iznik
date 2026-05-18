@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 )
 
 //go:embed demo.html
@@ -179,6 +180,10 @@ func startServer(g *Graph, addr string) {
 			return json.Marshal(v)
 		},
 	})
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowMethods: "GET,OPTIONS",
+	}))
 	initGroupsDB()
 	app.Get("/health", handleHealth(g))
 	app.Get("/demo", func(c *fiber.Ctx) error {
