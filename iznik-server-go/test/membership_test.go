@@ -3338,10 +3338,10 @@ func TestGetMembershipsFilterModmails(t *testing.T) {
 	member3ID := CreateTestUser(t, prefix+"_m3", "User")
 	CreateTestMembership(t, member3ID, groupID, "Member")
 
-	// Insert modmail records: member1 older, member2 newer, member3 has none.
-	// logid has a UNIQUE constraint so we need distinct non-zero values.
-	db.Exec("INSERT INTO users_modmails (userid, groupid, timestamp, logid) VALUES (?, ?, '2026-01-01 10:00:00', ?)", member1ID, groupID, member1ID)
-	db.Exec("INSERT INTO users_modmails (userid, groupid, timestamp, logid) VALUES (?, ?, '2026-03-01 10:00:00', ?)", member2ID, groupID, member2ID)
+	// Insert modmail records via logs (the authoritative source; users_modmails is pruned at 30 days).
+	// member3 has no log entry and must be excluded by the filter.
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, byuser, timestamp, text) VALUES ('User', 'Mailed', ?, ?, ?, '2026-01-01 10:00:00', 'test modmail')", groupID, member1ID, modID)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, byuser, timestamp, text) VALUES ('User', 'Mailed', ?, ?, ?, '2026-03-01 10:00:00', 'test modmail')", groupID, member2ID, modID)
 
 	url := fmt.Sprintf("/api/memberships?groupid=%d&filter=6&jwt=%s", groupID, token)
 	req := httptest.NewRequest("GET", url, nil)
@@ -3399,10 +3399,11 @@ func TestGetMembershipsModmailFilterOrderAndLimit(t *testing.T) {
 			joinHoursAgo, membershipID)
 
 		// Anti-correlated modmail: oldest joiner (i=24) gets newest modmail (1h ago).
+		// Insert via logs (the authoritative source; users_modmails is pruned at 30 days).
 		mailHoursAgo := memberCount - i
 		db.Exec(
-			"INSERT INTO users_modmails (userid, groupid, timestamp, logid) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL ? HOUR), ?)",
-			uid, groupID, mailHoursAgo, uid,
+			"INSERT INTO logs (type, subtype, groupid, user, byuser, timestamp, text) VALUES ('User', 'Mailed', ?, ?, ?, DATE_SUB(NOW(), INTERVAL ? HOUR), 'test modmail')",
+			groupID, uid, modID, mailHoursAgo,
 		)
 	}
 
