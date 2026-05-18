@@ -3,7 +3,7 @@ FROM ghcr.io/freegle/freegle-base:latest
 WORKDIR /app
 
 ENV ROUTING_PORT=8196 \
-    OSM_PBF_PATH=/data/england-latest.osm.pbf
+    OSM_PBF_PATH=/data/uk-latest.osm.pbf
 
 COPY go.mod go.sum ./
 RUN go mod download

@@ -803,7 +803,7 @@ services:
       - SPATIAL_PORT=8196
       - SPATIAL_INTERNAL_PORT=8194
       - SPATIAL_KNN_URL=http://spatial-knn:8194
-      - OSM_PBF_PATH=/data/england-latest.osm.pbf
+      - OSM_PBF_PATH=/data/uk-latest.osm.pbf
       - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
       - MYSQL_HOST=percona
       - MYSQL_PORT=3306
@@ -970,7 +970,7 @@ services:
       - SPATIAL_PORT=8196
       - SPATIAL_INTERNAL_PORT=8194
       - SPATIAL_KNN_URL=http://spatial-knn-live:8194
-      - OSM_PBF_PATH=/data/england-latest.osm.pbf
+      - OSM_PBF_PATH=/data/uk-latest.osm.pbf
       - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
       - MYSQL_HOST=db-live
       - MYSQL_PORT=${LIVE_DB_PORT:-1234}
