@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -12,11 +13,27 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// wktPolygonToCoords parses a WKT POLYGON string into GeoJSON coordinate rings.
-// Only handles the outer ring; interior rings (holes) are included as extra rings.
+// Web Mercator (SRID 3857) ↔ WGS84 helpers.
+// polyindex is stored in SRID 3857; we convert Go-side to avoid MySQL axis-order
+// ambiguity with geographic SRIDs.
+
+const mercatorHalfCircum = 20037508.34
+
+func lngLatToMerc(lng, lat float64) (x, y float64) {
+	x = lng * mercatorHalfCircum / 180.0
+	y = math.Log(math.Tan((90.0+lat)*math.Pi/360.0)) * (mercatorHalfCircum / 180.0)
+	return
+}
+
+func mercToLng(x float64) float64 { return x * 180.0 / mercatorHalfCircum }
+func mercToLat(y float64) float64 {
+	return math.Atan(math.Exp(y*math.Pi/mercatorHalfCircum))*360.0/math.Pi - 90.0
+}
+
+// wktPolygonToCoords parses a WKT POLYGON string whose coordinates are in
+// SRID 3857 (meters) and converts each vertex to GeoJSON [lng, lat] degrees.
 func wktPolygonToCoords(wkt string) ([][][2]float64, error) {
 	wkt = strings.TrimSpace(wkt)
-	// Strip optional SRID prefix: "SRID=4326;POLYGON(..."
 	if i := strings.Index(wkt, ";"); i >= 0 {
 		wkt = wkt[i+1:]
 	}
@@ -25,14 +42,12 @@ func wktPolygonToCoords(wkt string) ([][][2]float64, error) {
 	if !strings.HasPrefix(upper, "POLYGON") {
 		return nil, fmt.Errorf("not a POLYGON: %s", wkt[:min(20, len(wkt))])
 	}
-	// Extract content between outer parens
 	start := strings.Index(wkt, "(")
 	end := strings.LastIndex(wkt, ")")
 	if start < 0 || end < 0 {
 		return nil, fmt.Errorf("malformed WKT")
 	}
 	inner := wkt[start+1 : end]
-	// Split rings by ),(
 	rawRings := splitRings(inner)
 	var rings [][][2]float64
 	for _, raw := range rawRings {
@@ -45,11 +60,14 @@ func wktPolygonToCoords(wkt string) ([][][2]float64, error) {
 			if len(fields) < 2 {
 				continue
 			}
-			lng, err1 := strconv.ParseFloat(fields[0], 64)
-			lat, err2 := strconv.ParseFloat(fields[1], 64)
+			// 3857 WKT: POINT(x y) = POINT(easting northing) — x=lng direction, y=lat direction
+			xMeters, err1 := strconv.ParseFloat(fields[0], 64)
+			yMeters, err2 := strconv.ParseFloat(fields[1], 64)
 			if err1 != nil || err2 != nil {
 				continue
 			}
+			lng := mercToLng(xMeters)
+			lat := mercToLat(yMeters)
 			ring = append(ring, [2]float64{lng, lat})
 		}
 		if len(ring) >= 4 {
@@ -93,9 +111,9 @@ func min(a, b int) int {
 
 // groupFeature is a GeoJSON Feature wrapping one group's polygon.
 type groupFeature struct {
-	Type       string         `json:"type"`
-	Properties groupProps     `json:"properties"`
-	Geometry   geoGeometry    `json:"geometry"`
+	Type       string      `json:"type"`
+	Properties groupProps  `json:"properties"`
+	Geometry   geoGeometry `json:"geometry"`
 }
 
 type groupProps struct {
@@ -149,6 +167,10 @@ func initGroupsDB() {
 // the given lat/lng. Each feature carries a "contains" boolean: true when the
 // offer point falls inside that group's polygon (i.e. the home group), false for
 // adjacent neighbours. Requires MySQL connection.
+//
+// polyindex is stored in SRID 3857 (Web Mercator). We convert the input WGS84
+// coordinates to 3857 in Go so the MySQL query stays in a single SRS and we
+// avoid MySQL 8.0 geographic-SRS axis-order ambiguity.
 func handleNearbyGroups() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if groupsDB == nil {
@@ -165,28 +187,36 @@ func handleNearbyGroups() fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"error": "lat and lng must be numeric"})
 		}
 
-		// Fetch groups that contain the offer point OR whose centroid is within
-		// ±1.5° (≈165 km), so adjacent groups appear on the map as well.
-		const deg = 1.5
+		// Convert offer point to 3857 meters for the spatial query.
+		ptX, ptY := lngLatToMerc(lngF, latF)
+
+		// Bounding box: ±1.5° ≈ ±167 km latitude / ±107 km longitude at 51°N.
+		// Compute in 3857 so the centroid range check is in the same SRS.
+		boxXMin, boxYMin := lngLatToMerc(lngF-1.5, latF-1.5)
+		boxXMax, boxYMax := lngLatToMerc(lngF+1.5, latF+1.5)
+
 		rows, err := groupsDB.Query(`
 			SELECT id, nameshort, ST_AsText(polyindex) AS wkt,
 			       ST_Contains(polyindex,
-			           ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 4326)) AS contains_pt
+			           ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857)) AS contains_pt
 			FROM `+"`groups`"+`
 			WHERE publish = 1 AND listable = 1
 			  AND polyindex IS NOT NULL
 			  AND (
-			    ST_Contains(polyindex, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 4326))
+			    ST_Contains(polyindex,
+			        ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857))
 			    OR (
 			      ST_X(ST_Centroid(polyindex)) BETWEEN ? AND ?
 			      AND ST_Y(ST_Centroid(polyindex)) BETWEEN ? AND ?
 			    )
 			  )
 			LIMIT 60
-		`, lngS, latS,
-			lngS, latS,
-			lngF-deg, lngF+deg,
-			latF-deg, latF+deg)
+		`,
+			ptX, ptY, // SELECT contains_pt
+			ptX, ptY, // WHERE ST_Contains
+			boxXMin, boxXMax, // centroid X (easting) range
+			boxYMin, boxYMax, // centroid Y (northing) range
+		)
 		if err != nil {
 			log.Printf("groups query: %v", err)
 			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
