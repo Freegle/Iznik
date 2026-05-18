@@ -485,9 +485,26 @@ export default defineNuxtConfig({
               org: 'freegle',
               project: 'capacitor',
               authToken: config.SENTRY_AUTH_TOKEN,
-              // For non-strict mode (debug builds), log errors but don't fail the build
+              // Never fail the build on Sentry API errors (502/504/bad gateway) —
+              // the app binary is the critical artifact; release creation is supplementary.
+              // In strict mode, still throw on non-API errors (wrong auth token, etc.).
               errorHandler: config.SENTRY_STRICT
-                ? undefined // Use default (throw on error)
+                ? (err) => {
+                    const msg = err.message || ''
+                    if (
+                      msg.includes('502') ||
+                      msg.includes('504') ||
+                      msg.includes('bad gateway') ||
+                      msg.includes('API request failed')
+                    ) {
+                      console.warn(
+                        '⚠️ Sentry API error (non-fatal) - release creation skipped:',
+                        msg
+                      )
+                    } else {
+                      throw err
+                    }
+                  }
                 : (err) => {
                     console.warn(
                       '⚠️ Sentry error (non-fatal in debug mode):',
