@@ -13,6 +13,7 @@ import {
   kvGet,
   kvSet,
   queueDiscourseDraft,
+  cancelDraftsForBug,
   insertReviewerFeedback,
   listUnprocessedFeedback,
   upsertDiscourseBug,
@@ -441,6 +442,8 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
           db.prepare(
             "UPDATE discourse_bug SET state='off-topic', reason=? WHERE topic=? AND post=?"
           ).run(`Edward (post ${u.postNumber}): "${u.text.slice(0, 120)}"`, u.topic, u.post)
+          const cancelled = cancelDraftsForBug(db, u.topic, u.post, 'Bug dismissed as off-topic')
+          if (cancelled > 0) out(`check_bug_feedback: cancelled ${cancelled} pending draft(s) for off-topic bug ${u.topic}/${u.post}`)
           markedOffTopic.push({ topic: u.topic, post: u.post, reason: u.text.slice(0, 80) })
           out(`check_bug_feedback: marked ${u.topic}/${u.post} off-topic — Edward explained expected behaviour`)
         } else if (u.action === 'investigating') {
@@ -2162,6 +2165,8 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
               featureArea: c.featureArea ?? undefined, symptomTags, codeArea: codeArea ?? undefined,
               reason: `Duplicate of topic ${tagDup.topic}/${tagDup.post} (tag overlap)`,
             })
+            const cancelled = cancelDraftsForBug(db, Number(c.topic), Number(c.post), `Bug marked duplicate of topic ${tagDup.topic}/${tagDup.post}`)
+            if (cancelled > 0) out(`persist_classifications: cancelled ${cancelled} pending draft(s) for duplicate bug ${c.topic}/${c.post}`)
             out(`persist_classifications: topic ${c.topic}/${c.post} marked duplicate of ${tagDup.topic}/${tagDup.post} (tag similarity)`)
             upserted++
             continue
