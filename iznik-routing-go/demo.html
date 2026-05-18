@@ -282,8 +282,8 @@ input[type=range] {
       </div>
       <input type="range" id="speed-slider" min="1" max="10" step="1" value="3">
     </div>
-    <div id="freegler-bar" class="hidden">
-      <span style="color:#e8380d;font-size:14px">●</span> Freeglers within reach
+    <div id="freegler-bar" class="hidden" style="font-size:12px;color:#555;margin:6px 0 4px">
+      &nbsp;
     </div>
 
     <!-- Groups section -->
@@ -731,6 +731,12 @@ function quintileOfFreegler(fLng, fLat, data) {
   return 0;
 }
 
+// Estimated fraction of notifiable group members who have no stored location.
+// These users are distributed proportionately: the same fraction of unlocated
+// members are notified as located members (per the ripple-out plan §User Selection).
+// Tune this constant when real group membership data is available.
+const UNLOCATED_FRACTION = 0.35;
+
 function updateFreeglersInside(data) {
   let insideCount = 0, deprivedCount = 0;
   allFreeglers.forEach((f, i) => {
@@ -743,6 +749,27 @@ function updateFreeglersInside(data) {
       freeglersMarkers[i].setStyle({ fillOpacity: 0.15, opacity: 0.25, radius: 4 });
     }
   });
+
+  // Notifiable estimate: located inside + proportionate share of unlocated pool.
+  const totalLocated = allFreeglers.length;
+  const bar = document.getElementById('freegler-bar');
+  if (insideCount >= 0 && totalLocated > 0) {
+    const fraction = insideCount / totalLocated;
+    const estimatedUnlocated = Math.round(totalLocated * (UNLOCATED_FRACTION / (1 - UNLOCATED_FRACTION)));
+    const unlocatedShare = Math.round(estimatedUnlocated * fraction);
+    const totalEstimate = insideCount + unlocatedShare;
+    bar.innerHTML =
+      `<div style="font-size:13px;font-weight:600;color:#333;line-height:1.4">` +
+      `~${totalEstimate.toLocaleString()} would be notified</div>` +
+      `<div style="font-size:10px;color:#666;margin-top:1px">` +
+      `${insideCount.toLocaleString()} with known location` +
+      (unlocatedShare > 0 ? ` + ~${unlocatedShare.toLocaleString()} proportionate unlocated share` : '') +
+      `</div>` +
+      `<div style="font-size:10px;color:#aaa;font-style:italic;margin-top:2px">` +
+      `TrashNothing members use a separate digest algorithm</div>`;
+    bar.classList.remove('hidden');
+  }
+
   if (insideCount > 0) {
     const pct = Math.round(deprivedCount / insideCount * 100);
     setSwingometer(pct);
