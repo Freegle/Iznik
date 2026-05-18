@@ -187,6 +187,7 @@ const LOGIN_TYPE_NATIVE = "Native"
 const LOGIN_TYPE_LINK = "Link"
 const LOGIN_TYPE_GOOGLE = "Google"
 const LOGIN_TYPE_FACEBOOK = "Facebook"
+const LOGIN_TYPE_APPLE = "Apple"
 
 const SYSTEMROLE_USER = "User"
 const SYSTEMROLE_MODERATOR = "Moderator"
