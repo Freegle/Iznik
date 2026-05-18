@@ -207,32 +207,57 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
       //      burn the entire 10-minute test budget.
       //   3. Any page-content errors here are irrelevant to the test being set up;
       //      the test will navigate to its actual target URL straight afterwards.
-      console.log('[logoutIfLoggedIn] Navigating to homepage (try block)')
-      try {
-        await page.goto('/', {
-          timeout: timeouts.navigation.initial,
-          waitUntil: 'domcontentloaded',
-        })
+      //
+      // Skip the explicit navigation if the logout redirect already landed us at '/'.
+      // Calling page.goto('/') while the page is already loading '/' (from the logout
+      // redirect) triggers a double-navigation race: the logout-redirect navigation and
+      // the explicit goto compete, Chromium ends up processing both simultaneously, and
+      // the V8 renderer can hang for 35+ seconds before freeze-detection fires. This
+      // race is most visible when /browse auto-redirects new users to /explore (no group
+      // membership), because logoutIfLoggedIn then runs from /explore — the logout
+      // redirect to '/' is still in flight when goto('/') is called.
+      const currentPathIsHome =
+        !page.isClosed() &&
+        (() => {
+          try {
+            return new URL(page.url()).pathname === '/'
+          } catch {
+            return false
+          }
+        })()
+
+      if (currentPathIsHome) {
         console.log(
-          `[logoutIfLoggedIn] Navigated to homepage (try block) url=${page.url()}`
+          '[logoutIfLoggedIn] Logout redirect already at home page, skipping explicit navigation'
         )
-      } catch (navErr) {
-        // If the page itself was closed (e.g. by freeze-detection heartbeat), propagate
-        // as fatal so the test fails immediately rather than continuing with a dead page.
-        if (
-          page.isClosed() ||
-          navErr.message.includes(
-            'Target page, context or browser has been closed'
+      } else {
+        console.log('[logoutIfLoggedIn] Navigating to homepage (try block)')
+        try {
+          await page.goto('/', {
+            timeout: timeouts.navigation.initial,
+            waitUntil: 'domcontentloaded',
+          })
+          console.log(
+            `[logoutIfLoggedIn] Navigated to homepage (try block) url=${page.url()}`
           )
-        ) {
-          throw navErr
+        } catch (navErr) {
+          // If the page itself was closed (e.g. by freeze-detection heartbeat), propagate
+          // as fatal so the test fails immediately rather than continuing with a dead page.
+          if (
+            page.isClosed() ||
+            navErr.message.includes(
+              'Target page, context or browser has been closed'
+            )
+          ) {
+            throw navErr
+          }
+          console.warn(
+            `[logoutIfLoggedIn] Homepage navigation failed (non-fatal): ${navErr.message.substring(
+              0,
+              200
+            )}`
+          )
         }
-        console.warn(
-          `[logoutIfLoggedIn] Homepage navigation failed (non-fatal): ${navErr.message.substring(
-            0,
-            200
-          )}`
-        )
       }
     }
 
