@@ -716,6 +716,7 @@ func GetSession(c *fiber.Ctx) error {
 		Bouncing           int             `json:"bouncing"`
 		Relevantallowed    int             `json:"relevantallowed"`
 		Newslettersallowed int             `json:"newslettersallowed"`
+		Engagementlevel    *string         `json:"engagementlevel" gorm:"column:engagementlevel"`
 	}
 
 	type EmailRow struct {
@@ -774,7 +775,7 @@ func GetSession(c *fiber.Ctx) error {
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, fullname, firstname, lastname, systemrole, settings, lastaccess, added, lastlocation, onholidaytill, source, deleted, forgotten, trustlevel, permissions, marketingconsent, bouncing, relevantallowed, newslettersallowed FROM users WHERE id = ?", myid).Scan(&userRow)
+		db.Raw("SELECT id, fullname, firstname, lastname, systemrole, settings, lastaccess, added, lastlocation, onholidaytill, source, deleted, forgotten, trustlevel, permissions, marketingconsent, bouncing, relevantallowed, newslettersallowed, engagement AS engagementlevel FROM users WHERE id = ?", myid).Scan(&userRow)
 	}()
 	go func() {
 		defer wg.Done()
@@ -1401,6 +1402,7 @@ func GetSession(c *fiber.Ctx) error {
 		"bouncing":           userRow.Bouncing,
 		"relevantallowed":    userRow.Relevantallowed,
 		"newslettersallowed": userRow.Newslettersallowed,
+		"engagementlevel":    userRow.Engagementlevel,
 		"aboutme":            aboutme,
 		"supporter":          supporterInfo.Supporter,
 		"donated":            supporterInfo.Donated,
