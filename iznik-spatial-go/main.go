@@ -177,6 +177,50 @@ func main() {
 		return c.JSON(fiber.Map{"ids": ids})
 	})
 
+	// GET /v1/:dataset/within_coords — like /within but returns items with coordinates.
+	// Used by the routing server to find freeglers within an isochrone polygon without
+	// the centre-distance bias of a KNN query.
+	api.Get("/v1/:dataset/within_coords", func(c *fiber.Ctx) error {
+		name := c.Params("dataset")
+		state, ok := srv.getDataset(name)
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+
+		polygonWKT := c.Query("polygon")
+		if polygonWKT == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "polygon parameter required"})
+		}
+		pg, err := parsePolygonParam(polygonWKT)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		idx := state.getIndex()
+		if idx == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+
+		items, err := idx.QueryWithinFull(*pg)
+		if err == ErrTooManyResults {
+			return c.Status(fiber.StatusRequestEntityTooLarge).JSON(fiber.Map{
+				"error": ErrTooManyResults.Error(),
+			})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		type result struct {
+			Extra map[string]any `json:"extra,omitempty"`
+		}
+		results := make([]result, len(items))
+		for i, item := range items {
+			results[i] = result{Extra: item.Extra}
+		}
+		return c.JSON(fiber.Map{"results": results})
+	})
+
 	// Serve OpenAPI spec.
 	api.Get("/openapi.yaml", func(c *fiber.Ctx) error {
 		c.Set("Content-Type", "application/yaml")

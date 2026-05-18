@@ -203,6 +203,46 @@ func QueryBBox(idx *Index, minLng, maxLng, minLat, maxLat float64) ([]Item, erro
 	return result, rows.Err()
 }
 
+// QueryWithinFull returns all items (with Extra/coordinates) whose geometry
+// intersects polygon. For point datasets (WKB nil) the point is tested for
+// containment. Stops and returns ErrTooManyResults if over maxWithinResults.
+func (idx *Index) QueryWithinFull(polygon geom.Geometry) ([]Item, error) {
+	env := polygon.Envelope()
+	min, max, ok := env.MinMaxXYs()
+	if !ok {
+		return nil, fmt.Errorf("polygon has no envelope")
+	}
+
+	candidates, err := QueryBBox(idx, min.X, max.X, min.Y, max.Y)
+	if err != nil {
+		return nil, err
+	}
+
+	var items []Item
+	for _, c := range candidates {
+		var g geom.Geometry
+		if c.WKB != nil {
+			g, err = geom.UnmarshalWKB(c.WKB, geom.NoValidate{})
+			if err != nil {
+				continue
+			}
+		} else {
+			wkt := fmt.Sprintf("POINT(%.10f %.10f)", c.MinLng, c.MinLat)
+			g, err = geom.UnmarshalWKT(wkt, geom.NoValidate{})
+			if err != nil {
+				continue
+			}
+		}
+		if geom.Intersects(g, polygon) {
+			items = append(items, c)
+			if len(items) > maxWithinResults {
+				return nil, ErrTooManyResults
+			}
+		}
+	}
+	return items, nil
+}
+
 // QueryWithin returns the external IDs of all items whose geometry intersects polygon.
 // For point datasets (WKB nil) the point itself is tested for containment.
 // Stops and returns ErrTooManyResults if more than maxWithinResults items are found.

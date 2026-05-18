@@ -3,10 +3,14 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -107,20 +111,68 @@ func handleFairness(g *Graph) fiber.Handler {
 	}
 }
 
-// handleNearbyFreeglers proxies to the spatial server's userapproxlocs KNN endpoint
-// and returns {"freeglers":[{"lat":X,"lng":Y},...]}. Returns empty list on any error.
-func handleNearbyFreeglers(spatialURL string) fiber.Handler {
+// maxFreeglersReturned caps the number of freegler points returned to avoid
+// overwhelming the map. Points are uniformly sampled when over this limit.
+const maxFreeglersReturned = 2000
+
+// handleNearbyFreeglers computes the isochrone polygon for the given location
+// and returns all freeglers within it. This avoids the centre-distance bias of
+// a KNN query: every part of the reachable area is equally represented.
+func handleNearbyFreeglers(g *Graph, spatialURL string) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		lat := c.Query("lat")
-		lng := c.Query("lng")
-		limit := c.Query("limit", "500")
-		if lat == "" || lng == "" {
+		latS := c.Query("lat")
+		lngS := c.Query("lng")
+		if latS == "" || lngS == "" {
 			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
 		}
+		latF, err1 := strconv.ParseFloat(latS, 64)
+		lngF, err2 := strconv.ParseFloat(lngS, 64)
+		if err1 != nil || err2 != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "lat and lng must be numeric")
+		}
+
+		minutes, _ := strconv.ParseFloat(c.Query("minutes", "15"), 64)
+		if minutes <= 0 || minutes > 120 {
+			minutes = 15
+		}
+		modeStr := c.Query("mode", "walk")
+		var mode Mode
+		switch modeStr {
+		case "cycle":
+			mode = Cycle
+		case "drive":
+			mode = Drive
+		default:
+			mode = Walk
+		}
+
 		empty := fiber.Map{"freeglers": []interface{}{}}
-		url := spatialURL + "/v1/userapproxlocs?lat=" + lat + "&lng=" + lng + "&limit=" + limit
-		resp, err := http.Get(url) //nolint:gosec
+
+		// Compute the reachable polygon for the given location.
+		secs := float32(minutes * 60)
+		iso := Isochrone(g, latF, lngF, secs, mode)
+		if len(iso.ReachedNodes) == 0 {
+			return c.JSON(empty)
+		}
+		res := AutoResolution(secs, mode)
+		poly := IsochronePolygon(g, iso.ReachedNodes, res)
+		ring := poly.Geometry.Coordinates
+		if len(ring) == 0 || len(ring[0]) < 4 {
+			return c.JSON(empty)
+		}
+
+		// Convert the outer ring to a WKT POLYGON for the within_coords query.
+		wkt := ringToWKT(ring[0])
+
+		reqURL := spatialURL + "/v1/userapproxlocs/within_coords?polygon=" + url.QueryEscape(wkt)
+		resp, err := http.Get(reqURL) //nolint:gosec
 		if err != nil || resp.StatusCode != 200 {
+			log.Printf("nearby-freeglers: within_coords request failed (status=%v err=%v)", func() int {
+				if resp != nil {
+					return resp.StatusCode
+				}
+				return 0
+			}(), err)
 			return c.JSON(empty)
 		}
 		defer resp.Body.Close()
@@ -128,20 +180,21 @@ func handleNearbyFreeglers(spatialURL string) fiber.Handler {
 		if err != nil {
 			return c.JSON(empty)
 		}
-		var knn struct {
+		var within struct {
 			Results []struct {
 				Extra map[string]any `json:"extra"`
 			} `json:"results"`
 		}
-		if err := json.Unmarshal(body, &knn); err != nil {
+		if err := json.Unmarshal(body, &within); err != nil {
 			return c.JSON(empty)
 		}
+
 		type pt struct {
 			Lat float64 `json:"lat"`
 			Lng float64 `json:"lng"`
 		}
-		pts := make([]pt, 0, len(knn.Results))
-		for _, r := range knn.Results {
+		pts := make([]pt, 0, len(within.Results))
+		for _, r := range within.Results {
 			if r.Extra == nil {
 				continue
 			}
@@ -151,8 +204,24 @@ func handleNearbyFreeglers(spatialURL string) fiber.Handler {
 				pts = append(pts, pt{lat, lng})
 			}
 		}
+
+		// Uniform random sample if over the display cap.
+		if len(pts) > maxFreeglersReturned {
+			rand.Shuffle(len(pts), func(i, j int) { pts[i], pts[j] = pts[j], pts[i] })
+			pts = pts[:maxFreeglersReturned]
+		}
+
 		return c.JSON(fiber.Map{"freeglers": pts})
 	}
+}
+
+// ringToWKT converts a GeoJSON polygon ring ([lng,lat] pairs) to WKT POLYGON.
+func ringToWKT(ring [][2]float64) string {
+	pts := make([]string, len(ring))
+	for i, p := range ring {
+		pts[i] = fmt.Sprintf("%.8f %.8f", p[0], p[1])
+	}
+	return "POLYGON((" + strings.Join(pts, ",") + "))"
 }
 
 // handleHealth is a simple liveness check.
@@ -196,7 +265,7 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	}
 	v1.Get("/isochrone", handleIsochrone(g))
 	v1.Get("/fairness", handleFairness(g))
-	v1.Get("/nearby-freeglers", handleNearbyFreeglers(spatialURL))
+	v1.Get("/nearby-freeglers", handleNearbyFreeglers(g, spatialURL))
 	v1.Get("/groups/nearby", handleNearbyGroups())
 	return app
 }

@@ -33,9 +33,6 @@
         <div class="rpl-slider-row">
           <div class="rpl-slider-label">
             <span>Travel time</span>
-            <span class="rpl-val"
-              ><span id="rippling-time-val">15</span> min</span
-            >
           </div>
           <input
             id="rippling-time-slider"
@@ -45,6 +42,17 @@
             step="1"
             value="15"
           />
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              font-size: 10px;
+              color: #aaa;
+              margin-top: 2px;
+            "
+          >
+            <span>Short</span><span>Long</span>
+          </div>
         </div>
 
         <div class="rpl-slider-row">
@@ -343,7 +351,6 @@ onMounted(async () => {
   })
 
   timeSlider.addEventListener('input', () => {
-    document.getElementById('rippling-time-val').textContent = timeSlider.value
     if (currentLat !== null) scheduleUpdate()
   })
   fairnessSlider.addEventListener('input', () => {
@@ -842,10 +849,9 @@ onMounted(async () => {
 
   async function fetchFreeglers() {
     if (currentLat === null) return
+    const minutes = parseInt(timeSlider.value)
     const url = apiUrl(
-      `/v1/nearby-freeglers?lat=${currentLat.toFixed(
-        6
-      )}&lng=${currentLng.toFixed(6)}&limit=500`
+      `/v1/nearby-freeglers?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}&minutes=${minutes}&mode=${currentMode}`
     )
     try {
       const r = await fetch(url)
@@ -983,6 +989,13 @@ onMounted(async () => {
     if (insideCount > 0) {
       const pct = Math.round((deprivedCount / insideCount) * 100)
       setSwingometer(pct)
+
+      if (ripplePlaying) {
+        const imbalance = Math.abs(pct - 60)
+        if (rippleMaxImbalance === null || imbalance > Math.abs(rippleMaxImbalance.pct - 60)) {
+          rippleMaxImbalance = { pct, minute: rippleStep }
+        }
+      }
     }
   }
 
@@ -1137,23 +1150,15 @@ onMounted(async () => {
     }
     sectionEl.style.display = ''
 
-    const mapBounds = map.getBounds()
     const reached = reachedGroupIds(lastIsoData)
 
-    function groupInView(f) {
-      const coords =
-        f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]
-      if (!coords || coords.length < 4) return false
-      const lngs = coords.map((c) => c[0])
-      const lats = coords.map((c) => c[1])
-      const polyBounds = L.latLngBounds(
-        [Math.min(...lats), Math.min(...lngs)],
-        [Math.max(...lats), Math.max(...lngs)]
-      )
-      return mapBounds.intersects(polyBounds)
+    // Only list groups that are home or reached by the current isochrone.
+    // Viewport-visible groups are not listed — only ripple-relevant ones.
+    function groupIsRelevant(f) {
+      return f.properties.contains || reached.has(f.properties.id)
     }
 
-    const sorted = [...groupFeatures].filter(groupInView).sort((a, b) => {
+    const sorted = [...groupFeatures].filter(groupIsRelevant).sort((a, b) => {
       if (a.properties.contains !== b.properties.contains)
         return a.properties.contains ? -1 : 1
       if (currentLat === null) return 0
@@ -1165,16 +1170,31 @@ onMounted(async () => {
       )
     })
 
-    // Compute which IDs should have visible polygons (home + cross-posting reached only)
+    // Compute which IDs should have visible polygons.
+    // Always show: home group (contains=true), cross-posting reached groups,
+    // and the nearest group by centroid as fallback when no contains=true group exists.
     const visibleIds = new Set()
+    let nearestGroupId = null
+    let nearestDist = Infinity
     groupFeatures.forEach((f) => {
       const coords =
         f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]
       if (!coords || coords.length < 4) return
-      const isHome = f.properties.contains
-      if (!isHome && !reached.has(f.properties.id)) return
-      visibleIds.add(f.properties.id)
+      if (f.properties.contains || reached.has(f.properties.id)) {
+        visibleIds.add(f.properties.id)
+      }
+      if (currentLat !== null) {
+        const [cLng, cLat] = groupCentroid(f)
+        const d = distSq(currentLat, currentLng, cLat, cLng)
+        if (d < nearestDist) {
+          nearestDist = d
+          nearestGroupId = f.properties.id
+        }
+      }
     })
+    // Ensure the nearest group always has its polygon shown (acts as home group
+    // even when ST_Contains returns false due to boundary proximity).
+    if (nearestGroupId !== null) visibleIds.add(nearestGroupId)
 
     // Remove layers for groups no longer visible
     Object.keys(groupLayerMap).forEach((id) => {
@@ -1383,6 +1403,7 @@ onMounted(async () => {
   let rippleTimer = null
   let ripplePlaying = false
   let crossPostingDetected = false
+  let rippleMaxImbalance = null  // {pct, minute} — worst affluence bias seen during animation
 
   document.getElementById('rippling-btn').addEventListener('click', () => {
     if (ripplePlaying) stopRipple()
@@ -1454,6 +1475,7 @@ onMounted(async () => {
     rippleStep = 0
     ripplePlaying = true
     crossPostingDetected = false
+    rippleMaxImbalance = null
     btn.disabled = false
     btn.textContent = '⏹ Stop'
     btn.classList.add('rpl-stop')
@@ -1488,9 +1510,13 @@ onMounted(async () => {
       const btn = document.getElementById('rippling-btn')
       btn.textContent = '▶ Replay'
       btn.classList.remove('rpl-stop')
-      document.getElementById(
-        'rippling-info'
-      ).textContent = `${currentMode} · done`
+      let doneText = `${currentMode} · done`
+      if (rippleMaxImbalance !== null) {
+        const bias = rippleMaxImbalance.pct < 60 ? 'affluent' : 'deprived'
+        const diff = Math.abs(rippleMaxImbalance.pct - 60)
+        doneText += ` · peak ${bias} bias: ${diff}% at ${rippleMaxImbalance.minute} min`
+      }
+      document.getElementById('rippling-info').textContent = doneText
       drawGroupsOverlay()
       return
     }
@@ -1500,7 +1526,6 @@ onMounted(async () => {
     document.getElementById(
       'rippling-info'
     ).textContent = `${currentMode} · ${minute} min`
-    document.getElementById('rippling-time-val').textContent = minute
     updateTimeline(rippleStep, rippleFrames.length)
     timeSlider.value = minute
 
