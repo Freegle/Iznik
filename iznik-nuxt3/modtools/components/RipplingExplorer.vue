@@ -135,19 +135,22 @@
           &nbsp;
         </div>
 
-        <div class="rpl-layer-toggles">
-          <label class="rpl-layer-toggle"
-            ><input id="rippling-tog-quintiles" type="checkbox" checked />
-            Deprivation</label
-          >
-          <label class="rpl-layer-toggle"
-            ><input id="rippling-tog-freeglers" type="checkbox" checked />
-            Freeglers</label
-          >
-          <label class="rpl-layer-toggle"
-            ><input id="rippling-tog-groups" type="checkbox" checked />
-            Groups</label
-          >
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:4px">
+          <span style="font-size:11px;font-weight:600;color:#555;white-space:nowrap">Show:</span>
+          <div class="rpl-layer-toggles" style="margin-top:0">
+            <label class="rpl-layer-toggle"
+              ><input id="rippling-tog-quintiles" type="checkbox" checked />
+              Deprivation</label
+            >
+            <label class="rpl-layer-toggle"
+              ><input id="rippling-tog-freeglers" type="checkbox" checked />
+              Freeglers</label
+            >
+            <label class="rpl-layer-toggle"
+              ><input id="rippling-tog-groups" type="checkbox" checked />
+              Groups</label
+            >
+          </div>
         </div>
 
         <div
@@ -463,8 +466,6 @@ onMounted(async () => {
       fillOpacity: 1,
     })
       .addTo(map)
-      .bindTooltip('Offer location')
-      .openTooltip()
     if (fly) map.flyTo([lat, lng], Math.max(map.getZoom(), 13))
     fetchAndDrawGroups(lat, lng)
     updateIsochrone()
