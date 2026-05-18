@@ -94,9 +94,9 @@ Instead of one fixed notification area, we **expand in stages**:
    - We reach maximum size (e.g., 60-minute drive), OR
    - Too much time has passed (e.g., 3 days)
 
-5. **Skip nighttime**: Only expand during active hours (e.g., 8am-8pm)
-   - People don't respond to notifications at 3am
-   - Avoid waking people up
+5. **Skip low-activity hours**: Only expand during active hours (e.g., 6am-11pm)
+   - Activity is very low before 6am; otherwise no significant overnight cliff
+   - Empirical active window is wider than the old 8am–8pm assumption
 
 ### Key Algorithm Parameters
 
@@ -112,15 +112,33 @@ The algorithm is controlled by several parameters:
 | `transport` | Travel mode for isochrones | "car" |
 | `activeSince` | Only notify users active in last N days | 90 days |
 
-**Temporal expansion curve** (when to expand):
-- 0-12 hours: Expand every 4 hours
-- 12-24 hours: Expand every 6 hours
-- 24-72 hours: Expand every 8 hours
+**Temporal expansion curve** (when to expand) — *empirically derived, May 2026*:
+
+The reply hazard rate (probability a still-unreplied message gets a reply that hour) drops
+steeply in the first six hours then goes flat. Data from 303,491 production messages:
+
+| Hour | Hazard rate |
+|------|------------|
+| h0   | 7.84%      |
+| h1   | 3.73%      |
+| h2   | 2.56%      |
+| h3   | 1.96%      |
+| h4   | 1.53%      |
+| h5   | 1.26%      |
+| h6   | 1.03%      |
+| h8+  | ~0.6–0.7% (flat) |
+
+**Recommended expansion schedule** (tracks the hazard shape):
+- Expand at h1, h3, h6 — captures the fast-decay phase
+- Then h12, h24, h48 — flat regime; exact interval matters less here
+
+Note: the previously assumed 4/6/8h curve had no empirical basis. There is no detectable
+breakpoint at 12h or 24h; the decay is smooth from h0 to h8 then uniformly flat.
 
 **Active hours**: Only expand during hours when people respond:
-- Computed from historical data
-- Typically 8am-8pm on weekdays
-- May vary by day of week
+- **Empirical finding (May 2026)**: 6am–11pm, same weekday and weekend
+- No significant weekday-vs-weekend difference in the hourly hazard curve
+- The "8am–8pm weekdays only" assumption is not supported by production data
 
 ### Why This Works
 
@@ -211,7 +229,38 @@ We store simulation data in MySQL tables:
 
 ### Metrics Output
 
-Results will be populated as we complete the analysis.
+#### Empirical Analysis Results (spiralling_analysis.php, May 2026)
+
+Run against **303,491 messages** over the 6 months to May 2026 (production database).
+Script: `iznik-server/scripts/cron/spiralling_analysis.php`
+
+**Silence rate:**
+- 62.4% of messages receive no reply at all
+- 72.9% receive no reply within 1 day
+- 66.1% receive no reply within 7 days
+
+**First-replier spatial reach (crow-flies, n=105,371):**
+
+| Percentile | Distance |
+|-----------|---------|
+| p50       | 5.8 km  |
+| p75       | 11.5 km |
+| p90       | 19.6 km |
+| p95       | 27.2 km |
+
+⚠️ **Straight-line distances only.** Road distance is ~1.3–1.5× longer.
+The p90 road distance is ~25–30 km ≈ 30–35 min drive.
+
+**Location-defaulting bias: investigated and not present.** Users without a real location
+have `lastlocation = NULL`; the INNER JOIN on `locations` already excludes them. No
+Freegle groups have `groups.defaultlocation` set (checked May 2026: 0/506 groups), so
+there is no artificial cluster at a group-centre distance. The figures above are clean.
+
+**Wall-clock median time to first reply:** 7.6h (weekday), 6.7h (weekend)
+These are inflated by overnight waits — a message posted at 10pm and replied to at 6am
+counts as 8 hours elapsed despite only 1–2 active waking hours having passed.
+
+**Taker distance:** Not measurable — `messages_outcomes` has no userid column.
 
 ### Simulation Scripts
 
@@ -569,12 +618,9 @@ const DEFAULT_ISOCHRONE_PARAMS = [
     'numReplies' => 7,
     'transport' => 'car',
 
-    // Temporal expansion curve
-    'breakpoint1' => 12,  // hours
-    'breakpoint2' => 24,  // hours
-    'interval1' => 4,     // hours
-    'interval2' => 6,     // hours
-    'interval3' => 8      // hours
+    // Temporal expansion schedule (empirically derived May 2026)
+    // Hazard curve: fast decay h0-h6, then flat from h8+
+    'expansionHours' => [1, 3, 6, 12, 24, 48],
 ];
 ```
 
@@ -607,37 +653,34 @@ private static function loadGroupClusters() {
 
 // Define cluster-specific parameters
 private static $clusterParams = [
+    // Temporal schedule is the same for all clusters (empirically no cluster variation found yet)
     0 => [ // Urban dense
         'initialMinutes' => 5,
         'maxMinutes' => 60,
         'increment' => 5,
         'minUsers' => 150,
-        'breakpoint1' => 8,
-        'breakpoint2' => 18,
+        'expansionHours' => [1, 3, 6, 12, 24, 48],
     ],
     1 => [ // Suburban
         'initialMinutes' => 8,
         'maxMinutes' => 90,
         'increment' => 5,
         'minUsers' => 120,
-        'breakpoint1' => 12,
-        'breakpoint2' => 24,
+        'expansionHours' => [1, 3, 6, 12, 24, 48],
     ],
     2 => [ // Rural large
         'initialMinutes' => 12,
         'maxMinutes' => 120,
         'increment' => 8,
         'minUsers' => 80,
-        'breakpoint1' => 12,
-        'breakpoint2' => 30,
+        'expansionHours' => [1, 3, 6, 12, 24, 48],
     ],
     3 => [ // Rural small
         'initialMinutes' => 10,
         'maxMinutes' => 100,
         'increment' => 6,
         'minUsers' => 100,
-        'breakpoint1' => 10,
-        'breakpoint2' => 24,
+        'expansionHours' => [1, 3, 6, 12, 24, 48],
     ]
 ];
 
@@ -804,16 +847,168 @@ For each expansion:
    - Have been active in last 90 days
    - Have not been notified already for this message
    - Have notification preferences enabled
-3. Send notifications
-4. Record who was notified and when
+3. **Handle unknown-location users** (see below)
+4. Send notifications
+5. Record who was notified and when
+
+#### Handling Members Without a Real Location
+
+Members who haven't set a location have `lastlocation = NULL` and never match the
+isochrone query. They cannot simply be included at the group centre, because that creates
+an artificial notification cliff when the isochrone grows to reach the centre — all
+location-unknowns pop in at once regardless of where they actually live.
+
+**Recommended approach: density-proportional distribution**
+
+At each expansion step, include unknown-location members in proportion to the fraction of
+*known*-location members newly captured:
+
+```
+newly_notified_knowns   = count of known-location members inside the new isochrone
+                          but not the previous one
+total_known_members     = all active known-location members of this group
+total_unknown_members   = all active null-location members of this group (not yet notified)
+
+unknowns_to_notify_now  = round(total_unknown_remaining × (newly_notified_knowns / total_known_members))
+```
+
+Pick `unknowns_to_notify_now` at random (without replacement) from the unnotified unknown pool.
+
+**Why this works:** it assumes unknown-location members are spatially distributed like
+the known members — which is the best available prior. It distributes them smoothly
+across expansion steps with no artificial cliffs. It is unbiased: by the time the
+isochrone reaches maximum size, all unknowns will have been included if all knowns were.
+
+**Edge case:** if `total_known_members = 0` (group with no located members), fall back
+to distributing unknowns evenly across all expansion steps.
 
 ### Stopping Conditions
 
 Algorithm stops when ANY of these conditions is met:
 - Got enough responses (e.g., 7 interested users)
-- Reached maximum isochrone size (e.g., 60 minutes)
-- Reached maximum time (e.g., 72 active hours)
+- Reached maximum isochrone size (e.g., group-boundary ceiling or 60-minute drive)
+- All expansion steps exhausted (h1, h3, h6, h12, h24, h48, h72, h120, h168) — item stays
+  visible in browse/search but no further proactive notification expansion is sent
 - Message was withdrawn/taken
+- *(Optional)* Isochrone has crossed into an adjacent group boundary — see §Max Distance below
+
+Note: "maximum time" is not a hard expiry of the post; it means no further *expansion* steps
+are scheduled. The item remains discoverable for as long as the group keeps it active (30+ days
+in normal operation). The 48h figure from the hazard curve marks where expansion increments
+become small; h72–h168 steps are added for very hard-to-rehome items in sparse areas.
+
+### Max Distance and the Swamping Problem
+
+**Why a fixed `maxMinutes` is geographically inconsistent**
+
+A 60-minute drive covers ~25 km in central London but ~100 km in rural Northumberland. Travel
+time is still the right unit (it answers "would a reasonable person collect this?"), but the
+implication for cross-group reach varies enormously by location.
+
+**The swamping risk**
+
+If every low-desirability item automatically expands to a 1-hour radius, adjacent groups see a
+flood of rippled-in posts that originated elsewhere, diluting their own members' locally-posted
+items. The risk is proportional to:
+- The originating group's volume of undesirable/unloved offers (the long tail)
+- The target group's own active feed size (smaller/quieter groups are hit hardest)
+
+**Three-layer mitigation**
+
+1. **Neighbour-consent ceiling (primary)**: Stop expansion the moment the isochrone first
+   touches an adjacent group's boundary. This is a hard cap that prevents any cross-posting
+   without explicit consent. A per-group "allow cross-posting to neighbours" setting can
+   unlock it, but the safe default is no cross-posting.
+
+   The routing demo's cross-posting marker (⚡ on the timeline) shows empirically how long
+   it takes for a typical location to reach the nearest group boundary — useful for setting
+   expectations.
+
+2. **Local-interest gate on cross-posting (secondary)**: Only allow the isochrone to cross
+   a group boundary if the item has received at least one reply (showing local interest exists
+   but hasn't been fulfilled yet). Items with zero replies after h6 do not cross-post; they
+   simply exhaust within the home group.
+
+3. **Per-group inbound budget (display filter)**: Each group caps the number of rippled-in
+   items shown per day (e.g. no more than 20% of total visible items). This is a rendering
+   filter, not a notification one — it prevents feed dilution even if cross-posting is enabled.
+
+**Recommended default for launch**: neighbour-consent ceiling enabled (no cross-posting by
+default), local-interest gate enabled. Deploy the traffic-adaptive inbound budget (below) once
+cross-posting is enabled for any groups, so that low-traffic groups benefit rather than suffer.
+
+### Traffic-Adaptive Inbound Budget
+
+Preferred mitigation for the swamping problem. Instead of a global cap, each group's capacity
+to absorb rippled-in items scales inversely with its own traffic — quiet groups *benefit* from
+cross-posting while busy groups are protected.
+
+**Formula:**
+
+```
+activity_ratio = group_messages_per_week / national_median_messages_per_week
+
+max_cross_posts_per_day = round(
+    base_quota + (max_quota - base_quota) * max(0, 1 - activity_ratio)
+)
+```
+
+Suggested starting values (tune after measuring):
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| `base_quota` | 5 | min cross-posts/day even for very busy groups |
+| `max_quota` | 30 | max for groups with zero own traffic |
+| `national_median` | ~13 messages/week | from empirical data (May 2026) |
+
+Example behaviour:
+- Group with 0 posts/week → 30 cross-posts/day allowed
+- Group with 13 posts/week (median) → ~17/day
+- Group with 50 posts/week (busy) → ~7/day
+- Group with 100+ posts/week → ≈ base_quota (5/day)
+
+This is a *display* filter applied when rendering the group's browse page and digests — it
+limits how many rippled-in items a group's members see, not how many notifications are sent.
+Notifications respect the sender's home-group ripple schedule; display filtering is a
+receiver-side concern.
+
+### Minimum-Freegler Expansion Threshold
+
+Expansion speed should not be purely time-based; it should also respond to how many active
+Freeglers have been reached. In sparse areas, the first expansion step at h1 might only cover
+5 Freeglers — not enough to generate a meaningful reply probability.
+
+**Design principle**: each expansion step should add at least `minNewFreeglers` active members.
+If the next step in the time schedule hasn't reached that count, continue expanding travel time
+(up to the group-boundary ceiling) until it has.
+
+**How to choose `minNewFreeglers`:**
+
+From the empirical hazard data, the reply probability per notified person per hour at h1 is
+≈ 3.73%. To have a ≥50% chance of at least one reply within the h1–h3 window:
+```
+1 - (1 - 0.0373)^N ≥ 0.5   →   N ≥ ln(0.5) / ln(0.9627) ≈ 18 people
+```
+
+For a ≥90% chance:
+```
+N ≥ ln(0.1) / ln(0.9627) ≈ 61 people
+```
+
+**Recommended threshold**: `minNewFreeglers = 50`. This gives ~85% chance of at least one
+reply per expansion window in the fast-decay phase (h0-h6), and is realistic even in
+moderately sparse rural groups.
+
+**Implementation**: before applying the time-schedule expansion step, check if
+`countFreeglersInNewRing ≥ minNewFreeglers`. If not, expand travel time by one step and
+retry (up to the ceiling). If the ceiling is reached before the threshold is met, expand
+anyway and log for monitoring.
+
+**What the demo now shows**
+
+The `/demo` page at port 8196 now draws home-group and adjacent-group boundaries on the map.
+During the ripple animation the ⚡ marker on the 48-hour timeline fires the first frame the
+standard isochrone crosses any adjacent boundary, giving a visual read of "this item would
+start cross-posting at ~Xh" for any clicked location in the UK.
 
 ## Frequently Asked Questions
 
@@ -833,7 +1028,10 @@ A: Yes - the algorithm expands further in sparse areas. Simulation validates thi
 A: Currently using car isochrones as most items require car collection. Could add cycling for small items in future.
 
 **Q: How do we handle cross-posted messages?**
-A: Each group has independent isochrone expansion. If posted to multiple groups, algorithm runs separately for each.
+A: Each group has independent isochrone expansion. By default the isochrone stops when it
+first touches an adjacent group's boundary (neighbour-consent ceiling), so items stay within
+their home group unless cross-posting is explicitly enabled. If a message is posted to
+multiple groups, the algorithm runs independently for each.
 
 **Q: Can users opt out?**
 A: Yes, all existing notification preferences are respected. This only changes WHO and WHEN, not whether they're enrolled.
