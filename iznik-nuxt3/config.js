@@ -11,6 +11,9 @@ const CONFIG = {
   // Go API for all operations.
   APIv2: process.env.IZNIK_API_V2 || 'https://api.ilovefreegle.org/apiv2',
 
+  // Spatial/routing server URL (for /rippling moderator tool).
+  SPATIAL_SERVER_URL: process.env.SPATIAL_SERVER_URL || 'http://localhost:8196',
+
   // This is where the user site is.
   USER_SITE: process.env.USER_SITE || 'https://www.ilovefreegle.org',
   USER_DOMAIN: 'ilovefreegle.org',
