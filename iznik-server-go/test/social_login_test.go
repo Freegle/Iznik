@@ -787,3 +787,42 @@ func TestGoogleLoginDoesNotOverwriteExistingAvatar(t *testing.T) {
 	db.Exec("DELETE FROM sessions WHERE userid = ?", userID)
 	db.Exec("DELETE FROM users WHERE id = ?", userID)
 }
+
+func TestFacebookLoginDoesNotOverwriteExistingAvatar(t *testing.T) {
+	prefix := uniquePrefix("fb-avatar-nooverwrite")
+	email := fmt.Sprintf("%s@facebook.com", prefix)
+	fbID := "fb-uid-" + prefix
+	existingAvatarURL := "https://cdn.ilovefreegle.org/blob/" + prefix + ".jpg"
+	fbPictureURL := "https://graph.facebook.com/" + prefix + "/picture.jpg"
+
+	// Create a user with an existing custom avatar.
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	db.Exec("INSERT INTO users_images (userid, url, `default`, contenttype) VALUES (?, ?, 0, 'image/jpeg')",
+		userID, existingAvatarURL)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated) VALUES (?, ?, 0, NOW())",
+		userID, email)
+
+	server := newFacebookMockServerWithPicture(fbID, email, "FB", "User", "FB User", fbPictureURL, false)
+	defer server.Close()
+
+	os.Setenv("FACEBOOK_GRAPH_URL", server.URL)
+	defer os.Unsetenv("FACEBOOK_GRAPH_URL")
+
+	body := `{"fblogin":1,"fbaccesstoken":"fake-access-token"}`
+	resp := postSession(body)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The effective avatar (most recent users_images row) must still be the pre-existing one.
+	var gotURL string
+	db.Raw("SELECT url FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&gotURL)
+	assert.Equal(t, existingAvatarURL, gotURL,
+		"Facebook login must NOT overwrite an existing custom avatar: expected %s, got %s", existingAvatarURL, gotURL)
+
+	// Cleanup.
+	db.Exec("DELETE FROM users_images WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users_logins WHERE userid = ? AND type = 'Facebook'", userID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", userID)
+	db.Exec("DELETE FROM sessions WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users WHERE id = ?", userID)
+}
