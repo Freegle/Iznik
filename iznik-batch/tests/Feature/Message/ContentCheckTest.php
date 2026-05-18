@@ -915,4 +915,107 @@ class ContentCheckTest extends TestCase
         $this->assertEquals('Pending', $row->collection);
         $this->assertNull($row->contentcheck_checked_at);
     }
+
+    // -------------------------------------------------------------------------
+    // checkVagueItem — mid-word position
+    // -------------------------------------------------------------------------
+
+    public function test_vague_keyword_in_middle_of_name_returns_reason(): void
+    {
+        // "old stuff in shed" — 'stuff' is not at the start or end, should still be vague.
+        $result = $this->service->checkVagueItem('old stuff in shed');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('Vague', $result['check']);
+    }
+
+    // -------------------------------------------------------------------------
+    // processUnprocessed — action = 'block' moves message to Spam
+    // -------------------------------------------------------------------------
+
+    public function test_block_action_keyword_moves_message_to_spam(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        DB::table('concern_keywords')->insert([
+            'keyword'  => 'testblock_cc',
+            'category' => 'substance_regulated',
+            'action'   => 'block',
+            'match_mode' => 'literal',
+        ]);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: testblock_cc item (SW1A)',
+            'textbody' => 'Something that should be blocked',
+            'message'  => 'Something that should be blocked',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals(1, $stats['blocked'] ?? 0, 'block-action keyword must move message to Spam');
+        $collection = DB::table('messages_groups')->where('msgid', $msgid)->value('collection');
+        $this->assertEquals('Spam', $collection, 'message with block-action keyword must be in Spam collection');
+    }
+
+    // -------------------------------------------------------------------------
+    // processUnprocessed — arrival must NOT be reset on approval
+    // -------------------------------------------------------------------------
+
+    public function test_arrival_not_reset_when_message_is_approved(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $originalArrival = now()->subHour();
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Good chair (SW1A)',
+            'textbody' => 'A clean chair. Collection only.',
+            'message'  => 'A clean chair. Collection only.',
+            'arrival'  => $originalArrival,
+            'date'     => $originalArrival,
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Good chair']);
+        $itemId = DB::table('items')->where('name', 'Good chair')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => $originalArrival,
+            'deleted'    => 0,
+        ]);
+
+        $stats = $this->service->processUnprocessed();
+
+        $this->assertEquals(1, $stats['approved'], 'message must be approved');
+
+        $row = DB::table('messages_groups')->where('msgid', $msgid)->first();
+        $approvedArrival = \Carbon\Carbon::parse($row->arrival);
+        // arrival must be preserved — within 5 seconds of the original, not near now()
+        $this->assertEqualsWithDelta(
+            $originalArrival->timestamp,
+            $approvedArrival->timestamp,
+            5,
+            'arrival must not be reset to now() when promoting to Approved'
+        );
+    }
 }
