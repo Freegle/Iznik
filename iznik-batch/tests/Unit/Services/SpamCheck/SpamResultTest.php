@@ -229,6 +229,16 @@ class SpamResultTest extends TestCase
         $this->assertSame(0.0, $result->score);
     }
 
+    public function test_from_rspamd_integer_score_is_returned_as_float(): void
+    {
+        $response = ['score' => 5, 'action' => 'no action', 'symbols' => []];
+
+        $result = SpamResult::fromRspamd($response);
+
+        $this->assertSame(5.0, $result->score);
+        $this->assertIsFloat($result->score);
+    }
+
     public function test_from_rspamd_extracts_symbols_with_scores(): void
     {
         $response = [
