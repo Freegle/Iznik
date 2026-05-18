@@ -37,7 +37,7 @@ class ContentCheckService
      * Run all content checks for a single (msgid, groupid) pair.
      *
      * Returns array of failure reasons — empty means clean.
-     * Each reason: ['check' => string, 'category' => string|null, 'detail' => string]
+     * Each reason: ['check' => string, 'category' => string|null, 'action' => string, 'detail' => string]
      */
     public function checkMessage(int $msgid, int $groupid): array
     {
@@ -77,82 +77,111 @@ class ContentCheckService
     }
 
     /**
-     * Process all unprocessed pending messages.
+     * Process all unprocessed pending messages in batches of 100.
      *
-     * Returns stats: ['approved' => int, 'kept_pending' => int, 'errors' => int]
+     * Returns stats: ['approved' => int, 'kept_pending' => int, 'blocked' => int, 'errors' => int]
      */
     public function processUnprocessed(bool $dryRun = false): array
     {
-        $stats = ['approved' => 0, 'kept_pending' => 0, 'errors' => 0];
+        $stats = ['approved' => 0, 'kept_pending' => 0, 'blocked' => 0, 'errors' => 0];
 
-        $candidates = DB::table('messages_groups as mg')
+        DB::table('messages_groups as mg')
             ->join('messages as m', 'm.id', '=', 'mg.msgid')
             ->join('users as u', 'u.id', '=', 'm.fromuser')
-            ->select('mg.msgid', 'mg.groupid', 'm.type as msgtype')
+            ->select('mg.msgid', 'mg.groupid', DB::raw('m.type as msgtype'), DB::raw('m.fromuser as fromuser'))
             ->where('mg.collection', MessageGroup::COLLECTION_PENDING)
             ->whereNull('mg.contentcheck_checked_at')
             ->where('mg.deleted', 0)
             ->whereNull('m.deleted')
             ->whereNotNull('m.fromuser')
             ->whereNull('u.deleted')
-            ->get();
+            ->orderBy('mg.msgid')
+            ->orderBy('mg.groupid')
+            ->chunk(100, function ($candidates) use (&$stats, $dryRun) {
+                foreach ($candidates as $row) {
+                    try {
+                        $reasons     = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
+                        $isModerated = $this->isUserModerated((int) $row->msgid, (int) $row->groupid, (int) $row->fromuser)
+                                    || $this->isGroupModerated((int) $row->groupid);
+                        $promote     = empty($reasons) && !$isModerated;
+                        $hasBlock    = !$promote && !empty(array_filter(
+                            $reasons,
+                            fn($r) => ($r['action'] ?? 'flag') === 'block'
+                        ));
 
-        foreach ($candidates as $row) {
-            try {
-                $reasons     = $this->checkMessage((int) $row->msgid, (int) $row->groupid);
-                $isModerated = $this->isUserModerated((int) $row->msgid, (int) $row->groupid)
-                            || $this->isGroupModerated((int) $row->groupid);
-                $promote     = empty($reasons) && !$isModerated;
+                        if ($dryRun) {
+                            if ($promote) {
+                                $stats['approved']++;
+                            } elseif ($hasBlock) {
+                                $stats['blocked']++;
+                            } else {
+                                $stats['kept_pending']++;
+                            }
+                            continue;
+                        }
 
-                if ($dryRun) {
-                    $promote ? $stats['approved']++ : $stats['kept_pending']++;
-                    continue;
-                }
+                        if ($promote) {
+                            DB::transaction(function () use ($row, &$stats) {
+                                DB::table('messages_groups')
+                                    ->where('msgid', $row->msgid)
+                                    ->where('groupid', $row->groupid)
+                                    ->update([
+                                        'collection'              => MessageGroup::COLLECTION_APPROVED,
+                                        'approvedby'              => null,
+                                        'approvedat'              => now(),
+                                        'contentcheck_checked_at' => now(),
+                                        'contentcheck_reasons'    => null,
+                                    ]);
 
-                if ($promote) {
-                    DB::table('messages_groups')
-                        ->where('msgid', $row->msgid)
-                        ->where('groupid', $row->groupid)
-                        ->update([
-                            'collection'              => MessageGroup::COLLECTION_APPROVED,
-                            'approvedby'              => null,
-                            'approvedat'              => now(),
-                            'arrival'                 => now(),
-                            'contentcheck_checked_at' => now(),
-                            'contentcheck_reasons'    => null,
-                        ]);
+                                if ($row->msgtype === Message::TYPE_OFFER) {
+                                    DB::table('background_tasks')->insert([
+                                        'task_type' => BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
+                                        'data'      => json_encode(['msgid' => (int) $row->msgid]),
+                                    ]);
+                                }
 
-                    if ($row->msgtype === Message::TYPE_OFFER) {
-                        DB::table('background_tasks')->insert([
-                            'task_type' => BackgroundTask::TASK_FREEBIE_ALERTS_ADD,
-                            'data'      => json_encode(['msgid' => (int) $row->msgid]),
-                        ]);
+                                $stats['approved']++;
+                            });
+
+                            Log::info("ContentCheck: approved message #{$row->msgid} on group #{$row->groupid}");
+                        } elseif ($hasBlock) {
+                            DB::table('messages_groups')
+                                ->where('msgid', $row->msgid)
+                                ->where('groupid', $row->groupid)
+                                ->update([
+                                    'collection'              => MessageGroup::COLLECTION_SPAM,
+                                    'contentcheck_checked_at' => now(),
+                                    'contentcheck_reasons'    => json_encode($reasons),
+                                ]);
+
+                            $stats['blocked']++;
+                            Log::info("ContentCheck: blocked message #{$row->msgid} on group #{$row->groupid}", ['reasons' => $reasons]);
+                        } else {
+                            DB::transaction(function () use ($row, $reasons, &$stats) {
+                                DB::table('messages_groups')
+                                    ->where('msgid', $row->msgid)
+                                    ->where('groupid', $row->groupid)
+                                    ->update([
+                                        'contentcheck_checked_at' => now(),
+                                        'contentcheck_reasons'    => empty($reasons) ? null : json_encode($reasons),
+                                    ]);
+
+                                DB::table('background_tasks')->insert([
+                                    'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS,
+                                    'data'      => json_encode(['group_id' => (int) $row->groupid]),
+                                ]);
+
+                                $stats['kept_pending']++;
+                            });
+
+                            Log::info("ContentCheck: kept pending message #{$row->msgid} on group #{$row->groupid}", ['reasons' => $reasons]);
+                        }
+                    } catch (\Exception $e) {
+                        Log::error("ContentCheck: error processing message #{$row->msgid}: " . $e->getMessage());
+                        $stats['errors']++;
                     }
-
-                    $stats['approved']++;
-                    Log::info("ContentCheck: approved message #{$row->msgid} on group #{$row->groupid}");
-                } else {
-                    DB::table('messages_groups')
-                        ->where('msgid', $row->msgid)
-                        ->where('groupid', $row->groupid)
-                        ->update([
-                            'contentcheck_checked_at' => now(),
-                            'contentcheck_reasons'    => empty($reasons) ? null : json_encode($reasons),
-                        ]);
-
-                    DB::table('background_tasks')->insert([
-                        'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS,
-                        'data'      => json_encode(['group_id' => (int) $row->groupid]),
-                    ]);
-
-                    $stats['kept_pending']++;
-                    Log::info("ContentCheck: kept pending message #{$row->msgid} on group #{$row->groupid}", ['reasons' => $reasons]);
                 }
-            } catch (\Exception $e) {
-                Log::error("ContentCheck: error processing message #{$row->msgid}: " . $e->getMessage());
-                $stats['errors']++;
-            }
-        }
+            });
 
         return $stats;
     }
@@ -160,10 +189,17 @@ class ContentCheckService
     /**
      * Return true if the message's author has a moderated posting status on this group.
      * NULL or 'MODERATED' → moderated. Any explicit non-moderated value → not moderated.
+     *
+     * @param int      $msgid    Message ID (used to look up fromuser if not provided).
+     * @param int      $groupid  Group ID.
+     * @param int|null $fromuser Known fromuser value; skips the messages query when supplied.
      */
-    public function isUserModerated(int $msgid, int $groupid): bool
+    public function isUserModerated(int $msgid, int $groupid, ?int $fromuser = null): bool
     {
-        $fromuser = DB::table('messages')->where('id', $msgid)->value('fromuser');
+        if ($fromuser === null) {
+            $fromuser = DB::table('messages')->where('id', $msgid)->value('fromuser');
+        }
+
         if (!$fromuser) {
             return true;
         }
@@ -225,9 +261,30 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
+    // Safe regex helper — logs invalid patterns and returns false rather than
+    // suppressing errors silently. For keyword matches, false means no match
+    // (conservative — avoids false positives). For exclude patterns, the caller
+    // treats false as non-matching (conservative — still flags the message).
+    // -------------------------------------------------------------------------
+
+    private function safePreg(string $pattern, string $subject): bool
+    {
+        $result = @preg_match($pattern, $subject);
+        if (preg_last_error() !== PREG_NO_ERROR) {
+            Log::warning('ContentCheck: invalid regex pattern', [
+                'pattern' => $pattern,
+                'error'   => preg_last_error_msg(),
+            ]);
+            return false;
+        }
+        return $result === 1;
+    }
+
+    // -------------------------------------------------------------------------
     // Concern keywords — unified table replacing worrywords + spam_keywords.
     // Supports match_mode (fuzzy/literal/regex), global + per-group scope,
-    // exclude patterns, and category-specific frontend guidance.
+    // exclude patterns, category-specific frontend guidance, and action
+    // (flag = keep pending for review; block = move to Spam collection).
     // -------------------------------------------------------------------------
 
     public function checkConcernKeywords(string $subject, string $textbody, int $groupid): ?array
@@ -252,22 +309,23 @@ class ContentCheckService
             }
 
             $matched = match ($kw->match_mode) {
-                'regex'  => @preg_match('/' . $word . '/i', $original) === 1,
+                'regex'   => $this->safePreg('/' . $word . '/i', $original),
                 'literal' => preg_match('/\b' . preg_quote(strtolower($word), '/') . '\b/', $haystack) === 1,
-                default  => $this->matchesFuzzy($haystack, $word),
+                default   => $this->matchesFuzzy($haystack, $word),
             };
 
             if (!$matched) {
                 continue;
             }
 
-            if (!empty($kw->exclude) && @preg_match('/' . $kw->exclude . '/i', $original)) {
+            if (!empty($kw->exclude) && $this->safePreg('/' . $kw->exclude . '/i', $original)) {
                 continue;
             }
 
             return [
                 'check'    => self::CHECK_CONCERN_KEYWORD,
                 'category' => $kw->category,
+                'action'   => $kw->action ?? 'flag',
                 'detail'   => "Matched concern keyword '{$word}'",
             ];
         }
@@ -276,7 +334,7 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // Vague item name
+    // Vague item name — matches keyword at start, middle, or end of name.
     // -------------------------------------------------------------------------
 
     public function checkVagueItem(?string $itemName): ?array
@@ -295,6 +353,7 @@ class ContentCheckService
             if ($lower === $keyword
                 || str_starts_with($lower, $keyword . ' ')
                 || str_ends_with($lower, ' ' . $keyword)
+                || str_contains($lower, ' ' . $keyword . ' ')
             ) {
                 return ['check' => self::CHECK_VAGUE, 'category' => null, 'detail' => "Item name '{$itemName}' is too generic"];
             }

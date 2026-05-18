@@ -39,7 +39,7 @@ class ContentCheckCommand extends Command
         $stats = $service->processUnprocessed($dryRun);
 
         $prefix = $dryRun ? '[DRY RUN] ' : '';
-        $this->info("{$prefix}Approved: {$stats['approved']}, Kept pending: {$stats['kept_pending']}, Errors: {$stats['errors']}");
+        $this->info("{$prefix}Approved: {$stats['approved']}, Kept pending: {$stats['kept_pending']}, Blocked: {$stats['blocked']}, Errors: {$stats['errors']}");
 
         if ($stats['errors'] > 0) {
             $this->warn("Errors: {$stats['errors']}");
