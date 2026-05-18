@@ -410,6 +410,22 @@ export function listPendingDrafts(db: DB): DiscourseDraftRow[] {
   `).all() as DiscourseDraftRow[]
 }
 
+/**
+ * Cancel all pending (unposted, unrejected) drafts for a bug.
+ * Called when a bug is dismissed (off-topic, duplicate) so stale
+ * replies don't accumulate in the dashboard queue.
+ * Returns the number of drafts cancelled.
+ */
+export function cancelDraftsForBug(db: DB, topic: number, post: number, reason: string): number {
+  const info = db.prepare(`
+    UPDATE discourse_draft
+    SET rejected_at = datetime('now'), rejection_reason = ?
+    WHERE topic = ? AND post = ?
+      AND posted_at IS NULL AND rejected_at IS NULL
+  `).run(reason, topic, post)
+  return info.changes as number
+}
+
 // -------- Reviewer feedback --------
 
 export interface ReviewerFeedbackRow {
