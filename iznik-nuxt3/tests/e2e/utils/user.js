@@ -228,8 +228,31 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
 
       if (currentPathIsHome) {
         console.log(
-          '[logoutIfLoggedIn] Logout redirect already at home page, skipping explicit navigation'
+          '[logoutIfLoggedIn] Logout redirect already at home page, waiting for load state...'
         )
+        // Skip goto('/') to avoid the double-navigation race, but still wait for
+        // domcontentloaded. page.url() can show '/' before the redirect navigation
+        // has fully settled — if the caller navigates away immediately (e.g. to
+        // '/give' via postMessage), the renderer is still processing the '/' page
+        // and the two concurrent navigations cause a 35s+ V8 freeze.
+        try {
+          await page.waitForLoadState('domcontentloaded', { timeout: 30000 })
+          console.log(
+            '[logoutIfLoggedIn] Logout redirect at home page: load state settled'
+          )
+        } catch (waitErr) {
+          if (
+            page.isClosed() ||
+            waitErr.message.includes(
+              'Target page, context or browser has been closed'
+            )
+          ) {
+            throw waitErr
+          }
+          console.warn(
+            `[logoutIfLoggedIn] waitForLoadState non-fatal: ${waitErr.message.substring(0, 200)}`
+          )
+        }
       } else {
         console.log('[logoutIfLoggedIn] Navigating to homepage (try block)')
         try {

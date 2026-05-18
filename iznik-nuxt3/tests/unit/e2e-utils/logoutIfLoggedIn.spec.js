@@ -9,8 +9,6 @@ vi.mock('../../e2e/utils/ui.js', () => ({
   waitForModal: vi.fn(),
 }))
 
-const { logoutIfLoggedIn } = require('../../e2e/utils/user.js')
-
 function makeLocator(visible = false) {
   return {
     waitFor: vi.fn().mockResolvedValue(undefined),
@@ -49,6 +47,18 @@ function makePage(url = 'http://example.com/', overrides = {}) {
 }
 
 describe('logoutIfLoggedIn (e2e util)', () => {
+  let logoutIfLoggedIn
+
+  // vi.resetModules() clears the module cache so user.js is re-evaluated on
+  // each test. This ensures vi.mock('../../e2e/config.js') is applied to
+  // user.js's require('../config') rather than picking up a stale cached copy
+  // that loaded before the mock was registered.
+  beforeEach(async () => {
+    vi.resetModules()
+    const mod = await import('../../e2e/utils/user.js')
+    logoutIfLoggedIn = mod.logoutIfLoggedIn
+  })
+
   it('skips page.goto("/") when logout redirect already landed at home page', async () => {
     // The bug: after logout redirects to '/', calling page.goto('/') while the
     // page is still hydrating causes a double-navigation race that freezes the
