@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Freegle Fairness Isochrone Explorer</title>
+<title>Rippling Out Explorer</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -133,6 +133,76 @@ input[type=range] {
   width: 14px; height: 10px; border-radius: 2px; flex-shrink: 0;
 }
 
+/* Ripple animation */
+.ripple-row {
+  display: flex; align-items: center; gap: 8px;
+  margin: 10px 0 4px; padding-top: 10px;
+  border-top: 1px solid #f0f0f0;
+}
+#ripple-btn {
+  background: #61AE24; color: #fff; border: none;
+  border-radius: 6px; padding: 6px 12px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+  white-space: nowrap;
+}
+#ripple-btn:hover { background: #4d8b1d; }
+#ripple-btn.stop { background: #c0392b; }
+#ripple-btn:disabled { background: #aaa; cursor: default; }
+.ripple-info { font-size: 11px; color: #888; }
+#freegler-bar {
+  font-size: 12px; font-weight: 600; color: #333;
+  margin: 4px 0 8px; display: flex; align-items: center; gap: 5px;
+}
+#freegler-bar.hidden { display: none; }
+
+/* Timeline bar */
+#timeline {
+  position: absolute;
+  top: 10px; left: 50%; transform: translateX(-50%);
+  background: rgba(255,255,255,.95);
+  border-radius: 10px; padding: 10px 20px 8px;
+  z-index: 1000; min-width: 480px;
+  box-shadow: 0 3px 10px rgba(0,0,0,.22);
+  pointer-events: none;
+}
+#timeline.hidden { display: none; }
+#tl-elapsed {
+  font-size: 15px; font-weight: 700; color: #61AE24;
+  text-align: center; margin-bottom: 8px; letter-spacing: .3px;
+}
+#tl-track {
+  position: relative; height: 8px;
+  background: #e0e0e0; border-radius: 4px;
+  margin-bottom: 20px;
+}
+#tl-fill {
+  position: absolute; left: 0; top: 0; height: 100%;
+  background: #61AE24; border-radius: 4px;
+  transition: width 0.25s ease-out;
+}
+#tl-cursor {
+  position: absolute; width: 16px; height: 16px;
+  background: #61AE24; border: 3px solid #fff;
+  border-radius: 50%; top: -4px;
+  transform: translateX(-50%);
+  transition: left 0.25s ease-out;
+  box-shadow: 0 1px 5px rgba(0,0,0,.3);
+}
+.tl-tick {
+  position: absolute; transform: translateX(-50%);
+  top: 10px; font-size: 10px; color: #888;
+  white-space: nowrap; font-weight: 500;
+}
+.tl-tick.expansion {
+  color: #c44; font-weight: 700;
+}
+.tl-tick-mark {
+  position: absolute; width: 1px; height: 6px;
+  background: #bbb; top: 1px;
+  transform: translateX(-50%);
+}
+.tl-tick-mark.expansion { background: #c44; height: 8px; }
+
 /* Loading spinner */
 .spinner {
   display: inline-block; width: 14px; height: 14px;
@@ -149,7 +219,7 @@ input[type=range] {
 <div id="panel">
   <div id="panel-header">
     <span>🗺</span>
-    Freegle Fairness Explorer
+    Rippling Out Explorer
   </div>
   <div id="panel-body">
 
@@ -159,10 +229,10 @@ input[type=range] {
     </div>
 
     <div class="mode-row">
-      <button class="mode-btn active" data-mode="walk">
+      <button class="mode-btn" data-mode="walk">
         <span class="icon">🚶</span>Walk
       </button>
-      <button class="mode-btn" data-mode="cycle">
+      <button class="mode-btn active" data-mode="cycle">
         <span class="icon">🚴</span>Cycle
       </button>
       <button class="mode-btn" data-mode="drive">
@@ -172,20 +242,23 @@ input[type=range] {
 
     <div class="slider-row">
       <div class="slider-label">
-        <span>Time budget</span>
+        <span>Travel time</span>
         <span class="val"><span id="time-val">15</span> min</span>
       </div>
-      <input type="range" id="time-slider" min="5" max="60" step="5" value="15">
+      <input type="range" id="time-slider" min="1" max="30" step="1" value="15">
     </div>
 
     <div class="slider-row">
       <div class="slider-label">
-        <span>Fairness weight</span>
-        <span class="val"><span id="fairness-val">50</span>%</span>
+        <span>Fairness adjustment</span>
+        <span style="display:flex;align-items:center;gap:6px">
+          <button id="balance-btn" title="Find the fairness level that achieves proportionate coverage (~60% deprived)" style="font-size:10px;padding:2px 7px;border:1px solid #61AE24;border-radius:4px;background:#f2f9e6;color:#4d8b1d;cursor:pointer;white-space:nowrap">⊕ Proportionate</button>
+          <span class="val"><span id="fairness-val">50</span>%</span>
+        </span>
       </div>
       <input type="range" id="fairness-slider" min="0" max="100" step="5" value="50">
       <div style="display:flex;justify-content:space-between;font-size:10px;color:#aaa;margin-top:2px">
-        <span>Distance only</span><span>Maximise reach to deprived</span>
+        <span>Distance only</span><span>Strongly favour deprived</span>
       </div>
     </div>
 
@@ -193,25 +266,61 @@ input[type=range] {
       <div class="tip">Click on the map or search to set an offer location.</div>
     </div>
 
+    <!-- Ripple animation -->
+    <div class="ripple-row">
+      <button id="ripple-btn">▶ Animate ripple</button>
+      <span id="ripple-info" class="ripple-info">by drive · 1–30 min</span>
+    </div>
+    <div class="slider-row" style="margin-top:6px;margin-bottom:4px">
+      <div class="slider-label">
+        <span style="font-size:11px">Animation speed</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:#aaa;margin-bottom:2px">
+        <span>Slow</span><span>Fast</span>
+      </div>
+      <input type="range" id="speed-slider" min="1" max="10" step="1" value="3">
+    </div>
+    <div id="freegler-bar" class="hidden">
+      <span style="color:#e8380d;font-size:14px">●</span> Freeglers within reach
+    </div>
+
   </div>
 </div>
 
 <div id="legend">
   <h4>Deprivation quintile</h4>
-  <div class="leg-item"><div class="leg-swatch" style="background:#d73027;opacity:.7"></div> Q1 — most deprived</div>
-  <div class="leg-item"><div class="leg-swatch" style="background:#fc8d59;opacity:.7"></div> Q2</div>
-  <div class="leg-item"><div class="leg-swatch" style="background:#fee08b;opacity:.7;border:1px solid #ccc"></div> Q3</div>
-  <div class="leg-item"><div class="leg-swatch" style="background:#91cf60;opacity:.7"></div> Q4</div>
-  <div class="leg-item"><div class="leg-swatch" style="background:#1a9850;opacity:.7"></div> Q5 — least deprived</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#d73027;opacity:.75"></div> Q1 — most deprived</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#fc8d59;opacity:.75"></div> Q2</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#fee08b;opacity:.75;border:1px solid #ccc"></div> Q3</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#91cf60;opacity:.75"></div> Q4</div>
+  <div class="leg-item"><div class="leg-swatch" style="background:#1a9850;opacity:.75"></div> Q5 — least deprived</div>
   <div class="leg-item" style="margin-top:5px;padding-top:5px;border-top:1px solid #eee">
-    <div class="leg-swatch" style="background:#6699cc;opacity:.35;border:1px solid #6699cc"></div> Standard reach
+    <div class="leg-swatch" style="background:none;border:2.5px solid #cc0000"></div> Standard reach boundary
+  </div>
+  <div class="leg-item" style="margin-top:5px;padding-top:5px;border-top:1px solid #eee">
+    <div style="width:10px;height:10px;border-radius:50%;background:#e8380d;flex-shrink:0"></div> Active Freegler
+  </div>
+  <div class="leg-item" style="margin-top:5px;padding-top:5px;border-top:1px solid #eee">
+    <div class="leg-swatch" style="background:none;border:2.5px solid #005bb5"></div> Home group
   </div>
   <div class="leg-item">
-    <div class="leg-swatch" style="background:repeating-linear-gradient(45deg,#999 0,#999 2px,transparent 2px,transparent 6px);opacity:.6;border:1px dashed #999"></div> Fairness islands
+    <div class="leg-swatch" style="background:none;border:1.5px dashed #0099cc"></div> Adjacent group
+  </div>
+  <div class="leg-item">
+    <span style="color:#e07000;font-size:13px;margin-right:2px">⚡</span> Cross-posting begins
   </div>
 </div>
 
 <div id="status" class="hidden">Loading…</div>
+
+<!-- Rippling-out time timeline -->
+<div id="timeline" class="hidden">
+  <div id="tl-elapsed">Just posted</div>
+  <div id="tl-track">
+    <div id="tl-fill"></div>
+    <div id="tl-cursor"></div>
+  </div>
+</div>
 
 <script>
 const QCOLORS = ['', '#d73027', '#fc8d59', '#fee08b', '#91cf60', '#1a9850'];
@@ -226,7 +335,7 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
 
 // ── State ────────────────────────────────────────────────────────────────────
 let currentLat = null, currentLng = null;
-let currentMode = 'walk';
+let currentMode = 'cycle';
 let marker = null;
 let layers = {};
 let debounceTimer = null;
@@ -294,6 +403,14 @@ function nominatimSearch(q) {
 // ── Map click ────────────────────────────────────────────────────────────────
 map.on('click', e => setLocation(e.latlng.lat, e.latlng.lng, false));
 
+// ── Browser geolocation on load ──────────────────────────────────────────────
+if (navigator.geolocation) {
+  navigator.geolocation.getCurrentPosition(
+    pos => setLocation(pos.coords.latitude, pos.coords.longitude, true),
+    () => {} // silently ignore denial/unavailable
+  );
+}
+
 function setLocation(lat, lng, fly) {
   currentLat = lat;
   currentLng = lng;
@@ -303,6 +420,7 @@ function setLocation(lat, lng, fly) {
     fillColor: '#fff', fillOpacity: 1
   }).addTo(map).bindTooltip('Offer location').openTooltip();
   if (fly) map.flyTo([lat, lng], Math.max(map.getZoom(), 13));
+  fetchAndDrawGroups(lat, lng);
   updateIsochrone();
 }
 
@@ -334,10 +452,15 @@ function updateIsochrone() {
 
   fetch(url)
     .then(r => { if (!r.ok) throw new Error(`Server error ${r.status}`); return r.json(); })
-    .then(data => {
-      clearLayers();
-      drawPolygons(data);
+    .then(async data => {
+      drawPolygons(data, 0);
       updateStats(data);
+      if (data.snap_lat && data.snap_lng && marker) {
+        marker.setLatLng([data.snap_lat, data.snap_lng]);
+      }
+      await fetchFreeglers();
+      drawFreeglersLayer();
+      updateFreeglersInside(data);
       showStatus('Done', false);
     })
     .catch(err => {
@@ -346,59 +469,97 @@ function updateIsochrone() {
     });
 }
 
-// geo: GeoJSON [lng, lat] → Leaflet [lat, lng]
-function geoToLeaflet(coords) {
-  return coords.map(([lng, lat]) => [lat, lng]);
+// Chaikin corner-cutting: smooths a closed ring without changing geographic extent.
+function chaikinSmooth(ring, iterations) {
+  iterations = iterations || 3;
+  let pts = ring.slice(0, -1); // drop closing duplicate
+  for (let iter = 0; iter < iterations; iter++) {
+    const smoothed = [];
+    const n = pts.length;
+    for (let j = 0; j < n; j++) {
+      const a = pts[j], b = pts[(j + 1) % n];
+      smoothed.push([0.75*a[0] + 0.25*b[0], 0.75*a[1] + 0.25*b[1]]);
+      smoothed.push([0.25*a[0] + 0.75*b[0], 0.25*a[1] + 0.75*b[1]]);
+    }
+    pts = smoothed;
+  }
+  pts.push(pts[0]); // re-close
+  return pts;
 }
 
-function drawPolygons(data) {
-  const fairness = parseInt(fairnessSlider.value) / 100;
+// geo: GeoJSON [lng, lat] → Leaflet [lat, lng], with Chaikin smoothing for display
+function geoToLeaflet(coords) {
+  return chaikinSmooth(coords).map(([lng, lat]) => [lat, lng]);
+}
 
-  // ── Standard isochrone — translucent blue fill, drawn first (bottom layer) ──
-  if (hasRing(data.standard)) {
-    layers.standard = L.polygon(geoToLeaflet(data.standard.geometry.coordinates[0]), {
-      color: '#6699cc',
-      weight: 1.5,
-      fillColor: '#6699cc',
-      fillOpacity: 0.20,
-    }).addTo(map)
-      .bindTooltip('Standard isochrone (no fairness adjustment)');
+// drawPolygons(data, transitionMs)
+// transitionMs > 0: cross-fade old→new with scale-grow; 0 = instant replace.
+function drawPolygons(data, transitionMs) {
+  const dur = transitionMs || 0;
+  const outgoing = Object.assign({}, layers);
+  const newLayers = {};
+
+  function applyTransition(el, durationMs) {
+    if (!el) return;
+    el.style.transformBox = 'fill-box';
+    el.style.transformOrigin = 'center';
+    el.style.transform = 'scale(0.88)';
+    el.style.transition = `transform ${durationMs}ms ease-out, fill-opacity ${durationMs}ms ease-out, opacity ${durationMs}ms ease-out`;
   }
 
-  // ── Per-quintile polygons ─────────────────────────────────────────────────
-  // Draw affluent first (bottom), deprived last (top) when fairness > 0.
-  const order = fairness > 0 ? [5, 4, 3, 2, 1] : [1, 2, 3, 4, 5];
-  order.forEach(q => {
+  function addPoly(key, coords, opts, targetFill, targetOpacity, tooltip) {
+    const lyr = L.polygon(coords, { ...opts, fillOpacity: 0, opacity: 0 })
+      .addTo(map).bindTooltip(tooltip);
+    newLayers[key] = lyr;
+    if (dur > 0) {
+      const el = lyr.getElement();
+      applyTransition(el, dur);
+      requestAnimationFrame(() => {
+        if (el) el.style.transform = 'scale(1)';
+        lyr.setStyle({ fillOpacity: targetFill, opacity: targetOpacity });
+      });
+    } else {
+      lyr.setStyle({ fillOpacity: targetFill, opacity: targetOpacity });
+    }
+    return lyr;
+  }
+
+  // Draw Q5 first (bottom) → Q1 last (top) so deprived tooltips win.
+  [5, 4, 3, 2, 1].forEach(q => {
     const qr = data.quintiles && data.quintiles[q];
     if (!qr) return;
-
-    // Main contiguous polygon for this quintile.
     if (hasRing(qr.polygon)) {
-      layers[`q${q}`] = L.polygon(geoToLeaflet(qr.polygon.geometry.coordinates[0]), {
-        color: QCOLORS[q],
-        weight: 1.5,
-        fillColor: QCOLORS[q],
-        fillOpacity: fairness > 0 ? 0.40 : 0.25,
-      }).addTo(map)
-        .bindTooltip(`${QNAMES[q]}: ${qr.count.toLocaleString()} nodes · ${qr.time_budget_min.toFixed(1)} min budget`);
+      addPoly(`q${q}`, geoToLeaflet(qr.polygon.geometry.coordinates[0]),
+        { color: QCOLORS[q], weight: 0.5, fillColor: QCOLORS[q] },
+        0.12, 1, `${QNAMES[q]} (standard reach) · ${qr.time_budget_min.toFixed(1)} min`);
     }
-
-    // Disconnected islands (fairness-reach areas beyond the standard isochrone).
-    // Drawn with dashed border and slightly lower opacity to distinguish them.
-    if (qr.islands && qr.islands.length > 0) {
-      qr.islands.forEach((island, i) => {
-        if (!hasRing(island)) return;
-        layers[`q${q}_island_${i}`] = L.polygon(geoToLeaflet(island.geometry.coordinates[0]), {
-          color: QCOLORS[q],
-          weight: 1.5,
-          dashArray: '5 4',
-          fillColor: QCOLORS[q],
-          fillOpacity: 0.25,
-        }).addTo(map)
-          .bindTooltip(`${QNAMES[q]}: fairness island`);
-      });
-    }
+    (qr.islands || []).forEach((island, i) => {
+      if (!hasRing(island)) return;
+      addPoly(`q${q}_island_${i}`, geoToLeaflet(island.geometry.coordinates[0]),
+        { color: QCOLORS[q], weight: 2, dashArray: '5 4', fillColor: QCOLORS[q] },
+        0.85, 1, `${QNAMES[q]} — fairness bonus area`);
+    });
   });
+
+  if (hasRing(data.standard)) {
+    addPoly('standard', geoToLeaflet(data.standard.geometry.coordinates[0]),
+      { color: '#cc0000', weight: 2.5, fillColor: 'none' },
+      0, 1, 'Standard reach boundary (no fairness adjustment)');
+  }
+
+  // Retire outgoing layers
+  if (dur > 0) {
+    Object.values(outgoing).forEach(lyr => {
+      const el = lyr.getElement();
+      if (el) el.style.transition = `fill-opacity ${dur}ms ease-out, opacity ${dur}ms ease-out`;
+      lyr.setStyle({ fillOpacity: 0, opacity: 0 });
+      setTimeout(() => { if (map.hasLayer(lyr)) map.removeLayer(lyr); }, dur + 50);
+    });
+  } else {
+    Object.values(outgoing).forEach(lyr => { if (map.hasLayer(lyr)) map.removeLayer(lyr); });
+  }
+
+  layers = newLayers;
 }
 
 function hasRing(poly) {
@@ -406,58 +567,443 @@ function hasRing(poly) {
          poly.geometry.coordinates[0] && poly.geometry.coordinates[0].length >= 4;
 }
 
+function swingometerAngleXY(pct) {
+  const angle = Math.max(-90, Math.min(90, (pct - 60) / 40 * 90));
+  const rad = angle * Math.PI / 180;
+  const R = 42;
+  return { x: (R * Math.sin(rad)).toFixed(1), y: (-R * Math.cos(rad)).toFixed(1) };
+}
+
+function setSwingometer(pct) {
+  const needle = document.getElementById('swing-needle');
+  const labelEl = document.getElementById('swing-label');
+  const pctEl = document.getElementById('swing-pct');
+  if (!needle || !labelEl || !pctEl) return;
+  const { x, y } = swingometerAngleXY(pct);
+  needle.setAttribute('x2', x);
+  needle.setAttribute('y2', y);
+  const swingLabel = pct < 52 ? 'Affluent bias' : pct > 68 ? 'Deprived bias' : 'Balanced';
+  const swingColor = pct < 52 ? '#4477aa' : pct > 68 ? '#d73027' : '#1a9850';
+  const aboveBaseline = pct >= 60;
+  const diff = Math.abs(pct - 60);
+  labelEl.textContent = swingLabel;
+  labelEl.style.color = swingColor;
+  pctEl.innerHTML = `${pct}% of Freeglers within reach are in deprived areas<br>
+    <span style="color:${aboveBaseline ? '#1a9850' : '#d73027'};font-weight:600">${aboveBaseline ? '▲' : '▼'} ${diff}% ${aboveBaseline ? 'above' : 'below'} proportionate</span>`;
+}
+
 function updateStats(data) {
   const statsEl = document.getElementById('stats');
-  const qs = data.quintiles || [];
-  const fairness = parseInt(fairnessSlider.value) / 100;
   const hasFairness = data.fairness_score !== undefined && data.fairness_score >= 0;
-
-  let html = '';
 
   if (!hasFairness) {
     const noRoads = !hasRing(data.standard);
-    html = noRoads
-      ? `<div class="tip">No road data found near this location.</div>`
-      : `<div class="tip">No deprivation index for this area — only the standard isochrone is shown. (The demo deprivation data covers Bristol only; try BS1 1AA.)</div>`;
-    statsEl.innerHTML = html;
+    statsEl.innerHTML = noRoads
+      ? `<div class="tip">No road data near this location.</div>`
+      : `<div class="tip">No deprivation index for this area — only the standard isochrone is shown.</div>`;
     return;
   }
 
-  html += '<table><tr><th></th><th>Quintile</th><th>Nodes</th><th>Budget</th></tr>';
-  let anyData = false;
+  // Initial needle position from road-node score while waiting for Freegler data
+  const roadPct = Math.round(data.fairness_score * 100);
+  const { x: nx, y: ny } = swingometerAngleXY(roadPct);
+
+  statsEl.innerHTML = `
+    <div style="text-align:center;margin-top:6px">
+      <svg viewBox="-65 -58 130 72" width="160" style="display:block;margin:auto;overflow:visible">
+        <path d="M -52 0 A 52 52 0 0 1 0 -52" fill="none" stroke="#4477aa" stroke-width="14" opacity="0.30" stroke-linecap="butt"/>
+        <path d="M 0 -52 A 52 52 0 0 1 52 0" fill="none" stroke="#d73027" stroke-width="14" opacity="0.30" stroke-linecap="butt"/>
+        <line x1="0" y1="-44" x2="0" y2="-60" stroke="#555" stroke-width="1.5"/>
+        <line id="swing-needle" x1="0" y1="0" x2="${nx}" y2="${ny}" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+        <circle cx="0" cy="0" r="5" fill="#333"/>
+        <text x="-60" y="16" text-anchor="middle" font-size="9" fill="#4477aa" font-weight="600">Affluent</text>
+        <text x="60" y="16" text-anchor="middle" font-size="9" fill="#d73027" font-weight="600">Deprived</text>
+        <text x="0" y="-62" text-anchor="middle" font-size="9" fill="#555">Balanced</text>
+      </svg>
+      <div id="swing-label" style="font-size:14px;font-weight:700;color:#888;margin:2px 0 4px">Loading Freegler data…</div>
+      <div id="swing-pct" style="font-size:11px;color:#888;line-height:1.5">Waiting for Freegler data…</div>
+    </div>`;
+}
+
+// ── Proportionate-balance button ─────────────────────────────────────────────
+// Binary-search for the fairness W that achieves ~60% deprived-node coverage.
+document.getElementById('balance-btn').addEventListener('click', async () => {
+  if (currentLat === null) { showStatus('Click a location first', false); return; }
+  const btn = document.getElementById('balance-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Searching…';
+
+  const minutes = parseInt(timeSlider.value);
+  let lo = 0, hi = 1.0, best = 0.5;
+  for (let iter = 0; iter < 8; iter++) {
+    const mid = (lo + hi) / 2;
+    try {
+      const url = `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}&minutes=${minutes}&mode=${currentMode}&fairness=${mid.toFixed(4)}`;
+      const data = await fetch(url).then(r => r.json());
+      if (data.fairness_score === undefined) break;
+      best = mid;
+      if (data.fairness_score < 0.60) lo = mid; else hi = mid;
+    } catch (e) { break; }
+  }
+
+  const sliderVal = Math.round(best * 100 / 5) * 5; // snap to step=5
+  fairnessSlider.value = sliderVal;
+  document.getElementById('fairness-val').textContent = sliderVal;
+  btn.disabled = false;
+  btn.textContent = '⊕ Proportionate';
+  updateIsochrone();
+});
+
+// ── Freegler dots ─────────────────────────────────────────────────────────────
+let allFreeglers = [];
+let freeglersMarkers = [];
+
+// Fetch active Freeglers visible in the current map view from the live V2 API.
+const V2_API = 'http://localhost:8194';
+let freeglersMapTimer = null;
+
+async function fetchFreeglers(bounds) {
+  const b = bounds || map.getBounds();
+  const url = `${V2_API}/api/userapproxlocs?minLat=${b.getSouth().toFixed(6)}&maxLat=${b.getNorth().toFixed(6)}&minLng=${b.getWest().toFixed(6)}&maxLng=${b.getEast().toFixed(6)}`;
+  try {
+    const r = await fetch(url);
+    const data = await r.json();
+    allFreeglers = (data.results || []).map(x => x.extra).filter(e => e && e.lat && e.lng);
+  } catch (e) {
+    allFreeglers = [];
+  }
+}
+
+// Fetch Freeglers for the initial map view on page load.
+fetchFreeglers().then(drawFreeglersLayer);
+
+// Refresh Freegler dots when the map view changes (debounced).
+map.on('moveend zoomend', () => {
+  if (ripplePlaying) return; // animation manages its own fetches
+  clearTimeout(freeglersMapTimer);
+  freeglersMapTimer = setTimeout(async () => {
+    await fetchFreeglers();
+    drawFreeglersLayer();
+  }, 400);
+});
+
+function drawFreeglersLayer() {
+  freeglersMarkers.forEach(m => map.removeLayer(m));
+  freeglersMarkers = [];
+  allFreeglers.forEach(f => {
+    const m = L.circleMarker([f.lat, f.lng], {
+      radius: 2, color: '#e8380d', weight: 1,
+      fillColor: '#e8380d', fillOpacity: 0.5,
+    }).addTo(map);
+    freeglersMarkers.push(m);
+  });
+}
+
+function pointInRing(fLng, fLat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > fLat) !== (yj > fLat) &&
+        fLng < (xj - xi) * (fLat - yi) / (yj - yi) + xi)
+      inside = !inside;
+  }
+  return inside;
+}
+
+// Returns quintile (1-5) of a Freegler if inside the isochrone, 0 if outside.
+function quintileOfFreegler(fLng, fLat, data) {
   for (let q = 1; q <= 5; q++) {
-    const qr = qs[q] || {};
-    if (!qr.count) continue;
-    anyData = true;
-    const mins = qr.time_budget_min ? qr.time_budget_min.toFixed(1) : '—';
-    const islandCount = (qr.islands || []).length;
-    const islandSuffix = islandCount > 0 ? ` <span style="color:#999;font-size:10px">(+${islandCount} island${islandCount>1?'s':''})</span>` : '';
-    html += `<tr>
-      <td><span class="q-dot" style="background:${QCOLORS[q]}"></span></td>
-      <td>${QNAMES[q]}${islandSuffix}</td>
-      <td>${(qr.count || 0).toLocaleString()}</td>
-      <td>${mins} min</td>
-    </tr>`;
+    const qr = (data.quintiles || {})[q];
+    if (!qr) continue;
+    if (hasRing(qr.polygon) && pointInRing(fLng, fLat, qr.polygon.geometry.coordinates[0])) return q;
+    for (const isl of (qr.islands || [])) {
+      if (hasRing(isl) && pointInRing(fLng, fLat, isl.geometry.coordinates[0])) return q;
+    }
   }
-  html += '</table>';
+  return 0;
+}
 
-  if (!anyData) {
-    html = `<div class="tip">No deprivation-tagged nodes in this area.</div>`;
-  } else if (fairness > 0) {
-    const pct = Math.round(data.fairness_score * 100);
-    const affluent = 100 - pct;
-    html += `
-      <div class="score-row">
-        <span>Deprived Q1–Q3</span>
-        <div class="score-bar-wrap">
-          <div class="score-bar" style="width:${pct}%"></div>
-        </div>
-        <span class="score-val">${pct}%</span>
-      </div>
-      <div style="font-size:10px;color:#999;text-align:right;margin-top:2px">${affluent}% affluent Q4–Q5</div>`;
+function updateFreeglersInside(data) {
+  let insideCount = 0, deprivedCount = 0;
+  allFreeglers.forEach((f, i) => {
+    const q = quintileOfFreegler(f.lng, f.lat, data);
+    if (q > 0) {
+      insideCount++;
+      if (q <= 3) deprivedCount++;
+      freeglersMarkers[i].setStyle({ fillOpacity: 1, opacity: 1, radius: 3 });
+    } else {
+      freeglersMarkers[i].setStyle({ fillOpacity: 0.15, opacity: 0.25, radius: 4 });
+    }
+  });
+  if (insideCount > 0) {
+    const pct = Math.round(deprivedCount / insideCount * 100);
+    setSwingometer(pct);
+  }
+}
+
+// ── Group boundaries ──────────────────────────────────────────────────────────
+let groupLayers = [];
+let groupFeatures = [];    // raw GeoJSON features
+let homeGroupIds = new Set(); // IDs of groups that contain the offer point
+
+async function fetchAndDrawGroups(lat, lng) {
+  groupLayers.forEach(l => map.removeLayer(l));
+  groupLayers = [];
+  groupFeatures = [];
+  homeGroupIds = new Set();
+  try {
+    const r = await fetch(`/v1/groups/nearby?lat=${lat.toFixed(6)}&lng=${lng.toFixed(6)}`);
+    if (!r.ok) return;
+    const data = await r.json();
+    groupFeatures = data.features || [];
+    groupFeatures.forEach(f => {
+      if (f.properties.contains) homeGroupIds.add(f.properties.id);
+    });
+    drawGroupsOverlay();
+  } catch (e) { /* no group data — silently skip */ }
+}
+
+function drawGroupsOverlay() {
+  groupLayers.forEach(l => map.removeLayer(l));
+  groupLayers = [];
+  groupFeatures.forEach(f => {
+    const coords = f.geometry && f.geometry.coordinates && f.geometry.coordinates[0];
+    if (!coords || coords.length < 4) return;
+    const latlngs = coords.map(([lng, lat]) => [lat, lng]);
+    const isHome = f.properties.contains;
+    const lyr = L.polygon(latlngs, {
+      color: isHome ? '#005bb5' : '#0099cc',
+      weight: isHome ? 2.5 : 1.5,
+      fillColor: isHome ? '#005bb5' : '#0099cc',
+      fillOpacity: isHome ? 0.06 : 0.03,
+      dashArray: isHome ? null : '6 4',
+    }).addTo(map).bindTooltip(
+      (isHome ? '🏠 ' : '') + (f.properties.nameshort || 'Group'),
+      { sticky: true }
+    );
+    groupLayers.push(lyr);
+  });
+}
+
+// Returns the first adjacent (non-home) group that the given isochrone ring
+// overlaps, or null if no overlap. Uses vertex-in-polygon test.
+function checkCrossPosting(isoRing) {
+  if (!isoRing || groupFeatures.length === 0) return null;
+  for (const f of groupFeatures) {
+    if (f.properties.contains) continue; // skip home group
+    const gRing = f.geometry && f.geometry.coordinates && f.geometry.coordinates[0];
+    if (!gRing) continue;
+    for (const [lng, lat] of isoRing) {
+      if (pointInRing(lng, lat, gRing)) return f;
+    }
+    // Also check the reverse: any group vertex inside the isochrone
+    for (const [lng, lat] of gRing) {
+      if (pointInRing(lng, lat, isoRing)) return f;
+    }
+  }
+  return null;
+}
+
+// Stamp the timeline with a cross-posting marker at the given elapsed hours.
+function markCrossPosting(hours, groupName) {
+  const pct = Math.min(100, (hours / MAX_HOURS) * 100);
+  const track = document.getElementById('tl-track');
+
+  const mark = document.createElement('div');
+  mark.className = 'tl-tick-mark';
+  mark.style.cssText = `left:${pct}%;background:#e07000;height:10px;top:-1px;width:2px`;
+  track.appendChild(mark);
+
+  const label = document.createElement('div');
+  label.className = 'tl-tick';
+  label.style.cssText = `left:${pct}%;color:#e07000;font-weight:700;top:12px`;
+  label.textContent = '⚡ ' + (groupName || 'adjacent group');
+  track.appendChild(label);
+
+  document.getElementById('tl-elapsed').textContent =
+    formatElapsed(hours) + ' — cross-posting begins (' + (groupName || 'adjacent group') + ')';
+}
+
+// ── Timeline helpers ──────────────────────────────────────────────────────────
+// Empirical expansion schedule (hours since post) derived from hazard analysis
+// of 303,491 production messages. Hazard decays steeply h0-h6 then goes flat.
+const EXPANSION_HOURS = [0, 1, 3, 6, 12, 24, 48];
+const MAX_HOURS = 48;
+let timelineBuilt = false;
+
+function frameToHours(frameIdx, totalFrames) {
+  return (frameIdx / (totalFrames - 1)) * MAX_HOURS;
+}
+
+function formatElapsed(hours) {
+  if (hours < 0.083) return 'Just posted';
+  if (hours < 1) return Math.round(hours * 60) + 'm elapsed';
+  const h = Math.floor(hours);
+  const m = Math.round((hours - h) * 60);
+  const mStr = m ? ' ' + m + 'm' : '';
+  if (h < 24) return h + 'h' + mStr + ' elapsed';
+  const d = Math.floor(h / 24);
+  const hr = h % 24;
+  return d + 'd ' + (hr ? hr + 'h' : '') + ' elapsed';
+}
+
+function buildTimeline(totalFrames) {
+  if (timelineBuilt) return;
+  timelineBuilt = true;
+  const track = document.getElementById('tl-track');
+  EXPANSION_HOURS.forEach(h => {
+    const pct = (h / MAX_HOURS) * 100;
+    const mark = document.createElement('div');
+    mark.className = 'tl-tick-mark' + (h > 0 ? ' expansion' : '');
+    mark.style.left = pct + '%';
+    track.appendChild(mark);
+    const label = document.createElement('div');
+    label.className = 'tl-tick' + (h > 0 ? ' expansion' : '');
+    label.style.left = pct + '%';
+    label.textContent = h === 0 ? 'Post' : h < 24 ? h + 'h' : (h / 24) + 'd';
+    track.appendChild(label);
+  });
+}
+
+function updateTimeline(frameIdx, totalFrames) {
+  const hours = frameToHours(frameIdx, totalFrames);
+  const pct = (hours / MAX_HOURS) * 100;
+  document.getElementById('tl-fill').style.width = pct + '%';
+  document.getElementById('tl-cursor').style.left = pct + '%';
+  document.getElementById('tl-elapsed').textContent = formatElapsed(hours);
+}
+
+// ── Ripple animation ──────────────────────────────────────────────────────────
+let rippleFrames = [];
+let rippleStep = 0;
+let rippleTimer = null;
+let ripplePlaying = false;
+let crossPostingDetected = false; // true once we've marked the first overlap
+
+document.getElementById('ripple-btn').addEventListener('click', () => {
+  if (ripplePlaying) stopRipple(); else startRipple();
+});
+
+const speedSlider = document.getElementById('speed-slider');
+
+
+async function startRipple() {
+  if (currentLat === null) { showStatus('Click a location first', false); return; }
+
+  const btn = document.getElementById('ripple-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Loading…';
+  document.getElementById('ripple-info').textContent = `Fetching 30 frames (${currentMode})…`;
+
+  // Clear previous animation state, timeline, and zoom back to origin
+  clearLayers();
+  timelineBuilt = false;
+  const oldTrack = document.getElementById('tl-track');
+  oldTrack.innerHTML = '<div id="tl-fill"></div><div id="tl-cursor"></div>';
+  map.setView([currentLat, currentLng], 13, { animate: false });
+
+  const fairness = parseInt(fairnessSlider.value) / 100;
+  const promises = Array.from({ length: 30 }, (_, i) => {
+    const m = i + 1;
+    const url = `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}&minutes=${m}&mode=${currentMode}&fairness=${fairness}`;
+    return fetch(url).then(r => r.json()).catch(() => null);
+  });
+  rippleFrames = await Promise.all(promises);
+
+  // Pre-fetch Freeglers for the maximum extent of all frames so dots
+  // are always available as the animation expands.
+  let maxBounds = null;
+  for (const frame of rippleFrames) {
+    if (frame && hasRing(frame.standard)) {
+      const ring = frame.standard.geometry.coordinates[0];
+      const b = L.latLngBounds(ring.map(([lng, lat]) => [lat, lng]));
+      maxBounds = maxBounds ? maxBounds.extend(b) : b;
+    }
+  }
+  await fetchFreeglers(maxBounds ? maxBounds.pad(0.1) : null);
+  drawFreeglersLayer();
+
+  rippleStep = 0;
+  ripplePlaying = true;
+  crossPostingDetected = false;
+  btn.disabled = false;
+  btn.textContent = '⏹ Stop';
+  btn.classList.add('stop');
+  document.getElementById('freegler-bar').classList.remove('hidden');
+  buildTimeline(rippleFrames.length);
+  document.getElementById('timeline').classList.remove('hidden');
+
+  stepRipple();
+}
+
+function stopRipple() {
+  ripplePlaying = false;
+  clearTimeout(rippleTimer);
+  const btn = document.getElementById('ripple-btn');
+  btn.textContent = '▶ Animate ripple';
+  btn.classList.remove('stop');
+  document.getElementById('ripple-info').textContent = `by drive · 1–30 min`;
+  document.getElementById('freegler-bar').classList.add('hidden');
+  document.getElementById('timeline').classList.add('hidden');
+}
+
+function stepRipple() {
+  if (rippleStep >= rippleFrames.length) {
+    ripplePlaying = false;
+    const btn = document.getElementById('ripple-btn');
+    btn.textContent = '▶ Replay';
+    btn.classList.remove('stop');
+    document.getElementById('ripple-info').textContent = `drive · done`;
+    return;
   }
 
-  statsEl.innerHTML = html;
+  const data = rippleFrames[rippleStep];
+  const minute = rippleStep + 1;
+  document.getElementById('ripple-info').textContent = `drive · ${minute} min`;
+  document.getElementById('time-val').textContent = minute;
+  updateTimeline(rippleStep, rippleFrames.length);
+  timeSlider.value = minute;
+
+  // Slider 1=slowest (2s/frame) → 10=fastest (100ms/frame), exponential feel
+  const spd = parseInt(document.getElementById('speed-slider').value) || 3;
+  const delay = Math.round(2000 / Math.pow(spd, 1.4));
+
+  if (data) {
+    // Cross-fade transition takes 80% of the frame interval
+    drawPolygons(data, Math.round(delay * 0.8));
+    updateStats(data);
+    updateFreeglersInside(data);
+
+    // Cross-posting detection: check if the standard isochrone ring has
+    // reached into any adjacent (non-home) group polygon.
+    if (!crossPostingDetected && groupFeatures.length > 0 &&
+        data.standard && hasRing(data.standard)) {
+      const isoRing = data.standard.geometry.coordinates[0];
+      const hit = checkCrossPosting(isoRing);
+      if (hit) {
+        crossPostingDetected = true;
+        const hours = frameToHours(rippleStep, rippleFrames.length);
+        markCrossPosting(hours, hit.properties.nameshort);
+      }
+    }
+
+    // Every 2 frames: zoom to a lookahead frame so the map stays ahead of the polygon
+    if (rippleStep % 2 === 0) {
+      const ahead = Math.min(rippleStep + 5, rippleFrames.length - 1);
+      const lookahead = rippleFrames[ahead];
+      const zoomData = (lookahead && hasRing(lookahead.standard)) ? lookahead : data;
+      if (hasRing(zoomData.standard)) {
+        try {
+          const ring = zoomData.standard.geometry.coordinates[0];
+          const bounds = L.latLngBounds(ring.map(([lng, lat]) => [lat, lng]));
+          if (bounds.isValid()) map.fitBounds(bounds, { padding: [60, 60], maxZoom: 13, animate: false });
+        } catch (e) {}
+      }
+    }
+  }
+
+  rippleStep++;
+  if (ripplePlaying) rippleTimer = setTimeout(stepRipple, delay);
 }
 </script>
 </body>

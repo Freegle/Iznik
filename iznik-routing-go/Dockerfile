@@ -10,7 +10,8 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o /usr/local/bin/spatial-server .
+RUN go get github.com/go-sql-driver/mysql@v1.8.1 && go mod tidy && \
+    go build -o /usr/local/bin/spatial-server .
 
 EXPOSE 8196
 
