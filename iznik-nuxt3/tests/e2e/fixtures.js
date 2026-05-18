@@ -1204,7 +1204,6 @@ const testWithFixtures = test.extend({
         await page.gotoAndVerify(startPath, {
           timeout: timeouts.navigation.initial,
           waitUntil: 'domcontentloaded',
-          maxRetries: 1,
         })
 
         // Verify we're on the correct page
