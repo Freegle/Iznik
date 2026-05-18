@@ -246,6 +246,29 @@ describe('DonationAskStripe', () => {
     })
   })
 
+  describe('engagement floor applied to bandit amount', () => {
+    it('uses bandit amount when it exceeds the default', async () => {
+      mockApi.bandit.choose.mockResolvedValue({ variant: 'minimal-friction-5' })
+      const wrapper = createWrapper({ default: 2 })
+      await flushPromises()
+      expect(wrapper.find('.amount-value').text()).toBe('£5.00')
+    })
+
+    it('uses default when bandit amount is below it', async () => {
+      mockApi.bandit.choose.mockResolvedValue({ variant: 'minimal-friction-2' })
+      const wrapper = createWrapper({ default: 5 })
+      await flushPromises()
+      expect(wrapper.find('.amount-value').text()).toBe('£5.00')
+    })
+
+    it('uses default when bandit returns no variant', async () => {
+      mockApi.bandit.choose.mockResolvedValue({ variant: null })
+      const wrapper = createWrapper({ default: 5 })
+      await flushPromises()
+      expect(wrapper.find('.amount-value').text()).toBe('£5.00')
+    })
+  })
+
   describe('events', () => {
     it('emits cancel on Not now click', async () => {
       const wrapper = createWrapper()
