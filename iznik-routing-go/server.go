@@ -181,14 +181,17 @@ func startServer(g *Graph, addr string) {
 	})
 	initGroupsDB()
 	app.Get("/health", handleHealth(g))
-	app.Get("/v1/isochrone", handleIsochrone(g))
-	app.Get("/v1/fairness", handleFairness(g))
-	app.Get("/v1/nearby-freeglers", handleNearbyFreeglers(spatialURL))
-	app.Get("/v1/groups/nearby", handleNearbyGroups())
 	app.Get("/demo", func(c *fiber.Ctx) error {
 		c.Set("Content-Type", "text/html; charset=utf-8")
 		return c.Send(demoHTML)
 	})
+
+	// All /v1/* routes require a valid JWT.
+	v1 := app.Group("/v1", jwtAuthMiddleware())
+	v1.Get("/isochrone", handleIsochrone(g))
+	v1.Get("/fairness", handleFairness(g))
+	v1.Get("/nearby-freeglers", handleNearbyFreeglers(spatialURL))
+	v1.Get("/groups/nearby", handleNearbyGroups())
 
 	log.Printf("spatial-server: listening on %s (%d nodes, deprivation=%v)",
 		addr, g.NodeCount(), g.Deprivation != nil)

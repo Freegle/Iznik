@@ -10,7 +10,9 @@ RUN go mod download
 
 COPY . .
 
-RUN go get github.com/go-sql-driver/mysql@v1.8.1 && go mod tidy && \
+RUN go get github.com/go-sql-driver/mysql@v1.8.1 && \
+    go get github.com/golang-jwt/jwt/v4@v4.5.2 && \
+    go mod tidy && \
     go build -o /usr/local/bin/spatial-server .
 
 EXPOSE 8196
