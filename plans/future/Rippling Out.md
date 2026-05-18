@@ -897,79 +897,42 @@ are scheduled. The item remains discoverable for as long as the group keeps it a
 in normal operation). The 48h figure from the hazard curve marks where expansion increments
 become small; h72–h168 steps are added for very hard-to-rehome items in sparse areas.
 
-### Max Distance and the Swamping Problem
+### Max Distance
 
 **Why a fixed `maxMinutes` is geographically inconsistent**
 
 A 60-minute drive covers ~25 km in central London but ~100 km in rural Northumberland. Travel
 time is still the right unit (it answers "would a reasonable person collect this?"), but the
-implication for cross-group reach varies enormously by location.
+geographic radius implied by a fixed time varies enormously by location.
 
-**The swamping risk**
+**Rippling out vs. what members actually see**
 
-If every low-desirability item automatically expands to a 1-hour radius, adjacent groups see a
-flood of rippled-in posts that originated elsewhere, diluting their own members' locally-posted
-items. The risk is proportional to:
-- The originating group's volume of undesirable/unloved offers (the long tail)
-- The target group's own active feed size (smaller/quieter groups are hit hardest)
+An important distinction: *rippling out* decides **which members can potentially see a post**.
+It does not decide **which posts a member actually sees** or **in what order**. That is the
+job of the browse view and notification construction.
 
-**Three-layer mitigation**
+This means a post rippling into an adjacent group does not necessarily flood that group's
+members with irrelevant content — it simply makes the post *available* there. The browse view
+and digest/notification logic can then prioritise locally-originated posts, rank cross-group
+posts lower, or apply per-group feed budgets as it sees fit.
 
-1. **Neighbour-consent ceiling (primary)**: Stop expansion the moment the isochrone first
-   touches an adjacent group's boundary. This is a hard cap that prevents any cross-posting
-   without explicit consent. A per-group "allow cross-posting to neighbours" setting can
-   unlock it, but the safe default is no cross-posting.
+> **Future feature**: Traffic-adaptive feed ordering — when constructing a group's browse view
+> or digest, rank rippled-in cross-group posts below locally-originated ones. A low-traffic
+> group can choose to weight cross-posts more heavily to fill its feed; a busy group can
+> deprioritise them. This is a browse/notification concern, not a ripple-out concern.
+> Low-traffic groups should naturally benefit from cross-posting because their feeds are thin,
+> while busy groups' local content will drown out cross-posts organically.
 
-   The routing demo's cross-posting marker (⚡ on the timeline) shows empirically how long
-   it takes for a typical location to reach the nearest group boundary — useful for setting
-   expectations.
+**Cross-posting stopping conditions** (these ARE part of ripple-out logic):
 
-2. **Local-interest gate on cross-posting (secondary)**: Only allow the isochrone to cross
-   a group boundary if the item has received at least one reply (showing local interest exists
-   but hasn't been fulfilled yet). Items with zero replies after h6 do not cross-post; they
-   simply exhaust within the home group.
+1. **Neighbour-consent ceiling**: Stop expansion the moment the isochrone first touches an
+   adjacent group's boundary. Default is no cross-posting; a per-group "allow cross-posting
+   to neighbours" setting unlocks it. The demo's ⚡ timeline marker shows empirically when
+   this boundary would be reached for any clicked location.
 
-3. **Per-group inbound budget (display filter)**: Each group caps the number of rippled-in
-   items shown per day (e.g. no more than 20% of total visible items). This is a rendering
-   filter, not a notification one — it prevents feed dilution even if cross-posting is enabled.
-
-**Recommended default for launch**: neighbour-consent ceiling enabled (no cross-posting by
-default), local-interest gate enabled. Deploy the traffic-adaptive inbound budget (below) once
-cross-posting is enabled for any groups, so that low-traffic groups benefit rather than suffer.
-
-### Traffic-Adaptive Inbound Budget
-
-Preferred mitigation for the swamping problem. Instead of a global cap, each group's capacity
-to absorb rippled-in items scales inversely with its own traffic — quiet groups *benefit* from
-cross-posting while busy groups are protected.
-
-**Formula:**
-
-```
-activity_ratio = group_messages_per_week / national_median_messages_per_week
-
-max_cross_posts_per_day = round(
-    base_quota + (max_quota - base_quota) * max(0, 1 - activity_ratio)
-)
-```
-
-Suggested starting values (tune after measuring):
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| `base_quota` | 5 | min cross-posts/day even for very busy groups |
-| `max_quota` | 30 | max for groups with zero own traffic |
-| `national_median` | ~13 messages/week | from empirical data (May 2026) |
-
-Example behaviour:
-- Group with 0 posts/week → 30 cross-posts/day allowed
-- Group with 13 posts/week (median) → ~17/day
-- Group with 50 posts/week (busy) → ~7/day
-- Group with 100+ posts/week → ≈ base_quota (5/day)
-
-This is a *display* filter applied when rendering the group's browse page and digests — it
-limits how many rippled-in items a group's members see, not how many notifications are sent.
-Notifications respect the sender's home-group ripple schedule; display filtering is a
-receiver-side concern.
+2. **Local-interest gate**: Only allow the isochrone to cross a group boundary if the item
+   has received at least one reply (showing genuine local demand). Items with zero replies
+   after h6 stay within the home group.
 
 ### Minimum-Freegler Expansion Threshold
 
