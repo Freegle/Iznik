@@ -16,7 +16,7 @@ services:
     restart: "no"
     environment:
       - APP_NAME=Freegle EEE Batch
-      - APP_KEY=base64:/9sYlNDiNQ27/09jvTm4G+bs2x/1bY8/QGktENKPy4k=
+      - APP_KEY=${EEE_APP_KEY}
       - APP_ENV=local
       - APP_DEBUG=true
       - RUN_MIGRATIONS=false
@@ -38,6 +38,9 @@ services:
       - EEE_SQLITE_PATH=${EEE_SQLITE_PATH:-/var/www/html/storage/eee/classifications.sqlite}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
+      - GOOGLE_CLOUD_API_KEY=${GOOGLE_CLOUD_API_KEY:-}
+      - ICECAT_USERNAME=${ICECAT_USERNAME:-}
+      - ICECAT_PASSWORD=${ICECAT_PASSWORD:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - TOGETHER_API_KEY=${TOGETHER_API_KEY:-}
       - EEE_CLAUDE_MODEL=${EEE_CLAUDE_MODEL:-claude-sonnet-4-6}
