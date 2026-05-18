@@ -21,7 +21,7 @@ const mercatorHalfCircum = 20037508.34
 
 func lngLatToMerc(lng, lat float64) (x, y float64) {
 	x = lng * mercatorHalfCircum / 180.0
-	y = math.Log(math.Tan((90.0+lat)*math.Pi/360.0)) * (mercatorHalfCircum / 180.0)
+	y = math.Log(math.Tan((90.0+lat)*math.Pi/360.0)) * (mercatorHalfCircum / math.Pi)
 	return
 }
 

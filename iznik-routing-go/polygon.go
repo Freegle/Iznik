@@ -66,6 +66,38 @@ func buildIsochroneRings(g *Graph, reached map[NodeID]float32, resolution float6
 		}
 	}
 
+	// Morphological closing: fill empty cells that have ≥2 orthogonal filled
+	// neighbours. Read from a snapshot so fills don't cascade across the grid
+	// and produce spurious straight-line edges at the grid boundary.
+	snap := make([][]bool, rows)
+	for i := range snap {
+		snap[i] = make([]bool, cols)
+		copy(snap[i], grid[i])
+	}
+	for r := 1; r < rows-1; r++ {
+		for c := 1; c < cols-1; c++ {
+			if snap[r][c] {
+				continue
+			}
+			n := 0
+			if snap[r+1][c] {
+				n++
+			}
+			if snap[r-1][c] {
+				n++
+			}
+			if snap[r][c+1] {
+				n++
+			}
+			if snap[r][c-1] {
+				n++
+			}
+			if n >= 2 {
+				grid[r][c] = true
+			}
+		}
+	}
+
 	return traceBoundary(grid, rows, cols, minLat, minLng, resolution)
 }
 

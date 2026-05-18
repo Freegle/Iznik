@@ -14,6 +14,10 @@ type FairnessResult struct {
 	FairnessScore float32 `json:"fairness_score"`
 	// NodesTouched is total nodes explored by Dijkstra (useful for debugging).
 	NodesTouched int `json:"nodes_touched"`
+	// SnapLat/SnapLng is the actual road node used as the routing origin.
+	// May differ from the requested lat/lng when the click is off-road.
+	SnapLat float32 `json:"snap_lat"`
+	SnapLng float32 `json:"snap_lng"`
 }
 
 // QuintileResult holds per-quintile data for one fairness isochrone.
@@ -133,9 +137,11 @@ func FairnessIsochrone(g *Graph, lat, lng float64, limitSecs float32, mode Mode,
 	res := AutoResolution(limitSecs, mode)
 
 	result := FairnessResult{
-		Standard:     IsochronePolygon(g, standardNodes, res),
-		NodesTouched: len(dist),
+		Standard:      IsochronePolygon(g, standardNodes, res),
+		NodesTouched:  len(dist),
 		FairnessScore: -1,
+		SnapLat:       g.Nodes[origin].Lat,
+		SnapLng:       g.Nodes[origin].Lng,
 	}
 
 	if g.Deprivation == nil {

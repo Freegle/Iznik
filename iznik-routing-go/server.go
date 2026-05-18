@@ -3,7 +3,10 @@ package main
 import (
 	_ "embed"
 	"encoding/json"
+	"io"
 	"log"
+	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -104,6 +107,54 @@ func handleFairness(g *Graph) fiber.Handler {
 	}
 }
 
+// handleNearbyFreeglers proxies to the spatial server's userapproxlocs KNN endpoint
+// and returns {"freeglers":[{"lat":X,"lng":Y},...]}. Returns empty list on any error.
+func handleNearbyFreeglers(spatialURL string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		lat := c.Query("lat")
+		lng := c.Query("lng")
+		limit := c.Query("limit", "500")
+		if lat == "" || lng == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "lat and lng required")
+		}
+		empty := fiber.Map{"freeglers": []interface{}{}}
+		url := spatialURL + "/v1/userapproxlocs?lat=" + lat + "&lng=" + lng + "&limit=" + limit
+		resp, err := http.Get(url) //nolint:gosec
+		if err != nil || resp.StatusCode != 200 {
+			return c.JSON(empty)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return c.JSON(empty)
+		}
+		var knn struct {
+			Results []struct {
+				Extra map[string]any `json:"extra"`
+			} `json:"results"`
+		}
+		if err := json.Unmarshal(body, &knn); err != nil {
+			return c.JSON(empty)
+		}
+		type pt struct {
+			Lat float64 `json:"lat"`
+			Lng float64 `json:"lng"`
+		}
+		pts := make([]pt, 0, len(knn.Results))
+		for _, r := range knn.Results {
+			if r.Extra == nil {
+				continue
+			}
+			lat, ok1 := r.Extra["lat"].(float64)
+			lng, ok2 := r.Extra["lng"].(float64)
+			if ok1 && ok2 {
+				pts = append(pts, pt{lat, lng})
+			}
+		}
+		return c.JSON(fiber.Map{"freeglers": pts})
+	}
+}
+
 // handleHealth is a simple liveness check.
 func handleHealth(g *Graph) fiber.Handler {
 	return func(c *fiber.Ctx) error {
@@ -119,14 +170,21 @@ func handleHealth(g *Graph) fiber.Handler {
 }
 
 func startServer(g *Graph, addr string) {
+	spatialURL := os.Getenv("SPATIAL_SERVER_URL")
+	if spatialURL == "" {
+		spatialURL = "http://localhost:8194"
+	}
 	app := fiber.New(fiber.Config{
 		JSONEncoder: func(v interface{}) ([]byte, error) {
 			return json.Marshal(v)
 		},
 	})
+	initGroupsDB()
 	app.Get("/health", handleHealth(g))
 	app.Get("/v1/isochrone", handleIsochrone(g))
 	app.Get("/v1/fairness", handleFairness(g))
+	app.Get("/v1/nearby-freeglers", handleNearbyFreeglers(spatialURL))
+	app.Get("/v1/groups/nearby", handleNearbyGroups())
 	app.Get("/demo", func(c *fiber.Ctx) error {
 		c.Set("Content-Type", "text/html; charset=utf-8")
 		return c.Send(demoHTML)

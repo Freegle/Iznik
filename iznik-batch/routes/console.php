@@ -102,6 +102,15 @@ Schedule::command('messages:contentcheck')
     ->sendOutputTo(cronLog('messages:contentcheck'))
     ->runInBackground();
 
+// Update UK spatial data - runs monthly.
+// Downloads UK OSM PBF file and rebuilds deprivation quintile CSV for spatial server.
+// Signals Go spatial server to reload after update.
+Schedule::command('spatial:update-data')
+    ->monthlyOn(1, '03:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('spatial:update-data'))
+    ->runInBackground();
+
 // Auto-approve pending messages after 48 hours.
 // V1: cron/autoapprove.php
 Schedule::command('messages:auto-approve')

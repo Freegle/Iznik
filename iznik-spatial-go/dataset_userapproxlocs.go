@@ -35,6 +35,7 @@ func (d *UserApproxLocsDataset) Load(mysqlDB *sql.DB, idx *Index) error {
 			MaxLng: lng,
 			MinLat: lat,
 			MaxLat: lat,
+			Extra:  map[string]any{"lat": lat, "lng": lng},
 		})
 	}
 	if err := rows.Err(); err != nil {
