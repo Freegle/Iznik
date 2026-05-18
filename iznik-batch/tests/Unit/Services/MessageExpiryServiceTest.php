@@ -304,7 +304,7 @@ class MessageExpiryServiceTest extends TestCase
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
-        // Default group has no custom settings → expiretime defaults to max(90, 14*11) = 154.
+        // Default group has no custom settings → OFFER expiretime = GREATEST(90, 3*(5+1)) = 90.
         // A message with today's arrival is 0 days old, so the virtual-expiry filter doesn't fire.
         $message = $this->createTestMessage($user, $group);
 
@@ -541,6 +541,67 @@ class MessageExpiryServiceTest extends TestCase
     public function test_expire_lookback_days_constant(): void
     {
         $this->assertEquals(90, MessageExpiryService::EXPIRE_LOOKBACK_DAYS);
+    }
+
+    /**
+     * Regression: WANTED posts older than maxagetoshow must expire.
+     *
+     * V1 applies the same formula symmetrically to both types: interval × (max+1).
+     * The bug was that the batch SQL fallback defaults used V1 Message::getPublic()'s
+     * own incorrect fallbacks (wanted=14, max=10) instead of Group::defaultSettings
+     * (wanted=7, max=5). For groups without stored reposts settings this inflated the
+     * WANTED threshold from GREATEST(90, 7*6)=90 to GREATEST(90, 14*11)=154, leaving
+     * posts hidden from display for months before auto-expiry.
+     *
+     * Fix: SQL fallbacks now match Group::defaultSettings (wanted=7, max=5).
+     * With those defaults: WANTED threshold = GREATEST(90, 7*(5+1)) = 90 days.
+     */
+    public function test_wanted_post_expires_after_maxagetoshow_threshold(): void
+    {
+        $user = $this->createTestUser();
+        // Default group (no custom settings) → maxagetoshow=90, reposts.offer=3,
+        // reposts.wanted=7, max=5 (Group::defaultSettings).
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        // Both posts are 95 days old — past GREATEST(90, 7*(5+1))=90 threshold.
+        $arrival = now()->subDays(95);
+
+        $offer = $this->createTestMessage($user, $group, [
+            'type' => Message::TYPE_OFFER,
+            'arrival' => $arrival,
+        ]);
+        $wanted = $this->createTestMessage($user, $group, [
+            'type' => Message::TYPE_WANTED,
+            'subject' => 'WANTED: Some Item (TestLocation)',
+            'arrival' => $arrival,
+        ]);
+
+        foreach ([$offer, $wanted] as $m) {
+            DB::table('messages_spatial')->insert([
+                'msgid' => $m->id,
+                'point' => DB::raw("ST_GeomFromText('POINT(0 0)', 3857)"),
+                'successful' => 0,
+            ]);
+        }
+
+        $count = $this->service->processExpiredFromSpatialIndex();
+
+        // Both OFFER and WANTED must be expired after crossing maxagetoshow.
+        $this->assertEquals(2, $count);
+
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $offer->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+            'comments' => 'Auto-expired',
+        ]);
+        $this->assertDatabaseHas('messages_outcomes', [
+            'msgid' => $wanted->id,
+            'outcome' => MessageOutcome::OUTCOME_WITHDRAWN,
+            'comments' => 'Auto-expired',
+        ]);
+        $this->assertDatabaseMissing('messages_spatial', ['msgid' => $offer->id]);
+        $this->assertDatabaseMissing('messages_spatial', ['msgid' => $wanted->id]);
     }
 
     public function test_process_expired_from_spatial_index_logs_progress(): void
