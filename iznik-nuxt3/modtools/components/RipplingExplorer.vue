@@ -384,8 +384,8 @@ onMounted(async () => {
       showGroups = this.checked
       if (showGroups) drawGroupsOverlay()
       else {
-        groupLayers.forEach((l) => map.removeLayer(l))
-        groupLayers = []
+        Object.values(groupLayerMap).forEach((l) => map.removeLayer(l))
+        groupLayerMap = {}
         document.getElementById('rippling-groups-section').style.display =
           'none'
       }
@@ -522,6 +522,7 @@ onMounted(async () => {
         await fetchFreeglers()
         drawFreeglersLayer()
         updateFreeglersInside(data)
+        drawGroupsOverlay()
         showStatus('Done', false)
       })
       .catch((err) => {
@@ -571,6 +572,15 @@ onMounted(async () => {
     }
 
     function addPoly(key, coords, opts, targetFill, targetOpacity, tooltip) {
+      const existing = layers[key]
+      if (existing && map.hasLayer(existing)) {
+        existing.setLatLngs(coords)
+        existing.setStyle({ ...opts, fillOpacity: targetFill, opacity: targetOpacity })
+        existing.setTooltipContent(tooltip)
+        newLayers[key] = existing
+        delete outgoing[key]
+        return existing
+      }
       const lyr = L.polygon(coords, { ...opts, fillOpacity: 0, opacity: 0 })
         .addTo(map)
         .bindTooltip(tooltip)
@@ -596,7 +606,7 @@ onMounted(async () => {
           addPoly(
             `q${q}`,
             geoToLeaflet(qr.polygon.geometry.coordinates[0]),
-            { color: QCOLORS[q], weight: 0.5, fillColor: QCOLORS[q] },
+            { color: '#005bb5', weight: 1, fillColor: QCOLORS[q] },
             0.3,
             1,
             `${QNAMES[q]} (standard reach) · ${qr.time_budget_min.toFixed(
@@ -610,7 +620,7 @@ onMounted(async () => {
             `q${q}_island_${i}`,
             geoToLeaflet(island.geometry.coordinates[0]),
             {
-              color: QCOLORS[q],
+              color: '#005bb5',
               weight: 2,
               dashArray: '5 4',
               fillColor: QCOLORS[q],
@@ -994,13 +1004,13 @@ onMounted(async () => {
     return dlat * dlat + dlng * dlng
   }
 
-  let groupLayers = []
+  let groupLayerMap = {}
   let groupFeatures = []
   let homeGroupIds = new Set()
 
   async function fetchAndDrawGroups(lat, lng) {
-    groupLayers.forEach((l) => map.removeLayer(l))
-    groupLayers = []
+    Object.values(groupLayerMap).forEach((l) => map.removeLayer(l))
+    groupLayerMap = {}
     groupFeatures = []
     homeGroupIds = new Set()
     try {
@@ -1113,11 +1123,8 @@ onMounted(async () => {
   }
 
   function drawGroupsOverlay() {
-    groupLayers.forEach((l) => map.removeLayer(l))
-    groupLayers = []
     const listEl = document.getElementById('rippling-groups-list')
     const sectionEl = document.getElementById('rippling-groups-section')
-    listEl.innerHTML = ''
 
     if (!showGroups) {
       sectionEl.style.display = 'none'
@@ -1157,17 +1164,39 @@ onMounted(async () => {
       )
     })
 
+    // Compute which IDs should have visible polygons (home + cross-posting reached only)
+    const visibleIds = new Set()
     groupFeatures.forEach((f) => {
       const coords =
         f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]
       if (!coords || coords.length < 4) return
       const isHome = f.properties.contains
       if (!isHome && !reached.has(f.properties.id)) return
+      visibleIds.add(f.properties.id)
+    })
+
+    // Remove layers for groups no longer visible
+    Object.keys(groupLayerMap).forEach((id) => {
+      if (!visibleIds.has(Number(id))) {
+        map.removeLayer(groupLayerMap[id])
+        delete groupLayerMap[id]
+      }
+    })
+
+    // Add layers for newly visible groups
+    groupFeatures.forEach((f) => {
+      const coords =
+        f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]
+      if (!coords || coords.length < 4) return
+      const id = f.properties.id
+      if (!visibleIds.has(id)) return
+      if (groupLayerMap[id]) return
+      const isHome = f.properties.contains
       const latlngs = coords.map(([lng, lat]) => [lat, lng])
-      const lyr = L.polygon(latlngs, {
-        color: '#005bb5',
+      groupLayerMap[id] = L.polygon(latlngs, {
+        color: '#27ae60',
         weight: 2,
-        fillColor: '#005bb5',
+        fillColor: '#27ae60',
         fillOpacity: 0.04,
         dashArray: null,
       })
@@ -1176,13 +1205,13 @@ onMounted(async () => {
           (isHome ? '🏠 ' : '') + (f.properties.nameshort || 'Group'),
           { sticky: true }
         )
-      groupLayers.push(lyr)
     })
 
+    listEl.innerHTML = ''
     sorted.forEach((f) => {
       const isHome = f.properties.contains
       const postShows = isHome || reached.has(f.properties.id)
-      const dotColor = isHome ? '#005bb5' : postShows ? '#27ae60' : '#e74c3c'
+      const dotColor = isHome ? '#27ae60' : postShows ? '#27ae60' : '#e74c3c'
       const item = document.createElement('div')
       item.style.cssText =
         'display:flex;align-items:center;gap:5px;padding:1px 0'
@@ -1344,6 +1373,7 @@ onMounted(async () => {
       drawPolygons(data, 0)
       updateStats(data)
       updateFreeglersInside(data)
+      drawGroupsOverlay()
     }
   }
 
@@ -1451,6 +1481,7 @@ onMounted(async () => {
       document.getElementById(
         'rippling-info'
       ).textContent = `${currentMode} · done`
+      drawGroupsOverlay()
       return
     }
 

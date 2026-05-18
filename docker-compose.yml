@@ -791,18 +791,34 @@ services:
     build:
       context: ./iznik-routing-go
       network: host
+    depends_on:
+      percona:
+        condition: service_healthy
+        required: false
     restart: "no"
     environment:
       - ROUTING_PORT=8196
       - OSM_PBF_PATH=/data/england-latest.osm.pbf
+      - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
+      - MYSQL_HOST=percona
+      - MYSQL_PORT=3306
+      - MYSQL_USER=root
+      - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
+      - MYSQL_DBNAME=iznik
+      - JWT_SECRET=${JWT_SECRET:-secret}
     volumes:
-      - routing_data:/data
+      - ${SPATIAL_DATA_DIR:-./iznik-routing-go/data}:/data:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8196/health || exit 1"]
       interval: 60s
       timeout: 10s
       retries: 3
       start_period: 300s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.routing.rule=Host(`routing.localhost`)"
+      - "traefik.http.routers.routing.entrypoints=web"
+      - "traefik.http.services.routing.loadbalancer.server.port=8196"
 
   # V2 API with LIVE production database via tunnel
   # Start with: docker compose --profile prod-live up -d apiv2-live
@@ -1115,6 +1131,7 @@ services:
       - NUXT_SSR_LOG=false
       - NODE_ENV=development
       - NUXT_BUILD_MODE=development
+      - SPATIAL_SERVER_URL=http://routing.localhost:${PORT_TRAEFIK_HTTP:-80}
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.modtools-dev-local.rule=Host(`modtools-dev-local.localhost`)"

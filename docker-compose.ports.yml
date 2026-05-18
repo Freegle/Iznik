@@ -94,3 +94,7 @@ services:
   embedding-sidecar:
     ports:
       - "0.0.0.0:${PORT_EMBEDDING_SIDECAR:-3200}:3200"
+
+  routing:
+    ports:
+      - "0.0.0.0:${PORT_ROUTING:-8196}:8196"
