@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/auth"
+	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
@@ -118,7 +119,12 @@ func handleGoogleLogin(c *fiber.Ctx, jwtToken string) error {
 		})
 	}
 
-	saveProfileImage(userID, tokenInfo.Picture)
+	// Only save the Google profile picture when no avatar exists yet.
+	// GetProfileRecord uses ORDER BY id DESC LIMIT 1, so a new INSERT would
+	// silently become the effective avatar, overwriting any custom upload.
+	if user.GetProfileRecord(userID).Profileid == 0 {
+		saveProfileImage(userID, tokenInfo.Picture)
+	}
 
 	persistent, jwtString, err := auth.CreateSessionAndJWT(userID)
 	if err != nil {

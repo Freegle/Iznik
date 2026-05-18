@@ -746,3 +746,44 @@ func TestGoogleLoginSavesProfilePicture(t *testing.T) {
 	db.Exec("DELETE FROM sessions WHERE userid = ?", userID)
 	db.Exec("DELETE FROM users WHERE id = ?", userID)
 }
+
+func TestGoogleLoginDoesNotOverwriteExistingAvatar(t *testing.T) {
+	prefix := uniquePrefix("google-avatar-nooverwrite")
+	email := fmt.Sprintf("%s@gmail.com", prefix)
+	clientID := "test-google-nooverwrite-client-id"
+	existingAvatarURL := "https://cdn.ilovefreegle.org/blob/" + prefix + ".jpg"
+	googlePictureURL := "https://lh3.googleusercontent.com/google-" + prefix + ".jpg"
+
+	// Create a user with an existing custom avatar.
+	db := database.DBConn
+	userID := CreateTestUser(t, prefix, "User")
+	db.Exec("INSERT INTO users_images (userid, url, `default`, contenttype) VALUES (?, ?, 0, 'image/jpeg')",
+		userID, existingAvatarURL)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred, validated) VALUES (?, ?, 0, NOW())",
+		userID, email)
+
+	server := newGoogleMockServerWithPicture("google-uid-"+prefix, email, "Google", "User", "Google User", clientID, googlePictureURL)
+	defer server.Close()
+
+	os.Setenv("GOOGLE_TOKENINFO_URL", server.URL)
+	os.Setenv("GOOGLE_CLIENT_ID", clientID)
+	defer os.Unsetenv("GOOGLE_TOKENINFO_URL")
+	defer os.Unsetenv("GOOGLE_CLIENT_ID")
+
+	body := `{"googlelogin":true,"googlejwt":"fake-jwt-token"}`
+	resp := postSession(body)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The effective avatar (most recent users_images row) must still be the pre-existing one.
+	var gotURL string
+	db.Raw("SELECT url FROM users_images WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&gotURL)
+	assert.Equal(t, existingAvatarURL, gotURL,
+		"Google login must NOT overwrite an existing custom avatar: expected %s, got %s", existingAvatarURL, gotURL)
+
+	// Cleanup.
+	db.Exec("DELETE FROM users_images WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users_logins WHERE userid = ? AND type = 'Google'", userID)
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", userID)
+	db.Exec("DELETE FROM sessions WHERE userid = ?", userID)
+	db.Exec("DELETE FROM users WHERE id = ?", userID)
+}
