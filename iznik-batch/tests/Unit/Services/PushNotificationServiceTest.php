@@ -376,6 +376,65 @@ class PushNotificationServiceTest extends TestCase
             'Zero-count clear-badge pushes have empty title and must not show in the tray');
     }
 
+    /**
+     * Chitchat notifications (CommentOnYourPost in users_notifications) must never
+     * inflate the modtools badge count.
+     *
+     * V1 Bug #9676: PushNotifications::notify($uid, TRUE) fired unconditionally when
+     * $modtools=TRUE, and getNotificationPayload(TRUE) included ALL notification types
+     * in $total, so a chitchat comment triggered a spurious "1 pending" modtools push.
+     *
+     * V2 fix: getBadgeCount() queries only messages_groups (pending/spam) and
+     * volunteering — it never touches users_notifications. Chitchat activity therefore
+     * cannot inflate the modtools badge.
+     */
+    public function test_getBadgeCount_not_inflated_by_chitchat_notification(): void
+    {
+        $mod = $this->createTestUser();
+        $sender = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Insert a CommentOnYourPost notification (chitchat) for the mod — simulates a
+        // newsfeed comment arriving while the mod has no pending modtools work.
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $mod->id,
+            'type' => 'CommentOnYourPost',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $count = $this->service->getBadgeCount($mod->id);
+
+        $this->assertEquals(0, $count,
+            'Chitchat (CommentOnYourPost) must not inflate the modtools badge — V2 fix for Discourse #9676');
+    }
+
+    /**
+     * When no modtools work is pending, buildModToolsPayload returns a zero-count
+     * badge-clearing payload with an empty title — no visible notification is raised
+     * in the Android system tray (guarded by test_buildAndroidFcmMessage_skips_notification_block_when_title_empty).
+     *
+     * This confirms the full V2 chain: chitchat-only activity → badge=0 → title=''
+     * → no notification block → no tray entry in ModTools app.
+     */
+    public function test_buildModToolsPayload_returns_zero_badge_when_no_modtools_work(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertNotNull($payload, 'Payload must not be null (zero-count clears the badge)');
+        $this->assertSame('0', $payload['badge'], 'Badge must be 0 when no modtools work pending');
+        $this->assertSame('0', $payload['count'], 'Count must be 0 when no modtools work pending');
+        $this->assertSame('', $payload['title'], 'Title must be empty so no tray notification is raised');
+    }
+
     private function invokeBuildAndroidFcmMessage(string $token, array $payload, bool $forceVisible): array
     {
         $method = new \ReflectionMethod($this->service, 'buildAndroidFcmMessage');
