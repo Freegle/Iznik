@@ -304,7 +304,7 @@ class MessageExpiryServiceTest extends TestCase
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
-        // Default group has no custom settings → OFFER expiretime = GREATEST(90, 3*(10+1)) = 90.
+        // Default group has no custom settings → OFFER expiretime = GREATEST(90, 3*(5+1)) = 90.
         // A message with today's arrival is 0 days old, so the virtual-expiry filter doesn't fire.
         $message = $this->createTestMessage($user, $group);
 
@@ -544,25 +544,27 @@ class MessageExpiryServiceTest extends TestCase
     }
 
     /**
-     * Regression: WANTED posts older than maxagetoshow (90 days) must expire
-     * at the same threshold as OFFER posts.
+     * Regression: WANTED posts older than maxagetoshow must expire.
      *
-     * Bug: getExpiredCandidates() computes the WANTED expiretime as
-     *   GREATEST(maxagetoshow=90, reposts.wanted=14 * (max=10+1)) = GREATEST(90,154) = 154 days
-     * so a 95-day-old WANTED post is never returned as a candidate and is never
-     * auto-expired, even though it is past the maxagetoshow threshold that
-     * governs display and OFFER expiry alike.
+     * V1 applies the same formula symmetrically to both types: interval × (max+1).
+     * The bug was that the batch SQL fallback defaults used V1 Message::getPublic()'s
+     * own incorrect fallbacks (wanted=14, max=10) instead of Group::defaultSettings
+     * (wanted=7, max=5). For groups without stored reposts settings this inflated the
+     * WANTED threshold from GREATEST(90, 7*6)=90 to GREATEST(90, 14*11)=154, leaving
+     * posts hidden from display for months before auto-expiry.
+     *
+     * Fix: SQL fallbacks now match Group::defaultSettings (wanted=7, max=5).
+     * With those defaults: WANTED threshold = GREATEST(90, 7*(5+1)) = 90 days.
      */
     public function test_wanted_post_expires_after_maxagetoshow_threshold(): void
     {
         $user = $this->createTestUser();
         // Default group (no custom settings) → maxagetoshow=90, reposts.offer=3,
-        // reposts.wanted=14, max=10.
+        // reposts.wanted=7, max=5 (Group::defaultSettings).
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
-        // Both posts are 95 days old — past maxagetoshow (90) but before the
-        // inflated WANTED threshold (14*11 = 154).
+        // Both posts are 95 days old — past GREATEST(90, 7*(5+1))=90 threshold.
         $arrival = now()->subDays(95);
 
         $offer = $this->createTestMessage($user, $group, [

@@ -169,14 +169,16 @@ class MessageExpiryService
      * rather than calling getPublic() on every spatial row. Returns msgids whose
      * spatial row should be cleaned up.
      *
-     * Defaults match V1 Message::getPublic() (reposts: offer=3, wanted=14, max=10;
-     * maxagetoshow: 90). Real groups carry their own settings; the defaults only
-     * apply when settings are missing or null.
+     * The formula is symmetric for Offer and Wanted: repost_interval × (max+1).
+     * V1 Message::getPublic() applies the same formula to both types; only the
+     * parameter values differ (offer interval is shorter than wanted interval).
      *
-     * OFFER uses reposts.offer × (max+1) — the full repost-cycle length.
-     * WANTED uses reposts.wanted directly (no multiplier): WANTED posts repost on
-     * a fixed cadence without the max-repost concept, matching V1 behaviour.
-     * GREATEST() with maxagetoshow ensures posts visible past that age always expire.
+     * Fallback defaults match Group::defaultSettings (offer=3, wanted=7, max=5).
+     * V1 Message::getPublic() used different fallbacks (wanted=14, max=10) that
+     * caused groups without stored reposts settings to compute a 154-day WANTED
+     * threshold regardless of maxagetoshow — posts hidden from display for months
+     * before being auto-expired. Groups that have stored settings are unaffected
+     * (JSON_EXTRACT reads their actual values).
      */
     protected function getExpiredCandidates(): \Illuminate\Support\Collection
     {
@@ -202,8 +204,9 @@ WHERE ms.successful = 0
         COALESCE(JSON_EXTRACT(g.settings, '$.maxagetoshow') + 0, 90),
         CASE m.type
           WHEN 'Offer' THEN COALESCE(JSON_EXTRACT(g.settings, '$.reposts.offer')  + 0, 3)
-                          * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 10) + 1)
-          ELSE          COALESCE(JSON_EXTRACT(g.settings, '$.reposts.wanted') + 0, 14)
+                          * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
+          ELSE          COALESCE(JSON_EXTRACT(g.settings, '$.reposts.wanted') + 0, 7)
+                          * (COALESCE(JSON_EXTRACT(g.settings, '$.reposts.max') + 0, 5) + 1)
         END
       )
       AND NOT EXISTS (
