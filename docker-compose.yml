@@ -900,6 +900,47 @@ services:
       - "traefik.http.middlewares.apiv2-live-retry.retry.initialinterval=100ms"
       - "traefik.http.services.apiv2-live.loadbalancer.server.port=8192"
 
+  # KNN spatial index server with LIVE production database via tunnel.
+  # Provides user approx-locations and other spatial indices from production data.
+  # Start with: docker compose --profile prod-live up -d spatial-knn-live
+  # Requires: SSH tunnel to production DB on local port ${LIVE_DB_PORT:-1234}
+  # WARNING: This connects to the REAL production database!
+  spatial-knn-live:
+    container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spatial-knn-live
+    profiles:
+      - prod-live
+    networks:
+      default:
+        aliases:
+          - spatial-knn-live.localhost
+    build:
+      context: ./iznik-spatial-go
+      network: host
+    extra_hosts:
+      - "db-live:host-gateway"
+    depends_on:
+      reverse-proxy:
+        condition: service_healthy
+        required: false
+    restart: "no"
+    environment:
+      - SPATIAL_PORT=8194
+      - SPATIAL_ADMIN_PORT=8195
+      - SPATIAL_INDEX_DIR=/data
+      - MYSQL_HOST=db-live
+      - MYSQL_PORT=${LIVE_DB_PORT:-1234}
+      - MYSQL_USER=${LIVE_DB_USER:-root}
+      - MYSQL_PASSWORD=${LIVE_DB_PASSWORD:-}
+      - MYSQL_DBNAME=iznik
+    volumes:
+      - spatial_knn_live_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8194/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 300s
+
   # Spatial server with LIVE production database via tunnel
   # Start with: docker compose --profile prod-live up -d spatial-live
   # Requires: SSH tunnel to production DB on local port ${LIVE_DB_PORT:-1234}
@@ -921,10 +962,14 @@ services:
       reverse-proxy:
         condition: service_healthy
         required: false
+      spatial-knn-live:
+        condition: service_healthy
+        required: false
     restart: "no"
     environment:
       - SPATIAL_PORT=8196
       - SPATIAL_INTERNAL_PORT=8194
+      - SPATIAL_KNN_URL=http://spatial-knn-live:8194
       - OSM_PBF_PATH=/data/england-latest.osm.pbf
       - DEPRIVATION_CSV=/data/uk_lsoa_quintile.csv
       - MYSQL_HOST=db-live
@@ -1842,6 +1887,8 @@ volumes:
   loki-data:
     name: ${LOKI_VOLUME:-loki-data}
   spatial_data:
+    driver: local
+  spatial_knn_live_data:
     driver: local
   routing_data:
     driver: local

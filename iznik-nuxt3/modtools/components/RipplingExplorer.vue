@@ -1152,10 +1152,29 @@ onMounted(async () => {
 
     const reached = reachedGroupIds(lastIsoData)
 
-    // Only list groups that are home or reached by the current isochrone.
-    // Viewport-visible groups are not listed — only ripple-relevant ones.
+    // Find the nearest group by centroid distance first, so we can include it
+    // in both the polygon display and the sidebar list as a fallback home group.
+    let nearestGroupId = null
+    let nearestDist = Infinity
+    if (currentLat !== null) {
+      groupFeatures.forEach((f) => {
+        const [cLng, cLat] = groupCentroid(f)
+        const d = distSq(currentLat, currentLng, cLat, cLng)
+        if (d < nearestDist) {
+          nearestDist = d
+          nearestGroupId = f.properties.id
+        }
+      })
+    }
+
+    // Show: home (contains=true), reached cross-posting groups, and always
+    // the nearest group (acts as home when ST_Contains misses due to boundaries).
     function groupIsRelevant(f) {
-      return f.properties.contains || reached.has(f.properties.id)
+      return (
+        f.properties.contains ||
+        reached.has(f.properties.id) ||
+        f.properties.id === nearestGroupId
+      )
     }
 
     const sorted = [...groupFeatures].filter(groupIsRelevant).sort((a, b) => {
@@ -1170,31 +1189,16 @@ onMounted(async () => {
       )
     })
 
-    // Compute which IDs should have visible polygons.
-    // Always show: home group (contains=true), cross-posting reached groups,
-    // and the nearest group by centroid as fallback when no contains=true group exists.
+    // Compute which IDs should have visible polygons (same criteria as the list).
     const visibleIds = new Set()
-    let nearestGroupId = null
-    let nearestDist = Infinity
     groupFeatures.forEach((f) => {
       const coords =
         f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]
       if (!coords || coords.length < 4) return
-      if (f.properties.contains || reached.has(f.properties.id)) {
+      if (groupIsRelevant(f)) {
         visibleIds.add(f.properties.id)
       }
-      if (currentLat !== null) {
-        const [cLng, cLat] = groupCentroid(f)
-        const d = distSq(currentLat, currentLng, cLat, cLng)
-        if (d < nearestDist) {
-          nearestDist = d
-          nearestGroupId = f.properties.id
-        }
-      }
     })
-    // Ensure the nearest group always has its polygon shown (acts as home group
-    // even when ST_Contains returns false due to boundary proximity).
-    if (nearestGroupId !== null) visibleIds.add(nearestGroupId)
 
     // Remove layers for groups no longer visible
     Object.keys(groupLayerMap).forEach((id) => {
