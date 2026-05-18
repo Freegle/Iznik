@@ -3436,6 +3436,69 @@ func TestGetMembershipsModmailFilterOrderAndLimit(t *testing.T) {
 	}
 }
 
+// TestGetMembershipsFilter6OldModmailPruned is an AssertFlip failing test for issue 9518.
+//
+// Bug: filter=6 (Received mod mails) omits members whose only modmails are older than
+// ~30 days.  The root cause is that users_modmails entries are pruned at 30 days by the
+// users:update-modmails cron, and the filter=6 query uses INNER JOIN users_modmails
+// (no date guard).  Members with no surviving users_modmails row are silently excluded.
+//
+// AssertFlip Step 2 (inverted): asserts the correct behaviour — the member MUST appear —
+// and therefore FAILS on the current buggy code, proving the regression exists.
+//
+// Fix: replace the INNER JOIN users_modmails with a join on the logs table, which is not
+// pruned, using the same type/subtype criteria as UserModMailsService.
+func TestGetMembershipsFilter6OldModmailPruned(t *testing.T) {
+	prefix := uniquePrefix("mf_pruned")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	// Seed a logs entry representing a modmail (User/Mailed) from 35 days ago.
+	// This simulates a real modmail action whose users_modmails entry has since been
+	// pruned by the 30-day cron.  We deliberately do NOT insert into users_modmails.
+	result := db.Exec(
+		"INSERT INTO logs (type, subtype, groupid, user, byuser, timestamp, text) "+
+			"VALUES ('User', 'Mailed', ?, ?, ?, DATE_SUB(NOW(), INTERVAL 35 DAY), 'test modmail')",
+		groupID, memberID, modID,
+	)
+	if result.Error != nil {
+		t.Fatalf("ERROR: Failed to insert logs entry: %v", result.Error)
+	}
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&filter=6&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var members []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&members)
+
+	// STEP 2 (inverted — this is the failing assertion that proves the bug):
+	// The member received a modmail 35 days ago.  Even though the users_modmails row
+	// has been pruned, the log entry still exists.  The correct behaviour is for the
+	// member to appear in the filter=6 listing; the current code omits them.
+	found := false
+	for _, m := range members {
+		if uid, ok := m["userid"].(float64); ok && uint64(uid) == memberID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found,
+		"member with a 35-day-old modmail log entry (users_modmails pruned) must appear in filter=6 results")
+}
+
 // --- Partner auth tests ---
 
 func insertTestPartnerKey(t *testing.T, prefix string, domain string) string {
