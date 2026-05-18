@@ -5,22 +5,49 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/gofiber/fiber/v2"
 )
 
-func newTestApp(t *testing.T) *fiber.App {
+// newInternalApp builds the unauthenticated (internal) app for testing.
+func newInternalApp(t *testing.T) *fiber.App {
 	t.Helper()
 	g := getBristolGraph(t)
-	app := fiber.New()
-	app.Get("/health", handleHealth(g))
-	app.Get("/v1/isochrone", handleIsochrone(g))
-	return app
+	return newApp(g, "", false)
+}
+
+// newExternalApp builds the JWT-authenticated (external) app for testing.
+func newExternalApp(t *testing.T) *fiber.App {
+	t.Helper()
+	g := getBristolGraph(t)
+	return newApp(g, "", true)
+}
+
+// makeJWT creates a signed test JWT using the current JWT_SECRET env var.
+func makeJWT(t *testing.T, userID, sessionID string) string {
+	t.Helper()
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = "secret"
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"id":        userID,
+		"sessionid": sessionID,
+		"exp":       time.Now().Add(time.Hour).Unix(),
+	})
+	signed, err := token.SignedString([]byte(secret))
+	if err != nil {
+		t.Fatalf("makeJWT: %v", err)
+	}
+	return signed
 }
 
 func TestHealth(t *testing.T) {
-	app := newTestApp(t)
+	app := newInternalApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	resp, err := app.Test(req, 5000)
 	if err != nil {
@@ -42,8 +69,77 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+// TestInternalPort_NoAuthRequired verifies that /v1/* is accessible without
+// a JWT on the internal (unauthenticated) app.
+func TestInternalPort_NoAuthRequired(t *testing.T) {
+	app := newInternalApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/isochrone?lat=51.4545&lng=-2.5879&minutes=5", nil)
+	resp, err := app.Test(req, 30000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("internal port: expected 200 without auth, got %d: %s", resp.StatusCode, body)
+	}
+}
+
+// TestExternalPort_RequiresAuth verifies that /v1/* returns 401 without a JWT
+// on the external (authenticated) app.
+func TestExternalPort_RequiresAuth(t *testing.T) {
+	app := newExternalApp(t)
+	for _, path := range []string{
+		"/v1/isochrone?lat=51.4545&lng=-2.5879&minutes=5",
+		"/v1/fairness?lat=51.4545&lng=-2.5879&minutes=5&mode=drive&fairness=0.5",
+		"/v1/nearby-freeglers?lat=51.4545&lng=-2.5879",
+		"/v1/groups/nearby?lat=51.4545&lng=-2.5879",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		resp, err := app.Test(req, 5000)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if resp.StatusCode != 401 {
+			t.Errorf("external port %s: expected 401 without auth, got %d", path, resp.StatusCode)
+		}
+	}
+}
+
+// TestExternalPort_HealthNoAuth verifies /health is accessible without JWT on
+// the external port (health checks must not require auth).
+func TestExternalPort_HealthNoAuth(t *testing.T) {
+	app := newExternalApp(t)
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	resp, err := app.Test(req, 5000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Errorf("external port /health: expected 200, got %d", resp.StatusCode)
+	}
+}
+
+// TestExternalPort_ValidJWT_IsochroneAccessible verifies that a valid JWT
+// grants access to /v1/isochrone on the external port.
+// When groupsDB is nil (no MySQL in test), JWT signature check still runs
+// but session validation is skipped.
+func TestExternalPort_ValidJWT_IsochroneAccessible(t *testing.T) {
+	app := newExternalApp(t)
+	tok := makeJWT(t, "12345", "67890")
+	req := httptest.NewRequest(http.MethodGet,
+		"/v1/isochrone?lat=51.4545&lng=-2.5879&minutes=5&jwt="+tok, nil)
+	resp, err := app.Test(req, 30000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("external port with valid JWT: expected 200, got %d: %s", resp.StatusCode, body)
+	}
+}
+
 func TestIsochroneEndpoint_AllThreeModes(t *testing.T) {
-	app := newTestApp(t)
+	app := newInternalApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/v1/isochrone?lat=51.4545&lng=-2.5879&minutes=15", nil)
 	resp, err := app.Test(req, 30000)
 	if err != nil {
@@ -81,7 +177,7 @@ func TestIsochroneEndpoint_AllThreeModes(t *testing.T) {
 }
 
 func TestIsochroneEndpoint_MissingLat(t *testing.T) {
-	app := newTestApp(t)
+	app := newInternalApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/v1/isochrone?lng=-2.5879", nil)
 	resp, err := app.Test(req, 5000)
 	if err != nil {
@@ -93,8 +189,7 @@ func TestIsochroneEndpoint_MissingLat(t *testing.T) {
 }
 
 func TestIsochroneEndpoint_DefaultMinutes(t *testing.T) {
-	app := newTestApp(t)
-	// No minutes param — should default to 15.
+	app := newInternalApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/v1/isochrone?lat=51.4545&lng=-2.5879", nil)
 	resp, err := app.Test(req, 30000)
 	if err != nil {

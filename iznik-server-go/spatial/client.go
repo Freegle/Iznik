@@ -13,6 +13,10 @@ import (
 var httpClient = &http.Client{Timeout: 5 * time.Second}
 
 func baseURL() string {
+	// SPATIAL_KNN_URL is the canonical name; SPATIAL_SERVER_URL is kept for backward compat.
+	if u := os.Getenv("SPATIAL_KNN_URL"); u != "" {
+		return u
+	}
 	if u := os.Getenv("SPATIAL_SERVER_URL"); u != "" {
 		return u
 	}

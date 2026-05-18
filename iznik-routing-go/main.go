@@ -36,6 +36,5 @@ func main() {
 	}
 	log.Printf("spatial-server: loaded %d nodes, %d edges", g.NodeCount(), len(g.Edges))
 
-	addr := ":" + getenv("ROUTING_PORT", "8196")
-	startServer(g, addr)
+	startServer(g)
 }

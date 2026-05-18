@@ -22,10 +22,10 @@
           <button class="rpl-mode-btn" data-mode="walk">
             <span class="rpl-icon">🚶</span>Walk
           </button>
-          <button class="rpl-mode-btn rpl-active" data-mode="cycle">
+          <button class="rpl-mode-btn" data-mode="cycle">
             <span class="rpl-icon">🚴</span>Cycle
           </button>
-          <button class="rpl-mode-btn" data-mode="drive">
+          <button class="rpl-mode-btn rpl-active" data-mode="drive">
             <span class="rpl-icon">🚗</span>Drive
           </button>
         </div>
@@ -101,7 +101,7 @@
         <div class="rpl-ripple-row">
           <button id="rippling-btn">▶ Animate ripple</button>
           <span id="rippling-info" class="rpl-ripple-info"
-            >by cycle · 1–30 min</span
+            >by drive · 1–30 min</span
           >
         </div>
         <div class="rpl-slider-row" style="margin-top: 6px; margin-bottom: 4px">
@@ -321,7 +321,7 @@ onMounted(async () => {
 
   let currentLat = null
   let currentLng = null
-  let currentMode = 'cycle'
+  let currentMode = 'drive'
   let marker = null
   let layers = {}
   let debounceTimer = null
@@ -1409,12 +1409,21 @@ onMounted(async () => {
       return
     }
 
+    // Ripple always uses drive mode.
+    if (currentMode !== 'drive') {
+      currentMode = 'drive'
+      document.querySelectorAll('.rpl-mode-btn').forEach((b) => {
+        b.classList.toggle('rpl-active', b.dataset.mode === 'drive')
+      })
+      if (currentLat !== null) updateIsochrone()
+    }
+
     const btn = document.getElementById('rippling-btn')
     btn.disabled = true
     btn.textContent = '⏳ Loading…'
     document.getElementById(
       'rippling-info'
-    ).textContent = `Fetching 30 frames (${currentMode})…`
+    ).textContent = `Fetching 30 frames (drive)…`
 
     clearLayers()
     timelineBuilt = false

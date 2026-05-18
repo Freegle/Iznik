@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
@@ -170,11 +169,10 @@ func handleHealth(g *Graph) fiber.Handler {
 	}
 }
 
-func startServer(g *Graph, addr string) {
-	spatialURL := os.Getenv("SPATIAL_SERVER_URL")
-	if spatialURL == "" {
-		spatialURL = "http://localhost:8194"
-	}
+// newApp builds a Fiber app with all spatial endpoints.
+// When requireAuth is true, /v1/* routes require a valid moderator JWT.
+// When false (internal port), /v1/* routes are accessible without auth.
+func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	app := fiber.New(fiber.Config{
 		JSONEncoder: func(v interface{}) ([]byte, error) {
 			return json.Marshal(v)
@@ -184,21 +182,42 @@ func startServer(g *Graph, addr string) {
 		AllowOrigins: "*",
 		AllowMethods: "GET,OPTIONS",
 	}))
-	initGroupsDB()
 	app.Get("/health", handleHealth(g))
 	app.Get("/demo", func(c *fiber.Ctx) error {
 		c.Set("Content-Type", "text/html; charset=utf-8")
 		return c.Send(demoHTML)
 	})
 
-	// All /v1/* routes require a valid JWT.
-	v1 := app.Group("/v1", jwtAuthMiddleware())
+	var v1 fiber.Router
+	if requireAuth {
+		v1 = app.Group("/v1", jwtAuthMiddleware())
+	} else {
+		v1 = app.Group("/v1")
+	}
 	v1.Get("/isochrone", handleIsochrone(g))
 	v1.Get("/fairness", handleFairness(g))
 	v1.Get("/nearby-freeglers", handleNearbyFreeglers(spatialURL))
 	v1.Get("/groups/nearby", handleNearbyGroups())
+	return app
+}
 
-	log.Printf("spatial-server: listening on %s (%d nodes, deprivation=%v)",
-		addr, g.NodeCount(), g.Deprivation != nil)
-	log.Fatal(app.Listen(addr))
+func startServer(g *Graph) {
+	spatialURL := getenv("SPATIAL_KNN_URL", "http://localhost:8194")
+
+	initGroupsDB()
+
+	// Internal port: no authentication — for trusted backend services.
+	internalAddr := ":" + getenv("SPATIAL_INTERNAL_PORT", "8194")
+	internalApp := newApp(g, spatialURL, false)
+	go func() {
+		log.Printf("spatial-server: internal listener on %s (no auth)", internalAddr)
+		log.Fatal(internalApp.Listen(internalAddr))
+	}()
+
+	// External port: JWT authentication required, moderators only.
+	externalAddr := ":" + getenv("SPATIAL_PORT", "8196")
+	externalApp := newApp(g, spatialURL, true)
+	log.Printf("spatial-server: external listener on %s (JWT auth, %d nodes, deprivation=%v)",
+		externalAddr, g.NodeCount(), g.Deprivation != nil)
+	log.Fatal(externalApp.Listen(externalAddr))
 }

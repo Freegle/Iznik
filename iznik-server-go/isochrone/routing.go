@@ -33,11 +33,15 @@ type routingResponse struct {
 	Drive routingPolygon `json:"drive"`
 }
 
-// FetchIsochroneWKTFromRoutingServer calls the internal routing server and
+// FetchIsochroneWKTFromRoutingServer calls the internal spatial server and
 // returns a WKT POLYGON for the requested transport mode.
-// Returns empty string on failure or when ROUTING_SERVER_URL is not set.
+// Returns empty string on failure or when SPATIAL_SERVER_URL is not set.
 func FetchIsochroneWKTFromRoutingServer(transport string, lat, lng float64, minutes int) string {
-	base := os.Getenv("ROUTING_SERVER_URL")
+	// SPATIAL_SERVER_URL is the canonical name; ROUTING_SERVER_URL is kept for backward compat.
+	base := os.Getenv("SPATIAL_SERVER_URL")
+	if base == "" {
+		base = os.Getenv("ROUTING_SERVER_URL")
+	}
 	if base == "" {
 		return ""
 	}
