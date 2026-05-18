@@ -42,7 +42,7 @@
         gap: 12px;
       "
     >
-      <div style="font-size: 1.2rem">Routing server warming up…</div>
+      <div style="font-size: 1.2rem">Spatial server warming up…</div>
       <div style="font-size: 0.85rem; color: #999">This takes about 2–3 minutes on first start</div>
     </div>
     <RipplingExplorer v-else :spatial-url="spatialUrl" :jwt="jwtToken" />
