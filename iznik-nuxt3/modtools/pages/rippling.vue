@@ -54,8 +54,6 @@ import { computed, ref, onMounted, onUnmounted, useRuntimeConfig } from '#import
 import { useMe } from '~/composables/useMe'
 import RipplingExplorer from '~/modtools/components/RipplingExplorer.vue'
 
-definePageMeta({ layout: false })
-
 const runtimeConfig = useRuntimeConfig()
 const { mod, jwt: jwtToken, loginStateKnown } = useMe()
 

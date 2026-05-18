@@ -29,6 +29,9 @@ func jwtAuthMiddleware() fiber.Handler {
 		}
 
 		secret := os.Getenv("JWT_SECRET")
+		if secret == "" {
+			secret = "secret"
+		}
 		token, err := jwt.Parse(tokenString, func(t *jwt.Token) (interface{}, error) {
 			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, errors.New("unexpected signing method")

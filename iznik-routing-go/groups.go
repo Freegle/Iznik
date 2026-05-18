@@ -30,8 +30,8 @@ func mercToLat(y float64) float64 {
 	return math.Atan(math.Exp(y*math.Pi/mercatorHalfCircum))*360.0/math.Pi - 90.0
 }
 
-// wktPolygonToCoords parses a WKT POLYGON string whose coordinates are in
-// SRID 3857 (meters) and converts each vertex to GeoJSON [lng, lat] degrees.
+// wktPolygonToCoords parses a WKT POLYGON string whose coordinates are stored
+// as WGS84 degrees (despite being tagged SRID 3857). Returns GeoJSON [lng, lat] rings.
 func wktPolygonToCoords(wkt string) ([][][2]float64, error) {
 	wkt = strings.TrimSpace(wkt)
 	if i := strings.Index(wkt, ";"); i >= 0 {
@@ -60,14 +60,12 @@ func wktPolygonToCoords(wkt string) ([][][2]float64, error) {
 			if len(fields) < 2 {
 				continue
 			}
-			// 3857 WKT: POINT(x y) = POINT(easting northing) — x=lng direction, y=lat direction
-			xMeters, err1 := strconv.ParseFloat(fields[0], 64)
-			yMeters, err2 := strconv.ParseFloat(fields[1], 64)
+			// Coordinates are stored as degrees (WKT: lng lat order).
+			lng, err1 := strconv.ParseFloat(fields[0], 64)
+			lat, err2 := strconv.ParseFloat(fields[1], 64)
 			if err1 != nil || err2 != nil {
 				continue
 			}
-			lng := mercToLng(xMeters)
-			lat := mercToLat(yMeters)
 			ring = append(ring, [2]float64{lng, lat})
 		}
 		if len(ring) >= 4 {
@@ -168,9 +166,9 @@ func initGroupsDB() {
 // offer point falls inside that group's polygon (i.e. the home group), false for
 // adjacent neighbours. Requires MySQL connection.
 //
-// polyindex is stored in SRID 3857 (Web Mercator). We convert the input WGS84
-// coordinates to 3857 in Go so the MySQL query stays in a single SRS and we
-// avoid MySQL 8.0 geographic-SRS axis-order ambiguity.
+// polyindex is tagged SRID 3857 in the database but the coordinate values are
+// stored as WGS84 degrees (not Mercator meters). We pass degree values directly
+// to avoid incorrect Mercator conversion.
 func handleNearbyGroups() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if groupsDB == nil {
@@ -187,13 +185,12 @@ func handleNearbyGroups() fiber.Handler {
 			return c.Status(400).JSON(fiber.Map{"error": "lat and lng must be numeric"})
 		}
 
-		// Convert offer point to 3857 meters for the spatial query.
-		ptX, ptY := lngLatToMerc(lngF, latF)
-
-		// Bounding box: ±1.5° ≈ ±167 km latitude / ±107 km longitude at 51°N.
-		// Compute in 3857 so the centroid range check is in the same SRS.
-		boxXMin, boxYMin := lngLatToMerc(lngF-1.5, latF-1.5)
-		boxXMax, boxYMax := lngLatToMerc(lngF+1.5, latF+1.5)
+		// polyindex stores degree values tagged as SRID 3857 — use raw degrees.
+		// Bounding box: ±1.5° covers all adjacent groups.
+		boxLngMin := lngF - 1.5
+		boxLngMax := lngF + 1.5
+		boxLatMin := latF - 1.5
+		boxLatMax := latF + 1.5
 
 		rows, err := groupsDB.Query(`
 			SELECT id, nameshort, ST_AsText(polyindex) AS wkt,
@@ -212,10 +209,10 @@ func handleNearbyGroups() fiber.Handler {
 			  )
 			LIMIT 60
 		`,
-			ptX, ptY, // SELECT contains_pt
-			ptX, ptY, // WHERE ST_Contains
-			boxXMin, boxXMax, // centroid X (easting) range
-			boxYMin, boxYMax, // centroid Y (northing) range
+			lngF, latF, // SELECT contains_pt  (WKT: POINT(lng lat))
+			lngF, latF, // WHERE ST_Contains
+			boxLngMin, boxLngMax, // centroid X = lng (degrees)
+			boxLatMin, boxLatMax, // centroid Y = lat (degrees)
 		)
 		if err != nil {
 			log.Printf("groups query: %v", err)
