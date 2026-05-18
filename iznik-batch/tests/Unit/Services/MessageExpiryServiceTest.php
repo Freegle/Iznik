@@ -304,7 +304,7 @@ class MessageExpiryServiceTest extends TestCase
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
-        // Default group has no custom settings → expiretime defaults to max(90, 14*11) = 154.
+        // Default group has no custom settings → OFFER expiretime = GREATEST(90, 3*(10+1)) = 90.
         // A message with today's arrival is 0 days old, so the virtual-expiry filter doesn't fire.
         $message = $this->createTestMessage($user, $group);
 
