@@ -218,22 +218,34 @@ func (f FlexBool) Bool() bool {
 	return bool(f)
 }
 
+// AppleCredentials holds the payload sent by the Capacitor Apple Sign In plugin.
+type AppleCredentials struct {
+	IdentityToken     string `json:"identityToken"`
+	User              string `json:"user"`
+	Email             string `json:"email"`
+	GivenName         string `json:"givenName"`
+	FamilyName        string `json:"familyName"`
+	AuthorizationCode string `json:"authorizationCode"`
+}
+
 // PostSessionRequest covers all fields used across session POST actions.
 type PostSessionRequest struct {
-	Action        string     `json:"action"`
-	Email         string     `json:"email"`
-	Password      string     `json:"password"`
-	U             FlexUint64 `json:"u"`
-	K             string     `json:"k"`
-	Userlist      []uint64   `json:"userlist"`
-	Partner       string     `json:"partner"`
-	ID            uint64     `json:"id"`
-	GoogleLogin   bool       `json:"googlelogin"`
-	GoogleJWT     string     `json:"googlejwt"`
-	Mobile        bool       `json:"mobile"`
-	FBLogin       FlexBool   `json:"fblogin"`
-	FBAccessToken string     `json:"fbaccesstoken"`
-	FBLimited     FlexBool   `json:"fblimited"`
+	Action           string           `json:"action"`
+	Email            string           `json:"email"`
+	Password         string           `json:"password"`
+	U                FlexUint64       `json:"u"`
+	K                string           `json:"k"`
+	Userlist         []uint64         `json:"userlist"`
+	Partner          string           `json:"partner"`
+	ID               uint64           `json:"id"`
+	GoogleLogin      bool             `json:"googlelogin"`
+	GoogleJWT        string           `json:"googlejwt"`
+	Mobile           bool             `json:"mobile"`
+	FBLogin          FlexBool         `json:"fblogin"`
+	FBAccessToken    string           `json:"fbaccesstoken"`
+	FBLimited        FlexBool         `json:"fblimited"`
+	AppleLogin       bool             `json:"applelogin"`
+	AppleCredentials AppleCredentials `json:"applecredentials"`
 }
 
 // PostSession dispatches session write actions.
@@ -266,6 +278,10 @@ func PostSession(c *fiber.Ctx) error {
 				return handleFacebookLimitedLogin(c, req.FBAccessToken)
 			}
 			return handleFacebookLogin(c, req.FBAccessToken)
+		}
+		if req.AppleLogin && req.AppleCredentials.IdentityToken != "" {
+			creds := req.AppleCredentials
+			return handleAppleLogin(c, creds.IdentityToken, creds.User, creds.Email, creds.GivenName, creds.FamilyName)
 		}
 		if req.Email != "" && req.Password != "" {
 			return handleEmailPasswordLogin(c, req.Email, req.Password)

@@ -310,6 +310,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       APIv2: config.APIv2,
+      SPATIAL_SERVER_URL: config.SPATIAL_SERVER_URL,
       OSM_TILE: config.OSM_TILE,
       GEOCODE: config.GEOCODE,
       FACEBOOK_APPID: config.FACEBOOK_APPID,
