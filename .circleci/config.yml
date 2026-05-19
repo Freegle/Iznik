@@ -63,9 +63,10 @@ jobs:
             fi
 
             # Cancel all running/on_hold workflows from older pipelines.
+            # Skip API-triggered pipelines (manual runs like build_modtools_production).
             # No state filter — we want to catch both setup and continuation pipelines.
             echo "$PIPELINES" | jq -r --argjson thisNum "$THIS_NUMBER" \
-              '.items[] | select(.number < $thisNum) | .id' | while read -r PIPELINE_ID; do
+              '.items[] | select(.number < $thisNum) | select(.trigger.type != "api") | .id' | while read -r PIPELINE_ID; do
               echo "Checking workflows for pipeline ${PIPELINE_ID}..."
 
               WORKFLOWS=$(curl -sf \
@@ -240,7 +241,7 @@ jobs:
             fi
 
             echo "$PIPELINES" | jq -r --argjson thisNum "$THIS_NUMBER" \
-              '.items[] | select(.number < $thisNum) | .id' | while read -r PIPELINE_ID; do
+              '.items[] | select(.number < $thisNum) | select(.trigger.type != "api") | .id' | while read -r PIPELINE_ID; do
               WORKFLOWS=$(curl -sf \
                 -H "Circle-Token: ${CIRCLE_TOKEN}" \
                 "https://circleci.com/api/v2/pipeline/${PIPELINE_ID}/workflow" 2>/dev/null) || continue
