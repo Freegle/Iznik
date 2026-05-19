@@ -229,6 +229,67 @@ class ContentCheckTest extends TestCase
         $this->assertNull($noMatch, 'unrelated word must not match');
     }
 
+    /**
+     * @dataProvider shortFuzzyFalsePositiveProvider
+     */
+    public function test_fuzzy_match_rejects_short_keyword_neighbours(string $keyword, string $body): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => $keyword,
+            'category'   => 'review',
+            'action'     => 'flag',
+            'match_mode' => 'fuzzy',
+        ]);
+
+        $result = $this->service->checkConcernKeywords('OFFER: item', $body, $group->id);
+        $this->assertNull($result, "short keyword '{$keyword}' must not match unrelated 1-edit neighbour in body: {$body}");
+    }
+
+    public static function shortFuzzyFalsePositiveProvider(): array
+    {
+        return [
+            'poof vs roof'   => ['poof', 'waterproof pvc roof with poles'],
+            'poof vs proof'  => ['poof', 'rainproof marquee'],
+            'lend vs led'    => ['lend', 'hp 22" ips backlit led monitor'],
+            'cash vs case'   => ['cash', 'sewing machine in a case'],
+            'pay vs pat'     => ['pay',  'has not been pat tested'],
+            'swap vs snap'   => ['swap', 'one snap-on cover'],
+            'sell vs sill'   => ['sell', 'window sill needs repainting'],
+            'dollar vs lone' => ['$',    'reposting due to no collection - general wear'],
+            'dollar vs a'    => ['$',    'as seen, fair chance of working'],
+        ];
+    }
+
+    /**
+     * @dataProvider shortFuzzyInflectionProvider
+     */
+    public function test_fuzzy_match_still_catches_inflections_for_short_keywords(string $keyword, string $body): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => $keyword,
+            'category'   => 'review',
+            'action'     => 'flag',
+            'match_mode' => 'fuzzy',
+        ]);
+
+        $result = $this->service->checkConcernKeywords('OFFER: item', $body, $group->id);
+        $this->assertNotNull($result, "short keyword '{$keyword}' must match inflection in body: {$body}");
+    }
+
+    public static function shortFuzzyInflectionProvider(): array
+    {
+        return [
+            'lend plural'       => ['lend', 'who lends tools around here'],
+            'cash plural'       => ['cash', 'only cashes accepted'],
+            'pay -ing'          => ['pay',  'I am paying for shipping'],
+            'swap exact'        => ['swap', 'happy to swap items'],
+            'swap -ed'          => ['swap', 'have already swapped these'],
+            'punctuation strip' => ['cash', 'only (cash), please'],
+        ];
+    }
+
     // -------------------------------------------------------------------------
     // checkVagueItem
     // -------------------------------------------------------------------------

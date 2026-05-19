@@ -234,11 +234,15 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // Fuzzy keyword matching — V1 WorryWords parity.
-    // Splits the haystack into tokens and accepts a token if its levenshtein
-    // distance from the keyword is ≤ 1 AND its length is within ±25% of the
-    // keyword length. This catches plurals and single-character typos without
-    // the false positives of bare str_contains (e.g. "hash" vs "hashtagging").
+    // Fuzzy keyword matching.
+    // Goal: catch plurals / common inflections / single-character typos without
+    // matching unrelated 1-edit neighbours of short keywords.
+    //
+    // For short keywords (< 6 chars) every levenshtein-1 neighbour is almost
+    // always a different word ("poof"↔"roof", "lend"↔"led", "cash"↔"case"),
+    // so we accept only exact matches and an explicit set of inflectional
+    // suffixes. For longer keywords (≥ 6 chars) we keep the levenshtein-1
+    // generosity since real typo-catching dominates the false-positive rate.
     // -------------------------------------------------------------------------
 
     private function matchesFuzzy(string $haystack, string $keyword): bool
@@ -249,15 +253,53 @@ class ContentCheckService
             return false;
         }
 
+        $variants = $this->inflectionVariants($kwLower);
+
         foreach (preg_split('/\s+/', $haystack, -1, PREG_SPLIT_NO_EMPTY) as $token) {
-            $tokLen = strlen($token);
-            $ratio  = $tokLen / $kwLen;
-            if ($ratio >= 0.75 && $ratio <= 1.25 && levenshtein($token, $kwLower) <= 1) {
+            // Strip common edge punctuation so "cash," or "(money)" still match.
+            $token = trim($token, ".,;:!?\"'()[]{}");
+            if ($token === '') {
+                continue;
+            }
+            $tokLow = strtolower($token);
+
+            if ($tokLow === $kwLower) {
                 return true;
+            }
+
+            if (in_array($tokLow, $variants, true)) {
+                return true;
+            }
+
+            if ($kwLen >= 6) {
+                $tokLen = strlen($tokLow);
+                $ratio  = $tokLen / $kwLen;
+                if ($ratio >= 0.75 && $ratio <= 1.25 && levenshtein($tokLow, $kwLower) <= 1) {
+                    return true;
+                }
             }
         }
 
         return false;
+    }
+
+    /**
+     * Return the inflectional variants we accept as equivalent to the keyword
+     * (plurals, -ing, -ed). Keeps the "catches plurals" intent of fuzzy mode
+     * without admitting arbitrary 1-edit neighbours.
+     */
+    private function inflectionVariants(string $kwLower): array
+    {
+        $variants = [
+            $kwLower . 's',
+            $kwLower . 'es',
+            $kwLower . 'ing',
+            $kwLower . 'ed',
+        ];
+        if (strlen($kwLower) > 1 && str_ends_with($kwLower, 'y')) {
+            $variants[] = substr($kwLower, 0, -1) . 'ies';
+        }
+        return $variants;
     }
 
     // -------------------------------------------------------------------------
@@ -423,10 +465,11 @@ class ContentCheckService
      * Scan existing Pending and Approved messages and report where the content
      * check service disagrees with the current state.  Read-only — no DB writes.
      *
-     * @param int|null $groupid  Restrict audit to a single group (null = all groups).
-     * @param int      $limit    Max rows per collection to examine (0 = no limit).
+     * @param int|null $groupid    Restrict audit to a single group (null = all groups).
+     * @param int      $limit      Max rows per collection to examine (0 = no limit).
+     * @param int|null $sinceDays  Only consider rows with mg.arrival within the last N days (null = no time filter).
      */
-    public function auditExisting(?int $groupid = null, int $limit = 500): array
+    public function auditExisting(?int $groupid = null, int $limit = 500, ?int $sinceDays = null): array
     {
         $disagreements = [];
 
@@ -443,6 +486,11 @@ class ContentCheckService
 
             if ($groupid !== null) {
                 $query->where('mg.groupid', $groupid);
+            }
+
+            if ($sinceDays !== null && $sinceDays > 0) {
+                $query->where('mg.arrival', '>=', now()->subDays($sinceDays));
+                $query->orderByDesc('mg.arrival');
             }
 
             if ($limit > 0) {
