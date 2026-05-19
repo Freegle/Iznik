@@ -430,6 +430,34 @@ class PushNotificationService
     }
 
     /**
+     * Build the AndroidConfig (priority, ttl, optional notification tag)
+     * that accompanies the FCM message.
+     *
+     * Zero-work ModTools pushes carry empty title/message — they exist only
+     * to clear the launcher badge and must stay silent. We achieve that by
+     * sending pure data-only at normal priority: no notification block, and
+     * no AndroidConfig.notification (which can promote the message to a
+     * notification on some devices/Capacitor builds and leave an empty
+     * tray entry).
+     */
+    protected function buildAndroidConfig(int $userId, array $payload, bool $forceVisible): array
+    {
+        $isModtools = ($payload['channel_id'] ?? '') === 'modtools';
+        $hasVisibleContent = ! empty($payload['title']);
+
+        $androidConfig = [
+            'ttl' => '3600s',
+            'priority' => ($forceVisible || ($isModtools && $hasVisibleContent)) ? 'high' : 'normal',
+        ];
+
+        if ($isModtools && $hasVisibleContent) {
+            $androidConfig['notification'] = ['tag' => "modtools-{$userId}"];
+        }
+
+        return $androidConfig;
+    }
+
+    /**
      * Send FCM notification to a device.
      *
      * When $forceVisible is true, includes a notification block so the push appears in the
@@ -438,23 +466,9 @@ class PushNotificationService
     private function sendFcm(int $userId, string $type, string $token, array $payload, bool $forceVisible = false): void
     {
         if ($type === self::PUSH_FCM_ANDROID) {
-            $isModtools = ($payload['channel_id'] ?? '') === 'modtools';
-
             $androidMessage = $this->buildAndroidFcmMessage($token, $payload, $forceVisible);
             $message = CloudMessage::fromArray($androidMessage);
-
-            $androidConfig = [
-                'ttl' => '3600s',
-                'priority' => ($forceVisible || $isModtools) ? 'high' : 'normal',
-            ];
-
-            // Per-user tag causes Android to replace the existing notification
-            // rather than stack a new one alongside it.
-            if ($isModtools) {
-                $androidConfig['notification'] = ['tag' => "modtools-{$userId}"];
-            }
-
-            $message = $message->withAndroidConfig($androidConfig);
+            $message = $message->withAndroidConfig($this->buildAndroidConfig($userId, $payload, $forceVisible));
         } else {
             // iOS: include notification block for display
             $ios = [

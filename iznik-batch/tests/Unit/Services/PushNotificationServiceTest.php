@@ -435,10 +435,76 @@ class PushNotificationServiceTest extends TestCase
         $this->assertSame('', $payload['title'], 'Title must be empty so no tray notification is raised');
     }
 
+    /**
+     * Visible ModTools push: priority high and notification.tag set so the
+     * latest "N pending" entry replaces the previous one in the tray.
+     */
+    public function test_buildAndroidConfig_visible_modtools_gets_high_priority_and_tag(): void
+    {
+        $payload = [
+            'title' => '3 messages pending',
+            'message' => 'Open ModTools to review',
+            'channel_id' => 'modtools',
+        ];
+
+        $cfg = $this->invokeBuildAndroidConfig(123, $payload, false);
+
+        $this->assertSame('high', $cfg['priority']);
+        $this->assertSame(['tag' => 'modtools-123'], $cfg['notification']);
+    }
+
+    /**
+     * Zero-work ModTools push (empty title) must be truly silent: data-only,
+     * normal priority, no AndroidConfig.notification. Setting
+     * AndroidConfig.notification on a data-only payload promotes it to a
+     * notification message on some devices/Capacitor builds and surfaces an
+     * empty tray entry — the bug we're fixing.
+     */
+    public function test_buildAndroidConfig_zero_count_modtools_is_silent(): void
+    {
+        $payload = [
+            'title' => '',
+            'message' => '',
+            'channel_id' => 'modtools',
+        ];
+
+        $cfg = $this->invokeBuildAndroidConfig(123, $payload, false);
+
+        $this->assertSame('normal', $cfg['priority'],
+            'Silent badge-clear pushes should not wake the device with high priority');
+        $this->assertArrayNotHasKey('notification', $cfg,
+            'AndroidConfig.notification must be absent for data-only clear-badge pushes');
+    }
+
+    /**
+     * forceVisible (test-push command) always rides high priority even for
+     * non-modtools channels, but never gets the modtools tag.
+     */
+    public function test_buildAndroidConfig_forceVisible_high_priority_no_tag_for_non_modtools(): void
+    {
+        $payload = [
+            'title' => 'Test',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+        ];
+
+        $cfg = $this->invokeBuildAndroidConfig(123, $payload, true);
+
+        $this->assertSame('high', $cfg['priority']);
+        $this->assertArrayNotHasKey('notification', $cfg);
+    }
+
     private function invokeBuildAndroidFcmMessage(string $token, array $payload, bool $forceVisible): array
     {
         $method = new \ReflectionMethod($this->service, 'buildAndroidFcmMessage');
         $method->setAccessible(true);
         return $method->invoke($this->service, $token, $payload, $forceVisible);
+    }
+
+    private function invokeBuildAndroidConfig(int $userId, array $payload, bool $forceVisible): array
+    {
+        $method = new \ReflectionMethod($this->service, 'buildAndroidConfig');
+        $method->setAccessible(true);
+        return $method->invoke($this->service, $userId, $payload, $forceVisible);
     }
 }
