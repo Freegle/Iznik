@@ -435,8 +435,19 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // Vague item name — matches keyword at start, middle, or end of name.
+    // Vague item name.
+    //
+    // Flag only if every "significant" token in the name is itself a vague
+    // keyword. A token is significant if it is more than 2 characters, not a
+    // stopword, and not purely numeric. Short item names like "TV" or "PC"
+    // therefore pass through (no significant tokens), and names that include
+    // a specific noun ("Assorted picture frames", "Marilyn monroe stuff")
+    // pass because the specific token rescues them.
     // -------------------------------------------------------------------------
+
+    private const VAGUE_STOPWORDS = [
+        'of', 'and', 'the', 'to', 'for', 'a', 'an', 'or', 'with', 'in', 'on', 'at', 'by',
+    ];
 
     public function checkVagueItem(?string $itemName): ?array
     {
@@ -444,23 +455,60 @@ class ContentCheckService
             return null;
         }
 
-        $lower = strtolower(trim($itemName));
-
-        if (mb_strlen($lower) < 3) {
-            return ['check' => self::CHECK_VAGUE, 'category' => null, 'detail' => "Item name '{$itemName}' is too short"];
+        $trimmed = trim($itemName);
+        if ($trimmed === '') {
+            return null;
         }
 
-        foreach (self::VAGUE_KEYWORDS as $keyword) {
-            if ($lower === $keyword
-                || str_starts_with($lower, $keyword . ' ')
-                || str_ends_with($lower, ' ' . $keyword)
-                || str_contains($lower, ' ' . $keyword . ' ')
-            ) {
-                return ['check' => self::CHECK_VAGUE, 'category' => null, 'detail' => "Item name '{$itemName}' is too generic"];
+        $lower = strtolower($trimmed);
+
+        $tokens = preg_split('/[\s,;\-\/!?()\.]+/', $lower, -1, PREG_SPLIT_NO_EMPTY);
+
+        $significantCount = 0;
+        $allVague         = true;
+        foreach ($tokens as $token) {
+            if (in_array($token, self::VAGUE_STOPWORDS, true)) {
+                continue;
+            }
+            if (preg_match('/^\d+$/', $token)) {
+                continue;
+            }
+            if (mb_strlen($token) <= 2) {
+                continue;
+            }
+
+            $significantCount++;
+            if (!isset($this->vagueTokenSet()[$token])) {
+                $allVague = false;
+                break;
             }
         }
 
+        if ($significantCount > 0 && $allVague) {
+            return ['check' => self::CHECK_VAGUE, 'category' => null, 'detail' => "Item name '{$itemName}' is too generic"];
+        }
+
         return null;
+    }
+
+    /**
+     * Flat token set built from VAGUE_KEYWORDS so multi-word phrases like
+     * 'free stuff' or 'bits and pieces' contribute each of their tokens.
+     */
+    private function vagueTokenSet(): array
+    {
+        static $set = null;
+        if ($set === null) {
+            $set = [];
+            foreach (self::VAGUE_KEYWORDS as $kw) {
+                foreach (preg_split('/\s+/', strtolower($kw), -1, PREG_SPLIT_NO_EMPTY) as $t) {
+                    if (!in_array($t, self::VAGUE_STOPWORDS, true) && mb_strlen($t) > 2) {
+                        $set[$t] = true;
+                    }
+                }
+            }
+        }
+        return $set;
     }
 
     // -------------------------------------------------------------------------

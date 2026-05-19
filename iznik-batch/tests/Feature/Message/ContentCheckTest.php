@@ -310,12 +310,12 @@ class ContentCheckTest extends TestCase
         $this->assertEquals('Vague', $result['check']);
     }
 
-    public function test_vague_item_too_short_returns_reason(): void
+    public function test_short_item_name_passes(): void
     {
-        $result = $this->service->checkVagueItem('ab');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('Vague', $result['check']);
+        // Short acronym item names like "TV", "PC", "ab" have no significant tokens and pass.
+        $this->assertNull($this->service->checkVagueItem('TV'));
+        $this->assertNull($this->service->checkVagueItem('PC'));
+        $this->assertNull($this->service->checkVagueItem('ab'));
     }
 
     public function test_specific_item_name_returns_null(): void
@@ -325,28 +325,56 @@ class ContentCheckTest extends TestCase
         $this->assertNull($result);
     }
 
-    public function test_null_item_name_returns_null(): void
+    public function test_null_or_empty_item_name_returns_null(): void
     {
-        $result = $this->service->checkVagueItem(null);
-
-        $this->assertNull($result);
+        $this->assertNull($this->service->checkVagueItem(null));
+        $this->assertNull($this->service->checkVagueItem(''));
+        $this->assertNull($this->service->checkVagueItem('   '));
     }
 
-    public function test_vague_keyword_as_prefix_returns_reason(): void
+    /**
+     * @dataProvider vagueItemFalsePositiveProvider
+     */
+    public function test_specific_noun_rescues_a_vague_modifier(string $itemName): void
     {
-        // "stuff " at start of name is vague.
-        $result = $this->service->checkVagueItem('stuff from attic');
+        $this->assertNull(
+            $this->service->checkVagueItem($itemName),
+            "name '{$itemName}' has a specific noun and must not flag as vague",
+        );
+    }
 
-        $this->assertNotNull($result);
+    public static function vagueItemFalsePositiveProvider(): array
+    {
+        return [
+            'assorted + specific'        => ['Assorted picture frames'],
+            'various + specific'         => ['Various small kitchen items'],
+            'bundle + specific'          => ['Girls clothes bundle'],
+            'collection + specific'      => ['Pending collection -Camping chair'],
+            'mid + specific'             => ['Marilyn monroe stuff'],
+            'trailing-comma + specific'  => ['Mugs, various'],
+            'embedded "stuff"'           => ['stuffed bear toy'],
+        ];
+    }
+
+    /**
+     * @dataProvider vagueItemTruePositiveProvider
+     */
+    public function test_genuinely_vague_names_are_flagged(string $itemName): void
+    {
+        $result = $this->service->checkVagueItem($itemName);
+        $this->assertNotNull($result, "name '{$itemName}' must flag as vague");
         $this->assertEquals('Vague', $result['check']);
     }
 
-    public function test_vague_keyword_embedded_in_word_is_allowed(): void
+    public static function vagueItemTruePositiveProvider(): array
     {
-        // "stuffed" is not vague — it contains "stuff" as substring but is not a keyword match.
-        $result = $this->service->checkVagueItem('stuffed bear toy');
-
-        $this->assertNull($result);
+        return [
+            'single vague word'          => ['stuff'],
+            'two vague words'            => ['various items'],
+            'vague phrase'               => ['bits and pieces'],
+            'free stuff phrase'          => ['free stuff'],
+            'numbers + only vague'       => ['4 assorted things'],
+        ];
     }
 
     // -------------------------------------------------------------------------
@@ -984,13 +1012,11 @@ class ContentCheckTest extends TestCase
     // checkVagueItem — mid-word position
     // -------------------------------------------------------------------------
 
-    public function test_vague_keyword_in_middle_of_name_returns_reason(): void
+    public function test_vague_word_alongside_specific_tokens_is_not_flagged(): void
     {
-        // "old stuff in shed" — 'stuff' is not at the start or end, should still be vague.
-        $result = $this->service->checkVagueItem('old stuff in shed');
-
-        $this->assertNotNull($result);
-        $this->assertEquals('Vague', $result['check']);
+        // "old stuff in shed" includes a vague word ('stuff') but also specific
+        // tokens ('old', 'shed'), so the rule should not flag it.
+        $this->assertNull($this->service->checkVagueItem('old stuff in shed'));
     }
 
     // -------------------------------------------------------------------------
