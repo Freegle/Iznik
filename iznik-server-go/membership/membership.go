@@ -384,16 +384,23 @@ func GetMemberships(c *fiber.Ctx) error {
 	// ordered by join date (m.added DESC) to match the default listing order.
 	if filter == 6 {
 		var members []GetMembershipsMember
+		// Join logs instead of users_modmails: users_modmails is pruned at 30 days by the
+		// users:update-modmails cron, so an INNER JOIN on it silently drops members whose
+		// only modmails are older than ~30 days.  The logs table is not pruned and is the
+		// authoritative source; criteria match the modmailsonly filter in logs/logs.go.
 		db.Raw("SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
 			"u.fullname, u.firstname, u.lastname, m.settings, "+
 			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
 			"b.date AS bandate, b.byuser AS bannedby, "+
 			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, "+
-			"MAX(um.timestamp) AS lastmodmail "+
+			"MAX(l.timestamp) AS lastmodmail "+
 			"FROM memberships m "+
 			"JOIN users u ON u.id = m.userid "+
 			"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid "+
-			"INNER JOIN users_modmails um ON um.userid = m.userid AND um.groupid = m.groupid "+
+			"INNER JOIN logs l ON l.user = m.userid AND l.groupid = m.groupid "+
+			"AND ((l.type = 'Message' AND l.subtype IN ('Rejected', 'Deleted', 'Replied')) "+
+			"OR (l.type = 'User' AND l.subtype IN ('Mailed', 'Rejected', 'Deleted'))) "+
+			"AND l.byuser != l.user "+
 			"WHERE m.groupid = ? AND m.collection = ? "+
 			"GROUP BY m.userid "+
 			"ORDER BY m.added DESC LIMIT ?",

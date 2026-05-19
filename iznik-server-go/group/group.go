@@ -125,6 +125,8 @@ type GroupEntry struct {
 	Recentautoapproves     *int       `json:"recentautoapproves,omitempty" gorm:"-"`
 	Recentmanualapproves   *int       `json:"recentmanualapproves,omitempty" gorm:"-"`
 	Recentautoapprovespct  *float64   `json:"recentautoapprovespercent,omitempty" gorm:"-"`
+	Recentmoderated        *int       `json:"recentmoderated,omitempty" gorm:"-"`
+	Recentmoderatedpct     *float64   `json:"recentmoderatedpercent,omitempty" gorm:"-"`
 
 	// Polygon fields (only populated when polygon=true query param)
 	Poly         *string `json:"poly,omitempty" gorm:"-"`
@@ -492,31 +494,51 @@ func ListGroups(c *fiber.Ctx) error {
 		db.Raw("SELECT id, nameshort, namefull, lat, lng, onmap, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin FROM `groups` WHERE publish = 1 AND onhere = 1 AND type = ?", FREEGLE).Scan(&groups)
 	}
 
-	// For support mode, fetch recent auto-approve and manual-approve counts in parallel.
+	// For support mode, fetch recent auto-approve, manual-approve, and moderation counts in parallel.
 	type approveCount struct {
 		Groupid uint64 `gorm:"column:groupid"`
 		Count   int    `gorm:"column:count"`
 	}
+	type moderatedCount struct {
+		Groupid        uint64 `gorm:"column:groupid"`
+		ModeratedCount int    `gorm:"column:moderated_count"`
+		TotalCount     int    `gorm:"column:total_count"`
+	}
 
 	var autoApproves []approveCount
 	var manualApproves []approveCount
+	var moderatedCounts []moderatedCount
 
 	if isAdminOrSupport {
-		start := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
+		start31 := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
+		start30 := time.Now().AddDate(0, 0, -30).Format("2006-01-02")
 
 		var wg sync.WaitGroup
-		wg.Add(2)
+		wg.Add(3)
 
 		go func() {
 			defer wg.Done()
 			db.Raw("SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp >= ? AND type = ? AND subtype = ? GROUP BY groupid",
-				start, "Message", "Autoapproved").Scan(&autoApproves)
+				start31, "Message", "Autoapproved").Scan(&autoApproves)
 		}()
 
 		go func() {
 			defer wg.Done()
 			db.Raw("SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp >= ? AND type = ? AND subtype = ? GROUP BY groupid",
-				start, "Message", "Approved").Scan(&manualApproves)
+				start31, "Message", "Approved").Scan(&manualApproves)
+		}()
+
+		go func() {
+			defer wg.Done()
+			// Count messages where a moderator manually approved (approvedby IS NOT NULL)
+			// vs total messages arriving in the past 30 days, grouped by community.
+			// Uses arrival rather than approvedat so the denominator is consistent.
+			db.Raw(`SELECT groupid,
+				SUM(approvedby IS NOT NULL) AS moderated_count,
+				COUNT(*) AS total_count
+				FROM messages_groups
+				WHERE arrival >= ?
+				GROUP BY groupid`, start30).Scan(&moderatedCounts)
 		}()
 
 		wg.Wait()
@@ -529,6 +551,10 @@ func ListGroups(c *fiber.Ctx) error {
 		manualMap := make(map[uint64]int, len(manualApproves))
 		for _, a := range manualApproves {
 			manualMap[a.Groupid] = a.Count
+		}
+		modMap := make(map[uint64]moderatedCount, len(moderatedCounts))
+		for _, m := range moderatedCounts {
+			modMap[m.Groupid] = m
 		}
 
 		for ix := range groups {
@@ -549,6 +575,15 @@ func ListGroups(c *fiber.Ctx) error {
 				pct = float64(100*autoCount) / float64(total)
 			}
 			groups[ix].Recentautoapprovespct = &pct
+
+			mc := modMap[groups[ix].ID]
+			modCount := mc.ModeratedCount
+			groups[ix].Recentmoderated = &modCount
+			var modPct float64
+			if mc.TotalCount > 0 {
+				modPct = float64(100*mc.ModeratedCount) / float64(mc.TotalCount)
+			}
+			groups[ix].Recentmoderatedpct = &modPct
 		}
 	}
 
