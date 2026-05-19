@@ -336,13 +336,28 @@ function findOrCreateMessage($dbhr, $dbhm, $subject, $gid, $groupName, $approver
 }
 
 $locName = $location['postcode'];
-$offerMsgId = findOrCreateMessage($dbhr, $dbhm, "OFFER: PW_$prefix Test Item ($locName)", $gid, $groupName, $modUid, $pcid, $location['lat'], $location['lng'], $modEmail, 'Approved');
-$wantedMsgId = findOrCreateMessage($dbhr, $dbhm, "WANTED: PW_$prefix Wanted Item ($locName)", $gid, $groupName, $modUid, $pcid, $location['lat'], $location['lng'], $modEmail, 'Approved');
-$pendingOfferId = findOrCreateMessage($dbhr, $dbhm, "OFFER: PW_$prefix Pending Sofa ($locName)", $gid, $groupName, $modUid, $pcid, $location['lat'], $location['lng'], $modEmail, 'Pending');
-$pendingWantedId = findOrCreateMessage($dbhr, $dbhm, "OFFER: PW_$prefix Pending Bookshelf ($locName)", $gid, $groupName, $modUid, $pcid, $location['lat'], $location['lng'], $modEmail, 'Pending');
+
+# Wrap each message creation with retryOnTransientDbError: under parallel load
+# (11 Playwright workers), concurrent MailRouter calls cause InnoDB deadlocks and
+# lock-wait timeouts. Retrying on these transient errors avoids script failure and
+# keeps total runtime within the status-API execAsync timeout budget.
+$offerMsgId = retryOnTransientDbError(function () use ($dbhr, $dbhm, $prefix, $locName, $gid, $groupName, $modUid, $pcid, $location, $modEmail) {
+    return findOrCreateMessage($dbhr, $dbhm, "OFFER: PW_$prefix Test Item ($locName)", $gid, $groupName, $modUid, $pcid, $location['lat'], $location['lng'], $modEmail, 'Approved');
+});
+$wantedMsgId = retryOnTransientDbError(function () use ($dbhr, $dbhm, $prefix, $locName, $gid, $groupName, $modUid, $pcid, $location, $modEmail) {
+    return findOrCreateMessage($dbhr, $dbhm, "WANTED: PW_$prefix Wanted Item ($locName)", $gid, $groupName, $modUid, $pcid, $location['lat'], $location['lng'], $modEmail, 'Approved');
+});
+$pendingOfferId = retryOnTransientDbError(function () use ($dbhr, $dbhm, $prefix, $locName, $gid, $groupName, $modUid, $pcid, $location, $modEmail) {
+    return findOrCreateMessage($dbhr, $dbhm, "OFFER: PW_$prefix Pending Sofa ($locName)", $gid, $groupName, $modUid, $pcid, $location['lat'], $location['lng'], $modEmail, 'Pending');
+});
+$pendingWantedId = retryOnTransientDbError(function () use ($dbhr, $dbhm, $prefix, $locName, $gid, $groupName, $modUid, $pcid, $location, $modEmail) {
+    return findOrCreateMessage($dbhr, $dbhm, "OFFER: PW_$prefix Pending Bookshelf ($locName)", $gid, $groupName, $modUid, $pcid, $location['lat'], $location['lng'], $modEmail, 'Pending');
+});
 
 # Create a rejected message owned by the regular user (for repost-group-change tests).
-$rejectedOfferId = findOrCreateMessage($dbhr, $dbhm, "OFFER: PW_$prefix Rejected Chair ($locName)", $gid, $groupName, $modUid, $pcid, $location['lat'], $location['lng'], $userEmail, 'Rejected');
+$rejectedOfferId = retryOnTransientDbError(function () use ($dbhr, $dbhm, $prefix, $locName, $gid, $groupName, $modUid, $pcid, $location, $userEmail) {
+    return findOrCreateMessage($dbhr, $dbhm, "OFFER: PW_$prefix Rejected Chair ($locName)", $gid, $groupName, $modUid, $pcid, $location['lat'], $location['lng'], $userEmail, 'Rejected');
+});
 
 # Ensure pending messages start unheld (clean state for hold/release tests).
 $dbhm->preExec("UPDATE messages SET heldby = NULL WHERE id IN (?, ?)", [$pendingOfferId, $pendingWantedId]);
