@@ -1281,7 +1281,7 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 		return reason
 	}
 
-	// Step 1: Check spam_keywords (matches both Spam and Review actions).
+	// Step 1: Check concern_keywords with literal/regex match modes.
 	type spamWord struct {
 		Word    string  `gorm:"column:word"`
 		Type    string  `gorm:"column:type"`
@@ -1289,7 +1289,7 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 		Exclude *string `gorm:"column:exclude"`
 	}
 	var keywords []spamWord
-	db.Raw("SELECT word, type, action, exclude FROM spam_keywords WHERE action IN ('Spam', 'Review') AND LENGTH(TRIM(word)) > 0").Scan(&keywords)
+	db.Raw("SELECT keyword AS word, match_mode AS type, action, exclude FROM concern_keywords WHERE match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND LENGTH(TRIM(keyword)) > 0").Scan(&keywords)
 
 	for _, kw := range keywords {
 		word := strings.TrimSpace(kw.Word)
