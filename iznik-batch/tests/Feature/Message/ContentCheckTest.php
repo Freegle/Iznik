@@ -200,6 +200,23 @@ class ContentCheckTest extends TestCase
         $this->assertNotNull($typo, 'single-char typo must match via fuzzy');
     }
 
+    public function test_fuzzy_match_catches_transposition(): void
+    {
+        // Damerau-Levenshtein: adjacent-char transpositions count as distance 1.
+        // "cocaine" → "cociane" (a↔i adjacent) scores DL=1 but levenshtein=2,
+        // so standard levenshtein would miss it; Damerau catches it.
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'cocaine',
+            'category'   => 'substance_regulated',
+            'action'     => 'flag',
+            'match_mode' => 'fuzzy',
+        ]);
+
+        $transposed = $this->service->checkConcernKeywords('OFFER: cociane for sale', '', $group->id);
+        $this->assertNotNull($transposed, 'adjacent-char transposition must match via Damerau-Levenshtein');
+    }
+
     public function test_fuzzy_match_rejects_substring_of_much_longer_word(): void
     {
         $group = $this->createTestGroup();
