@@ -5683,8 +5683,8 @@ func TestGetMessageWorryWords(t *testing.T) {
 	// Insert a global worry word (use a simple word without special chars,
 	// matching real worry words like "cocaine", "heroin" etc.).
 	worryKeyword := "dangertest" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Regulated')", worryKeyword)
-	defer db.Exec("DELETE FROM worrywords WHERE keyword = ?", worryKeyword)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'substance_regulated', 'fuzzy', 'global', 'flag')", worryKeyword)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword = ?", worryKeyword)
 
 	// Create a message whose subject contains the worry word.
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: "+worryKeyword+" near town", 52.5, -1.8)
@@ -5721,8 +5721,8 @@ func TestGetMessageWorryWords(t *testing.T) {
 
 	// 3. Test worry word in textbody (not subject).
 	worryKeyword2 := "bodytest" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Medicine')", worryKeyword2)
-	defer db.Exec("DELETE FROM worrywords WHERE keyword = ?", worryKeyword2)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'substance_medicine', 'fuzzy', 'global', 'flag')", worryKeyword2)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword = ?", worryKeyword2)
 
 	// Create message with clean subject but worry word in body.
 	msgID2 := CreateTestMessage(t, posterID, groupID, "OFFER: harmless item", 52.5, -1.8)
@@ -5771,9 +5771,9 @@ func TestGetMessageWorryWords(t *testing.T) {
 
 	// 5. Test Allowed words are excluded.
 	allowedWord := "allowtest" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Allowed')", allowedWord)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Regulated')", allowedWord+"x")
-	defer db.Exec("DELETE FROM worrywords WHERE keyword IN (?, ?)", allowedWord, allowedWord+"x")
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'allowed', 'fuzzy', 'global', 'flag')", allowedWord)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'substance_regulated', 'fuzzy', 'global', 'flag')", allowedWord+"x")
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword IN (?, ?)", allowedWord, allowedWord+"x")
 
 	// Create message with just the allowed word — should NOT trigger worry.
 	msgID4 := CreateTestMessage(t, posterID, groupID, "OFFER: "+allowedWord+" only", 52.5, -1.8)
@@ -5874,8 +5874,8 @@ func TestGetMessageWorryWordsGroupMod(t *testing.T) {
 
 	// Insert a unique worry word.
 	worryKeyword := "grpmodworry" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Regulated')", worryKeyword)
-	defer db.Exec("DELETE FROM worrywords WHERE keyword = ?", worryKeyword)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'substance_regulated', 'fuzzy', 'global', 'flag')", worryKeyword)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword = ?", worryKeyword)
 
 	// Create message containing the worry word.
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: "+worryKeyword+" near here", 52.5, -1.8)
