@@ -1665,6 +1665,196 @@ class ContentCheckTest extends TestCase
         $this->assertNull($result, 'Message without IP should not be checked');
     }
 
+    public function test_ip_abuse_user_branch_embeds_user_ids_in_reason(): void
+    {
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $createdUserIds = [];
+
+        $user = $this->createTestUser();
+        $createdUserIds[] = (int) $user->id;
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        for ($i = 0; $i < 5; $i++) {
+            $otherUser = $this->createTestUser();
+            $createdUserIds[] = (int) $otherUser->id;
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Another item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('IpAbuse', $result['check']);
+        $this->assertEquals($ip, $result['ip']);
+        $this->assertIsArray($result['users']);
+        $this->assertCount(6, $result['users']);
+        sort($createdUserIds);
+        $returnedSorted = $result['users'];
+        sort($returnedSorted);
+        $this->assertEquals($createdUserIds, $returnedSorted, 'user IDs in reason must match the senders');
+        foreach ($result['users'] as $id) {
+            $this->assertIsInt($id, 'user ID must be int, not string');
+        }
+    }
+
+    public function test_ip_abuse_user_branch_caps_user_ids_at_50(): void
+    {
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // 59 more distinct users on the same IP (60 total).
+        for ($i = 0; $i < 59; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Another item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNotNull($result);
+        $this->assertCount(50, $result['users'], 'user list must be capped at 50');
+        $this->assertStringContainsString('60', $result['detail'], 'detail must still show the true count');
+    }
+
+    public function test_ip_abuse_user_branch_orders_users_by_recency(): void
+    {
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+
+        $oldestUser = $this->createTestUser();
+        DB::table('messages')->insert([
+            'fromuser' => $oldestUser->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Old',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now()->subDays(10),
+            'date'     => now()->subDays(10),
+            'source'   => 'Platform',
+        ]);
+
+        // Four middle-aged senders.
+        for ($i = 0; $i < 4; $i++) {
+            $u = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $u->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Middle ' . $i,
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now()->subDays(5),
+                'date'     => now()->subDays(5),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        $newestUser = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $newestUser->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: New',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNotNull($result);
+        $this->assertEquals((int) $newestUser->id, $result['users'][0], 'most-recent sender must come first');
+        $this->assertEquals((int) $oldestUser->id, end($result['users']), 'oldest sender must come last');
+    }
+
+    public function test_ip_abuse_group_branch_embeds_group_ids_in_reason(): void
+    {
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $user = $this->createTestUser();
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $createdGroupIds = [];
+        for ($i = 0; $i < 20; $i++) {
+            $group = $this->createTestGroup();
+            $createdGroupIds[] = (int) $group->id;
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => now(),
+                'deleted'    => 0,
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNotNull($result);
+        $this->assertEquals($ip, $result['ip']);
+        $this->assertIsArray($result['groups']);
+        $this->assertCount(20, $result['groups']);
+        sort($createdGroupIds);
+        $returnedSorted = $result['groups'];
+        sort($returnedSorted);
+        $this->assertEquals($createdGroupIds, $returnedSorted);
+        foreach ($result['groups'] as $id) {
+            $this->assertIsInt($id, 'group ID must be int, not string');
+        }
+        $this->assertArrayNotHasKey('users', $result, 'group branch must not include a users array');
+    }
+
     // -------------------------------------------------------------------------
     // checkBulkVolunteerMail — detect bulk mailing to volunteer addresses (V1 Spam.php parity)
     // -------------------------------------------------------------------------
