@@ -3308,6 +3308,12 @@ jobs:
             sed -i 's/org\.ilovefreegle\.direct/org.ilovefreegle.modtools/g' android/app/build.gradle
             sed -i 's/>Freegle</>ModTools</g' android/app/src/main/res/values/strings.xml
             sed -i 's/@drawable\/fr_icon/@drawable\/ic_stat_modtools/g' android/app/src/main/AndroidManifest.xml
+            # ModTools has no ads — remove AD_ID permission added transitively by Firebase
+            MANIFEST="android/app/src/main/AndroidManifest.xml"
+            if ! grep -q 'AD_ID' "$MANIFEST"; then
+              sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
+              sed -i 's|</manifest>|    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>\n</manifest>|' "$MANIFEST"
+            fi
             echo "✅ ModTools identity configured"
       - run:
           name: Set ModTools Launcher Icons
@@ -3513,6 +3519,12 @@ jobs:
             sed -i 's/org\.ilovefreegle\.direct/org.ilovefreegle.modtools/g' android/app/build.gradle
             sed -i 's/>Freegle</>ModTools</g' android/app/src/main/res/values/strings.xml
             sed -i 's/@drawable\/fr_icon/@drawable\/ic_stat_modtools/g' android/app/src/main/AndroidManifest.xml
+            # ModTools has no ads — remove AD_ID permission added transitively by Firebase
+            MANIFEST="android/app/src/main/AndroidManifest.xml"
+            if ! grep -q 'AD_ID' "$MANIFEST"; then
+              sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
+              sed -i 's|</manifest>|    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>\n</manifest>|' "$MANIFEST"
+            fi
             echo "✅ ModTools identity configured"
       - run:
           name: Set ModTools Launcher Icons
