@@ -1090,7 +1090,7 @@ class ContentCheckTest extends TestCase
     public function test_per_group_worry_word_flags_message(): void
     {
         $group = $this->createTestGroup([
-            'settings' => json_encode(['spammers' => ['worrywords' => 'badtestword_cc,anotherbadword_cc']]),
+            'settings' => ['spammers' => ['worrywords' => 'badtestword_cc,anotherbadword_cc']],
         ]);
 
         $result = $this->service->checkPerGroupWorryWords('OFFER: badtestword_cc item', 'Some body text', $group->id);
@@ -1103,7 +1103,7 @@ class ContentCheckTest extends TestCase
     public function test_per_group_worry_word_second_word_in_list_matches(): void
     {
         $group = $this->createTestGroup([
-            'settings' => json_encode(['spammers' => ['worrywords' => 'badtestword_cc,anotherbadword_cc']]),
+            'settings' => ['spammers' => ['worrywords' => 'badtestword_cc,anotherbadword_cc']],
         ]);
 
         $result = $this->service->checkPerGroupWorryWords('OFFER: Lamp', 'anotherbadword_cc for sale', $group->id);
@@ -1115,7 +1115,7 @@ class ContentCheckTest extends TestCase
     public function test_per_group_worry_word_not_flagged_for_other_group(): void
     {
         $group1 = $this->createTestGroup([
-            'settings' => json_encode(['spammers' => ['worrywords' => 'badtestword_cc']]),
+            'settings' => ['spammers' => ['worrywords' => 'badtestword_cc']],
         ]);
         $group2 = $this->createTestGroup();
 
@@ -1136,7 +1136,7 @@ class ContentCheckTest extends TestCase
     public function test_per_group_worry_word_fuzzy_matches_typo(): void
     {
         $group = $this->createTestGroup([
-            'settings' => json_encode(['spammers' => ['worrywords' => 'badtestword_cc']]),
+            'settings' => ['spammers' => ['worrywords' => 'badtestword_cc']],
         ]);
 
         // One character off — levenshtein distance 1.
@@ -1149,7 +1149,7 @@ class ContentCheckTest extends TestCase
     public function test_per_group_worry_word_clean_message_returns_null(): void
     {
         $group = $this->createTestGroup([
-            'settings' => json_encode(['spammers' => ['worrywords' => 'badtestword_cc']]),
+            'settings' => ['spammers' => ['worrywords' => 'badtestword_cc']],
         ]);
 
         $result = $this->service->checkPerGroupWorryWords('OFFER: Nice lamp', 'A lovely lamp. Collection only.', $group->id);
@@ -1283,21 +1283,17 @@ class ContentCheckTest extends TestCase
 
     public function test_known_spammer_email_flags_message(): void
     {
-        // Insert a known spammer user and their email
-        $spammerUserId = DB::table('users')->insertGetId([
-            'email' => 'spammer_' . uniqid() . '@example.com',
-            'type'  => 'User',
-        ]);
-
+        // Create a spammer user and add their spam email
+        $spammer = $this->createTestUser();
         $spammerEmail = 'known.spammer' . uniqid() . '@spam.com';
         DB::table('users_emails')->insert([
-            'userid' => $spammerUserId,
+            'userid' => $spammer->id,
             'email'  => $spammerEmail,
         ]);
 
         // Mark as known spammer
         DB::table('spam_users')->insert([
-            'userid'     => $spammerUserId,
+            'userid'     => $spammer->id,
             'collection' => 'Spammer',
         ]);
 
@@ -1313,20 +1309,16 @@ class ContentCheckTest extends TestCase
 
     public function test_known_spammer_multiple_emails_flags_on_first_match(): void
     {
-        // Insert a known spammer
-        $spammerUserId = DB::table('users')->insertGetId([
-            'email' => 'spammer_user_' . uniqid() . '@example.com',
-            'type'  => 'User',
-        ]);
-
+        // Create a spammer user and add their spam email
+        $spammer = $this->createTestUser();
         $spammerEmail = 'known.spammer.' . uniqid() . '@spam.com';
         DB::table('users_emails')->insert([
-            'userid' => $spammerUserId,
+            'userid' => $spammer->id,
             'email'  => $spammerEmail,
         ]);
 
         DB::table('spam_users')->insert([
-            'userid'     => $spammerUserId,
+            'userid'     => $spammer->id,
             'collection' => 'Spammer',
         ]);
 
@@ -1938,15 +1930,21 @@ class ContentCheckTest extends TestCase
             'date'     => now(),
         ]);
 
-        // Insert 6 messages with same image hash in the last 24 hours
+        // Attach same hash to the message being checked
         $testHash = 'hash_' . uniqid();
-        for ($i = 0; $i < 6; $i++) {
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msgid,
+            'hash'  => $testHash,
+        ]);
+
+        // Insert 5 more messages with the same hash (6 total in 24h → flagged)
+        for ($i = 0; $i < 5; $i++) {
             $otherMsgid = DB::table('messages')->insertGetId([
                 'subject'  => "OFFER: Item $i",
                 'textbody' => 'Content',
                 'message'  => 'Content',
-                'arrival'  => now()->subHours($i),
-                'date'     => now()->subHours($i),
+                'arrival'  => now()->subHours($i + 1),
+                'date'     => now()->subHours($i + 1),
             ]);
             DB::table('messages_attachments')->insert([
                 'msgid' => $otherMsgid,
