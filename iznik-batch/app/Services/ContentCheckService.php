@@ -346,6 +346,18 @@ class ContentCheckService
         if (strlen($kwLower) > 1 && str_ends_with($kwLower, 'y')) {
             $variants[] = substr($kwLower, 0, -1) . 'ies';
         }
+        // CVC rule: for words ending consonant-vowel-consonant (e.g. "swap"),
+        // double the final consonant before -ed/-ing ("swapped", "swapping").
+        $vowels = 'aeiou';
+        $len    = strlen($kwLower);
+        if ($len >= 3) {
+            $last = $kwLower[$len - 1];
+            $pen  = $kwLower[$len - 2];
+            if (!str_contains($vowels, $last) && str_contains($vowels, $pen)) {
+                $variants[] = $kwLower . $last . 'ed';
+                $variants[] = $kwLower . $last . 'ing';
+            }
+        }
         return $variants;
     }
 
