@@ -207,12 +207,16 @@ func handleNearbyGroups() fiber.Handler {
 			      AND ST_Y(ST_Centroid(polyindex)) BETWEEN ? AND ?
 			    )
 			  )
+			ORDER BY contains_pt DESC,
+			         ST_Distance(polyindex,
+			             ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857)) ASC
 			LIMIT 60
 		`,
 			lngF, latF, // SELECT contains_pt  (WKT: POINT(lng lat))
 			lngF, latF, // WHERE ST_Contains
 			boxLngMin, boxLngMax, // centroid X = lng (degrees)
 			boxLatMin, boxLatMax, // centroid Y = lat (degrees)
+			lngF, latF, // ORDER BY distance from polygon boundary
 		)
 		if err != nil {
 			log.Printf("groups query: %v", err)
