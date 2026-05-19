@@ -3927,6 +3927,24 @@ jobs:
             echo "export KEYCHAIN_NAME=$KEYCHAIN_PATH" >> $BASH_ENV
             echo "export KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> $BASH_ENV
       - run:
+          name: Strip entitlements for ModTools
+          command: |
+            # The Freegle entitlements include Apple Pay, Sign in with Apple, and Universal
+            # Links — capabilities not in the ModTools provisioning profile. Replace with a
+            # minimal entitlements file containing only push notifications (aps-environment).
+            cat > ios/App/App/App.entitlements \<< 'ENTITLEMENTS'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+                <key>aps-environment</key>
+                <string>production</string>
+            </dict>
+            </plist>
+            ENTITLEMENTS
+            echo "✅ ModTools entitlements written"
+            cat ios/App/App/App.entitlements
+      - run:
           name: Build and Deploy ModTools to TestFlight
           command: |
             export TERM=xterm-256color
@@ -3944,6 +3962,16 @@ jobs:
               -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
               "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
             echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
+      - run:
+          name: Collect Xcode build logs
+          when: always
+          command: |
+            mkdir -p /tmp/xcode-logs
+            cp ~/Library/Logs/gym/*.log /tmp/xcode-logs/ 2>/dev/null || true
+            ls -la /tmp/xcode-logs/
+      - store_artifacts:
+          path: /tmp/xcode-logs
+          destination: xcode-logs
       - store_artifacts:
           path: build/
           destination: modtools-ios-build
