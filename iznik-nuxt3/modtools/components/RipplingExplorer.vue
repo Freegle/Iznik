@@ -256,7 +256,7 @@
       >
         <div
           class="rpl-leg-swatch"
-          style="background: none; border: 2px solid #005bb5"
+          style="background: none; border: 2px solid #27ae60"
         ></div>
         Freegle group
       </div>
@@ -867,9 +867,9 @@ onMounted(async () => {
   map.on('zoomend moveend', () => updateFairnessClip())
 
   map.on('moveend zoomend', () => {
-    if (ripplePlaying) return
     drawGroupsOverlay()
-    drawFreeglersLayer()
+    drawFreeglersLayer()  // always re-apply zoom gate (clears dots when zoomed out)
+    if (ripplePlaying) return  // skip expensive re-fetch during animation
     clearTimeout(freeglersMapTimer)
     freeglersMapTimer = setTimeout(async () => {
       await fetchFreeglers()
@@ -1120,18 +1120,16 @@ onMounted(async () => {
 
   function reachedGroupIds(isoData) {
     const reached = new Set()
-    const isoRings = allIsoRings(isoData)
-    if (isoRings.length === 0) return reached
+    // Use only the standard (un-adjusted) travel boundary to decide which groups
+    // have been reached.  Fairness-adjustment islands can extend to distant
+    // deprived towns and would otherwise falsely mark those groups as reached.
+    if (!isoData || !hasRing(isoData.standard)) return reached
+    const isoRing = isoData.standard.geometry.coordinates[0]
     for (const f of groupFeatures) {
       const gRing =
         f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]
       if (!gRing || gRing.length < 4) continue
-      for (const isoRing of isoRings) {
-        if (ringsOverlap(isoRing, gRing)) {
-          reached.add(f.properties.id)
-          break
-        }
-      }
+      if (ringsOverlap(isoRing, gRing)) reached.add(f.properties.id)
     }
     return reached
   }
@@ -1216,13 +1214,13 @@ onMounted(async () => {
       const id = f.properties.id
       if (!visibleIds.has(id)) return
       if (groupLayerMap[id]) return
-      const isHome = f.properties.contains
+      const isHome = f.properties.contains || id === nearestGroupId
       const latlngs = coords.map(([lng, lat]) => [lat, lng])
       groupLayerMap[id] = L.polygon(latlngs, {
         color: '#27ae60',
-        weight: 2,
+        weight: isHome ? 3 : 2,
         fillColor: '#27ae60',
-        fillOpacity: 0.04,
+        fillOpacity: isHome ? 0.10 : 0.05,
         dashArray: null,
       })
         .addTo(map)
@@ -1541,6 +1539,7 @@ onMounted(async () => {
       drawPolygons(data, Math.round(delay * 0.8))
       updateStats(data)
       updateFreeglersInside(data)
+      drawGroupsOverlay()
 
       const hours = frameToHours(rippleStep, rippleFrames.length)
       if (
