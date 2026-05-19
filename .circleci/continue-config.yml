@@ -17,9 +17,13 @@ parameters:
     type: boolean
     default: false
     description: "Set to true to run tests on a Katapult cloud runner (freegle/katapult-runner)"
+  build_modtools_production:
+    type: boolean
+    default: false
+    description: "Set to true to manually build and publish ModTools to Play Store / TestFlight"
 
 orbs:
-  freegle: freegle/tests@1
+  freegle: freegle/tests@1.1.306
 
 jobs:
   mark-ci-passed:
@@ -101,6 +105,13 @@ workflows:
               ignore:
                 - production
                 - modtools
+      - freegle/build-android-modtools-debug:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              only:
+                - master
 
   build-test-cloud:
     when:
@@ -154,13 +165,22 @@ workflows:
               ignore:
                 - production
                 - modtools
+      - freegle/build-android-modtools-debug:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              only:
+                - master
 
-  # Deploy apps when production branch is pushed
+  # Deploy apps when production branch is pushed — Freegle app only.
+  # ModTools is published separately via the manual modtools-production workflow.
   deploy-apps:
     when:
       and:
         - not: << pipeline.parameters.run_manual_promote >>
         - not: << pipeline.parameters.build_testflight >>
+        - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - freegle/increment-version:
           filters:
@@ -189,6 +209,20 @@ workflows:
             branches:
               only:
                 - production
+
+  # Manually-triggered ModTools production build and Play Store / TestFlight upload.
+  # Trigger by setting build_modtools_production: true in the CircleCI pipeline parameters UI.
+  # Does not run automatically — ModTools updates are infrequent and manually controlled.
+  modtools-production:
+    when: << pipeline.parameters.build_modtools_production >>
+    jobs:
+      - freegle/increment-version-modtools
+      - freegle/build-android-modtools:
+          requires:
+            - freegle/increment-version-modtools
+      - freegle/build-ios-modtools:
+          requires:
+            - freegle/increment-version-modtools
 
   # Manual promotion trigger
   manual-promote-submit:
@@ -236,6 +270,13 @@ workflows:
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
+      - freegle/build-android-modtools-debug:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              only:
+                - master
 
   # Build iOS for TestFlight from any branch
   testflight-branch:

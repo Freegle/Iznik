@@ -15,6 +15,10 @@ parameters:
     type: boolean
     default: false
     description: "Set to true to run tests on a Katapult cloud runner"
+  build_modtools_production:
+    type: boolean
+    default: false
+    description: "Set to true to manually build and publish ModTools to Play Store / TestFlight"
 
 orbs:
   continuation: circleci/continuation@2
@@ -81,11 +85,13 @@ jobs:
           name: Check self-hosted runner availability
           no_output_timeout: 30m
           command: |
-            # For manual promote or testflight, skip runner check — those workflows
-            # don't use the runner. Only pass use_self_hosted to avoid re-passing
-            # trigger parameters which causes "Conflicting pipeline parameters".
-            if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || [ "<< pipeline.parameters.build_testflight >>" = "true" ]; then
-              echo "Manual promote or testflight trigger — skipping runner check"
+            # For manual-only workflows, skip runner check — they use cloud executors (Android/macOS).
+            # Only pass use_self_hosted to avoid re-passing trigger parameters which causes
+            # "Conflicting pipeline parameters".
+            if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_testflight >>" = "true" ] || \
+               [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
+              echo "Manual workflow trigger — skipping self-hosted runner check"
               echo "{\"use_self_hosted\": false}" > /tmp/pipeline-params.json
               cat /tmp/pipeline-params.json
               exit 0

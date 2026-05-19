@@ -13,6 +13,10 @@ const mockMiscStore = {
   set: vi.fn(),
 }
 
+const mockMobileStore = {
+  isApp: false,
+}
+
 const mockMe = {
   displayname: 'Test User',
   email: 'test@example.com',
@@ -30,6 +34,10 @@ vi.mock('~/stores/auth', () => ({
 
 vi.mock('@/stores/misc', () => ({
   useMiscStore: () => mockMiscStore,
+}))
+
+vi.mock('~/stores/mobile', () => ({
+  useMobileStore: () => mockMobileStore,
 }))
 
 vi.mock('~/composables/useMe', () => ({
@@ -132,6 +140,8 @@ describe('ModSettingsPersonal', () => {
       modnotifs: 4,
       backupmodnotifs: 12,
     }
+
+    mockMobileStore.isApp = false
   })
 
   describe('rendering', () => {
@@ -522,4 +532,5 @@ describe('ModSettingsPersonal', () => {
       await expect(wrapper.vm.saveEmail(callback)).rejects.toThrow()
     })
   })
+
 })

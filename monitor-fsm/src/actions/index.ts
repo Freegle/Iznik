@@ -2252,7 +2252,8 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       // Note: 'investigating' means Edward has posted a fix — FSM should not duplicate that work.
       const db = getDb()
       const dbOpenBugs = (db.prepare(`
-        SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle, pr_rejections AS prRejections
+        SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle,
+               pr_rejections AS prRejections, symptom_tags AS symptomTagsJson
         FROM discourse_bug
         WHERE state = 'open' AND pr_number IS NULL
       `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
@@ -2287,6 +2288,25 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         return { _transition: 'COVERAGE_GATE', reason: `peak phase — no backlog bugs; deferring ${pendingCount} new bug(s) to off-peak` }
       }
 
+      // Recent merged PR dedup: skip bugs that appear already covered by a recently
+      // merged PR. The caller passes recentlyMergedPRs [{number, title}] in context.
+      // A bug is considered "covered" if any merged PR title contains its featureArea
+      // or any of its symptomTags as a substring (case-insensitive, min 3 chars).
+      const recentlyMergedPRs: Array<{ number: number; title: string }> =
+        Array.isArray(ctx?.recentlyMergedPRs) ? ctx.recentlyMergedPRs : []
+      const isLikelyCoveredByMergedPR = (bug: any): boolean => {
+        if (recentlyMergedPRs.length === 0) return false
+        let tags: string[] = []
+        try { tags = JSON.parse(bug.symptomTagsJson ?? '[]') } catch { /* ignore */ }
+        const area = (bug.featureArea ?? '').toLowerCase()
+        const signals = [...tags.map((t: string) => t.toLowerCase()), ...(area.length >= 3 ? [area] : [])]
+        if (signals.length === 0) return false
+        return recentlyMergedPRs.some(pr => {
+          const title = pr.title.toLowerCase()
+          return signals.some(s => s.length >= 3 && title.includes(s))
+        })
+      }
+
       // Dedup: skip bugs whose Discourse topic already has an active PR on another post,
       // or which are marked as duplicates. Cross-topic tag dedup is handled at persist
       // time; this handles the in-memory classifications path (seen this iteration).
@@ -2304,6 +2324,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
         .filter(b => !topicsWithActivePr.has(Number(b.topic)))
         .filter(b => !topicsWithMinePost.has(Number(b.topic)))
+        .filter(b => !isLikelyCoveredByMergedPR(b))
 
       if (allPending.length > 0) {
         // Dispatch ONE bug at a time (oldest first_seen_at). With a single self-hosted

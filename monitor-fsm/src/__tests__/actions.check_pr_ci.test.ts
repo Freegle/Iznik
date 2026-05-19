@@ -5,6 +5,7 @@ import { SCHEMA_SQL } from '../db/schema'
 
 // We'll mock the shell execution since this action calls gh cli
 let checkPRCIHandler: any
+let ciRouterDecideHandler: (params: Record<string, unknown>, context: Record<string, unknown>) => Promise<any>
 
 describe('check_my_open_pr_ci action', () => {
   let testDb: Database.Database
@@ -287,5 +288,135 @@ build	pending	0s	https://circleci.com/job/1	Build running
 
     expect(pending.failed.length).toBe(0)
     expect(pending.pending.length).toBe(1)
+  })
+})
+
+describe('ci_router_decide — onlyFixPR gate', () => {
+  beforeEach(async () => {
+    resetDbForTests()
+    getDb(':memory:')
+    const { actions } = await import('../actions/index.js')
+    const action = actions.find((a: any) => a.name === 'ci_router_decide')
+    ciRouterDecideHandler = action!.handler
+  })
+
+  afterEach(() => {
+    resetDbForTests()
+    vi.clearAllMocks()
+  })
+
+  it('sets onlyFixPR=true when there is a red focus PR', async () => {
+    const result = await ciRouterDecideHandler({}, {
+      _action_check_master_ci: { failing: false },
+      _action_check_my_open_pr_ci: {
+        redPRs: [{ number: 42 }],
+        pendingPRs: [],
+      },
+      _action_discover_active_topics: { topics: [] },
+      phase: 'analysis',
+    })
+
+    expect(result._transition).toBe('PARALLEL_ANALYZE_AND_FIX')
+    expect(result.onlyFixPR).toBe(true)
+    expect(result.focusPRNumber).toBe(42)
+  })
+
+  it('sets onlyFixPR=false when there are no red PRs', async () => {
+    const result = await ciRouterDecideHandler({}, {
+      _action_check_master_ci: { failing: false },
+      _action_check_my_open_pr_ci: {
+        redPRs: [],
+        pendingPRs: [],
+      },
+      _action_discover_active_topics: { topics: [] },
+      phase: 'analysis',
+    })
+
+    expect(result._transition).toBe('PARALLEL_ANALYZE_AND_FIX')
+    expect(result.onlyFixPR).toBe(false)
+    expect(result.focusPRNumber).toBeNull()
+  })
+
+  it('transitions to WRAP_UP when there are pending PRs (drain mode)', async () => {
+    const result = await ciRouterDecideHandler({}, {
+      _action_check_master_ci: { failing: false },
+      _action_check_my_open_pr_ci: {
+        redPRs: [],
+        pendingPRs: [{ number: 55 }],
+      },
+      _action_discover_active_topics: { topics: [] },
+      phase: 'analysis',
+    })
+
+    expect(result._transition).toBe('WRAP_UP')
+    expect(result.drainMode).toBe(true)
+  })
+
+  it('transitions to FIX_MASTER_CI when master is failing', async () => {
+    const result = await ciRouterDecideHandler({}, {
+      _action_check_master_ci: { failing: true, latestRun: { databaseId: 999 } },
+      _action_check_my_open_pr_ci: {
+        redPRs: [{ number: 42 }],
+        pendingPRs: [],
+      },
+      _action_discover_active_topics: { topics: [] },
+      phase: 'analysis',
+      masterFixAttempted: false,
+    })
+
+    expect(result._transition).toBe('FIX_MASTER_CI')
+  })
+
+  it('stays in PARALLEL_ANALYZE_AND_FIX if master fix already attempted', async () => {
+    const result = await ciRouterDecideHandler({}, {
+      _action_check_master_ci: { failing: true },
+      _action_check_my_open_pr_ci: {
+        redPRs: [{ number: 42 }],
+        pendingPRs: [],
+      },
+      _action_discover_active_topics: { topics: [] },
+      phase: 'analysis',
+      masterFixAttempted: true,
+    })
+
+    expect(result._transition).toBe('PARALLEL_ANALYZE_AND_FIX')
+    expect(result.onlyFixPR).toBe(true)
+  })
+
+  it('keeps focus on stored PR number when it is still red', async () => {
+    const db = getDb()
+    // Pre-set a stored focus PR
+    db.prepare('INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)').run('focus_pr_number', '42')
+
+    const result = await ciRouterDecideHandler({}, {
+      _action_check_master_ci: { failing: false },
+      _action_check_my_open_pr_ci: {
+        redPRs: [{ number: 42 }, { number: 99 }],
+        pendingPRs: [],
+      },
+      _action_discover_active_topics: { topics: [] },
+      phase: 'analysis',
+    })
+
+    expect(result.focusPRNumber).toBe(42)
+  })
+
+  it('advances to next red PR when stored focus is no longer red', async () => {
+    const db = getDb()
+    // Stored focus PR 42 is now green — only 99 is red
+    db.prepare('INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)').run('focus_pr_number', '42')
+
+    const result = await ciRouterDecideHandler({}, {
+      _action_check_master_ci: { failing: false },
+      _action_check_my_open_pr_ci: {
+        redPRs: [{ number: 99 }],
+        pendingPRs: [],
+      },
+      _action_discover_active_topics: { topics: [] },
+      phase: 'analysis',
+    })
+
+    expect(result.focusPRNumber).toBe(99)
+    expect(result.onlyFixPR).toBe(true)
   })
 })

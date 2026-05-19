@@ -60,6 +60,7 @@ import { useLogoStore } from '~/stores/logo'
 import { useLocationStore } from '~/stores/location'
 import { useShortlinkStore } from '~/stores/shortlinks'
 import { useMiscStore } from '~/stores/misc'
+import { useMobileStore } from '~/stores/mobile'
 import { useConfigStore } from '~/stores/config'
 // polyfills
 import 'core-js/actual/array/to-sorted'
@@ -91,6 +92,7 @@ const runtimeConfig = JSON.parse(
 )
 
 const miscStore = useMiscStore()
+const mobileStore = useMobileStore()
 const groupStore = useGroupStore()
 const messageStore = useMessageStore()
 const authStore = useAuthStore()
@@ -177,6 +179,7 @@ systemConfigStore.init(runtimeConfig)
 emailTrackingStore.init(runtimeConfig)
 
 miscStore.modtools = true
+mobileStore.init(runtimeConfig)
 
 // u/k impersonation login is handled in modtools/pages/login.vue.
 // The default layout navigates to /login with u/k preserved in query params.
