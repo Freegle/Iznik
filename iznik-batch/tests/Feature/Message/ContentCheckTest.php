@@ -350,29 +350,32 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
-    // checkPII — phone numbers
+    // checkPhoneNumbers — universal UK phone number detection
     // -------------------------------------------------------------------------
 
-    public function test_phone_number_in_body_with_restrict_rule_returns_reason(): void
+    public function test_phone_number_in_body_returns_reason(): void
     {
-        $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
-
-        $result = $this->service->checkPII('OFFER: Sofa', 'Call me on 07700 900123', $group->id);
+        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123');
 
         $this->assertNotNull($result);
         $this->assertEquals('PhoneNumber', $result['check']);
     }
 
-    public function test_phone_number_without_restrict_rule_returns_null(): void
+    public function test_phone_number_universal_check_always_flags(): void
     {
         $group = $this->createTestGroup();
 
-        $result = $this->service->checkPII('OFFER: Sofa', 'Call me on 07700 900123', $group->id);
+        $result = $this->service->checkPhoneNumbers('OFFER: Sofa', 'Call me on 07700 900123');
 
-        $this->assertNull($result);
+        $this->assertNotNull($result, 'Phone numbers should be flagged universally regardless of group rules');
+        $this->assertEquals('PhoneNumber', $result['check']);
     }
 
-    public function test_no_phone_in_body_returns_null(): void
+    // -------------------------------------------------------------------------
+    // checkPII — email addresses (phone numbers now checked universally)
+    // -------------------------------------------------------------------------
+
+    public function test_no_personal_info_in_body_returns_null(): void
     {
         $group = $this->createTestGroup(['rules' => ['restrictpersonalinfo' => true]]);
 
@@ -1155,6 +1158,207 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // checkSubjectRepeat — flag mass-submission spam (V1 parity)
+    // -------------------------------------------------------------------------
+
+    public function test_subject_repeat_flags_when_posted_to_30_groups(): void
+    {
+        $subject = 'OFFER: Spam subject test_sr';
+
+        // Create 30 groups
+        $groups = [];
+        for ($i = 0; $i < 30; $i++) {
+            $groups[] = $this->createTestGroup();
+        }
+
+        // Create one message
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => $subject,
+            'textbody' => 'Same spam content',
+            'message'  => 'Same spam content',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // Add it to 30 groups
+        foreach ($groups as $group) {
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => now(),
+                'deleted'    => 0,
+            ]);
+        }
+
+        $result = $this->service->checkSubjectRepeat($subject, $msgid);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('SubjectRepeat', $result['check']);
+    }
+
+    public function test_subject_repeat_not_flagged_for_29_groups(): void
+    {
+        $subject = 'OFFER: Below threshold test_sr';
+
+        // Create 29 groups (below SUBJECT_THRESHOLD of 30)
+        $groups = [];
+        for ($i = 0; $i < 29; $i++) {
+            $groups[] = $this->createTestGroup();
+        }
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => $subject,
+            'textbody' => 'Content',
+            'message'  => 'Content',
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        foreach ($groups as $group) {
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => now(),
+                'deleted'    => 0,
+            ]);
+        }
+
+        $result = $this->service->checkSubjectRepeat($subject, $msgid);
+
+        $this->assertNull($result, 'Subject posted to 29 groups should not be flagged (below threshold of 30)');
+    }
+
+    public function test_subject_repeat_not_flagged_for_old_messages(): void
+    {
+        $subject = 'OFFER: Old subject test_sr';
+
+        // Create 30 groups but with messages older than 7 days
+        $groups = [];
+        for ($i = 0; $i < 30; $i++) {
+            $groups[] = $this->createTestGroup();
+        }
+
+        $user = $this->createTestUser();
+        $oldDate = now()->subDays(8); // 8 days ago
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => $subject,
+            'textbody' => 'Old content',
+            'message'  => 'Old content',
+            'arrival'  => $oldDate,
+            'date'     => $oldDate,
+            'source'   => 'Platform',
+        ]);
+
+        foreach ($groups as $group) {
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => $oldDate,
+                'deleted'    => 0,
+            ]);
+        }
+
+        $result = $this->service->checkSubjectRepeat($subject, $msgid);
+
+        $this->assertNull($result, 'Subject older than 7 days should not be flagged');
+    }
+
+    // -------------------------------------------------------------------------
+    // checkKnownSpammer — flag messages containing spammer email (V1 parity)
+    // -------------------------------------------------------------------------
+
+    public function test_known_spammer_email_flags_message(): void
+    {
+        // Insert a known spammer user and their email
+        $spammerUserId = DB::table('users')->insertGetId([
+            'email' => 'spammer_' . uniqid() . '@example.com',
+            'type'  => 'User',
+        ]);
+
+        $spammerEmail = 'known.spammer' . uniqid() . '@spam.com';
+        DB::table('users_emails')->insert([
+            'userid' => $spammerUserId,
+            'email'  => $spammerEmail,
+        ]);
+
+        // Mark as known spammer
+        DB::table('spam_users')->insert([
+            'userid'     => $spammerUserId,
+            'collection' => 'Spammer',
+        ]);
+
+        // Message body containing the spammer's email
+        $textbody = "Contact me at $spammerEmail for more info";
+
+        $result = $this->service->checkKnownSpammer($textbody);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('KnownSpammer', $result['check']);
+        $this->assertStringContainsString($spammerEmail, $result['detail']);
+    }
+
+    public function test_known_spammer_multiple_emails_flags_on_first_match(): void
+    {
+        // Insert a known spammer
+        $spammerUserId = DB::table('users')->insertGetId([
+            'email' => 'spammer_user_' . uniqid() . '@example.com',
+            'type'  => 'User',
+        ]);
+
+        $spammerEmail = 'known.spammer.' . uniqid() . '@spam.com';
+        DB::table('users_emails')->insert([
+            'userid' => $spammerUserId,
+            'email'  => $spammerEmail,
+        ]);
+
+        DB::table('spam_users')->insert([
+            'userid'     => $spammerUserId,
+            'collection' => 'Spammer',
+        ]);
+
+        // Message with both legitimate and spammer emails
+        $textbody = "Email john@example.com or $spammerEmail for details";
+
+        $result = $this->service->checkKnownSpammer($textbody);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('KnownSpammer', $result['check']);
+    }
+
+    public function test_legitimate_email_not_flagged(): void
+    {
+        // Message with legitimate email (not in spam_users table)
+        $textbody = "Contact john@example.com for more info";
+
+        $result = $this->service->checkKnownSpammer($textbody);
+
+        $this->assertNull($result, 'Legitimate email should not be flagged');
+    }
+
+    public function test_no_email_returns_null(): void
+    {
+        $textbody = "Collection only, no contact info";
+
+        $result = $this->service->checkKnownSpammer($textbody);
+
+        $this->assertNull($result);
+    }
+
+    // -------------------------------------------------------------------------
     // checkUrls — flag untrusted URLs (V1 parity)
     // -------------------------------------------------------------------------
 
@@ -1283,5 +1487,609 @@ class ContentCheckTest extends TestCase
         $result = $this->service->checkLanguage('OFFER: Lamp', 'ok thanks');
 
         $this->assertNull($result);
+    }
+
+    // -------------------------------------------------------------------------
+    // checkIpAbuse — detect IP abuse (V1 Spam.php USER_THRESHOLD=5, GROUP_THRESHOLD=20 parity)
+    // -------------------------------------------------------------------------
+
+    public function test_ip_abuse_flags_when_used_by_6_users(): void
+    {
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+
+        // Create one message with this IP
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // Add 5 more messages from different users, same IP
+        for ($i = 0; $i < 5; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Another item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        // Now IP has been used by 6 different users — should flag
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNotNull($result, 'IP used by 6 users (> 5) should be flagged');
+        $this->assertEquals('IpAbuse', $result['check']);
+        $this->assertStringContainsString('6', $result['detail']);
+    }
+
+    public function test_ip_abuse_not_flagged_for_5_users(): void
+    {
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // Add 4 more messages from different users (total 5)
+        for ($i = 0; $i < 4; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Another item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull($result, 'IP used by 5 users should not be flagged (threshold is > 5)');
+    }
+
+    public function test_ip_abuse_flags_when_used_for_20_groups(): void
+    {
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $user = $this->createTestUser();
+
+        // Create one message with this IP
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // Add the message to 20 different groups
+        for ($i = 0; $i < 20; $i++) {
+            $group = $this->createTestGroup();
+            DB::table('messages_groups')->insert([
+                'msgid'      => $msgid,
+                'groupid'    => $group->id,
+                'collection' => 'Pending',
+                'arrival'    => now(),
+                'deleted'    => 0,
+            ]);
+        }
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNotNull($result, 'IP used to post to 20 groups (>= 20) should be flagged');
+        $this->assertEquals('IpAbuse', $result['check']);
+        $this->assertStringContainsString('20', $result['detail']);
+    }
+
+    public function test_ip_abuse_no_ip_returns_null(): void
+    {
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => NULL,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull($result, 'Message without IP should not be checked');
+    }
+
+    // -------------------------------------------------------------------------
+    // checkBulkVolunteerMail — detect bulk mailing to volunteer addresses (V1 Spam.php parity)
+    // -------------------------------------------------------------------------
+
+    public function test_bulk_volunteer_mail_flags_when_sender_mailed_20_addresses_in_24h(): void
+    {
+        $sender = 'bulk-sender-' . uniqid() . '@example.com';
+        $subject = 'Important notice for volunteers';
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser'    => $user->id,
+            'type'        => 'Admin',
+            'subject'     => $subject,
+            'textbody'    => 'Test body',
+            'message'     => 'Test body',
+            'envelopefrom' => $sender,
+            'envelopeto'  => 'group1-volunteers@ilovefreegle.org',
+            'arrival'     => now(),
+            'date'        => now(),
+            'source'      => 'Email',
+        ]);
+
+        // Create 19 more messages from same sender to different group volunteer addresses
+        for ($i = 1; $i < 20; $i++) {
+            DB::table('messages')->insert([
+                'fromuser'     => $user->id,
+                'type'         => 'Admin',
+                'subject'      => $subject,
+                'textbody'     => 'Test body',
+                'message'      => 'Test body',
+                'envelopefrom' => $sender,
+                'envelopeto'   => "group{$i}-volunteers@ilovefreegle.org",
+                'arrival'      => now(),
+                'date'         => now(),
+                'source'       => 'Email',
+            ]);
+        }
+
+        $result = $this->service->checkBulkVolunteerMail($subject, $msgid);
+
+        $this->assertNotNull($result, 'Sender mailing 20 group volunteer addresses in 24h should be flagged');
+        $this->assertEquals('BulkMail', $result['check']);
+        $this->assertStringContainsString($sender, $result['detail']);
+    }
+
+    public function test_bulk_volunteer_mail_flags_when_subject_sent_to_20_addresses_in_24h(): void
+    {
+        $subject = 'Bulk spam subject ' . uniqid();
+        $sender1 = 'sender1-' . uniqid() . '@example.com';
+        $sender2 = 'sender2-' . uniqid() . '@example.com';
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser'     => $user->id,
+            'type'         => 'Admin',
+            'subject'      => $subject,
+            'textbody'     => 'Test body',
+            'message'      => 'Test body',
+            'envelopefrom' => $sender1,
+            'envelopeto'   => 'group1-volunteers@ilovefreegle.org',
+            'arrival'      => now(),
+            'date'         => now(),
+            'source'       => 'Email',
+        ]);
+
+        // Create 10 messages from sender1 with same subject
+        for ($i = 1; $i < 10; $i++) {
+            DB::table('messages')->insert([
+                'fromuser'     => $user->id,
+                'type'         => 'Admin',
+                'subject'      => $subject,
+                'textbody'     => 'Test body',
+                'message'      => 'Test body',
+                'envelopefrom' => $sender1,
+                'envelopeto'   => "group{$i}-volunteers@ilovefreegle.org",
+                'arrival'      => now(),
+                'date'         => now(),
+                'source'       => 'Email',
+            ]);
+        }
+
+        // Create 10 messages from sender2 with same subject (different sender, same subject = spam)
+        for ($i = 10; $i < 20; $i++) {
+            DB::table('messages')->insert([
+                'fromuser'     => $user->id,
+                'type'         => 'Admin',
+                'subject'      => $subject,
+                'textbody'     => 'Test body',
+                'message'      => 'Test body',
+                'envelopefrom' => $sender2,
+                'envelopeto'   => "group{$i}-volunteers@ilovefreegle.org",
+                'arrival'      => now(),
+                'date'         => now(),
+                'source'       => 'Email',
+            ]);
+        }
+
+        $result = $this->service->checkBulkVolunteerMail($subject, $msgid);
+
+        $this->assertNotNull($result, 'Subject sent to 20 group volunteer addresses in 24h should be flagged');
+        $this->assertEquals('BulkMail', $result['check']);
+        $this->assertStringContainsString($subject, $result['detail']);
+    }
+
+    public function test_bulk_volunteer_mail_not_flagged_for_19_addresses(): void
+    {
+        $sender = 'sender-' . uniqid() . '@example.com';
+        $subject = 'Notice';
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser'     => $user->id,
+            'type'         => 'Admin',
+            'subject'      => $subject,
+            'textbody'     => 'Test body',
+            'message'      => 'Test body',
+            'envelopefrom' => $sender,
+            'envelopeto'   => 'group1-volunteers@ilovefreegle.org',
+            'arrival'      => now(),
+            'date'         => now(),
+            'source'       => 'Email',
+        ]);
+
+        // Create 18 more messages (total 19, below threshold of 20)
+        for ($i = 1; $i < 19; $i++) {
+            DB::table('messages')->insert([
+                'fromuser'     => $user->id,
+                'type'         => 'Admin',
+                'subject'      => $subject,
+                'textbody'     => 'Test body',
+                'message'      => 'Test body',
+                'envelopefrom' => $sender,
+                'envelopeto'   => "group{$i}-volunteers@ilovefreegle.org",
+                'arrival'      => now(),
+                'date'         => now(),
+                'source'       => 'Email',
+            ]);
+        }
+
+        $result = $this->service->checkBulkVolunteerMail($subject, $msgid);
+
+        $this->assertNull($result, 'Sender mailing 19 volunteer addresses (< 20) should not be flagged');
+    }
+
+    public function test_bulk_volunteer_mail_no_envelope_returns_null(): void
+    {
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser'     => $user->id,
+            'type'         => 'Offer',
+            'subject'      => 'OFFER: Item',
+            'textbody'     => 'Test body',
+            'message'      => 'Test body',
+            'envelopeto'   => NULL,
+            'arrival'      => now(),
+            'date'         => now(),
+            'source'       => 'Platform',
+        ]);
+
+        $result = $this->service->checkBulkVolunteerMail('Test', $msgid);
+
+        $this->assertNull($result, 'Message without envelopeto should not be checked');
+    }
+
+    public function test_bulk_volunteer_mail_not_volunteer_address_returns_null(): void
+    {
+        $sender = 'sender@example.com';
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser'     => $user->id,
+            'type'         => 'Offer',
+            'subject'      => 'OFFER: Item',
+            'textbody'     => 'Test body',
+            'message'      => 'Test body',
+            'envelopefrom' => $sender,
+            'envelopeto'   => 'regular-user@example.com',  // Not a volunteer address
+            'arrival'      => now(),
+            'date'         => now(),
+            'source'       => 'Platform',
+        ]);
+
+        $result = $this->service->checkBulkVolunteerMail('Test', $msgid);
+
+        $this->assertNull($result, 'Non-volunteer address should not be checked');
+    }
+}
+
+    // -------------------------------------------------------------------------
+    // checkGreetingSpam — greeting + link pattern (V1 Spam.php parity)
+    // -------------------------------------------------------------------------
+
+    public function test_greeting_with_http_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Hello! Check this deal', 'Visit http://example.com for more info');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_greeting_in_subject_with_link_in_body_flags(): void
+    {
+        $result = $this->service->checkGreetingSpam('Hi there', 'More details at https://www.example.com/offer');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_hey_greeting_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Hey!', 'Check http://spam.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_good_morning_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Good morning everyone', 'Visit our site http://deals.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_sup_greeting_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Sup guys', 'Check out https://example.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_greetings_greeting_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Greetings', 'Visit http://spam.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_good_afternoon_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Good afternoon friends', 'www.example.com has deals');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_good_evening_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Good evening', 'Check http://example.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_hello_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Hello', 'http://example.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_salutations_with_link_flags_message(): void
+    {
+        $result = $this->service->checkGreetingSpam('Salutations', 'Visit https://example.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    public function test_greeting_without_link_returns_null(): void
+    {
+        $result = $this->service->checkGreetingSpam('Hello friend', 'Collection from SW1A 1AA please');
+
+        $this->assertNull($result);
+    }
+
+    public function test_no_greeting_with_link_returns_null(): void
+    {
+        $result = $this->service->checkGreetingSpam('OFFER: Sofa', 'Visit http://example.com');
+
+        $this->assertNull($result);
+    }
+
+    public function test_greeting_case_insensitive(): void
+    {
+        $result = $this->service->checkGreetingSpam('HELLO', 'http://spam.com');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('GreetingSpam', $result['check']);
+    }
+
+    // -------------------------------------------------------------------------
+    // checkImageSpam — duplicate image hash in 24 hours (V1 parity)
+    // -------------------------------------------------------------------------
+
+    public function test_image_spam_detects_hash_used_6_times_in_24h(): void
+    {
+        $subject = 'OFFER: Item';
+        $msgid = DB::table('messages')->insertGetId([
+            'subject'  => $subject,
+            'textbody' => 'Some content',
+            'message'  => 'Some content',
+            'arrival'  => now(),
+            'date'     => now(),
+        ]);
+
+        // Insert 6 messages with same image hash in the last 24 hours
+        $testHash = 'hash_' . uniqid();
+        for ($i = 0; $i < 6; $i++) {
+            $otherMsgid = DB::table('messages')->insertGetId([
+                'subject'  => "OFFER: Item $i",
+                'textbody' => 'Content',
+                'message'  => 'Content',
+                'arrival'  => now()->subHours($i),
+                'date'     => now()->subHours($i),
+            ]);
+            DB::table('messages_attachments')->insert([
+                'msgid' => $otherMsgid,
+                'hash'  => $testHash,
+            ]);
+        }
+
+        $result = $this->service->checkImageSpam($msgid);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('ImageSpam', $result['check']);
+    }
+
+    public function test_image_spam_detects_hash_used_5_times_not_flagged(): void
+    {
+        $msgid = DB::table('messages')->insertGetId([
+            'subject'  => 'OFFER: Item',
+            'textbody' => 'Content',
+            'message'  => 'Content',
+            'arrival'  => now(),
+            'date'     => now(),
+        ]);
+
+        // Insert 5 messages (threshold is > 5, so 5 is OK)
+        $testHash = 'hash_' . uniqid();
+        for ($i = 0; $i < 5; $i++) {
+            $otherMsgid = DB::table('messages')->insertGetId([
+                'subject'  => "OFFER: Item $i",
+                'textbody' => 'Content',
+                'message'  => 'Content',
+                'arrival'  => now()->subHours($i),
+                'date'     => now()->subHours($i),
+            ]);
+            DB::table('messages_attachments')->insert([
+                'msgid' => $otherMsgid,
+                'hash'  => $testHash,
+            ]);
+        }
+
+        $result = $this->service->checkImageSpam($msgid);
+
+        $this->assertNull($result, 'Image used 5 times should not be flagged (threshold is > 5)');
+    }
+
+    public function test_image_spam_ignores_old_images(): void
+    {
+        $msgid = DB::table('messages')->insertGetId([
+            'subject'  => 'OFFER: Item',
+            'textbody' => 'Content',
+            'message'  => 'Content',
+            'arrival'  => now(),
+            'date'     => now(),
+        ]);
+
+        // Insert 6 messages but older than 24 hours
+        $testHash = 'hash_' . uniqid();
+        for ($i = 0; $i < 6; $i++) {
+            $otherMsgid = DB::table('messages')->insertGetId([
+                'subject'  => "OFFER: Item $i",
+                'textbody' => 'Content',
+                'message'  => 'Content',
+                'arrival'  => now()->subHours(25 + $i),
+                'date'     => now()->subHours(25 + $i),
+            ]);
+            DB::table('messages_attachments')->insert([
+                'msgid' => $otherMsgid,
+                'hash'  => $testHash,
+            ]);
+        }
+
+        $result = $this->service->checkImageSpam($msgid);
+
+        $this->assertNull($result, 'Images older than 24 hours should not be counted');
+    }
+
+    public function test_image_spam_no_attachments_returns_null(): void
+    {
+        $msgid = DB::table('messages')->insertGetId([
+            'subject'  => 'OFFER: Item',
+            'textbody' => 'Content',
+            'message'  => 'Content',
+            'arrival'  => now(),
+            'date'     => now(),
+        ]);
+
+        $result = $this->service->checkImageSpam($msgid);
+
+        $this->assertNull($result);
+    }
+
+    // -------------------------------------------------------------------------
+    // checkSpamhaus — Spamhaus DBL lookup (V1 Spam.php parity)
+    // -------------------------------------------------------------------------
+
+    public function test_spamhaus_blocked_domain_flags_message(): void
+    {
+        $result = $this->service->checkSpamhaus(
+            'OFFER: Item',
+            'Visit http://spam.example.com for deals',
+            // Provide a mock DNS lookup for testing
+            fn ($domain) => ['spam.example.com.zen.spamhaus.org' => ['type' => 'A', 'ip' => '127.0.0.2']]
+        );
+
+        $this->assertNotNull($result);
+        $this->assertEquals('SpamhausDBL', $result['check']);
+    }
+
+    public function test_spamhaus_allowed_domain_returns_null(): void
+    {
+        $result = $this->service->checkSpamhaus(
+            'OFFER: Item',
+            'Visit http://google.com for info',
+            fn ($domain) => [] // No DNS response = not blocked
+        );
+
+        $this->assertNull($result);
+    }
+
+    public function test_spamhaus_no_urls_returns_null(): void
+    {
+        $result = $this->service->checkSpamhaus(
+            'OFFER: Item',
+            'Collection from SW1A 1AA please'
+        );
+
+        $this->assertNull($result);
+    }
+
+    public function test_spamhaus_multiple_urls_flags_on_first_blocked(): void
+    {
+        $result = $this->service->checkSpamhaus(
+            'OFFER: Item',
+            'Check http://good.com and http://bad.com',
+            function ($domain) {
+                if (str_contains($domain, 'bad')) {
+                    return ['bad.com.zen.spamhaus.org' => ['type' => 'A', 'ip' => '127.0.0.2']];
+                }
+                return [];
+            }
+        );
+
+        $this->assertNotNull($result);
+        $this->assertEquals('SpamhausDBL', $result['check']);
     }
 }
