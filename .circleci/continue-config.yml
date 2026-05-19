@@ -5,22 +5,22 @@ parameters:
     type: boolean
     default: false
     description: "Set by setup workflow — true when self-hosted runner is online"
-  run_manual_promote:
+  do_manual_promote:
     type: boolean
     default: false
-    description: "Set to true to manually trigger promotion/submission workflow"
-  build_testflight:
+    description: "Passed by setup when run_manual_promote trigger was set"
+  do_testflight:
     type: boolean
     default: false
-    description: "Set to true to build iOS and upload to TestFlight from current branch"
+    description: "Passed by setup when build_testflight trigger was set"
   use_katapult:
     type: boolean
     default: false
     description: "Set to true to run tests on a Katapult cloud runner (freegle/katapult-runner)"
-  build_modtools_production:
+  do_modtools_production:
     type: boolean
     default: false
-    description: "Set to true to manually build and publish ModTools to Play Store / TestFlight"
+    description: "Passed by setup when build_modtools_production trigger was set"
 
 orbs:
   freegle: freegle/tests@1.1.306
@@ -56,8 +56,8 @@ workflows:
     when:
       and:
         - << pipeline.parameters.use_self_hosted >>
-        - not: << pipeline.parameters.run_manual_promote >>
-        - not: << pipeline.parameters.build_testflight >>
+        - not: << pipeline.parameters.do_manual_promote >>
+        - not: << pipeline.parameters.do_testflight >>
     jobs:
       - freegle/build-and-test:
           use-executor:
@@ -118,8 +118,8 @@ workflows:
       and:
         - not: << pipeline.parameters.use_self_hosted >>
         - not: << pipeline.parameters.use_katapult >>
-        - not: << pipeline.parameters.run_manual_promote >>
-        - not: << pipeline.parameters.build_testflight >>
+        - not: << pipeline.parameters.do_manual_promote >>
+        - not: << pipeline.parameters.do_testflight >>
     jobs:
       - freegle/build-and-test:
           post-steps:
@@ -178,9 +178,9 @@ workflows:
   deploy-apps:
     when:
       and:
-        - not: << pipeline.parameters.run_manual_promote >>
-        - not: << pipeline.parameters.build_testflight >>
-        - not: << pipeline.parameters.build_modtools_production >>
+        - not: << pipeline.parameters.do_manual_promote >>
+        - not: << pipeline.parameters.do_testflight >>
+        - not: << pipeline.parameters.do_modtools_production >>
     jobs:
       - freegle/increment-version:
           filters:
@@ -214,7 +214,7 @@ workflows:
   # Trigger by setting build_modtools_production: true in the CircleCI pipeline parameters UI.
   # Does not run automatically — ModTools updates are infrequent and manually controlled.
   modtools-production:
-    when: << pipeline.parameters.build_modtools_production >>
+    when: << pipeline.parameters.do_modtools_production >>
     jobs:
       - freegle/increment-version-modtools
       - freegle/build-android-modtools:
@@ -226,7 +226,7 @@ workflows:
 
   # Manual promotion trigger
   manual-promote-submit:
-    when: << pipeline.parameters.run_manual_promote >>
+    when: << pipeline.parameters.do_manual_promote >>
     jobs:
       - freegle/auto-promote-production:
           filters:
@@ -280,6 +280,6 @@ workflows:
 
   # Build iOS for TestFlight from any branch
   testflight-branch:
-    when: << pipeline.parameters.build_testflight >>
+    when: << pipeline.parameters.do_testflight >>
     jobs:
       - freegle/build-ios-testflight

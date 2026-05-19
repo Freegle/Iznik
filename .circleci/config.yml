@@ -90,19 +90,19 @@ jobs:
             # "Conflicting pipeline parameters".
             if [ "<< pipeline.parameters.run_manual_promote >>" = "true" ]; then
               echo "Manual workflow trigger (run_manual_promote) — skipping self-hosted runner check"
-              echo "{\"use_self_hosted\": false, \"run_manual_promote\": true}" > /tmp/pipeline-params.json
+              echo "{\"use_self_hosted\": false, \"do_manual_promote\": true}" > /tmp/pipeline-params.json
               cat /tmp/pipeline-params.json
               exit 0
             fi
             if [ "<< pipeline.parameters.build_testflight >>" = "true" ]; then
               echo "Manual workflow trigger (build_testflight) — skipping self-hosted runner check"
-              echo "{\"use_self_hosted\": false, \"build_testflight\": true}" > /tmp/pipeline-params.json
+              echo "{\"use_self_hosted\": false, \"do_testflight\": true}" > /tmp/pipeline-params.json
               cat /tmp/pipeline-params.json
               exit 0
             fi
             if [ "<< pipeline.parameters.build_modtools_production >>" = "true" ]; then
               echo "Manual workflow trigger (build_modtools_production) — skipping self-hosted runner check"
-              echo "{\"use_self_hosted\": false, \"build_modtools_production\": true}" > /tmp/pipeline-params.json
+              echo "{\"use_self_hosted\": false, \"do_modtools_production\": true}" > /tmp/pipeline-params.json
               cat /tmp/pipeline-params.json
               exit 0
             fi
