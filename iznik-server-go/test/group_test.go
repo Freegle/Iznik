@@ -314,6 +314,14 @@ func TestListGroupsWithSupport(t *testing.T) {
 	db.Exec("INSERT INTO logs (timestamp, groupid, type, subtype) VALUES (NOW(), ?, ?, ?)", groupID, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_APPROVED)
 	db.Exec("INSERT INTO logs (timestamp, groupid, type, subtype) VALUES (NOW(), ?, ?, ?)", groupID, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_APPROVED)
 
+	// Insert messages_groups rows for the moderated% test:
+	// 2 of 3 messages have approvedby set (manually moderated), 1 does not.
+	msgID1 := CreateTestMessage(t, adminID, groupID, prefix+"_modmsg1", 51.5074, -0.1278)
+	msgID2 := CreateTestMessage(t, adminID, groupID, prefix+"_modmsg2", 51.5074, -0.1278)
+	msgID3 := CreateTestMessage(t, adminID, groupID, prefix+"_modmsg3", 51.5074, -0.1278)
+	db.Exec("UPDATE messages_groups SET approvedby = ? WHERE msgid IN (?, ?)", adminID, msgID1, msgID2)
+	// msgID3 left with approvedby = NULL (not moderated)
+
 	// Request with support=true and admin JWT.
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/group?support=true&jwt="+token, nil))
 	assert.Equal(t, 200, resp.StatusCode)
@@ -347,6 +355,8 @@ func TestListGroupsWithSupport(t *testing.T) {
 	assert.Contains(t, found, "recentautoapproves")
 	assert.Contains(t, found, "recentmanualapproves")
 	assert.Contains(t, found, "recentautoapprovespercent")
+	assert.Contains(t, found, "recentmoderated")
+	assert.Contains(t, found, "recentmoderatedpercent")
 
 	// Verify the approve counts are sensible.
 	assert.Equal(t, float64(1), found["recentautoapproves"])
@@ -354,6 +364,13 @@ func TestListGroupsWithSupport(t *testing.T) {
 	assert.Equal(t, float64(1), found["recentmanualapproves"])
 	// Percent = 100*1/(1+1) = 50
 	assert.Equal(t, float64(50), found["recentautoapprovespercent"])
+
+	// Verify moderated count: 2 of 3 messages have approvedby set.
+	assert.Equal(t, float64(2), found["recentmoderated"])
+	// 2/3 * 100 ≈ 66.67
+	modPct, ok := found["recentmoderatedpercent"].(float64)
+	assert.True(t, ok)
+	assert.InDelta(t, 66.67, modPct, 0.5)
 
 	// Verify that activeownercount is returned correctly.
 	assert.Equal(t, float64(2), found["activeownercount"])
@@ -376,10 +393,14 @@ func TestListGroupsWithSupport(t *testing.T) {
 		assert.NotContains(t, regularGroups[0], "lastmoderated")
 		assert.NotContains(t, regularGroups[0], "activeownercount")
 		assert.NotContains(t, regularGroups[0], "recentautoapproves")
+		assert.NotContains(t, regularGroups[0], "recentmoderated")
+		assert.NotContains(t, regularGroups[0], "recentmoderatedpercent")
 	}
 
-	// Cleanup test log entries.
+	// Cleanup test data.
 	db.Exec("DELETE FROM logs WHERE groupid = ? AND type = 'Message' AND subtype IN ('Autoapproved', 'Approved')", groupID)
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?, ?)", msgID1, msgID2, msgID3)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?, ?)", msgID1, msgID2, msgID3)
 }
 
 func TestGetGroupWithShowmods(t *testing.T) {
