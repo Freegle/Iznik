@@ -128,7 +128,7 @@ platform :android do
 
   desc "Build and deploy ModTools to Google Play Beta Testing"
   lane :modtools_beta do
-    unless File.exist?('fastlane/modtools-google-play-api-key.json')
+    unless File.exist?('modtools-google-play-api-key.json')
       UI.user_error!("❌ CRITICAL: modtools-google-play-api-key.json not found")
     end
 
@@ -211,7 +211,7 @@ platform :android do
 
   desc "Build and deploy ModTools directly to Google Play Production"
   lane :modtools_production do
-    unless File.exist?('fastlane/modtools-google-play-api-key.json')
+    unless File.exist?('modtools-google-play-api-key.json')
       UI.user_error!("❌ CRITICAL: modtools-google-play-api-key.json not found")
     end
 
