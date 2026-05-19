@@ -20,6 +20,16 @@ class ContentCheckService
     public const CHECK_URL               = 'Url';
     public const CHECK_MONEY             = 'Money';
     public const CHECK_LANGUAGE          = 'Language';
+    public const CHECK_IP_ABUSE          = 'IpAbuse';
+    public const CHECK_BULK_MAIL         = 'BulkMail';
+    public const CHECK_SUBJECT_REPEAT    = 'SubjectRepeat';
+    public const CHECK_KNOWN_SPAMMER     = 'KnownSpammer';
+    public const CHECK_GREETING_SPAM     = 'GreetingSpam';
+    public const CHECK_IMAGE_SPAM        = 'ImageSpam';
+    public const CHECK_SPAMHAUS_DBL      = 'SpamhausDBL';
+
+    private const SUBJECT_THRESHOLD = 30;
+    private const SUBJECT_REPEAT_WINDOW = 7; // days
 
     private const VAGUE_KEYWORDS = [
         'stuff', 'things', 'items', 'junk', 'bits', 'various', 'misc',
@@ -36,6 +46,11 @@ class ContentCheckService
         'discord.gg',
         'discord.com/invite',
         'signal.group',
+    ];
+
+    private const GREETING_KEYWORDS = [
+        'hello', 'salutations', 'hey', 'good morning', 'sup',
+        'hi', 'good evening', 'good afternoon', 'greetings',
     ];
 
     /**
@@ -90,6 +105,18 @@ class ContentCheckService
             $reasons[] = $r;
         }
         if ($r = $this->checkLanguage($subject, $textbody)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkSubjectRepeat($subject, $msgid)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkKnownSpammer($textbody)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkIpAbuse($msgid)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkBulkVolunteerMail($subject, $msgid)) {
             $reasons[] = $r;
         }
 
@@ -729,6 +756,289 @@ class ContentCheckService
             }
         } catch (\Exception $e) {
             Log::warning('ContentCheck: language detection error: ' . $e->getMessage());
+        }
+
+        return null;
+    }
+
+    public function checkIpAbuse(int $msgid): ?array
+    {
+        $fromip = DB::table('messages')->where('id', $msgid)->value('fromip');
+
+        if (!$fromip) {
+            return null;
+        }
+
+        // IP used by 5+ different users
+        $userCount = DB::table('messages')
+            ->where('fromip', $fromip)
+            ->whereNotNull('fromuser')
+            ->distinct('fromuser')
+            ->count();
+
+        if ($userCount > 5) {
+            return [
+                'check'    => self::CHECK_IP_ABUSE,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => "IP {$fromip} recently used by {$userCount} different user accounts",
+            ];
+        }
+
+        // IP used to post to 20+ different groups
+        $groupCount = DB::table('messages_groups')
+            ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
+            ->where('messages.fromip', $fromip)
+            ->distinct('messages_groups.groupid')
+            ->count();
+
+        if ($groupCount >= 20) {
+            return [
+                'check'    => self::CHECK_IP_ABUSE,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => "IP {$fromip} recently used to post to {$groupCount} different groups",
+            ];
+        }
+
+        return null;
+    }
+
+    public function checkBulkVolunteerMail(string $subject, int $msgid): ?array
+    {
+        $msg = DB::table('messages')->where('id', $msgid)->first();
+
+        if (!$msg || !$msg->envelopeto) {
+            return null;
+        }
+
+        // Only check volunteer address messages
+        if (!str_contains($msg->envelopeto, '-volunteers@ilovefreegle.org')) {
+            return null;
+        }
+
+        // Check sender sending to 20+ volunteer addresses in 24h
+        $senderCount = DB::table('messages')
+            ->where('envelopefrom', $msg->envelopefrom)
+            ->where('envelopeto', 'like', '%-volunteers@ilovefreegle.org')
+            ->where('arrival', '>=', now()->subHours(24))
+            ->count();
+
+        if ($senderCount >= 20) {
+            return [
+                'check'    => self::CHECK_BULK_MAIL,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => "Sender {$msg->envelopefrom} has mailed {$senderCount} group volunteer addresses in 24h",
+            ];
+        }
+
+        // Check subject sent to 20+ volunteer addresses in 24h
+        $subjectCount = DB::table('messages')
+            ->where('subject', $subject)
+            ->where('envelopeto', 'like', '%-volunteers@ilovefreegle.org')
+            ->where('arrival', '>=', now()->subHours(24))
+            ->count();
+
+        if ($subjectCount >= 20) {
+            return [
+                'check'    => self::CHECK_BULK_MAIL,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => "Subject '{$subject}' has been sent to {$subjectCount} group volunteer addresses in 24h",
+            ];
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // checkSubjectRepeat — flag mass-submission spam (V1 parity)
+    // -------------------------------------------------------------------------
+
+    public function checkSubjectRepeat(string $subject, int $msgid): ?array
+    {
+        // Don't check very short subjects - might be something like "TAKEN"
+        if (strlen(trim($subject)) < 10) {
+            return null;
+        }
+
+        // Count distinct groups with same subject in the past N days
+        $distinctGroupCount = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->where('m.subject', $subject)
+            ->where('mg.arrival', '>=', now()->subDays(self::SUBJECT_REPEAT_WINDOW))
+            ->where('mg.deleted', 0)
+            ->distinct('mg.groupid')
+            ->count();
+
+        if ($distinctGroupCount >= self::SUBJECT_THRESHOLD) {
+            return [
+                'check'    => self::CHECK_SUBJECT_REPEAT,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => "Subject recently posted to {$distinctGroupCount} different groups",
+            ];
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // checkKnownSpammer — flag messages containing spammer email (V1 parity)
+    // -------------------------------------------------------------------------
+
+    public function checkKnownSpammer(string $textbody): ?array
+    {
+        // Extract all email addresses from the text
+        if (!preg_match_all('/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/', $textbody, $matches)) {
+            return null;
+        }
+
+        // Check each email against the spam_users table
+        foreach ($matches[0] as $email) {
+            $spammer = DB::table('spam_users')
+                ->join('users_emails', 'spam_users.userid', '=', 'users_emails.userid')
+                ->where('spam_users.collection', 'Spammer')
+                ->where('users_emails.email', $email)
+                ->first();
+
+            if ($spammer) {
+                return [
+                    'check'    => self::CHECK_KNOWN_SPAMMER,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => "Message references known spammer email: {$email}",
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // checkGreetingSpam — greeting + link pattern (V1 Spam.php parity)
+    // Detects classic spam pattern: greeting (hello, hi, hey, good X, etc.) + HTTP link
+    // -------------------------------------------------------------------------
+
+    public function checkGreetingSpam(string $subject, string $textbody): ?array
+    {
+        $text = strtolower($subject . ' ' . $textbody);
+
+        // Check for greeting in subject or first line of body
+        $hasGreeting = false;
+        foreach (self::GREETING_KEYWORDS as $greeting) {
+            if (str_contains($text, $greeting)) {
+                $hasGreeting = true;
+                break;
+            }
+        }
+
+        if (!$hasGreeting) {
+            return null;
+        }
+
+        // Check for HTTP/PHP link
+        if (preg_match('#https?://#i', $subject . ' ' . $textbody) ||
+            preg_match('#www\d{0,3}[.]#', $subject . ' ' . $textbody)) {
+            return [
+                'check'    => self::CHECK_GREETING_SPAM,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'Post contains greeting combined with HTTP link (classic spam pattern)',
+            ];
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // checkImageSpam — duplicate image hash in 24 hours (V1 MailRouter.php parity)
+    // Detects when the same image (by hash) has been used more than 5 times in 24h
+    // -------------------------------------------------------------------------
+
+    public function checkImageSpam(int $msgid): ?array
+    {
+        // Get all image hashes attached to this message
+        $hashes = DB::table('messages_attachments')
+            ->where('msgid', $msgid)
+            ->whereNotNull('hash')
+            ->pluck('hash')
+            ->toArray();
+
+        if (empty($hashes)) {
+            return null;
+        }
+
+        // For each hash, check if it's been used more than 5 times in the last 24 hours
+        foreach ($hashes as $hash) {
+            $count = DB::table('messages_attachments as ma')
+                ->join('messages as m', 'm.id', '=', 'ma.msgid')
+                ->where('ma.hash', $hash)
+                ->where('m.arrival', '>=', now()->subHours(24))
+                ->count();
+
+            if ($count > 5) {
+                return [
+                    'check'    => self::CHECK_IMAGE_SPAM,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => "Image hash {$hash} has been used {$count} times in the last 24 hours",
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // checkSpamhaus — Spamhaus DBL lookup (V1 Spam.php parity)
+    // For each URL in the message, do a DNS lookup: {domain}.zen.spamhaus.org
+    // If the lookup returns an A record (not NXDOMAIN), the domain is blocked.
+    //
+    // The dnsLookup parameter allows for test mocking. If not provided, uses PHP's
+    // dns_get_record() function. For testing, pass a closure that returns DNS results.
+    // -------------------------------------------------------------------------
+
+    public function checkSpamhaus(string $subject, string $textbody, ?callable $dnsLookup = null): ?array
+    {
+        $text = $subject . ' ' . $textbody;
+
+        // Extract URLs using the same pattern as checkUrls
+        if (!preg_match_all(self::URL_PATTERN, $text, $matches)) {
+            return null;
+        }
+
+        // Default DNS lookup using PHP's dns_get_record
+        if ($dnsLookup === null) {
+            $dnsLookup = function (string $domain): array {
+                $checkDomain = $domain . '.zen.spamhaus.org';
+                // Suppress warnings from dns_get_record
+                $result = @dns_get_record($checkDomain, DNS_A);
+                return $result ?: [];
+            };
+        }
+
+        foreach ($matches[0] as $url) {
+            // Extract domain from URL
+            $urlLower = strtolower($url);
+            // Remove protocol
+            $stripped = preg_replace('#^https?://#i', '', $urlLower);
+            // Remove trailing path
+            $domain = preg_replace('#/.*$#', '', $stripped);
+            // Remove www prefix for cleaner lookups
+            $domain = preg_replace('#^www\d{0,3}\.#', '', $domain);
+
+            // Check Spamhaus
+            $dnsResult = $dnsLookup($domain);
+            if (!empty($dnsResult)) {
+                return [
+                    'check'    => self::CHECK_SPAMHAUS_DBL,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => "Domain {$domain} is listed in Spamhaus DBL",
+                ];
+            }
         }
 
         return null;
