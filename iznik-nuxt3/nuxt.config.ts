@@ -541,12 +541,21 @@ export default defineNuxtConfig({
               org: 'freegle',
               // ModTools layer overrides this to 'modtools', base config uses 'nuxt3'
               project: config.IS_MT ? 'modtools' : 'nuxt3',
-              // Handle Sentry API timeouts (504s) gracefully - sourcemaps upload is the critical part
+              // Handle Sentry API errors (502/504/bad gateway) gracefully — sourcemaps
+              // upload is the critical artifact; release creation is supplementary.
+              // Still throw for non-API errors (wrong auth token, etc.) so real
+              // misconfigurations remain fatal.
               errorHandler: (err) => {
-                // Only log warning for gateway timeouts, fail for other errors
-                if (err.message && err.message.includes('504')) {
+                const msg = err.message || ''
+                if (
+                  msg.includes('502') ||
+                  msg.includes('504') ||
+                  msg.includes('bad gateway') ||
+                  msg.includes('API request failed')
+                ) {
                   console.warn(
-                    '⚠️ Sentry release finalize timed out (504) - sourcemaps were uploaded successfully'
+                    '⚠️ Sentry API error (non-fatal) - release creation skipped:',
+                    msg
                   )
                 } else {
                   throw err
