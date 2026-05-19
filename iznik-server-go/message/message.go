@@ -1696,6 +1696,12 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		stdmsgid = *req.Stdmsgid
 	}
 
+	// Write audit-log entry for each group this deletion affected.
+	for _, gid := range authorizedGroups {
+		ctx.Groupid = gid
+		logAndNotifyMods(db, flog.LOG_SUBTYPE_DELETED, ctx, myid, req.ID, 0, "")
+	}
+
 	// Queue email+log+push via background task for each authorized group.
 	// The batch processor will create the mod log entry and notify group moderators.
 	for _, gid := range authorizedGroups {
@@ -2851,11 +2857,18 @@ func DeleteMessageEndpoint(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
 
-	if fromuser != myid && !isModForMessage(db, myid, msgid) {
+	isMod := fromuser != myid && isModForMessage(db, myid, msgid)
+	if fromuser != myid && !isMod {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to delete this message")
 	}
 
 	db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", msgid)
+
+	// Write audit-log entry when a moderator deletes a message.
+	if isMod {
+		groupid := getPrimaryGroupForMessage(db, msgid)
+		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, groupid, fromuser, myid, msgid, 0, "")
+	}
 
 	// Remove from freebiealerts.app — post is no longer available.
 	if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{

@@ -31,7 +31,7 @@ export default defineEventHandler(async (event) => {
     testEnvPending[prefix] = (async () => {
       const { stdout } = await execAsync(
         `docker exec ${process.env.COMPOSE_PROJECT_NAME || 'freegle'}-apiv1 php /var/www/iznik/install/create-test-env.php ${prefix}`,
-        { encoding: 'utf8', timeout: 60000 }
+        { encoding: 'utf8', timeout: 120000 }
       )
       const env = JSON.parse(stdout.trim())
       testEnvCache[prefix] = env
