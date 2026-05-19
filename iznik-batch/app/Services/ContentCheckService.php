@@ -880,6 +880,13 @@ class ContentCheckService
         return null;
     }
 
+    /**
+     * Cap on user/group IDs we embed in an IpAbuse reason so the JSON stays
+     * small. Mods only need to spot patterns; the headline count is also kept
+     * in the detail string for chronic-abuse cases beyond the cap.
+     */
+    private const IP_ABUSE_ID_CAP = 50;
+
     public function checkIpAbuse(int $msgid): ?array
     {
         $fromip = DB::table('messages')->where('id', $msgid)->value('fromip');
@@ -896,11 +903,24 @@ class ContentCheckService
             ->count();
 
         if ($userCount > 5) {
+            $users = DB::table('messages')
+                ->where('fromip', $fromip)
+                ->whereNotNull('fromuser')
+                ->select('fromuser')
+                ->groupBy('fromuser')
+                ->orderByRaw('MAX(arrival) DESC')
+                ->limit(self::IP_ABUSE_ID_CAP)
+                ->pluck('fromuser')
+                ->map(fn($id) => (int) $id)
+                ->all();
+
             return [
                 'check'    => self::CHECK_IP_ABUSE,
                 'category' => null,
                 'action'   => 'flag',
                 'detail'   => "IP {$fromip} recently used by {$userCount} different user accounts",
+                'ip'       => $fromip,
+                'users'    => $users,
             ];
         }
 
@@ -912,11 +932,24 @@ class ContentCheckService
             ->count();
 
         if ($groupCount >= 20) {
+            $groups = DB::table('messages_groups')
+                ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
+                ->where('messages.fromip', $fromip)
+                ->select('messages_groups.groupid')
+                ->groupBy('messages_groups.groupid')
+                ->orderByRaw('MAX(messages_groups.arrival) DESC')
+                ->limit(self::IP_ABUSE_ID_CAP)
+                ->pluck('messages_groups.groupid')
+                ->map(fn($id) => (int) $id)
+                ->all();
+
             return [
                 'check'    => self::CHECK_IP_ABUSE,
                 'category' => null,
                 'action'   => 'flag',
                 'detail'   => "IP {$fromip} recently used to post to {$groupCount} different groups",
+                'ip'       => $fromip,
+                'groups'   => $groups,
             ];
         }
 
