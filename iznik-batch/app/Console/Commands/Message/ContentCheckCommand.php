@@ -15,7 +15,8 @@ class ContentCheckCommand extends Command
                             {--dry-run : Show decisions without making changes}
                             {--audit  : Scan Pending + Approved messages and report disagreements (read-only)}
                             {--group= : Restrict --audit to a single group ID}
-                            {--limit=500 : Max rows per collection to examine in --audit mode (0 = no limit)}';
+                            {--limit=500 : Max rows per collection to examine in --audit mode (0 = no limit)}
+                            {--since= : In --audit mode, only consider messages with arrival within the last N days}';
 
     protected $description = 'Process unprocessed pending messages through content checks';
 
@@ -52,13 +53,15 @@ class ContentCheckCommand extends Command
 
     private function runAudit(ContentCheckService $service): int
     {
-        $groupid = $this->option('group') !== null ? (int) $this->option('group') : null;
-        $limit   = (int) $this->option('limit');
+        $groupid   = $this->option('group') !== null ? (int) $this->option('group') : null;
+        $limit     = (int) $this->option('limit');
+        $sinceDays = $this->option('since') !== null ? (int) $this->option('since') : null;
 
-        $scope = $groupid ? "group #{$groupid}" : 'all groups';
-        $this->info("AUDIT MODE (read-only) — scanning Pending + Approved messages across {$scope}, limit {$limit} per collection...");
+        $scope  = $groupid ? "group #{$groupid}" : 'all groups';
+        $window = $sinceDays !== null && $sinceDays > 0 ? " within the last {$sinceDays} days" : '';
+        $this->info("AUDIT MODE (read-only) — scanning Pending + Approved messages across {$scope}{$window}, limit {$limit} per collection...");
 
-        $disagreements = $service->auditExisting($groupid, $limit);
+        $disagreements = $service->auditExisting($groupid, $limit, $sinceDays);
 
         if (empty($disagreements)) {
             $this->info('No disagreements found.');

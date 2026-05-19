@@ -7,14 +7,29 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use LanguageDetection\Language;
 
 class ContentCheckService
 {
-    public const CHECK_CONCERN_KEYWORD = 'ConcernKeyword';
-    public const CHECK_VAGUE           = 'Vague';
-    public const CHECK_PHONE_NUMBER    = 'PhoneNumber';
-    public const CHECK_EMAIL_ADDRESS   = 'EmailAddress';
-    public const CHECK_MESSAGING_LINK  = 'MessagingLink';
+    public const CHECK_CONCERN_KEYWORD    = 'ConcernKeyword';
+    public const CHECK_VAGUE             = 'Vague';
+    public const CHECK_PHONE_NUMBER      = 'PhoneNumber';
+    public const CHECK_EMAIL_ADDRESS     = 'EmailAddress';
+    public const CHECK_MESSAGING_LINK    = 'MessagingLink';
+    public const CHECK_PER_GROUP_WORRY   = 'PerGroupWorryWord';
+    public const CHECK_URL               = 'Url';
+    public const CHECK_MONEY             = 'Money';
+    public const CHECK_LANGUAGE          = 'Language';
+    public const CHECK_IP_ABUSE          = 'IpAbuse';
+    public const CHECK_BULK_MAIL         = 'BulkMail';
+    public const CHECK_SUBJECT_REPEAT    = 'SubjectRepeat';
+    public const CHECK_KNOWN_SPAMMER     = 'KnownSpammer';
+    public const CHECK_GREETING_SPAM     = 'GreetingSpam';
+    public const CHECK_IMAGE_SPAM        = 'ImageSpam';
+    public const CHECK_SPAMHAUS_DBL      = 'SpamhausDBL';
+
+    private const SUBJECT_THRESHOLD = 30;
+    private const SUBJECT_REPEAT_WINDOW = 7; // days
 
     private const VAGUE_KEYWORDS = [
         'stuff', 'things', 'items', 'junk', 'bits', 'various', 'misc',
@@ -31,6 +46,11 @@ class ContentCheckService
         'discord.gg',
         'discord.com/invite',
         'signal.group',
+    ];
+
+    private const GREETING_KEYWORDS = [
+        'hello', 'salutations', 'hey', 'good morning', 'sup',
+        'hi', 'good evening', 'good afternoon', 'greetings',
     ];
 
     /**
@@ -63,13 +83,40 @@ class ContentCheckService
         if ($r = $this->checkConcernKeywords($subject, $textbody, $groupid)) {
             $reasons[] = $r;
         }
+        if ($r = $this->checkPerGroupWorryWords($subject, $textbody, $groupid)) {
+            $reasons[] = $r;
+        }
         if ($r = $this->checkVagueItem($itemName)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkPhoneNumbers($subject, $textbody)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkPII($subject, $textbody, $groupid)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkMessagingLinks($subject, $textbody)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkUrls($subject, $textbody)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkMoneySymbols($subject, $textbody)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkLanguage($subject, $textbody)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkSubjectRepeat($subject, $msgid)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkKnownSpammer($textbody)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkIpAbuse($msgid)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkBulkVolunteerMail($subject, $msgid)) {
             $reasons[] = $r;
         }
 
@@ -234,11 +281,15 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // Fuzzy keyword matching — V1 WorryWords parity.
-    // Splits the haystack into tokens and accepts a token if its levenshtein
-    // distance from the keyword is ≤ 1 AND its length is within ±25% of the
-    // keyword length. This catches plurals and single-character typos without
-    // the false positives of bare str_contains (e.g. "hash" vs "hashtagging").
+    // Fuzzy keyword matching.
+    // Goal: catch plurals / common inflections / single-character typos without
+    // matching unrelated 1-edit neighbours of short keywords.
+    //
+    // For short keywords (< 6 chars) every levenshtein-1 neighbour is almost
+    // always a different word ("poof"↔"roof", "lend"↔"led", "cash"↔"case"),
+    // so we accept only exact matches and an explicit set of inflectional
+    // suffixes. For longer keywords (≥ 6 chars) we keep the levenshtein-1
+    // generosity since real typo-catching dominates the false-positive rate.
     // -------------------------------------------------------------------------
 
     private function matchesFuzzy(string $haystack, string $keyword): bool
@@ -249,15 +300,65 @@ class ContentCheckService
             return false;
         }
 
+        $variants = $this->inflectionVariants($kwLower);
+
         foreach (preg_split('/\s+/', $haystack, -1, PREG_SPLIT_NO_EMPTY) as $token) {
-            $tokLen = strlen($token);
-            $ratio  = $tokLen / $kwLen;
-            if ($ratio >= 0.75 && $ratio <= 1.25 && levenshtein($token, $kwLower) <= 1) {
+            // Strip common edge punctuation so "cash," or "(money)" still match.
+            $token = trim($token, ".,;:!?\"'()[]{}");
+            if ($token === '') {
+                continue;
+            }
+            $tokLow = strtolower($token);
+
+            if ($tokLow === $kwLower) {
                 return true;
+            }
+
+            if (in_array($tokLow, $variants, true)) {
+                return true;
+            }
+
+            if ($kwLen >= 6) {
+                $tokLen = strlen($tokLow);
+                $ratio  = $tokLen / $kwLen;
+                if ($ratio >= 0.75 && $ratio <= 1.25 && levenshtein($tokLow, $kwLower) <= 1) {
+                    return true;
+                }
             }
         }
 
         return false;
+    }
+
+    /**
+     * Return the inflectional variants we accept as equivalent to the keyword
+     * (plurals, -ing, -ed). Keeps the "catches plurals" intent of fuzzy mode
+     * without admitting arbitrary 1-edit neighbours.
+     */
+    private function inflectionVariants(string $kwLower): array
+    {
+        $variants = [
+            $kwLower . 's',
+            $kwLower . 'es',
+            $kwLower . 'ing',
+            $kwLower . 'ed',
+        ];
+        if (strlen($kwLower) > 1 && str_ends_with($kwLower, 'y')) {
+            $variants[] = substr($kwLower, 0, -1) . 'ies';
+        }
+        // CVC rule: for words ending consonant-vowel-consonant (e.g. "swap"),
+        // double the final consonant before -ed/-ing ("swapped", "swapping").
+        $vowels = 'aeiou';
+        $len    = strlen($kwLower);
+        if ($len >= 3) {
+            $last = $kwLower[$len - 1];
+            $pen  = $kwLower[$len - 2];
+            if (!str_contains($vowels, $last) && str_contains($vowels, $pen)) {
+                $variants[] = $kwLower . $last . 'ed';
+                $variants[] = $kwLower . $last . 'ing';
+            }
+        }
+        return $variants;
     }
 
     // -------------------------------------------------------------------------
@@ -363,7 +464,31 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // PII — phone numbers and email addresses (when group rule restrictpersonalinfo)
+    // Phone numbers — UK format check, applied to all messages.
+    // Requires a proper UK prefix (0, +44, or 0044) followed by 9–10 digits
+    // (with optional spaces/hyphens). This specificity avoids false positives
+    // from short numeric strings like flat numbers or times.
+    // -------------------------------------------------------------------------
+
+    public function checkPhoneNumbers(string $subject, string $textbody): ?array
+    {
+        $haystack = $subject . ' ' . $textbody;
+
+        if (preg_match('/\b(?:(?:\+44|0044)\s?|0)(?:\d[\s\-]?){9,10}\b/', $haystack)) {
+            return [
+                'check'    => self::CHECK_PHONE_NUMBER,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'Post contains what looks like a phone number',
+            ];
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // PII — external email addresses, only when group rule restrictpersonalinfo
+    // is set. Phone numbers are checked universally via checkPhoneNumbers().
     // -------------------------------------------------------------------------
 
     public function checkPII(string $subject, string $textbody, int $groupid): ?array
@@ -379,19 +504,18 @@ class ContentCheckService
 
         $haystack = $subject . ' ' . $textbody;
 
-        // UK phone number detection — broad pattern covering mobile and landline formats.
-        if (preg_match('/\b(?:(?:\+44|0044)\s?|0)(?:\d[\s\-]?){9,10}\b/', $haystack)) {
-            return ['check' => self::CHECK_PHONE_NUMBER, 'category' => null, 'detail' => 'Post contains what looks like a phone number'];
-        }
-
-        // External email address detection.
         if (preg_match('/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/', $haystack, $m)) {
-            $email   = $m[0];
-            $isOurs  = str_contains($email, '@ilovefreegle.org')
-                    || str_contains($email, 'trashnothing')
-                    || str_contains($email, 'yahoogroups');
+            $email  = $m[0];
+            $isOurs = str_contains($email, '@ilovefreegle.org')
+                   || str_contains($email, 'trashnothing')
+                   || str_contains($email, 'yahoogroups');
             if (!$isOurs) {
-                return ['check' => self::CHECK_EMAIL_ADDRESS, 'category' => null, 'detail' => 'Post contains an external email address'];
+                return [
+                    'check'    => self::CHECK_EMAIL_ADDRESS,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => 'Post contains an external email address',
+                ];
             }
         }
 
@@ -423,10 +547,11 @@ class ContentCheckService
      * Scan existing Pending and Approved messages and report where the content
      * check service disagrees with the current state.  Read-only — no DB writes.
      *
-     * @param int|null $groupid  Restrict audit to a single group (null = all groups).
-     * @param int      $limit    Max rows per collection to examine (0 = no limit).
+     * @param int|null $groupid    Restrict audit to a single group (null = all groups).
+     * @param int      $limit      Max rows per collection to examine (0 = no limit).
+     * @param int|null $sinceDays  Only consider rows with mg.arrival within the last N days (null = no time filter).
      */
-    public function auditExisting(?int $groupid = null, int $limit = 500): array
+    public function auditExisting(?int $groupid = null, int $limit = 500, ?int $sinceDays = null): array
     {
         $disagreements = [];
 
@@ -443,6 +568,11 @@ class ContentCheckService
 
             if ($groupid !== null) {
                 $query->where('mg.groupid', $groupid);
+            }
+
+            if ($sinceDays !== null && $sinceDays > 0) {
+                $query->where('mg.arrival', '>=', now()->subDays($sinceDays));
+                $query->orderByDesc('mg.arrival');
             }
 
             if ($limit > 0) {
@@ -483,5 +613,446 @@ class ContentCheckService
         }
 
         return $disagreements;
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-group worry words — comma-separated list in groups.settings JSON
+    // under the path $.spammers.worrywords (V1 WorryWords.php parity).
+    // Uses the same fuzzy matching as global concern keywords.
+    // -------------------------------------------------------------------------
+
+    public function checkPerGroupWorryWords(string $subject, string $textbody, int $groupid): ?array
+    {
+        $raw = DB::table('groups')
+            ->where('id', $groupid)
+            ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.spammers.worrywords')) AS worrywords")
+            ->value('worrywords');
+
+        if (!$raw || $raw === 'null') {
+            return null;
+        }
+
+        $words    = array_filter(array_map('trim', explode(',', $raw)));
+        $haystack = strtolower($subject . ' ' . $textbody);
+
+        foreach ($words as $word) {
+            if ($word === '') {
+                continue;
+            }
+            if ($this->matchesFuzzy($haystack, $word)) {
+                return [
+                    'check'    => self::CHECK_PER_GROUP_WORRY,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => "Matched per-group worry word '{$word}'",
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // URL detection — flag messages containing untrusted URLs (V1 Spam.php parity).
+    // Uses the same regex as V1's Utils::URL_PATTERN. Domains with count >= 3 in
+    // spam_whitelist_links (excluding known short-link services) are trusted.
+    // -------------------------------------------------------------------------
+
+    private const URL_PATTERN = '#(?i)\b(((?:(?:http|https):(?:/{1,3}|[a-z0-9%])|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'".,<>?«»“”‘’]))|(\.com\/))#m';
+
+    private const URL_SHORTLINK_BLOCKLIST = ['linkedin', 'goo.gl', 'bit.ly', 'tinyurl'];
+
+    public function checkUrls(string $subject, string $textbody): ?array
+    {
+        $text = $subject . ' ' . $textbody;
+
+        if (!preg_match_all(self::URL_PATTERN, $text, $matches)) {
+            return null;
+        }
+
+        $trustedDomains = DB::table('spam_whitelist_links')
+            ->where('count', '>=', 3)
+            ->where('domain', 'not like', '%linkedin%')
+            ->where('domain', 'not like', '%goo.gl%')
+            ->where('domain', 'not like', '%bit.ly%')
+            ->where('domain', 'not like', '%tinyurl%')
+            ->where(DB::raw('LENGTH(domain)'), '>', 5)
+            ->pluck('domain')
+            ->map(fn ($d) => strtolower($d))
+            ->toArray();
+
+        foreach ($matches[0] as $url) {
+            $lower = strtolower($url);
+            $stripped = preg_replace('#^https?://#i', '', $lower);
+
+            $trusted = false;
+            foreach ($trustedDomains as $domain) {
+                if (str_starts_with($stripped, $domain)) {
+                    $trusted = true;
+                    break;
+                }
+            }
+
+            if (!$trusted) {
+                return [
+                    'check'    => self::CHECK_URL,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => 'Post contains an untrusted URL',
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Money symbols — flag £ or $ in subject or body (V1 Spam.php parity).
+    // -------------------------------------------------------------------------
+
+    public function checkMoneySymbols(string $subject, string $textbody): ?array
+    {
+        $text = $subject . ' ' . $textbody;
+
+        if (str_contains($text, '£') || str_contains($text, '$')) {
+            return [
+                'check'    => self::CHECK_MONEY,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'Post contains a money symbol',
+            ];
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Language detection — flag non-English/Welsh messages over 50 chars
+    // (V1 Spam.php parity using patrickschur/language-detection).
+    // English is accepted if it is the top language, or if P(en|cy) >= 0.8 *
+    // P(top language) — the same lax threshold V1 uses.
+    // -------------------------------------------------------------------------
+
+    public function checkLanguage(string $subject, string $textbody): ?array
+    {
+        $text = trim(str_ireplace('xxx', '', strtolower($textbody)));
+
+        if (strlen($text) <= 50) {
+            return null;
+        }
+
+        try {
+            $ld   = new Language();
+            $lang = $ld->detect($text)->close();
+
+            if (empty($lang)) {
+                return null;
+            }
+
+            reset($lang);
+            $firstLang = key($lang);
+            $firstProb = $lang[$firstLang] ?? 0;
+            $enProb    = $lang['en'] ?? 0;
+            $cyProb    = $lang['cy'] ?? 0;
+            $ourProb   = max($enProb, $cyProb);
+
+            $isAcceptable = ($firstLang === 'en' || $firstLang === 'cy' || $ourProb >= 0.9 * $firstProb);
+
+            if (!$isAcceptable) {
+                return [
+                    'check'    => self::CHECK_LANGUAGE,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => "Post appears to be in language '{$firstLang}' rather than English or Welsh",
+                ];
+            }
+        } catch (\Exception $e) {
+            Log::warning('ContentCheck: language detection error: ' . $e->getMessage());
+        }
+
+        return null;
+    }
+
+    public function checkIpAbuse(int $msgid): ?array
+    {
+        $fromip = DB::table('messages')->where('id', $msgid)->value('fromip');
+
+        if (!$fromip) {
+            return null;
+        }
+
+        // IP used by 5+ different users
+        $userCount = DB::table('messages')
+            ->where('fromip', $fromip)
+            ->whereNotNull('fromuser')
+            ->distinct('fromuser')
+            ->count();
+
+        if ($userCount > 5) {
+            return [
+                'check'    => self::CHECK_IP_ABUSE,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => "IP {$fromip} recently used by {$userCount} different user accounts",
+            ];
+        }
+
+        // IP used to post to 20+ different groups
+        $groupCount = DB::table('messages_groups')
+            ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
+            ->where('messages.fromip', $fromip)
+            ->distinct('messages_groups.groupid')
+            ->count();
+
+        if ($groupCount >= 20) {
+            return [
+                'check'    => self::CHECK_IP_ABUSE,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => "IP {$fromip} recently used to post to {$groupCount} different groups",
+            ];
+        }
+
+        return null;
+    }
+
+    public function checkBulkVolunteerMail(string $subject, int $msgid): ?array
+    {
+        $msg = DB::table('messages')->where('id', $msgid)->first();
+
+        if (!$msg || !$msg->envelopeto) {
+            return null;
+        }
+
+        // Only check volunteer address messages
+        if (!str_contains($msg->envelopeto, '-volunteers@ilovefreegle.org')) {
+            return null;
+        }
+
+        // Check sender sending to 20+ volunteer addresses in 24h
+        $senderCount = DB::table('messages')
+            ->where('envelopefrom', $msg->envelopefrom)
+            ->where('envelopeto', 'like', '%-volunteers@ilovefreegle.org')
+            ->where('arrival', '>=', now()->subHours(24))
+            ->count();
+
+        if ($senderCount >= 20) {
+            return [
+                'check'    => self::CHECK_BULK_MAIL,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => "Sender {$msg->envelopefrom} has mailed {$senderCount} group volunteer addresses in 24h",
+            ];
+        }
+
+        // Check subject sent to 20+ volunteer addresses in 24h
+        $subjectCount = DB::table('messages')
+            ->where('subject', $subject)
+            ->where('envelopeto', 'like', '%-volunteers@ilovefreegle.org')
+            ->where('arrival', '>=', now()->subHours(24))
+            ->count();
+
+        if ($subjectCount >= 20) {
+            return [
+                'check'    => self::CHECK_BULK_MAIL,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => "Subject '{$subject}' has been sent to {$subjectCount} group volunteer addresses in 24h",
+            ];
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // checkSubjectRepeat — flag mass-submission spam (V1 parity)
+    // -------------------------------------------------------------------------
+
+    public function checkSubjectRepeat(string $subject, int $msgid): ?array
+    {
+        // Don't check very short subjects - might be something like "TAKEN"
+        if (strlen(trim($subject)) < 10) {
+            return null;
+        }
+
+        // Count distinct groups with same subject in the past N days
+        $distinctGroupCount = DB::table('messages_groups as mg')
+            ->join('messages as m', 'm.id', '=', 'mg.msgid')
+            ->where('m.subject', $subject)
+            ->where('mg.arrival', '>=', now()->subDays(self::SUBJECT_REPEAT_WINDOW))
+            ->where('mg.deleted', 0)
+            ->distinct('mg.groupid')
+            ->count();
+
+        if ($distinctGroupCount >= self::SUBJECT_THRESHOLD) {
+            return [
+                'check'    => self::CHECK_SUBJECT_REPEAT,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => "Subject recently posted to {$distinctGroupCount} different groups",
+            ];
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // checkKnownSpammer — flag messages containing spammer email (V1 parity)
+    // -------------------------------------------------------------------------
+
+    public function checkKnownSpammer(string $textbody): ?array
+    {
+        // Extract all email addresses from the text
+        if (!preg_match_all('/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/', $textbody, $matches)) {
+            return null;
+        }
+
+        // Check each email against the spam_users table
+        foreach ($matches[0] as $email) {
+            $spammer = DB::table('spam_users')
+                ->join('users_emails', 'spam_users.userid', '=', 'users_emails.userid')
+                ->where('spam_users.collection', 'Spammer')
+                ->where('users_emails.email', $email)
+                ->first();
+
+            if ($spammer) {
+                return [
+                    'check'    => self::CHECK_KNOWN_SPAMMER,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => "Message references known spammer email: {$email}",
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // checkGreetingSpam — greeting + link pattern (V1 Spam.php parity)
+    // Detects classic spam pattern: greeting (hello, hi, hey, good X, etc.) + HTTP link
+    // -------------------------------------------------------------------------
+
+    public function checkGreetingSpam(string $subject, string $textbody): ?array
+    {
+        $text = strtolower($subject . ' ' . $textbody);
+
+        // Check for greeting in subject or first line of body
+        $hasGreeting = false;
+        foreach (self::GREETING_KEYWORDS as $greeting) {
+            if (str_contains($text, $greeting)) {
+                $hasGreeting = true;
+                break;
+            }
+        }
+
+        if (!$hasGreeting) {
+            return null;
+        }
+
+        // Check for HTTP/PHP link
+        if (preg_match('#https?://#i', $subject . ' ' . $textbody) ||
+            preg_match('#www\d{0,3}[.]#', $subject . ' ' . $textbody)) {
+            return [
+                'check'    => self::CHECK_GREETING_SPAM,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'Post contains greeting combined with HTTP link (classic spam pattern)',
+            ];
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // checkImageSpam — duplicate image hash in 24 hours (V1 MailRouter.php parity)
+    // Detects when the same image (by hash) has been used more than 5 times in 24h
+    // -------------------------------------------------------------------------
+
+    public function checkImageSpam(int $msgid): ?array
+    {
+        // Get all image hashes attached to this message
+        $hashes = DB::table('messages_attachments')
+            ->where('msgid', $msgid)
+            ->whereNotNull('hash')
+            ->pluck('hash')
+            ->toArray();
+
+        if (empty($hashes)) {
+            return null;
+        }
+
+        // For each hash, check if it's been used more than 5 times in the last 24 hours
+        foreach ($hashes as $hash) {
+            $count = DB::table('messages_attachments as ma')
+                ->join('messages as m', 'm.id', '=', 'ma.msgid')
+                ->where('ma.hash', $hash)
+                ->where('m.arrival', '>=', now()->subHours(24))
+                ->count();
+
+            if ($count > 5) {
+                return [
+                    'check'    => self::CHECK_IMAGE_SPAM,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => "Image hash {$hash} has been used {$count} times in the last 24 hours",
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // checkSpamhaus — Spamhaus DBL lookup (V1 Spam.php parity)
+    // For each URL in the message, do a DNS lookup: {domain}.zen.spamhaus.org
+    // If the lookup returns an A record (not NXDOMAIN), the domain is blocked.
+    //
+    // The dnsLookup parameter allows for test mocking. If not provided, uses PHP's
+    // dns_get_record() function. For testing, pass a closure that returns DNS results.
+    // -------------------------------------------------------------------------
+
+    public function checkSpamhaus(string $subject, string $textbody, ?callable $dnsLookup = null): ?array
+    {
+        $text = $subject . ' ' . $textbody;
+
+        // Extract URLs using the same pattern as checkUrls
+        if (!preg_match_all(self::URL_PATTERN, $text, $matches)) {
+            return null;
+        }
+
+        // Default DNS lookup using PHP's dns_get_record
+        if ($dnsLookup === null) {
+            $dnsLookup = function (string $domain): array {
+                $checkDomain = $domain . '.zen.spamhaus.org';
+                // Suppress warnings from dns_get_record
+                $result = @dns_get_record($checkDomain, DNS_A);
+                return $result ?: [];
+            };
+        }
+
+        foreach ($matches[0] as $url) {
+            // Extract domain from URL
+            $urlLower = strtolower($url);
+            // Remove protocol
+            $stripped = preg_replace('#^https?://#i', '', $urlLower);
+            // Remove trailing path
+            $domain = preg_replace('#/.*$#', '', $stripped);
+            // Remove www prefix for cleaner lookups
+            $domain = preg_replace('#^www\d{0,3}\.#', '', $domain);
+
+            // Check Spamhaus
+            $dnsResult = $dnsLookup($domain);
+            if (!empty($dnsResult)) {
+                return [
+                    'check'    => self::CHECK_SPAMHAUS_DBL,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => "Domain {$domain} is listed in Spamhaus DBL",
+                ];
+            }
+        }
+
+        return null;
     }
 }

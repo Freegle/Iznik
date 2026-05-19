@@ -72,3 +72,4 @@ freegle-mobile/
 
 # Local Claude session log (not committed — updates here don't make PRs go BEHIND)
 .claude-session.md
+monitor.db
