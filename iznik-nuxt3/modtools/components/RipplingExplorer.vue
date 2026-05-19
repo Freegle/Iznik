@@ -463,6 +463,7 @@ onMounted(async () => {
   }
 
   function setLocation(lat, lng, fly) {
+    if (ripplePlaying || rippleFrames.length > 0) stopRipple()
     currentLat = lat
     currentLng = lng
     if (marker) map.removeLayer(marker)
