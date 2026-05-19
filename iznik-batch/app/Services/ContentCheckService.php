@@ -7,14 +7,19 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use LanguageDetection\Language;
 
 class ContentCheckService
 {
-    public const CHECK_CONCERN_KEYWORD = 'ConcernKeyword';
-    public const CHECK_VAGUE           = 'Vague';
-    public const CHECK_PHONE_NUMBER    = 'PhoneNumber';
-    public const CHECK_EMAIL_ADDRESS   = 'EmailAddress';
-    public const CHECK_MESSAGING_LINK  = 'MessagingLink';
+    public const CHECK_CONCERN_KEYWORD    = 'ConcernKeyword';
+    public const CHECK_VAGUE             = 'Vague';
+    public const CHECK_PHONE_NUMBER      = 'PhoneNumber';
+    public const CHECK_EMAIL_ADDRESS     = 'EmailAddress';
+    public const CHECK_MESSAGING_LINK    = 'MessagingLink';
+    public const CHECK_PER_GROUP_WORRY   = 'PerGroupWorryWord';
+    public const CHECK_URL               = 'Url';
+    public const CHECK_MONEY             = 'Money';
+    public const CHECK_LANGUAGE          = 'Language';
 
     private const VAGUE_KEYWORDS = [
         'stuff', 'things', 'items', 'junk', 'bits', 'various', 'misc',
@@ -63,13 +68,28 @@ class ContentCheckService
         if ($r = $this->checkConcernKeywords($subject, $textbody, $groupid)) {
             $reasons[] = $r;
         }
+        if ($r = $this->checkPerGroupWorryWords($subject, $textbody, $groupid)) {
+            $reasons[] = $r;
+        }
         if ($r = $this->checkVagueItem($itemName)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkPhoneNumbers($subject, $textbody)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkPII($subject, $textbody, $groupid)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkMessagingLinks($subject, $textbody)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkUrls($subject, $textbody)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkMoneySymbols($subject, $textbody)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkLanguage($subject, $textbody)) {
             $reasons[] = $r;
         }
 
@@ -405,7 +425,31 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // PII — phone numbers and email addresses (when group rule restrictpersonalinfo)
+    // Phone numbers — UK format check, applied to all messages.
+    // Requires a proper UK prefix (0, +44, or 0044) followed by 9–10 digits
+    // (with optional spaces/hyphens). This specificity avoids false positives
+    // from short numeric strings like flat numbers or times.
+    // -------------------------------------------------------------------------
+
+    public function checkPhoneNumbers(string $subject, string $textbody): ?array
+    {
+        $haystack = $subject . ' ' . $textbody;
+
+        if (preg_match('/\b(?:(?:\+44|0044)\s?|0)(?:\d[\s\-]?){9,10}\b/', $haystack)) {
+            return [
+                'check'    => self::CHECK_PHONE_NUMBER,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'Post contains what looks like a phone number',
+            ];
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // PII — external email addresses, only when group rule restrictpersonalinfo
+    // is set. Phone numbers are checked universally via checkPhoneNumbers().
     // -------------------------------------------------------------------------
 
     public function checkPII(string $subject, string $textbody, int $groupid): ?array
@@ -421,19 +465,18 @@ class ContentCheckService
 
         $haystack = $subject . ' ' . $textbody;
 
-        // UK phone number detection — broad pattern covering mobile and landline formats.
-        if (preg_match('/\b(?:(?:\+44|0044)\s?|0)(?:\d[\s\-]?){9,10}\b/', $haystack)) {
-            return ['check' => self::CHECK_PHONE_NUMBER, 'category' => null, 'detail' => 'Post contains what looks like a phone number'];
-        }
-
-        // External email address detection.
         if (preg_match('/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/', $haystack, $m)) {
-            $email   = $m[0];
-            $isOurs  = str_contains($email, '@ilovefreegle.org')
-                    || str_contains($email, 'trashnothing')
-                    || str_contains($email, 'yahoogroups');
+            $email  = $m[0];
+            $isOurs = str_contains($email, '@ilovefreegle.org')
+                   || str_contains($email, 'trashnothing')
+                   || str_contains($email, 'yahoogroups');
             if (!$isOurs) {
-                return ['check' => self::CHECK_EMAIL_ADDRESS, 'category' => null, 'detail' => 'Post contains an external email address'];
+                return [
+                    'check'    => self::CHECK_EMAIL_ADDRESS,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => 'Post contains an external email address',
+                ];
             }
         }
 
@@ -531,5 +574,163 @@ class ContentCheckService
         }
 
         return $disagreements;
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-group worry words — comma-separated list in groups.settings JSON
+    // under the path $.spammers.worrywords (V1 WorryWords.php parity).
+    // Uses the same fuzzy matching as global concern keywords.
+    // -------------------------------------------------------------------------
+
+    public function checkPerGroupWorryWords(string $subject, string $textbody, int $groupid): ?array
+    {
+        $raw = DB::table('groups')
+            ->where('id', $groupid)
+            ->selectRaw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.spammers.worrywords')) AS worrywords")
+            ->value('worrywords');
+
+        if (!$raw || $raw === 'null') {
+            return null;
+        }
+
+        $words    = array_filter(array_map('trim', explode(',', $raw)));
+        $haystack = strtolower($subject . ' ' . $textbody);
+
+        foreach ($words as $word) {
+            if ($word === '') {
+                continue;
+            }
+            if ($this->matchesFuzzy($haystack, $word)) {
+                return [
+                    'check'    => self::CHECK_PER_GROUP_WORRY,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => "Matched per-group worry word '{$word}'",
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // URL detection — flag messages containing untrusted URLs (V1 Spam.php parity).
+    // Uses the same regex as V1's Utils::URL_PATTERN. Domains with count >= 3 in
+    // spam_whitelist_links (excluding known short-link services) are trusted.
+    // -------------------------------------------------------------------------
+
+    private const URL_PATTERN = '#(?i)\b(((?:(?:http|https):(?:/{1,3}|[a-z0-9%])|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:\'".,<>?«»""'']))|(\.com\/))#m';
+
+    private const URL_SHORTLINK_BLOCKLIST = ['linkedin', 'goo.gl', 'bit.ly', 'tinyurl'];
+
+    public function checkUrls(string $subject, string $textbody): ?array
+    {
+        $text = $subject . ' ' . $textbody;
+
+        if (!preg_match_all(self::URL_PATTERN, $text, $matches)) {
+            return null;
+        }
+
+        $trustedDomains = DB::table('spam_whitelist_links')
+            ->where('count', '>=', 3)
+            ->where('domain', 'not like', '%linkedin%')
+            ->where('domain', 'not like', '%goo.gl%')
+            ->where('domain', 'not like', '%bit.ly%')
+            ->where('domain', 'not like', '%tinyurl%')
+            ->where(DB::raw('LENGTH(domain)'), '>', 5)
+            ->pluck('domain')
+            ->map(fn ($d) => strtolower($d))
+            ->toArray();
+
+        foreach ($matches[0] as $url) {
+            $lower = strtolower($url);
+            $stripped = preg_replace('#^https?://#i', '', $lower);
+
+            $trusted = false;
+            foreach ($trustedDomains as $domain) {
+                if (str_starts_with($stripped, $domain)) {
+                    $trusted = true;
+                    break;
+                }
+            }
+
+            if (!$trusted) {
+                return [
+                    'check'    => self::CHECK_URL,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => 'Post contains an untrusted URL',
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Money symbols — flag £ or $ in subject or body (V1 Spam.php parity).
+    // -------------------------------------------------------------------------
+
+    public function checkMoneySymbols(string $subject, string $textbody): ?array
+    {
+        $text = $subject . ' ' . $textbody;
+
+        if (str_contains($text, '£') || str_contains($text, '$')) {
+            return [
+                'check'    => self::CHECK_MONEY,
+                'category' => null,
+                'action'   => 'flag',
+                'detail'   => 'Post contains a money symbol',
+            ];
+        }
+
+        return null;
+    }
+
+    // -------------------------------------------------------------------------
+    // Language detection — flag non-English/Welsh messages over 50 chars
+    // (V1 Spam.php parity using patrickschur/language-detection).
+    // English is accepted if it is the top language, or if P(en|cy) >= 0.8 *
+    // P(top language) — the same lax threshold V1 uses.
+    // -------------------------------------------------------------------------
+
+    public function checkLanguage(string $subject, string $textbody): ?array
+    {
+        $text = trim(str_ireplace('xxx', '', strtolower($textbody)));
+
+        if (strlen($text) <= 50) {
+            return null;
+        }
+
+        try {
+            $ld   = new Language();
+            $lang = $ld->detect($text)->close();
+
+            if (empty($lang)) {
+                return null;
+            }
+
+            reset($lang);
+            $firstLang = key($lang);
+            $firstProb = $lang[$firstLang] ?? 0;
+            $enProb    = $lang['en'] ?? 0;
+            $cyProb    = $lang['cy'] ?? 0;
+            $ourProb   = max($enProb, $cyProb);
+
+            $isAcceptable = ($firstLang === 'en' || $firstLang === 'cy' || $ourProb >= 0.8 * $firstProb);
+
+            if (!$isAcceptable) {
+                return [
+                    'check'    => self::CHECK_LANGUAGE,
+                    'category' => null,
+                    'action'   => 'flag',
+                    'detail'   => "Post appears to be in language '{$firstLang}' rather than English or Welsh",
+                ];
+            }
+        } catch (\Exception $e) {
+            Log::warning('ContentCheck: language detection error: ' . $e->getMessage());
+        }
+
+        return null;
     }
 }

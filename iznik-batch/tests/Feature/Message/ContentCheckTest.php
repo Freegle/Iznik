@@ -1079,4 +1079,209 @@ class ContentCheckTest extends TestCase
             'arrival must not be reset to now() when promoting to Approved'
         );
     }
+
+    // -------------------------------------------------------------------------
+    // checkPerGroupWorryWords — per-group worry words from groups.settings
+    // -------------------------------------------------------------------------
+
+    public function test_per_group_worry_word_flags_message(): void
+    {
+        $group = $this->createTestGroup([
+            'settings' => json_encode(['spammers' => ['worrywords' => 'badtestword_cc,anotherbadword_cc']]),
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords('OFFER: badtestword_cc item', 'Some body text', $group->id);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('PerGroupWorryWord', $result['check']);
+        $this->assertStringContainsString('badtestword_cc', $result['detail']);
+    }
+
+    public function test_per_group_worry_word_second_word_in_list_matches(): void
+    {
+        $group = $this->createTestGroup([
+            'settings' => json_encode(['spammers' => ['worrywords' => 'badtestword_cc,anotherbadword_cc']]),
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords('OFFER: Lamp', 'anotherbadword_cc for sale', $group->id);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('PerGroupWorryWord', $result['check']);
+    }
+
+    public function test_per_group_worry_word_not_flagged_for_other_group(): void
+    {
+        $group1 = $this->createTestGroup([
+            'settings' => json_encode(['spammers' => ['worrywords' => 'badtestword_cc']]),
+        ]);
+        $group2 = $this->createTestGroup();
+
+        $result = $this->service->checkPerGroupWorryWords('OFFER: badtestword_cc item', 'Some body', $group2->id);
+
+        $this->assertNull($result);
+    }
+
+    public function test_per_group_worry_word_no_settings_returns_null(): void
+    {
+        $group = $this->createTestGroup();
+
+        $result = $this->service->checkPerGroupWorryWords('OFFER: badtestword_cc item', 'Some body', $group->id);
+
+        $this->assertNull($result);
+    }
+
+    public function test_per_group_worry_word_fuzzy_matches_typo(): void
+    {
+        $group = $this->createTestGroup([
+            'settings' => json_encode(['spammers' => ['worrywords' => 'badtestword_cc']]),
+        ]);
+
+        // One character off — levenshtein distance 1.
+        $result = $this->service->checkPerGroupWorryWords('OFFER: badtestword_cd item', 'Some body', $group->id);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('PerGroupWorryWord', $result['check']);
+    }
+
+    public function test_per_group_worry_word_clean_message_returns_null(): void
+    {
+        $group = $this->createTestGroup([
+            'settings' => json_encode(['spammers' => ['worrywords' => 'badtestword_cc']]),
+        ]);
+
+        $result = $this->service->checkPerGroupWorryWords('OFFER: Nice lamp', 'A lovely lamp. Collection only.', $group->id);
+
+        $this->assertNull($result);
+    }
+
+    // -------------------------------------------------------------------------
+    // checkUrls — flag untrusted URLs (V1 parity)
+    // -------------------------------------------------------------------------
+
+    public function test_http_url_in_body_returns_reason(): void
+    {
+        $result = $this->service->checkUrls('OFFER: Sofa', 'See photos at http://example.com/sofa.jpg');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('Url', $result['check']);
+    }
+
+    public function test_https_url_in_body_returns_reason(): void
+    {
+        $result = $this->service->checkUrls('OFFER: Sofa', 'More info at https://www.example.com/listing');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('Url', $result['check']);
+    }
+
+    public function test_www_url_without_scheme_returns_reason(): void
+    {
+        $result = $this->service->checkUrls('OFFER: Sofa', 'Visit www.example.com for details');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('Url', $result['check']);
+    }
+
+    public function test_no_url_in_body_returns_null(): void
+    {
+        $result = $this->service->checkUrls('OFFER: Sofa', 'Collection from SW1A 1AA please, cash only');
+
+        $this->assertNull($result);
+    }
+
+    public function test_whitelisted_url_returns_null(): void
+    {
+        // Insert a trusted domain with count >= 3 into spam_whitelist_links.
+        DB::table('spam_whitelist_links')->insertOrIgnore([
+            'domain' => 'trusteddomain-cc.org',
+            'count'  => 5,
+        ]);
+
+        $result = $this->service->checkUrls('OFFER: Sofa', 'See https://trusteddomain-cc.org/listing for details');
+
+        $this->assertNull($result, 'Whitelisted domain with count >= 3 should not be flagged');
+
+        DB::table('spam_whitelist_links')->where('domain', 'trusteddomain-cc.org')->delete();
+    }
+
+    public function test_low_count_whitelisted_url_still_flagged(): void
+    {
+        DB::table('spam_whitelist_links')->insertOrIgnore([
+            'domain' => 'lowcount-cc.org',
+            'count'  => 2,
+        ]);
+
+        $result = $this->service->checkUrls('OFFER: Sofa', 'See https://lowcount-cc.org/listing');
+
+        $this->assertNotNull($result, 'Domain with whitelist count < 3 should still be flagged');
+
+        DB::table('spam_whitelist_links')->where('domain', 'lowcount-cc.org')->delete();
+    }
+
+    // -------------------------------------------------------------------------
+    // checkMoneySymbols — flag £, $ (V1 parity)
+    // -------------------------------------------------------------------------
+
+    public function test_pound_symbol_in_body_returns_reason(): void
+    {
+        $result = $this->service->checkMoneySymbols('OFFER: Sofa', 'Worth £200 but free to good home');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('Money', $result['check']);
+    }
+
+    public function test_dollar_symbol_in_body_returns_reason(): void
+    {
+        $result = $this->service->checkMoneySymbols('OFFER: Sofa', 'Cost $50 new, giving away free');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('Money', $result['check']);
+    }
+
+    public function test_pound_in_subject_returns_reason(): void
+    {
+        $result = $this->service->checkMoneySymbols('OFFER: Sofa worth £100', 'Collection only');
+
+        $this->assertNotNull($result);
+        $this->assertEquals('Money', $result['check']);
+    }
+
+    public function test_no_money_symbol_returns_null(): void
+    {
+        $result = $this->service->checkMoneySymbols('OFFER: Sofa', 'Collection from SW1A 1AA please');
+
+        $this->assertNull($result);
+    }
+
+    // -------------------------------------------------------------------------
+    // checkLanguage — flag non-English/Welsh (V1 parity)
+    // -------------------------------------------------------------------------
+
+    public function test_english_message_returns_null(): void
+    {
+        $text = 'This is a lovely solid oak dining table in great condition. Collection only from SW1A. Please bring help to carry.';
+
+        $result = $this->service->checkLanguage('OFFER: Oak dining table', $text);
+
+        $this->assertNull($result);
+    }
+
+    public function test_french_message_returns_reason(): void
+    {
+        // Clearly French text, well over 50 chars.
+        $text = 'Bonjour, je donne une belle table en chêne massif en très bon état. Venez la chercher dans le quartier.';
+
+        $result = $this->service->checkLanguage('OFFER: Table', $text);
+
+        $this->assertNotNull($result);
+        $this->assertEquals('Language', $result['check']);
+    }
+
+    public function test_short_message_skips_language_check(): void
+    {
+        // Under 50 chars — V1 skips language check for short strings.
+        $result = $this->service->checkLanguage('OFFER: Lamp', 'ok thanks');
+
+        $this->assertNull($result);
+    }
 }
