@@ -321,8 +321,20 @@ class ContentCheckService
             if ($kwLen >= 6) {
                 $tokLen = strlen($tokLow);
                 $ratio  = $tokLen / $kwLen;
-                if ($ratio >= 0.75 && $ratio <= 1.25 && levenshtein($tokLow, $kwLower) <= 1) {
-                    return true;
+                if ($ratio >= 0.75 && $ratio <= 1.25 && $this->damerauLevenshtein($tokLow, $kwLower) <= 1) {
+                    // Reject initial-consonant swaps: "hangers" vs "bangers" differ only
+                    // at position 0 and produce a completely different word, not a typo.
+                    $firstDiff = null;
+                    $minLen    = min(strlen($tokLow), strlen($kwLower));
+                    for ($i = 0; $i < $minLen; $i++) {
+                        if ($tokLow[$i] !== $kwLower[$i]) {
+                            $firstDiff = $i;
+                            break;
+                        }
+                    }
+                    if ($firstDiff !== 0) {
+                        return true;
+                    }
                 }
             }
         }
@@ -359,6 +371,53 @@ class ContentCheckService
             }
         }
         return $variants;
+    }
+
+    /**
+     * Optimal string alignment distance (restricted Damerau-Levenshtein).
+     * Counts insertions, deletions, substitutions, and adjacent transpositions
+     * each as cost 1. Catches "cannibas"↔"cannabis" (transposition) as distance 1
+     * where standard levenshtein would score 2.
+     */
+    private function damerauLevenshtein(string $a, string $b): int
+    {
+        $la = strlen($a);
+        $lb = strlen($b);
+
+        if ($la === 0) {
+            return $lb;
+        }
+        if ($lb === 0) {
+            return $la;
+        }
+
+        // d[$i][$j] = edit distance between a[0..$i-1] and b[0..$j-1]
+        $d = [];
+        for ($i = 0; $i <= $la; $i++) {
+            $d[$i][0] = $i;
+        }
+        for ($j = 0; $j <= $lb; $j++) {
+            $d[0][$j] = $j;
+        }
+
+        for ($i = 1; $i <= $la; $i++) {
+            for ($j = 1; $j <= $lb; $j++) {
+                $cost = ($a[$i - 1] === $b[$j - 1]) ? 0 : 1;
+                $d[$i][$j] = min(
+                    $d[$i - 1][$j] + 1,        // deletion
+                    $d[$i][$j - 1] + 1,        // insertion
+                    $d[$i - 1][$j - 1] + $cost // substitution
+                );
+                if ($i > 1 && $j > 1
+                    && $a[$i - 1] === $b[$j - 2]
+                    && $a[$i - 2] === $b[$j - 1]
+                ) {
+                    $d[$i][$j] = min($d[$i][$j], $d[$i - 2][$j - 2] + $cost); // transposition
+                }
+            }
+        }
+
+        return $d[$la][$lb];
     }
 
     // -------------------------------------------------------------------------
