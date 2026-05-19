@@ -111,7 +111,7 @@ workflows:
           filters:
             branches:
               only:
-                - feat/modtools-capacitor-app
+                - master
 
   build-test-cloud:
     when:
@@ -171,7 +171,7 @@ workflows:
           filters:
             branches:
               only:
-                - feat/modtools-capacitor-app
+                - master
 
   # Deploy apps when production branch is pushed — Freegle app only.
   # ModTools is published separately via the manual modtools-production workflow.
@@ -276,7 +276,7 @@ workflows:
           filters:
             branches:
               only:
-                - feat/modtools-capacitor-app
+                - master
 
   # Build iOS for TestFlight from any branch
   testflight-branch:
