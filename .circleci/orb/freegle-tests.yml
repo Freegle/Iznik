@@ -3830,10 +3830,6 @@ jobs:
             echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> $BASH_ENV
           max_auto_reruns: 3
           auto_rerun_delay: 10s
-      - restore_cache:
-          keys:
-            - npm-deps-v1-{{ checksum "package-lock.json" }}
-            - npm-deps-v1-
       - run:
           name: Install Node.js Dependencies
           command: npm ci
