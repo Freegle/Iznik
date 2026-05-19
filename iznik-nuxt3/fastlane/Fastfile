@@ -209,6 +209,89 @@ platform :android do
     UI.success("✅ Successfully uploaded ModTools to Google Play Beta!")
   end
 
+  desc "Build and deploy ModTools directly to Google Play Production"
+  lane :modtools_production do
+    unless File.exist?('fastlane/modtools-google-play-api-key.json')
+      UI.user_error!("❌ CRITICAL: modtools-google-play-api-key.json not found")
+    end
+
+    version_file = '../.new_version'
+    unless File.exist?(version_file)
+      UI.user_error!("❌ CRITICAL: Version file not found at #{version_file}")
+    end
+
+    version = File.read(version_file).strip
+    UI.success("📱 Using version from workspace: #{version}")
+
+    parts = version.split('.').map(&:to_i)
+    unless parts.length == 3
+      UI.user_error!("❌ CRITICAL: Invalid version format '#{version}'")
+    end
+
+    all_version_codes = []
+    ['internal', 'beta', 'production'].each do |track|
+      begin
+        version_codes = google_play_track_version_codes(
+          package_name: 'org.ilovefreegle.modtools',
+          track: track,
+          json_key: 'fastlane/modtools-google-play-api-key.json'
+        )
+        if version_codes && version_codes.any?
+          max_for_track = version_codes.max
+          all_version_codes << max_for_track
+          UI.message("📊 #{track.capitalize} track max version code: #{max_for_track}")
+        end
+      rescue => e
+        UI.message("ℹ️  Could not fetch #{track} track version codes: #{e.message}")
+      end
+    end
+
+    if all_version_codes.empty?
+      UI.user_error!("❌ CRITICAL: Could not fetch version codes from any Google Play track for org.ilovefreegle.modtools")
+    end
+
+    latest_build = all_version_codes.max
+    new_version_code = [latest_build + 1, 1272].max
+
+    UI.success("📊 New version code: #{new_version_code}")
+
+    gradle(
+      task: 'bundle',
+      build_type: 'Release',
+      project_dir: 'android/',
+      properties: {
+        "versionName" => version,
+        "versionCode" => new_version_code.to_s
+      },
+      flags: '--stacktrace'
+    )
+
+    gradle(
+      task: 'assemble',
+      build_type: 'Release',
+      project_dir: 'android/',
+      properties: {
+        "versionName" => version,
+        "versionCode" => new_version_code.to_s
+      },
+      flags: '--stacktrace'
+    )
+
+    changelog_dir = '../fastlane/metadata/android/en-US/changelogs'
+    FileUtils.mkdir_p(changelog_dir)
+    File.write("#{changelog_dir}/#{new_version_code}.txt", "Version #{version} - Bug fixes and improvements")
+
+    upload_to_play_store(
+      package_name: 'org.ilovefreegle.modtools',
+      track: 'production',
+      json_key: 'fastlane/modtools-google-play-api-key.json',
+      skip_upload_apk: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+    UI.success("✅ Successfully uploaded ModTools to Google Play Production!")
+  end
+
   desc "Promote Internal to Beta"
   lane :promote_beta do
     upload_to_play_store(
