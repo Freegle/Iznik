@@ -203,18 +203,44 @@ class ContentCheckTest extends TestCase
     public function test_fuzzy_match_catches_transposition(): void
     {
         // Damerau-Levenshtein: adjacent-char transpositions count as distance 1.
-        // "cocaine" → "cociane" (a↔i adjacent) scores DL=1 but levenshtein=2,
-        // so standard levenshtein would miss it; Damerau catches it.
+        // 8-char keyword keeps it in the fuzzy-typo branch (< 8 chars only get
+        // exact + inflections to avoid false positives like formic/formica).
         $group = $this->createTestGroup();
         DB::table('concern_keywords')->insert([
-            'keyword'    => 'cocaine',
+            'keyword'    => 'nicotine',
             'category'   => 'substance_regulated',
             'action'     => 'flag',
             'match_mode' => 'fuzzy',
         ]);
 
-        $transposed = $this->service->checkConcernKeywords('OFFER: cociane for sale', '', $group->id);
+        $transposed = $this->service->checkConcernKeywords('OFFER: nictoine for sale', '', $group->id);
         $this->assertNotNull($transposed, 'adjacent-char transposition must match via Damerau-Levenshtein');
+    }
+
+    public function test_fuzzy_match_rejects_six_and_seven_char_neighbours(): void
+    {
+        // Regression: 'formica' (laminate brand) wrongly matched 'formic' acid
+        // via levenshtein-1, blocking a benign WANTED post about furniture
+        // restoration. Now keywords < 8 chars only accept exact + inflections.
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insertOrIgnore([
+            ['keyword' => 'formic',  'category' => 'substance_reportable', 'action' => 'block', 'match_mode' => 'fuzzy'],
+            ['keyword' => 'rocket',  'category' => 'review',               'action' => 'flag',  'match_mode' => 'fuzzy'],
+            ['keyword' => 'selling', 'category' => 'review',               'action' => 'flag',  'match_mode' => 'fuzzy'],
+            ['keyword' => 'bangers', 'category' => 'review',               'action' => 'flag',  'match_mode' => 'fuzzy'],
+        ]);
+
+        $cases = [
+            'formica laminate'   => 'WANTED: Imperial 1/2 dowelling for a Formica topped gate-leg table',
+            'socket (vs rocket)' => 'OFFER: Spare socket set for car repairs',
+            'telling (vs selling)' => 'OFFER: A book about telling stories to kids',
+            'hangers (vs bangers)' => 'OFFER: Wooden coat hangers',
+        ];
+
+        foreach ($cases as $label => $subject) {
+            $result = $this->service->checkConcernKeywords($subject, '', $group->id);
+            $this->assertNull($result, "'{$label}' must not match a 6/7-char fuzzy concern keyword");
+        }
     }
 
     public function test_fuzzy_match_rejects_substring_of_much_longer_word(): void

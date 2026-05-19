@@ -285,12 +285,15 @@ class ContentCheckService
     // Goal: catch plurals / common inflections / single-character typos without
     // matching unrelated 1-edit neighbours of short keywords.
     //
-    // For short keywords (< 6 chars) every levenshtein-1 neighbour is almost
-    // always a different word ("poof"↔"roof", "lend"↔"led", "cash"↔"case"),
-    // so we accept only exact matches and an explicit set of inflectional
-    // suffixes. For longer keywords (≥ 6 chars) we keep the levenshtein-1
-    // generosity since real typo-catching dominates the false-positive rate.
+    // For keywords < 8 chars every levenshtein-1 neighbour is almost always a
+    // different word ("poof"↔"roof", "lend"↔"led", "cash"↔"case", "formic"↔
+    // "formica", "rocket"↔"socket", "selling"↔"telling"), so we accept only
+    // exact matches and an explicit set of inflectional suffixes. For keywords
+    // ≥ 8 chars (mostly chemistry/plant names) we keep levenshtein-1 typo-
+    // tolerance since real typo-catching dominates the false-positive rate.
     // -------------------------------------------------------------------------
+
+    private const FUZZY_LEVENSHTEIN_MIN_KW_LEN = 8;
 
     private function matchesFuzzy(string $haystack, string $keyword): bool
     {
@@ -318,7 +321,7 @@ class ContentCheckService
                 return true;
             }
 
-            if ($kwLen >= 6) {
+            if ($kwLen >= self::FUZZY_LEVENSHTEIN_MIN_KW_LEN) {
                 $tokLen = strlen($tokLow);
                 $ratio  = $tokLen / $kwLen;
                 if ($ratio >= 0.75 && $ratio <= 1.25 && $this->damerauLevenshtein($tokLow, $kwLower) <= 1) {
