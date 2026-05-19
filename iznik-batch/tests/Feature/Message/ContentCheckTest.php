@@ -5,6 +5,7 @@ namespace Tests\Feature\Message;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
+use App\Services\ContentEmbeddingService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -2131,5 +2132,65 @@ class ContentCheckTest extends TestCase
 
         $this->assertNotNull($result);
         $this->assertEquals('SpamhausDBL', $result['check']);
+    }
+
+    // -------------------------------------------------------------------------
+    // Contextual embedding suppression — ContentEmbeddingService integration
+    // -------------------------------------------------------------------------
+
+    public function test_contextual_innocent_verdict_suppresses_keyword_flag(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'gun',
+            'category'   => 'substance_regulated',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        $embedding = $this->createMock(ContentEmbeddingService::class);
+        $embedding->method('isInnocentContext')->willReturn(true);
+
+        $service = new ContentCheckService($embedding);
+        $result  = $service->checkConcernKeywords('OFFER: hot glue gun for crafts', '', $group->id);
+
+        $this->assertNull($result, 'Embedding service said innocent — should not flag');
+    }
+
+    public function test_contextual_concerning_verdict_still_flags(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'gun',
+            'category'   => 'substance_regulated',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        $embedding = $this->createMock(ContentEmbeddingService::class);
+        $embedding->method('isInnocentContext')->willReturn(false);
+
+        $service = new ContentCheckService($embedding);
+        $result  = $service->checkConcernKeywords('OFFER: gun for sale', '', $group->id);
+
+        $this->assertNotNull($result, 'Embedding service said concerning — should flag');
+        $this->assertEquals('substance_regulated', $result['category']);
+    }
+
+    public function test_no_embedding_service_still_flags(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'gun',
+            'category'   => 'substance_regulated',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        // No embedding service — conservative default is to flag everything.
+        $service = new ContentCheckService(null);
+        $result  = $service->checkConcernKeywords('OFFER: glue gun for crafts', '', $group->id);
+
+        $this->assertNotNull($result, 'No embedding service — should flag conservatively');
     }
 }
