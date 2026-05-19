@@ -3311,7 +3311,9 @@ jobs:
             # ModTools has no ads — remove AD_ID permission added transitively by Firebase
             MANIFEST="android/app/src/main/AndroidManifest.xml"
             if ! grep -q 'AD_ID' "$MANIFEST"; then
-              sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
+              if ! grep -q 'xmlns:tools' "$MANIFEST"; then
+                sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
+              fi
               sed -i 's|</manifest>|    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>\n</manifest>|' "$MANIFEST"
             fi
             echo "✅ ModTools identity configured"
@@ -3522,7 +3524,9 @@ jobs:
             # ModTools has no ads — remove AD_ID permission added transitively by Firebase
             MANIFEST="android/app/src/main/AndroidManifest.xml"
             if ! grep -q 'AD_ID' "$MANIFEST"; then
-              sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
+              if ! grep -q 'xmlns:tools' "$MANIFEST"; then
+                sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
+              fi
               sed -i 's|</manifest>|    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>\n</manifest>|' "$MANIFEST"
             fi
             echo "✅ ModTools identity configured"
