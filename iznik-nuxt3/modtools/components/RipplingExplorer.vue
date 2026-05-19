@@ -334,6 +334,7 @@ onMounted(async () => {
   let layers = {}
   let debounceTimer = null
   let isochroneGeneration = 0
+  let fitViewOnNextIsochrone = false
 
   const timeSlider = document.getElementById('rippling-time-slider')
   const fairnessSlider = document.getElementById('rippling-fairness-slider')
@@ -474,6 +475,7 @@ onMounted(async () => {
     })
       .addTo(map)
     if (fly) map.flyTo([lat, lng], Math.max(map.getZoom(), 13))
+    fitViewOnNextIsochrone = true
     fetchAndDrawGroups(lat, lng)
     updateIsochrone()
   }
@@ -526,6 +528,15 @@ onMounted(async () => {
         updateStats(data)
         if (data.snap_lat && data.snap_lng && marker) {
           marker.setLatLng([data.snap_lat, data.snap_lng])
+        }
+        if (fitViewOnNextIsochrone) {
+          fitViewOnNextIsochrone = false
+          const allRings = allIsoRings(data)
+          if (allRings.length > 0) {
+            const allCoords = allRings.flat()
+            const bounds = L.latLngBounds(allCoords.map(([lng, lat]) => [lat, lng]))
+            if (bounds.isValid()) map.fitBounds(bounds, { padding: [60, 60], maxZoom: 13, animate: false })
+          }
         }
         await fetchFreeglers()
         drawFreeglersLayer()
@@ -1540,6 +1551,7 @@ onMounted(async () => {
       updateStats(data)
       updateFreeglersInside(data)
       drawGroupsOverlay()
+      drawFreeglersLayer()
 
       const hours = frameToHours(rippleStep, rippleFrames.length)
       if (
