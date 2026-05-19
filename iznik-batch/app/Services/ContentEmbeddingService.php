@@ -62,6 +62,38 @@ class ContentEmbeddingService
                 'car battery jump start',
             ],
         ],
+        'substance_medicine' => [
+            'concerning' => [
+                'selling prescription medicine controlled drugs pills tablets',
+                'opioid opiate painkiller codeine tramadol for sale',
+                'controlled substance prescription pills diazepam buying',
+                'medication narcotics drugs pills selling prescription',
+            ],
+            'innocent' => [
+                'medicine cabinet bathroom storage unit wooden',
+                'vintage apothecary medicine bottle collectible antique',
+                'first aid kit medical supplies box donation',
+                'herbal tea natural medicine remedy organic',
+                'pill organiser tablet dispenser storage box',
+                'antique medicine chest wooden storage cupboard',
+            ],
+        ],
+        'scam' => [
+            'concerning' => [
+                'send payment bank transfer PayPal money gift card',
+                'pay upfront fee collection delivery charge payment required',
+                'click link verify bank account wire transfer',
+                'western union money gram advance fee send cash',
+                'payment required lottery prize winner claim money',
+            ],
+            'innocent' => [
+                'free item no payment needed collection only',
+                'warning scammers report police suspicious activity',
+                'beware fake messages not freegle scam alert',
+                'free no cost giveaway donation please collect',
+                'I was nearly scammed report suspicious contact police',
+            ],
+        ],
     ];
 
     // In-process cache for prototype embeddings so we only embed them once per

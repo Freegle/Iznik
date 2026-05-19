@@ -127,6 +127,144 @@ class ContentEmbeddingServiceTest extends TestCase
         }
     }
 
+    public function test_substance_medicine_suppresses_innocent_context(): void
+    {
+        // substance_medicine: 4 concerning + 6 innocent prototypes = 10 total.
+        $dim = 256;
+        $textVec      = array_fill(0, $dim, 0.0);
+        $textVec[0]   = 1.0; // points along dimension 0 (innocent direction)
+
+        $innocentVec  = array_fill(0, $dim, 0.0);
+        $innocentVec[0] = 1.0; // cosine(text, innocent) = 1.0
+
+        $concerningVec = array_fill(0, $dim, 0.0);
+        $concerningVec[1] = 1.0; // cosine(text, concerning) = 0.0
+
+        $protoResponse = array_merge(
+            array_fill(0, 4, $concerningVec), // 4 concerning prototypes
+            array_fill(0, 6, $innocentVec),   // 6 innocent prototypes
+        );
+
+        Http::fake([
+            '*/embed' => Http::sequence()
+                ->push(['embeddings' => $protoResponse], 200)
+                ->push(['embeddings' => [$textVec]], 200),
+        ]);
+
+        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        try {
+            $this->resetProtoCache();
+            $result = $this->service->isInnocentContext('medicine cabinet wooden storage', 'substance_medicine');
+            $this->assertTrue($result, 'Innocent medicine context (cabinet) should be suppressed');
+        } finally {
+            putenv('EMBEDDING_SIDECAR_URL=');
+            $this->resetProtoCache();
+        }
+    }
+
+    public function test_substance_medicine_does_not_suppress_concerning_context(): void
+    {
+        $dim = 256;
+        $textVec      = array_fill(0, $dim, 0.0);
+        $textVec[1]   = 1.0; // points along dimension 1 (concerning direction)
+
+        $concerningVec = array_fill(0, $dim, 0.0);
+        $concerningVec[1] = 1.0; // cosine(text, concerning) = 1.0
+
+        $innocentVec = array_fill(0, $dim, 0.0);
+        $innocentVec[0] = 1.0; // cosine(text, innocent) = 0.0
+
+        $protoResponse = array_merge(
+            array_fill(0, 4, $concerningVec),
+            array_fill(0, 6, $innocentVec),
+        );
+
+        Http::fake([
+            '*/embed' => Http::sequence()
+                ->push(['embeddings' => $protoResponse], 200)
+                ->push(['embeddings' => [$textVec]], 200),
+        ]);
+
+        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        try {
+            $this->resetProtoCache();
+            $result = $this->service->isInnocentContext('selling prescription opioid pills', 'substance_medicine');
+            $this->assertFalse($result, 'Concerning medicine context should not be suppressed');
+        } finally {
+            putenv('EMBEDDING_SIDECAR_URL=');
+            $this->resetProtoCache();
+        }
+    }
+
+    public function test_scam_suppresses_innocent_context(): void
+    {
+        // scam: 5 concerning + 5 innocent prototypes = 10 total.
+        $dim = 256;
+        $textVec      = array_fill(0, $dim, 0.0);
+        $textVec[0]   = 1.0;
+
+        $innocentVec  = array_fill(0, $dim, 0.0);
+        $innocentVec[0] = 1.0;
+
+        $concerningVec = array_fill(0, $dim, 0.0);
+        $concerningVec[1] = 1.0;
+
+        $protoResponse = array_merge(
+            array_fill(0, 5, $concerningVec), // 5 concerning prototypes
+            array_fill(0, 5, $innocentVec),   // 5 innocent prototypes
+        );
+
+        Http::fake([
+            '*/embed' => Http::sequence()
+                ->push(['embeddings' => $protoResponse], 200)
+                ->push(['embeddings' => [$textVec]], 200),
+        ]);
+
+        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        try {
+            $this->resetProtoCache();
+            $result = $this->service->isInnocentContext('warning this looks like a scam report it', 'scam');
+            $this->assertTrue($result, 'Innocent scam-warning context should be suppressed');
+        } finally {
+            putenv('EMBEDDING_SIDECAR_URL=');
+            $this->resetProtoCache();
+        }
+    }
+
+    public function test_scam_does_not_suppress_concerning_context(): void
+    {
+        $dim = 256;
+        $textVec      = array_fill(0, $dim, 0.0);
+        $textVec[1]   = 1.0;
+
+        $concerningVec = array_fill(0, $dim, 0.0);
+        $concerningVec[1] = 1.0;
+
+        $innocentVec = array_fill(0, $dim, 0.0);
+        $innocentVec[0] = 1.0;
+
+        $protoResponse = array_merge(
+            array_fill(0, 5, $concerningVec),
+            array_fill(0, 5, $innocentVec),
+        );
+
+        Http::fake([
+            '*/embed' => Http::sequence()
+                ->push(['embeddings' => $protoResponse], 200)
+                ->push(['embeddings' => [$textVec]], 200),
+        ]);
+
+        putenv('EMBEDDING_SIDECAR_URL=http://fake-sidecar:3200');
+        try {
+            $this->resetProtoCache();
+            $result = $this->service->isInnocentContext('send payment via bank transfer PayPal gift card', 'scam');
+            $this->assertFalse($result, 'Actual scam payment request should not be suppressed');
+        } finally {
+            putenv('EMBEDDING_SIDECAR_URL=');
+            $this->resetProtoCache();
+        }
+    }
+
     /** Reset the static prototype cache between tests to avoid cross-test pollution. */
     private function resetProtoCache(): void
     {

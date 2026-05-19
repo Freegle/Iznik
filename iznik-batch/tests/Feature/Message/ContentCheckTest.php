@@ -2193,4 +2193,42 @@ class ContentCheckTest extends TestCase
 
         $this->assertNotNull($result, 'No embedding service — should flag conservatively');
     }
+
+    public function test_contextual_innocent_verdict_suppresses_substance_medicine_flag(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'codeine',
+            'category'   => 'substance_medicine',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        $embedding = $this->createMock(ContentEmbeddingService::class);
+        $embedding->method('isInnocentContext')->willReturn(true);
+
+        $service = new ContentCheckService($embedding);
+        $result  = $service->checkConcernKeywords('OFFER: medicine cabinet with old codeine labels', '', $group->id);
+
+        $this->assertNull($result, 'Embedding service said innocent — should not flag substance_medicine');
+    }
+
+    public function test_contextual_innocent_verdict_suppresses_scam_flag(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'bank transfer',
+            'category'   => 'scam',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        $embedding = $this->createMock(ContentEmbeddingService::class);
+        $embedding->method('isInnocentContext')->willReturn(true);
+
+        $service = new ContentCheckService($embedding);
+        $result  = $service->checkConcernKeywords('OFFER: warning — I was asked for a bank transfer, report this scam', '', $group->id);
+
+        $this->assertNull($result, 'Embedding service said innocent — should not flag scam warning');
+    }
 }
