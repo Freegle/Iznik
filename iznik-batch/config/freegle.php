@@ -237,6 +237,7 @@ return [
 
     'spatial_server_url' => env('SPATIAL_SERVER_URL', 'http://localhost:8194'),
     'spatial_admin_url' => env('SPATIAL_ADMIN_URL', 'http://localhost:8195'),
+    'spatial_data_dir' => env('SPATIAL_DATA_DIR', '/data'),
 
     /*
     |--------------------------------------------------------------------------

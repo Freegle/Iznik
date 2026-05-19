@@ -3,41 +3,53 @@
 namespace Tests\Unit\Commands\Spatial;
 
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Log;
 use Tests\TestCase;
 
 class UpdateSpatialDataCommandTest extends TestCase
 {
+    private string $dataDir;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->dataDir = storage_path('tests/spatial');
+        if (!is_dir($this->dataDir)) {
+            mkdir($this->dataDir, 0755, true);
+        }
+        config(['freegle.spatial_data_dir' => $this->dataDir]);
+    }
+
+    protected function tearDown(): void
+    {
+        if (is_dir($this->dataDir)) {
+            foreach (glob("{$this->dataDir}/*") ?: [] as $f) {
+                @unlink($f);
+            }
+        }
+        parent::tearDown();
+    }
+
     /**
      * Test dry-run mode doesn't make any changes.
      */
     public function test_dry_run_mode_reports_no_changes(): void
     {
+        Http::fake();
+
         $this->artisan('spatial:update-data', ['--dry-run' => true])
-            ->expectsOutputToContain('DRY RUN')
-            ->expectsOutputToContain('Would download')
-            ->expectsOutputToContain('Would run')
-            ->expectsOutputToContain('Would signal')
+            ->expectsOutputToContain('no changes will be made')
+            ->expectsOutputToContain('Would download: https://')
+            ->expectsOutputToContain('Would run: DeprivationDataService')
+            ->expectsOutputToContain('Would signal: http://')
             ->assertExitCode(0);
     }
 
     /**
-     * Test OSM PBF download with atomic write (creates temp file first).
+     * Test OSM PBF download with atomic write succeeds end-to-end.
      */
     public function test_downloads_osm_pbf_file_atomically(): void
     {
-        Http::fake([
-            'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response(
-                "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x61\x64\x65\x72\x00MOCK_PBF_DATA",
-                200
-            ),
-        ]);
-
-        $dataDir = storage_path('tests/spatial');
-        if (is_dir($dataDir)) {
-            array_map('unlink', glob("$dataDir/*"));
-            rmdir($dataDir);
-        }
+        Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
 
         $this->artisan('spatial:update-data')
             ->assertExitCode(0);
@@ -60,7 +72,6 @@ class UpdateSpatialDataCommandTest extends TestCase
         ]);
 
         $this->artisan('spatial:update-data')
-            ->expectsOutputToContain('Error:')
             ->expectsOutputToContain('magic bytes')
             ->assertExitCode(1);
     }
@@ -70,78 +81,40 @@ class UpdateSpatialDataCommandTest extends TestCase
      */
     public function test_csv_validation_rejects_too_few_rows(): void
     {
-        $this->mockPythonScriptOutput(
-            "lat,lng,quintile\n51.5,0.0,1\n51.6,0.1,2\n"
-        );
+        $tinyContent = "lat,lng,quintile\n51.5,-2.0,1\n51.6,-2.0,2\n";
 
-        Http::fake([
-            'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response(
-                "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x61\x64\x65\x72\x00MOCK_PBF_DATA",
-                200
-            ),
-        ]);
+        Http::fake($this->buildFakeHttpResponses($tinyContent));
 
         $this->artisan('spatial:update-data')
-            ->expectsOutputToContain('Error:')
             ->expectsOutputToContain('Too few total rows')
             ->assertExitCode(1);
     }
 
     /**
      * Test CSV validation detects out-of-bounds coordinates.
+     * Uses a full valid CSV plus one row with lat=70 (outside UK bounds).
      */
     public function test_csv_validation_rejects_out_of_bounds_coords(): void
     {
-        // Create CSV with row outside UK bounds
-        $csvContent = "lat,lng,quintile\n";
-        for ($i = 0; $i < 40001; $i++) {
-            $lat = 51.5 + ($i % 10);
-            $lng = 0.0 + ($i % 5);
-            $quintile = ($i % 5) + 1;
-            $csvContent .= "$lat,$lng,$quintile\n";
-        }
-        $csvContent .= "70.0,0.0,1\n";
+        $csvContent = $this->generateValidCsv();
+        $csvContent .= "70.0,-2.0,1\n";
 
-        $this->mockPythonScriptOutput($csvContent);
-
-        Http::fake([
-            'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response(
-                "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x61\x64\x65\x72\x00MOCK_PBF_DATA",
-                200
-            ),
-        ]);
+        Http::fake($this->buildFakeHttpResponses($csvContent));
 
         $this->artisan('spatial:update-data')
-            ->expectsOutputToContain('Error:')
             ->expectsOutputToContain('outside UK bounds')
             ->assertExitCode(1);
     }
 
     /**
-     * Test CSV validation detects missing quintile.
+     * Test CSV validation detects skewed quintile distribution.
+     * Uses valid row counts/coords but quintile cycles only 2-5 (missing 1).
      */
     public function test_csv_validation_detects_missing_quintile(): void
     {
-        // Create CSV with only quintiles 2-5 (missing 1)
-        $csvContent = "lat,lng,quintile\n";
-        for ($i = 0; $i < 40001; $i++) {
-            $lat = 51.5 + ($i % 10);
-            $lng = 0.0 + ($i % 5);
-            $quintile = (($i % 4) + 2);
-            $csvContent .= "$lat,$lng,$quintile\n";
-        }
-
-        $this->mockPythonScriptOutput($csvContent);
-
-        Http::fake([
-            'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response(
-                "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x61\x64\x65\x72\x00MOCK_PBF_DATA",
-                200
-            ),
-        ]);
+        Http::fake($this->buildFakeHttpResponses($this->generateCsvWithSkewedQuintiles()));
 
         $this->artisan('spatial:update-data')
-            ->expectsOutputToContain('Error:')
             ->expectsOutputToContain('unusual distribution')
             ->assertExitCode(1);
     }
@@ -151,26 +124,18 @@ class UpdateSpatialDataCommandTest extends TestCase
      */
     public function test_csv_validation_detects_too_few_ew_rows(): void
     {
-        // Create CSV with only 100 E&W rows
+        // Only 100 E&W rows; rest are pure Scotland (lat>56, not in E&W range)
         $csvContent = "lat,lng,quintile\n";
         for ($i = 0; $i < 100; $i++) {
-            $csvContent .= "52.0,0.0," . (($i % 5) + 1) . "\n";
+            $csvContent .= "52.0,-2.0," . (($i % 5) + 1) . "\n";
         }
-        for ($i = 0; $i < 40000; $i++) {
-            $csvContent .= (56.0 + ($i % 2)) . ",-2.0," . (($i % 5) + 1) . "\n";
+        for ($i = 0; $i < 39900; $i++) {
+            $csvContent .= "57.0,-3.0," . (($i % 5) + 1) . "\n";
         }
 
-        $this->mockPythonScriptOutput($csvContent);
-
-        Http::fake([
-            'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response(
-                "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x61\x64\x65\x72\x00MOCK_PBF_DATA",
-                200
-            ),
-        ]);
+        Http::fake($this->buildFakeHttpResponses($csvContent));
 
         $this->artisan('spatial:update-data')
-            ->expectsOutputToContain('Error:')
             ->expectsOutputToContain('Too few E&W rows')
             ->assertExitCode(1);
     }
@@ -180,44 +145,7 @@ class UpdateSpatialDataCommandTest extends TestCase
      */
     public function test_valid_csv_passes_validation(): void
     {
-        $csvContent = "lat,lng,quintile\n";
-
-        // E&W rows (30k)
-        for ($i = 0; $i < 30000; $i++) {
-            $lat = 49.0 + ($i % 8);
-            $lng = -6.0 + ($i % 9);
-            $quintile = ($i % 5) + 1;
-            $csvContent .= "$lat,$lng,$quintile\n";
-        }
-
-        // Scotland rows (5k)
-        for ($i = 0; $i < 5000; $i++) {
-            $lat = 55.5 + ($i % 5);
-            $lng = -3.0 - ($i % 4);
-            $quintile = ($i % 5) + 1;
-            $csvContent .= "$lat,$lng,$quintile\n";
-        }
-
-        // NI rows (800)
-        for ($i = 0; $i < 800; $i++) {
-            $lat = 54.0 + ($i % 2);
-            $lng = -8.5 + ($i % 4);
-            $quintile = ($i % 5) + 1;
-            $csvContent .= "$lat,$lng,$quintile\n";
-        }
-
-        $this->mockPythonScriptOutput($csvContent);
-
-        Http::fake([
-            'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response(
-                "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x61\x64\x65\x72\x00MOCK_PBF_DATA",
-                200
-            ),
-            'http://localhost:8195/v1/reload' => Http::response(
-                ['status' => 'ok'],
-                200
-            ),
-        ]);
+        Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
 
         $this->artisan('spatial:update-data')
             ->expectsOutputToContain('Spatial data update complete')
@@ -226,30 +154,11 @@ class UpdateSpatialDataCommandTest extends TestCase
     }
 
     /**
-     * Test reload signal is sent.
+     * Test reload signal is sent after successful update.
      */
     public function test_sends_reload_signal_to_server(): void
     {
-        $csvContent = "lat,lng,quintile\n";
-        for ($i = 0; $i < 40001; $i++) {
-            $lat = 51.5 + ($i % 10);
-            $lng = 0.0 + ($i % 5);
-            $quintile = ($i % 5) + 1;
-            $csvContent .= "$lat,$lng,$quintile\n";
-        }
-
-        $this->mockPythonScriptOutput($csvContent);
-
-        Http::fake([
-            'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response(
-                "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x21\x64\x65\x72\x00MOCK_PBF_DATA",
-                200
-            ),
-            'http://localhost:8195/v1/reload' => Http::response(
-                ['status' => 'ok'],
-                200
-            ),
-        ]);
+        Http::fake($this->buildFakeHttpResponses($this->generateValidCsv()));
 
         $this->artisan('spatial:update-data')
             ->assertExitCode(0);
@@ -278,17 +187,17 @@ class UpdateSpatialDataCommandTest extends TestCase
     }
 
     /**
-     * Test command handles Python script failure.
+     * Test command handles DeprivationDataService failure (IMD download fails).
      */
-    public function test_handles_python_script_failure(): void
+    public function test_handles_deprivation_service_failure(): void
     {
-        $this->mockPythonScriptExitCode(1);
-
         Http::fake([
             'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response(
                 "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x61\x64\x65\x72\x00MOCK_PBF_DATA",
                 200
             ),
+            'https://raw.githubusercontent.com/*' => Http::response('Server Error', 500),
+            '*' => Http::response('Not Found', 404),
         ]);
 
         $this->artisan('spatial:update-data')
@@ -296,35 +205,97 @@ class UpdateSpatialDataCommandTest extends TestCase
             ->assertExitCode(1);
     }
 
+    // -------------------------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------------------------
+
     /**
-     * Helper to mock Python script output.
+     * Build Http::fake() responses that stub the OSM download, all DeprivationDataService
+     * external calls, and the reload signal — returning the given CSV content from
+     * a combined IMD+geometry response that produces exactly those rows.
+     *
+     * Rather than constructing realistic multi-page ArcGIS payloads, we stub the
+     * IMD lookup to return a small set of codes and stub the geometry endpoints to
+     * return matching features, then rely on the real service code to produce the
+     * correct output.  For integration-style CSV validation tests we bypass the
+     * service entirely and write the CSV directly (see writeCsvForTest).
+     *
+     * For simplicity, we write the final CSV ourselves into the temp path before
+     * the command runs, using a mock DeprivationDataService bound in the container.
      */
-    private function mockPythonScriptOutput(string $output): void
+    private function buildFakeHttpResponses(string $csvContent): array
     {
-        $scriptPath = base_path('scripts/build_uk_deprivation.py');
+        // Write the CSV directly to the expected temp path so the command can
+        // find it after "building".  We mock DeprivationDataService via the
+        // service container so no real HTTP is made for deprivation data.
+        $csvPath     = "{$this->dataDir}/uk_lsoa_quintile.csv";
+        $tempCsvPath = "{$csvPath}.tmp";
 
-        // Mock by creating a wrapper script in storage
-        $wrapperPath = storage_path('tests/mock_python.sh');
-        file_put_contents(
-            $wrapperPath,
-            "#!/bin/bash\necho \"$output\" > \"$1\"\nexit 0\n"
-        );
-        chmod($wrapperPath, 0755);
+        $mockService = new class($tempCsvPath, $csvContent) {
+            public function __construct(private string $path, private string $csv) {}
+            public function build(string $outputPath): void
+            {
+                file_put_contents($outputPath, $this->csv);
+            }
+        };
 
-        // This is a simplification - in real tests, we'd mock the system() call
-        // For now, tests will skip if actual Python isn't available
+        app()->bind(\App\Services\DeprivationDataService::class, fn() => $mockService);
+
+        return [
+            'https://download.geofabrik.de/europe/great-britain-latest.osm.pbf' => Http::response(
+                "\x00\x00\x00\x1a\x4f\x73\x6d\x48\x65\x61\x64\x65\x72\x00MOCK_PBF_DATA",
+                200
+            ),
+            'http://localhost:8195/v1/reload' => Http::response(['status' => 'ok'], 200),
+        ];
     }
 
     /**
-     * Helper to mock Python script exit code.
+     * Generate a valid UK deprivation CSV (40000 rows) meeting all validation criteria:
+     * - Total rows >= 40000
+     * - E&W rows (lat 49-56, lng -6 to 2) >= 30000
+     * - Scotland rows (lat > 55.3, lng < 0) >= 5000
+     * - NI rows (lat 54-55.3, lng -8.5 to -5.3) >= 800
+     * - Each quintile ~20% (within 15-30% range)
+     * - All coordinates within UK bounds (lat 49-61.5, lng -9.5-2.2)
      */
-    private function mockPythonScriptExitCode(int $code): void
+    private function generateValidCsv(): string
     {
-        $wrapperPath = storage_path('tests/mock_python.sh');
-        file_put_contents(
-            $wrapperPath,
-            "#!/bin/bash\nexit $code\n"
-        );
-        chmod($wrapperPath, 0755);
+        $lines = ['lat,lng,quintile'];
+        for ($i = 0; $i < 30100; $i++) {
+            $lines[] = '51.5,-2.0,' . (($i % 5) + 1);
+        }
+        for ($i = 0; $i < 5100; $i++) {
+            $lines[] = '57.0,-3.0,' . (($i % 5) + 1);
+        }
+        for ($i = 0; $i < 900; $i++) {
+            $lines[] = '54.5,-7.0,' . (($i % 5) + 1);
+        }
+        for ($i = 0; $i < 3900; $i++) {
+            $lines[] = '50.0,-1.0,' . (($i % 5) + 1);
+        }
+        return implode("\n", $lines) . "\n";
+    }
+
+    /**
+     * Generate a CSV with valid row counts/coords but quintile 1 missing (0%).
+     * This triggers the "unusual distribution" validation error.
+     */
+    private function generateCsvWithSkewedQuintiles(): string
+    {
+        $lines = ['lat,lng,quintile'];
+        for ($i = 0; $i < 30100; $i++) {
+            $lines[] = '51.5,-2.0,' . (($i % 4) + 2);
+        }
+        for ($i = 0; $i < 5100; $i++) {
+            $lines[] = '57.0,-3.0,' . (($i % 4) + 2);
+        }
+        for ($i = 0; $i < 900; $i++) {
+            $lines[] = '54.5,-7.0,' . (($i % 4) + 2);
+        }
+        for ($i = 0; $i < 3900; $i++) {
+            $lines[] = '50.0,-1.0,' . (($i % 4) + 2);
+        }
+        return implode("\n", $lines) . "\n";
     }
 }

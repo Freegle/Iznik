@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Spatial;
 
+use App\Services\DeprivationDataService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -38,8 +39,8 @@ class UpdateSpatialDataCommand extends Command
     public function handle(): int
     {
         $dryRun = $this->option('dry-run');
-        $dataDir = env('SPATIAL_DATA_DIR', '/data');
-        $adminUrl = env('SPATIAL_ADMIN_URL', 'http://localhost:8195');
+        $dataDir = config('freegle.spatial_data_dir', '/data');
+        $adminUrl = config('freegle.spatial_admin_url', 'http://localhost:8195');
 
         if ($dryRun) {
             $this->info('DRY RUN — no changes will be made.');
@@ -166,17 +167,16 @@ class UpdateSpatialDataCommand extends Command
     }
 
     /**
-     * Build UK deprivation quintile CSV by calling Python script (which handles coordinate transformation).
+     * Build UK deprivation quintile CSV using DeprivationDataService (pure PHP).
      * Validates the output CSV before atomic rename.
      */
     private function buildDeprivationQuintilesCsvAtomic(string $dataDir, bool $dryRun): ?string
     {
-        $scriptPath = base_path('scripts/build_uk_deprivation.py');
-        $csvPath = "{$dataDir}/uk_lsoa_quintile.csv";
+        $csvPath     = "{$dataDir}/uk_lsoa_quintile.csv";
         $tempCsvPath = "{$csvPath}.tmp";
 
         if ($dryRun) {
-            $this->info("  [DRY RUN] Would run: {$scriptPath}");
+            $this->info("  [DRY RUN] Would run: DeprivationDataService");
             $this->info("  [DRY RUN] To: {$csvPath}");
             return null;
         }
@@ -186,41 +186,12 @@ class UpdateSpatialDataCommand extends Command
         }
 
         try {
-            // Check Python script exists
-            if (!file_exists($scriptPath)) {
-                throw new RuntimeException("Python script not found: {$scriptPath}");
-            }
+            $this->line("  Building UK deprivation CSV...");
 
-            $this->line("  Running Python deprivation builder...");
-
-            // Run Python script, passing temp CSV path as argument
-            $cmd = sprintf(
-                "python3 %s %s 2>&1; echo \"EXIT_CODE:\$?\"",
-                escapeshellarg($scriptPath),
-                escapeshellarg($tempCsvPath)
-            );
-
-            $output = shell_exec($cmd);
-
-            // Extract exit code from output
-            $returnCode = 0;
-            if (preg_match('/EXIT_CODE:(\d+)$/', $output, $matches)) {
-                $returnCode = (int) $matches[1];
-                $output = preg_replace('/EXIT_CODE:\d+$/', '', $output);
-            }
-
-            // Log Python output for debugging
-            if (trim($output)) {
-                Log::info('Python deprivation script output', ['output' => trim($output)]);
-            }
-
-            if ($returnCode !== 0) {
-                @unlink($tempCsvPath);
-                throw new RuntimeException("Python script failed (exit code {$returnCode})");
-            }
+            app(DeprivationDataService::class)->build($tempCsvPath);
 
             if (!file_exists($tempCsvPath)) {
-                throw new RuntimeException("Python script did not create output file");
+                throw new RuntimeException("DeprivationDataService did not create output file");
             }
 
             // Validate CSV
