@@ -120,6 +120,7 @@ workflows:
         - not: << pipeline.parameters.use_katapult >>
         - not: << pipeline.parameters.do_manual_promote >>
         - not: << pipeline.parameters.do_testflight >>
+        - not: << pipeline.parameters.do_modtools_production >>
     jobs:
       - freegle/build-and-test:
           post-steps:
