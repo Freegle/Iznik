@@ -25,10 +25,11 @@ const STUBS = {
   },
 }
 
-function makeMessage(reasons = []) {
+function makeMessage(reasons = [], worry = []) {
   return {
     id: 123,
-    messagegroups: [{ contentcheck_reasons: reasons }],
+    worry,
+    groups: [{ contentcheck_reasons: reasons }],
   }
 }
 
@@ -69,7 +70,7 @@ describe('ModMessageWorry', () => {
       expect(wrapper.find('.notice-message.warning').exists()).toBe(true)
     })
 
-    it('handles message with no messagegroups', () => {
+    it('handles message with no groups', () => {
       const message = { id: 123 }
       mockMessageStore.byId.mockImplementation(() => message)
       const wrapper = mount(ModMessageWorry, {
@@ -79,14 +80,96 @@ describe('ModMessageWorry', () => {
       expect(wrapper.findAll('.notice-message').length).toBe(0)
     })
 
-    it('handles messagegroup with null contentcheck_reasons', () => {
-      const message = { id: 123, messagegroups: [{ contentcheck_reasons: null }] }
+    it('handles group with null contentcheck_reasons', () => {
+      const message = { id: 123, groups: [{ contentcheck_reasons: null }] }
       mockMessageStore.byId.mockImplementation(() => message)
       const wrapper = mount(ModMessageWorry, {
         props: { messageid: 123 },
         global: { stubs: STUBS },
       })
       expect(wrapper.findAll('.notice-message').length).toBe(0)
+    })
+  })
+
+  describe('worry words (Go API message.worry)', () => {
+    it('shows nothing when worry array is empty', () => {
+      const wrapper = mountWithReasons([])
+      expect(wrapper.findAll('.notice-message').length).toBe(0)
+    })
+
+    it('shows one NoticeMessage per worry match', () => {
+      const message = makeMessage([], [
+        { word: 'gun', worryword: { keyword: 'gun', type: 'Review' } },
+        { word: 'knife', worryword: { keyword: 'knife', type: 'Regulated' } },
+      ])
+      mockMessageStore.byId.mockReturnValue(message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.findAll('.notice-message').length).toBe(2)
+    })
+
+    it('shows the matched keyword and review text for Review type', () => {
+      const message = makeMessage([], [
+        { word: 'gun', worryword: { keyword: 'gun', type: 'Review' } },
+      ])
+      mockMessageStore.byId.mockReturnValue(message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.text()).toContain('gun')
+      expect(wrapper.text()).toContain('flagged up for review')
+    })
+
+    it('shows Regulated substance text for Regulated type', () => {
+      const message = makeMessage([], [
+        { word: 'gun', worryword: { keyword: 'gun', type: 'Regulated' } },
+      ])
+      mockMessageStore.byId.mockReturnValue(message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.text()).toContain('regulated substance')
+    })
+
+    it('shows Reportable substance text for Reportable type', () => {
+      const message = makeMessage([], [
+        { word: 'acid', worryword: { keyword: 'acid', type: 'Reportable' } },
+      ])
+      mockMessageStore.byId.mockReturnValue(message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.text()).toContain('reportable substance')
+    })
+
+    it('shows Medicine text for Medicine type', () => {
+      const message = makeMessage([], [
+        { word: 'codeine', worryword: { keyword: 'codeine', type: 'Medicine' } },
+      ])
+      mockMessageStore.byId.mockReturnValue(message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.text()).toContain('drug, medicine or supplement')
+    })
+
+    it('shows both worry matches and contentcheck reasons', () => {
+      const message = makeMessage(
+        [{ check: 'Vague', category: null, detail: 'too generic' }],
+        [{ word: 'gun', worryword: { keyword: 'gun', type: 'Review' } }]
+      )
+      mockMessageStore.byId.mockReturnValue(message)
+      const wrapper = mount(ModMessageWorry, {
+        props: { messageid: 123 },
+        global: { stubs: STUBS },
+      })
+      expect(wrapper.findAll('.notice-message').length).toBe(2)
     })
   })
 

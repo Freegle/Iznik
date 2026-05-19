@@ -341,7 +341,17 @@
               </b-button>
               <p class="text-muted small" />
             </div>
-            <ModMessageWorry v-if="message.worry" :messageid="message.id" />
+            <ModMessageWorry
+              v-if="
+                message.worry?.length ||
+                message.groups?.some(
+                  (g) =>
+                    g.contentcheck_reasons &&
+                    g.contentcheck_reasons.length
+                )
+              "
+              :messageid="message.id"
+            />
             <div v-if="expanded">
               <!-- eslint-disable-next-line -->
               <b-form-textarea v-if="editing" v-model="editmessage.textbody" rows="8" class="mb-3" />
