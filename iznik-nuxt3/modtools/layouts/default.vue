@@ -237,6 +237,12 @@
           @mobilehidemenu="mobilehidemenu"
         />
         <ModMenuItemLeft
+          v-if="supportOrAdmin"
+          link="/rippling"
+          name="Rippling"
+          @mobilehidemenu="mobilehidemenu"
+        />
+        <ModMenuItemLeft
           link="/settings"
           name="Settings"
           @mobilehidemenu="mobilehidemenu"
