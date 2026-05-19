@@ -3933,16 +3933,17 @@ jobs:
             bundle exec fastlane ios modtools_beta
           no_output_timeout: 30m
       - run:
-          name: Update CircleCI Version Variable
+          name: Update CircleCI ModTools Version Variable
           command: |
             if [ ! -f .new_version ]; then exit 0; fi
             NEW_VERSION=$(cat .new_version)
             curl -X DELETE -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
-              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_IOS_MODTOOLS_VERSION" 2>/dev/null || true
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
             curl -X POST -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "{\"name\":\"CURRENT_IOS_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
+              -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
               "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+            echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
       - store_artifacts:
           path: build/
           destination: modtools-ios-build
