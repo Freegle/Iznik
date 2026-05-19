@@ -1816,7 +1816,6 @@ class ContentCheckTest extends TestCase
 
         $this->assertNull($result, 'Non-volunteer address should not be checked');
     }
-}
 
     // -------------------------------------------------------------------------
     // checkGreetingSpam — greeting + link pattern (V1 Spam.php parity)
