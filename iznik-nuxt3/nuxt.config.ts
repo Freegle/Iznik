@@ -576,8 +576,6 @@ export default defineNuxtConfig({
           'es.object.from-entries',
           'es.array.flat-map',
           'es.array.flat',
-          'es.array.at',
-          'es.string.at',
           'es.string.replace-all',
           'es.promise.any',
         ],
