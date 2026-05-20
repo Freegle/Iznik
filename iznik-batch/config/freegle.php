@@ -117,8 +117,7 @@ return [
 
     // GeoIP database for IP country lookups
     'geoip' => [
-        'mmdb_path'     => env('GEOIP_MMDB_PATH', '/usr/share/GeoIP/GeoLite2-Country.mmdb'),
-        'asn_mmdb_path' => env('GEOIP_ASN_MMDB_PATH', '/usr/share/GeoIP/GeoLite2-ASN.mmdb'),
+        'mmdb_path' => env('GEOIP_MMDB_PATH', '/usr/share/GeoIP/GeoLite2-Country.mmdb'),
     ],
 
     // TUS uploader for AI-generated images

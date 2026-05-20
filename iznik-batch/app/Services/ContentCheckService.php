@@ -890,64 +890,6 @@ class ContentCheckService
      */
     private const IP_ABUSE_ID_CAP = 50;
 
-    /** ASN organization name keywords that identify mobile carrier networks. */
-    private const MOBILE_ASN_KEYWORDS = [
-        'mobile',
-        'mobility',
-        'wireless',
-        'cellular',
-        'mvno',
-    ];
-
-    /**
-     * Look up the ASN organization name for an IP via the GeoLite2-ASN database.
-     *
-     * Returns null if the database is unavailable or the lookup fails.
-     * Override in tests to inject a known ASN org name without a real database.
-     */
-    protected function lookupAsnOrganization(string $ip): ?string
-    {
-        $path = config('freegle.geoip.asn_mmdb_path', '/usr/share/GeoIP/GeoLite2-ASN.mmdb');
-        if (!file_exists($path)) {
-            return null;
-        }
-
-        try {
-            $reader = new \GeoIp2\Database\Reader($path);
-            $org    = $reader->asn($ip)->autonomousSystemOrganization;
-            $reader->close();
-
-            return $org ?: null;
-        } catch (\Exception $e) {
-            Log::debug('GeoIP ASN lookup failed', ['ip' => $ip, 'error' => $e->getMessage()]);
-
-            return null;
-        }
-    }
-
-    /**
-     * Return true if the IP belongs to a mobile carrier network.
-     *
-     * Mobile CGNAT pools are shared by thousands of legitimate users, so
-     * IP-abuse checks would generate constant false positives for them.
-     */
-    public function isMobileCarrierIp(string $ip): bool
-    {
-        $org = $this->lookupAsnOrganization($ip);
-        if ($org === null) {
-            return false;
-        }
-
-        $lower = strtolower($org);
-        foreach (self::MOBILE_ASN_KEYWORDS as $keyword) {
-            if (str_contains($lower, $keyword)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     public function checkIpAbuse(int $msgid): ?array
     {
         $fromip = DB::table('messages')->where('id', $msgid)->value('fromip');
@@ -956,15 +898,15 @@ class ContentCheckService
             return null;
         }
 
-        // Mobile carrier CGNAT pools are shared by thousands of legitimate users.
-        // Skip the IP-abuse check entirely to avoid false positives.
-        if ($this->isMobileCarrierIp($fromip)) {
-            return null;
-        }
+        // Match v1 behaviour: only look at the last 31 days.
+        // V1 queries `messages_history` which is pruned to 31 days by purge_messages.php.
+        // Without a window, CGNAT mobile IPs accumulate years of users and always trigger.
+        $window = now()->subDays(31);
 
         // IP used by 5+ different users
         $userCount = DB::table('messages')
             ->where('fromip', $fromip)
+            ->where('arrival', '>=', $window)
             ->whereNotNull('fromuser')
             ->distinct('fromuser')
             ->count();
@@ -972,6 +914,7 @@ class ContentCheckService
         if ($userCount > 5) {
             $users = DB::table('messages')
                 ->where('fromip', $fromip)
+                ->where('arrival', '>=', $window)
                 ->whereNotNull('fromuser')
                 ->select('fromuser')
                 ->groupBy('fromuser')
@@ -995,6 +938,7 @@ class ContentCheckService
         $groupCount = DB::table('messages_groups')
             ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
             ->where('messages.fromip', $fromip)
+            ->where('messages.arrival', '>=', $window)
             ->distinct('messages_groups.groupid')
             ->count();
 
@@ -1002,6 +946,7 @@ class ContentCheckService
             $groups = DB::table('messages_groups')
                 ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
                 ->where('messages.fromip', $fromip)
+                ->where('messages.arrival', '>=', $window)
                 ->select('messages_groups.groupid')
                 ->groupBy('messages_groups.groupid')
                 ->orderByRaw('MAX(messages_groups.arrival) DESC')

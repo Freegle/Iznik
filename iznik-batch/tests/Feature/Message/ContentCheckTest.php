@@ -1671,6 +1671,48 @@ class ContentCheckTest extends TestCase
         $this->assertStringContainsString('20', $result['detail']);
     }
 
+    public function test_ip_abuse_ignores_messages_older_than_31_days(): void
+    {
+        // V1 queries messages_history which is pruned to 31 days.
+        // Messages outside the window must not count toward the abuse threshold.
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $old = now()->subDays(32);
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // Add 5 more users — all with arrival > 31 days ago
+        for ($i = 0; $i < 5; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Old item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => $old,
+                'date'     => $old,
+                'source'   => 'Platform',
+            ]);
+        }
+
+        // Only 1 user within the window — must NOT flag
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull($result, 'IP abuse check should ignore messages older than 31 days');
+    }
+
     public function test_ip_abuse_no_ip_returns_null(): void
     {
         $user = $this->createTestUser();
@@ -1879,187 +1921,6 @@ class ContentCheckTest extends TestCase
             $this->assertIsInt($id, 'group ID must be int, not string');
         }
         $this->assertArrayNotHasKey('users', $result, 'group branch must not include a users array');
-    }
-
-    // -------------------------------------------------------------------------
-    // checkIpAbuse — mobile carrier detection (CGNAT false-positive suppression)
-    // -------------------------------------------------------------------------
-
-    /**
-     * Create a ContentCheckService whose ASN lookup returns a fixed org name,
-     * so tests can exercise mobile-carrier detection without a real database.
-     */
-    private function makeServiceWithAsn(?string $asnOrg): ContentCheckService
-    {
-        return new class($asnOrg) extends ContentCheckService {
-            public function __construct(private readonly ?string $asnOrg) {}
-
-            protected function lookupAsnOrganization(string $ip): ?string
-            {
-                return $this->asnOrg;
-            }
-        };
-    }
-
-    public function test_ip_abuse_skipped_for_mobile_carrier_ip_by_user_count(): void
-    {
-        $ip = '172.16.' . rand(0, 255) . '.' . rand(0, 255);
-
-        $user = $this->createTestUser();
-        $msgid = DB::table('messages')->insertGetId([
-            'fromuser' => $user->id,
-            'type'     => 'Offer',
-            'subject'  => 'OFFER: Test item',
-            'textbody' => 'Test body',
-            'message'  => 'Test body',
-            'fromip'   => $ip,
-            'arrival'  => now(),
-            'date'     => now(),
-            'source'   => 'Platform',
-        ]);
-
-        // 5 more users on the same IP — would normally trigger the user-count check
-        for ($i = 0; $i < 5; $i++) {
-            $otherUser = $this->createTestUser();
-            DB::table('messages')->insert([
-                'fromuser' => $otherUser->id,
-                'type'     => 'Offer',
-                'subject'  => 'OFFER: Another item',
-                'textbody' => 'Test body',
-                'message'  => 'Test body',
-                'fromip'   => $ip,
-                'arrival'  => now(),
-                'date'     => now(),
-                'source'   => 'Platform',
-            ]);
-        }
-
-        $service = $this->makeServiceWithAsn('EE Mobile');
-        $result  = $service->checkIpAbuse($msgid);
-
-        $this->assertNull($result, 'IP abuse check must be skipped for mobile carrier IPs');
-    }
-
-    public function test_ip_abuse_skipped_for_mobile_carrier_ip_by_group_count(): void
-    {
-        $ip = '172.16.' . rand(0, 255) . '.' . rand(0, 255);
-        $user = $this->createTestUser();
-
-        $msgid = DB::table('messages')->insertGetId([
-            'fromuser' => $user->id,
-            'type'     => 'Offer',
-            'subject'  => 'OFFER: Test item',
-            'textbody' => 'Test body',
-            'message'  => 'Test body',
-            'fromip'   => $ip,
-            'arrival'  => now(),
-            'date'     => now(),
-            'source'   => 'Platform',
-        ]);
-
-        // Post to 20 groups — would normally trigger the group-count check
-        for ($i = 0; $i < 20; $i++) {
-            $group = $this->createTestGroup();
-            DB::table('messages_groups')->insert([
-                'msgid'      => $msgid,
-                'groupid'    => $group->id,
-                'collection' => 'Pending',
-                'arrival'    => now(),
-                'deleted'    => 0,
-            ]);
-        }
-
-        $service = $this->makeServiceWithAsn('Vodafone UK Mobile');
-        $result  = $service->checkIpAbuse($msgid);
-
-        $this->assertNull($result, 'IP abuse check must be skipped for mobile carrier IPs');
-    }
-
-    public function test_ip_abuse_not_skipped_for_non_mobile_asn(): void
-    {
-        $ip = '10.' . rand(0, 255) . '.' . rand(0, 255) . '.' . rand(0, 255);
-
-        $user = $this->createTestUser();
-        $msgid = DB::table('messages')->insertGetId([
-            'fromuser' => $user->id,
-            'type'     => 'Offer',
-            'subject'  => 'OFFER: Test item',
-            'textbody' => 'Test body',
-            'message'  => 'Test body',
-            'fromip'   => $ip,
-            'arrival'  => now(),
-            'date'     => now(),
-            'source'   => 'Platform',
-        ]);
-
-        for ($i = 0; $i < 5; $i++) {
-            $otherUser = $this->createTestUser();
-            DB::table('messages')->insert([
-                'fromuser' => $otherUser->id,
-                'type'     => 'Offer',
-                'subject'  => 'OFFER: Another item',
-                'textbody' => 'Test body',
-                'message'  => 'Test body',
-                'fromip'   => $ip,
-                'arrival'  => now(),
-                'date'     => now(),
-                'source'   => 'Platform',
-            ]);
-        }
-
-        $service = $this->makeServiceWithAsn('BT Business Broadband');
-        $result  = $service->checkIpAbuse($msgid);
-
-        $this->assertNotNull($result, 'Non-mobile ASN must still trigger IP abuse check');
-        $this->assertEquals('IpAbuse', $result['check']);
-    }
-
-    /** @dataProvider mobileAsnProvider */
-    public function test_mobile_asn_names_are_detected(string $asnOrg): void
-    {
-        $service = $this->makeServiceWithAsn($asnOrg);
-        $this->assertTrue(
-            $service->isMobileCarrierIp('1.2.3.4'),
-            "ASN org '{$asnOrg}' should be detected as a mobile carrier"
-        );
-    }
-
-    public static function mobileAsnProvider(): array
-    {
-        return [
-            'EE Mobile'          => ['EE Mobile'],
-            'O2 UK Mobile'       => ['O2 (UK) Mobile'],
-            'Vodafone UK Mobile' => ['Vodafone UK Mobile'],
-            'Three UK'           => ['Three UK Wireless'],
-            'T-Mobile US'        => ['T-Mobile USA, Inc.'],
-            'Verizon Wireless'   => ['Verizon Wireless'],
-            'AT&T Mobility'      => ['AT&T Mobility LLC'],
-            'generic mobile'     => ['Some Mobile Network ISP'],
-            'generic wireless'   => ['Regional Wireless Co'],
-            'generic cellular'   => ['Cellular One Inc'],
-        ];
-    }
-
-    /** @dataProvider nonMobileAsnProvider */
-    public function test_non_mobile_asn_names_are_not_detected(?string $asnOrg): void
-    {
-        $service = $this->makeServiceWithAsn($asnOrg);
-        $this->assertFalse(
-            $service->isMobileCarrierIp('1.2.3.4'),
-            "ASN org " . var_export($asnOrg, true) . " should NOT be detected as a mobile carrier"
-        );
-    }
-
-    public static function nonMobileAsnProvider(): array
-    {
-        return [
-            'BT Business'   => ['BT Business Broadband'],
-            'Virgin Media'  => ['Virgin Media'],
-            'Sky Broadband' => ['Sky UK Limited'],
-            'AWS'           => ['Amazon.com, Inc.'],
-            'Cloudflare'    => ['Cloudflare, Inc.'],
-            'null ASN'      => [null],
-        ];
     }
 
     // -------------------------------------------------------------------------
