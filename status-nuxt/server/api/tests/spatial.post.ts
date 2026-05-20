@@ -26,14 +26,15 @@ export default defineEventHandler(async (event) => {
     withCoverage,
   })
 
-  // No database setup needed — tests use in-memory SQLite.
+  // Tests use in-memory SQLite — no external PBF data needed.
+  // Targets spatial-knn (iznik-spatial-go) which has SQLite R-tree index tests.
   const testCmd = withCoverage
     ? `go test -v -race -timeout 10m -coverprofile=coverage.out ./... -coverpkg ./...`
     : `go test -count=1 ./... -v`
 
   const testProcess = spawn('sh', ['-c', `
     echo "Running spatial server tests..."
-    docker exec -w /app ${prefix}-spatial sh -c "${testCmd} 2>&1"
+    docker exec -w /app ${prefix}-spatial-knn sh -c "${testCmd} 2>&1"
   `], { stdio: 'pipe' })
 
   let stdoutBuffer = ''
