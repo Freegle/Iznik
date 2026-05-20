@@ -30,6 +30,75 @@ class ReachVolunteeringService
         return $response->body();
     }
 
+    /**
+     * Fetch the feed and decode it to an array of opportunities, retrying on
+     * payloads that don't decode to an array.
+     *
+     * Reach's Drupal feed intermittently returns a PHP fatal-error page
+     * ("Maximum execution time of 30 seconds exceeded") with an HTTP 200, so a
+     * successful HTTP status isn't enough — we have to validate the body. The
+     * timeout is load-related, so a later attempt often succeeds.
+     *
+     * On total failure we throw rather than return [] on purpose: returning an
+     * empty set would make the caller treat every Reach opportunity as absent
+     * and mark the lot deleted on a transient outage.
+     */
+    protected function fetchOpportunities(string $feedUrl): array
+    {
+        $attempts = max(1, (int) config('freegle.reach_volunteering.fetch_attempts', 3));
+        $delay    = max(0, (int) config('freegle.reach_volunteering.retry_delay_seconds', 30));
+
+        $body    = '';
+        $decoded = null;
+
+        for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+            $body    = $this->fetchFeedData($feedUrl);
+            $decoded = json_decode($body, true, 512, JSON_INVALID_UTF8_IGNORE);
+
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+
+            Log::warning('ReachVolunteering: feed did not decode to array', [
+                'attempt'      => $attempt,
+                'attempts'     => $attempts,
+                'json_error'   => json_last_error_msg(),
+                'decoded_type' => gettype($decoded),
+                'body_length'  => strlen($body),
+                'body_sample'  => substr($body, 0, 500),
+            ]);
+
+            if ($attempt < $attempts && $delay > 0) {
+                sleep($delay);
+            }
+        }
+
+        // All attempts exhausted — the body still isn't a JSON array. Capture
+        // enough context to triage without a repro (Sentry doesn't record
+        // `$body` as a frame var) and throw to protect the deletion phase.
+        $type    = gettype($decoded);
+        $jsonErr = json_last_error_msg();
+        $bodyLen = strlen($body);
+        $sample  = substr($body, 0, 200);
+
+        Log::error('ReachVolunteering: unexpected feed payload', [
+            'attempts'     => $attempts,
+            'json_error'   => $jsonErr,
+            'decoded_type' => $type,
+            'body_length'  => $bodyLen,
+            'body_sample'  => substr($body, 0, 500),
+        ]);
+
+        throw new \RuntimeException(sprintf(
+            'Reach Volunteering feed: expected JSON array after %d attempt(s), got %s (json_error=%s, body_length=%d, body_sample=%s)',
+            $attempts,
+            $type,
+            $jsonErr,
+            $bodyLen,
+            $sample
+        ));
+    }
+
     public function sync(bool $dryRun = false): array
     {
         $added   = 0;
@@ -37,13 +106,7 @@ class ReachVolunteeringService
         $deleted = 0;
 
         $feedUrl = config('freegle.reach_volunteering.feed_url');
-        $body    = $this->fetchFeedData($feedUrl);
-
-        $opps = json_decode($body, true, 512, JSON_INVALID_UTF8_IGNORE);
-
-        if (!is_array($opps)) {
-            throw new \RuntimeException('Reach Volunteering feed: expected JSON array');
-        }
+        $opps    = $this->fetchOpportunities($feedUrl);
 
         $externalsSeen = [];
         $urlsSeen      = [];
