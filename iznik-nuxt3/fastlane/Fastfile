@@ -930,9 +930,27 @@ platform :ios do
       next
     end
 
-    if latest_build.processing_state != "VALID"
-      UI.message("⏳ ModTools build is still processing (status: #{latest_build.processing_state}), will try again later")
-      next
+    # Wait up to 30 minutes for Apple to finish processing the build (6 × 5-min sleeps).
+    # This covers the case where build-ios-modtools just uploaded and Apple hasn't
+    # finished processing yet when this job runs.
+    max_wait_seconds = 30 * 60
+    poll_interval    = 5 * 60
+    waited           = 0
+
+    while latest_build.processing_state != "VALID"
+      if waited >= max_wait_seconds
+        UI.error("❌ ModTools build #{build_number} still not processed after #{max_wait_seconds / 60} minutes (status: #{latest_build.processing_state})")
+        UI.message("💡 Re-trigger submission via run_manual_promote: true once Apple finishes processing")
+        UI.user_error!("Build processing timed out")
+      end
+
+      UI.message("⏳ ModTools build still processing (status: #{latest_build.processing_state}) — waiting #{poll_interval / 60} min (#{waited / 60}/#{max_wait_seconds / 60} min elapsed)...")
+      sleep(poll_interval)
+      waited += poll_interval
+
+      # Re-fetch the build to check updated processing state
+      builds = app.get_builds(sort: "-uploadedDate", limit: 50, includes: "preReleaseVersion")
+      latest_build = builds.find { |b| b.version == build_number } || latest_build
     end
 
     UI.success("🚀 Submitting ModTools build #{build_number} (version #{version}) for App Store review...")
