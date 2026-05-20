@@ -12,7 +12,7 @@
         </mj-text>
         <mj-text font-size="14px" color="#555555">
           Charities, community organisations and good causes in {{ $groupName }} are looking for helpers.
-          If you'd like to add one, <a href="https://{{ $userSite }}/volunteering">click here</a>.
+          If you'd like to add one, <a href="{{ $userSite }}/volunteering">click here</a>.
         </mj-text>
       </mj-column>
     </mj-section>
@@ -120,7 +120,7 @@
     <mj-section background-color="#ffffff" padding="16px 20px 20px">
       <mj-column>
         <mj-divider border-color="#e0e0e0" border-width="1px" padding="0 0 16px" />
-        <mj-button href="https://{{ $userSite }}/volunteering" mj-class="btn-success" border-radius="3px" font-size="16px">
+        <mj-button href="{{ $userSite }}/volunteering" mj-class="btn-success" border-radius="3px" font-size="16px">
           View all volunteering opportunities
         </mj-button>
       </mj-column>

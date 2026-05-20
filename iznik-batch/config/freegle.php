@@ -26,6 +26,7 @@ return [
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
         'wallpaper_url' => env('FREEGLE_WALLPAPER_URL', 'https://www.ilovefreegle.org/wallpaper.png'),
         'modtools_logo_url' => env('MODTOOLS_LOGO_URL', 'https://modtools.org/icon_modtools.png'),
+        'registered_address' => env('FREEGLE_REGISTERED_ADDRESS', '64a North Road, Ormesby, Great Yarmouth, Norfolk NR29 3LE'),
     ],
 
     'mail' => [

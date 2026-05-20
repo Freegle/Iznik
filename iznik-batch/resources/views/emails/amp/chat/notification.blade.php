@@ -410,7 +410,7 @@
       <div class="footer-divider"></div>
       <p class="footer-charity">
         {{ $siteName }} is registered as a charity with HMRC (ref. XT32865) and is run by volunteers. Which is nice.<br>
-        Registered address: 64a North Road, Ormesby, Great Yarmouth, Norfolk NR29 3LE
+        Registered address: {{ config('freegle.branding.registered_address') }}
       </p>
     </div>
   </div>
