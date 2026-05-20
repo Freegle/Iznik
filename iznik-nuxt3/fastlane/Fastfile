@@ -837,6 +837,148 @@ platform :ios do
     end
   end
 
+  desc "Auto-submit latest ModTools TestFlight build to App Store review (automatic release on approval)"
+  lane :auto_submit_modtools do
+    require 'spaceship'
+    require 'time'
+
+    UI.message("🔍 Checking TestFlight for ModTools builds ready to submit...")
+
+    app_store_connect_api_key(
+      key_id: ENV['APP_STORE_CONNECT_API_KEY_KEY_ID'],
+      issuer_id: ENV['APP_STORE_CONNECT_API_KEY_ISSUER_ID'],
+      key_content: Base64.decode64(ENV['APP_STORE_CONNECT_API_KEY_KEY']),
+      is_key_content_base64: false
+    )
+
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV['APP_STORE_CONNECT_API_KEY_KEY_ID'],
+      issuer_id: ENV['APP_STORE_CONNECT_API_KEY_ISSUER_ID'],
+      key: Base64.decode64(ENV['APP_STORE_CONNECT_API_KEY_KEY'])
+    )
+
+    app = Spaceship::ConnectAPI::App.find("org.ilovefreegle.modtools")
+    unless app
+      UI.user_error!("❌ Could not find app with identifier org.ilovefreegle.modtools")
+    end
+
+    builds = app.get_builds(
+      sort: "-uploadedDate",
+      limit: 50,
+      includes: "preReleaseVersion"
+    )
+
+    if builds.nil? || builds.empty?
+      UI.message("ℹ️  No TestFlight builds found for ModTools")
+      next
+    end
+
+    cutoff_time = Time.now - (7 * 24 * 60 * 60)
+    recent_builds = builds.select do |build|
+      upload_time = Time.parse(build.uploaded_date)
+      upload_time >= cutoff_time
+    end
+
+    if recent_builds.empty?
+      UI.message("ℹ️  No ModTools TestFlight builds uploaded in the last 7 days")
+      next
+    end
+
+    latest_build = recent_builds.first
+
+    version = nil
+    if latest_build.respond_to?(:app_version) && latest_build.app_version
+      version = latest_build.app_version
+    elsif latest_build.respond_to?(:pre_release_version) && latest_build.pre_release_version
+      version = latest_build.pre_release_version.version
+    end
+
+    unless version
+      UI.error("❌ Could not determine version string from ModTools build")
+      next
+    end
+
+    build_number = latest_build.version
+    UI.message("📦 Latest ModTools build: version #{version}, build #{build_number}")
+
+    all_versions = app.get_app_store_versions
+    UI.message("📋 ModTools App Store versions:")
+    all_versions.each do |v|
+      UI.message("   - Version #{v.version_string}: #{v.app_store_state}")
+    end
+
+    app_store_version = all_versions.find { |v| v.version_string == version }
+    if app_store_version
+      state = app_store_version.app_store_state
+      case state
+      when "PENDING_DEVELOPER_RELEASE", "PENDING_APPLE_RELEASE", "IN_REVIEW", "WAITING_FOR_REVIEW"
+        UI.message("✅ ModTools version #{version} is already in the submission pipeline (status: #{state})")
+        next
+      when "READY_FOR_SALE"
+        UI.message("✅ ModTools version #{version} is already released")
+        next
+      when "DEVELOPER_REJECTED", "REJECTED"
+        UI.message("⚠️  ModTools version #{version} was rejected (status: #{state})")
+        next
+      end
+    end
+
+    editable_states = ["PENDING_DEVELOPER_RELEASE", "PENDING_APPLE_RELEASE", "IN_REVIEW", "WAITING_FOR_REVIEW", "PREPARE_FOR_SUBMISSION", "READY_FOR_REVIEW"]
+    other_blocking = all_versions.find { |v| v.version_string != version && editable_states.include?(v.app_store_state) }
+    if other_blocking
+      UI.error("⚠️  Cannot submit ModTools: Version #{other_blocking.version_string} is blocking (status: #{other_blocking.app_store_state})")
+      next
+    end
+
+    if latest_build.processing_state != "VALID"
+      UI.message("⏳ ModTools build is still processing (status: #{latest_build.processing_state}), will try again later")
+      next
+    end
+
+    UI.success("🚀 Submitting ModTools build #{build_number} (version #{version}) for App Store review...")
+
+    begin
+      deliver(
+        build_number: build_number.to_s,
+        app_version: version,
+        submit_for_review: true,
+        automatic_release: true,
+        force: true,
+        skip_metadata: false,
+        skip_screenshots: true,
+        skip_binary_upload: true,
+        skip_app_version_update: false,
+        precheck_include_in_app_purchases: false,
+        app_identifier: "org.ilovefreegle.modtools",
+        release_notes: {
+          "en-GB" => "Bug fixes and improvements"
+        },
+        submission_information: {
+          add_id_info_uses_idfa: false,
+          export_compliance_uses_encryption: false,
+          export_compliance_is_exempt: true,
+          content_rights_contains_third_party_content: false
+        }
+      )
+      UI.success("✅ Successfully submitted ModTools build #{build_number} (version #{version}) for App Store review!")
+      UI.message("📱 automatic_release: true — the app will go live automatically when Apple approves it")
+    rescue => e
+      error_message = e.message.to_s.downcase
+      if error_message.include?("already") || error_message.include?("duplicate") || error_message.include?("in review")
+        UI.message("ℹ️  ModTools build #{build_number} appears to already be submitted or in review")
+      elsif error_message.include?("cannot submit") || error_message.include?("could not find an editable version") || error_message.include?("relationship value is not acceptable")
+        UI.error("❌ Cannot submit ModTools: Another version may be blocking submission")
+        UI.error("📝 Error details: #{e.message}")
+      elsif error_message.include?("pre-release build could not be added")
+        UI.error("❌ ModTools build #{build_number} cannot be added — may still be processing")
+        UI.error("📝 Error details: #{e.message}")
+      else
+        UI.error("❌ Failed to submit ModTools build #{build_number}: #{e.message}")
+        raise e
+      end
+    end
+  end
+
   desc "Auto-release approved apps from Pending Developer Release state"
   lane :auto_release do
     require 'spaceship'

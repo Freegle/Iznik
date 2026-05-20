@@ -23,7 +23,7 @@ parameters:
     description: "Forwarded from trigger — true when build_modtools_production was set"
 
 orbs:
-  freegle: freegle/tests@1.1.314
+  freegle: freegle/tests@1.1.315
 
 jobs:
   mark-ci-passed:
@@ -215,6 +215,8 @@ workflows:
   # Manually-triggered ModTools production build and Play Store / TestFlight upload.
   # Trigger by setting build_modtools_production: true in the CircleCI pipeline parameters UI.
   # Does not run automatically — ModTools updates are infrequent and manually controlled.
+  # After building, attempts to submit immediately. If Apple hasn't finished processing the
+  # build yet, the submit step exits gracefully — re-trigger via manual-promote-submit later.
   modtools-production:
     when: << pipeline.parameters.build_modtools_production >>
     jobs:
@@ -225,6 +227,9 @@ workflows:
       - freegle/build-ios-modtools:
           requires:
             - freegle/increment-version-modtools
+      - freegle/auto-submit-ios-modtools:
+          requires:
+            - freegle/build-ios-modtools
 
   # Manual promotion trigger
   manual-promote-submit:
@@ -241,6 +246,11 @@ workflows:
               only:
                 - production
       - freegle/auto-release-ios:
+          filters:
+            branches:
+              only:
+                - production
+      - freegle/auto-submit-ios-modtools:
           filters:
             branches:
               only:

@@ -4188,6 +4188,37 @@ jobs:
           name: Auto-submit Latest TestFlight Build to App Store Review
           command: bundle exec fastlane ios auto_submit
 
+  auto-submit-ios-modtools:
+    executor: macos-executor
+    working_directory: ~/project/iznik-nuxt3
+    steps:
+      - checkout:
+          path: ~/project
+      - run:
+          name: Install Node.js 22
+          command: |
+            curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            nvm install 22
+            nvm use 22
+            nvm alias default 22
+            echo 'export NVM_DIR="$HOME/.nvm"' >> $BASH_ENV
+            echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> $BASH_ENV
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - run:
+          name: Install Fastlane
+          command: |
+            gem install bundler
+            bundle update fastlane
+            bundle install
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - run:
+          name: Submit ModTools to App Store Review (auto-releases on approval)
+          command: bundle exec fastlane ios auto_submit_modtools
+
   auto-release-ios:
     executor: macos-executor
     working_directory: ~/project/iznik-nuxt3
