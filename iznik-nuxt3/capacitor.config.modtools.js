@@ -46,6 +46,7 @@ const config = {
       '@freegle/capacitor-push-notifications-cap7',
       '@capawesome/capacitor-badge',
       '@capgo/capacitor-social-login',
+      '@capacitor-community/apple-sign-in',
       '@capacitor/app',
       '@capacitor/status-bar',
       '@capacitor/network',

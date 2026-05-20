@@ -3950,9 +3950,9 @@ jobs:
       - run:
           name: Strip entitlements for ModTools
           command: |
-            # The Freegle entitlements include Apple Pay, Sign in with Apple, and Universal
-            # Links — capabilities not in the ModTools provisioning profile. Replace with a
-            # minimal entitlements file containing only push notifications (aps-environment).
+            # Replace Freegle entitlements (Apple Pay, Universal Links) with ModTools-specific
+            # ones. Apple Pay and Universal Links are not in the ModTools provisioning profile.
+            # Sign in with Apple and push notifications are included.
             cat > ios/App/App/App.entitlements \<< 'ENTITLEMENTS'
             <?xml version="1.0" encoding="UTF-8"?>
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -3960,6 +3960,10 @@ jobs:
             <dict>
                 <key>aps-environment</key>
                 <string>production</string>
+                <key>com.apple.developer.applesignin</key>
+                <array>
+                    <string>Default</string>
+                </array>
             </dict>
             </plist>
             ENTITLEMENTS
