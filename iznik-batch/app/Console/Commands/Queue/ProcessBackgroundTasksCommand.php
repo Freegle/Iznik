@@ -235,7 +235,7 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_HOUSEKEEPER_NOTIFY      => $this->handleHousekeeperNotify($data),
             BackgroundTask::TASK_REMAP_POSTCODES         => $this->handleRemapPostcodes($data),
             BackgroundTask::TASK_USER_FORGET             => $this->handleUserForget($data),
-            'tn_sync_command' => $this->handleTnSyncCommand($data),
+            BackgroundTask::TASK_TN_SYNC                 => $this->handleTnSyncCommand($data),
             default => throw new \RuntimeException("Unknown task type: {$taskType}"),
         };
     }
