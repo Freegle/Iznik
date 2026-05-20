@@ -34,16 +34,41 @@ class SyncReachVolunteeringCommandTest extends TestCase
 
     // ── Service tests ─────────────────────────────────────────────────────────
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Don't sleep between retries in tests.
+        config(['freegle.reach_volunteering.retry_delay_seconds' => 0]);
+    }
+
     private function makeService(array $feedData): ReachVolunteeringService
     {
-        $json = json_encode($feedData);
+        return $this->makeServiceFromBody(json_encode($feedData));
+    }
 
-        return new class($json) extends ReachVolunteeringService {
-            public function __construct(private string $feedJson) {}
+    private function makeServiceFromBody(string $body): ReachVolunteeringService
+    {
+        return $this->makeServiceFromBodies([$body]);
+    }
+
+    /**
+     * Build a service that returns each body in sequence on successive feed
+     * fetches (the last body repeats if fetched more times than provided).
+     */
+    private function makeServiceFromBodies(array $bodies): ReachVolunteeringService
+    {
+        return new class($bodies) extends ReachVolunteeringService {
+            private int $call = 0;
+
+            public function __construct(private array $bodies) {}
 
             protected function fetchFeedData(string $feedUrl): string
             {
-                return $this->feedJson;
+                $body = $this->bodies[$this->call] ?? end($this->bodies);
+                $this->call++;
+
+                return $body;
             }
         };
     }
@@ -259,6 +284,80 @@ class SyncReachVolunteeringCommandTest extends TestCase
 
         $this->assertSame(1, $result['deleted']);
         $this->assertSame(0, (int) DB::table('volunteering')->where('externalid', 'reach-99999')->value('deleted'));
+    }
+
+    public function test_throws_with_diagnostic_detail_when_feed_is_not_array(): void
+    {
+        // Mirrors the real failure: Reach's Drupal returns a PHP fatal-error
+        // page with HTTP 200 instead of JSON.
+        $service = $this->makeServiceFromBody(
+            "<br />\n<b>Fatal error</b>:  Maximum execution time of 30 seconds exceeded"
+        );
+
+        try {
+            $service->sync();
+            $this->fail('Expected RuntimeException');
+        } catch (\RuntimeException $e) {
+            $msg = $e->getMessage();
+            $this->assertStringContainsString('expected JSON array', $msg);
+            // The point of the fix: triage info must be in the message.
+            $this->assertStringContainsString('got NULL', $msg);
+            $this->assertStringContainsString('body_length=', $msg);
+            $this->assertStringContainsString('Fatal error', $msg);
+        }
+    }
+
+    public function test_throws_with_diagnostic_detail_when_feed_is_empty(): void
+    {
+        $service = $this->makeServiceFromBody('');
+
+        try {
+            $service->sync();
+            $this->fail('Expected RuntimeException');
+        } catch (\RuntimeException $e) {
+            $msg = $e->getMessage();
+            $this->assertStringContainsString('expected JSON array', $msg);
+            $this->assertStringContainsString('body_length=0', $msg);
+        }
+    }
+
+    public function test_does_not_delete_records_when_feed_fails(): void
+    {
+        // A transient feed failure must NOT cascade into deleting every Reach
+        // opportunity — the throw has to happen before the deletion phase.
+        DB::table('volunteering')->insert([
+            'externalid'  => 'reach-77777',
+            'title'       => 'Live Opportunity',
+            'location'    => 'Somewhere',
+            'description' => 'Active',
+            'contacturl'  => 'https://reachvolunteering.org.uk/vol/77777',
+            'deleted'     => 0,
+        ]);
+
+        try {
+            $this->makeServiceFromBody('<br /><b>Fatal error</b>')->sync();
+            $this->fail('Expected RuntimeException');
+        } catch (\RuntimeException) {
+            // expected
+        }
+
+        $this->assertSame(0, (int) DB::table('volunteering')->where('externalid', 'reach-77777')->value('deleted'));
+    }
+
+    public function test_retries_and_recovers_when_a_later_fetch_succeeds(): void
+    {
+        $this->seedLocationAndGroup('SW1A 1AA', 51.5007, -0.1246);
+
+        // First fetch returns Reach's fatal-error page; the retry returns valid JSON.
+        $service = $this->makeServiceFromBodies([
+            '<br /><b>Fatal error</b>: Maximum execution time of 30 seconds exceeded',
+            json_encode([$this->opportunity()]),
+        ]);
+
+        $result = $service->sync();
+
+        $this->assertSame(1, $result['added']);
+        $this->assertDatabaseHas('volunteering', ['externalid' => 'reach-12345']);
     }
 
     public function test_skips_group_with_volunteering_disabled(): void
