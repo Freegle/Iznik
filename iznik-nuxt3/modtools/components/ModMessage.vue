@@ -309,6 +309,14 @@
             >
               {{ message.spamreason }}
             </NoticeMessage>
+            <NoticeMessage
+              v-if="pending && membership && membership.ourpostingstatus === 'MODERATED'"
+              variant="info"
+              class="mb-2"
+            >
+              This member is <strong>Moderated</strong> — their posts need
+              approval before going live.
+            </NoticeMessage>
             <div
               v-if="
                 message.microvolunteering && message.microvolunteering.length
