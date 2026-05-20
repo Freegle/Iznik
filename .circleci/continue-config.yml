@@ -23,7 +23,7 @@ parameters:
     description: "Forwarded from trigger — true when build_modtools_production was set"
 
 orbs:
-  freegle: freegle/tests@1.1.311
+  freegle: freegle/tests@1.1.312
 
 jobs:
   mark-ci-passed:
