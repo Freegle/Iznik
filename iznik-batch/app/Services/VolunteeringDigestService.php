@@ -147,7 +147,7 @@ class VolunteeringDigestService
                     'contacturl'     => $v->contacturl,
                     'photo_thumb'    => $photoThumb,
                     'applyby'        => $applyby,
-                    'url'            => "https://{$userSite}/volunteering/{$v->id}",
+                    'url'            => "{$userSite}/volunteering/{$v->id}",
                 ];
             })->values()->all();
 
@@ -187,7 +187,7 @@ class VolunteeringDigestService
                 }
 
                 if (!$dryRun) {
-                    $unsubscribeUrl = "https://{$userSite}/unsubscribe?email=" . urlencode($member->email);
+                    $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($member->email);
                     // SafeMail catches permanent (bounce + skip) and transient
                     // (mail-host hiccup mid-run) SMTP failures so one bad
                     // address or one closed-connection doesn't crash the

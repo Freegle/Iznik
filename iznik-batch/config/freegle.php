@@ -26,6 +26,7 @@ return [
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),
         'wallpaper_url' => env('FREEGLE_WALLPAPER_URL', 'https://www.ilovefreegle.org/wallpaper.png'),
         'modtools_logo_url' => env('MODTOOLS_LOGO_URL', 'https://modtools.org/icon_modtools.png'),
+        'registered_address' => env('FREEGLE_REGISTERED_ADDRESS', '64a North Road, Ormesby, Great Yarmouth, Norfolk NR29 3LE'),
     ],
 
     'mail' => [
@@ -339,5 +340,10 @@ return [
         'feed_url' => env('REACH_VOLUNTEERING_FEED_URL', ''),
         'username' => env('REACH_VOLUNTEERING_USER', ''),
         'password' => env('REACH_VOLUNTEERING_PASSWORD', ''),
+        // Reach's Drupal feed periodically returns a PHP fatal-error page
+        // (max_execution_time exceeded) with HTTP 200 instead of JSON. Retry
+        // a few times before giving up, since the timeout is load-related.
+        'fetch_attempts'      => (int) env('REACH_VOLUNTEERING_FETCH_ATTEMPTS', 3),
+        'retry_delay_seconds' => (int) env('REACH_VOLUNTEERING_RETRY_DELAY_SECONDS', 30),
     ],
 ];
