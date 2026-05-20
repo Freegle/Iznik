@@ -114,6 +114,19 @@ func TestClientLogEndpointV2(t *testing.T) {
 	assert.Equal(t, 204, resp.StatusCode, "V2 endpoint should also return 204")
 }
 
+func TestClientLogEndpointIncludesClientIP(t *testing.T) {
+	// Verify the endpoint accepts requests with a client IP in X-Real-IP (fire-and-forget, 204).
+	body := `{"logs":[{"timestamp":"2024-01-01T00:00:00Z","level":"info","message":"Log with IP"}]}`
+
+	req := httptest.NewRequest("POST", "/api/clientlog", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Real-IP", "203.0.113.42")
+
+	resp, err := getApp().Test(req)
+	assert.Nil(t, err)
+	assert.Equal(t, 204, resp.StatusCode, "Should return 204 with X-Real-IP header")
+}
+
 func TestClientLogEndpointWithAPIRequestLog(t *testing.T) {
 	// Test with API request log event type
 	body := `{"logs":[{
