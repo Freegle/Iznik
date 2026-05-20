@@ -890,11 +890,75 @@ class ContentCheckService
      */
     private const IP_ABUSE_ID_CAP = 50;
 
+    /** ASN organization name keywords that identify mobile carrier networks. */
+    private const MOBILE_ASN_KEYWORDS = [
+        'mobile',
+        'mobility',
+        'wireless',
+        'cellular',
+        'mvno',
+    ];
+
+    /**
+     * Look up the ASN organization name for an IP via the GeoLite2-ASN database.
+     *
+     * Returns null if the database is unavailable or the lookup fails.
+     * Override in tests to inject a known ASN org name without a real database.
+     */
+    protected function lookupAsnOrganization(string $ip): ?string
+    {
+        $path = config('freegle.geoip.asn_mmdb_path', '/usr/share/GeoIP/GeoLite2-ASN.mmdb');
+        if (!file_exists($path)) {
+            return null;
+        }
+
+        try {
+            $reader = new \GeoIp2\Database\Reader($path);
+            $org    = $reader->asn($ip)->autonomousSystemOrganization;
+            $reader->close();
+
+            return $org ?: null;
+        } catch (\Exception $e) {
+            Log::debug('GeoIP ASN lookup failed', ['ip' => $ip, 'error' => $e->getMessage()]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Return true if the IP belongs to a mobile carrier network.
+     *
+     * Mobile CGNAT pools are shared by thousands of legitimate users, so
+     * IP-abuse checks would generate constant false positives for them.
+     */
+    public function isMobileCarrierIp(string $ip): bool
+    {
+        $org = $this->lookupAsnOrganization($ip);
+        if ($org === null) {
+            return false;
+        }
+
+        $lower = strtolower($org);
+        foreach (self::MOBILE_ASN_KEYWORDS as $keyword) {
+            if (str_contains($lower, $keyword)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public function checkIpAbuse(int $msgid): ?array
     {
         $fromip = DB::table('messages')->where('id', $msgid)->value('fromip');
 
         if (!$fromip) {
+            return null;
+        }
+
+        // Mobile carrier CGNAT pools are shared by thousands of legitimate users.
+        // Skip the IP-abuse check entirely to avoid false positives.
+        if ($this->isMobileCarrierIp($fromip)) {
             return null;
         }
 
