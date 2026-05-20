@@ -9,6 +9,7 @@ import {
   getDiscourseBug,
   queueDiscourseDraft,
   listPendingDrafts,
+  cancelDraftsForBug,
   reopenBugAfterRejection,
   markDiscourseBugFixed,
 } from '../db/index'
@@ -215,6 +216,48 @@ describe('Database Helpers', () => {
       expect(id2).not.toBe(id1)
       const pendingCount = (testDb.prepare('SELECT COUNT(*) AS c FROM discourse_draft WHERE posted_at IS NULL AND rejected_at IS NULL').get() as { c: number }).c
       expect(pendingCount).toBe(1)
+    })
+  })
+
+  describe('cancelDraftsForBug', () => {
+    it('should cancel pending drafts for a bug', () => {
+      queueDiscourseDraft(testDb, { topic: 700, post: 1, username: 'edward', quote: 'q', body: 'draft 1' })
+      queueDiscourseDraft(testDb, { topic: 700, post: 2, username: 'edward', quote: 'q', body: 'draft 2' })
+
+      const count = cancelDraftsForBug(testDb, 700, 1, 'Bug dismissed as off-topic')
+      expect(count).toBe(1)
+
+      const pending = listPendingDrafts(testDb)
+      expect(pending.length).toBe(1)
+      expect(pending[0].post).toBe(2)
+
+      const cancelled = testDb.prepare('SELECT * FROM discourse_draft WHERE topic = 700 AND post = 1').get() as { rejected_at: string | null; rejection_reason: string | null }
+      expect(cancelled.rejected_at).not.toBeNull()
+      expect(cancelled.rejection_reason).toBe('Bug dismissed as off-topic')
+    })
+
+    it('should not cancel already-posted drafts', () => {
+      const id = queueDiscourseDraft(testDb, { topic: 701, post: 1, username: 'edward', quote: 'q', body: 'posted draft' })
+      testDb.prepare(`UPDATE discourse_draft SET posted_at = datetime('now') WHERE id = ?`).run(id)
+
+      const count = cancelDraftsForBug(testDb, 701, 1, 'too late')
+      expect(count).toBe(0)
+    })
+
+    it('should return 0 when no pending drafts exist', () => {
+      const count = cancelDraftsForBug(testDb, 999, 1, 'nothing here')
+      expect(count).toBe(0)
+    })
+
+    it('should not cancel already-rejected drafts', () => {
+      const id = queueDiscourseDraft(testDb, { topic: 702, post: 1, username: 'edward', quote: 'q', body: 'rejected draft' })
+      testDb.prepare(`UPDATE discourse_draft SET rejected_at = datetime('now'), rejection_reason = 'old reason' WHERE id = ?`).run(id)
+
+      const count = cancelDraftsForBug(testDb, 702, 1, 'new reason')
+      expect(count).toBe(0)
+
+      const row = testDb.prepare('SELECT rejection_reason FROM discourse_draft WHERE id = ?').get(id) as { rejection_reason: string }
+      expect(row.rejection_reason).toBe('old reason')
     })
   })
 

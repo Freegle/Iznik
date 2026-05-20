@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Mail\Volunteering\VolunteeringDigestMail;
+use App\Support\SafeMail;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
@@ -187,14 +188,23 @@ class VolunteeringDigestService
 
                 if (!$dryRun) {
                     $unsubscribeUrl = "https://{$userSite}/unsubscribe?email=" . urlencode($member->email);
-                    Mail::send(new VolunteeringDigestMail(
-                        recipientEmail: $member->email,
-                        groupName: $groupRow->nameshort,
-                        volunteerings: $volData,
-                        unsubscribeUrl: $unsubscribeUrl,
-                        jobAds: $jobAds,
-                        userId: $member->userId,
-                    ));
+                    // SafeMail catches permanent (bounce + skip) and transient
+                    // (mail-host hiccup mid-run) SMTP failures so one bad
+                    // address or one closed-connection doesn't crash the
+                    // surrounding ~20k-recipient run. sendMailable() uses
+                    // Mail::send-style because VolunteeringDigestMail's
+                    // envelope() already sets the to: address.
+                    SafeMail::sendMailable(
+                        new VolunteeringDigestMail(
+                            recipientEmail: $member->email,
+                            groupName: $groupRow->nameshort,
+                            volunteerings: $volData,
+                            unsubscribeUrl: $unsubscribeUrl,
+                            jobAds: $jobAds,
+                            userId: $member->userId,
+                        ),
+                        $member->email,
+                    );
                 }
                 $sent++;
             }

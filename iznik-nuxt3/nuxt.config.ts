@@ -310,6 +310,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       APIv2: config.APIv2,
+      SPATIAL_SERVER_URL: config.SPATIAL_SERVER_URL,
       OSM_TILE: config.OSM_TILE,
       GEOCODE: config.GEOCODE,
       FACEBOOK_APPID: config.FACEBOOK_APPID,
@@ -484,9 +485,26 @@ export default defineNuxtConfig({
               org: 'freegle',
               project: 'capacitor',
               authToken: config.SENTRY_AUTH_TOKEN,
-              // For non-strict mode (debug builds), log errors but don't fail the build
+              // Never fail the build on Sentry API errors (502/504/bad gateway) —
+              // the app binary is the critical artifact; release creation is supplementary.
+              // In strict mode, still throw on non-API errors (wrong auth token, etc.).
               errorHandler: config.SENTRY_STRICT
-                ? undefined // Use default (throw on error)
+                ? (err) => {
+                    const msg = err.message || ''
+                    if (
+                      msg.includes('502') ||
+                      msg.includes('504') ||
+                      msg.includes('bad gateway') ||
+                      msg.includes('API request failed')
+                    ) {
+                      console.warn(
+                        '⚠️ Sentry API error (non-fatal) - release creation skipped:',
+                        msg
+                      )
+                    } else {
+                      throw err
+                    }
+                  }
                 : (err) => {
                     console.warn(
                       '⚠️ Sentry error (non-fatal in debug mode):',
@@ -523,12 +541,21 @@ export default defineNuxtConfig({
               org: 'freegle',
               // ModTools layer overrides this to 'modtools', base config uses 'nuxt3'
               project: config.IS_MT ? 'modtools' : 'nuxt3',
-              // Handle Sentry API timeouts (504s) gracefully - sourcemaps upload is the critical part
+              // Handle Sentry API errors (502/504/bad gateway) gracefully — sourcemaps
+              // upload is the critical artifact; release creation is supplementary.
+              // Still throw for non-API errors (wrong auth token, etc.) so real
+              // misconfigurations remain fatal.
               errorHandler: (err) => {
-                // Only log warning for gateway timeouts, fail for other errors
-                if (err.message && err.message.includes('504')) {
+                const msg = err.message || ''
+                if (
+                  msg.includes('502') ||
+                  msg.includes('504') ||
+                  msg.includes('bad gateway') ||
+                  msg.includes('API request failed')
+                ) {
                   console.warn(
-                    '⚠️ Sentry release finalize timed out (504) - sourcemaps were uploaded successfully'
+                    '⚠️ Sentry API error (non-fatal) - release creation skipped:',
+                    msg
                   )
                 } else {
                   throw err
@@ -549,6 +576,8 @@ export default defineNuxtConfig({
           'es.object.from-entries',
           'es.array.flat-map',
           'es.array.flat',
+          'es.array.at',
+          'es.string.at',
           'es.string.replace-all',
           'es.promise.any',
         ],
@@ -574,6 +603,13 @@ export default defineNuxtConfig({
       },
       title: "Freegle - Don't throw it away, give it away!",
       script: [
+        {
+          // Capture URL search params before Nuxt router hydration strips them.
+          // The router calls history.replaceState('/') during hydration (before onMounted),
+          // wiping any ?u=&k= impersonation params from window.location.search.
+          type: 'text/javascript',
+          innerHTML: `window.__initSearch=window.location.search`,
+        },
         {
           // This is a polyfill for Safari12.  Can't get it to work using modernPolyfills - needs to happen very
           // early.  Safari12 doesn't work well, but this makes it functional.

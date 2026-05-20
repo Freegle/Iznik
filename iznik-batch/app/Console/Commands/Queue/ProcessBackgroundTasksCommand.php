@@ -12,6 +12,7 @@ use App\Mail\Session\MergeOfferMail;
 use App\Mail\Session\UnsubscribeConfirmMail;
 use App\Mail\Session\VerifyEmailMail;
 use App\Mail\Message\ModStdMessageMail;
+use App\Models\BackgroundTask;
 use App\Models\ChatRoom;
 use App\Models\User;
 use App\Services\EmailSpoolerService;
@@ -215,25 +216,25 @@ class ProcessBackgroundTasksCommand extends Command
         bool $shouldSpool
     ): void {
         match ($taskType) {
-            'push_notify_group_mods' => $this->handlePushNotifyGroupMods($data, $pushService),
-            'email_chitchat_report' => $this->handleEmailChitchatReport($data, $spooler, $shouldSpool),
-            'email_charity_signup' => $this->handleEmailCharitySignup($data, $spooler, $shouldSpool),
-            'email_donate_external' => $this->handleEmailDonateExternal($data, $spooler, $shouldSpool),
-            'email_forgot_password' => $this->handleEmailForgotPassword($data, $spooler, $shouldSpool),
-            'email_unsubscribe' => $this->handleEmailUnsubscribe($data, $spooler, $shouldSpool),
-            'email_message_approved', 'email_message_rejected', 'email_message_reply'
-                => $this->handleModStdMessage($taskType, $data, $pushService, $spooler, $shouldSpool),
-            'email_mod_stdmsg'
-                => $this->handleModStdMessageForMember($taskType, $data, $spooler, $shouldSpool),
-            'email_merge' => $this->handleEmailMerge($data, $spooler, $shouldSpool),
-            'email_verify' => $this->handleEmailVerify($data, $spooler, $shouldSpool),
-            'refer_to_support' => $this->handleReferToSupport($data, $spooler, $shouldSpool),
-            'message_outcome' => $this->handleMessageOutcome($data),
-            'freebie_alerts_add' => $this->handleFreebieAlertsAdd($data),
-            'freebie_alerts_remove' => $this->handleFreebieAlertsRemove($data),
-            'housekeeper_notify' => $this->handleHousekeeperNotify($data),
-            'remap_postcodes' => $this->handleRemapPostcodes($data),
-            'user_forget' => $this->handleUserForget($data),
+            BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS  => $this->handlePushNotifyGroupMods($data, $pushService),
+            BackgroundTask::TASK_EMAIL_CHITCHAT_REPORT   => $this->handleEmailChitchatReport($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_EMAIL_CHARITY_SIGNUP    => $this->handleEmailCharitySignup($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_EMAIL_DONATE_EXTERNAL   => $this->handleEmailDonateExternal($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_EMAIL_FORGOT_PASSWORD   => $this->handleEmailForgotPassword($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_EMAIL_UNSUBSCRIBE       => $this->handleEmailUnsubscribe($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_EMAIL_MESSAGE_APPROVED,
+            BackgroundTask::TASK_EMAIL_MESSAGE_REJECTED,
+            BackgroundTask::TASK_EMAIL_MESSAGE_REPLY     => $this->handleModStdMessage($taskType, $data, $pushService, $spooler, $shouldSpool),
+            BackgroundTask::TASK_EMAIL_MOD_STDMSG        => $this->handleModStdMessageForMember($taskType, $data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_EMAIL_MERGE             => $this->handleEmailMerge($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_EMAIL_VERIFY            => $this->handleEmailVerify($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_REFER_TO_SUPPORT        => $this->handleReferToSupport($data, $spooler, $shouldSpool),
+            BackgroundTask::TASK_MESSAGE_OUTCOME         => $this->handleMessageOutcome($data),
+            BackgroundTask::TASK_FREEBIE_ALERTS_ADD      => $this->handleFreebieAlertsAdd($data),
+            BackgroundTask::TASK_FREEBIE_ALERTS_REMOVE   => $this->handleFreebieAlertsRemove($data),
+            BackgroundTask::TASK_HOUSEKEEPER_NOTIFY      => $this->handleHousekeeperNotify($data),
+            BackgroundTask::TASK_REMAP_POSTCODES         => $this->handleRemapPostcodes($data),
+            BackgroundTask::TASK_USER_FORGET             => $this->handleUserForget($data),
             'tn_sync_command' => $this->handleTnSyncCommand($data),
             default => throw new \RuntimeException("Unknown task type: {$taskType}"),
         };
@@ -467,9 +468,9 @@ class ProcessBackgroundTasksCommand extends Command
         // email_message_rejected with subject → Rejected, without subject → Deleted
         // email_message_reply → Replied
         $subtype = match ($taskType) {
-            'email_message_approved' => 'Approved',
-            'email_message_rejected' => $subject !== '' ? 'Rejected' : 'Deleted',
-            'email_message_reply' => 'Replied',
+            BackgroundTask::TASK_EMAIL_MESSAGE_APPROVED => 'Approved',
+            BackgroundTask::TASK_EMAIL_MESSAGE_REJECTED => $subject !== '' ? 'Rejected' : 'Deleted',
+            BackgroundTask::TASK_EMAIL_MESSAGE_REPLY    => 'Replied',
             default => 'Approved',
         };
 
@@ -727,7 +728,7 @@ class ProcessBackgroundTasksCommand extends Command
             // Only create the User/Mailed log for email_mod_stdmsg (direct mod message to member).
             // Membership approve/reject actions no longer route here — they use email_mod_stdmsg
             // directly (or create no task if no content), so we only log when it's a direct modmail.
-            if ($taskType === 'email_mod_stdmsg') {
+            if ($taskType === BackgroundTask::TASK_EMAIL_MOD_STDMSG) {
                 DB::table('logs')->insert([
                     'timestamp' => now(),
                     'type' => 'User',

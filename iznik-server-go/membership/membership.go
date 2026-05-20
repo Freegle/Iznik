@@ -384,16 +384,23 @@ func GetMemberships(c *fiber.Ctx) error {
 	// ordered by join date (m.added DESC) to match the default listing order.
 	if filter == 6 {
 		var members []GetMembershipsMember
+		// Join logs instead of users_modmails: users_modmails is pruned at 30 days by the
+		// users:update-modmails cron, so an INNER JOIN on it silently drops members whose
+		// only modmails are older than ~30 days.  The logs table is not pruned and is the
+		// authoritative source; criteria match the modmailsonly filter in logs/logs.go.
 		db.Raw("SELECT m.id, m.userid, m.groupid, m.role, m.collection, m.added, m.heldby, "+
 			"u.fullname, u.firstname, u.lastname, m.settings, "+
 			"m.emailfrequency, m.ourPostingStatus, m.eventsallowed, m.volunteeringallowed, "+
 			"b.date AS bandate, b.byuser AS bannedby, "+
 			"m.reviewrequestedat, m.reviewedat, m.reviewreason, u.engagement, "+
-			"MAX(um.timestamp) AS lastmodmail "+
+			"MAX(l.timestamp) AS lastmodmail "+
 			"FROM memberships m "+
 			"JOIN users u ON u.id = m.userid "+
 			"LEFT JOIN users_banned b ON b.userid = m.userid AND b.groupid = m.groupid "+
-			"INNER JOIN users_modmails um ON um.userid = m.userid AND um.groupid = m.groupid "+
+			"INNER JOIN logs l ON l.user = m.userid AND l.groupid = m.groupid "+
+			"AND ((l.type = 'Message' AND l.subtype IN ('Rejected', 'Deleted', 'Replied')) "+
+			"OR (l.type = 'User' AND l.subtype IN ('Mailed', 'Rejected', 'Deleted'))) "+
+			"AND l.byuser != l.user "+
 			"WHERE m.groupid = ? AND m.collection = ? "+
 			"GROUP BY m.userid "+
 			"ORDER BY m.added DESC LIMIT ?",
@@ -1178,6 +1185,13 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, ?, ?)",
 		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
 
+	// Record in memberships_history with processingrequired=1 so the
+	// Laravel batch (memberships:process) sends the group welcome email,
+	// runs spam checks, and applies review flags. Without this row the
+	// cron has nothing to do and welcomes are silently dropped.
+	db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
+		userid, groupid, utils.COLLECTION_APPROVED)
+
 	logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, userid, "via partner")
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid, "addedto": utils.COLLECTION_APPROVED})
@@ -1213,6 +1227,13 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 		userid, groupid, utils.ROLE_MEMBER, utils.COLLECTION_APPROVED)
 
 	if result.RowsAffected > 0 {
+		// Record in memberships_history with processingrequired=1 so the
+		// Laravel batch (memberships:process) sends the group welcome email,
+		// runs spam checks, and applies review flags. Without this row the
+		// cron has nothing to do and welcomes are silently dropped.
+		db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
+			userid, groupid, utils.COLLECTION_APPROVED)
+
 		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, byuser, "")
 	}
 
@@ -1295,8 +1316,13 @@ func DeleteMemberships(c *fiber.Ctx) error {
 	result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
 		userid, req.Groupid, utils.COLLECTION_APPROVED)
 
-	if result.RowsAffected == 0 {
-		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+	if result.RowsAffected > 0 {
+		// V1 parity: User::removeMembership() always logs Group/Left when the
+		// DELETE affects rows (User.php:1085-1095). Both self-leave and
+		// mod-removes-other need this — otherwise the moderator audit views
+		// (which query logs for type=Group/subtype=Left) lose every voluntary
+		// leave and every non-ban moderator removal.
+		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, req.Groupid, userid, myid, "")
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
@@ -1334,8 +1360,15 @@ func deleteMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) erro
 	}
 
 	// Remove the membership.
-	db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
+	result := db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ? AND collection = ?",
 		userid, groupid, utils.COLLECTION_APPROVED)
+
+	if result.RowsAffected > 0 {
+		// V1 parity: User::removeMembership() always logs Group/Left when the
+		// DELETE affects rows. byuser = the leaving user (no session in the
+		// partner path).
+		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_LEFT, groupid, userid, userid, "via partner")
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "fduserid": userid})
 }

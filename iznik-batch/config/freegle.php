@@ -334,4 +334,10 @@ return [
         'feed1' => env('WHATJOBS_FEED1', ''),
         'feed2' => env('WHATJOBS_FEED2', ''),
     ],
+
+    'reach_volunteering' => [
+        'feed_url' => env('REACH_VOLUNTEERING_FEED_URL', ''),
+        'username' => env('REACH_VOLUNTEERING_USER', ''),
+        'password' => env('REACH_VOLUNTEERING_PASSWORD', ''),
+    ],
 ];

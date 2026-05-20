@@ -45,6 +45,18 @@
         >
         </hot-column>
         <hot-column
+          title="Moderated (30d)"
+          data="recentmoderated"
+          :renderer="centreRenderer"
+        >
+        </hot-column>
+        <hot-column
+          title="% Moderated (30d)"
+          data="recentmoderatedpercent"
+          :renderer="moderatedPctRenderer"
+        >
+        </hot-column>
+        <hot-column
           title="Active-owner"
           data="activeownercount"
           :renderer="centreRenderer"
@@ -172,6 +184,21 @@ function autoApprovesRenderer(_instance, td, _row, _col, _prop, value) {
   td.style.textAlign = 'center'
   auto = Math.abs(auto)
   td.innerHTML = auto + '%'
+}
+
+function moderatedPctRenderer(_instance, td, _row, _col, _prop, value) {
+  const pct = Math.round(parseFloat(value) || 0)
+  td.style.textAlign = 'center'
+  // Highlight groups where < 10% of arriving messages were moderated (may indicate
+  // auto-approve is fully covering this community, or that moderation is very low).
+  if (pct < 10) {
+    td.style.backgroundColor = '#d4edda'
+  } else if (pct >= 80) {
+    td.style.backgroundColor = '#fff3cd'
+  } else {
+    td.style.backgroundColor = ''
+  }
+  td.innerHTML = pct + '%'
 }
 
 function centreRenderer(_instance, td, _row, _col, _prop, value) {

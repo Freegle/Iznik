@@ -129,14 +129,6 @@ describe('support/[[id]].vue page', () => {
           ModSupportAIAssistant: {
             template: '<div class="mod-support-ai-assistant" />',
           },
-          ModSupportWorryWords: {
-            template: '<div class="mod-support-worry-words" />',
-            methods: { fetchWorryWords: vi.fn() },
-          },
-          ModSupportSpamKeywords: {
-            template: '<div class="mod-support-spam-keywords" />',
-            methods: { fetchSpamKeywords: vi.fn() },
-          },
           ModSupportConcernKeywords: {
             template: '<div class="mod-support-concern-keywords" />',
           },

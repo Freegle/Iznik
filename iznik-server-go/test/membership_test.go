@@ -60,6 +60,42 @@ func TestPutMembershipsJoinGroup(t *testing.T) {
 	assert.Equal(t, int64(1), logCount, "PUT /memberships should log a Joined event")
 }
 
+// TestPutMembershipsJoinGroupQueuesWelcome verifies that a new JWT-authed join
+// inserts a memberships_history row with processingrequired=1, which is what
+// the Laravel batch (memberships:process) picks up to send the per-group
+// welcome email, run spam checks, and apply review flags.
+//
+// Regression: between the memberships_processing cron's PHP→Laravel migration
+// (2026-05-08) and the membership.go fix (2026-05-16), addMemberToGroup
+// inserted into memberships but not memberships_history, so the cron found
+// 0 rows every minute and no group welcomes went out for ~8 days.
+func TestPutMembershipsJoinGroupQueuesWelcome(t *testing.T) {
+	prefix := uniquePrefix("mem_join_welcome")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+
+	body := map[string]interface{}{
+		"userid":  userID,
+		"groupid": groupID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/memberships?jwt=%s", token)
+	req := httptest.NewRequest("PUT", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// memberships_history row exists with processingrequired=1.
+	var pendingCount int64
+	db.Raw("SELECT COUNT(*) FROM memberships_history WHERE userid = ? AND groupid = ? AND collection = 'Approved' AND processingrequired = 1",
+		userID, groupID).Scan(&pendingCount)
+	assert.Equal(t, int64(1), pendingCount, "join must queue a memberships_history row with processingrequired=1 so the batch sends the welcome email")
+}
+
 func TestPutMembershipsGoBannedCannotRejoin(t *testing.T) {
 	// Regression: banned member should not be able to rejoin via PUT /memberships.
 	// V1 approach: ban is stored in users_banned only (no memberships row).
@@ -234,6 +270,15 @@ func TestDeleteMembershipsLeaveGroup(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
 		userID, groupID).Scan(&count)
 	assert.Equal(t, int64(0), count)
+
+	// V1 parity: User::removeMembership logs Group/Left whenever the DELETE
+	// affects rows. Without this log, moderator audit views (which query
+	// type=Group/subtype=Left) lose every voluntary leave.
+	leftLog := findLog(db, "Group", "Left", userID)
+	assert.NotNil(t, leftLog, "self-leave must log Group/Left so audit/stats can see it")
+	if leftLog != nil {
+		assert.Equal(t, groupID, *leftLog.Groupid)
+	}
 }
 
 func TestDeleteMembershipsNotMember(t *testing.T) {
@@ -315,6 +360,93 @@ func TestDeleteMembershipsModRemovesMember(t *testing.T) {
 
 	// Verify log entry.
 	assert.NotNil(t, findLog(db, "User", "Deleted", memberID), "Mod removing member should create a Deleted log entry")
+
+	// V1 parity: User::removeMembership also logs Group/Left for the removed
+	// user when the DELETE affects rows. Mod audit views key off Group/Left,
+	// so the User/Deleted entry alone is not enough.
+	leftLog := findLog(db, "Group", "Left", memberID)
+	assert.NotNil(t, leftLog, "Mod removing member must also log Group/Left for audit parity with V1")
+}
+
+// TestMemberAuditLogLeaveGroupByuser — AssertFlip regression guard.
+//
+// The diagnosis for issue #9678: Group/Left log entries written by the Go API
+// leave path were missing the byuser field (who performed the removal).
+// Mod-tools audit views display the leaver's name via the byuser column, so a
+// nil byuser makes leavers appear anonymous even after commit 0d342ced6 ensured
+// the row is written at all.
+//
+// AssertFlip protocol (fix already in master via 0d342ced6):
+//   Step 1 — Assert CORRECT behaviour (passes on fixed master):
+//     Group/Left log exists AND byuser is non-nil AND byuser equals the acting user.
+//   Step 2 — Invert (would fail on fixed master, proves assertion is meaningful):
+//     assert byuser IS nil — fails because fix sets it.
+//
+// Self-leave: byuser must equal the leaving user's own ID.
+// Mod-removes: byuser must equal the moderator's ID (not the removed member's).
+func TestMemberAuditLogLeaveGroupByuser(t *testing.T) {
+	t.Run("self-leave sets byuser to own ID", func(t *testing.T) {
+		prefix := uniquePrefix("audit_byuser_self")
+		db := database.DBConn
+
+		userID := CreateTestUser(t, prefix+"_user", "User")
+		_, token := CreateTestSession(t, userID)
+		groupID := CreateTestGroup(t, prefix)
+		CreateTestMembership(t, userID, groupID, "Member")
+
+		body := map[string]interface{}{"userid": userID, "groupid": groupID}
+		bodyBytes, _ := json.Marshal(body)
+		url := fmt.Sprintf("/api/memberships?jwt=%s", token)
+		req := httptest.NewRequest("DELETE", url, bytes.NewBuffer(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		// Step 2 (correct-behaviour assertion — FAILS on pre-fix code, PASSES after fix):
+		// The Group/Left log must exist and byuser must be the leaving user's own ID.
+		// Without this, mod-tools audit views show an anonymous leaver.
+		leftLog := findLog(db, "Group", "Left", userID)
+		assert.NotNil(t, leftLog, "self-leave must write Group/Left log")
+		if leftLog != nil {
+			assert.NotNil(t, leftLog.Byuser, "Group/Left byuser must not be nil for self-leave")
+			if leftLog.Byuser != nil {
+				assert.Equal(t, userID, *leftLog.Byuser, "Group/Left byuser must be the leaving user's own ID")
+			}
+		}
+	})
+
+	t.Run("mod-removes sets byuser to mod ID", func(t *testing.T) {
+		prefix := uniquePrefix("audit_byuser_mod")
+		db := database.DBConn
+
+		modID := CreateTestUser(t, prefix+"_mod", "User")
+		memberID := CreateTestUser(t, prefix+"_member", "User")
+		_, modToken := CreateTestSession(t, modID)
+		groupID := CreateTestGroup(t, prefix)
+		CreateTestMembership(t, modID, groupID, "Owner")
+		CreateTestMembership(t, memberID, groupID, "Member")
+
+		body := map[string]interface{}{"userid": memberID, "groupid": groupID}
+		bodyBytes, _ := json.Marshal(body)
+		url := fmt.Sprintf("/api/memberships?jwt=%s", modToken)
+		req := httptest.NewRequest("DELETE", url, bytes.NewBuffer(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req)
+		assert.NoError(t, err)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		// Step 2 (correct-behaviour assertion — FAILS on pre-fix code, PASSES after fix):
+		// byuser must be the moderator's ID so the audit log shows who removed the member.
+		leftLog := findLog(db, "Group", "Left", memberID)
+		assert.NotNil(t, leftLog, "mod-removes must write Group/Left log for the removed member")
+		if leftLog != nil {
+			assert.NotNil(t, leftLog.Byuser, "Group/Left byuser must not be nil for mod-removes")
+			if leftLog.Byuser != nil {
+				assert.Equal(t, modID, *leftLog.Byuser, "Group/Left byuser must be the moderator's ID, not the removed member's")
+			}
+		}
+	})
 }
 
 func TestPatchMembershipsNotLoggedIn(t *testing.T) {
@@ -3206,10 +3338,10 @@ func TestGetMembershipsFilterModmails(t *testing.T) {
 	member3ID := CreateTestUser(t, prefix+"_m3", "User")
 	CreateTestMembership(t, member3ID, groupID, "Member")
 
-	// Insert modmail records: member1 older, member2 newer, member3 has none.
-	// logid has a UNIQUE constraint so we need distinct non-zero values.
-	db.Exec("INSERT INTO users_modmails (userid, groupid, timestamp, logid) VALUES (?, ?, '2026-01-01 10:00:00', ?)", member1ID, groupID, member1ID)
-	db.Exec("INSERT INTO users_modmails (userid, groupid, timestamp, logid) VALUES (?, ?, '2026-03-01 10:00:00', ?)", member2ID, groupID, member2ID)
+	// Insert modmail records via logs (the authoritative source; users_modmails is pruned at 30 days).
+	// member3 has no log entry and must be excluded by the filter.
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, byuser, timestamp, text) VALUES ('User', 'Mailed', ?, ?, ?, '2026-01-01 10:00:00', 'test modmail')", groupID, member1ID, modID)
+	db.Exec("INSERT INTO logs (type, subtype, groupid, user, byuser, timestamp, text) VALUES ('User', 'Mailed', ?, ?, ?, '2026-03-01 10:00:00', 'test modmail')", groupID, member2ID, modID)
 
 	url := fmt.Sprintf("/api/memberships?groupid=%d&filter=6&jwt=%s", groupID, token)
 	req := httptest.NewRequest("GET", url, nil)
@@ -3267,10 +3399,11 @@ func TestGetMembershipsModmailFilterOrderAndLimit(t *testing.T) {
 			joinHoursAgo, membershipID)
 
 		// Anti-correlated modmail: oldest joiner (i=24) gets newest modmail (1h ago).
+		// Insert via logs (the authoritative source; users_modmails is pruned at 30 days).
 		mailHoursAgo := memberCount - i
 		db.Exec(
-			"INSERT INTO users_modmails (userid, groupid, timestamp, logid) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL ? HOUR), ?)",
-			uid, groupID, mailHoursAgo, uid,
+			"INSERT INTO logs (type, subtype, groupid, user, byuser, timestamp, text) VALUES ('User', 'Mailed', ?, ?, ?, DATE_SUB(NOW(), INTERVAL ? HOUR), 'test modmail')",
+			groupID, uid, modID, mailHoursAgo,
 		)
 	}
 
@@ -3302,6 +3435,69 @@ func TestGetMembershipsModmailFilterOrderAndLimit(t *testing.T) {
 		assert.Equal(t, memberIDs[memberCount-1], lastUserID,
 			"last result should be the oldest-joined member (join-date DESC order)")
 	}
+}
+
+// TestGetMembershipsFilter6OldModmailPruned is an AssertFlip failing test for issue 9518.
+//
+// Bug: filter=6 (Received mod mails) omits members whose only modmails are older than
+// ~30 days.  The root cause is that users_modmails entries are pruned at 30 days by the
+// users:update-modmails cron, and the filter=6 query uses INNER JOIN users_modmails
+// (no date guard).  Members with no surviving users_modmails row are silently excluded.
+//
+// AssertFlip Step 2 (inverted): asserts the correct behaviour — the member MUST appear —
+// and therefore FAILS on the current buggy code, proving the regression exists.
+//
+// Fix: replace the INNER JOIN users_modmails with a join on the logs table, which is not
+// pruned, using the same type/subtype criteria as UserModMailsService.
+func TestGetMembershipsFilter6OldModmailPruned(t *testing.T) {
+	prefix := uniquePrefix("mf_pruned")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	// Seed a logs entry representing a modmail (User/Mailed) from 35 days ago.
+	// This simulates a real modmail action whose users_modmails entry has since been
+	// pruned by the 30-day cron.  We deliberately do NOT insert into users_modmails.
+	result := db.Exec(
+		"INSERT INTO logs (type, subtype, groupid, user, byuser, timestamp, text) "+
+			"VALUES ('User', 'Mailed', ?, ?, ?, DATE_SUB(NOW(), INTERVAL 35 DAY), 'test modmail')",
+		groupID, memberID, modID,
+	)
+	if result.Error != nil {
+		t.Fatalf("ERROR: Failed to insert logs entry: %v", result.Error)
+	}
+
+	url := fmt.Sprintf("/api/memberships?groupid=%d&filter=6&jwt=%s", groupID, token)
+	req := httptest.NewRequest("GET", url, nil)
+	resp, err := getApp().Test(req, -1)
+	if !assert.NoError(t, err) {
+		return
+	}
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var members []map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&members)
+
+	// STEP 2 (inverted — this is the failing assertion that proves the bug):
+	// The member received a modmail 35 days ago.  Even though the users_modmails row
+	// has been pruned, the log entry still exists.  The correct behaviour is for the
+	// member to appear in the filter=6 listing; the current code omits them.
+	found := false
+	for _, m := range members {
+		if uid, ok := m["userid"].(float64); ok && uint64(uid) == memberID {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found,
+		"member with a 35-day-old modmail log entry (users_modmails pruned) must appear in filter=6 results")
 }
 
 // --- Partner auth tests ---
@@ -3379,6 +3575,13 @@ func TestPutMembershipsPartnerAutoCreate(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
 		uint64(fduserid.(float64)), groupID).Scan(&count)
 	assert.Equal(t, int64(1), count)
+
+	// memberships_history row exists with processingrequired=1 so the batch
+	// will send the welcome email — same regression as the JWT-join path.
+	var pendingCount int64
+	db.Raw("SELECT COUNT(*) FROM memberships_history WHERE userid = ? AND groupid = ? AND collection = 'Approved' AND processingrequired = 1",
+		uint64(fduserid.(float64)), groupID).Scan(&pendingCount)
+	assert.Equal(t, int64(1), pendingCount, "partner join must queue a memberships_history row with processingrequired=1")
 }
 
 func TestPutMembershipsPartnerWrongDomain(t *testing.T) {
@@ -3434,6 +3637,16 @@ func TestDeleteMembershipsPartnerUnsubscribe(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ?",
 		userID, groupID).Scan(&count)
 	assert.Equal(t, int64(0), count)
+
+	// V1 parity: partner-driven unsubscribe must also log Group/Left.
+	leftLog := findLog(db, "Group", "Left", userID)
+	assert.NotNil(t, leftLog, "partner unsubscribe must log Group/Left for audit parity with V1")
+	if leftLog != nil {
+		assert.NotNil(t, leftLog.Text)
+		if leftLog.Text != nil {
+			assert.Equal(t, "via partner", *leftLog.Text)
+		}
+	}
 }
 
 func TestDeleteMembershipsPartnerUserNotFound(t *testing.T) {

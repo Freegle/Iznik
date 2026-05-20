@@ -227,7 +227,6 @@ export const useAuthStore = defineStore({
         }
 
         const res = await this.$api.session.login(params, false)
-
         const { persistent, jwt } = res
         this.setAuth(jwt, persistent)
         await this.fetchUser()

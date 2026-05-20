@@ -8,18 +8,22 @@ parameters:
   run_manual_promote:
     type: boolean
     default: false
-    description: "Set to true to manually trigger promotion/submission workflow"
+    description: "Forwarded from trigger — true when run_manual_promote was set"
   build_testflight:
     type: boolean
     default: false
-    description: "Set to true to build iOS and upload to TestFlight from current branch"
+    description: "Forwarded from trigger — true when build_testflight was set"
   use_katapult:
     type: boolean
     default: false
     description: "Set to true to run tests on a Katapult cloud runner (freegle/katapult-runner)"
+  build_modtools_production:
+    type: boolean
+    default: false
+    description: "Forwarded from trigger — true when build_modtools_production was set"
 
 orbs:
-  freegle: freegle/tests@1
+  freegle: freegle/tests@1.1.315
 
 jobs:
   mark-ci-passed:
@@ -54,6 +58,7 @@ workflows:
         - << pipeline.parameters.use_self_hosted >>
         - not: << pipeline.parameters.run_manual_promote >>
         - not: << pipeline.parameters.build_testflight >>
+        - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - freegle/build-and-test:
           use-executor:
@@ -101,6 +106,13 @@ workflows:
               ignore:
                 - production
                 - modtools
+      - freegle/build-android-modtools-debug:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              only:
+                - master
 
   build-test-cloud:
     when:
@@ -109,6 +121,7 @@ workflows:
         - not: << pipeline.parameters.use_katapult >>
         - not: << pipeline.parameters.run_manual_promote >>
         - not: << pipeline.parameters.build_testflight >>
+        - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - freegle/build-and-test:
           post-steps:
@@ -154,13 +167,22 @@ workflows:
               ignore:
                 - production
                 - modtools
+      - freegle/build-android-modtools-debug:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              only:
+                - master
 
-  # Deploy apps when production branch is pushed
+  # Deploy apps when production branch is pushed — Freegle app only.
+  # ModTools is published separately via the manual modtools-production workflow.
   deploy-apps:
     when:
       and:
         - not: << pipeline.parameters.run_manual_promote >>
         - not: << pipeline.parameters.build_testflight >>
+        - not: << pipeline.parameters.build_modtools_production >>
     jobs:
       - freegle/increment-version:
           filters:
@@ -190,6 +212,25 @@ workflows:
               only:
                 - production
 
+  # Manually-triggered ModTools production build and Play Store / TestFlight upload.
+  # Trigger by setting build_modtools_production: true in the CircleCI pipeline parameters UI.
+  # Does not run automatically — ModTools updates are infrequent and manually controlled.
+  # After building, attempts to submit immediately. If Apple hasn't finished processing the
+  # build yet, the submit step exits gracefully — re-trigger via manual-promote-submit later.
+  modtools-production:
+    when: << pipeline.parameters.build_modtools_production >>
+    jobs:
+      - freegle/increment-version-modtools
+      - freegle/build-android-modtools:
+          requires:
+            - freegle/increment-version-modtools
+      - freegle/build-ios-modtools:
+          requires:
+            - freegle/increment-version-modtools
+      - freegle/auto-submit-ios-modtools:
+          requires:
+            - freegle/build-ios-modtools
+
   # Manual promotion trigger
   manual-promote-submit:
     when: << pipeline.parameters.run_manual_promote >>
@@ -205,6 +246,11 @@ workflows:
               only:
                 - production
       - freegle/auto-release-ios:
+          filters:
+            branches:
+              only:
+                - production
+      - freegle/auto-submit-ios-modtools:
           filters:
             branches:
               only:
@@ -236,6 +282,13 @@ workflows:
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
+      - freegle/build-android-modtools-debug:
+          requires:
+            - freegle/build-and-test
+          filters:
+            branches:
+              only:
+                - master
 
   # Build iOS for TestFlight from any branch
   testflight-branch:

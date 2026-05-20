@@ -795,6 +795,45 @@ describe('ModMessage', () => {
     })
   })
 
+  describe('Moderated member notice', () => {
+    it('shows moderated notice for pending messages from MODERATED member', async () => {
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Test User',
+        memberships: [{ id: 789, groupid: 789, ourpostingstatus: 'MODERATED' }],
+      })
+      const wrapper = mountComponent({ summary: false })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).toContain('Moderated')
+      expect(wrapper.text()).toContain('posts need approval')
+    })
+
+    it('does not show moderated notice for DEFAULT member', async () => {
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Test User',
+        memberships: [{ id: 789, groupid: 789, ourpostingstatus: 'DEFAULT' }],
+      })
+      const wrapper = mountComponent({ summary: false })
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).not.toContain('posts need approval')
+    })
+
+    it('does not show moderated notice for approved messages', async () => {
+      mockUserStore.byId.mockReturnValue({
+        id: 456,
+        displayname: 'Test User',
+        memberships: [{ id: 789, groupid: 789, ourpostingstatus: 'MODERATED' }],
+      })
+      const wrapper = mountComponent(
+        { summary: false },
+        { groups: [{ groupid: 789, collection: 'Approved' }] }
+      )
+      await wrapper.vm.$nextTick()
+      expect(wrapper.text()).not.toContain('posts need approval')
+    })
+  })
+
   describe('ModMessageWorry', () => {
     it('shows worry component when worry is set', async () => {
       const wrapper = mountComponent({ summary: false }, { worry: 'medium' })

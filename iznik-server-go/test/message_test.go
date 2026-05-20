@@ -85,7 +85,7 @@ func TestMessages(t *testing.T) {
 
 	// Get the message as the sender
 	midArray := []string{fmt.Sprint(mid)}
-	msgDetails := message.GetMessagesByIds(userID, midArray)[0]
+	msgDetails := message.GetMessagesByIds(userID, midArray, false)[0]
 	assert.Equal(t, mid, msgDetails.ID)
 }
 
@@ -663,7 +663,7 @@ func createPendingMessage(t *testing.T, userID uint64, groupID uint64, prefix st
 		t.Fatalf("ERROR: Pending message was created but ID not found")
 	}
 
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)",
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) VALUES (?, ?, NOW(), 'Pending', 0, NOW())",
 		msgID, groupID)
 
 	return msgID
@@ -1764,7 +1764,8 @@ func TestJoinAndPostGroupDefaultModerated(t *testing.T) {
 }
 
 // TestJoinAndPostForcePendingOverridesApproved verifies that forcepending=true
-// sends an otherwise-approved message to Pending.
+// results in a Pending message. All messages now start Pending regardless, so
+// forcepending is a no-op but must not cause errors.
 func TestJoinAndPostForcePendingOverridesApproved(t *testing.T) {
 	prefix := uniquePrefix("msgmod_jap_fp")
 	db := database.DBConn
@@ -1773,7 +1774,7 @@ func TestJoinAndPostForcePendingOverridesApproved(t *testing.T) {
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	_, token := CreateTestSession(t, userID)
 
-	// User has UNMODERATED posting status — would normally go to Approved.
+	// User has unmoderated posting status — all messages start Pending regardless.
 	CreateTestMembership(t, userID, groupID, "Member")
 
 	// Create a draft message.
@@ -1846,6 +1847,44 @@ func TestJoinAndPostForcePendingFalseDoesNotOverride(t *testing.T) {
 	var collection string
 	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
 	assert.Equal(t, "Pending", collection, "forcepending=false must not override MODERATED status")
+}
+
+// TestJoinAndPostRejectsEmptyDraft verifies that a draft with no item, no
+// subject and no body — possible for drafts created before PUT /message
+// required item — is rejected at submit time rather than landing in the
+// group as an empty Pending Offer.
+func TestJoinAndPostRejectsEmptyDraft(t *testing.T) {
+	prefix := uniquePrefix("msgmod_jap_empty")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	// Simulate a stale pre-validation draft: empty subject, empty textbody,
+	// no row in messages_items, no locationid.
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', '', '', '', NOW(), NOW(), 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)", msgID, groupID, userID)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "JoinAndPost",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, 400, resp.StatusCode, "Empty draft must not be promotable")
+
+	// Confirm the draft was NOT routed to the group.
+	var msgGroupCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&msgGroupCount)
+	assert.Equal(t, int64(0), msgGroupCount, "Empty draft must not produce a messages_groups row")
 }
 
 // --- Test: PatchMessage ---
@@ -2233,6 +2272,36 @@ func TestDeleteMessageMod(t *testing.T) {
 	var deleted *string
 	db.Raw("SELECT deleted FROM messages WHERE id = ?", msgID).Scan(&deleted)
 	assert.NotNil(t, deleted, "Message should be soft-deleted by mod")
+}
+
+// TestDeleteMessageModCreatesAuditLog asserts that deleting a message via the DELETE
+// /message/:id endpoint as a moderator produces an audit-log entry in the logs table.
+// AssertFlip step 2: this assertion is INVERTED — it will FAIL on the buggy code because
+// DeleteMessageEndpoint does not call logModAction, leaving no logs row.
+func TestDeleteMessageModCreatesAuditLog(t *testing.T) {
+	prefix := uniquePrefix("msgmod_del_log")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, modToken), nil)
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// A mod deletion must create an audit-log row so volunteers' actions are traceable.
+	// On the buggy code DeleteMessageEndpoint never calls logModAction, so this fails.
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND msgid = ? AND byuser = ?",
+		log.LOG_TYPE_MESSAGE, log.LOG_SUBTYPE_DELETED, msgID, modID).Scan(&logCount)
+	assert.GreaterOrEqual(t, logCount, int64(1), "DeleteMessage by a moderator must write an audit-log entry (type=Message, subtype=Deleted)")
 }
 
 func TestDeleteMessageNotOwnerNotMod(t *testing.T) {
@@ -4350,7 +4419,7 @@ func TestListMessagesMT_LimboUserMessageNotReturned(t *testing.T) {
 
 	// Create a pending message from the poster.
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" limbo test item", 52.0, -1.0)
-	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ?", msgID)
+	db.Exec("UPDATE messages_groups SET collection = 'Pending', contentcheck_checked_at = NOW() WHERE msgid = ?", msgID)
 
 	// Verify it appears in listing before limbo.
 	resp, err := getApp().Test(httptest.NewRequest("GET",
@@ -5614,8 +5683,8 @@ func TestGetMessageWorryWords(t *testing.T) {
 	// Insert a global worry word (use a simple word without special chars,
 	// matching real worry words like "cocaine", "heroin" etc.).
 	worryKeyword := "dangertest" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Regulated')", worryKeyword)
-	defer db.Exec("DELETE FROM worrywords WHERE keyword = ?", worryKeyword)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'substance_regulated', 'fuzzy', 'global', 'flag')", worryKeyword)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword = ?", worryKeyword)
 
 	// Create a message whose subject contains the worry word.
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: "+worryKeyword+" near town", 52.5, -1.8)
@@ -5652,8 +5721,8 @@ func TestGetMessageWorryWords(t *testing.T) {
 
 	// 3. Test worry word in textbody (not subject).
 	worryKeyword2 := "bodytest" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Medicine')", worryKeyword2)
-	defer db.Exec("DELETE FROM worrywords WHERE keyword = ?", worryKeyword2)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'substance_medicine', 'fuzzy', 'global', 'flag')", worryKeyword2)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword = ?", worryKeyword2)
 
 	// Create message with clean subject but worry word in body.
 	msgID2 := CreateTestMessage(t, posterID, groupID, "OFFER: harmless item", 52.5, -1.8)
@@ -5702,9 +5771,9 @@ func TestGetMessageWorryWords(t *testing.T) {
 
 	// 5. Test Allowed words are excluded.
 	allowedWord := "allowtest" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Allowed')", allowedWord)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Regulated')", allowedWord+"x")
-	defer db.Exec("DELETE FROM worrywords WHERE keyword IN (?, ?)", allowedWord, allowedWord+"x")
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'allowed', 'fuzzy', 'global', 'flag')", allowedWord)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'substance_regulated', 'fuzzy', 'global', 'flag')", allowedWord+"x")
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword IN (?, ?)", allowedWord, allowedWord+"x")
 
 	// Create message with just the allowed word — should NOT trigger worry.
 	msgID4 := CreateTestMessage(t, posterID, groupID, "OFFER: "+allowedWord+" only", 52.5, -1.8)
@@ -5805,8 +5874,8 @@ func TestGetMessageWorryWordsGroupMod(t *testing.T) {
 
 	// Insert a unique worry word.
 	worryKeyword := "grpmodworry" + fmt.Sprintf("%d", time.Now().UnixNano()%100000)
-	db.Exec("INSERT INTO worrywords (keyword, type) VALUES (?, 'Regulated')", worryKeyword)
-	defer db.Exec("DELETE FROM worrywords WHERE keyword = ?", worryKeyword)
+	db.Exec("INSERT INTO concern_keywords (keyword, category, match_mode, scope, action) VALUES (?, 'substance_regulated', 'fuzzy', 'global', 'flag')", worryKeyword)
+	defer db.Exec("DELETE FROM concern_keywords WHERE keyword = ?", worryKeyword)
 
 	// Create message containing the worry word.
 	msgID := CreateTestMessage(t, posterID, groupID, "OFFER: "+worryKeyword+" near here", 52.5, -1.8)
@@ -7226,7 +7295,7 @@ func TestListMessagesMTMultiGroupNoDuplicates(t *testing.T) {
 
 	// Create a message on both groups as Pending.
 	msgID := createPendingMessage(t, posterID, groupA, prefix)
-	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Pending', 0)", msgID, groupB)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) VALUES (?, ?, NOW(), 'Pending', 0, NOW())", msgID, groupB)
 
 	// List Pending messages via ModTools endpoint (no groupid filter).
 	url := fmt.Sprintf("/api/modtools/messages?collection=Pending&jwt=%s", modToken)
@@ -7848,4 +7917,388 @@ func TestPatchMessageByTnPostidNotFound(t *testing.T) {
 	resp, err := getApp().Test(req, -1)
 	assert.NoError(t, err)
 	assert.Equal(t, 404, resp.StatusCode)
+}
+
+// TestPatchMessageByTnPostidUpdatesAllMessages verifies that PATCH /message/tn/:tnpostid
+// updates ALL Freegle messages sharing the same tnpostid (not just the first one).
+func TestPatchMessageByTnPostidUpdatesAllMessages(t *testing.T) {
+	prefix := uniquePrefix("patchtn_multi")
+	db := database.DBConn
+
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, group1ID, "Member")
+	CreateTestMembership(t, ownerID, group2ID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88801, ownerID)
+
+	tnpostid := fmt.Sprintf("tn-multi-%s", prefix)
+	msg1ID := CreateTestMessage(t, ownerID, group1ID, prefix+" Offer G1", 55.9533, -3.1883)
+	msg2ID := CreateTestMessage(t, ownerID, group2ID, prefix+" Offer G2", 55.9533, -3.1883)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", tnpostid, msg1ID, msg2ID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{"subject": "TN Multi Updated Subject"}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=88801&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var subject1, subject2 string
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msg1ID).Scan(&subject1)
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msg2ID).Scan(&subject2)
+	assert.Equal(t, "TN Multi Updated Subject", subject1, "first message should be updated")
+	assert.Equal(t, "TN Multi Updated Subject", subject2, "second message should also be updated")
+}
+
+// TestPostMessageByTnPostidUpdatesAllMessages verifies that POST /message with tnpostid
+// applies the action to ALL Freegle messages sharing the same tnpostid.
+func TestPostMessageByTnPostidUpdatesAllMessages(t *testing.T) {
+	prefix := uniquePrefix("posttn_multi")
+	db := database.DBConn
+
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, group1ID, "Member")
+	CreateTestMembership(t, ownerID, group2ID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88802, ownerID)
+
+	tnpostid := fmt.Sprintf("tn-post-multi-%s", prefix)
+	msg1ID := CreateTestMessage(t, ownerID, group1ID, "OFFER: "+prefix+" Item1", 55.9533, -3.1883)
+	msg2ID := CreateTestMessage(t, ownerID, group2ID, "OFFER: "+prefix+" Item2", 55.9533, -3.1883)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", tnpostid, msg1ID, msg2ID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{
+		"tnpostid": tnpostid,
+		"action":   "OutcomeIntended",
+		"outcome":  "Taken",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message?partner=%s&tnuserid=88802&email=%s@tn.com", key, prefix+"_owner")
+	req := httptest.NewRequest("POST", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var count1, count2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes_intended WHERE msgid = ? AND outcome = 'Taken'", msg1ID).Scan(&count1)
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes_intended WHERE msgid = ? AND outcome = 'Taken'", msg2ID).Scan(&count2)
+	assert.Equal(t, int64(1), count1, "first message should have outcome intended")
+	assert.Equal(t, int64(1), count2, "second message should also have outcome intended")
+}
+
+// TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection verifies that when
+// a TN user removes an AI attachment via PATCH /message/tn/:tnpostid, ALL Freegle messages
+// sharing that tnpostid get a messages_ai_declined row (preventing the cron from
+// re-adding an AI illustration to any of them).
+func TestPatchMessageByTnPostidProtectsAllMessagesFromAIReinjection(t *testing.T) {
+	prefix := uniquePrefix("patchtn_ai_multi")
+	db := database.DBConn
+
+	group1ID := CreateTestGroup(t, prefix+"_g1")
+	group2ID := CreateTestGroup(t, prefix+"_g2")
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, group1ID, "Member")
+	CreateTestMembership(t, ownerID, group2ID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 88803, ownerID)
+
+	tnpostid := fmt.Sprintf("tn-ai-multi-%s", prefix)
+	msg1ID := CreateTestMessage(t, ownerID, group1ID, prefix+" AI Msg1", 55.0, -3.0)
+	msg2ID := CreateTestMessage(t, ownerID, group2ID, prefix+" AI Msg2", 55.0, -3.0)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id IN (?, ?)", tnpostid, msg1ID, msg2ID)
+
+	aiUID1 := "freegletusd-ai-m1-" + prefix
+	aiUID2 := "freegletusd-ai-m2-" + prefix
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, '{\"ai\":true}', 1)", msg1ID, aiUID1)
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, '{\"ai\":true}', 1)", msg2ID, aiUID2)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_attachments WHERE msgid IN (?, ?)", msg1ID, msg2ID)
+		db.Exec("DELETE FROM messages_ai_declined WHERE msgid IN (?, ?)", msg1ID, msg2ID)
+	})
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	body := map[string]interface{}{"attachments": []uint64{}}
+	bodyBytes, _ := json.Marshal(body)
+	reqURL := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=88803&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", reqURL, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var dec1, dec2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msg1ID).Scan(&dec1)
+	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msg2ID).Scan(&dec2)
+	assert.Equal(t, int64(1), dec1, "first message should be protected from AI re-injection")
+	assert.Equal(t, int64(1), dec2, "second message should also be protected from AI re-injection")
+
+	var att1, att2 int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ?", msg1ID).Scan(&att1)
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ?", msg2ID).Scan(&att2)
+	assert.Equal(t, int64(0), att1, "first message should have no attachments")
+	assert.Equal(t, int64(0), att2, "second message should have no attachments")
+}
+
+// TestMessageAttachmentHasAIField verifies that the API returns an "ai" boolean field
+// on each attachment so that TN can determine which attachments were AI-generated.
+func TestMessageAttachmentHasAIField(t *testing.T) {
+	prefix := uniquePrefix("attach_ai_field")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" AI Field Test", 55.0, -3.0)
+	aiUID := "freegletusd-test-ai-field-" + prefix
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, '{\"ai\":true}', 1)", msgID, aiUID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+	})
+
+	reqURL := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	req := httptest.NewRequest("GET", reqURL, nil)
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	attachments, ok := result["attachments"].([]interface{})
+	assert.True(t, ok, "response should have attachments array")
+	assert.Equal(t, 1, len(attachments), "should have one attachment")
+	firstAttach, ok := attachments[0].(map[string]interface{})
+	assert.True(t, ok)
+	assert.Equal(t, true, firstAttach["ai"], "AI attachment should have ai:true field")
+}
+
+// Anonymous GET /api/message/:id masks 4+ digit sequences and email addresses
+// in the body (defence against scraping phone numbers / contacts). A valid
+// partner key is a trusted integration (e.g. Trash Nothing) and must see the
+// full body so messages can be round-tripped between platforms.
+func TestMessagePartnerKeyBypassesBodyMasking(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("msg_partner_mask")
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" Mask Test", 55.0, -3.0)
+
+	// Set a body that exercises both masking rules — a phone-like 11-digit
+	// number and an email address.
+	body := "Call me on 07700900123 or email someone@example.com"
+	db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", body, body, msgID)
+
+	// Register a partner key.
+	partnerKey := prefix + "_key"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES (?, ?)", prefix+"_partner", partnerKey)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+	})
+
+	// 1. Anonymous request: body must be masked.
+	resp, err := getApp().Test(httptest.NewRequest("GET", "/api/message/"+fmt.Sprint(msgID), nil), -1)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var anon map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&anon))
+	anonBody, _ := anon["textbody"].(string)
+	assert.Contains(t, anonBody, "***",
+		"Anonymous caller must see masked digits/emails")
+	assert.NotContains(t, anonBody, "07700900123",
+		"Anonymous caller must not see raw phone number")
+	assert.NotContains(t, anonBody, "someone@example.com",
+		"Anonymous caller must not see raw email address")
+
+	// 2. Partner request: body must be returned unmasked.
+	resp, err = getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/message/%d?partner=%s", msgID, partnerKey), nil), -1)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var partner map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&partner))
+	partnerBody, _ := partner["textbody"].(string)
+	assert.Equal(t, body, partnerBody,
+		"Valid partner key must return the textbody verbatim — no masking")
+
+	// 3. Invalid partner key: must still mask (we don't fail the request,
+	// we just treat the caller as anonymous).
+	resp, err = getApp().Test(httptest.NewRequest("GET",
+		"/api/message/"+fmt.Sprint(msgID)+"?partner=not_a_real_key_xyz", nil), -1)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var bogus map[string]interface{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&bogus))
+	bogusBody, _ := bogus["textbody"].(string)
+	assert.NotContains(t, bogusBody, "07700900123",
+		"Invalid partner key must not bypass masking")
+}
+
+// --- Content check pipeline tests ---
+
+// TestJoinAndPostUnmoderatedUserStartsPending verifies that even a user with
+// an explicit non-moderated posting status starts in Pending (awaiting contentcheck).
+func TestJoinAndPostUnmoderatedUserStartsPending(t *testing.T) {
+	prefix := uniquePrefix("msgcc_jap_unmod")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Explicitly non-moderated posting status — previously this caused Approved.
+	CreateTestMembership(t, userID, groupID, "Member")
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", userID, groupID)
+
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Unmod chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)", msgID, groupID, userID)
+
+	body := map[string]interface{}{"id": msgID, "action": "JoinAndPost"}
+	bodyBytes, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", token), bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	// Must start Pending — contentcheck batch job promotes to Approved after checking.
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Scan(&collection)
+	assert.Equal(t, "Pending", collection, "all submissions must start Pending for content check processing")
+
+	// No push_notify_group_mods task should be queued at submit time.
+	var taskCount int64
+	db.Raw("SELECT COUNT(*) FROM background_tasks WHERE task_type = 'push_notify_group_mods' AND processed_at IS NULL AND data LIKE ?",
+		fmt.Sprintf(`%%"group_id":%d%%`, groupID)).Scan(&taskCount)
+	assert.Equal(t, int64(0), taskCount, "push notification must not be queued at submit time — contentcheck batch job does that")
+}
+
+// TestContentcheckUnprocessedHiddenFromPendingQueue verifies that a message with
+// contentcheck_checked_at IS NULL does not appear in the pending mod queue.
+func TestContentcheckUnprocessedHiddenFromPendingQueue(t *testing.T) {
+	prefix := uniquePrefix("msgcc_hidden")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	// Create a Pending message with contentcheck_checked_at IS NULL (unprocessed).
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Hidden chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, deleted) VALUES (?, ?, 'Pending', NOW(), 0)", msgID, groupID)
+	// contentcheck_checked_at is NULL — should be hidden.
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	messages, _ := result["messages"].([]interface{})
+	for _, m := range messages {
+		assert.NotEqual(t, float64(msgID), m, "unprocessed message must not appear in pending queue")
+	}
+}
+
+// TestContentcheckProcessedVisibleInPendingQueue verifies that a message with
+// contentcheck_checked_at set IS visible in the pending mod queue.
+func TestContentcheckProcessedVisibleInPendingQueue(t *testing.T) {
+	prefix := uniquePrefix("msgcc_visible")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Visible chair', 'A chair', 'A chair', NOW(), NOW(), 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	// contentcheck_checked_at IS SET — should be visible.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, contentcheck_checked_at, deleted) VALUES (?, ?, 'Pending', NOW(), NOW(), 0)", msgID, groupID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	messages, _ := result["messages"].([]interface{})
+	found := false
+	for _, m := range messages {
+		if m == float64(msgID) {
+			found = true
+		}
+	}
+	assert.True(t, found, "processed message must appear in pending queue")
+}
+
+// TestContentcheckFallbackVisibleAfter30Minutes verifies the safety-net: a message
+// with contentcheck_checked_at IS NULL but arrival > 30 minutes ago IS shown.
+func TestContentcheckFallbackVisibleAfter30Minutes(t *testing.T) {
+	prefix := uniquePrefix("msgcc_fallback")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source) VALUES (?, 'Offer', 'Offer: Old unprocessed chair', 'A chair', 'A chair', NOW() - INTERVAL 35 MINUTE, NOW() - INTERVAL 35 MINUTE, 'Platform')", userID)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", userID).Scan(&msgID)
+	require.NotZero(t, msgID)
+	// contentcheck_checked_at IS NULL but arrival is 35 minutes ago — safety fallback should show it.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival, deleted) VALUES (?, ?, 'Pending', NOW() - INTERVAL 35 MINUTE, 0)", msgID, groupID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil)
+	resp, err := getApp().Test(req)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	messages, _ := result["messages"].([]interface{})
+	found := false
+	for _, m := range messages {
+		if m == float64(msgID) {
+			found = true
+		}
+	}
+	assert.True(t, found, "unprocessed message older than 30 minutes must appear in pending queue as safety fallback")
 }

@@ -4569,6 +4569,7 @@ class User extends Entity
             }
 
             $title = $title == '' ? NULL : $title;
+            $category = PushNotifications::CATEGORY_MODTOOLS;
         }
 
 

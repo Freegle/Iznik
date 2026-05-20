@@ -19,6 +19,7 @@ return new class extends Migration
             $table->bigIncrements('id');
             $table->timestamp('timestamp')->useCurrentOnUpdate()->useCurrent()->index('timestamp');
             $table->unsignedBigInteger('msgid')->index('msgid');
+            $table->unsignedBigInteger('userid')->nullable()->index('userid');
             $table->enum('outcome', ['Taken', 'Received', 'Withdrawn', 'Repost', 'Expired', 'Partial']);
             $table->enum('happiness', ['Happy', 'Fine', 'Unhappy'])->nullable();
             $table->text('comments')->nullable();

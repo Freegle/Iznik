@@ -4,9 +4,9 @@ namespace App\Services;
 
 use App\Mail\Donation\DonationSummaryMail;
 use App\Models\Group;
+use App\Support\SafeMail;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
 
 class DonationSummaryService
 {
@@ -112,11 +112,20 @@ class DonationSummaryService
             // <tbody><table>...</table></tbody>. That's invalid HTML and
             // most email clients (Gmail, Outlook) sanitised it away, which is
             // why the rendered email arrived without the donations list.
-            Mail::send(new DonationSummaryMail(
-                recipientEmail: $fundraisingAddr,
-                htmlContent: $rowsHtml,
-                total: $total,
-            ));
+            //
+            // SafeMail::sendMailable catches transient mail-host timeouts so
+            // the daily cron logs at warning level instead of escalating to
+            // Sentry (production hit this on 2026-05-15 08:01). The mailable
+            // already sets recipientEmail via its envelope, so sendMailable
+            // (not send) avoids duplicating the To: header.
+            SafeMail::sendMailable(
+                new DonationSummaryMail(
+                    recipientEmail: $fundraisingAddr,
+                    htmlContent: $rowsHtml,
+                    total: $total,
+                ),
+                $fundraisingAddr,
+            );
         }
 
         return [

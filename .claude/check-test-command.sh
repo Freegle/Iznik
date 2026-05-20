@@ -37,6 +37,10 @@ fi
 if echo "$PWD" | grep -qE 'monitor-fsm'; then
   IS_DATA_COMMAND=true
 fi
+# Allow knn-server — it's a separate Go module not covered by the status API.
+if echo "$COMMAND" | grep -qE 'knn-server'; then
+  IS_DATA_COMMAND=true
+fi
 if echo "$COMMAND" | grep -qE '\bcurl\b.*localhost:[0-9]+/api/tests.*/status'; then
   IS_DATA_COMMAND=true
 fi

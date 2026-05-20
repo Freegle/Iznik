@@ -21,7 +21,7 @@ return new class extends Migration
             $table->timestamp('date')->useCurrent()->index('date');
             $table->string('term', 80);
             $table->unsignedBigInteger('locationid')->nullable()->index('locationid');
-            $table->integer('groups')->nullable();
+            $table->text('groups')->nullable();
         });
     }
 

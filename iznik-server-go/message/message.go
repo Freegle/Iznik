@@ -98,13 +98,13 @@ type MessagePosting struct {
 	Namedisplay string `json:"namedisplay"`
 }
 
-// WorryMatch represents a worry word found in a message's subject or body.
+// WorryMatch represents a concern keyword found in a message's subject or body.
 type WorryMatch struct {
 	Word      string    `json:"word"`
 	Worryword WorryWord `json:"worryword"`
 }
 
-// WorryWord represents a row from the worrywords table.
+// WorryWord represents a concern keyword used for message checking.
 type WorryWord struct {
 	ID      uint64 `json:"id"`
 	Keyword string `json:"keyword"`
@@ -208,9 +208,15 @@ func computeExpiresat(db *gorm.DB, msgType string, messageGroups []MessageGroup)
 func GetMessages(c *fiber.Ctx) error {
 	ids := strings.Split(c.Params("ids"), ",")
 	myid := user.WhoAmI(c)
+	isPartner := false
+	if key := c.Query("partner"); key != "" {
+		if _, _, _, err := user.ValidatePartnerKey(database.DBConn, key); err == nil {
+			isPartner = true
+		}
+	}
 
 	if len(ids) < 20 {
-		messages := GetMessagesByIds(myid, ids)
+		messages := GetMessagesByIds(myid, ids, isPartner)
 
 		if len(ids) == 1 {
 			if len(messages) == 1 {
@@ -226,7 +232,7 @@ func GetMessages(c *fiber.Ctx) error {
 	}
 }
 
-func GetMessagesByIds(myid uint64, ids []string) []Message {
+func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	db := database.DBConn
 	archiveDomain := os.Getenv("IMAGE_ARCHIVED_DOMAIN")
 	imageDomain := os.Getenv("IMAGE_DOMAIN")
@@ -287,7 +293,7 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 				// Both APPROVED and PENDING messages are visible to all users. This is not a privacy
 				// issue because these messages were posted with the intention of being public. It also
 				// allows shared links to work even before moderation approval.
-				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
+				db.Raw("SELECT groupid, msgid, arrival, collection, autoreposts, approvedby, heldby, spamtype, spamreason, contentcheck_checked_at, contentcheck_reasons FROM messages_groups WHERE msgid = ? AND deleted = 0", id).Scan(&messageGroups)
 			}()
 
 			var messageAttachments []MessageAttachment
@@ -449,14 +455,19 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 					}
 				}
 
-				if myid == 0 {
+				// Strip potential phone numbers and email addresses for anonymous
+				// callers. Skip when authenticated by a valid partner key — partners
+				// are trusted integrations (e.g. Trash Nothing) that need the full
+				// body to round-trip messages between platforms.
+				if myid == 0 && !isPartner {
 					// Remove confidential info.
 					message.Textbody = er.ReplaceAllString(message.Textbody, "***@***.com")
 					message.Textbody = ep.ReplaceAllString(message.Textbody, "***")
 				}
 
-				// Get the paths.
+				// Get the paths and compute AI field.
 				for i, a := range message.MessageAttachments {
+					message.MessageAttachments[i].ComputeAI()
 					if a.Externaluid != "" {
 						message.MessageAttachments[i].Ouruid = a.Externaluid
 						message.MessageAttachments[i].Externalmods = a.Externalmods
@@ -601,12 +612,21 @@ func GetMessagesByIds(myid uint64, ids []string) []Message {
 	return messages
 }
 
-// checkWorryWords checks message subjects and textbodies against global and
-// group-specific worry words.  Matches are stored in Message.Worry.
+// checkWorryWords checks message subjects and textbodies against global concern
+// keywords (fuzzy match mode).  Matches are stored in Message.Worry.
 func checkWorryWords(db *gorm.DB, messages []Message) {
-	// Load global worry words from the worrywords table.
 	var globalWords []WorryWord
-	db.Raw("SELECT id, keyword, type FROM worrywords").Scan(&globalWords)
+	db.Raw(`SELECT id, keyword,
+		CASE category
+			WHEN 'substance_regulated' THEN 'Regulated'
+			WHEN 'substance_reportable' THEN 'Reportable'
+			WHEN 'substance_medicine' THEN 'Medicine'
+			WHEN 'review' THEN 'Review'
+			WHEN 'allowed' THEN 'Allowed'
+			ELSE 'Review'
+		END AS type
+	FROM concern_keywords
+	WHERE match_mode = 'fuzzy' AND scope = 'global'`).Scan(&globalWords)
 
 	// Collect unique group IDs from all messages so we can load group-specific
 	// worry words in one pass.
@@ -1685,6 +1705,12 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		stdmsgid = *req.Stdmsgid
 	}
 
+	// Write audit-log entry for each group this deletion affected.
+	for _, gid := range authorizedGroups {
+		ctx.Groupid = gid
+		logAndNotifyMods(db, flog.LOG_SUBTYPE_DELETED, ctx, myid, req.ID, 0, "")
+	}
+
 	// Queue email+log+push via background task for each authorized group.
 	// The batch processor will create the mod log entry and notify group moderators.
 	for _, gid := range authorizedGroups {
@@ -2117,31 +2143,14 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 			flog.LOG_TYPE_GROUP, flog.LOG_SUBTYPE_JOINED, groupid, myid, myid)
 	}
 
-	// Determine collection based on user's posting status.
-	// (User::postToCollection line 819):
-	//   (!$ps || $ps == MODERATED || $ps == PROHIBITED) → Pending
-	//   anything else → Approved
-	// So NULL, MODERATED, PROHIBITED → Pending. Only an explicit non-moderated value → Approved.
+	// All messages start Pending — the content check batch job runs content checks
+	// and promotes clean messages from non-moderated users to Approved.
 	collection := utils.COLLECTION_PENDING
 	var ourPostingStatus *string
 	db.Raw("SELECT ourPostingStatus FROM memberships WHERE userid = ? AND groupid = ?", myid, groupid).Scan(&ourPostingStatus)
 
 	if ourPostingStatus != nil && strings.EqualFold(*ourPostingStatus, utils.POSTING_STATUS_PROHIBITED) {
 		return fiber.NewError(fiber.StatusForbidden, "You are not allowed to post on this group")
-	}
-
-	if ourPostingStatus != nil &&
-		!strings.EqualFold(*ourPostingStatus, utils.POSTING_STATUS_MODERATED) &&
-		!strings.EqualFold(*ourPostingStatus, utils.POSTING_STATUS_PROHIBITED) &&
-		*ourPostingStatus != "" {
-		// Explicit non-moderated status (e.g. set by mod after reviewing posts) → Approved.
-		collection = utils.COLLECTION_APPROVED
-	}
-
-	// Allow the caller to force the message to Pending, e.g. for bulk posts
-	// that should always be moderated before becoming visible.
-	if req.ForcePending != nil && *req.ForcePending {
-		collection = utils.COLLECTION_PENDING
 	}
 
 	// Reconstruct subject with location and group keyword before submitting
@@ -2156,6 +2165,15 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 			newSubject := keyword + ": " + *itemName + " (" + locStr + ")"
 			db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, req.ID)
 		}
+	}
+
+	// Refuse to promote a draft that would land in the group with no subject.
+	// This catches pre-validation drafts created before PUT /message required
+	// item, and any other path that leaves subject empty by submit time.
+	var finalSubject string
+	db.Raw("SELECT COALESCE(subject, '') FROM messages WHERE id = ?", req.ID).Scan(&finalSubject)
+	if strings.TrimSpace(finalSubject) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Item is required")
 	}
 
 	// Save deadline and deliverypossible if provided.
@@ -2208,24 +2226,6 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	if msgLat != 0 || msgLng != 0 {
 		db.Exec("INSERT INTO messages_spatial (msgid, point, successful, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), 1, ?, ?, NOW()) ON DUPLICATE KEY UPDATE point = VALUES(point), groupid = VALUES(groupid), msgtype = VALUES(msgtype), arrival = VALUES(arrival)",
 			req.ID, msgLng, msgLat, groupid, msgType)
-	}
-
-	// Notify freebiealerts.app about Offer posts going directly to Approved.
-	if collection == utils.COLLECTION_APPROVED && msgType == "Offer" {
-		if err := queue.QueueTask(queue.TaskFreebieAlertsAdd, map[string]interface{}{
-			"msgid": req.ID,
-		}); err != nil {
-			log.Printf("Failed to queue freebie alerts add for message %d: %v", req.ID, err)
-		}
-	}
-
-	// Notify group moderators about the new message.
-	if collection == utils.COLLECTION_PENDING {
-		if err := queue.QueueTask(queue.TaskPushNotifyGroupMods, map[string]interface{}{
-			"group_id": groupid,
-		}); err != nil {
-			log.Printf("Failed to queue push notification for group %d on submit: %v", groupid, err)
-		}
 	}
 
 	// Check if user has a password (to determine if they're a new user).
@@ -2307,8 +2307,9 @@ func resolvePartnerAuth(c *fiber.Ctx) (uint64, error) {
 	return myid, nil
 }
 
-// applyPatchMessage performs the edit on a message after auth and ID are resolved.
-func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
+// applyPatchMessageCore performs the edit on a message without writing the HTTP response.
+// Returns non-nil on failure. Callers are responsible for writing the success response.
+func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
 	db := database.DBConn
 
 	// Check ownership or mod permission.
@@ -2699,6 +2700,14 @@ func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error
 		}
 	}
 
+	return nil
+}
+
+// applyPatchMessage performs the edit on a message after auth and ID are resolved.
+func applyPatchMessage(c *fiber.Ctx, myid uint64, req patchMessageRequest) error {
+	if err := applyPatchMessageCore(c, myid, req); err != nil {
+		return err
+	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
@@ -2766,9 +2775,9 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 	}
 
 	db := database.DBConn
-	var msgID uint64
-	db.Raw("SELECT id FROM messages WHERE tnpostid = ? LIMIT 1", tnpostid).Scan(&msgID)
-	if msgID == 0 {
+	var msgIDs []uint64
+	db.Raw("SELECT id FROM messages WHERE tnpostid = ?", tnpostid).Scan(&msgIDs)
+	if len(msgIDs) == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found for that TN post ID")
 	}
 
@@ -2784,8 +2793,13 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		req.Type = req.Messagetype
 	}
 
-	req.ID = msgID
-	return applyPatchMessage(c, myid, req)
+	for _, msgID := range msgIDs {
+		req.ID = msgID
+		if err := applyPatchMessageCore(c, myid, req); err != nil {
+			return err
+		}
+	}
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
 // DeleteMessageEndpoint handles DELETE /message/:id.
@@ -2817,11 +2831,18 @@ func DeleteMessageEndpoint(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
 
-	if fromuser != myid && !isModForMessage(db, myid, msgid) {
+	isMod := fromuser != myid && isModForMessage(db, myid, msgid)
+	if fromuser != myid && !isMod {
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to delete this message")
 	}
 
 	db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", msgid)
+
+	// Write audit-log entry when a moderator deletes a message.
+	if isMod {
+		groupid := getPrimaryGroupForMessage(db, msgid)
+		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, groupid, fromuser, myid, msgid, 0, "")
+	}
 
 	// Remove from freebiealerts.app — post is no longer available.
 	if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
@@ -3202,16 +3223,35 @@ func PostMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
 	}
 
-	// Resolve message ID from tnpostid when id is absent.
+	// When tnpostid is provided, apply the action to ALL Freegle messages with that TN post ID.
 	if req.ID == 0 && req.Tnpostid != nil && *req.Tnpostid != "" {
 		db := database.DBConn
-		db.Raw("SELECT id FROM messages WHERE tnpostid = ? LIMIT 1", *req.Tnpostid).Scan(&req.ID)
+		var msgIDs []uint64
+		db.Raw("SELECT id FROM messages WHERE tnpostid = ?", *req.Tnpostid).Scan(&msgIDs)
+		if len(msgIDs) == 0 {
+			return fiber.NewError(fiber.StatusNotFound, "Message not found for that TN post ID")
+		}
+		for i, msgID := range msgIDs {
+			req.ID = msgID
+			if err := dispatchPostMessageAction(c, myid, req); err != nil {
+				if i == 0 {
+					return err
+				}
+				log.Printf("tnpostid %s: failed to apply %s to message %d: %v", *req.Tnpostid, req.Action, msgID, err)
+			}
+		}
+		return nil
 	}
 
 	if req.ID == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "id is required")
 	}
 
+	return dispatchPostMessageAction(c, myid, req)
+}
+
+// dispatchPostMessageAction routes a POST /message action to the correct handler.
+func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	switch req.Action {
 	case "Promise":
 		return handlePromise(c, myid, req)

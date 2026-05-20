@@ -236,7 +236,8 @@ describe('regression detection in persist_classifications', () => {
   })
 
   it('does NOT flag regression when new bug symptom_tags have ZERO overlap with fixed bug tags', async () => {
-    // 9518/238 scenario: prior fix was for iOS add-note bug; new bug is a 500-error on Banned filter
+    // Prior fix was for iOS add-note bug; new bug is a completely unrelated symptom.
+    // Use synthetic keywords that won't match any real git commits.
     upsertDiscourseBug(db, {
       topic: 304, post: 1, state: 'fixed', prNumber: 350,
       symptomTags: ['ios', 'add-note', 'chat-review', 'button-disabled'],
@@ -244,8 +245,8 @@ describe('regression detection in persist_classifications', () => {
     await persistClassificationsHandler({}, {
       classifications: [{
         topic: 304, post: 5, type: 'bug', user: 'reporter',
-        symptom_tags: ['500-error', 'banned-filter', 'spammer-undefined'],
-        summary: 'Members > Approved filtered by Banned causes 500',
+        symptom_tags: ['zythian-quorblax', 'frambulated', 'xyloquartz-defrobler'],
+        summary: 'Zythian quorblax frambulated xyloquartz defrobler',
       }],
     })
     const bug = getDiscourseBug(db, 304, 5)

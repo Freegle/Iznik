@@ -75,6 +75,15 @@ Schedule::command('data:update-cpi')
     ->sendOutputTo(cronLog('data:update-cpi'))
     ->runInBackground();
 
+// Content check — run all content checks on unprocessed pending messages.
+// Promotes clean messages from non-moderated users to Approved; keeps others
+// in Pending with failure reasons stored, then notifies group mods.
+Schedule::command('messages:contentcheck')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('messages:contentcheck'))
+    ->runInBackground();
+
 // Auto-approve pending messages after 48 hours.
 // V1: cron/autoapprove.php
 Schedule::command('messages:auto-approve')
@@ -675,6 +684,14 @@ Schedule::command('locations:fix-skewed')
     ->sendOutputTo(cronLog('locations:fix-skewed'))
     ->runInBackground();
 
+// V1: cron/locations_pgsql (locations_pgsql_update.php + locations_pgsql_map.php)
+// Full sync of MySQL locations to PostgreSQL/PostGIS, then remap postcodes to areas.
+Schedule::command('locations:sync-pgsql')
+    ->dailyAt('01:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('locations:sync-pgsql'))
+    ->runInBackground();
+
 // V1: cron/user_ratings.php
 Schedule::command('users:update-ratings')
     ->everyTenMinutes()
@@ -699,12 +716,23 @@ Schedule::command('groups:check-boundaries')
     ->runInBackground();
 
 // Update group stats: fix repost settings, polyindex, activity/funding, mod counts, stats_outcomes.
-// V1: cron/group_stats.php (daily at 02:00)
-// Note: V1 also generates per-group stats (Stats::generate) and syncs TrashNothing groups — those parts are not migrated here.
+// V1: cron/group_stats.php (daily at 02:00) — metadata-maintenance portion only.
+// The per-day per-type Stats::generate() rows come from stats:generate-daily below.
+// TrashNothing group sync is intentionally not migrated (V1 keyed off TNKEY constant).
 Schedule::command('groups:update-stats')
     ->dailyAt('02:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('groups:update-stats'))
+    ->runInBackground();
+
+// Per-group daily stats (Outcomes, Approved/Spam counts, feedback, breakdowns, replies, weight, ...).
+// V1: cron/group_stats.php Stats::generate(yesterday) loop. Runs after groups:update-stats so the
+// activity/funding rollup it does in the 02:00 job uses today's freshly-written ApprovedMessageCount
+// rows on the NEXT day's run (V1 had the same one-day-stale property).
+Schedule::command('stats:generate-daily')
+    ->dailyAt('02:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stats:generate-daily'))
     ->runInBackground();
 
 // V1: cron/groups_closed.php
@@ -876,6 +904,14 @@ Schedule::command('stories:send-to-central')
     ->sendOutputTo(cronLog('stories:send-to-central'))
     ->runInBackground();
 
+// Send the stories newsletter to all eligible Freegle members.
+// V1: cron/stories_newsletter.php (monthly, 12th 23:00)
+Schedule::command('stories:newsletter')
+    ->monthlyOn(12, '23:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('stories:newsletter'))
+    ->runInBackground();
+
 // =============================================================================
 // GIT SUMMARY
 // =============================================================================
@@ -909,4 +945,12 @@ Schedule::command('groups:alert-no-messages')
     ->dailyAt('07:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('groups:alert-no-messages'))
+    ->runInBackground();
+
+// Sync Reach Volunteering opportunities.
+// V1: cron/reachvolunteering.php (daily at 21:00)
+Schedule::command('integrations:sync-reachvolunteering')
+    ->dailyAt('21:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('integrations:sync-reachvolunteering'))
     ->runInBackground();

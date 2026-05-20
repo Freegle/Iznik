@@ -294,4 +294,217 @@ class PushNotificationServiceTest extends TestCase
 
         $this->assertEquals(0, $count, 'Non-pending volunteering op must not count towards badge');
     }
+
+    /**
+     * ModTools Android pushes must include a `notification` block.
+     *
+     * Without it, FCM hands a data-only push to the app's listener and the
+     * notification never appears in the system tray — the bug that made
+     * real mod-work pushes invisible while the forceVisible test push worked.
+     */
+    public function test_buildAndroidFcmMessage_includes_notification_block_for_modtools(): void
+    {
+        $payload = [
+            'title' => '3 messages pending',
+            'message' => 'Open ModTools to review',
+            'channel_id' => 'modtools',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok-mt', $payload, false);
+
+        $this->assertArrayHasKey('notification', $arr,
+            'ModTools Android push must include a notification block so Android raises it in the tray');
+        $this->assertSame('3 messages pending', $arr['notification']['title']);
+        $this->assertSame('Open ModTools to review', $arr['notification']['body']);
+        $this->assertSame('tok-mt', $arr['token']);
+        $this->assertSame($payload, $arr['data'],
+            'Existing data payload (channel_id, badge, etc.) must still be present');
+    }
+
+    /**
+     * Non-modtools Android pushes without forceVisible stay data-only.
+     *
+     * This protects the user-app chat path (notifyIndividualMessages) which
+     * relies on data-only messages with action buttons built by the app.
+     */
+    public function test_buildAndroidFcmMessage_omits_notification_block_for_non_modtools(): void
+    {
+        $payload = [
+            'title' => 'New chat message',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok-chat', $payload, false);
+
+        $this->assertArrayNotHasKey('notification', $arr,
+            'Non-modtools push (no forceVisible) must remain data-only');
+    }
+
+    /**
+     * forceVisible (used by the test-push command) always adds the block,
+     * regardless of channel.
+     */
+    public function test_buildAndroidFcmMessage_forceVisible_adds_notification_block(): void
+    {
+        $payload = [
+            'title' => 'Test',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok', $payload, true);
+
+        $this->assertArrayHasKey('notification', $arr);
+    }
+
+    /**
+     * Empty-title payload (e.g. zero-count modtools push to clear the badge)
+     * must NOT add a notification block — we don't want an empty tray entry.
+     */
+    public function test_buildAndroidFcmMessage_skips_notification_block_when_title_empty(): void
+    {
+        $payload = [
+            'title' => '',
+            'message' => '',
+            'channel_id' => 'modtools',
+        ];
+
+        $arr = $this->invokeBuildAndroidFcmMessage('tok', $payload, false);
+
+        $this->assertArrayNotHasKey('notification', $arr,
+            'Zero-count clear-badge pushes have empty title and must not show in the tray');
+    }
+
+    /**
+     * Chitchat notifications (CommentOnYourPost in users_notifications) must never
+     * inflate the modtools badge count.
+     *
+     * V1 Bug #9676: PushNotifications::notify($uid, TRUE) fired unconditionally when
+     * $modtools=TRUE, and getNotificationPayload(TRUE) included ALL notification types
+     * in $total, so a chitchat comment triggered a spurious "1 pending" modtools push.
+     *
+     * V2 fix: getBadgeCount() queries only messages_groups (pending/spam) and
+     * volunteering — it never touches users_notifications. Chitchat activity therefore
+     * cannot inflate the modtools badge.
+     */
+    public function test_getBadgeCount_not_inflated_by_chitchat_notification(): void
+    {
+        $mod = $this->createTestUser();
+        $sender = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        // Insert a CommentOnYourPost notification (chitchat) for the mod — simulates a
+        // newsfeed comment arriving while the mod has no pending modtools work.
+        DB::table('users_notifications')->insert([
+            'fromuser' => $sender->id,
+            'touser' => $mod->id,
+            'type' => 'CommentOnYourPost',
+            'seen' => 0,
+            'timestamp' => now(),
+        ]);
+
+        $count = $this->service->getBadgeCount($mod->id);
+
+        $this->assertEquals(0, $count,
+            'Chitchat (CommentOnYourPost) must not inflate the modtools badge — V2 fix for Discourse #9676');
+    }
+
+    /**
+     * When no modtools work is pending, buildModToolsPayload returns a zero-count
+     * badge-clearing payload with an empty title — no visible notification is raised
+     * in the Android system tray (guarded by test_buildAndroidFcmMessage_skips_notification_block_when_title_empty).
+     *
+     * This confirms the full V2 chain: chitchat-only activity → badge=0 → title=''
+     * → no notification block → no tray entry in ModTools app.
+     */
+    public function test_buildModToolsPayload_returns_zero_badge_when_no_modtools_work(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        $this->assertNotNull($payload, 'Payload must not be null (zero-count clears the badge)');
+        $this->assertSame('0', $payload['badge'], 'Badge must be 0 when no modtools work pending');
+        $this->assertSame('0', $payload['count'], 'Count must be 0 when no modtools work pending');
+        $this->assertSame('', $payload['title'], 'Title must be empty so no tray notification is raised');
+    }
+
+    /**
+     * Visible ModTools push: priority high and notification.tag set so the
+     * latest "N pending" entry replaces the previous one in the tray.
+     */
+    public function test_buildAndroidConfig_visible_modtools_gets_high_priority_and_tag(): void
+    {
+        $payload = [
+            'title' => '3 messages pending',
+            'message' => 'Open ModTools to review',
+            'channel_id' => 'modtools',
+        ];
+
+        $cfg = $this->invokeBuildAndroidConfig(123, $payload, false);
+
+        $this->assertSame('high', $cfg['priority']);
+        $this->assertSame(['tag' => 'modtools-123'], $cfg['notification']);
+    }
+
+    /**
+     * Zero-work ModTools push (empty title) must be truly silent: data-only,
+     * normal priority, no AndroidConfig.notification. Setting
+     * AndroidConfig.notification on a data-only payload promotes it to a
+     * notification message on some devices/Capacitor builds and surfaces an
+     * empty tray entry — the bug we're fixing.
+     */
+    public function test_buildAndroidConfig_zero_count_modtools_is_silent(): void
+    {
+        $payload = [
+            'title' => '',
+            'message' => '',
+            'channel_id' => 'modtools',
+        ];
+
+        $cfg = $this->invokeBuildAndroidConfig(123, $payload, false);
+
+        $this->assertSame('normal', $cfg['priority'],
+            'Silent badge-clear pushes should not wake the device with high priority');
+        $this->assertArrayNotHasKey('notification', $cfg,
+            'AndroidConfig.notification must be absent for data-only clear-badge pushes');
+    }
+
+    /**
+     * forceVisible (test-push command) always rides high priority even for
+     * non-modtools channels, but never gets the modtools tag.
+     */
+    public function test_buildAndroidConfig_forceVisible_high_priority_no_tag_for_non_modtools(): void
+    {
+        $payload = [
+            'title' => 'Test',
+            'message' => 'Hello',
+            'channel_id' => 'chat_messages',
+        ];
+
+        $cfg = $this->invokeBuildAndroidConfig(123, $payload, true);
+
+        $this->assertSame('high', $cfg['priority']);
+        $this->assertArrayNotHasKey('notification', $cfg);
+    }
+
+    private function invokeBuildAndroidFcmMessage(string $token, array $payload, bool $forceVisible): array
+    {
+        $method = new \ReflectionMethod($this->service, 'buildAndroidFcmMessage');
+        $method->setAccessible(true);
+        return $method->invoke($this->service, $token, $payload, $forceVisible);
+    }
+
+    private function invokeBuildAndroidConfig(int $userId, array $payload, bool $forceVisible): array
+    {
+        $method = new \ReflectionMethod($this->service, 'buildAndroidConfig');
+        $method->setAccessible(true);
+        return $method->invoke($this->service, $userId, $payload, $forceVisible);
+    }
 }

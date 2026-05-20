@@ -70,8 +70,8 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
-      PW_WORKERS: 13
-      VITEST_MAX_WORKERS: 12
+      PW_WORKERS: 11
+      VITEST_MAX_WORKERS: 8
       PORT_TRAEFIK_HTTP: 9080
       PORT_TRAEFIK_API: 17192
       PORT_TRAEFIK_DASHBOARD: 17080
@@ -253,7 +253,14 @@ commands:
             # Ensure COMPOSE_PROFILES is set for all docker-compose commands
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
 
-            # Clean up any existing containers first
+            # Clean up any existing containers first.
+            # Do NOT pass --volumes: wiping named volumes forces MySQL to re-initialise
+            # its InnoDB data directory from scratch, causing a 24 MB/s disk write burst
+            # that saturates the disk (95% util) and starves the CircleCI runner of I/O,
+            # causing it to miss heartbeats → infrastructure_fail.
+            # Database cleanliness is handled by setup-test-database.sh which issues
+            # DROP DATABASE / CREATE DATABASE on self-hosted runners (including Katapult)
+            # so each pipeline starts with a fresh schema without the InnoDB init cost.
             docker-compose down --remove-orphans || true
             # On self-hosted runner, also clean up containers from old CI runs that used
             # COMPOSE_PROJECT_NAME=freegle (before we switched to freegle-ci)
@@ -525,6 +532,14 @@ commands:
             # Then run setup-test-database.sh to clone iznik → iznik_phpunit_test, iznik_go_test
             #
             # Phase 2: Start all remaining containers (all databases already exist)
+
+            # Clear the bind-mounted vendor/ directory before starting batch.
+            # The CI runner's persistent workspace may have a stale vendor/ from a previous
+            # run on a different branch (packages added/removed). A stale vendor/ causes
+            # composer install in the entrypoint to fire prePackageUninstall, which tries
+            # to bootstrap Laravel against the stale vendor/ and fails with exit code 1.
+            echo "Clearing stale vendor directory..."
+            rm -rf ./iznik-batch/vendor/
 
             echo "=== Phase 1: Starting infrastructure + batch for migrations ==="
             docker-compose up -d \
@@ -2566,6 +2581,13 @@ jobs:
 
               echo "[${elapsed_min}m] iznik-batch: $LARAVEL_DISPLAY | Go: $GO_DISPLAY | Playwright: $PLAYWRIGHT_DISPLAY | Vitest: $VITEST_DISPLAY"
 
+              # Every 5 minutes, dump Vitest output so a hang is diagnosable
+              if [ "$VITEST_STATUS" = "running" ] && [ $elapsed_min -gt 0 ] && [ $((elapsed_min % 5)) -eq 0 ] && [ $((elapsed % 60)) -lt 10 ]; then
+                echo "--- Vitest output @ ${elapsed_min}m (last 40 lines of ~/test-output/vitest.out) ---"
+                tail -40 ~/test-output/vitest.out 2>/dev/null || echo "(no vitest output yet)"
+                echo "---"
+              fi
+
               # Check for any failures (fail-fast)
               if [ "$LARAVEL_STATUS" = "fail" ]; then
                 echo "❌ FAIL-FAST: iznik-batch tests failed - stopping all tests"
@@ -3033,6 +3055,28 @@ jobs:
           paths:
             - .new_version
 
+  increment-version-modtools:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - run:
+          name: Increment ModTools Version Number
+          command: |
+            CURRENT_VERSION="${CURRENT_MODTOOLS_VERSION:-1.0.0}"
+            echo "Current ModTools version: $CURRENT_VERSION"
+            major=$(echo "$CURRENT_VERSION" | cut -d. -f1)
+            minor=$(echo "$CURRENT_VERSION" | cut -d. -f2)
+            patch=$(echo "$CURRENT_VERSION" | cut -d. -f3)
+            NEW_PATCH=$((patch + 1))
+            NEW_VERSION="$major.$minor.$NEW_PATCH"
+            echo "New ModTools version: $NEW_VERSION"
+            echo "$NEW_VERSION" > .new_version
+            cat .new_version
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .new_version
+
   build-android-debug:
     executor: android-executor
     working_directory: ~/project/iznik-nuxt3
@@ -3170,6 +3214,471 @@ jobs:
             echo "🎉 Debug build complete!"
             echo "📱 Download APK from CircleCI artifacts tab"
 
+  build-android-modtools-debug:
+    executor: android-executor
+    working_directory: ~/project/iznik-nuxt3
+    steps:
+      - checkout:
+          path: ~/project
+      - run:
+          name: Install Node.js 22
+          command: |
+            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+            sudo apt-get install -y nodejs
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - restore_cache:
+          keys:
+            - npm-deps-v1-{{ checksum "package-lock.json" }}
+            - npm-deps-v1-
+      - run:
+          name: Install Node.js Dependencies
+          command: npm ci
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - save_cache:
+          key: npm-deps-v1-{{ checksum "package-lock.json" }}
+          paths:
+            - node_modules
+      - run:
+          name: Install ModTools Dependencies
+          command: cd modtools && npm ci --legacy-peer-deps
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - run:
+          name: Prepare Parent Nuxt Layer
+          command: |
+            export NODE_OPTIONS="--max-old-space-size=3584"
+            npx nuxt prepare
+            echo "✅ Parent .nuxt/tsconfig.json generated"
+      - run:
+          name: Build ModTools Nuxt App
+          command: |
+            export NODE_OPTIONS="--max-old-space-size=3584"
+            export IZNIK_NUXT3_IS_APP=true
+            export APP_ENV=development
+            export TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
+            export IMAGE_DELIVERY=https://delivery.ilovefreegle.org
+            echo "🔧 Building ModTools debug version"
+            cd modtools && npm run generate
+            cd ..
+            # Detect output location and patch capacitor config to match
+            if [ -d "modtools/.output/public" ] && [ "$(ls -A modtools/.output/public 2>/dev/null)" ]; then
+              WEBDIR="modtools/.output/public"
+            elif [ -d "modtools/dist" ] && [ "$(ls -A modtools/dist 2>/dev/null)" ]; then
+              WEBDIR="modtools/dist"
+            else
+              echo "❌ ModTools build output not found in modtools/.output/public or modtools/dist"
+              exit 1
+            fi
+            echo "✅ Build output at: $WEBDIR"
+            sed -i "s|webDir: '.*'|webDir: '$WEBDIR'|" capacitor.config.modtools.js
+      - run:
+          name: Setup Firebase Configuration
+          command: |
+            PATCH_PKG='import json; gs=json.load(open("android/app/google-services.json")); [c["client_info"]["android_client_info"].update({"package_name":"org.ilovefreegle.modtools"}) for c in gs.get("client",[]) if "android_client_info" in c.get("client_info",{})]; json.dump(gs,open("android/app/google-services.json","w"),indent=2); print("Patched package_name to org.ilovefreegle.modtools")'
+            if [ -n "$MODTOOLS_GOOGLE_SERVICES_JSON_BASE64" ]; then
+              echo "Decoding modtools google-services.json"
+              echo "$MODTOOLS_GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n' | base64 -d > android/app/google-services.json
+              python3 -c "$PATCH_PKG"
+            elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+              echo "Using Freegle google-services.json for ModTools (patching package name)"
+              echo "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n' | base64 -d > android/app/google-services.json
+              python3 -c "$PATCH_PKG"
+            else
+              echo "⚠️  No Firebase config - push notifications will not work"
+            fi
+            if [ -f android/app/google-services.json ]; then
+              if python3 -m json.tool android/app/google-services.json > /dev/null 2>&1; then
+                echo "✅ Valid google-services.json"
+                echo "📱 Project ID: $(python3 -c 'import json; gs=json.load(open("android/app/google-services.json")); print(gs["project_info"]["project_id"])')"
+                echo "📱 Package name: $(python3 -c 'import json; gs=json.load(open("android/app/google-services.json")); print(gs["client"][0]["client_info"]["android_client_info"]["package_name"])')"
+              else
+                echo "❌ Invalid JSON in google-services.json"
+                exit 1
+              fi
+            fi
+      - run:
+          name: Switch to ModTools Capacitor Config
+          command: |
+            rm -f capacitor.config.ts
+            cp capacitor.config.modtools.js capacitor.config.js
+            echo "Using ModTools Capacitor config"
+      - run:
+          name: Sync Capacitor to Android
+          command: npx cap sync android
+      - run:
+          name: Configure ModTools Android Identity
+          command: |
+            sed -i 's/org\.ilovefreegle\.direct/org.ilovefreegle.modtools/g' android/app/build.gradle
+            sed -i 's/>Freegle</>ModTools</g' android/app/src/main/res/values/strings.xml
+            sed -i 's/@drawable\/fr_icon/@drawable\/ic_stat_modtools/g' android/app/src/main/AndroidManifest.xml
+            # ModTools has no ads — remove AD_ID permission added transitively by Firebase
+            MANIFEST="android/app/src/main/AndroidManifest.xml"
+            if ! grep -q 'AD_ID' "$MANIFEST"; then
+              if ! grep -q 'xmlns:tools' "$MANIFEST"; then
+                sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
+              fi
+              sed -i 's|</manifest>|    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>\n</manifest>|' "$MANIFEST"
+            fi
+            echo "✅ ModTools identity configured"
+      - run:
+          name: Set ModTools Launcher Icons
+          command: |
+            SRC="modtools/public/android-chrome-512x512.png"
+            RES="android/app/src/main/res"
+            if ! command -v pip3 >/dev/null 2>&1 && ! command -v pip >/dev/null 2>&1; then
+              sudo apt-get install -y --no-install-recommends python3-pip
+            fi
+            pip3 install pillow --quiet --break-system-packages 2>/dev/null || pip3 install pillow --quiet
+            python3 - \<<'PYEOF'
+            from PIL import Image
+            src = Image.open("modtools/public/android-chrome-512x512.png").convert("RGBA")
+            res = "android/app/src/main/res"
+            icons = {
+              "mipmap-ldpi/ic_launcher.png": 36,
+              "mipmap-mdpi/ic_launcher.png": 48,
+              "mipmap-hdpi/ic_launcher.png": 72,
+              "mipmap-xhdpi/ic_launcher.png": 96,
+              "mipmap-xxhdpi/ic_launcher.png": 144,
+              "mipmap-xxxhdpi/ic_launcher.png": 192,
+              "mipmap-ldpi-v26/ic_launcher_foreground.png": 81,
+              "mipmap-mdpi-v26/ic_launcher_foreground.png": 108,
+              "mipmap-hdpi-v26/ic_launcher_foreground.png": 162,
+              "mipmap-xhdpi-v26/ic_launcher_foreground.png": 216,
+              "mipmap-xxhdpi-v26/ic_launcher_foreground.png": 324,
+              "mipmap-xxxhdpi-v26/ic_launcher_foreground.png": 432,
+            }
+            for path, size in icons.items():
+                img = src.resize((size, size), Image.LANCZOS)
+                img.save(f"{res}/{path}")
+                print(f"OK {path} ({size}x{size})")
+            PYEOF
+      - run:
+          name: Make gradlew executable
+          command: chmod +x android/gradlew
+      - run:
+          name: Configure Gradle Plugin Portal
+          command: |
+            mkdir -p ~/.gradle/init.d
+            cat > ~/.gradle/init.d/plugin-portal.gradle \<<'INITSCRIPT'
+            allprojects {
+              buildscript {
+                repositories {
+                  maven { url "https://plugins.gradle.org/m2/" }
+                  google()
+                  mavenCentral()
+                }
+              }
+              repositories {
+                maven { url "https://plugins.gradle.org/m2/" }
+                google()
+                mavenCentral()
+              }
+            }
+            INITSCRIPT
+      - restore_cache:
+          keys:
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "package-lock.json" }}
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-
+            - gradle-deps-v1-
+      - run:
+          name: Create Debug Keystore
+          command: |
+            mkdir -p ~/.android
+            if [ -n "$MODTOOLS_DEBUG_KEYSTORE_BASE64" ]; then
+              echo "Restoring stored debug keystore from env var"
+              echo "$MODTOOLS_DEBUG_KEYSTORE_BASE64" | tr -d '\n' | base64 -d > ~/.android/debug.keystore
+            elif [ ! -f ~/.android/debug.keystore ]; then
+              echo "Creating fresh debug keystore (register SHA-1 from build output)"
+              keytool -genkey -v \
+                -keystore ~/.android/debug.keystore \
+                -storepass android \
+                -alias androiddebugkey \
+                -keypass android \
+                -keyalg RSA \
+                -keysize 2048 \
+                -validity 10000 \
+                -dname "CN=Android Debug,O=Android,C=US"
+            fi
+            echo "📋 Debug keystore SHA-1 (register in Firebase/Google Cloud for Google Sign-In):"
+            keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android -keypass android 2>/dev/null | grep "SHA1:"
+      - run:
+          name: Build ModTools Debug APK
+          command: |
+            cd android
+            ./gradlew assembleDebug --stacktrace
+            echo "✅ ModTools debug APK built"
+            ls -lh app/build/outputs/apk/debug/
+      - save_cache:
+          key: gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "package-lock.json" }}
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
+      - store_artifacts:
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          destination: modtools-debug.apk
+      - run:
+          name: Build Complete
+          command: |
+            echo "🎉 ModTools debug build complete!"
+            echo "📱 Download APK from CircleCI artifacts tab"
+
+  build-android-modtools:
+    executor: android-executor
+    working_directory: ~/project/iznik-nuxt3
+    steps:
+      - checkout:
+          path: ~/project
+      - attach_workspace:
+          at: .
+      - run:
+          name: Install Node.js 22
+          command: |
+            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+            sudo apt-get install -y nodejs
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - restore_cache:
+          keys:
+            - npm-deps-v1-{{ checksum "package-lock.json" }}
+            - npm-deps-v1-
+      - run:
+          name: Install Node.js Dependencies
+          command: npm ci
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - save_cache:
+          key: npm-deps-v1-{{ checksum "package-lock.json" }}
+          paths:
+            - node_modules
+      - run:
+          name: Install ModTools Dependencies
+          command: cd modtools && npm ci --legacy-peer-deps
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - run:
+          name: Prepare Parent Nuxt Layer
+          command: |
+            export NODE_OPTIONS="--max-old-space-size=3584"
+            npx nuxt prepare
+            echo "✅ Parent .nuxt/tsconfig.json generated"
+      - run:
+          name: Update Mobile Version in config.js
+          command: |
+            if [ ! -f .new_version ]; then
+              echo "❌ ERROR: Version file not found at .new_version"
+              exit 1
+            fi
+            NEW_VERSION=$(cat .new_version)
+            echo "📱 Using version from workspace: $NEW_VERSION"
+            if ! echo "$NEW_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "❌ ERROR: Invalid version format '$NEW_VERSION'"
+              exit 1
+            fi
+            sed -i "s/MOBILE_VERSION: '[0-9]*\.[0-9]*\.[0-9]*'/MOBILE_VERSION: '$NEW_VERSION'/" config.js
+            grep "MOBILE_VERSION:" config.js
+      - run:
+          name: Build ModTools Nuxt App
+          command: |
+            export NODE_OPTIONS="--max-old-space-size=3584"
+            export IZNIK_NUXT3_IS_APP=true
+            export APP_ENV=production
+            export TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
+            export IMAGE_DELIVERY=https://delivery.ilovefreegle.org
+            echo "🔧 Building ModTools production version"
+            cd modtools && npm run generate
+            cd ..
+            if [ -d "modtools/.output/public" ] && [ "$(ls -A modtools/.output/public 2>/dev/null)" ]; then
+              WEBDIR="modtools/.output/public"
+            elif [ -d "modtools/dist" ] && [ "$(ls -A modtools/dist 2>/dev/null)" ]; then
+              WEBDIR="modtools/dist"
+            else
+              echo "❌ ModTools build output not found"
+              exit 1
+            fi
+            echo "✅ Build output at: $WEBDIR"
+            sed -i "s|webDir: '.*'|webDir: '$WEBDIR'|" capacitor.config.modtools.js
+      - run:
+          name: Setup Firebase Configuration
+          command: |
+            if [ -n "$MODTOOLS_GOOGLE_SERVICES_JSON_BASE64" ]; then
+              echo "Decoding modtools google-services.json"
+              echo "$MODTOOLS_GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n' | base64 -d > android/app/google-services.json
+            elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+              echo "Using Freegle google-services.json (patching package name)"
+              echo "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\n' | base64 -d > android/app/google-services.json
+              python3 -c "import json; gs=json.load(open('android/app/google-services.json')); [c['client_info']['android_client_info'].update({'package_name':'org.ilovefreegle.modtools'}) for c in gs.get('client',[]) if 'android_client_info' in c.get('client_info',{})]; json.dump(gs,open('android/app/google-services.json','w'),indent=2); print('Patched package_name to org.ilovefreegle.modtools')"
+            else
+              echo "⚠️  No Firebase config - push notifications will not work"
+            fi
+      - run:
+          name: Switch to ModTools Capacitor Config
+          command: |
+            rm -f capacitor.config.ts
+            cp capacitor.config.modtools.js capacitor.config.js
+      - run:
+          name: Sync Capacitor to Android
+          command: npx cap sync android
+      - run:
+          name: Configure ModTools Android Identity
+          command: |
+            sed -i 's/org\.ilovefreegle\.direct/org.ilovefreegle.modtools/g' android/app/build.gradle
+            sed -i 's/>Freegle</>ModTools</g' android/app/src/main/res/values/strings.xml
+            sed -i 's/@drawable\/fr_icon/@drawable\/ic_stat_modtools/g' android/app/src/main/AndroidManifest.xml
+            # ModTools has no ads — remove AD_ID permission added transitively by Firebase
+            MANIFEST="android/app/src/main/AndroidManifest.xml"
+            if ! grep -q 'AD_ID' "$MANIFEST"; then
+              if ! grep -q 'xmlns:tools' "$MANIFEST"; then
+                sed -i 's|<manifest|<manifest xmlns:tools="http://schemas.android.com/tools"|' "$MANIFEST"
+              fi
+              sed -i 's|</manifest>|    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove"/>\n</manifest>|' "$MANIFEST"
+            fi
+            echo "✅ ModTools identity configured"
+      - run:
+          name: Set ModTools Launcher Icons
+          command: |
+            if ! command -v pip3 >/dev/null 2>&1 && ! command -v pip >/dev/null 2>&1; then
+              sudo apt-get install -y --no-install-recommends python3-pip
+            fi
+            pip3 install pillow --quiet --break-system-packages 2>/dev/null || pip3 install pillow --quiet
+            python3 - \<<'PYEOF'
+            from PIL import Image
+            src = Image.open("modtools/public/android-chrome-512x512.png").convert("RGBA")
+            res = "android/app/src/main/res"
+            icons = {
+              "mipmap-ldpi/ic_launcher.png": 36,
+              "mipmap-mdpi/ic_launcher.png": 48,
+              "mipmap-hdpi/ic_launcher.png": 72,
+              "mipmap-xhdpi/ic_launcher.png": 96,
+              "mipmap-xxhdpi/ic_launcher.png": 144,
+              "mipmap-xxxhdpi/ic_launcher.png": 192,
+              "mipmap-ldpi-v26/ic_launcher_foreground.png": 81,
+              "mipmap-mdpi-v26/ic_launcher_foreground.png": 108,
+              "mipmap-hdpi-v26/ic_launcher_foreground.png": 162,
+              "mipmap-xhdpi-v26/ic_launcher_foreground.png": 216,
+              "mipmap-xxhdpi-v26/ic_launcher_foreground.png": 324,
+              "mipmap-xxxhdpi-v26/ic_launcher_foreground.png": 432,
+            }
+            for path, size in icons.items():
+                img = src.resize((size, size), Image.LANCZOS)
+                img.save(f"{res}/{path}")
+                print(f"OK {path} ({size}x{size})")
+            PYEOF
+      - run:
+          name: Make gradlew executable
+          command: chmod +x android/gradlew
+      - run:
+          name: Setup ModTools Android Release Signing
+          command: |
+            # Prefer ModTools-specific keystore vars; fall back to shared Freegle ones.
+            # build.gradle reads ANDROID_KEYSTORE_BASE64 directly from the environment.
+            MT_KEYSTORE="${MODTOOLS_ANDROID_KEYSTORE_BASE64:-$ANDROID_KEYSTORE_BASE64}"
+            MT_STORE_PASS="${MODTOOLS_ANDROID_KEYSTORE_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+            MT_KEY_ALIAS="${MODTOOLS_ANDROID_KEY_ALIAS:-$ANDROID_KEY_ALIAS}"
+            MT_KEY_PASS="${MODTOOLS_ANDROID_KEY_PASSWORD:-$ANDROID_KEY_PASSWORD}"
+            if [ -n "$MT_KEYSTORE" ]; then
+              echo "ANDROID_KEYSTORE_BASE64=$MT_KEYSTORE" >> $BASH_ENV
+              echo "ANDROID_KEYSTORE_PASSWORD=$MT_STORE_PASS" >> $BASH_ENV
+              echo "ANDROID_KEY_ALIAS=$MT_KEY_ALIAS" >> $BASH_ENV
+              echo "ANDROID_KEY_PASSWORD=$MT_KEY_PASS" >> $BASH_ENV
+              echo "✅ Android release signing configured for ModTools"
+            else
+              echo "⚠️  No release keystore set — AAB will be unsigned"
+            fi
+      - run:
+          name: Configure Gradle Plugin Portal
+          command: |
+            mkdir -p ~/.gradle/init.d
+            cat > ~/.gradle/init.d/plugin-portal.gradle \<<'INITSCRIPT'
+            allprojects {
+              buildscript {
+                repositories {
+                  maven { url "https://plugins.gradle.org/m2/" }
+                  google()
+                  mavenCentral()
+                }
+              }
+              repositories {
+                maven { url "https://plugins.gradle.org/m2/" }
+                google()
+                mavenCentral()
+              }
+            }
+            INITSCRIPT
+      - restore_cache:
+          keys:
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "package-lock.json" }}
+            - gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-
+            - gradle-deps-v1-
+      - run:
+          name: Install Ruby and Bundler
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y ruby-full
+            sudo gem install bundler
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - restore_cache:
+          keys:
+            - bundle-v1-{{ checksum "Gemfile.lock" }}
+            - bundle-v1-
+      - run:
+          name: Install Fastlane
+          command: |
+            bundle config set --local path 'vendor/bundle'
+            bundle update fastlane
+            bundle install
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - run:
+          name: Decode ModTools Google Play JSON Key
+          command: |
+            MT_KEY="${MODTOOLS_GOOGLE_PLAY_JSON_KEY:-$GOOGLE_PLAY_JSON_KEY}"
+            if [ -z "$MT_KEY" ]; then
+              echo "❌ CRITICAL: Neither MODTOOLS_GOOGLE_PLAY_JSON_KEY nor GOOGLE_PLAY_JSON_KEY is set"
+              exit 1
+            fi
+            echo "$MT_KEY" | tr -d '\n' | base64 -d > fastlane/modtools-google-play-api-key.json
+            FILE_SIZE=$(wc -c < fastlane/modtools-google-play-api-key.json)
+            echo "✅ ModTools Google Play key: $FILE_SIZE bytes"
+      - save_cache:
+          key: bundle-v1-{{ checksum "Gemfile.lock" }}
+          paths:
+            - vendor/bundle
+      - run:
+          name: Build and Deploy ModTools to Google Play Production
+          command: bundle exec fastlane android modtools_production
+      - save_cache:
+          key: gradle-deps-v1-{{ checksum "android/gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "package-lock.json" }}
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
+      - run:
+          name: Update CircleCI ModTools Version Variable
+          command: |
+            if [ ! -f .new_version ]; then
+              echo "⚠️  .new_version file not found - skipping version update"
+              exit 0
+            fi
+            NEW_VERSION=$(cat .new_version)
+            echo "📝 Updating CURRENT_MODTOOLS_VERSION to: ${NEW_VERSION}"
+            curl -X DELETE \
+              -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
+            curl -X POST \
+              -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+            echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
+      - store_artifacts:
+          path: android/app/build/outputs/bundle/release/
+          destination: modtools-android-bundle
+      - store_artifacts:
+          path: android/app/build/outputs/apk/release/
+          destination: modtools-android-apk
+
   build-android:
     executor: android-executor
     working_directory: ~/project/iznik-nuxt3
@@ -3304,6 +3813,197 @@ jobs:
       - store_artifacts:
           path: android/app/build/outputs/apk/release/
           destination: android-apk
+
+  build-ios-modtools:
+    executor: macos-executor
+    working_directory: ~/project/iznik-nuxt3
+    steps:
+      - checkout:
+          path: ~/project
+      - attach_workspace:
+          at: .
+      - run:
+          name: Install Node.js 22
+          command: |
+            curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            nvm install 22
+            nvm use 22
+            nvm alias default 22
+            echo 'export NVM_DIR="$HOME/.nvm"' >> $BASH_ENV
+            echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> $BASH_ENV
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - run:
+          name: Install Node.js Dependencies
+          command: npm ci
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - run:
+          name: Install ModTools Dependencies
+          command: cd modtools && npm ci --legacy-peer-deps
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - run:
+          name: Prepare Parent Nuxt Layer
+          command: |
+            export NODE_OPTIONS="--max-old-space-size=3584"
+            npx nuxt prepare
+      - run:
+          name: Update Mobile Version in config.js
+          command: |
+            if [ ! -f .new_version ]; then
+              echo "❌ ERROR: Version file not found at .new_version"
+              exit 1
+            fi
+            NEW_VERSION=$(cat .new_version)
+            sed -i "" "s/MOBILE_VERSION: '[0-9]*\.[0-9]*\.[0-9]*'/MOBILE_VERSION: '$NEW_VERSION'/" config.js
+            grep "MOBILE_VERSION:" config.js
+      - run:
+          name: Build ModTools Nuxt App
+          command: |
+            export NODE_OPTIONS="--max-old-space-size=3584"
+            export IZNIK_NUXT3_IS_APP=true
+            export APP_ENV=production
+            export TUS_UPLOADER=https://uploads.ilovefreegle.org:8080
+            export IMAGE_DELIVERY=https://delivery.ilovefreegle.org
+            cd modtools && npm run generate
+            cd ..
+            if [ -d "modtools/.output/public" ] && [ "$(ls -A modtools/.output/public 2>/dev/null)" ]; then
+              WEBDIR="modtools/.output/public"
+            elif [ -d "modtools/dist" ] && [ "$(ls -A modtools/dist 2>/dev/null)" ]; then
+              WEBDIR="modtools/dist"
+            else
+              echo "❌ ModTools build output not found"
+              exit 1
+            fi
+            sed -i "" "s|webDir: '.*'|webDir: '$WEBDIR'|" capacitor.config.modtools.js
+      - run:
+          name: Sync Capacitor to iOS
+          command: |
+            rm -f capacitor.config.ts
+            cp capacitor.config.modtools.js capacitor.config.js
+            npx cap sync ios
+      - run:
+          name: Set ModTools App Icons for iOS
+          command: |
+            SRC="modtools/public/android-chrome-512x512.png"
+            DIR="ios/App/App/Assets.xcassets/AppIcon.appiconset"
+            for spec in \
+              "icon-20.png:20" "icon-20@2x.png:40" "icon-20@3x.png:60" \
+              "icon-29.png:29" "icon-29@2x.png:58" "icon-29@3x.png:87" \
+              "icon-40.png:40" "icon-40@2x.png:80" \
+              "icon-50.png:50" "icon-50@2x.png:100" \
+              "icon-60@2x.png:120" "icon-60@3x.png:180" \
+              "icon-72.png:72" "icon-72@2x.png:144" \
+              "icon-76.png:76" "icon-76@2x.png:152" \
+              "icon-83.5@2x.png:167" "icon-1024.png:1024" \
+              "icon.png:57" "icon@2x.png:114"; do
+              FILE="${spec%%:*}"
+              SIZE="${spec##*:}"
+              sips -z "$SIZE" "$SIZE" "$SRC" --out "$DIR/$FILE" > /dev/null
+              echo "✅ $FILE (${SIZE}x${SIZE})"
+            done
+      - run:
+          name: Setup Firebase Configuration for iOS
+          command: |
+            if [ -n "$MODTOOLS_GOOGLE_SERVICE_INFO_PLIST_BASE64" ]; then
+              echo "Decoding ModTools GoogleService-Info.plist"
+              echo "$MODTOOLS_GOOGLE_SERVICE_INFO_PLIST_BASE64" | tr -d '\n' | base64 -d > ios/App/App/GoogleService-Info.plist
+            elif [ -n "$GOOGLE_SERVICE_INFO_PLIST_BASE64" ]; then
+              echo "⚠️  Using Freegle GoogleService-Info.plist (push may not work for ModTools)"
+              echo "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | tr -d '\n' | base64 -d > ios/App/App/GoogleService-Info.plist
+            else
+              echo "⚠️  No GoogleService-Info.plist - push notifications will not work"
+            fi
+      - restore_cache:
+          keys:
+            - bundle-v1-{{ checksum "Gemfile.lock" }}
+            - bundle-v1-
+      - run:
+          name: Install Fastlane
+          command: |
+            gem install bundler
+            bundle config set --local path 'vendor/bundle'
+            bundle update fastlane
+            bundle install
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - save_cache:
+          key: bundle-v1-{{ checksum "Gemfile.lock" }}
+          paths:
+            - vendor/bundle
+      - run:
+          name: Setup iOS Certificates
+          command: |
+            mkdir -p ~/certificates
+            echo "$IOS_DISTRIBUTION_CERT" | tr -d '\n' | base64 --decode > ~/certificates/ios_distribution.p12
+            echo "$MODTOOLS_IOS_PROVISIONING_PROFILE" | tr -d '\n' | base64 --decode > ~/certificates/modtools_appstore.mobileprovision
+            KEYCHAIN_PATH=~/Library/Keychains/temp.keychain-db
+            KEYCHAIN_PASSWORD=circleci
+            security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+            security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+            security default-keychain -s "$KEYCHAIN_PATH"
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+            security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
+            echo "export IOS_CERTIFICATE_PATH=~/certificates/ios_distribution.p12" >> $BASH_ENV
+            echo "export IOS_PROVISIONING_PROFILE_PATH=~/certificates/modtools_appstore.mobileprovision" >> $BASH_ENV
+            echo "export KEYCHAIN_NAME=$KEYCHAIN_PATH" >> $BASH_ENV
+            echo "export KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> $BASH_ENV
+      - run:
+          name: Strip entitlements for ModTools
+          command: |
+            # Replace Freegle entitlements (Apple Pay, Universal Links) with ModTools-specific
+            # ones. Apple Pay and Universal Links are not in the ModTools provisioning profile.
+            # Sign in with Apple and push notifications are included.
+            cat > ios/App/App/App.entitlements \<< 'ENTITLEMENTS'
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0">
+            <dict>
+                <key>aps-environment</key>
+                <string>production</string>
+                <key>com.apple.developer.applesignin</key>
+                <array>
+                    <string>Default</string>
+                </array>
+            </dict>
+            </plist>
+            ENTITLEMENTS
+            echo "✅ ModTools entitlements written"
+            cat ios/App/App/App.entitlements
+      - run:
+          name: Build and Deploy ModTools to TestFlight
+          command: |
+            export TERM=xterm-256color
+            bundle exec fastlane ios modtools_beta
+          no_output_timeout: 30m
+      - run:
+          name: Update CircleCI ModTools Version Variable
+          command: |
+            if [ ! -f .new_version ]; then exit 0; fi
+            NEW_VERSION=$(cat .new_version)
+            curl -X DELETE -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar/CURRENT_MODTOOLS_VERSION" 2>/dev/null || true
+            curl -X POST -H "Circle-Token: ${CIRCLECI_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"name\":\"CURRENT_MODTOOLS_VERSION\",\"value\":\"${NEW_VERSION}\"}" \
+              "https://circleci.com/api/v2/project/gh/Freegle/Iznik/envvar"
+            echo "✅ Updated CURRENT_MODTOOLS_VERSION to ${NEW_VERSION}"
+      - run:
+          name: Collect Xcode build logs
+          when: always
+          command: |
+            mkdir -p /tmp/xcode-logs
+            cp ~/Library/Logs/gym/*.log /tmp/xcode-logs/ 2>/dev/null || true
+            ls -la /tmp/xcode-logs/
+      - store_artifacts:
+          path: /tmp/xcode-logs
+          destination: xcode-logs
+      - store_artifacts:
+          path: build/
+          destination: modtools-ios-build
 
   build-ios:
     executor: macos-executor
@@ -3492,6 +4192,37 @@ jobs:
       - run:
           name: Auto-submit Latest TestFlight Build to App Store Review
           command: bundle exec fastlane ios auto_submit
+
+  auto-submit-ios-modtools:
+    executor: macos-executor
+    working_directory: ~/project/iznik-nuxt3
+    steps:
+      - checkout:
+          path: ~/project
+      - run:
+          name: Install Node.js 22
+          command: |
+            curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            nvm install 22
+            nvm use 22
+            nvm alias default 22
+            echo 'export NVM_DIR="$HOME/.nvm"' >> $BASH_ENV
+            echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> $BASH_ENV
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - run:
+          name: Install Fastlane
+          command: |
+            gem install bundler
+            bundle update fastlane
+            bundle install
+          max_auto_reruns: 3
+          auto_rerun_delay: 10s
+      - run:
+          name: Submit ModTools to App Store Review (auto-releases on approval)
+          command: bundle exec fastlane ios auto_submit_modtools
 
   auto-release-ios:
     executor: macos-executor

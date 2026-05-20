@@ -39,6 +39,12 @@ class SmtpFailureClassifier
         '/non-ASCII characters/i',
         '/Invalid address/i',
         '/Bad recipient address syntax/i',
+        // Symfony's Mime\RfcComplianceException: thrown for addresses with
+        // mojibake leading characters (e.g. U+200F RTL mark prefixed onto a
+        // gmail address). Production hit this on 2026-05-16 16:50 in
+        // mail:engage — the address would never deliver, so mark bouncing
+        // and skip instead of crashing the per-user loop.
+        '/does not comply with addr-spec of RFC 2822/i',
     ];
 
     /**
@@ -48,7 +54,13 @@ class SmtpFailureClassifier
      */
     private const TRANSIENT_PATTERNS = [
         '/Connection refused/i',
-        '/Connection (?:to|with) [^"]+ timed out/i',
+        // Symfony's TransportException formats the host as `"%s"`, e.g.
+        //   `Connection to "mail-host:25" timed out.`
+        // The previous `[^"]+` required at least one non-quote char between
+        // `to ` and the host, so the regex didn't match and the exception
+        // re-threw — production hit this on 2026-05-15 07:31 and 08:01.
+        // Match the quoted host explicitly.
+        '/Connection (?:to|with) "[^"]+" timed out/i',
         '/Connection could not be established/i',
         '/stream_socket_client\(\): Unable to connect/i',
         '/Connection reset by peer/i',

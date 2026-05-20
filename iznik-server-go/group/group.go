@@ -45,8 +45,9 @@ type Group struct {
 	Lng                  float32          `json:"lng"`
 	Altlat               float32          `json:"altlat"`
 	Altlng               float32          `json:"altlng"`
-	GroupProfile         GroupProfile     `gorm:"ForeignKey:groupid" json:"-"`
-	GroupProfileStr      string           `json:"profile"`
+	GroupProfile         GroupProfile     `gorm:"-" json:"-"`
+	Profile              uint64           `gorm:"column:profile" json:"-"`
+	GroupProfileStr      string           `json:"profile" gorm:"-"`
 	Onmap                int              `json:"onmap"`
 	Tagline              string           `json:"tagline"`
 	Description          string           `json:"description"`
@@ -124,6 +125,8 @@ type GroupEntry struct {
 	Recentautoapproves     *int       `json:"recentautoapproves,omitempty" gorm:"-"`
 	Recentmanualapproves   *int       `json:"recentmanualapproves,omitempty" gorm:"-"`
 	Recentautoapprovespct  *float64   `json:"recentautoapprovespercent,omitempty" gorm:"-"`
+	Recentmoderated        *int       `json:"recentmoderated,omitempty" gorm:"-"`
+	Recentmoderatedpct     *float64   `json:"recentmoderatedpercent,omitempty" gorm:"-"`
 
 	// Polygon fields (only populated when polygon=true query param)
 	Poly         *string `json:"poly,omitempty" gorm:"-"`
@@ -196,7 +199,7 @@ func GetGroup(c *fiber.Ctx) error {
 
 		// Return the group even if publish = 0 or onhere = 0 because they have the actual id, so they must really
 		// want it.  This can happen if a user has a message on a group that is then set to publish = 0, for example.
-		q := db.Preload("GroupProfile")
+		q := db.Session(&gorm.Session{})
 
 		if !wantFilteredSponsors && wantSponsors {
 			// Load all sponsors via GORM Preload (no date/visible filtering) - backward compatible default.
@@ -207,8 +210,11 @@ func GetGroup(c *fiber.Ctx) error {
 		found = !errors.Is(err, gorm.ErrRecordNotFound)
 
 		if found {
-			if group.GroupProfile.ID > 0 {
-				group.GroupProfileStr = "https://" + os.Getenv("IMAGE_DOMAIN") + "/gimg_" + strconv.FormatUint(group.GroupProfile.ID, 10) + ".jpg"
+			if group.Profile > 0 {
+				db.Where("id = ?", group.Profile).First(&group.GroupProfile)
+				if group.GroupProfile.ID > 0 {
+					group.GroupProfileStr = "https://" + os.Getenv("IMAGE_DOMAIN") + "/gimg_" + strconv.FormatUint(group.GroupProfile.ID, 10) + ".jpg"
+				}
 			}
 
 			if len(group.Namefull) > 0 {
@@ -368,7 +374,7 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 			defer wg.Done()
 
 			var g Group
-			err := db.Preload("GroupProfile").Preload("GroupSponsors").
+			err := db.Preload("GroupSponsors").
 				Raw("SELECT `groups`.*, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin, ST_AsText(ST_ENVELOPE(polyindex)) AS bbox FROM `groups` WHERE id = ?", gid).
 				First(&g).Error
 
@@ -376,8 +382,11 @@ func getMultipleGroups(c *fiber.Ctx, idParam string) error {
 				return
 			}
 
-			if g.GroupProfile.ID > 0 {
-				g.GroupProfileStr = "https://" + os.Getenv("IMAGE_DOMAIN") + "/gimg_" + strconv.FormatUint(g.GroupProfile.ID, 10) + ".jpg"
+			if g.Profile > 0 {
+				db.Where("id = ?", g.Profile).First(&g.GroupProfile)
+				if g.GroupProfile.ID > 0 {
+					g.GroupProfileStr = "https://" + os.Getenv("IMAGE_DOMAIN") + "/gimg_" + strconv.FormatUint(g.GroupProfile.ID, 10) + ".jpg"
+				}
 			}
 
 			if len(g.Namefull) > 0 {
@@ -485,31 +494,51 @@ func ListGroups(c *fiber.Ctx) error {
 		db.Raw("SELECT id, nameshort, namefull, lat, lng, onmap, publish, region, contactmail, mentored, CAST(JSON_EXTRACT(groups.settings, '$.showjoin') AS UNSIGNED) AS showjoin FROM `groups` WHERE publish = 1 AND onhere = 1 AND type = ?", FREEGLE).Scan(&groups)
 	}
 
-	// For support mode, fetch recent auto-approve and manual-approve counts in parallel.
+	// For support mode, fetch recent auto-approve, manual-approve, and moderation counts in parallel.
 	type approveCount struct {
 		Groupid uint64 `gorm:"column:groupid"`
 		Count   int    `gorm:"column:count"`
 	}
+	type moderatedCount struct {
+		Groupid        uint64 `gorm:"column:groupid"`
+		ModeratedCount int    `gorm:"column:moderated_count"`
+		TotalCount     int    `gorm:"column:total_count"`
+	}
 
 	var autoApproves []approveCount
 	var manualApproves []approveCount
+	var moderatedCounts []moderatedCount
 
 	if isAdminOrSupport {
-		start := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
+		start31 := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
+		start30 := time.Now().AddDate(0, 0, -30).Format("2006-01-02")
 
 		var wg sync.WaitGroup
-		wg.Add(2)
+		wg.Add(3)
 
 		go func() {
 			defer wg.Done()
 			db.Raw("SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp >= ? AND type = ? AND subtype = ? GROUP BY groupid",
-				start, "Message", "Autoapproved").Scan(&autoApproves)
+				start31, "Message", "Autoapproved").Scan(&autoApproves)
 		}()
 
 		go func() {
 			defer wg.Done()
 			db.Raw("SELECT COUNT(*) AS count, groupid FROM logs WHERE timestamp >= ? AND type = ? AND subtype = ? GROUP BY groupid",
-				start, "Message", "Approved").Scan(&manualApproves)
+				start31, "Message", "Approved").Scan(&manualApproves)
+		}()
+
+		go func() {
+			defer wg.Done()
+			// Count messages where a moderator manually approved (approvedby IS NOT NULL)
+			// vs total messages arriving in the past 30 days, grouped by community.
+			// Uses arrival rather than approvedat so the denominator is consistent.
+			db.Raw(`SELECT groupid,
+				SUM(approvedby IS NOT NULL) AS moderated_count,
+				COUNT(*) AS total_count
+				FROM messages_groups
+				WHERE arrival >= ?
+				GROUP BY groupid`, start30).Scan(&moderatedCounts)
 		}()
 
 		wg.Wait()
@@ -522,6 +551,10 @@ func ListGroups(c *fiber.Ctx) error {
 		manualMap := make(map[uint64]int, len(manualApproves))
 		for _, a := range manualApproves {
 			manualMap[a.Groupid] = a.Count
+		}
+		modMap := make(map[uint64]moderatedCount, len(moderatedCounts))
+		for _, m := range moderatedCounts {
+			modMap[m.Groupid] = m
 		}
 
 		for ix := range groups {
@@ -542,6 +575,15 @@ func ListGroups(c *fiber.Ctx) error {
 				pct = float64(100*autoCount) / float64(total)
 			}
 			groups[ix].Recentautoapprovespct = &pct
+
+			mc := modMap[groups[ix].ID]
+			modCount := mc.ModeratedCount
+			groups[ix].Recentmoderated = &modCount
+			var modPct float64
+			if mc.TotalCount > 0 {
+				modPct = float64(100*mc.ModeratedCount) / float64(mc.TotalCount)
+			}
+			groups[ix].Recentmoderatedpct = &modPct
 		}
 	}
 
@@ -638,6 +680,7 @@ type PatchGroupRequest struct {
 	Mentored              *int     `json:"mentored"`
 	Ontn                  *int     `json:"ontn"`
 	Onlovejunk            *int              `json:"onlovejunk"`
+	Profile               *uint64           `json:"profile"`
 	Settings              *json.RawMessage  `json:"settings"`
 	Rules                 *json.RawMessage  `json:"rules"`
 	// Admin/Support only fields
@@ -727,6 +770,10 @@ func PatchGroup(c *fiber.Ctx) error {
 	}
 	if req.Onlovejunk != nil {
 		db.Exec("UPDATE `groups` SET onlovejunk = ? WHERE id = ?", *req.Onlovejunk, req.ID)
+	}
+	if req.Profile != nil {
+		db.Exec("UPDATE `groups` SET profile = ? WHERE id = ?", *req.Profile, req.ID)
+		logGroupEdit(req.ID, myid, "Profile")
 	}
 	if req.Settings != nil {
 		db.Exec("UPDATE `groups` SET settings = ? WHERE id = ?", string(*req.Settings), req.ID)

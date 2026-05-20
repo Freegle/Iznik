@@ -1153,160 +1153,6 @@ type configResponse struct {
 	Body config.ConfigItem
 }
 
-// swagger:route GET /config/admin/spam_keywords config listSpamKeywords
-// List spam keywords
-//
-// Returns all spam keywords (Support/Admin only)
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: spamKeywordsResponse
-//	401: errorResponse
-//	403: errorResponse
-//
-// spamKeywordsResponse is the response for spam keywords
-// swagger:response spamKeywordsResponse
-type spamKeywordsResponse struct {
-	// List of spam keywords
-	// in:body
-	Body []config.SpamKeyword
-}
-
-// swagger:route POST /config/admin/spam_keywords config createSpamKeyword
-// Create spam keyword
-//
-// Creates a new spam keyword (Support/Admin only)
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: spamKeywordResponse
-//	400: errorResponse
-//	401: errorResponse
-//	403: errorResponse
-
-// swagger:parameters createSpamKeyword
-type createSpamKeywordParams struct {
-	// Spam keyword object
-	// in: body
-	// required: true
-	Body CreateSpamKeywordRequest `json:"body"`
-}
-//
-// spamKeywordResponse is the response for a single spam keyword
-// swagger:response spamKeywordResponse
-type spamKeywordResponse struct {
-	// Spam keyword data
-	// in:body
-	Body config.SpamKeyword
-}
-
-// swagger:route DELETE /config/admin/spam_keywords/{id} config deleteSpamKeyword
-// Delete spam keyword
-//
-// Deletes a spam keyword by ID (Support/Admin only)
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Spam keyword ID
-//     required: true
-//     type: integer
-//     format: int64
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	400: errorResponse
-//	401: errorResponse
-//	403: errorResponse
-//	404: errorResponse
-
-// swagger:route GET /config/admin/worry_words config listWorryWords
-// List worry words
-//
-// Returns all worry words (Support/Admin only)
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: worryWordsResponse
-//	401: errorResponse
-//	403: errorResponse
-//
-// worryWordsResponse is the response for worry words
-// swagger:response worryWordsResponse
-type worryWordsResponse struct {
-	// List of worry words
-	// in:body
-	Body []config.WorryWord
-}
-
-// swagger:route POST /config/admin/worry_words config createWorryWord
-// Create worry word
-//
-// Creates a new worry word (Support/Admin only)
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: worryWordResponse
-//	400: errorResponse
-//	401: errorResponse
-//	403: errorResponse
-
-// swagger:parameters createWorryWord
-type createWorryWordParams struct {
-	// Worry word object
-	// in: body
-	// required: true
-	Body CreateWorryWordRequest `json:"body"`
-}
-//
-// worryWordResponse is the response for a single worry word
-// swagger:response worryWordResponse
-type worryWordResponse struct {
-	// Worry word data
-	// in:body
-	Body config.WorryWord
-}
-
-// swagger:route DELETE /config/admin/worry_words/{id} config deleteWorryWord
-// Delete worry word
-//
-// Deletes a worry word by ID (Support/Admin only)
-//
-// Parameters:
-//   + name: id
-//     in: path
-//     description: Worry word ID
-//     required: true
-//     type: integer
-//     format: int64
-//
-// security:
-// - BearerAuth: []
-//
-// Responses:
-//
-//	200: successResponse
-//	400: errorResponse
-//	401: errorResponse
-//	403: errorResponse
-//	404: errorResponse
-
 // swagger:route PATCH /config/admin config patchAdminConfig
 // Update admin config keys
 //
@@ -2499,7 +2345,13 @@ type messagesResponse struct {
 // swagger:route POST /message message postMessage
 // Message actions
 //
-// Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View
+// Handles message actions: Promise, Renege, OutcomeIntended, Outcome, AddBy, RemoveBy, View,
+// Approve, Reject, Delete, Spam, Hold, Release, ApproveEdits, RevertEdits, PartnerConsent,
+// Reply, JoinAndPost, Move, BackToPending, RejectToDraft.
+//
+// When tnpostid is supplied instead of id, the action is applied to ALL Freegle messages
+// sharing that TN post ID (a TN post can be submitted to multiple Freegle groups, each
+// producing a separate Freegle message row).
 //
 // security:
 // - BearerAuth: []
@@ -2509,6 +2361,7 @@ type messagesResponse struct {
 //	200: successResponse
 //	400: errorResponse
 //	401: errorResponse
+//	404: errorResponse
 
 // swagger:route PATCH /message message patchMessage
 // Update message
@@ -2544,10 +2397,12 @@ type messagesResponse struct {
 //	403: errorResponse
 
 // swagger:route PATCH /message/tn/{tnpostid} message patchMessageByTN
-// Update message by TN post ID
+// Update all messages by TN post ID
 //
-// Updates a message using its Trash Nothing post ID. For partner integrations
-// where the Freegle message ID is not yet known (e.g. post held for moderation).
+// Updates ALL Freegle messages sharing the given Trash Nothing post ID. A single TN post
+// can be submitted to multiple Freegle groups, each producing a separate Freegle message
+// row — this endpoint updates every one of them in a single call. Used by partner
+// integrations where the Freegle message ID is not yet known (e.g. post held for moderation).
 //
 // Parameters:
 //   + name: tnpostid
@@ -4079,36 +3934,6 @@ type fileResponse struct{}
 // ============================================================================
 // Shared Request Models
 // ============================================================================
-
-// CreateSpamKeywordRequest model for creating spam keywords
-// swagger:model configCreateSpamKeywordRequest
-type CreateSpamKeywordRequest struct {
-	// Word to match
-	// Required: true
-	Word string `json:"word"`
-	// Exclude pattern (optional)
-	Exclude *string `json:"exclude"`
-	// Action to take: Spam, Review, or Whitelist
-	// Required: true
-	// Enum: Spam,Review,Whitelist
-	Action string `json:"action"`
-	// Type of matching: Literal or Regex
-	// Required: true
-	// Enum: Literal,Regex
-	Type string `json:"type"`
-}
-
-// CreateWorryWordRequest model for creating worry words
-// swagger:model configCreateWorryWordRequest
-type CreateWorryWordRequest struct {
-	// Keyword to match
-	// Required: true
-	Keyword string `json:"keyword"`
-	// Substance description
-	Substance string `json:"substance"`
-	// Type of worry word
-	Type string `json:"type"`
-}
 
 // swagger:route GET /admin/ai-images/review ai-images listAIImagesReview
 // List AI images needing review

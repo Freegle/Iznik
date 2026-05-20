@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/freegle/iznik-server-go/auth"
+	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
@@ -118,7 +119,14 @@ func handleGoogleLogin(c *fiber.Ctx, jwtToken string) error {
 		})
 	}
 
-	saveProfileImage(userID, tokenInfo.Picture)
+	// Only save the Google profile picture when no avatar exists yet.
+	// A new INSERT would become the effective avatar (ORDER BY id DESC LIMIT 1),
+	// overwriting any custom upload the user has set.
+	var avatarCount int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM users_images WHERE userid = ?", userID).Scan(&avatarCount)
+	if avatarCount == 0 {
+		saveProfileImage(userID, tokenInfo.Picture)
+	}
 
 	persistent, jwtString, err := auth.CreateSessionAndJWT(userID)
 	if err != nil {

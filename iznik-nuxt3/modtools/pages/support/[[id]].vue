@@ -112,33 +112,12 @@
             />
           </b-tab>
 
-          <!-- Spam Tab with sub-tabs -->
-          <b-tab @click="onSpamTab">
+          <!-- Spam Tab -->
+          <b-tab>
             <template #title>
               <h2 class="ms-2 me-2">Spam</h2>
             </template>
-            <div class="subtabs-wrapper">
-              <b-tabs v-model="spamSubTab" content-class="mt-3" class="subtabs">
-                <b-tab @click="onWorryWordsTab">
-                  <template #title>
-                    <span class="subtab-title">Worry Words</span>
-                  </template>
-                  <ModSupportWorryWords ref="worryWordsComponent" />
-                </b-tab>
-                <b-tab @click="onSpamKeywordsTab">
-                  <template #title>
-                    <span class="subtab-title">Spam Keywords</span>
-                  </template>
-                  <ModSupportSpamKeywords ref="spamKeywordsComponent" />
-                </b-tab>
-                <b-tab>
-                  <template #title>
-                    <span class="subtab-title">Keyword List</span>
-                  </template>
-                  <ModSupportConcernKeywords />
-                </b-tab>
-              </b-tabs>
-            </div>
+            <ModSupportConcernKeywords />
           </b-tab>
         </b-tabs>
       </div>
@@ -169,8 +148,6 @@ const route = useRoute()
 // Template refs
 const findGroupComponent = ref(null)
 const listGroupsComponent = ref(null)
-const worryWordsComponent = ref(null)
-const spamKeywordsComponent = ref(null)
 
 // Local state (formerly data())
 const error = ref(false)
@@ -180,7 +157,6 @@ const showAIAssistant = ref(false)
 const aiAssistantBump = ref(0)
 const activeTab = ref(0)
 const communitySubTab = ref(0)
-const spamSubTab = ref(0)
 
 // Tab name to index mapping
 const topTabMap = {
@@ -197,11 +173,6 @@ const communitySubTabMap = {
   contact: 2,
   add: 3,
   volunteers: 4,
-}
-
-const spamSubTabMap = {
-  worry: 0,
-  keywords: 1,
 }
 
 // Computed properties
@@ -238,14 +209,6 @@ onMounted(() => {
         onAITab()
       } else if (tabParam === 'spam') {
         onSpamTab()
-        if (subTabParam && spamSubTabMap[subTabParam] !== undefined) {
-          spamSubTab.value = spamSubTabMap[subTabParam]
-          if (subTabParam === 'worry') {
-            onWorryWordsTab()
-          } else if (subTabParam === 'keywords') {
-            onSpamKeywordsTab()
-          }
-        }
       }
     })
   }
@@ -310,20 +273,6 @@ async function onFindCommunityTab() {
   }
 }
 
-async function onWorryWordsTab() {
-  // Fetch worry words when tab is selected
-  if (worryWordsComponent.value) {
-    await worryWordsComponent.value.fetchWorryWords()
-  }
-}
-
-async function onSpamKeywordsTab() {
-  // Fetch spam keywords when tab is selected
-  if (spamKeywordsComponent.value) {
-    await spamKeywordsComponent.value.fetchSpamKeywords()
-  }
-}
-
 async function onListCommunitiesTab() {
   // Fetch communities when tab is selected
   if (listGroupsComponent.value) {
@@ -345,10 +294,6 @@ function onAIAssistantTab() {
 }
 
 function onSpamTab() {
-  // Initialize spam tab - load worry words by default.
-  nextTick(() => {
-    onWorryWordsTab()
-  })
 }
 </script>
 

@@ -48,6 +48,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $stats = $this->service->process();
@@ -93,6 +94,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $stats = $this->service->process(dryRun: true);
@@ -131,6 +133,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(24),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $this->service->process();
@@ -159,6 +162,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         // Add a recent log entry (within 48 hours).
@@ -197,6 +201,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $this->service->process();
@@ -227,6 +232,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $this->service->process();
@@ -257,6 +263,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $this->service->process();
@@ -286,6 +293,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $this->service->process();
@@ -317,6 +325,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $stats = $this->service->process();
@@ -348,6 +357,7 @@ class AutoApproveServiceTest extends TestCase
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
                 'heldby' => $user->id,
+                'contentcheck_checked_at' => now(),
             ]);
 
         $this->service->process();
@@ -379,6 +389,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $this->service->process();
@@ -414,6 +425,7 @@ class AutoApproveServiceTest extends TestCase
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
                 'deleted' => 1,
+                'contentcheck_checked_at' => now(),
             ]);
 
         $this->service->process();
@@ -448,6 +460,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $stats = $this->service->process();
@@ -489,6 +502,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $this->service->process();
@@ -525,6 +539,7 @@ class AutoApproveServiceTest extends TestCase
             'groupid' => $group2->id,
             'collection' => MessageGroup::COLLECTION_PENDING,
             'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
         ]);
 
         // Group1: pending 49h (should approve). Group2: pending 49h (should approve).
@@ -534,6 +549,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $stats = $this->service->process();
@@ -575,6 +591,7 @@ class AutoApproveServiceTest extends TestCase
             'groupid' => $group2->id,
             'collection' => MessageGroup::COLLECTION_PENDING,
             'arrival' => now()->subHours(49),
+            'contentcheck_checked_at' => now(),
         ]);
 
         DB::table('messages_groups')
@@ -583,6 +600,7 @@ class AutoApproveServiceTest extends TestCase
             ->update([
                 'collection' => MessageGroup::COLLECTION_PENDING,
                 'arrival' => now()->subHours(49),
+                'contentcheck_checked_at' => now(),
             ]);
 
         $this->service->process();

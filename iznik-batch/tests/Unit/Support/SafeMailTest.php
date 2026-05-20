@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Symfony\Component\Mailer\Exception\InvalidArgumentException as SymfonyInvalidArgumentException;
 use Symfony\Component\Mailer\Exception\TransportException as SymfonyTransportException;
+use Symfony\Component\Mime\Exception\RfcComplianceException as SymfonyRfcComplianceException;
 use Tests\TestCase;
 
 class SafeMailTest extends TestCase
@@ -86,6 +87,62 @@ class SafeMailTest extends TestCase
 
         $bounced = DB::table('users_emails')->where('id', $emailId)->value('bounced');
         $this->assertNull($bounced, 'transient failure must NOT mark email as bouncing');
+    }
+
+    /**
+     * Mojibake leading-character addresses (U+200F RTL mark, zero-width
+     * spaces, etc) throw Symfony's Mime\RfcComplianceException — the address
+     * will never deliver, so classify as permanent and mark bouncing.
+     * Production hit this on 2026-05-16 16:50 in mail:engage with a Gmail
+     * address whose user pasted a copy with an invisible RTL prefix.
+     */
+    public function test_rfc2822_compliance_failure_is_treated_permanent(): void
+    {
+        $user = $this->createTestUser();
+        $email = $user->emails->first()->email;
+        $emailId = $user->emails->first()->id;
+
+        DB::table('users_emails')->where('id', $emailId)->update(['bounced' => 0]);
+
+        Mail::shouldReceive('to')->once()->andReturnSelf();
+        Mail::shouldReceive('send')->once()->andThrow(new SymfonyRfcComplianceException(
+            'Email "‏asmaa21367@gmail.com" does not comply with addr-spec of RFC 2822.'
+        ));
+
+        $delivered = SafeMail::send($this->makeFakeMailable(), $email);
+
+        $this->assertFalse($delivered, 'RFC 2822 failure must be classified permanent, not re-thrown');
+        $this->assertGreaterThan(
+            0,
+            DB::table('users_emails')->where('id', $emailId)->value('bounced'),
+            'RFC 2822 non-compliance is permanent — should mark bouncing',
+        );
+    }
+
+    /**
+     * The "timed out" variant of the same TransportException class —
+     * production hit this on 2026-05-15 07:31/08:01 with the actual message
+     * `Connection to "mail-host:25" timed out.` and the old `[^"]+` regex
+     * didn't match the quoted host, so SafeMail re-threw.
+     */
+    public function test_transient_failure_timeout_variant_is_caught(): void
+    {
+        $user = $this->createTestUser();
+        $email = $user->emails->first()->email;
+        $emailId = $user->emails->first()->id;
+        DB::table('users_emails')->where('id', $emailId)->update(['bounced' => null]);
+
+        Mail::shouldReceive('to')->once()->andReturnSelf();
+        Mail::shouldReceive('send')->once()->andThrow(new SymfonyTransportException(
+            'Connection to "mail-host:25" timed out.'
+        ));
+
+        $delivered = SafeMail::send($this->makeFakeMailable(), $email);
+
+        $this->assertFalse($delivered, 'timed-out variant must be classified transient, not re-thrown');
+
+        $bounced = DB::table('users_emails')->where('id', $emailId)->value('bounced');
+        $this->assertNull($bounced, 'transient timeout must NOT mark email as bouncing');
     }
 
     /**

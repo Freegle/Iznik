@@ -13,6 +13,7 @@ import {
   kvGet,
   kvSet,
   queueDiscourseDraft,
+  cancelDraftsForBug,
   insertReviewerFeedback,
   listUnprocessedFeedback,
   upsertDiscourseBug,
@@ -167,6 +168,58 @@ async function checkPrDeployed(prNumber: number): Promise<{
     productionSha,
     netlifyCommitSha,
     reason: parts.join('; '),
+  }
+}
+
+const STOP_WORDS = new Set([
+  'that', 'this', 'when', 'with', 'from', 'after', 'before', 'have', 'does',
+  'should', 'would', 'could', 'member', 'user', 'page', 'click', 'show', 'list',
+  'item', 'button', 'modal', 'error', 'issue', 'problem', 'missing', 'wrong',
+  'freegle', 'modtools', 'group', 'message', 'chat', 'email', 'post',
+])
+
+// Check whether master already has a fix commit for this bug.
+// Searches recent git log (90 days) for fix()/feat() commits whose scope or
+// message matches the bug's code_area, featureArea, or summary keywords.
+// Returns the matching commit short-SHA + subject, or null if no match.
+async function checkGitAlreadyFixed(
+  codeArea: string | null,
+  featureArea: string | null,
+  summary: string,
+): Promise<string | null> {
+  try {
+    const { stdout } = await exec('git', [
+      '-C', '/home/edward/FreegleDockerWSL',
+      'log', 'master',
+      '--since=90 days ago',
+      '--pretty=format:%h %s',
+      '--no-merges',
+    ], { maxBuffer: 2 * 1024 * 1024 })
+
+    const lines = stdout.split('\n').filter(Boolean)
+
+    // Build keyword set from code_area, featureArea, and first 6 words of summary
+    const rawKeywords = [
+      ...(codeArea ?? '').split(/[\/\-\s]+/),
+      ...(featureArea ?? '').split(/[\/\-\s]+/),
+      ...summary.split(/\s+/).slice(0, 6),
+    ]
+      .map(w => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
+      .filter(w => w.length >= 4 && !STOP_WORDS.has(w))
+
+    if (rawKeywords.length === 0) return null
+
+    for (const line of lines) {
+      const lower = line.toLowerCase()
+      // Only consider fix/feat commits — skip test/chore/docs/perf/ci
+      if (!/^\w+ fix|^\w+ feat/.test(lower)) continue
+      const matchCount = rawKeywords.filter(kw => lower.includes(kw)).length
+      // Require at least 2 keyword hits to avoid false positives
+      if (matchCount >= 2) return line.trim()
+    }
+    return null
+  } catch {
+    return null
   }
 }
 
@@ -389,6 +442,8 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
           db.prepare(
             "UPDATE discourse_bug SET state='off-topic', reason=? WHERE topic=? AND post=?"
           ).run(`Edward (post ${u.postNumber}): "${u.text.slice(0, 120)}"`, u.topic, u.post)
+          const cancelled = cancelDraftsForBug(db, u.topic, u.post, 'Bug dismissed as off-topic')
+          if (cancelled > 0) out(`check_bug_feedback: cancelled ${cancelled} pending draft(s) for off-topic bug ${u.topic}/${u.post}`)
           markedOffTopic.push({ topic: u.topic, post: u.post, reason: u.text.slice(0, 80) })
           out(`check_bug_feedback: marked ${u.topic}/${u.post} off-topic — Edward explained expected behaviour`)
         } else if (u.action === 'investigating') {
@@ -983,30 +1038,40 @@ print(json.dumps(out))
 
   {
     name: 'close_extra_prs',
-    description: 'Close any PRs opened since iterationStartTs that are not the expected PR number. Prevents rogue delegate work from polluting the repo. Returns { closed: number[], kept: number }.',
+    description: 'Close duplicate/rogue PRs that the fix delegate opened for the SAME bug as expectedBugBranch. Preserves PRs for other bugs (different branch prefix). Returns { closed: number[], kept: number }.',
     paramsSchema: {
       type: 'object',
       properties: {
         expectedPrNumber: { type: 'number', description: 'The one PR that should stay open' },
         iterationStartTs: { type: 'string', description: 'ISO timestamp — close PRs opened after this' },
+        expectedBugBranch: { type: 'string', description: 'Branch name of the expected PR (e.g. fix/post-expiry-9481-531). Only PRs whose branch starts with the same fix/ prefix are eligible for closure — prevents sweeping PRs for other bugs fixed earlier in the same iteration.' },
       },
       required: ['expectedPrNumber', 'iterationStartTs'],
     },
     handler: async (params) => {
       const expectedPrNumber = params.expectedPrNumber as number
       const iterationStartTs = params.iterationStartTs as string
+      const expectedBugBranch = (params.expectedBugBranch as string | undefined) ?? ''
       const listRes = await sh('gh', ['pr', 'list', '--repo', 'Freegle/Iznik', '--state', 'open', '--json', 'number,createdAt,headRefName,author'])
       if (listRes.code !== 0) return { error: `gh pr list failed: ${listRes.stderr}`, closed: [], kept: expectedPrNumber }
       const prs = JSON.parse(listRes.stdout) as Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } }>
       const cutoff = new Date(iterationStartTs)
-      const extras = prs.filter(pr =>
-        pr.number !== expectedPrNumber &&
-        new Date(pr.createdAt) >= cutoff &&
-        pr.author?.login === 'edwh'
-      )
+      // Extract the topic+post suffix from the expected branch so we only sweep
+      // PRs for the SAME bug (same topic/post in their branch name). PRs for
+      // other bugs — opened earlier in the same iteration — are left alone.
+      const bugSuffix = expectedBugBranch.match(/(\d+-\d+)$/)?.[1] ?? ''
+      const extras = prs.filter(pr => {
+        if (pr.number === expectedPrNumber) return false
+        if (new Date(pr.createdAt) < cutoff) return false
+        if (pr.author?.login !== 'edwh') return false
+        // If we have a bug suffix, only close PRs whose branch shares it
+        // (i.e. duplicate PRs for the same bug). Leave other bugs' PRs alone.
+        if (bugSuffix && !pr.headRefName.includes(bugSuffix)) return false
+        return true
+      })
       const closed: number[] = []
       for (const pr of extras) {
-        const closeRes = await sh('gh', ['pr', 'close', String(pr.number), '--repo', 'Freegle/Iznik', '--comment', 'Closed: opened outside scope of assigned fix task — FSM enforces one PR per implementation step'])
+        const closeRes = await sh('gh', ['pr', 'close', String(pr.number), '--repo', 'Freegle/Iznik', '--comment', 'Closed: duplicate PR for same bug — FSM enforces one PR per bug fix'])
         if (closeRes.code === 0) closed.push(pr.number)
       }
       return { closed, kept: expectedPrNumber }
@@ -2100,6 +2165,8 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
               featureArea: c.featureArea ?? undefined, symptomTags, codeArea: codeArea ?? undefined,
               reason: `Duplicate of topic ${tagDup.topic}/${tagDup.post} (tag overlap)`,
             })
+            const cancelled = cancelDraftsForBug(db, Number(c.topic), Number(c.post), `Bug marked duplicate of topic ${tagDup.topic}/${tagDup.post}`)
+            if (cancelled > 0) out(`persist_classifications: cancelled ${cancelled} pending draft(s) for duplicate bug ${c.topic}/${c.post}`)
             out(`persist_classifications: topic ${c.topic}/${c.post} marked duplicate of ${tagDup.topic}/${tagDup.post} (tag similarity)`)
             upserted++
             continue
@@ -2129,6 +2196,29 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
               finalReason = `REGRESSION: fix PR #${priorFix.pr_number} confirmed not working — needs human review`
               out(`persist_classifications: topic ${c.topic}/${c.post} flagged regression (PR #${priorFix.pr_number} didn't fix it)`)
             }
+          }
+        }
+
+        // Git cross-reference: before persisting as 'open', check if master already
+        // has a commit that fixes this. Keywords come from code_area, featureArea, and
+        // the first significant words of the summary. If we find a fix/ or feat/ commit
+        // on master touching the right area, mark it as already fixed+deployed so the
+        // FSM doesn't re-diagnose something already shipped.
+        if (finalState === 'open') {
+          const gitFixed = await checkGitAlreadyFixed(codeArea, c.featureArea ?? null, c.summary ?? c.title ?? '')
+          if (gitFixed) {
+            out(`persist_classifications: topic ${c.topic}/${c.post} already fixed on master — ${gitFixed}`)
+            upsertDiscourseBug(db, {
+              topic: Number(c.topic), post: Number(c.post),
+              topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
+              excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
+              state: 'fixed', featureArea: (c.featureArea as string) ?? undefined,
+              reason: `Already fixed on master: ${gitFixed}`,
+              symptomTags, codeArea: codeArea ?? undefined,
+            })
+            db.prepare(`UPDATE discourse_bug SET fixed_at = datetime('now'), deployed_at = datetime('now') WHERE topic = ? AND post = ?`).run(Number(c.topic), Number(c.post))
+            upserted++
+            continue
           }
         }
 
@@ -2162,7 +2252,8 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       // Note: 'investigating' means Edward has posted a fix — FSM should not duplicate that work.
       const db = getDb()
       const dbOpenBugs = (db.prepare(`
-        SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle, pr_rejections AS prRejections
+        SELECT topic, post, reporter, excerpt, feature_area AS featureArea, topic_title AS topicTitle,
+               pr_rejections AS prRejections, symptom_tags AS symptomTagsJson
         FROM discourse_bug
         WHERE state = 'open' AND pr_number IS NULL
       `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
@@ -2197,6 +2288,25 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         return { _transition: 'COVERAGE_GATE', reason: `peak phase — no backlog bugs; deferring ${pendingCount} new bug(s) to off-peak` }
       }
 
+      // Recent merged PR dedup: skip bugs that appear already covered by a recently
+      // merged PR. The caller passes recentlyMergedPRs [{number, title}] in context.
+      // A bug is considered "covered" if any merged PR title contains its featureArea
+      // or any of its symptomTags as a substring (case-insensitive, min 3 chars).
+      const recentlyMergedPRs: Array<{ number: number; title: string }> =
+        Array.isArray(ctx?.recentlyMergedPRs) ? ctx.recentlyMergedPRs : []
+      const isLikelyCoveredByMergedPR = (bug: any): boolean => {
+        if (recentlyMergedPRs.length === 0) return false
+        let tags: string[] = []
+        try { tags = JSON.parse(bug.symptomTagsJson ?? '[]') } catch { /* ignore */ }
+        const area = (bug.featureArea ?? '').toLowerCase()
+        const signals = [...tags.map((t: string) => t.toLowerCase()), ...(area.length >= 3 ? [area] : [])]
+        if (signals.length === 0) return false
+        return recentlyMergedPRs.some(pr => {
+          const title = pr.title.toLowerCase()
+          return signals.some(s => s.length >= 3 && title.includes(s))
+        })
+      }
+
       // Dedup: skip bugs whose Discourse topic already has an active PR on another post,
       // or which are marked as duplicates. Cross-topic tag dedup is handled at persist
       // time; this handles the in-memory classifications path (seen this iteration).
@@ -2214,6 +2324,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
       const allPending = [...pendingBugs, ...extraBugs.map(b => ({ ...b, type: 'bug' }))]
         .filter(b => !topicsWithActivePr.has(Number(b.topic)))
         .filter(b => !topicsWithMinePost.has(Number(b.topic)))
+        .filter(b => !isLikelyCoveredByMergedPR(b))
 
       if (allPending.length > 0) {
         // Dispatch ONE bug at a time (oldest first_seen_at). With a single self-hosted

@@ -67,9 +67,10 @@ func ReceiveClientLogs(c *fiber.Ctx) error {
 		userId = &userIdInJWT
 	}
 
-	// Extract trace headers from request.
+	// Extract trace headers and client IP from request.
 	traceID := c.Get("X-Trace-ID")
 	sessionID := c.Get("X-Session-ID")
+	clientIP := c.IP()
 
 	// Process each log entry asynchronously.
 	go func() {
@@ -91,6 +92,11 @@ func ReceiveClientLogs(c *fiber.Ctx) error {
 			// Add user ID if available.
 			if userId != nil {
 				logData["user_id"] = *userId
+			}
+
+			// Always record the client IP.
+			if clientIP != "" {
+				logData["client_ip"] = clientIP
 			}
 
 			// Determine level for labels.

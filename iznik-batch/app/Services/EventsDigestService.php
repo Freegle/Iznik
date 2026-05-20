@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Mail\Event\EventsDigestMail;
+use App\Support\SafeMail;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
@@ -164,13 +165,23 @@ class EventsDigestService
             foreach ($members as $member) {
                 if (!$dryRun) {
                     $unsubscribeUrl = "https://{$userSite}/unsubscribe?email=" . urlencode($member->email);
-                    Mail::send(new EventsDigestMail(
-                        recipientEmail: $member->email,
-                        groupName: $groupRow->nameshort,
-                        events: $eventData,
-                        unsubscribeUrl: $unsubscribeUrl,
-                        userId: $member->userId,
-                    ));
+                    // SafeMail catches permanent (bounce + skip) and transient
+                    // (mail-host hiccup mid-run) SMTP failures so one bad address
+                    // or one closed-connection doesn't crash the rest of the
+                    // ~94k-recipient run. The mailable's own envelope() sets the
+                    // to: address, so use sendMailable() (Mail::send-style) not
+                    // send() (which would Mail::to(...) and duplicate the
+                    // recipient).
+                    SafeMail::sendMailable(
+                        new EventsDigestMail(
+                            recipientEmail: $member->email,
+                            groupName: $groupRow->nameshort,
+                            events: $eventData,
+                            unsubscribeUrl: $unsubscribeUrl,
+                            userId: $member->userId,
+                        ),
+                        $member->email,
+                    );
                 }
                 $sent++;
             }

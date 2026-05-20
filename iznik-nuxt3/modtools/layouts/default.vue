@@ -258,8 +258,9 @@
         <div>
           <a href="#" class="ps-1" @click="logOut"> Logout </a>
         </div>
-        <div v-if="inMTapp" id="mtinfo" :title="inMTapp">
-          MT app {{ inMTapp }}
+        <div v-if="mobileStore.isApp" class="mt-2 ps-1 small text-muted">
+          <div>Build: {{ buildDate }}</div>
+          <NuxtLink to="/applog" @click="mobilehidemenu">App Log</NuxtLink>
         </div>
       </div>
       <div class="ml-0 pl-0 pl-sm-1 pr-0 pr-sm-1 pageContent w-100">
@@ -288,6 +289,7 @@ import { useModConfigStore } from '@/stores/modconfig'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
 import { useAIImages } from '~/modtools/composables/useAIImages'
+import { useMobileStore } from '@/stores/mobile'
 
 import { buildHead } from '~/composables/useMTBuildHead'
 
@@ -351,6 +353,7 @@ if (!ready.value) {
 }
 
 const runtimeConfig = useRuntimeConfig()
+const buildDate = runtimeConfig.public.BUILD_DATE || 'unknown'
 useHead(
   buildHead(
     route,
@@ -380,6 +383,14 @@ const menuCount = computed(() => {
   const work = authStore?.work
   if (!work || !work.total) return 0
   return work.total
+})
+
+const mobileStore = useMobileStore()
+
+watch(menuCount, (newVal) => {
+  if (mobileStore.isApp) {
+    mobileStore.setBadgeCount(newVal)
+  }
 })
 
 watch(
@@ -462,6 +473,36 @@ onMounted(async () => {
 
   // Get chats and poll regularly for new ones
   chatStore.fetchLatestChatsMT()
+
+  // Capacitor app: clear all delivered notifications on open and sync badge count
+  if (mobileStore.isApp) {
+    try {
+      const { PushNotifications } = await import(
+        '@freegle/capacitor-push-notifications-cap7'
+      )
+      await PushNotifications.removeAllDeliveredNotifications()
+    } catch (e) {
+      console.log('removeAllDeliveredNotifications error', e)
+    }
+    mobileStore.setBadgeCount(menuCount.value || 0)
+
+    // On app resume (foregrounded), refresh work and clear notifications
+    try {
+      const { App } = await import('@capacitor/app')
+      App.addListener('resume', async () => {
+        try {
+          const { PushNotifications } = await import(
+            '@freegle/capacitor-push-notifications-cap7'
+          )
+          await PushNotifications.removeAllDeliveredNotifications()
+        } catch (e) {}
+        await checkWork()
+        mobileStore.setBadgeCount(menuCount.value || 0)
+      })
+    } catch (e) {
+      console.log('App resume listener error', e)
+    }
+  }
 })
 
 onBeforeUnmount(() => {

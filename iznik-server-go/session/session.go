@@ -218,22 +218,34 @@ func (f FlexBool) Bool() bool {
 	return bool(f)
 }
 
+// AppleCredentials holds the payload sent by the Capacitor Apple Sign In plugin.
+type AppleCredentials struct {
+	IdentityToken     string `json:"identityToken"`
+	User              string `json:"user"`
+	Email             string `json:"email"`
+	GivenName         string `json:"givenName"`
+	FamilyName        string `json:"familyName"`
+	AuthorizationCode string `json:"authorizationCode"`
+}
+
 // PostSessionRequest covers all fields used across session POST actions.
 type PostSessionRequest struct {
-	Action        string     `json:"action"`
-	Email         string     `json:"email"`
-	Password      string     `json:"password"`
-	U             FlexUint64 `json:"u"`
-	K             string     `json:"k"`
-	Userlist      []uint64   `json:"userlist"`
-	Partner       string     `json:"partner"`
-	ID            uint64     `json:"id"`
-	GoogleLogin   bool       `json:"googlelogin"`
-	GoogleJWT     string     `json:"googlejwt"`
-	Mobile        bool       `json:"mobile"`
-	FBLogin       FlexBool   `json:"fblogin"`
-	FBAccessToken string     `json:"fbaccesstoken"`
-	FBLimited     FlexBool   `json:"fblimited"`
+	Action           string           `json:"action"`
+	Email            string           `json:"email"`
+	Password         string           `json:"password"`
+	U                FlexUint64       `json:"u"`
+	K                string           `json:"k"`
+	Userlist         []uint64         `json:"userlist"`
+	Partner          string           `json:"partner"`
+	ID               uint64           `json:"id"`
+	GoogleLogin      bool             `json:"googlelogin"`
+	GoogleJWT        string           `json:"googlejwt"`
+	Mobile           bool             `json:"mobile"`
+	FBLogin          FlexBool         `json:"fblogin"`
+	FBAccessToken    string           `json:"fbaccesstoken"`
+	FBLimited        FlexBool         `json:"fblimited"`
+	AppleLogin       bool             `json:"applelogin"`
+	AppleCredentials AppleCredentials `json:"applecredentials"`
 }
 
 // PostSession dispatches session write actions.
@@ -266,6 +278,10 @@ func PostSession(c *fiber.Ctx) error {
 				return handleFacebookLimitedLogin(c, req.FBAccessToken)
 			}
 			return handleFacebookLogin(c, req.FBAccessToken)
+		}
+		if req.AppleLogin && req.AppleCredentials.IdentityToken != "" {
+			creds := req.AppleCredentials
+			return handleAppleLogin(c, creds.IdentityToken, creds.User, creds.Email, creds.GivenName, creds.FamilyName)
 		}
 		if req.Email != "" && req.Password != "" {
 			return handleEmailPasswordLogin(c, req.Email, req.Password)
@@ -305,6 +321,29 @@ func handleLostPassword(c *fiber.Ctx, email string) error {
 			"ret":    2,
 			"status": "We don't know that email address.",
 		})
+	}
+
+	// Check whether the account has a native password. OAuth-only accounts (e.g.
+	// Google/Facebook signups) have no Native row in users_logins; sending them a
+	// password-reset link would be confusing and unhelpful — tell the frontend to
+	// redirect to social sign-in instead.
+	//
+	// Note: users with no login rows at all (email-only, never set a password) are
+	// allowed through — they can use the reset link to set their first password.
+	var nativeCount int64
+	db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = ?",
+		userID, utils.LOGIN_TYPE_NATIVE).Scan(&nativeCount)
+	if nativeCount == 0 {
+		var socialCount int64
+		db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type IN (?, ?)",
+			userID, utils.LOGIN_TYPE_GOOGLE, utils.LOGIN_TYPE_FACEBOOK).Scan(&socialCount)
+		if socialCount > 0 {
+			return c.JSON(fiber.Map{
+				"ret":          1,
+				"status":       "This account uses social sign-in. Please sign in with Google, Facebook, or Yahoo.",
+				"socialSignin": true,
+			})
+		}
 	}
 
 	// Get or create the auto-login key for this user.
@@ -693,6 +732,7 @@ func GetSession(c *fiber.Ctx) error {
 		Bouncing           int             `json:"bouncing"`
 		Relevantallowed    int             `json:"relevantallowed"`
 		Newslettersallowed int             `json:"newslettersallowed"`
+		Engagementlevel    *string         `json:"engagementlevel" gorm:"column:engagementlevel"`
 	}
 
 	type EmailRow struct {
@@ -751,7 +791,7 @@ func GetSession(c *fiber.Ctx) error {
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, fullname, firstname, lastname, systemrole, settings, lastaccess, added, lastlocation, onholidaytill, source, deleted, forgotten, trustlevel, permissions, marketingconsent, bouncing, relevantallowed, newslettersallowed FROM users WHERE id = ?", myid).Scan(&userRow)
+		db.Raw("SELECT id, fullname, firstname, lastname, systemrole, settings, lastaccess, added, lastlocation, onholidaytill, source, deleted, forgotten, trustlevel, permissions, marketingconsent, bouncing, relevantallowed, newslettersallowed, engagement AS engagementlevel FROM users WHERE id = ?", myid).Scan(&userRow)
 	}()
 	go func() {
 		defer wg.Done()
@@ -1265,9 +1305,30 @@ func GetSession(c *fiber.Ctx) error {
 	// Wait for discourse fetch to complete.
 	discourseWg.Wait()
 
-	// Fetch location if available (depends on userRow).
+	// Fetch location for me.lat/me.lng — V1 parity: prefer settings.mylocation, fall back to lastlocation.
+	// V1 User::getLatLngs() uses settings.mylocation.lat/lng as primary (the postcode the user typed in
+	// their settings) and only falls back to lastlocation when mylocation is absent. lastlocation is
+	// updated by every draft post, so without this preference a draft on a remote group would shift
+	// me.lat/me.lng (and therefore chat distances) to that group's location.
 	var loc *LocationRow
-	if userRow.Lastlocation != nil && *userRow.Lastlocation > 0 {
+	if len(userRow.Settings) > 0 {
+		var parsed struct {
+			Mylocation *struct {
+				Lat  float64 `json:"lat"`
+				Lng  float64 `json:"lng"`
+				Name string  `json:"name"`
+			} `json:"mylocation"`
+		}
+		if json.Unmarshal(userRow.Settings, &parsed) == nil && parsed.Mylocation != nil &&
+			(parsed.Mylocation.Lat != 0 || parsed.Mylocation.Lng != 0) {
+			loc = &LocationRow{
+				Lat:  parsed.Mylocation.Lat,
+				Lng:  parsed.Mylocation.Lng,
+				Name: parsed.Mylocation.Name,
+			}
+		}
+	}
+	if loc == nil && userRow.Lastlocation != nil && *userRow.Lastlocation > 0 {
 		var locRow LocationRow
 		db.Raw("SELECT name, lat, lng FROM locations WHERE id = ?", *userRow.Lastlocation).Scan(&locRow)
 		if locRow.Name != "" {
@@ -1357,6 +1418,7 @@ func GetSession(c *fiber.Ctx) error {
 		"bouncing":           userRow.Bouncing,
 		"relevantallowed":    userRow.Relevantallowed,
 		"newslettersallowed": userRow.Newslettersallowed,
+		"engagementlevel":    userRow.Engagementlevel,
 		"aboutme":            aboutme,
 		"supporter":          supporterInfo.Supporter,
 		"donated":            supporterInfo.Donated,

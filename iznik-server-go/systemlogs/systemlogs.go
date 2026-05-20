@@ -522,21 +522,28 @@ func parseTimeRange(start, end string) (int64, int64) {
 	}
 
 	// Parse start time (relative or absolute).
+	var startParsed bool
 	if strings.HasSuffix(start, "m") {
-		mins, _ := strconv.Atoi(strings.TrimSuffix(start, "m"))
-		startTs = now.Add(-time.Duration(mins) * time.Minute).UnixNano()
+		if mins, err := strconv.Atoi(strings.TrimSuffix(start, "m")); err == nil {
+			startTs = now.Add(-time.Duration(mins) * time.Minute).UnixNano()
+			startParsed = true
+		}
 	} else if strings.HasSuffix(start, "h") {
-		hours, _ := strconv.Atoi(strings.TrimSuffix(start, "h"))
-		startTs = now.Add(-time.Duration(hours) * time.Hour).UnixNano()
+		if hours, err := strconv.Atoi(strings.TrimSuffix(start, "h")); err == nil {
+			startTs = now.Add(-time.Duration(hours) * time.Hour).UnixNano()
+			startParsed = true
+		}
 	} else if strings.HasSuffix(start, "d") {
-		days, _ := strconv.Atoi(strings.TrimSuffix(start, "d"))
-		startTs = now.Add(-time.Duration(days) * 24 * time.Hour).UnixNano()
-	} else {
-		t, err := time.Parse(time.RFC3339, start)
-		if err != nil {
-			startTs = now.Add(-1 * time.Minute).UnixNano()
-		} else {
+		if days, err := strconv.Atoi(strings.TrimSuffix(start, "d")); err == nil {
+			startTs = now.Add(-time.Duration(days) * 24 * time.Hour).UnixNano()
+			startParsed = true
+		}
+	}
+	if !startParsed {
+		if t, err := time.Parse(time.RFC3339, start); err == nil {
 			startTs = t.UnixNano()
+		} else {
+			startTs = now.Add(-1 * time.Minute).UnixNano()
 		}
 	}
 

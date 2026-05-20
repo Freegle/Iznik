@@ -117,8 +117,12 @@ class PushNotificationService
                     'error' => $errorMsg,
                 ]);
 
-                // Remove invalid/unregistered tokens
+                // Remove permanently invalid tokens (UNREGISTERED = app uninstalled,
+                // NOT_FOUND = instance deleted, SENDER_ID_MISMATCH = wrong Firebase project)
                 if (str_contains($errorMsg, 'UNREGISTERED') ||
+                    str_contains($errorMsg, 'NOT_FOUND') ||
+                    str_contains($errorMsg, 'SENDER_ID_MISMATCH') ||
+                    str_contains($errorMsg, 'Requested entity was not found') ||
                     str_contains($errorMsg, 'Invalid registration token') ||
                     str_contains($errorMsg, 'not a valid FCM registration token')) {
                     DB::table('users_push_notifications')
@@ -282,11 +286,13 @@ class PushNotificationService
                 'modtools' => '1',
                 'sound' => 'default',
                 'route' => '/modtools',
+                'channel_id' => 'modtools',
+                'notId' => (string) $userId,
             ];
         }
 
         $title = "$total message" . ($total > 1 ? 's' : '') . " pending";
-        $message = "$total pending";
+        $message = "Open ModTools to review";
 
         return [
             'badge' => (string) $total,
@@ -301,6 +307,7 @@ class PushNotificationService
             'modtools' => '1',
             'sound' => 'default',
             'route' => '/modtools/messages/pending',
+            'channel_id' => 'modtools',
             // Fixed notId per user so each new notification replaces the previous one
             // on Android instead of stacking multiple "N pending" badges.
             'notId' => (string) $userId,
@@ -349,6 +356,7 @@ class PushNotificationService
             'route' => $modtools ? '/modtools' : '/',
             'notId' => (string) $userId,
             'test' => '1',
+            'channel_id' => $modtools ? 'modtools' : 'chat_messages',
         ];
 
         $count = 0;
@@ -394,6 +402,62 @@ class PushNotificationService
     }
 
     /**
+     * Build the array passed to CloudMessage::fromArray for an Android push.
+     *
+     * Extracted so we can assert on the wire-level structure in tests without
+     * standing up a Firebase mock. Adds a `notification` block when the push
+     * is for ModTools or has been explicitly marked forceVisible — otherwise
+     * FCM hands the data-only message to the app's listener and it never
+     * appears in the system tray.
+     */
+    protected function buildAndroidFcmMessage(string $token, array $payload, bool $forceVisible): array
+    {
+        $isModtools = ($payload['channel_id'] ?? '') === 'modtools';
+
+        $androidMessage = [
+            'token' => $token,
+            'data' => $payload,
+        ];
+
+        if (($forceVisible || $isModtools) && ! empty($payload['title'])) {
+            $androidMessage['notification'] = [
+                'title' => $payload['title'],
+                'body' => $payload['message'] ?: $payload['title'],
+            ];
+        }
+
+        return $androidMessage;
+    }
+
+    /**
+     * Build the AndroidConfig (priority, ttl, optional notification tag)
+     * that accompanies the FCM message.
+     *
+     * Zero-work ModTools pushes carry empty title/message — they exist only
+     * to clear the launcher badge and must stay silent. We achieve that by
+     * sending pure data-only at normal priority: no notification block, and
+     * no AndroidConfig.notification (which can promote the message to a
+     * notification on some devices/Capacitor builds and leave an empty
+     * tray entry).
+     */
+    protected function buildAndroidConfig(int $userId, array $payload, bool $forceVisible): array
+    {
+        $isModtools = ($payload['channel_id'] ?? '') === 'modtools';
+        $hasVisibleContent = ! empty($payload['title']);
+
+        $androidConfig = [
+            'ttl' => '3600s',
+            'priority' => ($forceVisible || ($isModtools && $hasVisibleContent)) ? 'high' : 'normal',
+        ];
+
+        if ($isModtools && $hasVisibleContent) {
+            $androidConfig['notification'] = ['tag' => "modtools-{$userId}"];
+        }
+
+        return $androidConfig;
+    }
+
+    /**
      * Send FCM notification to a device.
      *
      * When $forceVisible is true, includes a notification block so the push appears in the
@@ -402,24 +466,9 @@ class PushNotificationService
     private function sendFcm(int $userId, string $type, string $token, array $payload, bool $forceVisible = false): void
     {
         if ($type === self::PUSH_FCM_ANDROID) {
-            $androidMessage = [
-                'token' => $token,
-                'data' => $payload,
-            ];
-
-            if ($forceVisible && ! empty($payload['title'])) {
-                $androidMessage['notification'] = [
-                    'title' => $payload['title'],
-                    'body' => $payload['message'] ?: $payload['title'],
-                ];
-            }
-
+            $androidMessage = $this->buildAndroidFcmMessage($token, $payload, $forceVisible);
             $message = CloudMessage::fromArray($androidMessage);
-
-            $message = $message->withAndroidConfig([
-                'ttl' => '3600s',
-                'priority' => $forceVisible ? 'high' : 'normal',
-            ]);
+            $message = $message->withAndroidConfig($this->buildAndroidConfig($userId, $payload, $forceVisible));
         } else {
             // iOS: include notification block for display
             $ios = [

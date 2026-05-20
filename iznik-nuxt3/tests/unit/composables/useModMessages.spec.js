@@ -400,3 +400,150 @@ describe('useModMessages work computed', () => {
     expect(work.value).toBe(13)
   })
 })
+
+describe('useModMessages collection filter (approve-race defence)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    mockAuthWork = null
+  })
+
+  afterEach(() => {
+    vi.resetModules()
+  })
+
+  it('excludes a message that was resurrected with Approved collection while listing Pending', async () => {
+    // Simulate the race: both IDs came back from getMessages() as Pending, but
+    // id=2 was concurrently re-fetched after approve() and now has collection='Approved'.
+    const msgPending = {
+      id: 1,
+      arrival: '2026-01-05',
+      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Pending' }],
+    }
+    const msgApprovedRace = {
+      id: 2,
+      arrival: '2026-01-04',
+      groups: [{ groupid: 10, arrival: '2026-01-04', collection: 'Approved' }],
+    }
+
+    mockAll.value = [msgPending, msgApprovedRace]
+    mockFetchMessagesMT.mockResolvedValue([1, 2])
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { getMessages, collection, messages } = setupModMessages(true)
+    collection.value = 'Pending'
+    await getMessages()
+
+    // listingIds has both 1 and 2 (from the original fetch), but only id=1 is
+    // actually Pending — id=2 must be filtered out to prevent Approved buttons.
+    expect(messages.value.map((m) => m.id)).toEqual([1])
+  })
+
+  it('includes PendingOther messages when listing Pending', async () => {
+    const msgPending = {
+      id: 1,
+      arrival: '2026-01-05',
+      groups: [{ groupid: 10, arrival: '2026-01-05', collection: 'Pending' }],
+    }
+    const msgPendingOther = {
+      id: 2,
+      arrival: '2026-01-04',
+      groups: [{ groupid: 10, arrival: '2026-01-04', collection: 'PendingOther' }],
+    }
+
+    mockAll.value = [msgPending, msgPendingOther]
+    mockFetchMessagesMT.mockResolvedValue([1, 2])
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { getMessages, collection, messages } = setupModMessages(true)
+    collection.value = 'Pending'
+    await getMessages()
+
+    expect(messages.value.map((m) => m.id)).toContain(1)
+    expect(messages.value.map((m) => m.id)).toContain(2)
+  })
+
+  it('uses the contextual group collection when groupid is set', async () => {
+    // Message is Pending on group 10 but Approved on group 20.
+    // When viewing group 10 Pending list, it should appear.
+    const msg = {
+      id: 1,
+      arrival: '2026-01-05',
+      groups: [
+        { groupid: 10, arrival: '2026-01-05', collection: 'Pending' },
+        { groupid: 20, arrival: '2026-01-04', collection: 'Approved' },
+      ],
+    }
+
+    mockGetByGroup.mockReturnValue([msg])
+    mockAll.value = [msg]
+    mockFetchMessagesMT.mockResolvedValue([1])
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { getMessages, collection, groupid, messages } = setupModMessages(true)
+    collection.value = 'Pending'
+    groupid.value = 10
+    await getMessages()
+
+    expect(messages.value.map((m) => m.id)).toEqual([1])
+  })
+
+  it('excludes a message when its contextual group has a non-matching collection', async () => {
+    // Message is Approved on group 10, but we are viewing group 10 Pending.
+    const msg = {
+      id: 1,
+      arrival: '2026-01-05',
+      groups: [
+        { groupid: 10, arrival: '2026-01-05', collection: 'Approved' },
+      ],
+    }
+
+    mockGetByGroup.mockReturnValue([msg])
+    mockAll.value = [msg]
+    mockFetchMessagesMT.mockResolvedValue([1])
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { getMessages, collection, groupid, messages } = setupModMessages(true)
+    collection.value = 'Pending'
+    groupid.value = 10
+    await getMessages()
+
+    expect(messages.value.map((m) => m.id)).toEqual([])
+  })
+
+  it('does not strip Approved-on-group messages when listing the Edit view', async () => {
+    // The Edit view is virtual: an edited message stays Approved on its
+    // group, with a pending row in messages_edits. The defensive filter
+    // would compare 'Edit' against the group's 'Approved' collection and
+    // strip every result — breaking the moderator edits page.
+    const msg = {
+      id: 1,
+      arrival: '2026-01-05',
+      groups: [
+        { groupid: 10, arrival: '2026-01-05', collection: 'Approved' },
+      ],
+    }
+
+    mockGetByGroup.mockReturnValue([msg])
+    mockAll.value = [msg]
+    mockFetchMessagesMT.mockResolvedValue([1])
+
+    const { setupModMessages } = await import(
+      '~/modtools/composables/useModMessages'
+    )
+    const { getMessages, collection, groupid, messages } = setupModMessages(true)
+    collection.value = 'Edit'
+    groupid.value = 10
+    await getMessages()
+
+    expect(messages.value.map((m) => m.id)).toEqual([1])
+  })
+})
