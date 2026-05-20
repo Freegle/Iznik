@@ -98,13 +98,13 @@ type MessagePosting struct {
 	Namedisplay string `json:"namedisplay"`
 }
 
-// WorryMatch represents a worry word found in a message's subject or body.
+// WorryMatch represents a concern keyword found in a message's subject or body.
 type WorryMatch struct {
 	Word      string    `json:"word"`
 	Worryword WorryWord `json:"worryword"`
 }
 
-// WorryWord represents a row from the worrywords table.
+// WorryWord represents a concern keyword used for message checking.
 type WorryWord struct {
 	ID      uint64 `json:"id"`
 	Keyword string `json:"keyword"`
@@ -612,12 +612,21 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 	return messages
 }
 
-// checkWorryWords checks message subjects and textbodies against global and
-// group-specific worry words.  Matches are stored in Message.Worry.
+// checkWorryWords checks message subjects and textbodies against global concern
+// keywords (fuzzy match mode).  Matches are stored in Message.Worry.
 func checkWorryWords(db *gorm.DB, messages []Message) {
-	// Load global worry words from the worrywords table.
 	var globalWords []WorryWord
-	db.Raw("SELECT id, keyword, type FROM worrywords").Scan(&globalWords)
+	db.Raw(`SELECT id, keyword,
+		CASE category
+			WHEN 'substance_regulated' THEN 'Regulated'
+			WHEN 'substance_reportable' THEN 'Reportable'
+			WHEN 'substance_medicine' THEN 'Medicine'
+			WHEN 'review' THEN 'Review'
+			WHEN 'allowed' THEN 'Allowed'
+			ELSE 'Review'
+		END AS type
+	FROM concern_keywords
+	WHERE match_mode = 'fuzzy' AND scope = 'global'`).Scan(&globalWords)
 
 	// Collect unique group IDs from all messages so we can load group-specific
 	// worry words in one pass.

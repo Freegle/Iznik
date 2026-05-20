@@ -66,6 +66,14 @@ vi.mock('@/stores/modconfig', () => ({
   }),
 }))
 
+vi.mock('@/stores/mobile', () => ({
+  useMobileStore: () => ({
+    isApp: false,
+    setBadgeCount: vi.fn(),
+    init: vi.fn(),
+  }),
+}))
+
 vi.mock('~/composables/useMe', () => ({
   useMe: () => ({
     supportOrAdmin: computed(() => false),

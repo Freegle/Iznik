@@ -126,6 +126,172 @@ platform :android do
     UI.success("✅ Successfully uploaded to Google Play Beta Testing!")
   end
 
+  desc "Build and deploy ModTools to Google Play Beta Testing"
+  lane :modtools_beta do
+    unless File.exist?('modtools-google-play-api-key.json')
+      UI.user_error!("❌ CRITICAL: modtools-google-play-api-key.json not found")
+    end
+
+    version_file = '../.new_version'
+    unless File.exist?(version_file)
+      UI.user_error!("❌ CRITICAL: Version file not found at #{version_file}")
+    end
+
+    version = File.read(version_file).strip
+    UI.success("📱 Using version from workspace: #{version}")
+
+    parts = version.split('.').map(&:to_i)
+    unless parts.length == 3
+      UI.user_error!("❌ CRITICAL: Invalid version format '#{version}'")
+    end
+
+    all_version_codes = []
+    ['internal', 'beta', 'production'].each do |track|
+      begin
+        version_codes = google_play_track_version_codes(
+          package_name: 'org.ilovefreegle.modtools',
+          track: track,
+          json_key: 'fastlane/modtools-google-play-api-key.json'
+        )
+        if version_codes && version_codes.any?
+          max_for_track = version_codes.max
+          all_version_codes << max_for_track
+          UI.message("📊 #{track.capitalize} track max version code: #{max_for_track}")
+        end
+      rescue => e
+        UI.message("ℹ️  Could not fetch #{track} track version codes: #{e.message}")
+      end
+    end
+
+    if all_version_codes.empty?
+      UI.user_error!("❌ CRITICAL: Could not fetch version codes from any Google Play track for org.ilovefreegle.modtools")
+    end
+
+    latest_build = all_version_codes.max
+    new_version_code = [latest_build + 1, 1272].max
+
+    UI.success("📊 New version code: #{new_version_code}")
+
+    gradle(
+      task: 'bundle',
+      build_type: 'Release',
+      project_dir: 'android/',
+      properties: {
+        "versionName" => version,
+        "versionCode" => new_version_code.to_s
+      },
+      flags: '--stacktrace'
+    )
+
+    gradle(
+      task: 'assemble',
+      build_type: 'Release',
+      project_dir: 'android/',
+      properties: {
+        "versionName" => version,
+        "versionCode" => new_version_code.to_s
+      },
+      flags: '--stacktrace'
+    )
+
+    changelog_dir = '../fastlane/metadata/android/en-US/changelogs'
+    FileUtils.mkdir_p(changelog_dir)
+    File.write("#{changelog_dir}/#{new_version_code}.txt", "Version #{version} - Bug fixes and improvements")
+
+    upload_to_play_store(
+      package_name: 'org.ilovefreegle.modtools',
+      track: 'beta',
+      json_key: 'fastlane/modtools-google-play-api-key.json',
+      skip_upload_apk: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+    UI.success("✅ Successfully uploaded ModTools to Google Play Beta!")
+  end
+
+  desc "Build and deploy ModTools directly to Google Play Production"
+  lane :modtools_production do
+    unless File.exist?('modtools-google-play-api-key.json')
+      UI.user_error!("❌ CRITICAL: modtools-google-play-api-key.json not found")
+    end
+
+    version_file = '../.new_version'
+    unless File.exist?(version_file)
+      UI.user_error!("❌ CRITICAL: Version file not found at #{version_file}")
+    end
+
+    version = File.read(version_file).strip
+    UI.success("📱 Using version from workspace: #{version}")
+
+    parts = version.split('.').map(&:to_i)
+    unless parts.length == 3
+      UI.user_error!("❌ CRITICAL: Invalid version format '#{version}'")
+    end
+
+    all_version_codes = []
+    ['internal', 'beta', 'production'].each do |track|
+      begin
+        version_codes = google_play_track_version_codes(
+          package_name: 'org.ilovefreegle.modtools',
+          track: track,
+          json_key: 'fastlane/modtools-google-play-api-key.json'
+        )
+        if version_codes && version_codes.any?
+          max_for_track = version_codes.max
+          all_version_codes << max_for_track
+          UI.message("📊 #{track.capitalize} track max version code: #{max_for_track}")
+        end
+      rescue => e
+        UI.message("ℹ️  Could not fetch #{track} track version codes: #{e.message}")
+      end
+    end
+
+    if all_version_codes.empty?
+      UI.user_error!("❌ CRITICAL: Could not fetch version codes from any Google Play track for org.ilovefreegle.modtools")
+    end
+
+    latest_build = all_version_codes.max
+    new_version_code = [latest_build + 1, 1272].max
+
+    UI.success("📊 New version code: #{new_version_code}")
+
+    gradle(
+      task: 'bundle',
+      build_type: 'Release',
+      project_dir: 'android/',
+      properties: {
+        "versionName" => version,
+        "versionCode" => new_version_code.to_s
+      },
+      flags: '--stacktrace'
+    )
+
+    gradle(
+      task: 'assemble',
+      build_type: 'Release',
+      project_dir: 'android/',
+      properties: {
+        "versionName" => version,
+        "versionCode" => new_version_code.to_s
+      },
+      flags: '--stacktrace'
+    )
+
+    changelog_dir = '../fastlane/metadata/android/en-US/changelogs'
+    FileUtils.mkdir_p(changelog_dir)
+    File.write("#{changelog_dir}/#{new_version_code}.txt", "Version #{version} - Bug fixes and improvements")
+
+    upload_to_play_store(
+      package_name: 'org.ilovefreegle.modtools',
+      track: 'production',
+      json_key: 'fastlane/modtools-google-play-api-key.json',
+      skip_upload_apk: true,
+      skip_upload_images: true,
+      skip_upload_screenshots: true
+    )
+    UI.success("✅ Successfully uploaded ModTools to Google Play Production!")
+  end
+
   desc "Promote Internal to Beta"
   lane :promote_beta do
     upload_to_play_store(
@@ -356,6 +522,96 @@ platform :ios do
     UI.success("✅ Successfully uploaded to TestFlight!")
   end
 
+  desc "Build and upload ModTools to TestFlight"
+  lane :modtools_beta do
+    unless ENV['APP_STORE_CONNECT_API_KEY_KEY_ID']
+      UI.user_error!("❌ CRITICAL: APP_STORE_CONNECT_API_KEY_KEY_ID not set")
+    end
+    unless ENV['APP_STORE_CONNECT_API_KEY_ISSUER_ID']
+      UI.user_error!("❌ CRITICAL: APP_STORE_CONNECT_API_KEY_ISSUER_ID not set")
+    end
+    unless ENV['APP_STORE_CONNECT_API_KEY_KEY']
+      UI.user_error!("❌ CRITICAL: APP_STORE_CONNECT_API_KEY_KEY not set")
+    end
+
+    app_store_connect_api_key(
+      key_id: ENV['APP_STORE_CONNECT_API_KEY_KEY_ID'],
+      issuer_id: ENV['APP_STORE_CONNECT_API_KEY_ISSUER_ID'],
+      key_content: Base64.decode64(ENV['APP_STORE_CONNECT_API_KEY_KEY']),
+      is_key_content_base64: false
+    )
+
+    version_file = '../.new_version'
+    unless File.exist?(version_file)
+      UI.user_error!("❌ CRITICAL: Version file not found at #{version_file}")
+    end
+    version = File.read(version_file).strip
+
+    increment_version_number(
+      version_number: version,
+      xcodeproj: "ios/App/App.xcodeproj"
+    )
+
+    begin
+      latest_build = latest_testflight_build_number(
+        version: version,
+        initial_build_number: 0,
+        app_identifier: "org.ilovefreegle.modtools"
+      )
+    rescue => e
+      UI.message("ℹ️  No existing builds for v#{version}, starting at 0")
+      latest_build = 0
+    end
+
+    new_build = [latest_build + 1, 1272].max
+    increment_build_number(
+      build_number: new_build,
+      xcodeproj: "ios/App/App.xcodeproj"
+    )
+
+    import_certificate(
+      certificate_path: ENV['IOS_CERTIFICATE_PATH'] || 'ios_distribution.p12',
+      certificate_password: ENV['IOS_CERTIFICATE_PASSWORD'] || '',
+      keychain_name: ENV['KEYCHAIN_NAME'] || 'login.keychain',
+      keychain_password: ENV['KEYCHAIN_PASSWORD'] || ''
+    )
+
+    profile_path = ENV['IOS_PROVISIONING_PROFILE_PATH'] || 'modtools_appstore.mobileprovision'
+    install_provisioning_profile(path: profile_path)
+
+    update_project_provisioning(
+      xcodeproj: "ios/App/App.xcodeproj",
+      target_filter: "Freegle",
+      profile: profile_path,
+      code_signing_identity: "iPhone Distribution"
+    )
+
+    update_code_signing_settings(
+      use_automatic_signing: false,
+      path: "ios/App/App.xcodeproj",
+      targets: ["Freegle"],
+      code_sign_identity: "iPhone Distribution",
+      bundle_identifier: "org.ilovefreegle.modtools"
+    )
+
+    gym(
+      scheme: "Freegle",
+      workspace: "ios/App/App.xcworkspace",
+      export_method: "app-store",
+      clean: true,
+      output_directory: "./build",
+      skip_package_dependencies_resolution: true
+    )
+
+    pilot(
+      skip_waiting_for_build_processing: true,
+      distribute_external: false,
+      app_identifier: "org.ilovefreegle.modtools"
+    )
+
+    UI.success("✅ Successfully uploaded ModTools to TestFlight!")
+  end
+
   desc "Promote TestFlight to Production"
   lane :release do
     app_store_connect_api_key(
@@ -576,6 +832,166 @@ platform :ios do
       else
         # Re-raise unexpected errors
         UI.error("❌ Failed to submit build #{build_number}: #{e.message}")
+        raise e
+      end
+    end
+  end
+
+  desc "Auto-submit latest ModTools TestFlight build to App Store review (automatic release on approval)"
+  lane :auto_submit_modtools do
+    require 'spaceship'
+    require 'time'
+
+    UI.message("🔍 Checking TestFlight for ModTools builds ready to submit...")
+
+    app_store_connect_api_key(
+      key_id: ENV['APP_STORE_CONNECT_API_KEY_KEY_ID'],
+      issuer_id: ENV['APP_STORE_CONNECT_API_KEY_ISSUER_ID'],
+      key_content: Base64.decode64(ENV['APP_STORE_CONNECT_API_KEY_KEY']),
+      is_key_content_base64: false
+    )
+
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV['APP_STORE_CONNECT_API_KEY_KEY_ID'],
+      issuer_id: ENV['APP_STORE_CONNECT_API_KEY_ISSUER_ID'],
+      key: Base64.decode64(ENV['APP_STORE_CONNECT_API_KEY_KEY'])
+    )
+
+    app = Spaceship::ConnectAPI::App.find("org.ilovefreegle.modtools")
+    unless app
+      UI.user_error!("❌ Could not find app with identifier org.ilovefreegle.modtools")
+    end
+
+    builds = app.get_builds(
+      sort: "-uploadedDate",
+      limit: 50,
+      includes: "preReleaseVersion"
+    )
+
+    if builds.nil? || builds.empty?
+      UI.message("ℹ️  No TestFlight builds found for ModTools")
+      next
+    end
+
+    cutoff_time = Time.now - (7 * 24 * 60 * 60)
+    recent_builds = builds.select do |build|
+      upload_time = Time.parse(build.uploaded_date)
+      upload_time >= cutoff_time
+    end
+
+    if recent_builds.empty?
+      UI.message("ℹ️  No ModTools TestFlight builds uploaded in the last 7 days")
+      next
+    end
+
+    latest_build = recent_builds.first
+
+    version = nil
+    if latest_build.respond_to?(:app_version) && latest_build.app_version
+      version = latest_build.app_version
+    elsif latest_build.respond_to?(:pre_release_version) && latest_build.pre_release_version
+      version = latest_build.pre_release_version.version
+    end
+
+    unless version
+      UI.error("❌ Could not determine version string from ModTools build")
+      next
+    end
+
+    build_number = latest_build.version
+    UI.message("📦 Latest ModTools build: version #{version}, build #{build_number}")
+
+    all_versions = app.get_app_store_versions
+    UI.message("📋 ModTools App Store versions:")
+    all_versions.each do |v|
+      UI.message("   - Version #{v.version_string}: #{v.app_store_state}")
+    end
+
+    app_store_version = all_versions.find { |v| v.version_string == version }
+    if app_store_version
+      state = app_store_version.app_store_state
+      case state
+      when "PENDING_DEVELOPER_RELEASE", "PENDING_APPLE_RELEASE", "IN_REVIEW", "WAITING_FOR_REVIEW"
+        UI.message("✅ ModTools version #{version} is already in the submission pipeline (status: #{state})")
+        next
+      when "READY_FOR_SALE"
+        UI.message("✅ ModTools version #{version} is already released")
+        next
+      when "DEVELOPER_REJECTED", "REJECTED"
+        UI.message("⚠️  ModTools version #{version} was rejected (status: #{state})")
+        next
+      end
+    end
+
+    editable_states = ["PENDING_DEVELOPER_RELEASE", "PENDING_APPLE_RELEASE", "IN_REVIEW", "WAITING_FOR_REVIEW", "PREPARE_FOR_SUBMISSION", "READY_FOR_REVIEW"]
+    other_blocking = all_versions.find { |v| v.version_string != version && editable_states.include?(v.app_store_state) }
+    if other_blocking
+      UI.error("⚠️  Cannot submit ModTools: Version #{other_blocking.version_string} is blocking (status: #{other_blocking.app_store_state})")
+      next
+    end
+
+    # Wait up to 30 minutes for Apple to finish processing the build (6 × 5-min sleeps).
+    # This covers the case where build-ios-modtools just uploaded and Apple hasn't
+    # finished processing yet when this job runs.
+    max_wait_seconds = 30 * 60
+    poll_interval    = 5 * 60
+    waited           = 0
+
+    while latest_build.processing_state != "VALID"
+      if waited >= max_wait_seconds
+        UI.error("❌ ModTools build #{build_number} still not processed after #{max_wait_seconds / 60} minutes (status: #{latest_build.processing_state})")
+        UI.message("💡 Re-trigger submission via run_manual_promote: true once Apple finishes processing")
+        UI.user_error!("Build processing timed out")
+      end
+
+      UI.message("⏳ ModTools build still processing (status: #{latest_build.processing_state}) — waiting #{poll_interval / 60} min (#{waited / 60}/#{max_wait_seconds / 60} min elapsed)...")
+      sleep(poll_interval)
+      waited += poll_interval
+
+      # Re-fetch the build to check updated processing state
+      builds = app.get_builds(sort: "-uploadedDate", limit: 50, includes: "preReleaseVersion")
+      latest_build = builds.find { |b| b.version == build_number } || latest_build
+    end
+
+    UI.success("🚀 Submitting ModTools build #{build_number} (version #{version}) for App Store review...")
+
+    begin
+      deliver(
+        build_number: build_number.to_s,
+        app_version: version,
+        submit_for_review: true,
+        automatic_release: true,
+        force: true,
+        skip_metadata: false,
+        skip_screenshots: true,
+        skip_binary_upload: true,
+        skip_app_version_update: false,
+        precheck_include_in_app_purchases: false,
+        app_identifier: "org.ilovefreegle.modtools",
+        release_notes: {
+          "en-GB" => "Bug fixes and improvements"
+        },
+        submission_information: {
+          add_id_info_uses_idfa: false,
+          export_compliance_uses_encryption: false,
+          export_compliance_is_exempt: true,
+          content_rights_contains_third_party_content: false
+        }
+      )
+      UI.success("✅ Successfully submitted ModTools build #{build_number} (version #{version}) for App Store review!")
+      UI.message("📱 automatic_release: true — the app will go live automatically when Apple approves it")
+    rescue => e
+      error_message = e.message.to_s.downcase
+      if error_message.include?("already") || error_message.include?("duplicate") || error_message.include?("in review")
+        UI.message("ℹ️  ModTools build #{build_number} appears to already be submitted or in review")
+      elsif error_message.include?("cannot submit") || error_message.include?("could not find an editable version") || error_message.include?("relationship value is not acceptable")
+        UI.error("❌ Cannot submit ModTools: Another version may be blocking submission")
+        UI.error("📝 Error details: #{e.message}")
+      elsif error_message.include?("pre-release build could not be added")
+        UI.error("❌ ModTools build #{build_number} cannot be added — may still be processing")
+        UI.error("📝 Error details: #{e.message}")
+      else
+        UI.error("❌ Failed to submit ModTools build #{build_number}: #{e.message}")
         raise e
       end
     end

@@ -2,7 +2,6 @@ import fs from 'fs'
 
 const packageJson = fs.readFileSync('./package.json', 'utf8')
 const version = JSON.parse(packageJson).version || 0
-// import config from '../config'
 console.log('Building iznik-modtools', version)
 
 process.env.MT = 'true'
@@ -11,6 +10,10 @@ export default defineNuxtConfig({
   // target: 'static',
   ssr: false,
   extends: ['../'],
+  // Explicitly declare @nuxt/image — module registration from parent layers can
+  // fail to propagate to the child static build, leaving <NuxtPicture> emitting
+  // no <img> tag at all (image silently missing rather than broken).
+  modules: ['@nuxt/image'],
   sourcemap: { client: true },
   compatibilityDate: '2024-11-26',
   experimental: {
@@ -39,6 +42,14 @@ export default defineNuxtConfig({
       VERSION: version,
       BUILD_DATE: new Date().toLocaleString('en-GB'),
       SITE: 'MT',
+      // Hardcoded production endpoints. The CircleCI project-level
+      // TUS_UPLOADER env var is set to https://tusd.tusdemo.net/files/
+      // (the public TUS demo server), which leaks into the modtools APK
+      // debug build and breaks image rendering. Until the project env
+      // is fixed, override here so the modtools layer always bakes in
+      // the right value regardless of build env.
+      TUS_UPLOADER: 'https://uploads.ilovefreegle.org:8080',
+      IMAGE_DELIVERY: 'https://delivery.ilovefreegle.org',
     },
   },
   vite: {
@@ -62,6 +73,31 @@ export default defineNuxtConfig({
       // process.env.NODE_ENV === 'production'
       //  ? { preset: ['default', { discardComments: { removeAll: true } }] }
       //  : false, // disable cssnano when not in production
+    },
+  },
+
+  // Explicitly declare image providers here so they are reliably included when
+  // building this child layer (Nuxt module config from parent layers may not
+  // propagate correctly to child static builds).
+  image: {
+    uploadcare: {
+      provider: 'uploadcare',
+    },
+    weserv: {
+      provider: 'weserv',
+      // Hardcoded — see runtimeConfig note above (CircleCI env leakage).
+      baseURL: 'https://uploads.ilovefreegle.org',
+      weservURL: 'https://delivery.ilovefreegle.org',
+    },
+    densities: [1, 2],
+    screens: {
+      xs: 320,
+      sm: 576,
+      md: 768,
+      lg: 768,
+      xl: 768,
+      xxl: 768,
+      '2xl': 768,
     },
   },
 

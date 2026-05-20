@@ -1,5 +1,41 @@
 <template>
   <div v-if="message">
+    <!-- Worry words flagged by the Go API (real-time, per-request check) -->
+    <NoticeMessage
+      v-for="(match, i) in worryMatches"
+      :key="'worry-' + message.id + '-' + i"
+      variant="warning"
+      class="mb-1"
+    >
+      <p>
+        Flagged for review: "<span class="text-danger fw-bold">{{
+          match.worryword.keyword
+        }}</span>".
+      </p>
+      <p v-if="match.worryword.type === 'Regulated'">
+        This post looks as though it might contain a regulated substance. These
+        are not legal on Freegle. If in doubt please check on
+        <ExternalLink href="https://discourse.ilovefreegle.org/">Central</ExternalLink>
+        first.
+      </p>
+      <p v-else-if="match.worryword.type === 'Reportable'">
+        This post looks as though it might contain a reportable substance. These
+        may need to be reported to the police. Please ask the member about it,
+        and if in doubt discuss on
+        <ExternalLink href="https://discourse.ilovefreegle.org/">Central</ExternalLink>.
+      </p>
+      <p v-else-if="match.worryword.type === 'Medicine'">
+        This post looks as though it might contain a drug, medicine or supplement.
+        These are not legal on Freegle. Please do not approve this without checking on
+        <ExternalLink href="https://discourse.ilovefreegle.org/">Central</ExternalLink>
+        first.
+      </p>
+      <p v-else>
+        This post contains a keyword which means it's flagged up for review. If
+        you can't see anything wrong with it, then it's fine to approve.
+      </p>
+    </NoticeMessage>
+
     <!-- Content check failure reasons (stored, from batch processing) -->
     <NoticeMessage
       v-for="(reason, i) in contentcheckReasons"
@@ -98,10 +134,16 @@ watch(
   { immediate: true }
 )
 
-/* Extract contentcheck_reasons from the first message group that has them. */
+/* Worry word matches from the Go API (message.worry array). */
+const worryMatches = computed(() => {
+  return message.value?.worry ?? []
+})
+
+/* Extract contentcheck_reasons from the first message group that has them.
+   The API field is `groups` (not `messagegroups`). */
 const contentcheckReasons = computed(() => {
-  if (!message.value?.messagegroups) return []
-  for (const mg of message.value.messagegroups) {
+  if (!message.value?.groups) return []
+  for (const mg of message.value.groups) {
     const reasons = mg.contentcheck_reasons
     if (reasons && Array.isArray(reasons) && reasons.length > 0) {
       return reasons

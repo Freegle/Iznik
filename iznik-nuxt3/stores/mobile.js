@@ -106,7 +106,8 @@ export const useMobileStore = defineStore({
             dbg()?.debug('No background push log entries')
           }
         } catch (e) {
-          dbg()?.warn('Failed to read background push log', e.message)
+          // getBackgroundPushLog is not implemented on all Android plugin versions — not actionable
+          dbg()?.debug('Background push log unavailable', e.message)
         }
       }
 
@@ -261,6 +262,7 @@ export const useMobileStore = defineStore({
         // Delete old channels
         await PushNotifications.deleteChannel({ id: 'PushDefaultForeground' })
         await PushNotifications.deleteChannel({ id: 'NewPosts' })
+        await PushNotifications.deleteChannel({ id: 'modtools' }) // recreate below with correct settings
 
         // Create notification channels matching server-side categories
         // Channel IDs must match what the server sends in android.notification.channel_id
@@ -323,6 +325,18 @@ export const useMobileStore = defineStore({
           lights: false,
           lightColor: '#5ECA24',
           vibration: false,
+        })
+
+        // ModTools - HIGH importance for mod work items and chat
+        await PushNotifications.createChannel({
+          id: 'modtools',
+          name: 'ModTools Alerts',
+          description: 'Pending messages, mod chat, and moderation work items',
+          importance: 4, // HIGH - heads-up notification
+          visibility: 1,
+          lights: true,
+          lightColor: '#0077CC',
+          vibration: true,
         })
 
         dbg()?.info('Android notification channels created')
@@ -481,7 +495,14 @@ export const useMobileStore = defineStore({
         data.count = parseInt(data.badge)
 
         if (data.count === 0) {
-          console.log('clearAllNotifications TODO')
+          // Zero-count push is the silent badge-clear from iznik-batch. Clear
+          // any leftover tray entries for this app so a stale "N pending"
+          // notification doesn't linger after the work has been handled.
+          try {
+            await PushNotifications.removeAllDeliveredNotifications()
+          } catch (e) {
+            console.log('removeAllDeliveredNotifications failed', e?.message)
+          }
         }
         console.log('handleNotification badgeCount', data.count)
         this.setBadgeCount(data.count, Badge)
