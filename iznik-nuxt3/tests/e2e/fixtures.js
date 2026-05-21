@@ -336,6 +336,7 @@ const test = base.test.extend({
       /net::ERR_SOCKET_NOT_CONNECTED.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
       /Failed to load resource.*delivery\.ilovefreegle\.org/, // External CDN not accessible in local/Docker test environments
       /Your focus-trap must have at least one container/, // Bootstrap Vue focus-trap error during modal transitions (transient, non-critical)
+      /Failed to load resource.*adtrafficquality\.google.*sodar/, // Google CSE script internally calls sodar (ad traffic quality) — external service, not our code
     ]
 
     // Initialize the working copy of allowed error patterns

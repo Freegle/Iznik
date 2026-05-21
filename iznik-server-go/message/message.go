@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -13,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/embedding"
@@ -27,6 +30,7 @@ import (
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v4"
+	"golang.org/x/net/html"
 	"gorm.io/gorm"
 )
 
@@ -34,6 +38,150 @@ import (
 var emailRegexp = regexp.MustCompile(utils.EMAIL_REGEXP)
 var phoneRegexp = regexp.MustCompile(utils.PHONE_REGEXP)
 var tnRegexp = regexp.MustCompile(utils.TN_REGEXP)
+// tnPicPageURLRegexp finds each TN "pics" page link embedded in a textbody.
+var tnPicPageURLRegexp = regexp.MustCompile(`(?m)https://trashnothing\.com/pics/\S+`)
+// tnPicHeaderRegexp strips the "Check out the pictures…" intro line.
+var tnPicHeaderRegexp = regexp.MustCompile(`(?m)^Check out the pictures[^\n]*\n?`)
+// tnPicURLLineRegexp strips individual trashnothing.com/pics/ URL lines.
+var tnPicURLLineRegexp = regexp.MustCompile(`(?m)^https://trashnothing\.com/pics/[^\n]*\n?`)
+
+// TNPageFetcher fetches a TN /pics/ page and returns direct image URLs.
+// Swappable in tests.
+var TNPageFetcher = extractTNImageURLsFromPage
+
+// TNImageFetcher downloads a TN image and returns (data, mime, error).
+// Swappable in tests.
+var TNImageFetcher = downloadTNImage
+
+func downloadTNImage(imageURL string) ([]byte, string, error) {
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(imageURL)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", err
+	}
+	mime := resp.Header.Get("Content-Type")
+	if mime == "" {
+		mime = "image/jpeg"
+	}
+	return data, mime, nil
+}
+
+// isTNImageURL returns true for direct TN image URLs (not the /pics/ page links).
+func isTNImageURL(u string) bool {
+	return strings.Contains(u, "trashnothing.com/img/") ||
+		strings.Contains(u, "img.trashnothing.com") ||
+		strings.Contains(u, "/tn-photos/") ||
+		strings.Contains(u, "photos.trashnothing.com")
+}
+
+// extractTNImageURLsFromPage fetches a TN /pics/ page and returns direct image URLs.
+func extractTNImageURLsFromPage(pageURL string) []string {
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(pageURL)
+	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if err == nil {
+			resp.Body.Close()
+		}
+		return nil
+	}
+	defer resp.Body.Close()
+
+	doc, err := html.Parse(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	var found []string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "a" {
+			for _, attr := range n.Attr {
+				if attr.Key == "href" && isTNImageURL(attr.Val) {
+					found = append(found, attr.Val)
+					break
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+
+	// Fall back to img src if no anchor hrefs found.
+	if len(found) == 0 {
+		var walkImgs func(*html.Node)
+		walkImgs = func(n *html.Node) {
+			if n.Type == html.ElementNode && n.Data == "img" {
+				for _, attr := range n.Attr {
+					if attr.Key == "src" && isTNImageURL(attr.Val) {
+						found = append(found, attr.Val)
+						break
+					}
+				}
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				walkImgs(c)
+			}
+		}
+		walkImgs(doc)
+	}
+
+	return found
+}
+
+// TNPhotoScrapeRunner launches TN photo scraping.  Swappable in tests to run synchronously.
+var TNPhotoScrapeRunner = func(db *gorm.DB, msgID uint64, picPageURLs []string) {
+	go scrapeTNPhotosToAttachments(db, msgID, picPageURLs)
+}
+
+// scrapeTNPhotosToAttachments downloads TN images from pic-page URLs and inserts
+// them as messages_attachments rows.  Errors are logged only.
+// Exported as ScrapeTNPhotosSync for test use.
+func scrapeTNPhotosToAttachments(db *gorm.DB, msgID uint64, picPageURLs []string) {
+	isPrimary := true
+	seen := map[string]bool{}
+	for _, pageURL := range picPageURLs {
+		imageURLs := TNPageFetcher(pageURL)
+		for _, imageURL := range imageURLs {
+			if seen[imageURL] {
+				continue
+			}
+			seen[imageURL] = true
+
+			data, mime, err := TNImageFetcher(imageURL)
+			if err != nil {
+				log.Printf("scrapeTNPhotos: failed to download %s: %v", imageURL, err)
+				continue
+			}
+
+			externaluid, err := aiimage.ImageUploader(data, mime)
+			if err != nil {
+				log.Printf("scrapeTNPhotos: TUS upload failed for %s: %v", imageURL, err)
+				continue
+			}
+
+			primary := 0
+			if isPrimary {
+				primary = 1
+				isPrimary = false
+			}
+			db.Exec("INSERT IGNORE INTO messages_attachments (msgid, externaluid, `primary`) VALUES (?, ?, ?)",
+				msgID, externaluid, primary)
+		}
+	}
+}
+
+// ScrapeTNPhotosSync is the synchronous variant of scrapeTNPhotosToAttachments, exposed for tests.
+var ScrapeTNPhotosSync = scrapeTNPhotosToAttachments
 
 // Declaring the table name seems to help with a race seen in testing.
 func (Message) TableName() string {
@@ -2789,8 +2937,44 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 
 	for _, msgID := range msgIDs {
 		req.ID = msgID
+
+		// TN never sends an explicit attachments array.  We detect photo changes
+		// through the textbody:
+		//   • No trashnothing.com/pics/ links → user removed all photos → remove AI.
+		//   • Links present → scrape+store TN photos AND remove AI (TN photos replace it).
+		// In both cases the AI attachment must go; in the second case we also strip the
+		// "Check out the pictures…" block from the stored textbody and kick off scraping.
+		var picPageURLs []string
+		if req.Textbody != nil {
+			picPageURLs = tnPicPageURLRegexp.FindAllString(*req.Textbody, -1)
+			if len(picPageURLs) > 0 {
+				// Strip the photo-link block before persisting the textbody.
+				stripped := tnPicHeaderRegexp.ReplaceAllString(*req.Textbody, "")
+				stripped = tnPicURLLineRegexp.ReplaceAllString(stripped, "")
+				stripped = strings.TrimSpace(stripped)
+				req.Textbody = &stripped
+			}
+		}
+
 		if err := applyPatchMessageCore(c, myid, req); err != nil {
 			return err
+		}
+
+		// Remove any AI attachment whenever textbody is updated (both cases).
+		if req.Textbody != nil {
+			var aiCount int64
+			db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
+				msgID, `%"ai":true%`).Scan(&aiCount)
+			if aiCount > 0 {
+				recordAIDeletions(db, myid, msgID, []uint64{}, nil)
+				db.Exec("DELETE FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
+					msgID, `%"ai":true%`)
+			}
+		}
+
+		// If TN photos were present, scrape them and store as attachments.
+		if len(picPageURLs) > 0 {
+			TNPhotoScrapeRunner(db, msgID, picPageURLs)
 		}
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
