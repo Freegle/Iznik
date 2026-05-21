@@ -22,6 +22,7 @@ use App\Services\UserManagementService;
 use App\Services\PushNotificationService;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -234,6 +235,7 @@ class ProcessBackgroundTasksCommand extends Command
             BackgroundTask::TASK_HOUSEKEEPER_NOTIFY      => $this->handleHousekeeperNotify($data),
             BackgroundTask::TASK_REMAP_POSTCODES         => $this->handleRemapPostcodes($data),
             BackgroundTask::TASK_USER_FORGET             => $this->handleUserForget($data),
+            BackgroundTask::TASK_TN_SYNC                 => $this->handleTnSyncCommand($data),
             default => throw new \RuntimeException("Unknown task type: {$taskType}"),
         };
     }
@@ -1433,5 +1435,44 @@ class ProcessBackgroundTasksCommand extends Command
             'user_id' => $userId,
             'reason'  => $reason,
         ]);
+    }
+
+    protected function handleTnSyncCommand(array $data): void
+    {
+        $args = [];
+
+        if (!empty($data['from'])) {
+            $args['--from'] = (string) $data['from'];
+        }
+
+        if (!empty($data['to'])) {
+            $args['--to'] = (string) $data['to'];
+        }
+
+        if (!empty($data['run_id'])) {
+            $args['--run-id'] = (string) $data['run_id'];
+        }
+
+        if (isset($data['dry_run']) && (bool) $data['dry_run']) {
+            $args['--dry-run'] = true;
+        }
+
+        if (isset($data['local_testing']) && (bool) $data['local_testing']) {
+            $args['--local-testing'] = true;
+        }
+
+        $exitCode = Artisan::call('tn:sync', $args);
+
+        Log::info('Processed tn_sync_command task', [
+            'exit_code' => $exitCode,
+            'from' => $args['--from'] ?? null,
+            'to' => $args['--to'] ?? null,
+            'run_id' => $args['--run-id'] ?? null,
+            'dry_run' => $args['--dry-run'] ?? null,
+        ]);
+
+        if ($exitCode !== 0) {
+            throw new \RuntimeException("tn:sync failed with exit code {$exitCode}");
+        }
     }
 }

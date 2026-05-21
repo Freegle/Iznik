@@ -6,6 +6,31 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+/**
+ * @property int $id
+ * @property \Illuminate\Support\Carbon $timestamp
+ * @property int $msgid
+ * @property string $outcome
+ * @property int|null $happiness
+ * @property string|null $comments
+ * @property int $reviewed
+ * @property-read \App\Models\Message $message
+ * @method static Builder<static>|MessageOutcome expired()
+ * @method static Builder<static>|MessageOutcome newModelQuery()
+ * @method static Builder<static>|MessageOutcome newQuery()
+ * @method static Builder<static>|MessageOutcome query()
+ * @method static Builder<static>|MessageOutcome repost()
+ * @method static Builder<static>|MessageOutcome successful()
+ * @method static Builder<static>|MessageOutcome whereComments($value)
+ * @method static Builder<static>|MessageOutcome whereHappiness($value)
+ * @method static Builder<static>|MessageOutcome whereId($value)
+ * @method static Builder<static>|MessageOutcome whereMsgid($value)
+ * @method static Builder<static>|MessageOutcome whereOutcome($value)
+ * @method static Builder<static>|MessageOutcome whereReviewed($value)
+ * @method static Builder<static>|MessageOutcome whereTimestamp($value)
+ * @method static Builder<static>|MessageOutcome withdrawn()
+ * @mixin \Eloquent
+ */
 class MessageOutcome extends Model
 {
     protected $table = 'messages_outcomes';

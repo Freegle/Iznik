@@ -775,6 +775,7 @@ class User extends Entity
         # Invalidate cache.
         $this->emails = NULL;
 
+
         $rc = $this->dbhm->preExec("DELETE FROM users_emails WHERE userid = ? AND email = ?;",
             [$this->id, $email]);
         return ($rc);
@@ -3052,12 +3053,14 @@ class User extends Entity
                                 $this->dbhm->preExec("UPDATE chat_messages SET chatid = {$alreadys[0]['id']} WHERE chatid = {$room['id']}");
 
                                 # Make sure latestmessage is set correctly.
+                                $traceLatestMessage = strlen($room['latestmessage']) > 50 ? ('len=' . strlen($room['latestmessage'])) : $room['latestmessage'];
                                 $this->dbhm->preExec("UPDATE chat_rooms SET latestmessage = GREATEST(latestmessage, ?) WHERE id = ?", [
                                     $room['latestmessage'],
                                     $alreadys[0]['id']
                                 ]);
                             } else {
                                 # No, there isn't, so we can update our old one.
+                                $traceColumn = $room['user1'] == $id2 ? 'user1' : 'user2';
                                 $sql = $room['user1'] == $id2 ? "UPDATE chat_rooms SET user1 = $id1 WHERE id = {$room['id']};" : "UPDATE chat_rooms SET user2 = $id1 WHERE id = {$room['id']};";
                                 $this->dbhm->preExec($sql);
                             }
@@ -3181,12 +3184,13 @@ class User extends Entity
 
                     if ($rc) {
                         # Log the merge - before the delete otherwise we will fail to log it.
+                        $mergeText = "Merged $id2 into $id1 ($reason)";
                         $l->log([
                             'type' => Log::TYPE_USER,
                             'subtype' => Log::SUBTYPE_MERGED,
                             'user' => $id2,
                             'byuser' => $me ? $me->getId() : NULL,
-                            'text' => "Merged $id2 into $id1 ($reason)"
+                            'text' => $mergeText
                         ]);
 
                         # Log under both users to make sure we can trace it.
@@ -3195,7 +3199,7 @@ class User extends Entity
                             'subtype' => Log::SUBTYPE_MERGED,
                             'user' => $id1,
                             'byuser' => $me ? $me->getId() : NULL,
-                            'text' => "Merged $id2 into $id1 ($reason)"
+                            'text' => $mergeText
                         ]);
                     }
 
@@ -3231,6 +3235,11 @@ class User extends Entity
                     #
                     # Make sure we don't pick up an old cached version, as we've just changed it quite a bit.
                     error_log("Merged $id1 < $id2, $reason");
+                    $deletemembs = $this->dbhr->preQuery("SELECT groupid FROM memberships WHERE userid = ?;", [
+                        $id2
+                    ]);
+                    foreach ($deletemembs as $deletememb) {
+                    }
                     $deleteme = new User($this->dbhm, $this->dbhm, $id2);
                     $rc = $deleteme->delete(NULL, NULL, NULL, FALSE);
                 }

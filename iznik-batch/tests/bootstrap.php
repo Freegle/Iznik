@@ -1,5 +1,27 @@
 <?php
 
+// When PHPUnit runs tests in separate processes (#[RunTestsInSeparateProcesses]),
+// this bootstrap is executed in each child process as well as the main process.
+// Running migrations 41+ times would be catastrophically slow.
+//
+// Detection: the main process writes a PID lock file after completing migrations.
+// Child processes (spawned by the main process) find the lock file and see the
+// main process is still alive → skip the heavy setup. The lock expires automatically
+// when the main process exits, so the next test run always gets a fresh migration.
+$migrationLockFile = sys_get_temp_dir().'/phpunit_iznik_migrations_'.md5(__DIR__).'.lock';
+
+$runSetup = true;
+if (file_exists($migrationLockFile)) {
+    $lockData = @json_decode(@file_get_contents($migrationLockFile), true);
+    if (
+        isset($lockData['pid']) &&
+        function_exists('posix_kill') &&
+        posix_kill((int) $lockData['pid'], 0)
+    ) {
+        $runSetup = false;
+    }
+}
+
 // Clear config cache before loading Laravel.
 // When running tests, we need phpunit.xml env vars to take effect.
 // If config is cached, Laravel ignores env vars and uses the cached values.
@@ -9,6 +31,11 @@ if (file_exists($configCachePath)) {
 }
 
 require __DIR__.'/../vendor/autoload.php';
+
+if (! $runSetup) {
+    // Child process: autoloader is all that's needed. setUp() creates the app.
+    return;
+}
 
 $app = require __DIR__.'/../bootstrap/app.php';
 $app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap();
@@ -38,3 +65,6 @@ if ($exitCode !== 0) {
     die("Migration failed with exit code $exitCode\n");
 }
 echo "Migrations complete.\n";
+
+// Write lock file so child processes (spawned by this process) skip migrations.
+file_put_contents($migrationLockFile, json_encode(['pid' => getmypid(), 'time' => time()]));

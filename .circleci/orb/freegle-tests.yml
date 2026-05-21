@@ -2117,6 +2117,10 @@ jobs:
                 git reset --hard HEAD
                 git clean -fd
                 git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+                # Second clean: removes files from previous branch that git checkout couldn't
+                # delete (e.g., root-owned files created by Docker containers via bind mounts,
+                # or files left by concurrent builds sharing the workspace directory).
+                git clean -fd
               else
                 # git clone fails when the directory isn't empty (leftover files from
                 # a previous build). Use git init + fetch instead, which works either way.
@@ -2126,6 +2130,7 @@ jobs:
                 git fetch --prune origin
                 git clean -fd
                 git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+                git clean -fd
               fi
             }
 
@@ -3880,6 +3885,8 @@ jobs:
             rm -f capacitor.config.ts
             cp capacitor.config.modtools.js capacitor.config.js
             npx cap sync ios
+            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ModTools" ios/App/App/Info.plist
+            echo "✅ Set CFBundleDisplayName to ModTools"
       - run:
           name: Set ModTools App Icons for iOS
           command: |

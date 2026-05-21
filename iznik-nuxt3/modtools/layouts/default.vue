@@ -54,7 +54,6 @@
             </b-button>
             <b-badge
               v-show="menuCount"
-              v-if="!showMenu"
               variant="danger"
               class="menuCount position-absolute"
               @click="toggleMenu"
@@ -454,7 +453,7 @@ onMounted(async () => {
       })
     } else {
       authStore.forceLogin = true
-      loginModal.value?.show()
+      loginModal.value?.showLogin()
     }
     return
   }
@@ -524,7 +523,7 @@ async function logOut() {
 
 function requestLogin() {
   console.log('MODTOOLS.VUE requestLogin')
-  loginModal.value.show()
+  loginModal.value.showLogin()
 }
 
 function clicklogo(e) {

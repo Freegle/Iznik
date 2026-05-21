@@ -50,4 +50,5 @@ class BackgroundTask extends Model
     public const TASK_REFER_TO_SUPPORT          = 'refer_to_support';
     public const TASK_REMAP_POSTCODES           = 'remap_postcodes';
     public const TASK_USER_FORGET               = 'user_forget';
+    public const TASK_TN_SYNC                   = 'tn_sync_command';
 }

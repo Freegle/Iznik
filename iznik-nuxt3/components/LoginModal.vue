@@ -384,6 +384,12 @@ function show() {
   bumpIt()
 }
 
+function showLogin() {
+  forceSignIn.value = true
+  showSignUp.value = false
+  show()
+}
+
 function hide() {
   pleaseShowModal.value = false
 }
@@ -971,6 +977,7 @@ onBeforeUnmount(() => {
 // Expose methods to parent components
 defineExpose({
   show,
+  showLogin,
   hide,
   tryLater,
   showModal,
