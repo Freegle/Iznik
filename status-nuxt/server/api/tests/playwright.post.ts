@@ -276,14 +276,19 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         // to the actual code under test. Drop + recreate + migrate + testenv restores
         // the same clean state that the main run started from.
         appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Resetting test database to clean state...\n`)
+        // Brief pause to let MySQL connections from the completed test run settle
+        // before issuing DDL. After 11 parallel workers finish, InnoDB dirty pages
+        // and open transactions need a moment to flush; without this the DROP DATABASE
+        // can hold the DDL lock for > 2 minutes and timeout.
+        await new Promise((r) => setTimeout(r, 10000))
         try {
           execSync(
             `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
-            { encoding: 'utf8', timeout: 120000 }
+            { encoding: 'utf8', timeout: 300000 }
           )
           execSync(
             `docker exec ${pfx}-batch php artisan migrate --force --no-interaction`,
-            { encoding: 'utf8', timeout: 120000 }
+            { encoding: 'utf8', timeout: 300000 }
           )
           execSync(
             `docker exec ${pfx}-apiv1 sh -c "rm -f /tmp/iznik.dbstatus.*.down && cd /var/www/iznik && php install/testenv.php"`,
