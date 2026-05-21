@@ -2090,7 +2090,7 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
 
   {
     name: 'persist_classifications',
-    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. Upserts each bug/retest classification as "open" (or "deferred" if type is deferred). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
+    description: 'Persist TRIAGE classifications to the discourse_bug table so the status post reflects all identified bugs, not just ones with PRs. Upserts each bug/retest classification as "open" (or "deferred" if type is deferred, "feature-request" if type is feature_request). Already-fixed bugs are not downgraded. Returns {upserted: number, skipped: number}.',
     paramsSchema: { type: 'object', properties: {} },
     handler: async (_params, context) => {
       const ctx = context as any
@@ -2104,7 +2104,24 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         c.post = post
         // Only persist actionable classifications — skip mine/off_topic/already_fixed/confirmed
         const type = c.type as string
-        if (!['bug', 'retest', 'deferred', 'question'].includes(type)) { skipped++; continue }
+        if (!['bug', 'retest', 'deferred', 'question', 'feature_request'].includes(type)) { skipped++; continue }
+
+        // Feature requests are stored directly — no dedup, no regression check, no git-fixed check.
+        if (type === 'feature_request') {
+          const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, post) as { state: string } | undefined
+          if (existing && existing.state === 'feature-request') { skipped++; continue }
+          upsertDiscourseBug(db, {
+            topic: Number(c.topic), post: Number(post),
+            topicTitle: c.topicTitle ?? null, reporter: c.user ?? null,
+            excerpt: c.summary ?? c.originalPostText?.slice(0, 200) ?? null,
+            state: 'feature-request', featureArea: c.featureArea ?? undefined,
+            reason: c.reason ?? undefined,
+          })
+          out(`persist_classifications: topic ${c.topic}/${post} persisted as feature-request`)
+          upserted++
+          continue
+        }
+
         const state = type === 'deferred' ? 'deferred' : type === 'question' ? 'deferred' : 'open'
         // Don't downgrade a bug already in fix-queued or fixed state
         const existing = db.prepare('SELECT state FROM discourse_bug WHERE topic = ? AND post = ?').get(c.topic, c.post) as { state: string } | undefined
@@ -2233,6 +2250,49 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         upserted++
       }
       return { upserted, skipped }
+    },
+  },
+
+  {
+    name: 'reparse_recent_topics',
+    description: 'Reset topic cursors for Discourse topics that have deferred/open bug entries from the last N days so that the next triage iteration re-fetches those posts and can reclassify them (e.g. to feature_request). Self-guards with a KV key so it only runs once per schema version — safe to call unconditionally. Returns {reset: number, topics: number[], skipped?: string}. Params: {days?: number} (default 14).',
+    paramsSchema: {
+      type: 'object',
+      properties: {
+        days: { type: 'number', description: 'How many days back to look (default 14).' },
+      },
+    },
+    handler: async (params: any) => {
+      const db = getDb()
+      const KV_KEY = 'reparse_done_v4'
+      if (kvGet(db, KV_KEY) === '1') {
+        return { reset: 0, topics: [], skipped: 'already ran for schema v4' }
+      }
+
+      const days: number = typeof params?.days === 'number' ? params.days : 14
+      // Find topics with deferred entries in the last N days
+      const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString()
+      const staleEntries = db.prepare(`
+        SELECT topic, MIN(post) AS min_post
+        FROM discourse_bug
+        WHERE state IN ('deferred', 'open')
+          AND last_seen_at >= ?
+        GROUP BY topic
+      `).all(cutoff) as Array<{ topic: number; min_post: number }>
+
+      let reset = 0
+      const topics: number[] = []
+      for (const entry of staleEntries) {
+        // Reset cursor to just before the earliest post we want re-classified
+        const targetPost = Math.max(0, entry.min_post - 1)
+        setTopicCursor(db, entry.topic, targetPost)
+        topics.push(entry.topic)
+        reset++
+        out(`reparse_recent_topics: reset cursor for topic ${entry.topic} to ${targetPost}`)
+      }
+
+      kvSet(db, KV_KEY, '1')
+      return { reset, topics }
     },
   },
 

@@ -333,6 +333,21 @@ async function handleApi(db: DB, req: IncomingMessage, res: ServerResponse, path
     return
   }
 
+  // GET /api/feature-requests
+  if (req.method === 'GET' && path === '/api/feature-requests') {
+    const rows = db.prepare(`
+      SELECT b.topic, b.post, b.topic_title, b.reporter, b.excerpt, b.state,
+             b.pr_number, b.reason, b.first_seen_at, b.last_seen_at,
+             b.feature_area, b.pr_rejections,
+             COALESCE(b.feature_area, 'General') AS group_key
+      FROM discourse_bug b
+      WHERE b.state = 'feature-request'
+      ORDER BY b.last_seen_at DESC
+    `).all()
+    json(res, 200, rows)
+    return
+  }
+
   // GET /api/drafts
   if (req.method === 'GET' && path === '/api/drafts') {
     const rows = db.prepare(`
