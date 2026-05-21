@@ -34,6 +34,10 @@ import (
 var emailRegexp = regexp.MustCompile(utils.EMAIL_REGEXP)
 var phoneRegexp = regexp.MustCompile(utils.PHONE_REGEXP)
 var tnRegexp = regexp.MustCompile(utils.TN_REGEXP)
+// tnPhotoLinkRegexp matches the "Check out the pictures" photo-link block that TN
+// appends to textbody when a post has photos.  Absence of this pattern in an
+// updated textbody means the TN user intentionally removed all their photos.
+var tnPhotoLinkRegexp = regexp.MustCompile(`https://trashnothing\.com/pics/`)
 
 // Declaring the table name seems to help with a race seen in testing.
 func (Message) TableName() string {
@@ -2791,6 +2795,22 @@ func PatchMessageByTN(c *fiber.Ctx) error {
 		req.ID = msgID
 		if err := applyPatchMessageCore(c, myid, req); err != nil {
 			return err
+		}
+
+		// TN never sends an explicit attachments array — photo removal is signalled
+		// by the absence of a trashnothing.com/pics/ link in the updated textbody.
+		// When we see a textbody update with no photo links, treat any remaining AI
+		// attachment as implicitly removed: record the deletion (sets messages_ai_declined
+		// to block cron re-injection) and delete the attachment row.
+		if req.Textbody != nil && !tnPhotoLinkRegexp.MatchString(*req.Textbody) {
+			var aiCount int64
+			db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
+				msgID, `%"ai":true%`).Scan(&aiCount)
+			if aiCount > 0 {
+				recordAIDeletions(db, myid, msgID, []uint64{}, nil)
+				db.Exec("DELETE FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?",
+					msgID, `%"ai":true%`)
+			}
 		}
 	}
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
