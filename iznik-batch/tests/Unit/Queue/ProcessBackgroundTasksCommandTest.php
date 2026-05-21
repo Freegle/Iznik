@@ -151,6 +151,42 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertNull($task->failed_at);
     }
 
+    public function test_email_chitchat_report_sends_without_user_email(): void
+    {
+        // Regression: reporter with no preferred=1 email queues an empty user_email.
+        // The consumer must still send the report — user_id identifies the reporter.
+        Mail::fake();
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_chitchat_report',
+            'data' => json_encode([
+                'user_id' => 99001,
+                'user_name' => 'No-Email Reporter',
+                'user_email' => '',
+                'newsfeed_id' => 88001,
+                'reason' => 'Spam',
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        Mail::assertSent(ChitchatReportMail::class, function (ChitchatReportMail $mail) {
+            return $mail->reporterId === 99001
+                && $mail->newsfeedId === 88001
+                && $mail->reporterEmail === '';
+        });
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+        $this->assertNull($task->failed_at);
+    }
+
     public function test_skips_already_processed_tasks(): void
     {
         DB::table('background_tasks')->insert([
