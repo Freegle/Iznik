@@ -17,7 +17,8 @@
         "sentry/sentry-laravel": "^4.20",
         "simple-as-fuck/laravel-lock": "^0.4.0",
         "spatie/mjml-php": "^1.2",
-        "zbateson/mail-mime-parser": "^3.0"
+        "zbateson/mail-mime-parser": "^3.0",
+        "trashnothing/public-api": "*"
     },
     "require-dev": {
         "barryvdh/laravel-ide-helper": "*",
@@ -94,5 +95,14 @@
         }
     },
     "minimum-stability": "stable",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "repositories": [
+        {
+            "type": "path",
+            "url": "./app/Services/TrashNothing/PublicApi",
+            "options": {
+                "symlink": true
+            }
+        }
+    ]
 }
