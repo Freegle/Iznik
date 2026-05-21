@@ -8,7 +8,7 @@
 import { writeFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { Database as DB } from 'better-sqlite3'
-import { listOpenDiscourseBugs, listPendingDrafts, listTopicCursors, kvGet } from './index.js'
+import { listOpenDiscourseBugs, listFeatureRequests, listPendingDrafts, listTopicCursors, kvGet } from './index.js'
 import { DISCOURSE_BASE } from '../discourse.js'
 
 export const FS_DIR = '/tmp/freegle-monitor'
@@ -67,6 +67,7 @@ export async function renderDraftsMd(db: DB, path = DRAFTS_PATH): Promise<void> 
 
 export async function renderSummaryMd(db: DB, path = SUMMARY_PATH): Promise<void> {
   const openBugs = listOpenDiscourseBugs(db)
+  const featureRequests = listFeatureRequests(db)
   const pending = listPendingDrafts(db)
   const iterCount = (db.prepare('SELECT COUNT(*) AS c FROM iteration').get() as { c: number }).c
   const firstIter = db.prepare('SELECT MIN(started_at) AS t FROM iteration').get() as { t: string | null }
@@ -88,6 +89,18 @@ export async function renderSummaryMd(db: DB, path = SUMMARY_PATH): Promise<void
       const excerpt = (b.excerpt ?? '').replace(/\|/g, '\\|').slice(0, 120)
       lines.push(
         `| [${b.topic}.${b.post}](${DISCOURSE_BASE}/t/${b.topic}/${b.post}) | ${b.reporter ?? '—'} | ${excerpt} | ${b.state} | ${(b.reason ?? '').slice(0, 100)} |`,
+      )
+    }
+    lines.push('')
+  }
+
+  if (featureRequests.length > 0) {
+    lines.push('## Feature requests', '')
+    lines.push('| Topic.Post | Reporter | Summary |', '|---|---|---|')
+    for (const b of featureRequests) {
+      const excerpt = (b.excerpt ?? '').replace(/\|/g, '\\|').slice(0, 120)
+      lines.push(
+        `| [${b.topic}.${b.post}](${DISCOURSE_BASE}/t/${b.topic}/${b.post}) | ${b.reporter ?? '—'} | ${excerpt} |`,
       )
     }
     lines.push('')
