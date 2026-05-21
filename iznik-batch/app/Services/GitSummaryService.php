@@ -96,9 +96,9 @@ class GitSummaryService
      * @param string $branch Branch name.
      * @param int $since Unix timestamp.
      * @param int|null $until Unix timestamp (optional end date for catching up).
-     * @return array|null Repository changes or null if no changes.
+     * @return array|false|null Repository changes, false if clone failed, null if no changes.
      */
-    public function getRepositoryChanges(string $repoUrl, string $branch, int $since, ?int $until = null): ?array
+    public function getRepositoryChanges(string $repoUrl, string $branch, int $since, ?int $until = null): array|false|null
     {
         $tempDir = sys_get_temp_dir() . '/iznik_git_' . uniqid();
         mkdir($tempDir);
@@ -130,7 +130,7 @@ class GitSummaryService
                     'branch' => $branch,
                     'output' => $rawOutput,
                 ]);
-                return null;
+                return false;
             }
 
             $cwd = getcwd();
@@ -302,6 +302,11 @@ class GitSummaryService
             ]);
 
             $changes = $this->getRepositoryChanges($repo['url'], $repo['branch'], $since, $until);
+
+            if ($changes === false) {
+                Log::warning('GitSummaryService: Failed to fetch repository', ['repo' => $repo['name']]);
+                continue;
+            }
 
             if ($changes === null) {
                 Log::info('GitSummaryService: No changes found', ['repo' => $repo['name']]);
