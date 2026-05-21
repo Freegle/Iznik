@@ -32,10 +32,6 @@ PARENT_ENV="$(dirname "$0")/../.env"
 if [ -f "$PARENT_ENV" ]; then
   set -a; { source "$PARENT_ENV"; } 2>/dev/null || true; set +a
 fi
-# The parent .env contains ANTHROPIC_API_KEY for Docker containers.
-# Unset it here so the claude CLI uses the subscription (OAuth), not the
-# direct API — which has much lower rate limits and burns API credits.
-unset ANTHROPIC_API_KEY
 
 # ── Single-instance guard ─────────────────────────────────────────────────────
 # Prevent two run-loop.sh processes from running concurrently (e.g. if the
