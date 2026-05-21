@@ -10,6 +10,7 @@ use App\Models\UserAboutMe;
 use App\Models\UserEmail;
 use App\Models\UserReplyTime;
 use App\Services\LokiService;
+use App\Services\TrashNothing\Sync\PostSyncer;
 use App\Traits\GracefulShutdown;
 use App\Traits\LogsBatchJob;
 use Illuminate\Console\Command;
@@ -21,7 +22,7 @@ class TNSyncCommand extends Command
 {
     use GracefulShutdown;
     use LogsBatchJob;
-    
+
     // TODO Finnbarr: remove this after testing is complete. The Laravel scheduler's withoutOverlapping will handle locking.
     use PreventsOverlapping;
 
@@ -103,6 +104,13 @@ class TNSyncCommand extends Command
                 // Merge duplicate TN users.
                 $duplicatesMerged = $this->mergeDuplicateTNUsers();
 
+                // Sync posts.
+                $postSyncer = new PostSyncer($this->dryRun, $this->localTesting, $this->apiKey, $this->apiBaseUrl, $this->loki);
+                [$postsProcessed, $postsMaxDate] = $postSyncer->sync($from, $to);
+                if ($postsMaxDate && (!$maxChangeDate || $postsMaxDate > $maxChangeDate)) {
+                    $maxChangeDate = $postsMaxDate;
+                }
+
                 // Store the max change date for next sync.
                 if ($maxChangeDate) {
                     $this->storeSyncDate($maxChangeDate);
@@ -110,21 +118,22 @@ class TNSyncCommand extends Command
                     Log::info('No change date to store - no data processed');
                 }
 
-                if ($ratingsProcessed === 0 && $changesProcessed === 0 && $duplicatesMerged === 0) {
+                if ($ratingsProcessed === 0 && $changesProcessed === 0 && $duplicatesMerged === 0 && $postsProcessed === 0) {
                     Log::warning('TN sync did nothing');
                     if (function_exists('\Sentry\captureMessage')) {
                         \Sentry\captureMessage('TN sync did nothing');
                     }
                 }
 
-                $this->info("TN sync complete: {$ratingsProcessed} ratings, {$changesProcessed} user changes, {$duplicatesMerged} duplicates merged.");
+                $this->info("TN sync complete: {$ratingsProcessed} ratings, {$changesProcessed} user changes, {$duplicatesMerged} duplicates merged, {$postsProcessed} posts.");
                 Log::info('TN sync complete', [
                     'ratings_processed' => $ratingsProcessed,
                     'changes_processed' => $changesProcessed,
                     'duplicates_merged' => $duplicatesMerged,
+                    'posts_processed' => $postsProcessed,
                 ]);
 
-                Log::info("TN-SYNC-TRACE [END] ratings={$ratingsProcessed} changes={$changesProcessed} merges={$duplicatesMerged} max_date=" . ($maxChangeDate ?? 'null'));
+                Log::info("TN-SYNC-TRACE [END] ratings={$ratingsProcessed} changes={$changesProcessed} merges={$duplicatesMerged} posts={$postsProcessed} max_date=" . ($maxChangeDate ?? 'null'));
 
                 return Command::SUCCESS;
             });
