@@ -11,6 +11,10 @@ use LanguageDetection\Language;
 
 class ContentCheckService
 {
+    public function __construct(
+        private readonly ?ContentEmbeddingService $embeddingService = null,
+    ) {}
+
     public const CHECK_CONCERN_KEYWORD    = 'ConcernKeyword';
     public const CHECK_VAGUE             = 'Vague';
     public const CHECK_PHONE_NUMBER      = 'PhoneNumber';
@@ -482,6 +486,13 @@ class ContentCheckService
             }
 
             if (!empty($kw->exclude) && $this->safePreg('/' . $kw->exclude . '/i', $original)) {
+                continue;
+            }
+
+            // Contextual check: if the embedding service identifies this as an
+            // innocent use of the keyword (e.g. "glue gun" vs real weapon),
+            // skip the flag. Falls back to flagging when the sidecar is absent.
+            if ($this->embeddingService?->isInnocentContext($original, $kw->category)) {
                 continue;
             }
 

@@ -1344,6 +1344,9 @@ services:
       mjml:
         condition: service_healthy
         required: false
+      embedding-sidecar:
+        condition: service_healthy
+        required: false
     restart: "no"
     environment:
       - APP_NAME=Freegle Batch Jobs
@@ -1383,6 +1386,7 @@ services:
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100
       - MJML_URL=http://mjml/
+      - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
       - FREEGLE_AVATAR_SERVER_URL=http://apiv2.localhost:${PORT_TRAEFIK_HTTP:-80}/api/avatar
       - FREEGLE_MAIL_ENABLED_TYPES=Welcome,ChatNotification,ChatNotificationUser2Mod,ChatNotificationMod2Mod,Digest,UnifiedDigest,DonationThank,DonationAsk,ChaseUp,AutoRepost,MessageExpiry,NotificationChaseUp,StoriesNewsletter
       # CI=true skips supervisor startup to prevent Laravel bootstrap race conditions.
