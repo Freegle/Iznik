@@ -173,11 +173,14 @@ class SpamCleanupService
         // UPDATEs in the chat notification pipeline (same class of failure
         // we hit at 02:08 UTC 15 May in ChatExpectedService). Updating by
         // single id keeps each statement's lock window to milliseconds.
+        // Stream ids in keyset-paginated chunks rather than pluck()-ing the whole
+        // spammer chat_messages backlog into memory. Setting reviewrejected only
+        // moves rows out of the filter behind the cursor, so lazyById is safe here.
         $updated = 0;
-        foreach ($idsQuery->pluck('id') as $id) {
+        foreach ($idsQuery->lazyById(1000) as $row) {
             $updated += DB::update(
                 'UPDATE chat_messages SET reviewrejected = 1, reviewrequired = 0 WHERE id = ?',
-                [$id],
+                [$row->id],
             );
         }
 

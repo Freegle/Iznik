@@ -96,9 +96,9 @@ class UnifiedDigestService
      *
      * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
      * @param int|null $userId Specific user ID to process
-     * @return Collection
+     * @return \Illuminate\Support\LazyCollection
      */
-    protected function getUsersForDigest(string $mode, ?int $userId = null): Collection
+    protected function getUsersForDigest(string $mode, ?int $userId = null): \Illuminate\Support\LazyCollection
     {
         $query = User::query()
             ->whereNull('deleted')
@@ -132,7 +132,10 @@ class UnifiedDigestService
             });
         }
 
-        return $query->with(['emails', 'memberships'])->get();
+        // Stream in keyset-paginated chunks with eager loads applied per chunk — these
+        // are full User models with relations, so a single get() over the 90-day-active
+        // userbase exhausts memory. The caller's take($limit) stays lazy.
+        return $query->with(['emails', 'memberships'])->lazyById(500);
     }
 
     /**

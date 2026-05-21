@@ -44,18 +44,20 @@ class EngageEmailService
         $atRiskSent = $this->sendToUsers(self::ENGAGEMENT_AT_RISK, $atRiskUserIds, true, $dryRun);
 
         // "Inactive" — users already classified as Inactive in users.engagement
+        // Stream the (large) Inactive cohort in keyset-paginated chunks rather than
+        // pluck()-ing every id into memory at once — Inactive is the dominant state.
         $inactiveUserIds = DB::table('users')
             ->where('engagement', self::ENGAGEMENT_INACTIVE)
             ->whereNull('deleted')
-            ->pluck('id')
-            ->toArray();
+            ->lazyById(1000)
+            ->pluck('id');
 
         $inactiveSent = $this->sendToUsers(self::ENGAGEMENT_INACTIVE, $inactiveUserIds, false, $dryRun);
 
         return ['at_risk_sent' => $atRiskSent, 'inactive_sent' => $inactiveSent];
     }
 
-    private function sendToUsers(string $engagement, array $userIds, bool $force, bool $dryRun): int
+    private function sendToUsers(string $engagement, iterable $userIds, bool $force, bool $dryRun): int
     {
         $count = 0;
 
