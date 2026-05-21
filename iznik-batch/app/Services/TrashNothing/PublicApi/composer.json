@@ -1,0 +1,38 @@
+{
+    "description": "This is the REST API for [trashnothing.com](https://trashnothing.com).  To learn more about the API or to register your app for use with the API visit the [Trash Nothing Developer page](https://trashnothing.com/app/developer).  NOTE: All date-time values are [UTC](https://en.wikipedia.org/wiki/Coordinated_Universal_Time) and are in [ISO 8601 format](https://en.wikipedia.org/wiki/ISO_8601) (eg. 2019-02-03T01:23:53).",
+    "keywords": [
+        "openapitools",
+        "openapi-generator",
+        "openapi",
+        "php",
+        "sdk",
+        "rest",
+        "api"
+    ],
+    "homepage": "https://openapi-generator.tech",
+    "license": "unlicense",
+    "authors": [
+        {
+            "name": "OpenAPI",
+            "homepage": "https://openapi-generator.tech"
+        }
+    ],
+    "require": {
+        "php": "^8.1",
+        "ext-curl": "*",
+        "ext-json": "*",
+        "ext-mbstring": "*",
+        "guzzlehttp/guzzle": "^7.3",
+        "guzzlehttp/psr7": "^1.7 || ^2.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^8.0 || ^9.0",
+        "friendsofphp/php-cs-fixer": "^3.5"
+    },
+    "autoload": {
+        "psr-4": { "OpenAPI\\Client\\" : "lib/" }
+    },
+    "autoload-dev": {
+        "psr-4": { "OpenAPI\\Client\\Test\\" : "test/" }
+    }
+}
