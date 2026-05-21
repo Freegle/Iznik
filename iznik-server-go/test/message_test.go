@@ -1127,6 +1127,50 @@ func TestPostMessageDelete(t *testing.T) {
 	assert.Contains(t, taskData, "\"action\": \"Delete Approved Message\"", "Delete should include action field for BCC lookup")
 }
 
+// TestPostMessageDeleteNoDuplicateLog asserts that POST /message?action=Delete does NOT
+// synchronously write a Message/Deleted row to the logs table.  The batch processor
+// (ProcessBackgroundTasksCommand) is the sole writer: it inserts the row when it picks up
+// the email_message_rejected background task.  Adding a second synchronous write in the Go
+// handler creates an identical duplicate in production (one from Go, one from PHP).
+//
+// AssertFlip step 1 (BUGGY behaviour — count == 1): PASSES on current code because the
+// recent fix added logAndNotifyMods() to handleDeleteMessage.
+// AssertFlip step 2 (CORRECT behaviour — count == 0): asserted here; FAILS on buggy code.
+func TestPostMessageDeleteNoDuplicateLog(t *testing.T) {
+	prefix := uniquePrefix("msgmod_del_duplog")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	body := map[string]interface{}{
+		"id":     msgID,
+		"action": "Delete",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The Go handler must NOT write a Message/Deleted log entry directly.
+	// The batch processor writes it when processing the email_message_rejected task.
+	// A sync write here produces a duplicate in production (Go + PHP = 2 identical rows).
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND msgid = ?",
+		log.LOG_TYPE_MESSAGE, log.LOG_SUBTYPE_DELETED, msgID).Scan(&logCount)
+	assert.Equal(t, int64(0), logCount,
+		"handleDeleteMessage must not sync-write a logs row: count expected 0, batch processor is the sole writer")
+}
+
 // --- Test: Spam ---
 
 func TestPostMessageSpam(t *testing.T) {
