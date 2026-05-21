@@ -132,7 +132,7 @@ function mountLayout(stubs = {}) {
         LoginModal: {
           template: '<span />',
           setup() {
-            return { show: vi.fn(), showModal: false }
+            return { show: vi.fn(), showLogin: vi.fn(), showModal: false }
           },
         },
         ModMenuItemLeft: { template: '<div />' },
