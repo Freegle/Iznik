@@ -16,14 +16,14 @@ import (
 // newInternalApp builds the unauthenticated (internal) app for testing.
 func newInternalApp(t *testing.T) *fiber.App {
 	t.Helper()
-	g := getBristolGraph(t)
+	g := getTestGraph(t)
 	return newApp(g, "", false)
 }
 
 // newExternalApp builds the JWT-authenticated (external) app for testing.
 func newExternalApp(t *testing.T) *fiber.App {
 	t.Helper()
-	g := getBristolGraph(t)
+	g := getTestGraph(t)
 	return newApp(g, "", true)
 }
 
@@ -64,8 +64,8 @@ func TestHealth(t *testing.T) {
 	if m["status"] != "ok" {
 		t.Errorf("status=%v", m["status"])
 	}
-	if nodes, ok := m["nodes"].(float64); !ok || nodes < 10000 {
-		t.Errorf("nodes=%v, expected ≥10000", m["nodes"])
+	if nodes, ok := m["nodes"].(float64); !ok || nodes < 100 {
+		t.Errorf("nodes=%v, expected ≥100", m["nodes"])
 	}
 }
 

@@ -30,6 +30,7 @@ func FindNearestPolygon(idx *Index, lng, lat float64, limit int) ([]QueryResult,
 		extra map[string]any
 	}
 	var collected []match
+	seen := make(map[int64]struct{})
 
 	for level, radius := range bufferLevels {
 		candidates, err := QueryBBox(idx, lng-radius, lng+radius, lat-radius, lat+radius)
@@ -46,6 +47,9 @@ func FindNearestPolygon(idx *Index, lng, lat float64, limit int) ([]QueryResult,
 		}
 
 		for _, c := range candidates {
+			if _, already := seen[c.ExtID]; already {
+				continue
+			}
 			if c.WKB == nil {
 				continue
 			}
@@ -54,6 +58,7 @@ func FindNearestPolygon(idx *Index, lng, lat float64, limit int) ([]QueryResult,
 				continue
 			}
 			if geom.Intersects(g, circle) {
+				seen[c.ExtID] = struct{}{}
 				collected = append(collected, match{level, c.Area, c.ExtID, c.Extra})
 			}
 		}

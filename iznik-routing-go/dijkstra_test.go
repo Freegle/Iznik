@@ -4,23 +4,20 @@ import (
 	"testing"
 )
 
-var bristolGraph *Graph
+// testGraph is the shared 50×50 grid used across all algorithm tests.
+var testGraph *Graph
 
-func getBristolGraph(t *testing.T) *Graph {
+func getTestGraph(t *testing.T) *Graph {
 	t.Helper()
-	if bristolGraph != nil {
-		return bristolGraph
+	if testGraph != nil {
+		return testGraph
 	}
-	g, err := BuildGraph(bristolPBF, nil)
-	if err != nil {
-		t.Fatalf("BuildGraph: %v", err)
-	}
-	bristolGraph = g
-	return g
+	testGraph = makeTestGrid(nil)
+	return testGraph
 }
 
 func TestIsochrone_Walk15min(t *testing.T) {
-	g := getBristolGraph(t)
+	g := getTestGraph(t)
 	result := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
 
 	if len(result.ReachedNodes) < 100 {
@@ -37,7 +34,7 @@ func TestIsochrone_Walk15min(t *testing.T) {
 }
 
 func TestIsochrone_Drive15min_LargerThanWalk(t *testing.T) {
-	g := getBristolGraph(t)
+	g := getTestGraph(t)
 	walk := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
 	drive := Isochrone(g, 51.4545, -2.5879, 15*60, Drive)
 
@@ -49,7 +46,7 @@ func TestIsochrone_Drive15min_LargerThanWalk(t *testing.T) {
 }
 
 func TestIsochrone_30min_LargerThan15min(t *testing.T) {
-	g := getBristolGraph(t)
+	g := getTestGraph(t)
 	r15 := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
 	r30 := Isochrone(g, 51.4545, -2.5879, 30*60, Walk)
 
@@ -61,7 +58,7 @@ func TestIsochrone_30min_LargerThan15min(t *testing.T) {
 }
 
 func TestIsochrone_Cycle_BetweenWalkAndDrive(t *testing.T) {
-	g := getBristolGraph(t)
+	g := getTestGraph(t)
 	walk := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
 	cycle := Isochrone(g, 51.4545, -2.5879, 15*60, Cycle)
 	drive := Isochrone(g, 51.4545, -2.5879, 15*60, Drive)
@@ -77,18 +74,19 @@ func TestIsochrone_Cycle_BetweenWalkAndDrive(t *testing.T) {
 	}
 }
 
-func TestNearestNode_CloseToTemplateMeads(t *testing.T) {
-	g := getBristolGraph(t)
-	// Bristol Temple Meads station
-	id := nearestNodeForMode(g, 51.4491, -2.5832, Walk)
+func TestNearestNode_CloseToGridCentre(t *testing.T) {
+	g := getTestGraph(t)
+	// Query at the test grid's centre (row 24, col 25 ≈ lat 51.454, lng −2.588).
+	// The nearest node should be within one grid cell (≈100 m).
+	queryLat, queryLng := 51.4545, -2.5879
+	id := nearestNodeForMode(g, queryLat, queryLng, Walk)
 	if id == noNode {
 		t.Fatal("nearestNode returned noNode")
 	}
 	n := g.Nodes[id]
-	d := haversineM(51.4491, -2.5832, float64(n.Lat), float64(n.Lng))
-	if d > 200 {
-		t.Errorf("nearest node is %fm away from query, expected <200m", d)
+	d := haversineM(queryLat, queryLng, float64(n.Lat), float64(n.Lng))
+	if d > 150 {
+		t.Errorf("nearest node is %fm away from query, expected <150m", d)
 	}
-	t.Logf("nearest node to Temple Meads: id=%d lat=%.5f lng=%.5f dist=%.0fm",
-		id, n.Lat, n.Lng, d)
+	t.Logf("nearest node: id=%d lat=%.5f lng=%.5f dist=%.0fm", id, n.Lat, n.Lng, d)
 }

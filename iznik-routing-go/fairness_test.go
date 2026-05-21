@@ -5,10 +5,7 @@ import (
 )
 
 func TestFairnessIsochrone_NoDeprivation(t *testing.T) {
-	g, err := BuildGraph(bristolPBF, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	g := makeTestGrid(nil)
 	// Without deprivation data, should still return a standard polygon.
 	res := FairnessIsochrone(g, 51.4545, -2.5879, 15*60, Walk, 0.5)
 	if len(res.Standard.Geometry.Coordinates[0]) < 4 {
@@ -21,10 +18,7 @@ func TestFairnessIsochrone_NoDeprivation(t *testing.T) {
 
 func TestFairnessIsochrone_ZeroWeight(t *testing.T) {
 	idx := LoadDeprivation(sampleLSOACSV)
-	g, err := BuildGraph(bristolPBF, idx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	g := makeTestGrid(idx)
 	// W=0 should match standard isochrone exactly.
 	standard := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
 	fair := FairnessIsochrone(g, 51.4545, -2.5879, 15*60, Walk, 0.0)
@@ -41,10 +35,7 @@ func TestFairnessIsochrone_ZeroWeight(t *testing.T) {
 
 func TestFairnessIsochrone_FullWeight(t *testing.T) {
 	idx := LoadDeprivation(sampleLSOACSV)
-	g, err := BuildGraph(bristolPBF, idx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	g := makeTestGrid(idx)
 	// W=1 should explore 2× the base time — more nodes than W=0.
 	r0 := FairnessIsochrone(g, 51.4545, -2.5879, 15*60, Walk, 0.0)
 	r1 := FairnessIsochrone(g, 51.4545, -2.5879, 15*60, Walk, 1.0)
@@ -59,10 +50,7 @@ func TestFairnessIsochrone_FullWeight(t *testing.T) {
 
 func TestFairnessIsochrone_Q1GetsMoreTime(t *testing.T) {
 	idx := LoadDeprivation(sampleLSOACSV)
-	g, err := BuildGraph(bristolPBF, idx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	g := makeTestGrid(idx)
 	const base = 15 * 60
 	r := FairnessIsochrone(g, 51.4545, -2.5879, base, Walk, 1.0)
 

@@ -5,7 +5,7 @@ import (
 )
 
 func TestIsochronePolygon_Walk15min(t *testing.T) {
-	g := getBristolGraph(t)
+	g := getTestGraph(t)
 	result := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
 	res := AutoResolution(15*60, Walk)
 	poly := IsochronePolygon(g, result.ReachedNodes, res)
@@ -26,7 +26,7 @@ func TestIsochronePolygon_Walk15min(t *testing.T) {
 }
 
 func TestIsochronePolygon_CentreInside(t *testing.T) {
-	g := getBristolGraph(t)
+	g := getTestGraph(t)
 	result := Isochrone(g, 51.4545, -2.5879, 15*60, Walk)
 	res := AutoResolution(15*60, Walk)
 	poly := IsochronePolygon(g, result.ReachedNodes, res)

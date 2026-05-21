@@ -4,46 +4,87 @@ import (
 	"testing"
 )
 
-const bristolPBF = "testdata/bristol.osm.pbf"
 const sampleLSOACSV = "testdata/bristol_lsoa.csv"
 
-func TestBuildGraph_LoadsBristol(t *testing.T) {
-	g, err := BuildGraph(bristolPBF, nil)
-	if err != nil {
-		t.Fatalf("BuildGraph: %v", err)
+// makeTestGrid builds a 50×50 grid of nodes around Bristol city centre
+// connected by bidirectional residential roads. Tests that previously
+// required testdata/bristol.osm.pbf use this instead — no external files needed.
+//
+// Grid bounds: lat 51.430–51.479, lng −2.613–−2.564 (~70 m per cell).
+// The query point (51.4545, −2.5879) used in algorithm tests maps to row 24,
+// col 25 — well inside the grid and reachable from all sides.
+func makeTestGrid(dep *DeprivationIndex) *Graph {
+	const (
+		rows      = 50
+		cols      = 50
+		latOrigin = 51.430
+		lngOrigin = -2.613
+		dLat      = 0.001 // ≈70 m per row
+		dLng      = 0.001 // ≈70 m per col
+	)
+	idAt := func(r, c int) int64 { return int64(r*cols+c) + 1 }
+
+	nodes := make([]RawNodeSpec, 0, rows*cols)
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			nodes = append(nodes, RawNodeSpec{
+				OSMID: idAt(r, c),
+				Lat:   latOrigin + float64(r)*dLat,
+				Lng:   lngOrigin + float64(c)*dLng,
+			})
+		}
 	}
-	if g.NodeCount() < 10000 {
-		t.Errorf("expected ≥10k nodes, got %d", g.NodeCount())
+
+	ways := make([]RawWaySpec, 0, rows*(cols-1)+(rows-1)*cols)
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols-1; c++ {
+			ways = append(ways, RawWaySpec{
+				NodeIDs: []int64{idAt(r, c), idAt(r, c+1)},
+				Highway: "residential",
+			})
+		}
 	}
-	if len(g.Edges) < 10000 {
-		t.Errorf("expected ≥10k edges, got %d", len(g.Edges))
+	for r := 0; r < rows-1; r++ {
+		for c := 0; c < cols; c++ {
+			ways = append(ways, RawWaySpec{
+				NodeIDs: []int64{idAt(r, c), idAt(r+1, c)},
+				Highway: "residential",
+			})
+		}
+	}
+
+	return BuildGraphFromRaw(nodes, ways, dep)
+}
+
+func TestBuildGraphFromRaw_NodeAndEdgeCount(t *testing.T) {
+	g := makeTestGrid(nil)
+	const want = 50 * 50
+	if g.NodeCount() != want {
+		t.Errorf("expected %d nodes, got %d", want, g.NodeCount())
+	}
+	// Horizontal: 50 rows × 49 bidir = 4900; Vertical: 49 rows × 50 bidir = 4900 → 9800 total.
+	if len(g.Edges) < 9800 {
+		t.Errorf("expected ≥9800 edges, got %d", len(g.Edges))
 	}
 	t.Logf("nodes=%d edges=%d", g.NodeCount(), len(g.Edges))
 }
 
-func TestBuildGraph_NodesHaveCoords(t *testing.T) {
-	g, err := BuildGraph(bristolPBF, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestBuildGraphFromRaw_NodesHaveCoords(t *testing.T) {
+	g := makeTestGrid(nil)
 	for id := NodeID(1); id < NodeID(len(g.Nodes)); id++ {
 		n := g.Nodes[id]
 		if n.Lat == 0 && n.Lng == 0 {
 			t.Errorf("node %d has zero coords", id)
 		}
-		// Bristol is roughly 51.4-51.5 N, 2.5-2.6 W
 		if n.Lat < 51.0 || n.Lat > 52.0 {
 			t.Errorf("node %d lat %f out of Bristol range", id, n.Lat)
 		}
-		break // spot-check first node
+		break // spot-check first node only
 	}
 }
 
-func TestBuildGraph_EdgesHaveSensibleTimes(t *testing.T) {
-	g, err := BuildGraph(bristolPBF, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestBuildGraphFromRaw_EdgeCounts(t *testing.T) {
+	g := makeTestGrid(nil)
 	walkEdges, cycleEdges, driveEdges := 0, 0, 0
 	for id := NodeID(1); id < NodeID(len(g.Nodes)); id++ {
 		for _, e := range g.EdgesFrom(id) {
@@ -70,24 +111,12 @@ func TestBuildGraph_EdgesHaveSensibleTimes(t *testing.T) {
 	}
 }
 
-func TestHaversineM(t *testing.T) {
-	// Bristol Temple Meads to Bristol city centre ≈ 800m
-	d := haversineM(51.4491, -2.5832, 51.4545, -2.5879)
-	if d < 500 || d > 1200 {
-		t.Errorf("haversine gave %f m, expected ~800m", d)
-	}
-}
-
-func TestBuildGraph_WithDeprivation(t *testing.T) {
+func TestBuildGraphFromRaw_WithDeprivation(t *testing.T) {
 	idx := LoadDeprivation(sampleLSOACSV)
 	if idx == nil {
 		t.Fatal("LoadDeprivation returned nil for sample CSV")
 	}
-	g, err := BuildGraph(bristolPBF, idx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// At least some nodes should have quintile data.
+	g := makeTestGrid(idx)
 	tagged := 0
 	for id := NodeID(1); id < NodeID(len(g.Nodes)); id++ {
 		if g.Nodes[id].Quintile != 0 {
@@ -98,4 +127,46 @@ func TestBuildGraph_WithDeprivation(t *testing.T) {
 		t.Error("expected some nodes with deprivation quintile, got 0")
 	}
 	t.Logf("tagged nodes with quintile: %d / %d", tagged, g.NodeCount())
+}
+
+func TestBuildGraphFromRaw_MotorwayExcludesWalkers(t *testing.T) {
+	// Build a minimal two-node graph with only a motorway way.
+	nodes := []RawNodeSpec{
+		{OSMID: 1, Lat: 51.45, Lng: -2.59},
+		{OSMID: 2, Lat: 51.45, Lng: -2.58},
+	}
+	ways := []RawWaySpec{
+		{NodeIDs: []int64{1, 2}, Highway: "motorway", Oneway: true},
+	}
+	g := BuildGraphFromRaw(nodes, ways, nil)
+
+	found := false
+	for _, e := range g.EdgesFrom(1) {
+		if e.To == 2 {
+			found = true
+			if e.Seconds[Walk] > 0 {
+				t.Error("motorway edge must exclude walkers (Seconds[Walk] must be ≤0)")
+			}
+			if e.Seconds[Drive] <= 0 {
+				t.Error("motorway edge must allow driving (Seconds[Drive] must be >0)")
+			}
+		}
+	}
+	if !found {
+		t.Error("expected edge from node 1 to node 2")
+	}
+	// Oneway: no reverse edge.
+	for _, e := range g.EdgesFrom(2) {
+		if e.To == 1 {
+			t.Error("motorway is oneway — no reverse edge expected")
+		}
+	}
+}
+
+func TestHaversineM(t *testing.T) {
+	// Bristol Temple Meads to Bristol city centre ≈ 800m
+	d := haversineM(51.4491, -2.5832, 51.4545, -2.5879)
+	if d < 500 || d > 1200 {
+		t.Errorf("haversine gave %f m, expected ~800m", d)
+	}
 }

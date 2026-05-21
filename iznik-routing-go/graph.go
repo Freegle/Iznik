@@ -292,6 +292,108 @@ func BuildGraph(pbfPath string, dep *DeprivationIndex) (*Graph, error) {
 	return g, nil
 }
 
+// RawNodeSpec describes a node for BuildGraphFromRaw.
+type RawNodeSpec struct {
+	OSMID    int64
+	Lat, Lng float64
+}
+
+// RawWaySpec describes a way for BuildGraphFromRaw.
+// Highway must match a key in highwaySpeed (e.g. "residential", "motorway").
+type RawWaySpec struct {
+	NodeIDs []int64
+	Highway string
+	Oneway  bool
+}
+
+// BuildGraphFromRaw constructs a routing Graph from explicit node/way data.
+// Equivalent to BuildGraph but reads from in-memory slices rather than an OSM
+// PBF file. Used by tests and offline tooling.
+func BuildGraphFromRaw(rawNodes []RawNodeSpec, rawWays []RawWaySpec, dep *DeprivationIndex) *Graph {
+	N := len(rawNodes)
+
+	osmToSeq := make(map[int64]NodeID, N)
+	nodes := make([]Node, N+1) // [0] = unused sentinel
+	for i, n := range rawNodes {
+		id := NodeID(i + 1)
+		osmToSeq[n.OSMID] = id
+		nodes[id] = Node{Lat: float32(n.Lat), Lng: float32(n.Lng)}
+	}
+
+	if dep != nil {
+		for i := NodeID(1); i <= NodeID(N); i++ {
+			nd := &nodes[i]
+			nd.Quintile = dep.Lookup(float64(nd.Lat), float64(nd.Lng))
+		}
+	}
+
+	type tempEdge struct {
+		from, to NodeID
+		secs     [3]float32
+	}
+	var tempEdges []tempEdge
+	for _, w := range rawWays {
+		speeds, ok := highwaySpeed[w.Highway]
+		if !ok {
+			continue
+		}
+		for i := 0; i < len(w.NodeIDs)-1; i++ {
+			from, ok1 := osmToSeq[w.NodeIDs[i]]
+			to, ok2 := osmToSeq[w.NodeIDs[i+1]]
+			if !ok1 || !ok2 {
+				continue
+			}
+			nf, nt := nodes[from], nodes[to]
+			distM := haversineM(float64(nf.Lat), float64(nf.Lng), float64(nt.Lat), float64(nt.Lng))
+			var secs [3]float32
+			for m := 0; m < 3; m++ {
+				if speeds[m] < 0 {
+					secs[m] = -1
+				} else {
+					secs[m] = float32(distM) / speeds[m]
+				}
+			}
+			tempEdges = append(tempEdges, tempEdge{from, to, secs})
+			if !w.Oneway {
+				tempEdges = append(tempEdges, tempEdge{to, from, secs})
+			}
+		}
+	}
+
+	sort.Slice(tempEdges, func(i, j int) bool { return tempEdges[i].from < tempEdges[j].from })
+
+	edgeStart := make([]int32, N+2)
+	edges := make([]Edge, len(tempEdges))
+	{
+		pos := 0
+		for id := NodeID(1); id <= NodeID(N); id++ {
+			edgeStart[id] = int32(pos)
+			for pos < len(tempEdges) && tempEdges[pos].from == id {
+				edges[pos] = Edge{To: tempEdges[pos].to, Seconds: tempEdges[pos].secs}
+				pos++
+			}
+		}
+		edgeStart[N+1] = int32(pos)
+	}
+
+	g := &Graph{
+		Nodes:       nodes,
+		EdgeStart:   edgeStart,
+		Edges:       edges,
+		Deprivation: dep,
+	}
+
+	g.Grid = newGrid()
+	for i := NodeID(1); i <= NodeID(N); i++ {
+		nd := nodes[i]
+		if nd.Lat != 0 || nd.Lng != 0 {
+			g.Grid.add(float64(nd.Lat), float64(nd.Lng), i)
+		}
+	}
+
+	return g
+}
+
 // waySpeedsAndOneway returns per-mode speeds (m/s, -1 = unusable) and whether oneway.
 func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool) {
 	tags := w.TagMap()
