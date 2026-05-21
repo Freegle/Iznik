@@ -282,6 +282,16 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         // can hold the DDL lock for > 2 minutes and timeout.
         await new Promise((r) => setTimeout(r, 10000))
         try {
+          // Kill all active connections to iznik before dropping — avoids waiting
+          // for InnoDB to flush dirty pages (DDL lock) after a heavy parallel run.
+          // KILL is best-effort; the DROP succeeds even if some connections have
+          // already closed between the SELECT and the KILL.
+          try {
+            execSync(
+              `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e \\"SELECT CONCAT('KILL ',id,';') FROM information_schema.processlist WHERE db='iznik'\\" | mysql -h percona -u root -piznik"`,
+              { encoding: 'utf8', timeout: 10000 }
+            )
+          } catch {}
           execSync(
             `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
             { encoding: 'utf8', timeout: 300000 }
