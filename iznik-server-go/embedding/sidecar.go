@@ -53,14 +53,29 @@ func EmbedBatch(texts []string) ([][]float32, error) {
 	return embedBatchViaSidecar(texts)
 }
 
-// EmbedQuery embeds a single search query. Uses the native ONNX pool when
-// available, otherwise calls the HTTP sidecar.
+// EmbedQuery embeds a single search query. Checks the in-memory LRU cache
+// first; on a miss, uses the native ONNX pool when available, otherwise calls
+// the HTTP sidecar. The result is stored in the cache for future lookups.
 func EmbedQuery(text string) ([]float32, error) {
-	if vec, err := embedQueryNative(text); vec != nil || err != nil {
-		return vec, err
+	if vec, ok := queryCache.get(text); ok {
+		return vec, nil
 	}
 
-	return embedQueryViaSidecar(text)
+	vec, err := embedQueryNative(text)
+	if err != nil {
+		return nil, err
+	}
+	if vec == nil {
+		vec, err = embedQueryViaSidecar(text)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if vec != nil {
+		queryCache.set(text, vec)
+	}
+	return vec, nil
 }
 
 func embedQueryViaSidecar(text string) ([]float32, error) {
