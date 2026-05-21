@@ -405,6 +405,7 @@ class UserManagementService
               AND users.systemrole = ?
               AND users.deleted IS NULL
               AND users.forgotten IS NULL
+            LIMIT 50000
         ", [$sixMonthsAgo, 'User']);
 
         $count = 0;
@@ -446,6 +447,7 @@ class UserManagementService
             WHERE deleted IS NOT NULL
               AND DATEDIFF(NOW(), deleted) > 14
               AND forgotten IS NULL
+            LIMIT 50000
         ");
 
         $count = count($users);
@@ -641,6 +643,7 @@ class UserManagementService
                 INNER JOIN users ON users.id = memberships.userid
                 WHERE TIMESTAMPDIFF(SECOND, users.lastaccess, memberships.added) > 600
             ) t
+            LIMIT 50000
         ");
 
         $stats['candidates'] = count($users);

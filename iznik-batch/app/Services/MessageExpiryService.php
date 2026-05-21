@@ -8,7 +8,6 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\MessageOutcome;
 use App\Models\User;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -67,10 +66,14 @@ class MessageExpiryService
     /**
      * Get messages that have reached their deadline without an outcome.
      */
-    protected function getMessagesWithExpiredDeadline(): Collection
+    protected function getMessagesWithExpiredDeadline(): \Illuminate\Support\LazyCollection
     {
         $earliestDate = now()->subDays(self::EXPIRE_LOOKBACK_DAYS);
 
+        // Stream in keyset-paginated chunks: the 90-day candidate set can be large and
+        // these are full Message models (incl. text columns), so a single get() exhausts
+        // memory. Keyset pagination by messages.id is also safe against the outcome rows
+        // we create as each message is expired (they only fall behind the cursor).
         return Message::select('messages.*')
             ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
             ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
@@ -79,7 +82,7 @@ class MessageExpiryService
             ->whereRaw('messages.deadline < CURDATE()')
             ->whereNull('messages_outcomes.id')
             ->distinct()
-            ->get();
+            ->lazyById(500, 'messages.id', 'id');
     }
 
     /**

@@ -41,13 +41,15 @@ class StoriesAskService
             ->whereNull('users.deleted')
             ->where('messages.arrival', '>=', $earliestDate)
             ->distinct()
-            ->pluck('messages.fromuser')
-            ->toArray();
+            ->select('messages.fromuser');
 
         $considered = 0;
         $asked = 0;
 
-        foreach ($candidates as $userId) {
+        // Stream distinct posters in keyset-paginated chunks (by fromuser) rather than
+        // pluck()-ing the entire 90-day poster set into memory at once.
+        foreach ($candidates->lazyById(1000, 'messages.fromuser', 'fromuser') as $candidate) {
+            $userId = $candidate->fromuser;
             $considered++;
 
             $outcomeCount = (int) DB::table('messages_by')

@@ -164,7 +164,7 @@ class StoriesNewsletterService
         //   - group has not disabled newsletters in its settings
         //   - user has newslettersallowed = 1
         //   - user is not deleted
-        $userIds = DB::table('users')
+        $eligibleMembers = DB::table('users')
             ->join('memberships', 'memberships.userid', '=', 'users.id')
             ->join('groups', function ($join) {
                 $join->on('groups.id', '=', 'memberships.groupid')
@@ -179,9 +179,12 @@ class StoriesNewsletterService
                     ->orWhereRaw("COALESCE(JSON_EXTRACT(groups.settings, '$.newsletter'), 1) != 0");
             })
             ->distinct()
-            ->pluck('users.id');
+            ->select('users.id');
 
-        foreach ($userIds as $userId) {
+        // Stream eligible members in keyset-paginated chunks; pluck()-ing the entire
+        // eligible newsletter userbase (hundreds of thousands of ids) at once exhausts memory.
+        foreach ($eligibleMembers->lazyById(1000, 'users.id', 'id') as $member) {
+            $userId = $member->id;
             $user = DB::table('users')->where('id', $userId)->first();
             if (!$user || $user->bouncing) {
                 continue;
