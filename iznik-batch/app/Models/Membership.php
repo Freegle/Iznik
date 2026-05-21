@@ -5,9 +5,62 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class Membership extends Model
+/**
+ * @property int $id
+ * @property int $userid
+ * @property int $groupid
+ * @property string $role
+ * @property string $collection
+ * @property int|null $configid Configuration used to moderate this group if a moderator
+ * @property \Illuminate\Support\Carbon $added
+ * @property array<array-key, mixed>|null $settings Other group settings, e.g. for moderators
+ * @property int $syncdelete Used during member sync
+ * @property int|null $heldby
+ * @property int $emailfrequency In hours; -1 immediately, 0 never
+ * @property bool|null $eventsallowed
+ * @property int $volunteeringallowed
+ * @property string|null $ourPostingStatus For Yahoo groups, NULL; for ours, the posting status
+ * @property \Illuminate\Support\Carbon|null $reviewrequestedat
+ * @property string|null $reviewreason
+ * @property \Illuminate\Support\Carbon|null $reviewedat
+ * @property-read \App\Models\ModConfig|null $config
+ * @property-read \App\Models\Group $group
+ * @property-read \App\Models\User $user
+ * @method static Builder<static>|Membership activeModerators()
+ * @method static Builder<static>|Membership approved()
+ * @method static Builder<static>|Membership digestSubscribers(int $frequency)
+ * @method static Builder<static>|Membership moderators()
+ * @method static Builder<static>|Membership newModelQuery()
+ * @method static Builder<static>|Membership newQuery()
+ * @method static Builder<static>|Membership owners()
+ * @method static Builder<static>|Membership pending()
+ * @method static Builder<static>|Membership query()
+ * @method static Builder<static>|Membership whereAdded($value)
+ * @method static Builder<static>|Membership whereCollection($value)
+ * @method static Builder<static>|Membership whereConfigid($value)
+ * @method static Builder<static>|Membership whereEmailfrequency($value)
+ * @method static Builder<static>|Membership whereEventsallowed($value)
+ * @method static Builder<static>|Membership whereGroupid($value)
+ * @method static Builder<static>|Membership whereHeldby($value)
+ * @method static Builder<static>|Membership whereId($value)
+ * @method static Builder<static>|Membership whereOurPostingStatus($value)
+ * @method static Builder<static>|Membership whereReviewedat($value)
+ * @method static Builder<static>|Membership whereReviewreason($value)
+ * @method static Builder<static>|Membership whereReviewrequestedat($value)
+ * @method static Builder<static>|Membership whereRole($value)
+ * @method static Builder<static>|Membership whereSettings($value)
+ * @method static Builder<static>|Membership whereSyncdelete($value)
+ * @method static Builder<static>|Membership whereUserid($value)
+ * @method static Builder<static>|Membership whereVolunteeringallowed($value)
+ * @method static Builder<static>|Membership withEmailFrequency(int $frequency)
+ * @mixin \Eloquent
+ */
+class Membership extends Model implements Auditable
 {
+    use \OwenIt\Auditing\Auditable;
+
     protected $table = 'memberships';
     protected $guarded = ['id'];
     public $timestamps = FALSE;

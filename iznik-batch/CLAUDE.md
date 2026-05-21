@@ -55,6 +55,7 @@ docker exec freegle-batch php artisan migrate:generate
 - Use `config()` helper for all configurable values - never hardcode domains or magic numbers
 - Use MJML templates in `resources/views/emails/mjml/`
 - All Mailable classes must extend `MjmlMailable` and implement `getSubject()`
+- Whenever possible, replace DB facade query builder code with equivalent Eloquent model usage. Use the class-based methods like setting properties and calling `save()` on the models to trigger model events like `saving`, `saved`, `updating`, and `updated` since these events need to fire for Laravel Auditing to work
 
 ## Email Guidelines
 
@@ -88,11 +89,13 @@ All emails extending `MjmlMailable` automatically include these headers for trac
 - **`X-Freegle-User-Id`** - Recipient's Freegle user ID (if available). Enables support tool lookups.
 
 These headers are also logged when spooling and sending, enabling searches like:
+
 - Find all emails sent to a specific user (by user ID)
 - Trace an email's journey from creation to delivery (by trace ID)
 - Filter emails by type in dashboards
 
 To add user ID tracking to a new mailable, override `getRecipientUserId()`:
+
 ```php
 protected function getRecipientUserId(): ?int
 {
@@ -112,6 +115,7 @@ Emails are sent via a file-based spooler (`EmailSpoolerService`) for resilience.
 This means any header added via `withSymfonyMessage()` callbacks automatically survives through the spool - no special handling needed for new headers.
 
 Spool directories:
+
 - `storage/spool/mail/pending/` - Queued for sending
 - `storage/spool/mail/sending/` - Currently being sent
 - `storage/spool/mail/sent/` - Successfully sent (cleaned up after 7 days)
@@ -127,13 +131,13 @@ When implementing services, check the PHPUnit tests in `iznik-server/test/ut/php
 
 When migrating code from iznik-server to this Laravel application:
 
-1. **Never change test assertions to make tests pass.** When a test fails, the test is telling you what the code *should* do. The implementation must be fixed to match the test, not the other way around.
+1. **Never change test assertions to make tests pass.** When a test fails, the test is telling you what the code _should_ do. The implementation must be fixed to match the test, not the other way around.
 
 2. **Always verify against iznik-server first.** Before changing any constant, enum value, or business logic, grep `iznik-server` to see what the original values/behavior are. The source of truth is always the PHP code in iznik-server, not database introspection or generated migrations.
 
 3. **Fix the source, not the symptom.** If a migration is missing an enum value that iznik-server defines, fix the migration - don't remove the constant from the model.
 
-4. **Red flag: changing test expectations.** Any time you're about to change what a test *expects* (not how it sets up data), stop and verify the expected behavior against iznik-server before proceeding.
+4. **Red flag: changing test expectations.** Any time you're about to change what a test _expects_ (not how it sets up data), stop and verify the expected behavior against iznik-server before proceeding.
 
 5. **Document discrepancies.** If you find the database schema differs from iznik-server constants, document it and fix the migration rather than silently changing behavior.
 

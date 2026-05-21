@@ -5,9 +5,58 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class MessageGroup extends Model
+/**
+ * @property int $msgid id in the messages table
+ * @property int $groupid
+ * @property string|null $collection
+ * @property \Illuminate\Support\Carbon $arrival
+ * @property int $autoreposts How many times this message has been auto-reposted
+ * @property \Illuminate\Support\Carbon|null $lastautopostwarning
+ * @property \Illuminate\Support\Carbon|null $lastchaseup
+ * @property bool $deleted
+ * @property bool $senttoyahoo
+ * @property string|null $yahoopendingid For Yahoo messages, pending id if relevant
+ * @property string|null $yahooapprovedid For Yahoo messages, approved id if relevant
+ * @property string|null $yahooapprove For Yahoo messages, email to trigger approve if relevant
+ * @property string|null $yahooreject For Yahoo messages, email to trigger reject if relevant
+ * @property int|null $approvedby Mod who approved this post (if any)
+ * @property \Illuminate\Support\Carbon|null $approvedat
+ * @property \Illuminate\Support\Carbon|null $rejectedat
+ * @property string|null $msgtype In here for performance optimisation
+ * @property-read \App\Models\User|null $approvedBy
+ * @property-read \App\Models\Group $group
+ * @property-read \App\Models\Message $message
+ * @method static Builder<static>|MessageGroup approved()
+ * @method static Builder<static>|MessageGroup newModelQuery()
+ * @method static Builder<static>|MessageGroup newQuery()
+ * @method static Builder<static>|MessageGroup notDeleted()
+ * @method static Builder<static>|MessageGroup pending()
+ * @method static Builder<static>|MessageGroup query()
+ * @method static Builder<static>|MessageGroup whereApprovedat($value)
+ * @method static Builder<static>|MessageGroup whereApprovedby($value)
+ * @method static Builder<static>|MessageGroup whereArrival($value)
+ * @method static Builder<static>|MessageGroup whereAutoreposts($value)
+ * @method static Builder<static>|MessageGroup whereCollection($value)
+ * @method static Builder<static>|MessageGroup whereDeleted($value)
+ * @method static Builder<static>|MessageGroup whereGroupid($value)
+ * @method static Builder<static>|MessageGroup whereLastautopostwarning($value)
+ * @method static Builder<static>|MessageGroup whereLastchaseup($value)
+ * @method static Builder<static>|MessageGroup whereMsgid($value)
+ * @method static Builder<static>|MessageGroup whereMsgtype($value)
+ * @method static Builder<static>|MessageGroup whereRejectedat($value)
+ * @method static Builder<static>|MessageGroup whereSenttoyahoo($value)
+ * @method static Builder<static>|MessageGroup whereYahooapprove($value)
+ * @method static Builder<static>|MessageGroup whereYahooapprovedid($value)
+ * @method static Builder<static>|MessageGroup whereYahoopendingid($value)
+ * @method static Builder<static>|MessageGroup whereYahooreject($value)
+ * @mixin \Eloquent
+ */
+class MessageGroup extends Model implements Auditable
 {
+    use \OwenIt\Auditing\Auditable;
+
     protected $table = 'messages_groups';
     protected $primaryKey = 'msgid';
     public $incrementing = FALSE;

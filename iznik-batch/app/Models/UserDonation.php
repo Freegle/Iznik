@@ -5,9 +5,52 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class UserDonation extends Model
+/**
+ * @property int $id
+ * @property string $type
+ * @property int|null $userid
+ * @property string $Payer
+ * @property string $PayerDisplayName
+ * @property \Illuminate\Support\Carbon $timestamp
+ * @property string|null $TransactionID
+ * @property numeric $GrossAmount
+ * @property string $source
+ * @property bool $giftaidconsent
+ * @property string|null $giftaidclaimed
+ * @property \Illuminate\Support\Carbon|null $giftaidchaseup
+ * @property string|null $TransactionType
+ * @property string|null $thanked
+ * @property-read \App\Models\User|null $user
+ * @method static Builder<static>|UserDonation fromPaymentProviders()
+ * @method static Builder<static>|UserDonation inDateRange(int $minDays, int $maxDays)
+ * @method static Builder<static>|UserDonation newModelQuery()
+ * @method static Builder<static>|UserDonation newQuery()
+ * @method static Builder<static>|UserDonation notChasedForGiftAid()
+ * @method static Builder<static>|UserDonation query()
+ * @method static Builder<static>|UserDonation recent(int $days = 30)
+ * @method static Builder<static>|UserDonation whereGiftaidchaseup($value)
+ * @method static Builder<static>|UserDonation whereGiftaidclaimed($value)
+ * @method static Builder<static>|UserDonation whereGiftaidconsent($value)
+ * @method static Builder<static>|UserDonation whereGrossAmount($value)
+ * @method static Builder<static>|UserDonation whereId($value)
+ * @method static Builder<static>|UserDonation wherePayer($value)
+ * @method static Builder<static>|UserDonation wherePayerDisplayName($value)
+ * @method static Builder<static>|UserDonation whereSource($value)
+ * @method static Builder<static>|UserDonation whereThanked($value)
+ * @method static Builder<static>|UserDonation whereTimestamp($value)
+ * @method static Builder<static>|UserDonation whereTransactionID($value)
+ * @method static Builder<static>|UserDonation whereTransactionType($value)
+ * @method static Builder<static>|UserDonation whereType($value)
+ * @method static Builder<static>|UserDonation whereUserid($value)
+ * @method static Builder<static>|UserDonation withoutGiftAidConsent()
+ * @mixin \Eloquent
+ */
+class UserDonation extends Model implements Auditable
 {
+    use \OwenIt\Auditing\Auditable;
+
     protected $table = 'users_donations';
     protected $guarded = ['id'];
     public $timestamps = FALSE;

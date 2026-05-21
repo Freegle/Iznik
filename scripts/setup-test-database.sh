@@ -42,7 +42,11 @@ if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
 fi
 echo "Creating iznik database and running Laravel migrations..."
 docker exec "${PREFIX}-apiv1" sh -c "mysql -h percona -u root -piznik -e 'CREATE DATABASE IF NOT EXISTS iznik;'"
-docker exec "${PREFIX}-batch" php artisan migrate --force --no-interaction 2>&1
+if ! docker exec "${PREFIX}-batch" php artisan migrate --force --no-interaction; then
+  echo "Laravel migrations FAILED — aborting test database setup"
+  docker logs "${PREFIX}-batch" --tail 50 2>&1 || true
+  exit 1
+fi
 echo "Laravel migrations complete"
 
 # 2. Set SQL mode (disable ONLY_FULL_GROUP_BY)

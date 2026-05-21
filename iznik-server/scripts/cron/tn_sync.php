@@ -6,6 +6,7 @@ define('BASE_DIR', dirname(__FILE__) . '/../..');
 require_once(BASE_DIR . '/include/config.php');
 require_once(IZNIK_BASE . '/lib/GreatCircle.php');
 require_once(IZNIK_BASE . '/include/db.php');
+require_once(IZNIK_BASE . '/include/LaravelQueue.php');
 global $dbhr, $dbhm;
 
 $lockh = Utils::lockScript(basename(__FILE__));
@@ -32,19 +33,73 @@ if (!$from) {
 }
 
 $to = Utils::ISODate('@' . time());
+$runId = uniqid('tnsync-', TRUE);
+
+error_log("TN-SYNC-TRACE [START] from=$from to=$to run_id=$runId");
+
+$localTesting = in_array('--local-testing', $argv ?? [], TRUE);
+
+# Run the Laravel tn:sync command first with the exact same timing window, and wait for completion.
+$queuedTaskId = LaravelQueue::queueTask('tn_sync_command', [
+    'from' => $from,
+    'to' => $to,
+    'run_id' => $runId,
+    'queued_by' => 'tn_sync.php',
+    'dry_run' => true,
+    'local_testing' => $localTesting,
+]);
+
+if (is_null($queuedTaskId)) {
+    error_log("[QUEUE] failed to queue tn_sync_command task run_id=$runId");
+} else {
+    $waitOk = LaravelQueue::waitForTaskProcessed($queuedTaskId, 150, 1000);
+
+    if (!$waitOk) {
+        error_log("[QUEUE] task $queuedTaskId did not complete successfully before timeout run_id=$runId");
+    } else {
+        $completionData = LaravelQueue::waitForTNSyncCompletionData($queuedTaskId, $runId, 150, 1000);
+
+        if (is_null($completionData)) {
+            error_log("[QUEUE] task $queuedTaskId completed but tn_sync completion data was not populated before timeout run_id=$runId");
+        } else {
+            $status = Utils::presdef('tn_sync_status', $completionData, 'unknown');
+            $finishedAt = Utils::presdef('tn_sync_finished_at', $completionData, 'unknown');
+            $exitCode = Utils::presdef('tn_sync_exit_code', $completionData, 'unknown');
+
+            error_log("[QUEUE] task $queuedTaskId completion data ready run_id=$runId status=$status finished_at=$finishedAt exit_code=$exitCode");
+        }
+    }
+}
 
 # Sync the ratings.
 $page = 1;
 $maxChangeDate = null;
+$ratingsCount = 0;
+$changesCount = 0;
+$mergesCount = 0;
 
 do {
-    $url = "https://trashnothing.com/fd/api/ratings?key=" . TNKEY . "&page=$page&per_page=100&date_min=$from&date_max=$to";
-    $ratings = json_decode(file_get_contents($url), TRUE)['ratings'];
+    if ($localTesting) {
+        $ratingsFile = BASE_DIR . "/test/integration/tn_sync/fixtures/ratings_page_{$page}.json";
+        if (file_exists($ratingsFile)) {
+            $ratingsPayload = json_decode(file_get_contents($ratingsFile), TRUE);
+            $ratings = Utils::presdef('ratings', $ratingsPayload, []);
+        } else {
+            error_log("TN-SYNC-TRACE [RATINGS-PAGE] missing fixture file=$ratingsFile");
+            $ratings = [];
+        }
+    } else {
+        $url = "https://trashnothing.com/fd/api/ratings?key=" . TNKEY . "&page=$page&per_page=100&date_min=$from&date_max=$to";
+        $ratings = json_decode(file_get_contents($url), TRUE)['ratings'];
+    }
     $page++;
+
+    error_log("TN-SYNC-TRACE [RATINGS-PAGE] page=" . ($page - 1) . " count=" . count($ratings));
 
     foreach ($ratings as $rating) {
         $donesummat = TRUE;
-        
+        $ratingsCount++;
+
         # Track the maximum date from this batch
         if (!$maxChangeDate || $rating['date'] > $maxChangeDate) {
             $maxChangeDate = $rating['date'];
@@ -57,6 +112,7 @@ do {
             if ($u->getId()) {
                 try {
                     if ($rating['rating']) {
+                        error_log("TN-SYNC-TRACE [WRITE] table=ratings op=upsert where=tn_rating_id={$rating['rating_id']} set=ratee={$rating['ratee_fd_user_id']},rating={$rating['rating']},timestamp={$rating['date']},visible=1");
                         $dbhm->preExec("INSERT INTO ratings (ratee, rating, timestamp, visible, tn_rating_id) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE rating = ?, timestamp = ?;", [
                             $rating['ratee_fd_user_id'],
                             $rating['rating'],
@@ -67,12 +123,14 @@ do {
                             $rating['date']
                         ]);
                     } else {
+                        error_log("TN-SYNC-TRACE [WRITE] table=ratings op=delete where=ratee={$rating['ratee_fd_user_id']},tn_rating_id={$rating['rating_id']}");
                         $dbhm->preExec("DELETE FROM ratings WHERE ratee = ? AND tn_rating_id = ?;", [
                             $rating['ratee_fd_user_id'],
                             $rating['rating_id']
                         ]);
                     }
                 } catch (\Exception $e) {
+                    error_log("TN-SYNC-TRACE [RATING] id={$rating['rating_id']} ratee={$rating['ratee_fd_user_id']} rating={$rating['rating']} action=error");
                     error_log("Ratings sync failed " . $e->getMessage() . " " . var_export($rating, TRUE));
                     \Sentry\captureException($e);
                 }
@@ -85,13 +143,27 @@ do {
 $page = 1;
 
 do {
-    $url = "https://trashnothing.com/fd/api/user-changes?key=" . TNKEY . "&page=$page&per_page=100&date_min=$from&date_max=$to";
-    $changes = json_decode(file_get_contents($url), TRUE)['changes'];
+    if ($localTesting) {
+        $changesFile = BASE_DIR . "/test/integration/tn_sync/fixtures/user_changes_page_{$page}.json";
+        if (file_exists($changesFile)) {
+            $changesPayload = json_decode(file_get_contents($changesFile), TRUE);
+            $changes = Utils::presdef('changes', $changesPayload, []);
+        } else {
+            error_log("TN-SYNC-TRACE [CHANGES-PAGE] missing fixture file=$changesFile");
+            $changes = [];
+        }
+    } else {
+        $url = "https://trashnothing.com/fd/api/user-changes?key=" . TNKEY . "&page=$page&per_page=100&date_min=$from&date_max=$to";
+        $changes = json_decode(file_get_contents($url), TRUE)['changes'];
+    }
     $page++;
+
+    error_log("TN-SYNC-TRACE [CHANGES-PAGE] page=" . ($page - 1) . " count=" . count($changes));
 
     foreach ($changes as $change) {
         $donesummat = TRUE;
-        
+        $changesCount++;
+
         # Track the maximum date from this batch  
         if (!$maxChangeDate || $change['date'] > $maxChangeDate) {
             $maxChangeDate = $change['date'];
@@ -104,9 +176,11 @@ do {
                 if ($u->isTN()) {
                     if (Utils::pres('account_removed', $change)) {
                         error_log("FD #{$change['fd_user_id']} TN account removed");
+                        error_log("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=account-removed");
                         $u->forget('TN account removed');
                     } else {
                         if (Utils::pres('reply_time', $change)) {
+                            error_log("TN-SYNC-TRACE [WRITE] table=users_replytime op=replace where=userid={$change['fd_user_id']} set=replytime={$change['reply_time']},timestamp={$change['date']}");
                             $dbhm->preExec(
                                 "REPLACE INTO users_replytime (userid, replytime, timestamp) VALUES (?, ?, ?);",
                                 [
@@ -119,6 +193,7 @@ do {
 
                         if (Utils::pres('about_me', $change)) {
                             try {
+                                error_log("TN-SYNC-TRACE [WRITE] table=users_aboutme op=replace where=userid={$change['fd_user_id']} set=timestamp={$change['date']},text=len=" . strlen($change['about_me']));
                                 $dbhm->preExec(
                                     "REPLACE INTO users_aboutme (userid, timestamp, text) VALUES (?, ?, ?);",
                                     [
@@ -137,6 +212,7 @@ do {
 
                         if (Utils::pres('username', $change) && $oldname != $change['username']) {
                             error_log("Name change for {$change['fd_user_id']} $oldname => {$change['username']}");
+                            error_log("TN-SYNC-TRACE [NAME-CHANGE] fd_user_id={$change['fd_user_id']} old=$oldname new={$change['username']}");
                             $u->setPrivate('fullname', $change['username']);
 
                             $emails = $u->getEmails();
@@ -163,17 +239,21 @@ do {
                                 if ($loc) {
                                     #error_log("...found postcode {$loc['id']} {$loc['name']}");
 
-                                    if ($loc['id'] !== $u->getPrivate('locationid')) {
-                                        error_log("FD #{$change['fd_user_id']} TN lat/lng $lat,$lng has changed {$u->getPrivate('locationid')} => {$loc['id']} {$loc['name']}");
+                                    if ($loc['id'] !== $u->getPrivate('lastlocation')) {
+                                        error_log("FD #{$change['fd_user_id']} TN lat/lng $lat,$lng has changed {$u->getPrivate('lastlocation')} => {$loc['id']} {$loc['name']}");
+                                        error_log("TN-SYNC-TRACE [LOCATION] fd_user_id={$change['fd_user_id']} lat=$lat lng=$lng old_loc={$u->getPrivate('lastlocation')} new_loc={$loc['id']}");
                                         $u->setPrivate('lastlocation', $loc['id']);
                                     }
                                 }
                             }
                         }
+
+                        error_log("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=processed");
                     }
                 }
             } catch (\Exception $e) {
-                error_log("Ratings sync failed " . $e->getMessage() . " " . var_export($rating, TRUE));
+                error_log("TN-SYNC-TRACE [USER-CHANGE] fd_user_id={$change['fd_user_id']} action=error");
+                error_log("Changes sync failed " . $e->getMessage() . " " . var_export($change, TRUE));
                 \Sentry\captureException($e);
             }
         }
@@ -182,34 +262,48 @@ do {
 
 # Spot any duplicate FD users we have created for TN users.  This should no longer happen given the locking code in
 # Message::parse and so could be retired once we're convinced it is fixed.
-$users = $dbhr->preQuery("SELECT COUNT(DISTINCT(userid)) AS count, REGEXP_REPLACE(email, '(.*)-g[0-9]+@user\.trashnothing\.com', '$1') AS username FROM users_emails WHERE email LIKE '%@user.trashnothing.com' GROUP BY username HAVING count > 1;");
+#
+# Use the backwards index (prefix scan on reversed email) to avoid a full table scan.
+# LIKE '%@user.trashnothing.com' requires a full scan; LIKE '<reversed-suffix>%' uses the index.
+$reversedSuffix = strrev('@user.trashnothing.com');
+$rows = $dbhr->preQuery(
+    "SELECT userid, email FROM users_emails WHERE backwards LIKE ?",
+    [$reversedSuffix . '%']
+);
 
-if (count($users) > 0) {
-    error_log("Found " . count($users) . " duplicate TN users");
+# Group by TN username in PHP — avoids slow REGEXP_REPLACE GROUP BY in MySQL.
+$groups = [];
+foreach ($rows as $row) {
+    $username = preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row['email']);
+    $groups[$username][] = (int) $row['userid'];
+}
+
+$duplicateGroups = array_filter($groups, function($ids) {
+    return count(array_unique($ids)) > 1;
+});
+
+if (count($duplicateGroups) > 0) {
+    error_log("Found " . count($duplicateGroups) . " duplicate TN users");
+    error_log("TN-SYNC-TRACE [DUP-SCAN] count=" . count($duplicateGroups));
     $u = User::get($dbhr, $dbhm);
 
-    foreach ($users as $user) {
-        error_log("Look for dups for {$user['username']}");
-        $userids = $dbhr->preQuery("SELECT DISTINCT(userid) FROM users_emails WHERE REGEXP_REPLACE(email, '(.*)-g[0-9]+@user\.trashnothing\.com', '$1') = ? AND email LIKE '%@user.trashnothing.com';", [
-            $user['username']]
-        );
+    foreach ($duplicateGroups as $username => $userIds) {
+        $uniqueIds = array_values(array_unique($userIds));
+        error_log("Found " . count($uniqueIds) . " users for $username");
+        $mergeto = $uniqueIds[0];
 
-        error_log("Found " . count($userids) . " users for {$user['username']}");
-        if (count($userids) > 1) {
-            $mergeto = $userids[0]['userid'];
-
-            foreach ($userids as $userid) {
-                if ($userid['userid'] != $mergeto) {
-                    error_log("Merging {$userid['userid']} into $mergeto");
-                    $u->merge($mergeto, $userid['userid'], "Duplicate TN user created accidentally");
-                }
-            }
+        foreach (array_slice($uniqueIds, 1) as $userId) {
+            error_log("Merging $userId into $mergeto");
+            error_log("TN-SYNC-TRACE [MERGE] from=$userId into=$mergeto");
+            $u->merge($mergeto, $userId, "Duplicate TN user created accidentally");
+            $mergesCount++;
         }
     }
 }
 
 # Store the maximum change date for next sync if we processed any data
 if ($maxChangeDate) {
+    error_log("TN-SYNC-TRACE [WRITE] op=file-write path=$dateFile set=date=$maxChangeDate");
     if (file_put_contents($dateFile, $maxChangeDate) !== false) {
         error_log("Stored max change date to $dateFile: $maxChangeDate");
     } else {
@@ -219,6 +313,8 @@ if ($maxChangeDate) {
 } else {
     error_log("No change date to store - no data processed");
 }
+
+error_log("TN-SYNC-TRACE [END] ratings=$ratingsCount changes=$changesCount merges=$mergesCount max_date=" . ($maxChangeDate ?? 'null'));
 
 if (!$donesummat) {
     \Sentry\CaptureMessage("TN sync did nothing");

@@ -4,9 +4,41 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class GiftAid extends Model
+/**
+ * @property int $id
+ * @property int $userid
+ * @property \Illuminate\Support\Carbon $timestamp
+ * @property string $period
+ * @property string $fullname
+ * @property string $homeaddress
+ * @property \Illuminate\Support\Carbon|null $deleted
+ * @property \Illuminate\Support\Carbon|null $reviewed
+ * @property \Illuminate\Support\Carbon $updated
+ * @property string|null $postcode
+ * @property string|null $housenameornumber
+ * @property-read \App\Models\User $user
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid newModelQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid newQuery()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid query()
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid whereDeleted($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid whereFullname($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid whereHomeaddress($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid whereHousenameornumber($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid whereId($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid wherePeriod($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid wherePostcode($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid whereReviewed($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid whereTimestamp($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid whereUpdated($value)
+ * @method static \Illuminate\Database\Eloquent\Builder<static>|GiftAid whereUserid($value)
+ * @mixin \Eloquent
+ */
+class GiftAid extends Model implements Auditable
 {
+    use \OwenIt\Auditing\Auditable;
+
     protected $table = 'giftaid';
     protected $guarded = ['id'];
     public $timestamps = FALSE;
@@ -65,8 +97,10 @@ class GiftAid extends Model
      */
     public function hasValidNameSplit(): bool
     {
-        if ($this->firstname !== null && $this->firstname !== '' &&
-            $this->lastname !== null && $this->lastname !== '') {
+        if (
+            $this->firstname !== null && $this->firstname !== '' &&
+            $this->lastname !== null && $this->lastname !== ''
+        ) {
             return true;
         }
 

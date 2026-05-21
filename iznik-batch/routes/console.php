@@ -281,11 +281,10 @@ Schedule::command('chats:process-spam')
 // Sync data from TrashNothing.
 // This command can be called more frequently if the "kick" API is called by TN,
 // e.g. to reduce latency by requesting an immediate sync after sending a chat message.
-// TRACE: commented out for port testing. Instead called in iznik-server/tn_sync.php
-// Schedule::command('tn:sync')
-//     ->everyMinute()
-//     ->withoutOverlapping()
-//     ->runInBackground();
+Schedule::command('tn:sync')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->runInBackground();
 
 // =============================================================================
 // DISABLED COMMANDS (to be enabled when ready)

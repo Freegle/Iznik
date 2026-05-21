@@ -4,12 +4,18 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class Location extends Model
+class Location extends Model implements Auditable
 {
+    use \OwenIt\Auditing\Auditable;
+
+    // Fields exposed by getPublic() - mirrors iznik-server Location::$publicatts.
+    private const PUBLIC_ATTS = ['id', 'osm_id', 'name', 'type', 'popularity', 'gridid', 'postcodeid', 'areaid', 'lat', 'lng', 'maxdimension'];
+
     protected $table = 'locations';
     protected $guarded = ['id'];
-    public $timestamps = FALSE;
+    public $timestamps = false;
 
     protected $casts = [
         'lat' => 'decimal:6',

@@ -8,9 +8,60 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use OwenIt\Auditing\Contracts\Auditable;
 
-class ChatRoom extends Model
+/**
+ * @property int $id
+ * @property string|null $name
+ * @property string $chattype
+ * @property int|null $groupid Restricted to a group
+ * @property \App\Models\User|null $user1 For DMs
+ * @property \App\Models\User|null $user2 For DMs
+ * @property string|null $description
+ * @property \Illuminate\Support\Carbon|null $created
+ * @property string $synctofacebook
+ * @property int|null $synctofacebookgroupid
+ * @property \Illuminate\Support\Carbon|null $latestmessage Really when chat last active
+ * @property int $msgvalid
+ * @property int $msginvalid
+ * @property bool $flaggedspam
+ * @property int|null $ljofferid
+ * @property-read \App\Models\Group|null $group
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\ChatImage> $images
+ * @property-read int|null $images_count
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\ChatMessage> $messages
+ * @property-read int|null $messages_count
+ * @property-read \Illuminate\Database\Eloquent\Collection<int, \App\Models\ChatRoster> $roster
+ * @property-read int|null $roster_count
+ * @method static Builder<static>|ChatRoom mod2Mod()
+ * @method static Builder<static>|ChatRoom newModelQuery()
+ * @method static Builder<static>|ChatRoom newQuery()
+ * @method static Builder<static>|ChatRoom notFlaggedSpam()
+ * @method static Builder<static>|ChatRoom query()
+ * @method static Builder<static>|ChatRoom recent(int $days = 31)
+ * @method static Builder<static>|ChatRoom user2Mod()
+ * @method static Builder<static>|ChatRoom user2User()
+ * @method static Builder<static>|ChatRoom whereChattype($value)
+ * @method static Builder<static>|ChatRoom whereCreated($value)
+ * @method static Builder<static>|ChatRoom whereDescription($value)
+ * @method static Builder<static>|ChatRoom whereFlaggedspam($value)
+ * @method static Builder<static>|ChatRoom whereGroupid($value)
+ * @method static Builder<static>|ChatRoom whereId($value)
+ * @method static Builder<static>|ChatRoom whereLatestmessage($value)
+ * @method static Builder<static>|ChatRoom whereLjofferid($value)
+ * @method static Builder<static>|ChatRoom whereMsginvalid($value)
+ * @method static Builder<static>|ChatRoom whereMsgvalid($value)
+ * @method static Builder<static>|ChatRoom whereName($value)
+ * @method static Builder<static>|ChatRoom whereSynctofacebook($value)
+ * @method static Builder<static>|ChatRoom whereSynctofacebookgroupid($value)
+ * @method static Builder<static>|ChatRoom whereUser1($value)
+ * @method static Builder<static>|ChatRoom whereUser2($value)
+ * @mixin \Eloquent
+ */
+class ChatRoom extends Model implements Auditable
 {
+    use \OwenIt\Auditing\Auditable;
+
     protected $table = 'chat_rooms';
     protected $guarded = ['id'];
     public $timestamps = FALSE;
