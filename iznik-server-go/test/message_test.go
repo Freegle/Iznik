@@ -1133,9 +1133,8 @@ func TestPostMessageDelete(t *testing.T) {
 // the email_message_rejected background task.  Adding a second synchronous write in the Go
 // handler creates an identical duplicate in production (one from Go, one from PHP).
 //
-// AssertFlip step 1 (BUGGY behaviour — count == 1): PASSES on current code because the
-// recent fix added logAndNotifyMods() to handleDeleteMessage.
-// AssertFlip step 2 (CORRECT behaviour — count == 0): asserted here; FAILS on buggy code.
+// handleDeleteMessage was temporarily broken to add a logAndNotifyMods() call (bug: duplicate
+// logs).  The fix removed that call; this test guards against regression by asserting count==0.
 func TestPostMessageDeleteNoDuplicateLog(t *testing.T) {
 	prefix := uniquePrefix("msgmod_del_duplog")
 	db := database.DBConn
