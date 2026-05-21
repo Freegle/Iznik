@@ -277,16 +277,6 @@ async function runPlaywrightTests(testFile: string | null, testName: string | nu
         // the same clean state that the main run started from.
         appendTestLogs('playwright', `[Freeze-retry ${freezeRound + 1}/2] Resetting test database to clean state...\n`)
         try {
-          // Kill all active connections to iznik before dropping — avoids waiting
-          // for InnoDB to flush dirty pages (DDL lock) after a heavy parallel run.
-          // KILL is best-effort; the DROP succeeds even if some connections have
-          // already closed between the SELECT and the KILL.
-          try {
-            execSync(
-              `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e \\"SELECT CONCAT('KILL ',id,';') FROM information_schema.processlist WHERE db='iznik'\\" | mysql -h percona -u root -piznik"`,
-              { encoding: 'utf8', timeout: 10000 }
-            )
-          } catch {}
           execSync(
             `docker exec ${pfx}-apiv1 sh -c "mysql -h percona -u root -piznik -e 'DROP DATABASE IF EXISTS iznik; CREATE DATABASE iznik;'"`,
             { encoding: 'utf8', timeout: 120000 }
