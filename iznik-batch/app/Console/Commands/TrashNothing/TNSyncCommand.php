@@ -7,7 +7,6 @@ use App\Models\Location;
 use App\Models\Rating;
 use App\Models\User;
 use App\Models\UserAboutMe;
-use App\Models\UserEmail;
 use App\Models\UserReplyTime;
 use App\Services\LokiService;
 use App\Traits\GracefulShutdown;
@@ -549,19 +548,24 @@ class TNSyncCommand extends Command
         // but the reversed suffix is a prefix match — O(log n) range scan instead of O(n).
         $reversedSuffix = strrev('@user.trashnothing.com');
 
-        $rows = UserEmail::select('userid', 'email')
-            ->where('backwards', 'LIKE', $reversedSuffix . '%')
-            ->get();
-
-        if ($rows->isEmpty()) {
-            return 0;
-        }
-
+        // Stream rows with a query-builder cursor and group as we go. Hydrating the
+        // full ~400k-row result set as Eloquent models exhausts the 512M memory_limit;
+        // raw rows are an order of magnitude lighter and we only need userid + email.
         // Group by TN username in PHP — avoids slow REGEXP_REPLACE GROUP BY in MySQL.
         $groups = [];
-        foreach ($rows as $row) {
+        foreach (
+            DB::table('users_emails')
+                ->select('userid', 'email')
+                ->where('backwards', 'LIKE', $reversedSuffix . '%')
+                ->orderBy('id')
+                ->cursor() as $row
+        ) {
             $username = preg_replace('/-g\d+@user\.trashnothing\.com$/i', '', $row->email);
             $groups[$username][] = (int) $row->userid;
+        }
+
+        if (empty($groups)) {
+            return 0;
         }
 
         $duplicateGroups = array_filter($groups, fn($ids) => count(array_unique($ids)) > 1);
