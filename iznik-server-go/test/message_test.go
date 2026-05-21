@@ -8492,3 +8492,51 @@ func TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent(t *t
 	db.Exec("DELETE FROM messages_ai_declined WHERE msgid = ?", msgID)
 	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
 }
+
+// TestPatchMessageByTnPostid_NonAIAttachmentPreservedOnTextOnlyEdit verifies that when a
+// TN user edits only the text of their post (no photo links in textbody) and there is no
+// AI attachment, any existing real attachment is left untouched.
+func TestPatchMessageByTnPostid_NonAIAttachmentPreservedOnTextOnlyEdit(t *testing.T) {
+	prefix := uniquePrefix("patchtn_noai")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77803, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-noai-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	// Insert a regular (non-AI) attachment.
+	realAttachID := CreateTestAttachment(t, msgID)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// PATCH with a textbody containing no TN photo links — pure text edit.
+	body := map[string]interface{}{
+		"textbody": "Updated description with no photos.",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77803&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Real attachment must still exist.
+	var attachCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE id = ?", realAttachID).Scan(&attachCount)
+	assert.Equal(t, int64(1), attachCount, "non-AI attachment must not be deleted on a text-only TN edit")
+
+	// No AI declined flag should be set (no AI attachment was present).
+	var declinedCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msgID).Scan(&declinedCount)
+	assert.Equal(t, int64(0), declinedCount, "messages_ai_declined must not be set when no AI attachment existed")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_attachments WHERE id = ?", realAttachID)
+}
