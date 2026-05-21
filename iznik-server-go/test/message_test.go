@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/message"
@@ -8392,6 +8393,100 @@ func TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks(t *tes
 	var declinedCount int64
 	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msgID).Scan(&declinedCount)
 	assert.Equal(t, int64(1), declinedCount, "messages_ai_declined must be set to prevent cron re-injection")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_ai_declined WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+}
+
+// TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent verifies that
+// when a TN user edits their post and the textbody contains trashnothing.com/pics/ links:
+//   - The AI-generated attachment is removed and messages_ai_declined is set
+//   - The pic-link block is stripped from the stored textbody
+//   - The TN page fetcher is invoked and its returned image URLs are stored as attachments
+func TestPatchMessageByTnPostid_RemovesAIAndScrapesTNPhotosWhenLinksPresent(t *testing.T) {
+	prefix := uniquePrefix("patchtn_scrape")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77802, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-scrape-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	// Insert an AI-generated attachment.
+	aiExternalUID := fmt.Sprintf("ai-uid-scrape-%d", msgID)
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, ?, 1)",
+		msgID, aiExternalUID, `{"ai":true}`)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// Inject a fake TNPageFetcher that returns a stable image URL without real HTTP.
+	fakeImageURL := "https://img.trashnothing.com/fake/photo.jpg"
+	origFetcher := message.TNPageFetcher
+	message.TNPageFetcher = func(pageURL string) []string {
+		return []string{fakeImageURL}
+	}
+	defer func() { message.TNPageFetcher = origFetcher }()
+
+	// Inject a fake TNImageFetcher that returns stub image data without real HTTP.
+	origImageFetcher := message.TNImageFetcher
+	message.TNImageFetcher = func(imageURL string) ([]byte, string, error) {
+		return []byte("fake-image-data"), "image/jpeg", nil
+	}
+	defer func() { message.TNImageFetcher = origImageFetcher }()
+
+	// Inject a fake ImageUploader that returns a stable externaluid without real TUS.
+	fakeExternalUID := fmt.Sprintf("freegletusd-tn-fake-%d", msgID)
+	origUploader := aiimage.ImageUploader
+	aiimage.ImageUploader = func(data []byte, mime string) (string, error) {
+		return fakeExternalUID, nil
+	}
+	defer func() { aiimage.ImageUploader = origUploader }()
+
+	// Run scraping synchronously so the test doesn't need to sleep.
+	origScrapeRunner := message.TNPhotoScrapeRunner
+	message.TNPhotoScrapeRunner = message.ScrapeTNPhotosSync
+	defer func() { message.TNPhotoScrapeRunner = origScrapeRunner }()
+
+	// PATCH with a textbody containing a TN photo link block.
+	textbody := "I have a sofa to give away.\n\nCheck out the pictures at:\nhttps://trashnothing.com/pics/abc123\n"
+	body := map[string]interface{}{
+		"textbody": textbody,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77802&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// AI attachment must be gone.
+	var aiCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?", msgID, `%"ai":true%`).Scan(&aiCount)
+	assert.Equal(t, int64(0), aiCount, "AI attachment should be removed when TN textbody has photo links")
+
+	// messages_ai_declined must be set.
+	var declinedCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msgID).Scan(&declinedCount)
+	assert.Equal(t, int64(1), declinedCount, "messages_ai_declined must be set to prevent cron re-injection")
+
+	// The pic-link block should be stripped from the stored textbody.
+	var storedTextbody string
+	db.Raw("SELECT textbody FROM messages WHERE id = ?", msgID).Scan(&storedTextbody)
+	assert.NotContains(t, storedTextbody, "trashnothing.com/pics/", "pic links should be stripped from stored textbody")
+	assert.NotContains(t, storedTextbody, "Check out the pictures", "pic block header should be stripped from stored textbody")
+	assert.Contains(t, storedTextbody, "sofa", "non-photo content should be preserved in textbody")
+
+	// Verify the scraped TN photo was stored as an attachment.
+	var tnCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externaluid = ?", msgID, fakeExternalUID).Scan(&tnCount)
+	assert.Equal(t, int64(1), tnCount, "scraped TN photo should be stored as attachment")
 
 	// Cleanup.
 	db.Exec("DELETE FROM messages_ai_declined WHERE msgid = ?", msgID)
