@@ -7,4 +7,4 @@ or turn them back on from {{ $settingsUrl }}.
 
 ---
 {{ $siteName }} is registered as a charity with HMRC (ref. XT32865) and is run by volunteers.
-Registered address: 64a North Road, Ormesby, Great Yarmouth, Norfolk NR29 3LE
+Registered address: {{ config('freegle.branding.registered_address') }}

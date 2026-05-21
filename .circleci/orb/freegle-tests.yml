@@ -3885,6 +3885,8 @@ jobs:
             rm -f capacitor.config.ts
             cp capacitor.config.modtools.js capacitor.config.js
             npx cap sync ios
+            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ModTools" ios/App/App/Info.plist
+            echo "✅ Set CFBundleDisplayName to ModTools"
       - run:
           name: Set ModTools App Icons for iOS
           command: |

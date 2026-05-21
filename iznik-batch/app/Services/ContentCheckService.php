@@ -11,6 +11,10 @@ use LanguageDetection\Language;
 
 class ContentCheckService
 {
+    public function __construct(
+        private readonly ?ContentEmbeddingService $embeddingService = null,
+    ) {}
+
     public const CHECK_CONCERN_KEYWORD    = 'ConcernKeyword';
     public const CHECK_VAGUE             = 'Vague';
     public const CHECK_PHONE_NUMBER      = 'PhoneNumber';
@@ -485,6 +489,13 @@ class ContentCheckService
                 continue;
             }
 
+            // Contextual check: if the embedding service identifies this as an
+            // innocent use of the keyword (e.g. "glue gun" vs real weapon),
+            // skip the flag. Falls back to flagging when the sidecar is absent.
+            if ($this->embeddingService?->isInnocentContext($original, $kw->category)) {
+                continue;
+            }
+
             return [
                 'check'    => self::CHECK_CONCERN_KEYWORD,
                 'category' => $kw->category,
@@ -898,9 +909,15 @@ class ContentCheckService
             return null;
         }
 
+        // Match v1 behaviour: only look at the last 31 days.
+        // V1 queries `messages_history` which is pruned to 31 days by purge_messages.php.
+        // Without a window, CGNAT mobile IPs accumulate years of users and always trigger.
+        $window = now()->subDays(31);
+
         // IP used by 5+ different users
         $userCount = DB::table('messages')
             ->where('fromip', $fromip)
+            ->where('arrival', '>=', $window)
             ->whereNotNull('fromuser')
             ->distinct('fromuser')
             ->count();
@@ -908,6 +925,7 @@ class ContentCheckService
         if ($userCount > 5) {
             $users = DB::table('messages')
                 ->where('fromip', $fromip)
+                ->where('arrival', '>=', $window)
                 ->whereNotNull('fromuser')
                 ->select('fromuser')
                 ->groupBy('fromuser')
@@ -931,6 +949,7 @@ class ContentCheckService
         $groupCount = DB::table('messages_groups')
             ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
             ->where('messages.fromip', $fromip)
+            ->where('messages.arrival', '>=', $window)
             ->distinct('messages_groups.groupid')
             ->count();
 
@@ -938,6 +957,7 @@ class ContentCheckService
             $groups = DB::table('messages_groups')
                 ->join('messages', 'messages.id', '=', 'messages_groups.msgid')
                 ->where('messages.fromip', $fromip)
+                ->where('messages.arrival', '>=', $window)
                 ->select('messages_groups.groupid')
                 ->groupBy('messages_groups.groupid')
                 ->orderByRaw('MAX(messages_groups.arrival) DESC')

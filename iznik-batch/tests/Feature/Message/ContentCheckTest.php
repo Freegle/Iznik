@@ -5,6 +5,7 @@ namespace Tests\Feature\Message;
 use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Services\ContentCheckService;
+use App\Services\ContentEmbeddingService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -1671,6 +1672,48 @@ class ContentCheckTest extends TestCase
         $this->assertStringContainsString('20', $result['detail']);
     }
 
+    public function test_ip_abuse_ignores_messages_older_than_31_days(): void
+    {
+        // V1 queries messages_history which is pruned to 31 days.
+        // Messages outside the window must not count toward the abuse threshold.
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $old = now()->subDays(32);
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // Add 5 more users — all with arrival > 31 days ago
+        for ($i = 0; $i < 5; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Old item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => $old,
+                'date'     => $old,
+                'source'   => 'Platform',
+            ]);
+        }
+
+        // Only 1 user within the window — must NOT flag
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull($result, 'IP abuse check should ignore messages older than 31 days');
+    }
+
     public function test_ip_abuse_no_ip_returns_null(): void
     {
         $user = $this->createTestUser();
@@ -2347,5 +2390,103 @@ class ContentCheckTest extends TestCase
 
         $this->assertNotNull($result);
         $this->assertEquals('SpamhausDBL', $result['check']);
+    }
+
+    // -------------------------------------------------------------------------
+    // Contextual embedding suppression — ContentEmbeddingService integration
+    // -------------------------------------------------------------------------
+
+    public function test_contextual_innocent_verdict_suppresses_keyword_flag(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'gun',
+            'category'   => 'substance_regulated',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        $embedding = $this->createMock(ContentEmbeddingService::class);
+        $embedding->method('isInnocentContext')->willReturn(true);
+
+        $service = new ContentCheckService($embedding);
+        $result  = $service->checkConcernKeywords('OFFER: hot glue gun for crafts', '', $group->id);
+
+        $this->assertNull($result, 'Embedding service said innocent — should not flag');
+    }
+
+    public function test_contextual_concerning_verdict_still_flags(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'gun',
+            'category'   => 'substance_regulated',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        $embedding = $this->createMock(ContentEmbeddingService::class);
+        $embedding->method('isInnocentContext')->willReturn(false);
+
+        $service = new ContentCheckService($embedding);
+        $result  = $service->checkConcernKeywords('OFFER: gun for sale', '', $group->id);
+
+        $this->assertNotNull($result, 'Embedding service said concerning — should flag');
+        $this->assertEquals('substance_regulated', $result['category']);
+    }
+
+    public function test_no_embedding_service_still_flags(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'gun',
+            'category'   => 'substance_regulated',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        // No embedding service — conservative default is to flag everything.
+        $service = new ContentCheckService(null);
+        $result  = $service->checkConcernKeywords('OFFER: glue gun for crafts', '', $group->id);
+
+        $this->assertNotNull($result, 'No embedding service — should flag conservatively');
+    }
+
+    public function test_contextual_innocent_verdict_suppresses_substance_medicine_flag(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'codeine',
+            'category'   => 'substance_medicine',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        $embedding = $this->createMock(ContentEmbeddingService::class);
+        $embedding->method('isInnocentContext')->willReturn(true);
+
+        $service = new ContentCheckService($embedding);
+        $result  = $service->checkConcernKeywords('OFFER: medicine cabinet with old codeine labels', '', $group->id);
+
+        $this->assertNull($result, 'Embedding service said innocent — should not flag substance_medicine');
+    }
+
+    public function test_contextual_innocent_verdict_suppresses_scam_flag(): void
+    {
+        $group = $this->createTestGroup();
+        DB::table('concern_keywords')->insert([
+            'keyword'    => 'bank transfer',
+            'category'   => 'scam',
+            'action'     => 'flag',
+            'match_mode' => 'literal',
+        ]);
+
+        $embedding = $this->createMock(ContentEmbeddingService::class);
+        $embedding->method('isInnocentContext')->willReturn(true);
+
+        $service = new ContentCheckService($embedding);
+        $result  = $service->checkConcernKeywords('OFFER: warning — I was asked for a bank transfer, report this scam', '', $group->id);
+
+        $this->assertNull($result, 'Embedding service said innocent — should not flag scam warning');
     }
 }
