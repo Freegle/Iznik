@@ -8345,3 +8345,55 @@ func TestContentcheckFallbackVisibleAfter30Minutes(t *testing.T) {
 	}
 	assert.True(t, found, "unprocessed message older than 30 minutes must appear in pending queue as safety fallback")
 }
+
+// TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks verifies that
+// when a TN user edits their post to remove all photos (textbody has no TN photo links),
+// the AI-generated attachment is deleted and the message is flagged as AI-declined so the
+// illustrations cron cannot re-inject it.
+func TestPatchMessageByTnPostid_RemovesAIPhotoWhenTextbodyHasNoPhotoLinks(t *testing.T) {
+	prefix := uniquePrefix("patchtn_ai_photo")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	db.Exec("UPDATE users SET tnuserid = ? WHERE id = ?", 77801, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Offer", 55.9533, -3.1883)
+	tnpostid := fmt.Sprintf("tn-ai-%d", msgID)
+	db.Exec("UPDATE messages SET tnpostid = ? WHERE id = ?", tnpostid, msgID)
+
+	// Insert an AI-generated attachment on the message.
+	externalUID := fmt.Sprintf("ai-uid-%d", msgID)
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, ?, 1)",
+		msgID, externalUID, `{"ai":true}`)
+
+	key := insertTestPartnerKeyMsg(t, prefix, "tn.com")
+	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
+
+	// PATCH with a textbody that contains no TN photo links — simulates TN user deleting their photo.
+	body := map[string]interface{}{
+		"textbody": "I have a sofa to give away. No photos.",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message/tn/%s?partner=%s&tnuserid=77801&email=%s@tn.com", tnpostid, key, prefix+"_owner")
+	req := httptest.NewRequest("PATCH", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, -1)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// AI attachment must be gone.
+	var aiCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE msgid = ? AND externalmods LIKE ?", msgID, `%"ai":true%`).Scan(&aiCount)
+	assert.Equal(t, int64(0), aiCount, "AI attachment should be removed when TN textbody has no photo links")
+
+	// messages_ai_declined must be set so the cron cannot re-inject.
+	var declinedCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msgID).Scan(&declinedCount)
+	assert.Equal(t, int64(1), declinedCount, "messages_ai_declined must be set to prevent cron re-injection")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_ai_declined WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+}
