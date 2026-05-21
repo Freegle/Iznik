@@ -1671,6 +1671,48 @@ class ContentCheckTest extends TestCase
         $this->assertStringContainsString('20', $result['detail']);
     }
 
+    public function test_ip_abuse_ignores_messages_older_than_31_days(): void
+    {
+        // V1 queries messages_history which is pruned to 31 days.
+        // Messages outside the window must not count toward the abuse threshold.
+        $ip = '192.168.' . rand(0, 255) . '.' . rand(0, 255);
+        $old = now()->subDays(32);
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        // Add 5 more users — all with arrival > 31 days ago
+        for ($i = 0; $i < 5; $i++) {
+            $otherUser = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $otherUser->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Old item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => $old,
+                'date'     => $old,
+                'source'   => 'Platform',
+            ]);
+        }
+
+        // Only 1 user within the window — must NOT flag
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull($result, 'IP abuse check should ignore messages older than 31 days');
+    }
+
     public function test_ip_abuse_no_ip_returns_null(): void
     {
         $user = $this->createTestUser();

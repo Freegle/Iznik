@@ -533,7 +533,7 @@ function scanChats(closed, chats) {
       }
 
       if (
-        chat.name.toLowerCase().includes(l) ||
+        (chat.name?.toLowerCase() ?? '').includes(l) ||
         (chat.snippet && chat.snippet.toLowerCase().includes(l))
       ) {
         return true

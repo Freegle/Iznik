@@ -1705,12 +1705,6 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		stdmsgid = *req.Stdmsgid
 	}
 
-	// Write audit-log entry for each group this deletion affected.
-	for _, gid := range authorizedGroups {
-		ctx.Groupid = gid
-		logAndNotifyMods(db, flog.LOG_SUBTYPE_DELETED, ctx, myid, req.ID, 0, "")
-	}
-
 	// Queue email+log+push via background task for each authorized group.
 	// The batch processor will create the mod log entry and notify group moderators.
 	for _, gid := range authorizedGroups {
