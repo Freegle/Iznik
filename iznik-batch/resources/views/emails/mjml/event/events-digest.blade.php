@@ -12,7 +12,7 @@
         </mj-text>
         <mj-text font-size="14px" color="#555555">
           Here are upcoming community events for {{ $groupName }}.
-          If you'd like to add one, <a href="https://{{ $userSite }}/communityevents">click here</a>.
+          If you'd like to add one, <a href="{{ $userSite }}/communityevents">click here</a>.
         </mj-text>
       </mj-column>
     </mj-section>
@@ -101,7 +101,7 @@
     <mj-section background-color="#ffffff" padding="16px 20px 20px">
       <mj-column>
         <mj-divider border-color="#e0e0e0" border-width="1px" padding="0 0 16px" />
-        <mj-button href="https://{{ $userSite }}/communityevents" mj-class="btn-success" border-radius="3px" font-size="16px">
+        <mj-button href="{{ $userSite }}/communityevents" mj-class="btn-success" border-radius="3px" font-size="16px">
           View all community events
         </mj-button>
       </mj-column>
