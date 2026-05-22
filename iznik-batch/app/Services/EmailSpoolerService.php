@@ -73,7 +73,39 @@ class EmailSpoolerService
 
         // Build the complete message using a capturing transport.
         // This runs all withSymfonyMessage callbacks and captures the final message.
-        $email = $this->captureBuiltMessage($mailable);
+        //
+        // A malformed/non-ASCII recipient (e.g. "kojopoku6.com" with no @) throws
+        // a permanent address error here, while building the message — before it is
+        // ever written to the spool. The send-time catch in processSpool() records
+        // a bounce for these, but it never runs because the message never reaches
+        // the spool, so the exception used to escape uncaught: it killed the queue
+        // task and escalated to Sentry, and the bad address was never flagged as
+        // bouncing. Mirror the send-time / SafeMail behaviour here: a permanent
+        // failure marks the recipient bouncing and is skipped; anything else
+        // (e.g. MJML/infra build failures) re-throws unchanged.
+        try {
+            $email = $this->captureBuiltMessage($mailable);
+        } catch (\Throwable $e) {
+            if (!$this->isPermanentSmtpFailure($e->getMessage())) {
+                throw $e;
+            }
+
+            $recipient = $this->extractOffendingRecipient($e->getMessage(), $normalizedTo);
+            if ($recipient !== null) {
+                app(SmtpFailureClassifier::class)
+                    ->recordPermanentBounce($recipient, $e->getMessage());
+            }
+
+            Log::warning('Skipped permanent-failure recipient while spooling and marked as bouncing', [
+                'mailable' => get_class($mailable),
+                'recipient' => $recipient,
+                'to' => array_column($normalizedTo, 'address'),
+                'type' => $emailType,
+                'error' => $e->getMessage(),
+            ]);
+
+            return '';
+        }
 
         // Extract all data from the captured message.
         // IMPORTANT: Use the $to parameter as authoritative recipient, not the captured email.
@@ -569,6 +601,24 @@ class EmailSpoolerService
         $traceId = $data['headers']['X-Freegle-Trace-Id'] ?? null;
         app(SmtpFailureClassifier::class)
             ->recordPermanentBounce($recipientEmail, $errorMessage, $traceId);
+    }
+
+    /**
+     * Pick which recipient to flag as bouncing after a permanent build failure.
+     *
+     * Symfony's RfcComplianceException names the offending address in its
+     * message (e.g. Email "x" does not comply with addr-spec of RFC 2822).
+     * Prefer that exact address so one bad recipient in a multi-recipient send
+     * doesn't wrongly flag a valid co-recipient; fall back to the first
+     * recipient when the message doesn't name one.
+     */
+    protected function extractOffendingRecipient(string $errorMessage, array $normalizedTo): ?string
+    {
+        if (preg_match('/Email "([^"]+)"/', $errorMessage, $m)) {
+            return $m[1];
+        }
+
+        return $normalizedTo[0]['address'] ?? null;
     }
 
     protected function generateId(): string
