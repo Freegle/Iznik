@@ -119,7 +119,7 @@ class EventsDigestService
                 if ($images->has($event->id)) {
                     $img  = $images->get($event->id);
                     $mods = $img->externalmods ? json_decode($img->externalmods, true) : [];
-                    $imageUrl = $mods['url'] ?? "https://{$userSite}/communityevent/{$event->id}/image/{$img->id}";
+                    $imageUrl = $mods['url'] ?? "{$userSite}/communityevent/{$event->id}/image/{$img->id}";
                 }
 
                 return [
@@ -134,7 +134,7 @@ class EventsDigestService
                     'start'        => $start,
                     'end'          => $end,
                     'imageUrl'     => $imageUrl,
-                    'url'          => "https://{$userSite}/communityevent/{$event->id}",
+                    'url'          => "{$userSite}/communityevent/{$event->id}",
                 ];
             })->values()->all();
 
@@ -164,7 +164,7 @@ class EventsDigestService
 
             foreach ($members as $member) {
                 if (!$dryRun) {
-                    $unsubscribeUrl = "https://{$userSite}/unsubscribe?email=" . urlencode($member->email);
+                    $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($member->email);
                     // SafeMail catches permanent (bounce + skip) and transient
                     // (mail-host hiccup mid-run) SMTP failures so one bad address
                     // or one closed-connection doesn't crash the rest of the
