@@ -10,21 +10,24 @@ package embedding
 // (SetInterOpNumThreads). This reduces single-inference latency proportional
 // to available cores and eliminates the HTTP round-trip to the Node sidecar.
 //
-// Activation: set EMBEDDING_ONNX_MODEL_PATH and EMBEDDING_TOKENIZER_PATH.
-// If unset the package falls back to the HTTP sidecar transparently.
-// Both paths are available in /app/model-cache once the embedding-sidecar
-// container has run (shared via the embedding_model_cache Docker volume).
+// Model discovery: auto-discovers nomic-embed-text-v1.5 in the HuggingFace
+// cache at EMBEDDING_MODEL_CACHE_DIR (default /app/model-cache, shared volume
+// with embedding-sidecar). Override with EMBEDDING_ONNX_MODEL_PATH and
+// EMBEDDING_TOKENIZER_PATH for a non-standard layout.
 
 import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 
 	tk "github.com/daulet/tokenizers"
 	ort "github.com/yalue/onnxruntime_go"
 )
+
+const defaultModelCacheDir = "/app/model-cache"
 
 var nativePool *NativePool
 var nativeOnce sync.Once
@@ -39,9 +42,29 @@ type NativePool struct {
 	tokenizer *tk.Tokenizer
 }
 
+// discoverModelPaths finds nomic-embed-text-v1.5 files in the HuggingFace
+// transformers cache layout: {cacheDir}/models--nomic-ai--nomic-embed-text-v1.5/snapshots/{hash}/...
+func discoverModelPaths(cacheDir string) (modelPath, tokenizerPath string) {
+	base := filepath.Join(cacheDir, "models--nomic-ai--nomic-embed-text-v1.5", "snapshots")
+	if models, _ := filepath.Glob(filepath.Join(base, "*", "onnx", "model_quantized.onnx")); len(models) > 0 {
+		modelPath = models[0]
+	}
+	if tokenizers, _ := filepath.Glob(filepath.Join(base, "*", "tokenizer.json")); len(tokenizers) > 0 {
+		tokenizerPath = tokenizers[0]
+	}
+	return
+}
+
 func initNativePool() {
 	modelPath := os.Getenv("EMBEDDING_ONNX_MODEL_PATH")
 	tokenizerPath := os.Getenv("EMBEDDING_TOKENIZER_PATH")
+	if modelPath == "" || tokenizerPath == "" {
+		cacheDir := os.Getenv("EMBEDDING_MODEL_CACHE_DIR")
+		if cacheDir == "" {
+			cacheDir = defaultModelCacheDir
+		}
+		modelPath, tokenizerPath = discoverModelPaths(cacheDir)
+	}
 	if modelPath == "" || tokenizerPath == "" {
 		return
 	}
@@ -51,8 +74,8 @@ func initNativePool() {
 		return
 	}
 	nativePool = pool
-	fmt.Printf("Native embedding pool ready (sessions=%d, threads=%d)\n",
-		cap(pool.sessions), runtime.NumCPU())
+	fmt.Printf("Native embedding pool ready (sessions=%d, threads=%d, model=%s)\n",
+		cap(pool.sessions), runtime.NumCPU(), modelPath)
 }
 
 func newNativePool(modelPath, tokenizerPath string) (*NativePool, error) {
@@ -65,6 +88,10 @@ func newNativePool(modelPath, tokenizerPath string) (*NativePool, error) {
 		return nil, fmt.Errorf("session options: %w", err)
 	}
 	n := runtime.NumCPU()
+	// Constant folding, node fusion (LayerNorm, attention), dead node elimination.
+	if err := opts.SetSessionGraphOptimizationLevel(ort.OrtEnableAll); err != nil {
+		return nil, fmt.Errorf("SetSessionGraphOptimizationLevel: %w", err)
+	}
 	// THE PARALLEL ALGORITHM: tile each GEMM matmul across N threads,
 	// reducing per-inference latency by ~N× on CPU.
 	if err := opts.SetIntraOpNumThreads(n); err != nil {
