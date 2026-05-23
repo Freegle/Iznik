@@ -42,6 +42,23 @@
         </div>
       </div>
 
+      <!-- Feature Requests (collapsible, only shown when non-empty) -->
+      <div v-if="featureRequestsData.state.requests.length > 0" class="mt-3">
+        <details class="card">
+          <summary class="card-header" style="cursor: pointer; user-select: none;">
+            <span class="ms-2">Feature Requests</span>
+            <span class="badge bg-info text-dark ms-2">{{ featureRequestsData.state.requests.length }}</span>
+          </summary>
+          <div class="card-body p-0">
+            <FeatureRequestPanel
+              :requests="featureRequestsData.state.requests"
+              :loading="featureRequestsData.state.loading"
+              @refresh="featureRequestsData.refresh()"
+            />
+          </div>
+        </details>
+      </div>
+
       <!-- Recently Fixed (collapsible) -->
       <div v-if="recentlyFixed.length > 0" class="mt-4">
         <details class="card">
@@ -119,14 +136,16 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useBugs, useCIRunner, useDrafts, useIterations, usePrsLive } from './composables/useApi'
+import { useBugs, useCIRunner, useDrafts, useFeatureRequests, useIterations, usePrsLive } from './composables/useApi'
 import PrPanel from './components/PrPanel.vue'
 import BugPanel from './components/BugPanel.vue'
+import FeatureRequestPanel from './components/FeatureRequestPanel.vue'
 import ReplyQueue from './components/ReplyQueue.vue'
 import IterTable from './components/IterTable.vue'
 
 const bugsData = useBugs()
 const draftsData = useDrafts()
+const featureRequestsData = useFeatureRequests()
 const itersData = useIterations()
 const prsData = usePrsLive()
 const ciRunner = useCIRunner()

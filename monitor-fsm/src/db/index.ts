@@ -2,7 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
+import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -41,6 +41,9 @@ function applySchema(db: DB): void {
     for (const stmt of MIGRATION_V3_SQL.trim().split('\n').filter(s => s.trim())) {
       try { db.exec(stmt) } catch { /* column already exists */ }
     }
+  }
+  if (current < 4) {
+    try { db.exec(MIGRATION_V4_SQL) } catch (e) { /* table already recreated */ }
   }
   if (current < SCHEMA_VERSION) {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION)
@@ -154,8 +157,16 @@ export function getDiscourseBug(db: DB, topic: number, post: number): DiscourseB
 export function listOpenDiscourseBugs(db: DB): DiscourseBugRow[] {
   return db.prepare(`
     SELECT * FROM discourse_bug
-    WHERE state NOT IN ('fixed','confirmed','off-topic','duplicate')
+    WHERE state NOT IN ('fixed','confirmed','off-topic','duplicate','feature-request')
     ORDER BY topic, post
+  `).all() as DiscourseBugRow[]
+}
+
+export function listFeatureRequests(db: DB): DiscourseBugRow[] {
+  return db.prepare(`
+    SELECT * FROM discourse_bug
+    WHERE state = 'feature-request'
+    ORDER BY last_seen_at DESC
   `).all() as DiscourseBugRow[]
 }
 
