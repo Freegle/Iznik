@@ -1041,7 +1041,7 @@ func Post(c *fiber.Ctx) error {
 				Email    string
 			}
 			var reporter ReporterInfo
-			db.Raw("SELECT u.fullname, ue.email FROM users u LEFT JOIN users_emails ue ON ue.userid = u.id AND ue.preferred = 1 WHERE u.id = ?", myid).Scan(&reporter)
+			db.Raw("SELECT u.fullname, ue.email FROM users u LEFT JOIN users_emails ue ON ue.userid = u.id WHERE u.id = ? ORDER BY ue.preferred DESC, ue.id ASC LIMIT 1", myid).Scan(&reporter)
 
 			if err := queue.QueueTask(queue.TaskEmailChitchatReport, map[string]interface{}{
 				"user_id":     myid,
