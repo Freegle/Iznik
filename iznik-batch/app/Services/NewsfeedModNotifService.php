@@ -153,6 +153,7 @@ class NewsfeedModNotifService
                 }
 
                 $postsData[] = [
+                    'id'      => $post->id,
                     'label'   => $label,
                     'preview' => $preview,
                     'added'   => $post->added,
