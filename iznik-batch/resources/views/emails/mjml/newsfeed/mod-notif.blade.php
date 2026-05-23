@@ -30,7 +30,7 @@
         </mj-text>
       </mj-column>
       <mj-column width="110px" vertical-align="middle">
-        <mj-button mj-class="btn-modtools" href="{{ $chitchatUrl }}" font-size="13px" inner-padding="8px 14px">
+        <mj-button mj-class="btn-modtools" href="{{ $userSite }}/chitchat/{{ $post['id'] }}" font-size="13px" inner-padding="8px 14px">
           View
         </mj-button>
       </mj-column>
@@ -44,7 +44,7 @@
 
     <mj-section background-color="#ffffff" padding="10px 20px 20px">
       <mj-column>
-        <mj-button href="{{ $chitchatUrl }}" mj-class="btn-modtools" border-radius="3px" font-size="16px">
+        <mj-button href="{{ $userSite }}/chitchat" mj-class="btn-modtools" border-radius="3px" font-size="16px">
           View all chitchat
         </mj-button>
       </mj-column>
