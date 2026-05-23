@@ -191,6 +191,11 @@ class ContentCheckService
                                     ]);
                                 }
 
+                                // Now Approved — add to the spatial index immediately so the
+                                // post shows in browse/search without waiting for the periodic
+                                // messages:update-spatial-index reconciler.
+                                (new MessageSpatialService())->addApprovedMessage((int) $row->msgid);
+
                                 $stats['approved']++;
                             });
 

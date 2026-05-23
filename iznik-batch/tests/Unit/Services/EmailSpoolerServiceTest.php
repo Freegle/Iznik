@@ -800,4 +800,63 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(1, $stats['retried']);
         $this->assertEquals(0, $stats['bounced'] ?? 0);
     }
+
+    /**
+     * Test that a malformed recipient address — which throws while the message
+     * is built, before it is ever written to the spool — records a permanent
+     * bounce and is skipped, rather than escaping uncaught and killing the
+     * queue task (Sentry BATCH-17 / BATCH-6).
+     */
+    public function test_spool_records_bounce_when_recipient_address_is_malformed(): void
+    {
+        // No "@" → Symfony throws RfcComplianceException ("... does not comply
+        // with addr-spec of RFC 2822"), which the classifier treats as permanent.
+        $malformed = 'kojopoku6_' . uniqid() . '.com';
+        $user = $this->createTestUser(['email_preferred' => $malformed]);
+        $userEmail = UserEmail::where('email', $malformed)->first();
+
+        $mailable = new WelcomeMail($malformed);
+
+        // Must not throw, and must not spool anything.
+        $id = $this->spooler->spool($mailable, $malformed, 'welcome');
+
+        $this->assertSame('', $id);
+        $this->assertCount(0, glob($this->testSpoolDir . '/pending/*.json'));
+
+        // Permanent bounce recorded against the offending address.
+        $bounceCount = DB::table('bounces_emails')
+            ->where('emailid', $userEmail->id)
+            ->where('permanent', 1)
+            ->count();
+        $this->assertGreaterThanOrEqual(1, $bounceCount);
+
+        // User flagged as bouncing (1 permanent bounce = suspension).
+        $user->refresh();
+        $this->assertEquals(1, $user->bouncing);
+    }
+
+    /**
+     * Test that a non-permanent build failure (e.g. infra/MJML) still
+     * propagates from spool() instead of being silently swallowed.
+     */
+    public function test_spool_rethrows_non_permanent_build_failure(): void
+    {
+        $email = $this->uniqueEmail('recipient');
+
+        // A mailable whose build throws a transient/unknown error — not an
+        // address problem — must bubble up so it gets noticed, exactly as
+        // before this change.
+        $mailable = new class($email) extends Mailable {
+            public function __construct(private string $recipient) {}
+
+            public function build(): static
+            {
+                throw new \RuntimeException('MJML compilation failed: Could not resolve host: mjml');
+            }
+        };
+
+        $this->expectException(\RuntimeException::class);
+
+        $this->spooler->spool($mailable, $email);
+    }
 }

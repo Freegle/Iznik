@@ -208,4 +208,57 @@ class MessageSpatialService
 
         return $ids->count();
     }
+
+    /**
+     * Add a single just-approved message to the spatial index immediately, so it
+     * appears in browse/search without waiting for the every-5-minute reconciler.
+     *
+     * No-op unless the message is Approved, has a location, and has no outcome —
+     * messages_spatial backs the public browse/map, so Pending/Spam/Rejected
+     * messages must never be added here. Safe to call inside the same transaction
+     * that set the collection to Approved (it reads its own uncommitted write).
+     */
+    public function addApprovedMessage(int $msgid): void
+    {
+        $msg = DB::table('messages')
+            ->join('messages_groups', 'messages_groups.msgid', '=', 'messages.id')
+            ->leftJoin('messages_outcomes', 'messages_outcomes.msgid', '=', 'messages.id')
+            ->where('messages.id', $msgid)
+            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages_groups.deleted', 0)
+            ->whereNull('messages.deleted')
+            ->whereNotNull('messages.lat')
+            ->whereNotNull('messages.lng')
+            ->whereNull('messages_outcomes.id')
+            ->orderByDesc('messages_groups.arrival')
+            ->select(
+                'messages.id',
+                'messages.lat',
+                'messages.lng',
+                DB::raw('messages.type as msgtype'),
+                'messages_groups.groupid',
+                'messages_groups.arrival',
+            )
+            ->first();
+
+        if (!$msg) {
+            return;
+        }
+
+        // Coordinates come from the DB, not user input — safe to embed in WKT.
+        $wkt  = "POINT({$msg->lng} {$msg->lat})";
+        $srid = self::SRID;
+
+        DB::statement(
+            "INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival)
+             VALUES (?, ST_GeomFromText('$wkt', $srid), ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+               point = ST_GeomFromText('$wkt', $srid),
+               groupid = ?,
+               msgtype = ?,
+               arrival = ?",
+            [$msg->id, $msg->groupid, $msg->msgtype, $msg->arrival,
+             $msg->groupid, $msg->msgtype, $msg->arrival]
+        );
+    }
 }
