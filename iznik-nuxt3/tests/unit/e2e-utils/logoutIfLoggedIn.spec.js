@@ -20,6 +20,9 @@ function makeLocator(visible = false) {
     filter: function () {
       return this
     },
+    first: function () {
+      return this
+    },
   }
 }
 
@@ -56,6 +59,15 @@ describe('logoutIfLoggedIn (e2e util)', () => {
     const page = makePage('http://freegle-prod-local.localhost:9080/')
     await logoutIfLoggedIn(page)
     expect(page.goto).not.toHaveBeenCalled()
+  })
+
+  it('waits for .test-signinbutton when logout redirect already landed at home page', async () => {
+    // After skipping goto('/'), we wait for .test-signinbutton to confirm Nuxt has
+    // fully hydrated the logged-out state before returning, so the caller can
+    // safely navigate without triggering a concurrent-navigation renderer freeze.
+    const page = makePage('http://freegle-prod-local.localhost:9080/')
+    await logoutIfLoggedIn(page)
+    expect(page.locator).toHaveBeenCalledWith('.test-signinbutton')
   })
 
   it('calls page.goto("/") when logout did not redirect to home page', async () => {

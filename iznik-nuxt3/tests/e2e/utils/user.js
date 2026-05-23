@@ -230,6 +230,19 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
         console.log(
           '[logoutIfLoggedIn] Logout redirect already at home page, skipping explicit navigation'
         )
+        // The logout redirect changed the URL to '/' but Nuxt's post-navigation
+        // JavaScript (store updates, API calls) is still running. If the caller
+        // immediately navigates to another URL (e.g. /give via postMessage), the two
+        // concurrent navigations race and the V8 renderer can hang for 35+ seconds.
+        // Waiting for the sign-in button confirms Nuxt has fully hydrated the
+        // logged-out state, at which point it is safe for the caller to navigate.
+        // Unlike waitForLoadState('domcontentloaded'), this does not block on
+        // external scripts — it only depends on Vue/Nuxt hydration completing.
+        await page
+          .locator('.test-signinbutton')
+          .first()
+          .waitFor({ state: 'visible', timeout: 15000 })
+          .catch(() => {})
       } else {
         console.log('[logoutIfLoggedIn] Navigating to homepage (try block)')
         try {
