@@ -1646,6 +1646,44 @@ func logAndNotifyMods(db *gorm.DB, subtype string, ctx *MessageModContext, myid 
 	}
 }
 
+// addApprovedMessageToSpatialIndex inserts/updates the messages_spatial row for a
+// message that has just become Approved, so it appears in browse/search immediately
+// instead of waiting for the every-5-minute reconciler (MessageSpatialService).
+// messages_spatial backs the public browse/map, so it must only contain Approved
+// messages with a location — Pending/Spam/Rejected must never be added here. The
+// query re-checks collection=Approved so this is a safe no-op if called otherwise.
+func addApprovedMessageToSpatialIndex(db *gorm.DB, msgid uint64) {
+	var row struct {
+		Lat     float64
+		Lng     float64
+		Msgtype string
+		Groupid uint64
+		Arrival string
+	}
+	db.Raw("SELECT messages.lat AS lat, messages.lng AS lng, messages.type AS msgtype, "+
+		"messages_groups.groupid AS groupid, "+
+		"DATE_FORMAT(messages_groups.arrival, '%Y-%m-%d %H:%i:%s') AS arrival "+
+		"FROM messages "+
+		"INNER JOIN messages_groups ON messages_groups.msgid = messages.id "+
+		"LEFT JOIN messages_outcomes ON messages_outcomes.msgid = messages.id "+
+		"WHERE messages.id = ? AND messages_groups.collection = ? "+
+		"AND messages_groups.deleted = 0 AND messages.deleted IS NULL "+
+		"AND messages.lat IS NOT NULL AND messages.lng IS NOT NULL "+
+		"AND messages_outcomes.id IS NULL "+
+		"ORDER BY messages_groups.arrival DESC LIMIT 1",
+		msgid, utils.COLLECTION_APPROVED).Scan(&row)
+
+	if row.Groupid == 0 || (row.Lat == 0 && row.Lng == 0) {
+		return
+	}
+
+	db.Exec("INSERT INTO messages_spatial (msgid, point, groupid, msgtype, arrival) "+
+		"VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), ?, ?, ?) "+
+		"ON DUPLICATE KEY UPDATE point = VALUES(point), groupid = VALUES(groupid), "+
+		"msgtype = VALUES(msgtype), arrival = VALUES(arrival)",
+		msgid, row.Lng, row.Lat, row.Groupid, row.Msgtype, row.Arrival)
+}
+
 // handleApprove approves a pending message.
 func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	db := database.DBConn
@@ -1683,6 +1721,10 @@ func handleApprove(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	if stillHeldCount == 0 {
 		db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
 	}
+
+	// Now Approved — add to the spatial index so the post appears in browse/search
+	// immediately rather than waiting for the periodic reconciler.
+	addApprovedMessageToSpatialIndex(db, req.ID)
 
 	// Mark as ham if it was flagged as spam on any authorised group (fall back to messages table).
 	var spamtype *string
@@ -2360,15 +2402,13 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 	// and text=messageid (RFC822 Message-Id header).
 	logMessageReceived(db, groupid, myid, req.ID)
 
-	// Add to spatial index now that the message is in a group
-	// (only runs after messages_groups insert).
-	var msgLat, msgLng float64
-	var msgType string
-	db.Raw("SELECT lat, lng, type FROM messages WHERE id = ?", req.ID).Row().Scan(&msgLat, &msgLng, &msgType)
-	if msgLat != 0 || msgLng != 0 {
-		db.Exec("INSERT INTO messages_spatial (msgid, point, successful, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), 1, ?, ?, NOW()) ON DUPLICATE KEY UPDATE point = VALUES(point), groupid = VALUES(groupid), msgtype = VALUES(msgtype), arrival = VALUES(arrival)",
-			req.ID, msgLng, msgLat, groupid, msgType)
-	}
+	// Do NOT add to messages_spatial here. Every post starts Pending (see above),
+	// and messages_spatial backs the public browse/map — which is shown to all users,
+	// including logged-out ones (see message.Bounds / message.Groups). So it must only
+	// ever contain Approved messages. The message is added to the spatial index when it
+	// becomes Approved: either the content-check batch job (messages:contentcheck)
+	// auto-promotes it, or a moderator approves it (handleApprove). The poster still
+	// sees their own pending post immediately via the fromuser branch of the browse query.
 
 	// Check if user has a password (to determine if they're a new user).
 	var hasPassword int64
@@ -2564,16 +2604,13 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		db.Exec("UPDATE messages SET "+strings.Join(setClauses, ", ")+" WHERE id = ?", args...)
 	}
 
-	// Update spatial index when lat/lng change so browse/search reflects the new location.
+	// Keep the spatial index point in sync when an already-indexed message's location
+	// changes. We deliberately UPDATE only — never INSERT — so editing a Pending
+	// message's location cannot leak it into messages_spatial (which backs the public
+	// browse). Only Approved messages have a spatial row; the approval path inserts.
 	if req.Lat != nil && req.Lng != nil {
-		var msgType string
-		var groupid uint64
-		db.Raw("SELECT type FROM messages WHERE id = ?", req.ID).Scan(&msgType)
-		groupid = getPrimaryGroupForMessage(db, req.ID)
-		if groupid > 0 {
-			db.Exec("INSERT INTO messages_spatial (msgid, point, successful, groupid, msgtype, arrival) VALUES (?, ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857), 1, ?, ?, NOW()) ON DUPLICATE KEY UPDATE point = VALUES(point)",
-				req.ID, *req.Lng, *req.Lat, groupid, msgType)
-		}
+		db.Exec("UPDATE messages_spatial SET point = ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857) WHERE msgid = ?",
+			*req.Lng, *req.Lat, req.ID)
 	}
 
 	// PHP parity (message.php:371-372): when a groupid is supplied, persist it to

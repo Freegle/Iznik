@@ -631,6 +631,88 @@ class ContentCheckTest extends TestCase
         $this->assertNotNull($checkedAt);
     }
 
+    public function test_promoted_message_with_location_is_added_to_spatial_index(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        $this->createMembership($user, $group, ['ourPostingStatus' => 'DEFAULT']);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'lat'      => 51.5,
+            'lng'      => -0.12,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        // Pending → must not be in the spatial index (it backs the public browse).
+        $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
+
+        $stats = $this->service->processUnprocessed();
+        $this->assertEquals(1, $stats['approved']);
+        $this->assertEquals('Approved', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'));
+
+        // Approved → now in the spatial index.
+        $this->assertEquals(1, DB::table('messages_spatial')->where('msgid', $msgid)->count());
+
+        DB::table('messages_spatial')->where('msgid', $msgid)->delete();
+    }
+
+    public function test_kept_pending_message_is_not_added_to_spatial_index(): void
+    {
+        $group = $this->createTestGroup();
+        $user  = $this->createTestUser();
+        // NULL ourPostingStatus = MODERATED → message is kept Pending even when clean.
+        $this->createMembership($user, $group);
+
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Solid oak table (SW1A)',
+            'textbody' => 'Beautiful table. Collection only.',
+            'message'  => 'Beautiful table. Collection only.',
+            'lat'      => 51.5,
+            'lng'      => -0.12,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        DB::table('items')->insertOrIgnore(['name' => 'Solid oak table']);
+        $itemId = DB::table('items')->where('name', 'Solid oak table')->value('id');
+        DB::table('messages_items')->insert(['msgid' => $msgid, 'itemid' => $itemId]);
+
+        DB::table('messages_groups')->insert([
+            'msgid'      => $msgid,
+            'groupid'    => $group->id,
+            'collection' => 'Pending',
+            'arrival'    => now(),
+            'deleted'    => 0,
+        ]);
+
+        $stats = $this->service->processUnprocessed();
+        $this->assertEquals(1, $stats['kept_pending']);
+        $this->assertEquals('Pending', DB::table('messages_groups')->where('msgid', $msgid)->value('collection'));
+
+        // Still Pending → must not be in the spatial index.
+        $this->assertEquals(0, DB::table('messages_spatial')->where('msgid', $msgid)->count());
+    }
+
     public function test_moderated_user_message_stays_pending_with_checked_at_set(): void
     {
         $group = $this->createTestGroup();

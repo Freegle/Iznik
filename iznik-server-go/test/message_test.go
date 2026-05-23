@@ -726,6 +726,61 @@ func TestPostMessageApprove(t *testing.T) {
 	// (not synchronously in the Go API), so no log or push_notify_group_mods assertions here.
 }
 
+// TestApproveAddsApprovedMessageToSpatial verifies that a Pending message with a
+// location is not in messages_spatial, and that approving it adds it (so it then
+// shows in the public browse) with the correct coordinates.
+func TestApproveAddsApprovedMessageToSpatial(t *testing.T) {
+	prefix := uniquePrefix("msgmod_appr_spatial")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// A location with non-zero lat/lng for the spatial point.
+	var locLat, locLng float64
+	db.Raw("SELECT lat, lng FROM locations WHERE lat != 0 AND lng != 0 LIMIT 1").Row().Scan(&locLat, &locLng)
+	if locLat == 0 && locLng == 0 {
+		t.Fatal("No locations with non-zero lat/lng in test database")
+	}
+
+	// Pending message with a location.
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, lat, lng, arrival, date) VALUES (?, ?, 'Body', 'Body', 'Offer', ?, ?, NOW(), NOW())",
+		posterID, prefix+" spatial offer", locLat, locLng)
+	var msgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1", posterID, prefix+" spatial offer").Scan(&msgID)
+	require.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, contentcheck_checked_at) VALUES (?, ?, NOW(), 'Pending', NOW())", msgID, groupID)
+
+	// Pending → must not be in the spatial index.
+	var spatialCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", msgID).Scan(&spatialCount)
+	assert.Equal(t, int64(0), spatialCount, "Pending message must not be in messages_spatial")
+
+	// Approve as the moderator.
+	body, _ := json.Marshal(map[string]interface{}{"id": msgID, "action": "Approve"})
+	req := httptest.NewRequest("POST", fmt.Sprintf("/api/message?jwt=%s", modToken), bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// Approved → now in the spatial index with matching coordinates.
+	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", msgID).Scan(&spatialCount)
+	assert.Equal(t, int64(1), spatialCount, "approved message should be in messages_spatial")
+
+	var spatialLat, spatialLng float64
+	db.Raw("SELECT ST_Y(point), ST_X(point) FROM messages_spatial WHERE msgid = ?", msgID).Row().Scan(&spatialLat, &spatialLng)
+	assert.InDelta(t, locLat, spatialLat, 0.001, "spatial lat should match location")
+	assert.InDelta(t, locLng, spatialLng, 0.001, "spatial lng should match location")
+
+	// Clean up the spatial entry so it does not affect other tests.
+	db.Exec("DELETE FROM messages_spatial WHERE msgid = ?", msgID)
+}
+
 func TestPostMessageApproveWithStdMsg(t *testing.T) {
 	prefix := uniquePrefix("msgmod_appr_std")
 	db := database.DBConn
@@ -2566,7 +2621,9 @@ func TestPutMessageSetsLatLngFromLocation(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", newID).Scan(&spatialCount)
 	assert.Equal(t, int64(0), spatialCount, "draft should not be in messages_spatial")
 
-	// Now submit via JoinAndPost — spatial index should be populated.
+	// Now submit via JoinAndPost. Every post starts Pending, and messages_spatial
+	// backs the public browse — so a Pending post must NOT enter it. It is added to
+	// the spatial index only when approved (see TestApproveAddsApprovedMessageToSpatial).
 	postBody, _ := json.Marshal(map[string]interface{}{
 		"id":     newID,
 		"email":  fmt.Sprintf("%s@test.com", prefix+"_user"),
@@ -2578,15 +2635,14 @@ func TestPutMessageSetsLatLngFromLocation(t *testing.T) {
 	assert.NoError(t, postErr)
 	assert.Equal(t, 200, postResp.StatusCode)
 
-	// Now messages_spatial should have the entry.
-	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", newID).Scan(&spatialCount)
-	assert.Equal(t, int64(1), spatialCount, "submitted message should be in messages_spatial")
+	// Submitted message is Pending.
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ?", newID).Scan(&collection)
+	assert.Equal(t, "Pending", collection, "submitted message should start Pending")
 
-	// Verify spatial coords match.
-	var spatialLat, spatialLng float64
-	db.Raw("SELECT ST_Y(point), ST_X(point) FROM messages_spatial WHERE msgid = ?", newID).Row().Scan(&spatialLat, &spatialLng)
-	assert.InDelta(t, locLat, spatialLat, 0.001, "spatial lat should match location")
-	assert.InDelta(t, locLng, spatialLng, 0.001, "spatial lng should match location")
+	// Pending message must NOT be in messages_spatial (would leak to the public browse).
+	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", newID).Scan(&spatialCount)
+	assert.Equal(t, int64(0), spatialCount, "Pending message must not be in messages_spatial")
 }
 
 func TestPutMessageNotMemberDraft(t *testing.T) {
