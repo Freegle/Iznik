@@ -6,19 +6,15 @@ use App\Mail\Newsfeed\NewsfeedModNotifMail;
 use Tests\TestCase;
 
 /**
- * AssertFlip failing test for the broken chitchat link in NewsfeedModNotifMail.
+ * Tests for NewsfeedModNotifMail link correctness (V1 parity).
  *
  * Bug (topic 9676): the "View" and "View all chitchat" buttons in the moderator
  * chitchat notification email link to https://modtools.org/chitchat, but the
  * Modtools application has no /chitchat route — clicking the link produces a 404.
  *
- * The legacy iznik-server code correctly linked to https://www.ilovefreegle.org/chitchat
- * (the user site), where the /chitchat page exists. The batch migration accidentally
- * changed the destination to the mod site, which has no such page.
- *
- * AssertFlip Step 2 — inverted assertions that FAIL on buggy code, PASS after the fix.
- * The fix: change chitchatUrl to use config('freegle.sites.user') instead of
- * config('freegle.sites.mod').
+ * V1 parity: iznik-server Newsfeed.php links to /chitchat/{id} (specific post),
+ * not just /chitchat. Each per-post "View" button must use the post ID so mods
+ * land directly on the reported post rather than the general chitchat listing.
  */
 class NewsfeedModNotifMailTest extends TestCase
 {
@@ -26,6 +22,7 @@ class NewsfeedModNotifMailTest extends TestCase
     {
         return [
             [
+                'id'      => 42,
                 'label'   => 'Post',
                 'preview' => 'Anyone know a good plumber nearby?',
                 'added'   => '2026-05-22 10:30:00',
@@ -45,8 +42,6 @@ class NewsfeedModNotifMailTest extends TestCase
         $modSite  = config('freegle.sites.mod');   // https://modtools.org
         $userSite = config('freegle.sites.user');  // https://www.ilovefreegle.org
 
-        // The Modtools app has no /chitchat route: clicking the link returns a 404.
-        // After the fix, the button must link to the user site where /chitchat exists.
         $this->assertStringNotContainsString(
             $modSite . '/chitchat',
             $html,
@@ -60,7 +55,7 @@ class NewsfeedModNotifMailTest extends TestCase
         );
     }
 
-    public function test_view_all_chitchat_button_uses_user_site(): void
+    public function test_per_post_view_button_links_to_specific_post(): void
     {
         $mail = new NewsfeedModNotifMail(
             recipientEmail: 'mod@example.com',
@@ -71,8 +66,27 @@ class NewsfeedModNotifMailTest extends TestCase
 
         $userSite = config('freegle.sites.user');
 
-        // Both the per-post "View" buttons and the "View all chitchat" button
-        // must link to the user site — the only place where /chitchat exists.
+        // V1 parity: each "View" button must link to /chitchat/{id} so mods
+        // land on the specific post, not the general listing.
+        $this->assertStringContainsString(
+            $userSite . '/chitchat/42',
+            $html,
+            'Per-post "View" button must link to /chitchat/{id} matching V1 behaviour'
+        );
+    }
+
+    public function test_view_all_chitchat_button_links_to_general_listing(): void
+    {
+        $mail = new NewsfeedModNotifMail(
+            recipientEmail: 'mod@example.com',
+            posts: $this->makePosts(),
+        );
+
+        $html = $mail->render();
+
+        $userSite = config('freegle.sites.user');
+
+        // The "View all chitchat" footer button goes to the general listing.
         $this->assertStringContainsString(
             $userSite . '/chitchat',
             $html,

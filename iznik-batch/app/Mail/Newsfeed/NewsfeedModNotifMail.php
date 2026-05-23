@@ -39,10 +39,10 @@ class NewsfeedModNotifMail extends MjmlMailable
         $userSite = config('freegle.sites.user', 'https://www.ilovefreegle.org');
 
         return $this->mjmlView('emails.mjml.newsfeed.mod-notif', [
-            'posts'       => $this->posts,
-            'count'       => count($this->posts),
-            'chitchatUrl' => "{$userSite}/chitchat",
-            'email'       => $this->recipientEmail,
+            'posts'    => $this->posts,
+            'count'    => count($this->posts),
+            'userSite' => $userSite,
+            'email'    => $this->recipientEmail,
         ]);
     }
 }
