@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 
 	tk "github.com/daulet/tokenizers"
 	ort "github.com/yalue/onnxruntime_go"
@@ -29,8 +30,11 @@ import (
 
 const defaultModelCacheDir = "/app/model-cache"
 
-var nativePool *NativePool
-var nativeOnce sync.Once
+// _nativePool is set once when the model files are first found on disk.
+// Reads use Load() with no lock; writes go through nativePoolMu.
+var _nativePool atomic.Pointer[NativePool]
+var nativePoolMu sync.Mutex
+var ortInitOnce sync.Once // ort.InitializeEnvironment must be called exactly once
 
 // NativePool holds N independent ONNX sessions plus one tokenizer.
 // Sessions sit in a buffered channel: each concurrent EmbedQuery call grabs
@@ -55,34 +59,57 @@ func discoverModelPaths(cacheDir string) (modelPath, tokenizerPath string) {
 	return
 }
 
-func initNativePool() {
-	modelPath := os.Getenv("EMBEDDING_ONNX_MODEL_PATH")
-	tokenizerPath := os.Getenv("EMBEDDING_TOKENIZER_PATH")
-	if modelPath == "" || tokenizerPath == "" {
-		cacheDir := os.Getenv("EMBEDDING_MODEL_CACHE_DIR")
-		if cacheDir == "" {
-			cacheDir = defaultModelCacheDir
-		}
-		modelPath, tokenizerPath = discoverModelPaths(cacheDir)
-	}
-	if modelPath == "" || tokenizerPath == "" {
+// resolveModelPaths returns the model and tokenizer paths, from explicit env
+// vars or by discovering them in the HuggingFace cache dir.
+func resolveModelPaths() (modelPath, tokenizerPath string) {
+	modelPath = os.Getenv("EMBEDDING_ONNX_MODEL_PATH")
+	tokenizerPath = os.Getenv("EMBEDDING_TOKENIZER_PATH")
+	if modelPath != "" && tokenizerPath != "" {
 		return
+	}
+	cacheDir := os.Getenv("EMBEDDING_MODEL_CACHE_DIR")
+	if cacheDir == "" {
+		cacheDir = defaultModelCacheDir
+	}
+	return discoverModelPaths(cacheDir)
+}
+
+// getNativePool returns the initialised pool, or nil if the model files are
+// not yet present. It retries discovery on every call until the pool is ready,
+// so it self-activates once the embedding-sidecar has downloaded the model.
+func getNativePool() *NativePool {
+	// Fast path: pool already initialised.
+	if p := _nativePool.Load(); p != nil {
+		return p
+	}
+	// Slow path: attempt initialisation under lock.
+	nativePoolMu.Lock()
+	defer nativePoolMu.Unlock()
+	if p := _nativePool.Load(); p != nil {
+		return p // another goroutine beat us
+	}
+	modelPath, tokenizerPath := resolveModelPaths()
+	if modelPath == "" || tokenizerPath == "" {
+		return nil // files not downloaded yet; caller falls back to HTTP sidecar
+	}
+	var ortErr error
+	ortInitOnce.Do(func() { ortErr = ort.InitializeEnvironment() })
+	if ortErr != nil {
+		fmt.Printf("WARNING: ORT init failed: %v — using HTTP sidecar\n", ortErr)
+		return nil
 	}
 	pool, err := newNativePool(modelPath, tokenizerPath)
 	if err != nil {
 		fmt.Printf("WARNING: native embedding pool init failed: %v — using HTTP sidecar\n", err)
-		return
+		return nil
 	}
-	nativePool = pool
+	_nativePool.Store(pool)
 	fmt.Printf("Native embedding pool ready (sessions=%d, threads=%d, model=%s)\n",
 		cap(pool.sessions), runtime.NumCPU(), modelPath)
+	return pool
 }
 
 func newNativePool(modelPath, tokenizerPath string) (*NativePool, error) {
-	if err := ort.InitializeEnvironment(); err != nil {
-		return nil, fmt.Errorf("ort env: %w", err)
-	}
-
 	opts, err := ort.NewSessionOptions()
 	if err != nil {
 		return nil, fmt.Errorf("session options: %w", err)
@@ -125,24 +152,24 @@ func newNativePool(modelPath, tokenizerPath string) (*NativePool, error) {
 	return &NativePool{sessions: sessions, tokenizer: tokenizer}, nil
 }
 
-// embedQueryNative returns nil, nil when the pool is not configured.
+// embedQueryNative returns nil, nil when the pool is not yet available.
 func embedQueryNative(text string) ([]float32, error) {
-	nativeOnce.Do(initNativePool)
-	if nativePool == nil {
+	p := getNativePool()
+	if p == nil {
 		return nil, nil
 	}
-	return nativePool.embed("search_query: " + text)
+	return p.embed("search_query: " + text)
 }
 
-// embedBatchNative returns nil, nil when the pool is not configured.
+// embedBatchNative returns nil, nil when the pool is not yet available.
 func embedBatchNative(texts []string) ([][]float32, error) {
-	nativeOnce.Do(initNativePool)
-	if nativePool == nil {
+	p := getNativePool()
+	if p == nil {
 		return nil, nil
 	}
 	results := make([][]float32, len(texts))
 	for i, t := range texts {
-		v, err := nativePool.embed("search_document: " + t)
+		v, err := p.embed("search_document: " + t)
 		if err != nil {
 			return nil, err
 		}
