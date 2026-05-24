@@ -5,9 +5,9 @@
   <mj-body background-color="#ffffff">
 
     {{-- Header --}}
-    <mj-section mj-class="bg-success" padding="0">
+    <mj-section mj-class="bg-success" padding="20px 0">
       <mj-column width="65%" vertical-align="middle">
-        <mj-text font-size="18px" font-weight="bold" color="#ffffff" padding="10px 25px">
+        <mj-text font-size="18px" font-weight="bold" color="#ffffff" padding="0 0 0 25px">
           You have {{ $count }} notification{{ $count === 1 ? '' : 's' }}
         </mj-text>
       </mj-column>
@@ -17,7 +17,7 @@
           src="{{ config('freegle.logo_url', 'https://www.ilovefreegle.org/icon.png') }}"
           alt="Freegle"
           align="right"
-          padding="10px 20px"
+          padding="0 20px"
         />
       </mj-column>
     </mj-section>
