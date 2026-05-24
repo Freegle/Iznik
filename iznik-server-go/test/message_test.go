@@ -3876,6 +3876,58 @@ func TestPostMessageWithdrawnPending(t *testing.T) {
 	assert.Equal(t, 1, mgDeleted, "messages_groups.deleted must be 1 after withdrawing a pending message (V1 parity)")
 }
 
+func TestPostMessageWithdrawnPendingLogsDeleted(t *testing.T) {
+	// V1 parity (Message::delete() logs SUBTYPE_DELETED per group): withdrawing a
+	// still-pending post must leave a Message/Deleted audit-log entry.  Without it the
+	// post silently vanishes from the mod pending queue while its "Posted"/Received log
+	// remains, so mods see "logs say posted but there's no post and it's not in pending"
+	// (Discourse #9703).
+	prefix := uniquePrefix("msgw_wdr_log")
+	db := database.DBConn
+
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	_, token := CreateTestSession(t, userID)
+	groupID := CreateTestGroup(t, prefix)
+	msgID := CreateTestMessage(t, userID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	// Set the message as Pending on the group.
+	db.Exec("UPDATE messages_groups SET collection = 'Pending' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	// Clean slate so the assertion only sees the log written by this withdrawal.
+	db.Exec("DELETE FROM logs WHERE msgid = ? AND subtype = ?", msgID, "Deleted")
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Outcome",
+		"outcome": "Withdrawn",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", token)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// A Message/Deleted log must have been written for this group.
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE msgid = ? AND groupid = ? AND type = ? AND subtype = ?",
+		msgID, groupID, "Message", "Deleted").Scan(&logCount)
+	assert.Equal(t, int64(1), logCount,
+		"a Message/Deleted log must be written when a pending post is withdrawn (V1 parity, Discourse #9703)")
+
+	// Attributed to the member: user = author, byuser = the actor who withdrew it,
+	// text = "Withdrawn" so mods can tell it apart from a mod-initiated delete.
+	var logUser, logByuser uint64
+	var logText string
+	db.Raw("SELECT `user`, byuser, COALESCE(text, '') FROM logs "+
+		"WHERE msgid = ? AND groupid = ? AND type = ? AND subtype = ? LIMIT 1",
+		msgID, groupID, "Message", "Deleted").Row().Scan(&logUser, &logByuser, &logText)
+	assert.Equal(t, userID, logUser, "log.user should be the message author")
+	assert.Equal(t, userID, logByuser, "log.byuser should be the member who withdrew the post")
+	assert.Equal(t, "Withdrawn", logText, "log.text should note the withdrawal")
+}
+
 func TestPostMessageWithdrawnApproved(t *testing.T) {
 	// Withdrawn on an approved message should record the outcome normally (not delete).
 	prefix := uniquePrefix("msgw_wdr_app")
