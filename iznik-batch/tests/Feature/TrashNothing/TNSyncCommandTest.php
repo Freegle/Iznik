@@ -1277,6 +1277,79 @@ class TNSyncCommandTest extends TestCase
     }
 
     // =========================================================================
+    // Staleness alerting (no-op cycle)
+    // =========================================================================
+
+    public function test_no_op_alerts_when_sync_is_stale(): void
+    {
+        // Stored sync date ~13 hours ago — older than the 12h threshold.
+        $staleDate = gmdate('Y-m-d\TH:i:s\Z', time() - (13 * 3600));
+        file_put_contents($this->dateFile, $staleDate);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        Log::spy();
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        Log::shouldHaveReceived('warning')
+            ->withArgs(fn ($message, $context = []) =>
+                str_contains((string) $message, 'TN sync stale')
+            );
+    }
+
+    public function test_no_op_does_not_alert_when_sync_is_fresh(): void
+    {
+        // Stored sync date ~1 hour ago — well within the 12h threshold.
+        $freshDate = gmdate('Y-m-d\TH:i:s\Z', time() - 3600);
+        file_put_contents($this->dateFile, $freshDate);
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        Log::spy();
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        // No stale warning — an info log is emitted instead.
+        Log::shouldNotHaveReceived('warning')
+            ->withArgs(fn ($message, $context = []) =>
+                str_contains((string) $message, 'TN sync stale')
+            );
+    }
+
+    public function test_no_op_does_not_alert_when_no_baseline(): void
+    {
+        // No sync date file, and no TN ratings seeded — there is no baseline,
+        // so a no-op cycle must not emit a stale warning.
+        if (file_exists($this->dateFile)) {
+            @unlink($this->dateFile);
+        }
+        $this->assertFileDoesNotExist($this->dateFile);
+
+        DB::table('ratings')->whereNotNull('tn_rating_id')->delete();
+
+        Http::fake([
+            '*/ratings*' => Http::response(['ratings' => []], 200),
+            '*/user-changes*' => Http::response(['changes' => []], 200),
+        ]);
+
+        Log::spy();
+
+        $this->artisan('tn:sync')->assertExitCode(0);
+
+        Log::shouldNotHaveReceived('warning')
+            ->withArgs(fn ($message, $context = []) =>
+                str_contains((string) $message, 'TN sync stale')
+            );
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 
