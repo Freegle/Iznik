@@ -65,13 +65,25 @@ describe('logoutIfLoggedIn (e2e util)', () => {
     expect(page.goto).not.toHaveBeenCalled()
   })
 
-  it('waits for .test-signinbutton when logout redirect already landed at home page', async () => {
-    // After skipping goto('/'), we wait for .test-signinbutton to confirm Nuxt has
-    // fully hydrated the logged-out state before returning, so the caller can
-    // safely navigate without triggering a concurrent-navigation renderer freeze.
-    const page = makePage('http://freegle-prod-local.localhost:9080/')
+  it('waits for sign-in button when logout redirect already landed at home page', async () => {
+    // After skipping goto('/'), Nuxt's post-navigation JavaScript is still running.
+    // If the caller immediately navigates to another URL (e.g. /give via postMessage),
+    // two concurrent navigations race and the V8 renderer can hang for 35+ seconds.
+    // Fix: wait for .test-signinbutton visible, confirming Nuxt has fully hydrated.
+    const signinLocator = makeLocator(false)
+    const page = makePage('http://freegle-prod-local.localhost:9080/', {
+      locator: vi.fn().mockImplementation((selector) => {
+        if (selector === '.test-signinbutton') {
+          return signinLocator
+        }
+        return makeLocator(false)
+      }),
+    })
     await logoutIfLoggedIn(page)
     expect(page.locator).toHaveBeenCalledWith('.test-signinbutton')
+    expect(signinLocator.waitFor).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'visible', timeout: 15000 })
+    )
   })
 
   it('calls page.goto("/") when logout did not redirect to home page', async () => {
