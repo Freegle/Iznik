@@ -213,6 +213,13 @@ if [[ "$TEST_PATH" == /var/www/iznik/* ]]; then
     echo "Adjusted test path to: $TEST_PATH"
 fi
 
+# --filter requires functional mode (-f) in paratest
+FUNCTIONAL_FLAG=""
+if echo "$TEST_PATH" | grep -q -- "--filter"; then
+    FUNCTIONAL_FLAG="-f"
+    echo "Using functional mode to support --filter"
+fi
+
 cd /var/www/iznik
 export XDEBUG_MODE=coverage
 
@@ -225,6 +232,7 @@ timeout --signal=SIGTERM --kill-after=60s 3000 \
     php -d memory_limit=-1 -d max_execution_time=0 \
     /var/www/iznik/composer/vendor/bin/paratest \
     -p 4 \
+    $FUNCTIONAL_FLAG \
     --verbose \
     --configuration /var/www/iznik/test/ut/php/phpunit.xml \
     --coverage-clover /tmp/phpunit-coverage.xml \
