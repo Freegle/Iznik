@@ -79,7 +79,12 @@ class GroupMembershipDetectionTest extends IznikTestCase {
         $groups = $l->groupsNear(50, FALSE, 1);
 
         // STEP 2 (AssertFlip — must FAIL on buggy code):
-        // Correct behaviour: Group B must NOT appear — the point is not inside its polygon.
+        // Correct behaviour: Group A must appear (point is inside its polygon)
+        // and Group B must NOT appear (point is outside its polygon).
+        $this->assertTrue(
+            in_array($gidA, $groups),
+            'Bug #9518: Group A (containing polygon) must be returned for a point inside it'
+        );
         $this->assertFalse(
             in_array($gidB, $groups),
             'Bug #9518: Group B (close centre, non-containing polygon) must NOT be returned for a point inside Group A'
