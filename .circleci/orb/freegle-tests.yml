@@ -70,7 +70,7 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
-      PW_WORKERS: 11
+      PW_WORKERS: 9
       VITEST_MAX_WORKERS: 8
       PORT_TRAEFIK_HTTP: 9080
       PORT_TRAEFIK_API: 17192
