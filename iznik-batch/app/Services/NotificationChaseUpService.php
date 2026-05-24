@@ -276,8 +276,10 @@ class NotificationChaseUpService
             $result[] = [
                 'id'        => $notif->id,
                 'type'      => $notif->type,
-                'fromname'  => $fromUser ? $fromUser->fullname : 'Someone',
-                'fromimage' => $this->resolveAvatarUrl($fromUser),
+                'fromname'  => $fromUser ? $fromUser->fullname : 'Freegle',
+                'fromimage' => $fromUser
+                    ? $this->resolveAvatarUrl($fromUser)
+                    : config('freegle.logo_url', 'https://www.ilovefreegle.org/icon.png'),
                 'title'    => $notif->title,
                 'text'     => $notif->text,
                 'url'      => $notif->url,
