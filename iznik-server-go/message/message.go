@@ -3650,12 +3650,30 @@ func handleOutcome(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 		var pendingCount int64
 		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING).Scan(&pendingCount)
 		if pendingCount > 0 {
+			// Capture the groups the post is actively pending on *before* the
+			// soft-delete, so we can write a per-group audit log below.
+			var pendingGroups []uint64
+			db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ? AND collection = ? AND deleted = 0", req.ID, utils.COLLECTION_PENDING).Scan(&pendingGroups)
+
 			// V1 parity (Message::delete()): soft-delete messages_groups first, then the
 			// message itself.  Without this, the orphaned Pending row (deleted=0) gets
 			// picked up by AutoApproveService 48 hours later and auto-approved as if the
 			// member never withdrew it — making the message reappear in ModTools.
 			db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND collection = ?", req.ID, utils.COLLECTION_PENDING)
 			db.Exec("UPDATE messages SET deleted = NOW(), messageid = NULL WHERE id = ?", req.ID)
+
+			// V1 parity (Message::delete() logs SUBTYPE_DELETED per group): without an
+			// audit-log entry the post silently vanishes from the mod pending queue while
+			// its "Posted"/Received log remains, so mods see "logs say posted but there's
+			// no post and it's not in pending" (Discourse #9703). Log a Deleted entry per
+			// group: `user` is the message author, `byuser` the actor (the member
+			// withdrawing), and text notes that it was a withdrawal.
+			var fromuser uint64
+			db.Raw("SELECT fromuser FROM messages WHERE id = ?", req.ID).Scan(&fromuser)
+			for _, gid := range pendingGroups {
+				logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, gid, fromuser, myid, req.ID, 0, "Withdrawn")
+			}
+
 			if err := queue.QueueTask(queue.TaskFreebieAlertsRemove, map[string]interface{}{
 				"msgid": req.ID,
 			}); err != nil {
