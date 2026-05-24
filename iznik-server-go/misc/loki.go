@@ -19,6 +19,7 @@ type LokiClient struct {
 	fileMutex    sync.Mutex
 	currentFile  *os.File
 	currentDate  string
+	goroutineWg  sync.WaitGroup
 }
 
 // lokiJsonLogEntry is the JSON structure written to log files for Alloy to pick up.
@@ -450,6 +451,13 @@ func (l *LokiClient) LogChatReply(source string, chatID, userID uint64, messageI
 
 	logLine, _ := json.Marshal(logData)
 	l.log(labels, string(logLine))
+}
+
+// Flush waits for all in-flight async log goroutines to complete.
+// Call in tests after app.Test() to ensure goroutines finish before
+// t.TempDir() cleanup removes the log directory.
+func (l *LokiClient) Flush() {
+	l.goroutineWg.Wait()
 }
 
 // Close gracefully shuts down the Loki client.

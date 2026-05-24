@@ -893,6 +893,8 @@ func TestNewLokiMiddleware_EnabledLoki_RequestPassesThrough(t *testing.T) {
 			return &uid
 		},
 	}))
+	// Flush in-flight log goroutines before t.TempDir() removes the log directory.
+	t.Cleanup(GetLoki().Flush)
 	app.Get("/hello", func(c *fiber.Ctx) error {
 		return c.SendString("world")
 	})
@@ -923,6 +925,8 @@ func TestNewLokiMiddleware_EnabledLoki_SetsXUserIDHeader(t *testing.T) {
 			return &uid
 		},
 	}))
+	// Flush in-flight log goroutines before t.TempDir() removes the log directory.
+	t.Cleanup(GetLoki().Flush)
 	app.Get("/check", func(c *fiber.Ctx) error {
 		return c.SendString("ok")
 	})
@@ -954,6 +958,8 @@ func TestNewLokiMiddleware_EnabledLoki_SetsXUserRoleHeader(t *testing.T) {
 		},
 		GetUserRole: func(c *fiber.Ctx) *string { return &role },
 	}))
+	// Flush in-flight log goroutines before t.TempDir() removes the log directory.
+	t.Cleanup(GetLoki().Flush)
 	app.Get("/role", func(c *fiber.Ctx) error {
 		return c.SendString("ok")
 	})
