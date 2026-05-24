@@ -421,11 +421,11 @@ WHERE $groupq AND role IN ('Moderator', 'Owner') HAVING lastactive IS NOT NULL;"
 
         if (in_array(Dashboard::COMPONENTS_DISCOURSE_TOPICS, $components) && $ismod) {
             # Get Discourse topics.  We need this quick or not at all.  Also need to pass authentication in headers rather
-            # than URL parameters.
+            # than URL parameters.  Retry up to 3 times to handle transient failures and rate limiting (429).
             $ctx = stream_context_create(
                 array(
                     'http' => [
-                        'timeout' => 5,
+                        'timeout' => 3,
                         "method" => "GET",
                         "header" => "Accept-language: en\r\n" .
                             "Api-Key: " . DISCOURSE_APIKEY . "\r\n" .
@@ -434,7 +434,17 @@ WHERE $groupq AND role IN ('Moderator', 'Owner') HAVING lastactive IS NOT NULL;"
                 )
             );
 
-            $ret[Dashboard::COMPONENTS_DISCOURSE_TOPICS] = @file_get_contents(DISCOURSE_API . '/posts.json', FALSE, $ctx);
+            $result = FALSE;
+            for ($attempt = 0; $attempt < 3; $attempt++) {
+                $result = @file_get_contents(DISCOURSE_API . '/posts.json', FALSE, $ctx);
+                if ($result !== FALSE) {
+                    break;
+                }
+                if ($attempt < 2) {
+                    sleep(1);
+                }
+            }
+            $ret[Dashboard::COMPONENTS_DISCOURSE_TOPICS] = $result;
         }
 
         return($ret);
