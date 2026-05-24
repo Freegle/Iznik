@@ -260,7 +260,9 @@ workflows:
               only:
                 - production
 
-  # Katapult cloud runner test — triggered manually with use_katapult: true
+  # Katapult cloud runner test — the default CI path (use_katapult=true is set by check-runner
+  # for all normal pushes). Branch filters here must match build-test-local/build-test-cloud
+  # so production and modtools are skipped (they use deploy-apps and have no tests to run).
   build-test-katapult:
     when: << pipeline.parameters.use_katapult >>
     jobs:
@@ -283,9 +285,19 @@ workflows:
                     -d '{"labels":["CI: Failed"]}' \
                     "https://api.github.com/repos/$REPO/issues/$PR_NUMBER/labels" 2>/dev/null || true
                   echo "Labelled PR #$PR_NUMBER as CI: Failed"
+          filters:
+            branches:
+              ignore:
+                - modtools
+                - production
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
+          filters:
+            branches:
+              ignore:
+                - modtools
+                - production
       - freegle/build-android-modtools-debug:
           requires:
             - freegle/build-and-test
