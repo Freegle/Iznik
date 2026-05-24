@@ -29,6 +29,7 @@ function makeLocator(visible = false) {
 function makePage(url = 'http://example.com/', overrides = {}) {
   const gotoMock = vi.fn().mockResolvedValue(undefined)
   const waitForLoadStateMock = vi.fn().mockResolvedValue(undefined)
+  const waitForURLMock = vi.fn().mockResolvedValue(undefined)
   return {
     _url: url,
     isClosed: () => false,
@@ -37,6 +38,7 @@ function makePage(url = 'http://example.com/', overrides = {}) {
     },
     goto: gotoMock,
     waitForLoadState: waitForLoadStateMock,
+    waitForURL: waitForURLMock,
     evaluate: vi.fn().mockResolvedValue(undefined),
     context: () => ({ clearCookies: vi.fn().mockResolvedValue(undefined) }),
     locator: vi.fn().mockImplementation((selector) => {
@@ -108,6 +110,22 @@ describe('logoutIfLoggedIn (e2e util)', () => {
     expect(page.waitForLoadState).toHaveBeenCalledWith(
       'domcontentloaded',
       expect.objectContaining({ timeout: 5000 })
+    )
+  })
+
+  it('waits for /browse→/explore redirect via waitForURL when at /browse', async () => {
+    // The production CI failure: /browse auto-redirects new users to /explore via
+    // JS AFTER DOMContentLoaded fires. waitForLoadState('domcontentloaded') resolves
+    // immediately because /browse's DOMContentLoaded has already fired, leaving the
+    // JS-initiated redirect in flight. Clicking logout while /browse→/explore is
+    // committing causes two simultaneous hard navigations that freeze the V8 renderer
+    // for 35+ seconds (observed in production CI job 16194 at sha 83d85abb9).
+    // Fix: explicitly call waitForURL(/explore|myposts/) when the entry URL is /browse.
+    const page = makePage('http://freegle-prod-local.localhost:9080/browse')
+    await logoutIfLoggedIn(page)
+    expect(page.waitForURL).toHaveBeenCalledWith(
+      expect.any(RegExp),
+      expect.objectContaining({ timeout: 3000 })
     )
   })
 })
