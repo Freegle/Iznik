@@ -130,6 +130,34 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
         .catch(() => {})
     }
 
+    // /browse auto-redirects new users (no group membership) to /explore via JS
+    // AFTER DOMContentLoaded fires. waitForLoadState above resolves immediately
+    // because /browse's DOMContentLoaded has already fired by the time
+    // logoutIfLoggedIn is called, leaving the JS-initiated /browse→/explore
+    // redirect still in flight. Clicking logout while that navigation is
+    // committing causes two simultaneous hard navigations that freeze the V8
+    // renderer for 35+ seconds before freeze-detection closes the page.
+    if (!page.isClosed()) {
+      const currentPath = (() => {
+        try {
+          return new URL(page.url()).pathname
+        } catch {
+          return ''
+        }
+      })()
+      if (currentPath === '/browse') {
+        console.log(
+          '[logoutIfLoggedIn] At /browse — waiting for /browse→/explore redirect to complete'
+        )
+        await page
+          .waitForURL(/\/(explore|myposts)/, { timeout: 3000 })
+          .catch(() => {})
+        await page
+          .waitForLoadState('domcontentloaded', { timeout: 3000 })
+          .catch(() => {})
+      }
+    }
+
     // Clear any lingering modal backdrop from a prior modal (e.g. the login
     // modal that closes via route redirect after signUpViaHomepage). The
     // backdrop node in <div id="teleports"> otherwise intercepts pointer
