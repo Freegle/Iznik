@@ -128,6 +128,35 @@ class ContentCheckService
     }
 
     /**
+     * Run the text-based content checks relevant to a chat message and return
+     * the first failure reason (or null when clean).
+     *
+     * This is the chat analogue of checkMessage(). Chat messages live in
+     * chat_messages (not the messages table) and carry no group, item, IP or
+     * bulk-mail context, so only the text checks apply. Global concern keywords
+     * are used (groupid 0). Mirrors the checks V1 ChatMessage::process() ran via
+     * Spam::checkReview() for Moderated members, plus phone-number and
+     * messaging-app-link detection.
+     *
+     * @return array|null Reason ['check','category','action','detail'] or null.
+     */
+    public function checkChatMessage(string $message): ?array
+    {
+        $message = trim($message);
+        if ($message === '') {
+            return null;
+        }
+
+        return $this->checkConcernKeywords('', $message, 0)
+            ?? $this->checkUrls('', $message)
+            ?? $this->checkMessagingLinks('', $message)
+            ?? $this->checkMoneySymbols('', $message)
+            ?? $this->checkPhoneNumbers('', $message)
+            ?? $this->checkKnownSpammer($message)
+            ?? $this->checkLanguage('', $message);
+    }
+
+    /**
      * Process all unprocessed pending messages in batches of 100.
      *
      * Returns stats: ['approved' => int, 'kept_pending' => int, 'blocked' => int, 'errors' => int]

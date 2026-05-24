@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
+use App\Services\ContentCheckService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -24,6 +25,14 @@ class ChatProcessService
     // V1: ChatMessage::REVIEW_SPAM, REVIEW_FORCE, etc.
     private const REVIEW_SPAM = 'Spam';
     private const REVIEW_LAST = 'Last';
+
+    private ContentCheckService $contentCheck;
+
+    public function __construct(?ContentCheckService $contentCheck = null)
+    {
+        // Resolve from the container when not injected (keeps `new ChatProcessService()` working).
+        $this->contentCheck = $contentCheck ?? app(ContentCheckService::class);
+    }
 
     /**
      * Process all pending chat messages (processingrequired = 1).
@@ -113,8 +122,20 @@ class ChatProcessService
             $chatmodstatus = $user?->chatmodstatus ?? 'Moderated';
 
             if ($chatmodstatus === 'Fully') {
+                // Fully moderated: every message goes to review (shadow ban).
                 $review = 1;
                 $reviewreason = self::REVIEW_SPAM;
+            } elseif ($chatmodstatus === 'Moderated' && $this->isContentCheckable($message->type)) {
+                // V1 parity: ChatMessage::process() ran Spam::checkReview() on
+                // Moderated members' user-text messages and held any that matched
+                // a concern keyword / link / phone number etc. That scan was lost
+                // when chat_process.php was migrated to this service, so restore it.
+                // Any hit maps to reportreason 'Spam'; the review UI re-derives the
+                // specific reason from the message text.
+                if ($this->contentCheck->checkChatMessage((string) ($message->message ?? '')) !== null) {
+                    $review = 1;
+                    $reviewreason = self::REVIEW_SPAM;
+                }
             }
 
             // If the previous message in this chat is held for review, hold this one too.
@@ -153,6 +174,21 @@ class ChatProcessService
             ->update(['status' => ChatRoster::STATUS_OFFLINE]);
 
         return true;
+    }
+
+    /**
+     * Whether a chat message type carries member-entered text that should be
+     * content checked. Mirrors the V1 ChatMessage::process() type filter; system
+     * and templated messages (System, Promised, Nudge, etc.) are excluded.
+     */
+    private function isContentCheckable(?string $type): bool
+    {
+        return in_array($type, [
+            ChatMessage::TYPE_DEFAULT,
+            ChatMessage::TYPE_INTERESTED,
+            ChatMessage::TYPE_REPORTEDUSER,
+            ChatMessage::TYPE_ADDRESS,
+        ], true);
     }
 
     /**
