@@ -28,6 +28,7 @@ function makeLocator(visible = false) {
 
 function makePage(url = 'http://example.com/', overrides = {}) {
   const gotoMock = vi.fn().mockResolvedValue(undefined)
+  const waitForLoadStateMock = vi.fn().mockResolvedValue(undefined)
   return {
     _url: url,
     isClosed: () => false,
@@ -35,6 +36,7 @@ function makePage(url = 'http://example.com/', overrides = {}) {
       return this._url
     },
     goto: gotoMock,
+    waitForLoadState: waitForLoadStateMock,
     evaluate: vi.fn().mockResolvedValue(undefined),
     context: () => ({ clearCookies: vi.fn().mockResolvedValue(undefined) }),
     locator: vi.fn().mockImplementation((selector) => {
@@ -92,6 +94,20 @@ describe('logoutIfLoggedIn (e2e util)', () => {
     expect(page.goto).toHaveBeenCalledWith(
       '/',
       expect.objectContaining({ waitUntil: 'domcontentloaded' })
+    )
+  })
+
+  it('waits for domcontentloaded before clicking logout to settle any in-flight redirect', async () => {
+    // After signUpViaHomepage the page may be at /browse which immediately redirects
+    // to /explore for new users. If the logout button is clicked while /browse→/explore
+    // is still committing, two simultaneous hard navigations freeze the V8 renderer.
+    // Fix: waitForLoadState('domcontentloaded') at the start of logoutIfLoggedIn ensures
+    // the page is stable before we look for and click the logout button.
+    const page = makePage('http://freegle-prod-local.localhost:9080/browse')
+    await logoutIfLoggedIn(page)
+    expect(page.waitForLoadState).toHaveBeenCalledWith(
+      'domcontentloaded',
+      expect.objectContaining({ timeout: 5000 })
     )
   })
 })

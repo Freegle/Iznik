@@ -114,6 +114,22 @@ async function logoutIfLoggedIn(page, navigateToHome = true) {
   console.log(`[logoutIfLoggedIn] Start — URL=${entryUrl}`)
 
   try {
+    // Wait for any in-flight redirect to settle before clicking the logout button.
+    // After signUpViaHomepage, the page may be at /browse which immediately redirects
+    // to /explore for new users (no group membership). If we click the logout button
+    // while /browse→/explore is still committing, the logout redirect (→/) competes with
+    // the in-flight /explore commit, causing two simultaneous hard navigations that freeze
+    // the V8 renderer for 35+ seconds before freeze-detection closes the page.
+    // Waiting for domcontentloaded ensures we are on a stable page before clicking.
+    // This only applies to /browse and /explore (internal pages, no external scripts
+    // that could block), not the home page where waitForLoadState was reverted in
+    // 697eabc2b because Google One Tap etc. can hang that event indefinitely.
+    if (!page.isClosed()) {
+      await page
+        .waitForLoadState('domcontentloaded', { timeout: 5000 })
+        .catch(() => {})
+    }
+
     // Clear any lingering modal backdrop from a prior modal (e.g. the login
     // modal that closes via route redirect after signUpViaHomepage). The
     // backdrop node in <div id="teleports"> otherwise intercepts pointer
