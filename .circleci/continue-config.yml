@@ -83,6 +83,7 @@ workflows:
             branches:
               ignore:
                 - modtools
+                - production
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
@@ -90,6 +91,7 @@ workflows:
             branches:
               ignore:
                 - modtools
+                - production
       - freegle/build-android-dev:
           requires:
             - freegle/build-and-test
@@ -144,6 +146,7 @@ workflows:
             branches:
               ignore:
                 - modtools
+                - production
       - mark-ci-passed:
           requires:
             - freegle/build-and-test
@@ -151,6 +154,7 @@ workflows:
             branches:
               ignore:
                 - modtools
+                - production
       - freegle/build-android-dev:
           requires:
             - freegle/build-and-test
