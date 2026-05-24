@@ -19,7 +19,7 @@ import (
 // called from a single goroutine (no t.Parallel in these tests).
 func resetLokiSingleton() {
 	if lokiInstance != nil {
-		lokiInstance.Drain() // wait for in-flight async goroutines before closing
+		lokiInstance.Flush() // wait for in-flight async goroutines before closing
 		lokiInstance.Close() // flush and close the open log file before clearing
 	}
 	lokiOnce = sync.Once{}
