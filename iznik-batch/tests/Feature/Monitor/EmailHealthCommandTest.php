@@ -22,6 +22,9 @@ use Tests\TestCase;
  */
 class EmailHealthCommandTest extends TestCase
 {
+    private int $incomingChatId;
+    private int $incomingUserId;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -30,6 +33,13 @@ class EmailHealthCommandTest extends TestCase
         // assertions are deterministic regardless of pre-existing test data.
         DB::table('email_tracking')->delete();
         DB::table('chat_messages')->delete();
+
+        // Create parent rows needed by seedIncoming().
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+        $this->incomingChatId = $room->id;
+        $this->incomingUserId = $user1->id;
     }
 
     protected function tearDown(): void
@@ -59,8 +69,8 @@ class EmailHealthCommandTest extends TestCase
     private function seedIncoming(int $minutesAgo): void
     {
         DB::table('chat_messages')->insert([
-            'chatid' => 1,
-            'userid' => 1,
+            'chatid' => $this->incomingChatId,
+            'userid' => $this->incomingUserId,
             'type' => 'Default',
             'message' => 'Test incoming',
             'platform' => 0,
