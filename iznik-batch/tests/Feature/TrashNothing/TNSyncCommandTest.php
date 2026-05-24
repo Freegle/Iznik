@@ -1316,11 +1316,8 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
-        // No stale warning — an info log is emitted instead.
-        Log::shouldNotHaveReceived('warning')
-            ->withArgs(fn ($message, $context = []) =>
-                str_contains((string) $message, 'TN sync stale')
-            );
+        // No warnings expected: Mockery's shouldNotHaveReceived() doesn't support ->withArgs() chaining.
+        Log::shouldNotHaveReceived('warning');
     }
 
     public function test_no_op_does_not_alert_when_no_baseline(): void
@@ -1343,10 +1340,7 @@ class TNSyncCommandTest extends TestCase
 
         $this->artisan('tn:sync')->assertExitCode(0);
 
-        Log::shouldNotHaveReceived('warning')
-            ->withArgs(fn ($message, $context = []) =>
-                str_contains((string) $message, 'TN sync stale')
-            );
+        Log::shouldNotHaveReceived('warning');
     }
 
     // =========================================================================
