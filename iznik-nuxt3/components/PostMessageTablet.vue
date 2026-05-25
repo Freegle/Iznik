@@ -49,6 +49,12 @@
             class="detail-textarea"
             rows="4"
           />
+          <div
+            v-if="charsRemaining > 0"
+            class="description-counter description-counter--needs-more"
+          >
+            {{ charsRemaining }} more characters needed (or add a photo).
+          </div>
         </div>
 
         <!-- Quantity - only for offers -->
@@ -229,6 +235,17 @@ const placeholder = computed(() => {
     : 'Size, colour, any specific requirements...'
 })
 
+const MIN_DESCRIPTION_NO_PHOTO = 80
+
+const charsRemaining = computed(() => {
+  const hasRealPhoto = currentAtts.value.some(
+    (a) => !a.externalmods || a.externalmods.ai !== true
+  )
+  if (hasRealPhoto) return 0
+  const len = (description.value || '').trim().length
+  return Math.max(0, MIN_DESCRIPTION_NO_PHOTO - len)
+})
+
 function $id(type) {
   return uid(type)
 }
@@ -307,6 +324,16 @@ function $id(type) {
   font-weight: 500;
   color: $color-gray--darker;
   margin-bottom: 0.75rem;
+}
+
+.description-counter {
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.description-counter--needs-more {
+  color: $color-red;
 }
 
 .detail-input {

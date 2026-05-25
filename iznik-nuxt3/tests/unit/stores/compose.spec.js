@@ -615,10 +615,15 @@ describe('compose store', () => {
   })
 
   describe('messageValid getter', () => {
-    it('returns true when message has item and description', () => {
+    it('returns true when message has item and sufficiently long description', () => {
       const store = useComposeStore()
       store.messages = [
-        { type: 'Offer', item: 'Sofa', description: 'Good condition' },
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          description:
+            'Good condition, brown leather, three-seater, comes from a smoke-free home, free to a good home.',
+        },
       ]
       expect(store.messageValid({ value: 'Offer' })).toBe(true)
     })
@@ -654,6 +659,127 @@ describe('compose store', () => {
     it('returns false when no messages', () => {
       const store = useComposeStore()
       expect(store.messageValid({ value: 'Offer' })).toBe(false)
+    })
+
+    it('returns false when no real photo and description is shorter than 80 chars', () => {
+      const store = useComposeStore()
+      store.messages = [
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          description: 'short desc',
+        },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(false)
+    })
+
+    it('returns true when no real photo and description is at least 80 chars', () => {
+      const store = useComposeStore()
+      const longDesc = 'a'.repeat(80)
+      store.messages = [
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          description: longDesc,
+        },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(true)
+    })
+
+    it('returns false when only AI photo and description is shorter than 80 chars', () => {
+      const store = useComposeStore()
+      store.messages = [
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          description: 'short desc',
+          attachments: [{ id: 1, externalmods: { ai: true } }],
+        },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(false)
+    })
+
+    it('returns true when real photo present and short description', () => {
+      const store = useComposeStore()
+      store.messages = [
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          description: 'short',
+          attachments: [{ id: 1 }],
+        },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(true)
+    })
+
+    it('returns true when real photo present and no description', () => {
+      const store = useComposeStore()
+      store.messages = [
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          attachments: [{ id: 1 }],
+        },
+      ]
+      expect(store.messageValid({ value: 'Offer' })).toBe(true)
+    })
+
+    it('applies the same rule to Wanted posts', () => {
+      const store = useComposeStore()
+      store.messages = [
+        {
+          type: 'Wanted',
+          item: 'Sofa',
+          description: 'too short',
+        },
+      ]
+      expect(store.messageValid({ value: 'Wanted' })).toBe(false)
+    })
+  })
+
+  describe('messageInvalidReason getter', () => {
+    it('returns null when message is valid', () => {
+      const store = useComposeStore()
+      store.messages = [
+        { type: 'Offer', item: 'Sofa', attachments: [{ id: 1 }] },
+      ]
+      expect(store.messageInvalidReason({ value: 'Offer' })).toBeNull()
+    })
+
+    it('returns short-description reason when no real photo and < 80 chars', () => {
+      const store = useComposeStore()
+      store.messages = [
+        { type: 'Offer', item: 'Sofa', description: 'short' },
+      ]
+      const reason = store.messageInvalidReason({ value: 'Offer' })
+      expect(reason).toBeTruthy()
+      expect(reason).toMatch(/80 characters/i)
+    })
+
+    it('returns short-description reason when only AI photo and < 80 chars', () => {
+      const store = useComposeStore()
+      store.messages = [
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          description: 'short',
+          attachments: [{ id: 1, externalmods: { ai: true } }],
+        },
+      ]
+      const reason = store.messageInvalidReason({ value: 'Offer' })
+      expect(reason).toMatch(/80 characters/i)
+    })
+
+    it('returns null when description is exactly 80 chars', () => {
+      const store = useComposeStore()
+      store.messages = [
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          description: 'a'.repeat(80),
+        },
+      ]
+      expect(store.messageInvalidReason({ value: 'Offer' })).toBeNull()
     })
   })
 
