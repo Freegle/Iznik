@@ -264,13 +264,7 @@ func TestValidateDiscourseSession_InvalidJSON(t *testing.T) {
 }
 
 // ----- DiscourseSSO handler — pre-DB early-exit paths --------------------
-
-// newSSOApp creates a minimal Fiber app with the DiscourseSSO route registered.
-func newSSOApp() *fiber.App {
-	app := fiber.New()
-	app.Get("/discourse_sso", DiscourseSSO)
-	return app
-}
+// newSSOApp is defined in discourse_handler_test.go (same package).
 
 // makeSignedPayload returns a base64-encoded payload and its HMAC-SHA256 signature.
 func makeSignedPayload(rawPayload, secret string) (string, string) {
