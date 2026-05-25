@@ -31,6 +31,19 @@ const CONFIG = {
   IMAGE_DELIVERY:
     process.env.IMAGE_DELIVERY || 'https://delivery.ilovefreegle.org',
 
+  // Source URL the @nuxt/image weserv provider fetches from (passed to weserv
+  // as `?url=...`). Defaults to TUS_UPLOADER with `:8080` stripped — the same
+  // value the previous hard-coded `.replace(':8080', '')` produced — so when
+  // unset Freegle's behaviour is unchanged. Set explicitly when TUS lives on
+  // a non-:8080 port (e.g. prefix-routed behind a 443 reverse proxy) so
+  // weserv doesn't fetch from a now-wrong URL.
+  IMAGE_SRC_URL:
+    process.env.IMAGE_SRC_URL ||
+    (process.env.TUS_UPLOADER || 'https://uploads.ilovefreegle.org:8080').replace(
+      ':8080',
+      ''
+    ),
+
   // OpenStreetMap Tile Server
   OSM_TILE:
     process.env.OSM_TILE ||

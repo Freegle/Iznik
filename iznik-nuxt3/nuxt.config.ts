@@ -1128,7 +1128,14 @@ export default defineNuxtConfig({
 
     weserv: {
       provider: 'weserv',
-      baseURL: config.TUS_UPLOADER.replace(':8080', ''),
+      // Source URL passed to weserv as `?url=…<image-id>`. Reads
+      // IMAGE_SRC_URL so deployments where TUS is on a non-:8080 port
+      // (e.g. behind a 443 prefix-routed proxy) can configure it
+      // explicitly instead of relying on `.replace(':8080', '')`.
+      // When IMAGE_SRC_URL is unset, config.js falls back to the
+      // previous strip-:8080 behaviour, so existing Freegle deploys
+      // see no change.
+      baseURL: config.IMAGE_SRC_URL,
       weservURL: config.IMAGE_DELIVERY,
     },
 
