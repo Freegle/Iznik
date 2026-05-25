@@ -380,4 +380,37 @@ describe('auth store', () => {
       expect(pickMatch[1]).not.toContain('loginCount')
     })
   })
+
+  describe('unsubscribe', () => {
+    it('returns worked:true unknown:false when API confirms email sent', async () => {
+      mockUnsubscribe.mockResolvedValue({
+        ret: 0,
+        status: 'Success',
+        emailsent: true,
+        unknown: false,
+      })
+      const result = await store.unsubscribe('known@example.com')
+      expect(result.worked).toBe(true)
+      expect(result.unknown).toBe(false)
+    })
+
+    it('returns worked:false unknown:true when API reports unknown email', async () => {
+      mockUnsubscribe.mockResolvedValue({
+        ret: 0,
+        status: 'Success',
+        emailsent: false,
+        unknown: true,
+      })
+      const result = await store.unsubscribe('nobody@example.com')
+      expect(result.worked).toBe(false)
+      expect(result.unknown).toBe(true)
+    })
+
+    it('returns worked:false unknown:false when API throws', async () => {
+      mockUnsubscribe.mockRejectedValue(new Error('network'))
+      const result = await store.unsubscribe('any@example.com')
+      expect(result.worked).toBe(false)
+      expect(result.unknown).toBe(false)
+    })
+  })
 })

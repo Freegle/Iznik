@@ -68,7 +68,7 @@
                 v-model:email="email"
                 v-model:valid="emailValid"
                 label=""
-                class="mb-3"
+                class="email-input-prominent mb-3"
               />
               <div class="mobile-actions">
                 <NuxtLink to="/settings" class="mobile-btn mobile-btn--primary">
@@ -86,13 +86,14 @@
               <p class="mobile-section__label mt-3">
                 Using the app? Having trouble finding your account?
               </p>
-              <a
-                href="mailto:support@ilovefreegle.org?subject=Delete%20my%20Freegle%20account&body=I%20would%20like%20to%20delete%20my%20Freegle%20account."
+              <button
+                type="button"
                 class="mobile-btn mobile-btn--white mt-3"
+                @click="openContactSupport"
               >
                 <v-icon icon="envelope" class="me-2" />
                 Contact us to delete your account
-              </a>
+              </button>
             </div>
 
             <NoticeMessage v-if="emailSent" variant="primary" class="mt-3">
@@ -183,7 +184,7 @@
                 v-model:email="email"
                 v-model:valid="emailValid"
                 label=""
-                class="mb-2"
+                class="email-input-prominent mb-2"
               />
               <div class="d-flex justify-content-between flex-wrap mt-4">
                 <nuxt-link to="/settings" no-prefetch class="mb-2 me-2">
@@ -204,13 +205,14 @@
               <p class="mt-3 mb-1">
                 Using the app? Having trouble finding your account?
               </p>
-              <a
-                href="mailto:support@ilovefreegle.org?subject=Delete%20my%20Freegle%20account&body=I%20would%20like%20to%20delete%20my%20Freegle%20account."
+              <button
+                type="button"
                 class="btn btn-lg btn-outline-secondary mt-2 mb-2"
+                @click="openContactSupport"
               >
                 <v-icon icon="envelope" />
                 <span class="ms-1">Contact us to delete your account</span>
-              </a>
+              </button>
               <NoticeMessage
                 v-if="emailSent"
                 variant="primary"
@@ -247,6 +249,7 @@
         v-if="showForgetFailModal"
         @hidden="showForgetFailModal = false"
       />
+      <ContactSupportModal ref="contactSupportModal" />
     </div>
   </client-only>
 </template>
@@ -276,6 +279,9 @@ const GroupSelect = defineAsyncComponent(() =>
 )
 const ConfirmModal = defineAsyncComponent(() =>
   import('~/components/ConfirmModal.vue')
+)
+const ContactSupportModal = defineAsyncComponent(() =>
+  import('~/components/ContactSupportModal.vue')
 )
 const NoticeMessage = defineAsyncComponent(() =>
   import('~/components/NoticeMessage.vue')
@@ -314,6 +320,11 @@ const left = ref(null)
 const unknown = ref(false)
 const showForgetFailModal = ref(false)
 const showConfirmModal = ref(false)
+const contactSupportModal = ref(null)
+
+function openContactSupport() {
+  contactSupportModal.value?.show()
+}
 
 // Route parameters
 const userid = parseInt(route.params.id)
@@ -442,6 +453,11 @@ onMounted(() => {
     color: var(--color-gray-600);
     margin-bottom: 0.5rem;
   }
+}
+
+:deep(.email-input-prominent input.email),
+:deep(.email-input-prominent .form-control) {
+  border: 2px solid $color-success;
 }
 
 .mobile-actions {
