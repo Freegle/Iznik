@@ -50,7 +50,7 @@ class ContentCheckServiceTest extends TestCase
             'one insertion'             => ['hello', 'helllo', 1],
             'one deletion'              => ['helllo', 'hello', 1],
             'one substitution'          => ['hello', 'hxllo', 1],
-            'adjacent transposition'    => ['cannibas', 'cannabis', 1],
+            'adjacent transposition'    => ['beleived', 'believed', 1],
             'empty a'                   => ['', 'abc', 3],
             'empty b'                   => ['abc', '', 3],
             'both empty'                => ['', '', 0],
@@ -128,8 +128,9 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_matches_fuzzy_transposition_for_long_keywords(): void
     {
-        // "cannibas" is a transposition of "cannabis" (8 chars, damerau distance 1)
-        $result = $this->callPrivate('matchesFuzzy', 'selling cannibas', 'cannabis');
+        // "beleived" is an adjacent transposition of "believed"
+        // (8 chars, damerau distance 1).
+        $result = $this->callPrivate('matchesFuzzy', 'I beleived him', 'believed');
         $this->assertTrue($result);
     }
 
@@ -565,8 +566,10 @@ class ContentCheckServiceTest extends TestCase
         $this->assertTrue($this->service->isUserModerated($msg->id, $group->id, $user->id));
     }
 
-    public function test_is_user_moderated_sub_status_not_moderated(): void
+    public function test_is_user_moderated_default_status_not_moderated(): void
     {
+        // ENUM values are MODERATED / DEFAULT / PROHIBITED / UNMODERATED
+        // (see memberships migration). DEFAULT means standard posting → not moderated.
         $user  = $this->createTestUser();
         $group = $this->createTestGroup();
         DB::table('memberships')->insert([
@@ -575,7 +578,7 @@ class ContentCheckServiceTest extends TestCase
             'role'    => 'Member',
             'collection' => 'Approved',
             'emailfrequency' => -2,
-            'ourPostingStatus' => 'SUB',
+            'ourPostingStatus' => 'DEFAULT',
             'added'   => now(),
         ]);
 
@@ -623,7 +626,7 @@ class ContentCheckServiceTest extends TestCase
             'role'    => 'Member',
             'collection' => 'Approved',
             'emailfrequency' => -2,
-            'ourPostingStatus' => 'SUB',
+            'ourPostingStatus' => 'DEFAULT',
             'added'   => now(),
         ]);
 
@@ -886,7 +889,9 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_image_spam_above_threshold_returns_flag(): void
     {
-        $hash = 'spamhash_' . uniqid();
+        // messages_attachments.hash is VARCHAR(16); cap to fit so the inserted
+        // value round-trips and matches the message string verbatim.
+        $hash = substr('spamhash_' . uniqid(), 0, 16);
         $user  = $this->createTestUser();
         $group = $this->createTestGroup();
 

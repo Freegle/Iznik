@@ -409,24 +409,34 @@ class ContentCheckService
         $variants = [
             $kwLower . 's',
             $kwLower . 'es',
-            $kwLower . 'ing',
-            $kwLower . 'ed',
         ];
-        if (strlen($kwLower) > 1 && str_ends_with($kwLower, 'y')) {
-            $variants[] = substr($kwLower, 0, -1) . 'ies';
-        }
-        // CVC rule: for words ending consonant-vowel-consonant (e.g. "swap"),
-        // double the final consonant before -ed/-ing ("swapped", "swapping").
         $vowels = 'aeiou';
         $len    = strlen($kwLower);
-        if ($len >= 3) {
-            $last = $kwLower[$len - 1];
-            $pen  = $kwLower[$len - 2];
-            if (!str_contains($vowels, $last) && str_contains($vowels, $pen)) {
-                $variants[] = $kwLower . $last . 'ed';
-                $variants[] = $kwLower . $last . 'ing';
+
+        if ($len > 1 && str_ends_with($kwLower, 'y')) {
+            $variants[] = substr($kwLower, 0, -1) . 'ies';
+        }
+
+        if (str_ends_with($kwLower, 'e')) {
+            // English: drop the trailing 'e' before -ing; add only 'd' for -ed.
+            // Avoids producing wrong forms like "trueed" / "trueing".
+            $variants[] = $kwLower . 'd';
+            $variants[] = substr($kwLower, 0, -1) . 'ing';
+        } else {
+            $variants[] = $kwLower . 'ed';
+            $variants[] = $kwLower . 'ing';
+            // CVC rule: for words ending consonant-vowel-consonant (e.g. "swap"),
+            // double the final consonant before -ed/-ing ("swapped", "swapping").
+            if ($len >= 3) {
+                $last = $kwLower[$len - 1];
+                $pen  = $kwLower[$len - 2];
+                if (!str_contains($vowels, $last) && str_contains($vowels, $pen)) {
+                    $variants[] = $kwLower . $last . 'ed';
+                    $variants[] = $kwLower . $last . 'ing';
+                }
             }
         }
+
         return $variants;
     }
 
@@ -703,7 +713,9 @@ class ContentCheckService
     {
         $haystack = $subject . ' ' . $textbody;
 
-        if (preg_match('/\b(?:(?:\+44|0044)\s?|0)(?:\d[\s\-]?){9,10}\b/', $haystack)) {
+        // (?<!\d) / (?!\d) instead of \b — \b doesn't fire before a literal "+"
+        // (non-word/non-word boundary), which made "Ring +44 ..." slip through.
+        if (preg_match('/(?<!\d)(?:(?:\+44|0044)\s?|0)(?:\d[\s\-]?){9,10}(?!\d)/', $haystack)) {
             return [
                 'check'    => self::CHECK_PHONE_NUMBER,
                 'category' => null,
