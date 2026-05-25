@@ -36,10 +36,26 @@ class ContentCheckService
     private const SUBJECT_REPEAT_WINDOW = 7; // days
 
     private const VAGUE_KEYWORDS = [
-        'stuff', 'things', 'items', 'junk', 'bits', 'various', 'misc',
-        'miscellaneous', 'anything', 'loads', 'bundle', 'random', 'assorted',
-        'collection', 'lots', 'free stuff', 'free items', 'bits and pieces',
+        'stuff', 'thing', 'item', 'junk', 'bits', 'various', 'misc',
+        'miscellaneous', 'anything', 'assorted',
+        'free stuff', 'free items', 'bits and pieces',
         'this and that', 'unwanted', 'clutter', 'rubbish', 'tat',
+        // Category qualifiers — non-rescuing per design: "household items" still flags.
+        'household', 'general',
+        // "any/all" detection happens here (item-name only) rather than in the
+        // per-group worry-word list, where "take all"/"any colour" body matches
+        // were noisy.
+        'any', 'all', 'everything',
+        // Other vocabulary gaps that map to "I haven't told you what it is".
+        'goods', 'sundries', 'bric-a-brac', 'odds and ends',
+    ];
+
+    // Ambiguous single-token entries: each one has many legitimate uses
+    // ("baby bundle", "stamp collection", "lots of seedlings"). Treat as
+    // vague only when they co-occur with another (non-ambiguous) vague
+    // token in the same item name.
+    private const VAGUE_AMBIGUOUS = [
+        'bundle', 'collection', 'lots', 'random', 'loads',
     ];
 
     private const MESSAGING_LINK_DOMAINS = [
@@ -556,6 +572,8 @@ class ContentCheckService
         'of', 'and', 'the', 'to', 'for', 'a', 'an', 'or', 'with', 'in', 'on', 'at', 'by',
     ];
 
+    private const TOKEN_SPLIT_PATTERN = '/[\s,;\-\/!?()\.]+/';
+
     public function checkVagueItem(?string $itemName): ?array
     {
         if ($itemName === null) {
@@ -569,10 +587,15 @@ class ContentCheckService
 
         $lower = strtolower($trimmed);
 
-        $tokens = preg_split('/[\s,;\-\/!?()\.]+/', $lower, -1, PREG_SPLIT_NO_EMPTY);
+        $tokens = preg_split(self::TOKEN_SPLIT_PATTERN, $lower, -1, PREG_SPLIT_NO_EMPTY);
+
+        $vagueSet     = $this->vagueTokenSet();
+        $ambiguousSet = $this->ambiguousTokenSet();
 
         $significantCount = 0;
+        $unambiguousVague = 0;
         $allVague         = true;
+
         foreach ($tokens as $token) {
             if (in_array($token, self::VAGUE_STOPWORDS, true)) {
                 continue;
@@ -580,38 +603,89 @@ class ContentCheckService
             if (preg_match('/^\d+$/', $token)) {
                 continue;
             }
-            if (mb_strlen($token) <= 2) {
+            $isShort = mb_strlen($token) <= 2;
+
+            if ($isShort) {
+                // Short vague tokens (e.g. "any", "all" — but those are 3 chars
+                // so they wouldn't land here; left for symmetry) count as vague.
+                // Short non-vague tokens (TV, PC) rescue: identify a specific
+                // category and shouldn't be treated as vague-by-default.
+                if (isset($vagueSet[$token])) {
+                    $significantCount++;
+                    $unambiguousVague++;
+                } else {
+                    $allVague = false;
+                    break;
+                }
                 continue;
             }
 
             $significantCount++;
-            if (!isset($this->vagueTokenSet()[$token])) {
+
+            if (isset($vagueSet[$token])) {
+                $unambiguousVague++;
+            } elseif (isset($ambiguousSet[$token])) {
+                // Counted as significant but only "vague" when paired with an
+                // unambiguous vague token elsewhere in the item.
+            } else {
                 $allVague = false;
                 break;
             }
         }
 
-        if ($significantCount > 0 && $allVague) {
-            return ['check' => self::CHECK_VAGUE, 'category' => null, 'detail' => "Item name '{$itemName}' is too generic"];
+        if ($significantCount === 0 || !$allVague) {
+            return null;
         }
 
-        return null;
+        // Ambiguous tokens alone (e.g. "bundle", "stamp collection") don't
+        // flag — they need an unambiguous vague companion to convert into a
+        // real signal.
+        if ($unambiguousVague === 0) {
+            return null;
+        }
+
+        return ['check' => self::CHECK_VAGUE, 'category' => null, 'detail' => "Item name '{$itemName}' is too generic"];
     }
 
     /**
-     * Flat token set built from VAGUE_KEYWORDS so multi-word phrases like
-     * 'free stuff' or 'bits and pieces' contribute each of their tokens.
+     * Flat token set built from VAGUE_KEYWORDS plus their inflectional
+     * variants (item→items, thing→things) so we don't have to hand-maintain
+     * plurals.
      */
     private function vagueTokenSet(): array
     {
         static $set = null;
         if ($set === null) {
-            $set = [];
-            foreach (self::VAGUE_KEYWORDS as $kw) {
-                foreach (preg_split('/\s+/', strtolower($kw), -1, PREG_SPLIT_NO_EMPTY) as $t) {
-                    if (!in_array($t, self::VAGUE_STOPWORDS, true) && mb_strlen($t) > 2) {
-                        $set[$t] = true;
-                    }
+            $set = $this->buildTokenSet(self::VAGUE_KEYWORDS);
+        }
+        return $set;
+    }
+
+    private function ambiguousTokenSet(): array
+    {
+        static $set = null;
+        if ($set === null) {
+            $set = $this->buildTokenSet(self::VAGUE_AMBIGUOUS);
+        }
+        return $set;
+    }
+
+    private function buildTokenSet(array $keywords): array
+    {
+        $set = [];
+        foreach ($keywords as $kw) {
+            // Split each keyword the same way checkVagueItem splits its
+            // input — that way hyphenated entries like "bric-a-brac"
+            // contribute "bric" and "brac" to the set, matching the input
+            // tokens after they get split on the hyphen.
+            $tokens = preg_split(self::TOKEN_SPLIT_PATTERN, strtolower($kw), -1, PREG_SPLIT_NO_EMPTY);
+            foreach ($tokens as $t) {
+                if (in_array($t, self::VAGUE_STOPWORDS, true)) {
+                    continue;
+                }
+                $set[$t] = true;
+                foreach ($this->inflectionVariants($t) as $variant) {
+                    $set[$variant] = true;
                 }
             }
         }
