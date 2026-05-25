@@ -56,6 +56,9 @@ func mockSidecarReturning(t *testing.T, vec []float32) *httptest.Server {
 }
 
 func TestVectorSearchBasic(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	sofaVec := makeTestVec(0.5)
 	chairVec := makeTestVec(0.51)
 	bikeVec := makeTestVec(5.0)
@@ -81,6 +84,9 @@ func TestVectorSearchBasic(t *testing.T) {
 }
 
 func TestVectorSearchKeywordBoost(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	vec := makeTestVec(1.0)
 	vecSimilar := makeTestVec(1.001)
 
@@ -103,6 +109,9 @@ func TestVectorSearchKeywordBoost(t *testing.T) {
 }
 
 func TestVectorSearchWithMsgtypeFilter(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	vec := makeTestVec(1.0)
 
 	embedding.Global.SetEntries([]embedding.Entry{
@@ -123,6 +132,9 @@ func TestVectorSearchWithMsgtypeFilter(t *testing.T) {
 }
 
 func TestVectorSearchWithGroupFilter(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	vec := makeTestVec(1.0)
 
 	embedding.Global.SetEntries([]embedding.Entry{
@@ -143,6 +155,9 @@ func TestVectorSearchWithGroupFilter(t *testing.T) {
 }
 
 func TestVectorSearchLimit(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	vec := makeTestVec(1.0)
 	entries := make([]embedding.Entry, 10)
 	for i := range entries {
@@ -170,6 +185,9 @@ func TestVectorSearchLimit(t *testing.T) {
 // the logs which stage drifted — sidecar embedding, store size, or top
 // candidate cosines. Keep this test honest if you edit VectorStats.
 func TestVectorSearchStatsDiagnostics(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	queryVec := makeTestVec(1.0)
 	strongMatch := makeTestVec(1.001)   // cosine ≈ 1 with queryVec → above threshold
 	antiparallel := makeAntiparallelVec(1.0) // cosine ≈ -1 → below threshold
@@ -204,6 +222,9 @@ func TestVectorSearchStatsDiagnostics(t *testing.T) {
 // fingerprint is stable for identical inputs against a deterministic sidecar —
 // the property we rely on to detect sidecar-induced non-determinism in Loki.
 func TestVectorSearchStatsDeterministicFingerprint(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	queryVec := makeTestVec(1.0)
 	embedding.Global.SetEntries([]embedding.Entry{
 		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "x", SubjectVec: makeTestVec(1.001)},
@@ -230,6 +251,9 @@ func TestVectorSearchStatsDeterministicFingerprint(t *testing.T) {
 // stats carry the error text and the handler can emit a diagnostic log
 // regardless of the failure path.
 func TestVectorSearchStatsOnEmbedError(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	embedding.Global.SetEntries([]embedding.Entry{
 		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "x", SubjectVec: makeTestVec(1.0)},
 	})
@@ -248,6 +272,9 @@ func TestVectorSearchStatsOnEmbedError(t *testing.T) {
 }
 
 func TestVectorSearchSidecarError(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	embedding.Global.SetEntries([]embedding.Entry{
 		{Msgid: 1, Groupid: 100, Msgtype: "Offer", Subject: "test", SubjectVec: makeTestVec(1.0)},
 	})
@@ -315,6 +342,9 @@ func TestStoreSetEntriesAndCount(t *testing.T) {
 // After the fix, an explicit searchmode=vector request respects the vector
 // result set (even if empty) instead of secretly switching to keyword.
 func TestSearchHandlerVectorModeDoesNotFallBackToKeyword(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	prefix := uniquePrefix("vectornofallback")
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
@@ -386,6 +416,9 @@ func TestSearchHandlerVectorModeDoesNotFallBackToKeyword(t *testing.T) {
 // "very puzzling" report that identical queries produced different results
 // (Discourse 9594).
 func TestSearchHandlerVectorModeIsDeterministic(t *testing.T) {
+	embedding.ResetQueryCache()
+	t.Cleanup(embedding.ResetQueryCache)
+
 	prefix := uniquePrefix("vectordeterministic")
 	groupID := CreateTestGroup(t, prefix)
 

@@ -1,5 +1,17 @@
 FROM ghcr.io/freegle/freegle-base:latest
 
+# ONNX Runtime C library — required for native Go embedding pool.
+# SetIntraOpNumThreads/SetInterOpNumThreads parallelise GEMM tiles and
+# independent graph nodes (Q/K/V projections) across all CPU cores.
+ARG ONNXRUNTIME_VERSION=1.20.1
+RUN curl -fsSL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" \
+    | tar xz -C /tmp && \
+    cp "/tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}" /usr/local/lib/ && \
+    ln -sf "/usr/local/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}" /usr/local/lib/libonnxruntime.so && \
+    cp -r "/tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/include" /usr/local/include/onnxruntime && \
+    rm -rf "/tmp/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}" && \
+    ldconfig
+
 WORKDIR /app
 
 ENV MYSQL_USER=root \
