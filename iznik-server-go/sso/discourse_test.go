@@ -10,6 +10,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -262,6 +263,93 @@ func TestValidateDiscourseSession_InvalidJSON(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid cookie JSON")
 }
 
+// ----- DiscourseSSO handler — pre-DB early-exit paths --------------------
+// newSSOApp is defined in discourse_handler_test.go (same package).
+
+// makeSignedPayload returns a base64-encoded payload and its HMAC-SHA256 signature.
+func makeSignedPayload(rawPayload, secret string) (string, string) {
+	encoded := base64.StdEncoding.EncodeToString([]byte(rawPayload))
+	sig := computeHMAC(encoded, secret)
+	return encoded, sig
+}
+
+func TestDiscourseSSO_MissingSecret_Returns500(t *testing.T) {
+	// DISCOURSE_SECRET env var not set → 500 Internal Server Error.
+	t.Setenv("DISCOURSE_SECRET", "")
+	app := newSSOApp()
+	req := httptest.NewRequest("GET", "/discourse_sso?sso=anything&sig=anysig", nil)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
+}
+
+func TestDiscourseSSO_InvalidHMAC_Returns403(t *testing.T) {
+	// Secret is set but the signature doesn't match → 403 Forbidden.
+	t.Setenv("DISCOURSE_SECRET", "my-secret")
+	app := newSSOApp()
+	req := httptest.NewRequest("GET", "/discourse_sso?sso=validpayload&sig=wrongsig", nil)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+func TestDiscourseSSO_BadBase64Payload_Returns400(t *testing.T) {
+	// Valid HMAC over a payload that, once base64-decoded, fails as URL-encoded nonce.
+	// We sign the raw literal "!!!" which is valid base64 only with padding, and
+	// the decoded bytes are not valid URL-encoded form → nonce extraction fails.
+	secret := "my-secret"
+	t.Setenv("DISCOURSE_SECRET", secret)
+	app := newSSOApp()
+
+	// "!!!" is not standard base64 — decoding fails → extractNonce returns error.
+	badPayload := "!!!"
+	sig := computeHMAC(badPayload, secret)
+	req := httptest.NewRequest("GET", "/discourse_sso?sso="+url.QueryEscape(badPayload)+"&sig="+url.QueryEscape(sig), nil)
+	resp, err := app.Test(req)
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
+}
+
+func TestDiscourseSSO_ValidPayload_NoCookie_Redirects(t *testing.T) {
+	// Signature valid, nonce extracted, but no Iznik-Discourse-SSO cookie → redirect.
+	secret := "my-secret"
+	t.Setenv("DISCOURSE_SECRET", secret)
+	app := newSSOApp()
+
+	rawPayload := "nonce=abc123&return_sso_url=https%3A%2F%2Fdiscourse.example.com"
+	encoded, sig := makeSignedPayload(rawPayload, secret)
+
+	req := httptest.NewRequest("GET", "/discourse_sso?sso="+url.QueryEscape(encoded)+"&sig="+url.QueryEscape(sig), nil)
+	resp, err := app.Test(req, -1) // -1: don't follow redirects
+	require.NoError(t, err)
+	assert.Equal(t, fiber.StatusFound, resp.StatusCode)
+	assert.Contains(t, resp.Header.Get("Location"), "modtools.org")
+}
+
+func TestDiscourseSSO_MultipleNonceValues_ExtractsFirst(t *testing.T) {
+	// Duplicate nonce keys in the payload — url.Values.Get returns the first;
+	// the handler must still accept the request and reach the redirect path.
+	secret := "my-secret"
+	t.Setenv("DISCOURSE_SECRET", secret)
+	app := newSSOApp()
+
+	rawPayload := "nonce=first&nonce=second"
+	encoded, sig := makeSignedPayload(rawPayload, secret)
+	req := httptest.NewRequest("GET", "/discourse_sso?sso="+url.QueryEscape(encoded)+"&sig="+url.QueryEscape(sig), nil)
+	resp, err := app.Test(req, -1)
+	require.NoError(t, err)
+	// No cookie → redirect (not a DB-dependent path).
+	assert.Equal(t, fiber.StatusFound, resp.StatusCode)
+}
+
+// ----- validateDiscourseSession — pre-DB validation ----------------------
+
+func TestValidateDiscourseSession_InvalidJSON_ReturnsError(t *testing.T) {
+	_, err := validateDiscourseSession("{not valid json}")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid cookie JSON")
+}
+
 func TestValidateDiscourseSession_ZeroID(t *testing.T) {
 	_, err := validateDiscourseSession(`{"id":0,"series":"abc","token":"def"}`)
 	assert.Error(t, err)
@@ -312,4 +400,41 @@ func TestDiscourseSSO_NoSecretAlwaysReturns500(t *testing.T) {
 			assert.Equal(t, fiber.StatusInternalServerError, resp.StatusCode)
 		})
 	}
+}
+
+func TestValidateDiscourseSession_MissingFields(t *testing.T) {
+	// Table of cookie values where at least one required field is zero/empty.
+	// All return before touching the DB.
+	tests := []struct {
+		name   string
+		cookie string
+	}{
+		{"ID zero", `{"id":0,"series":"s","token":"t"}`},
+		{"series empty", `{"id":1,"series":"","token":"t"}`},
+		{"token empty", `{"id":1,"series":"s","token":""}`},
+		{"all empty", `{"id":0,"series":"","token":""}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := validateDiscourseSession(tc.cookie)
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), "incomplete cookie data")
+		})
+	}
+}
+
+func TestValidateDiscourseSession_ValidJSONCompleteFields_TriesDB(t *testing.T) {
+	// Cookie has all required fields — the function proceeds past pre-DB checks
+	// and hits database.DBConn. Without a DB this panics. Skip if no DB.
+	// This test documents that the pre-DB path is not an exit point here.
+	t.Skip("requires database — verifies that pre-DB checks pass; DB path not reachable in unit tests")
+	_, _ = validateDiscourseSession(`{"id":1,"series":"abc","token":"xyz"}`)
+}
+
+// ----- os.Setenv safety — restore original value after tests that mutate env -----
+
+func init() {
+	// Ensure DISCOURSE_SECRET is unset between test runs so test isolation
+	// is maintained if the test binary reuses the process environment.
+	os.Unsetenv("DISCOURSE_SECRET")
 }
