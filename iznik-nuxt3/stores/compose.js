@@ -3,50 +3,6 @@ import { useMessageStore } from '~/stores/message'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
 
-// When the user posts without a real (non-AI) photo we require at least this
-// many characters of description so other Freeglers can understand the item.
-const MIN_DESCRIPTION_LENGTH_NO_PHOTO = 80
-
-// Returns null if all messages of `postType` are valid, else the reason for
-// the first invalid message. Shared by messageValid and messageInvalidReason.
-function computeInvalidReason(messages, postType) {
-  const type = postType?.value
-  const isOffer = type === 'Offer'
-  const verbing = isOffer ? 'giving away' : 'looking for'
-  const noun = isOffer ? 'giving away' : 'wanting'
-
-  if (!messages?.length) {
-    return 'No message to post.'
-  }
-  const filtered = messages.filter((m) => m?.type === type)
-  if (!filtered.length) {
-    return 'No message to post.'
-  }
-  for (const message of filtered) {
-    const atts = message.attachments ? message.attachments : []
-    const realPhotos = atts.filter(
-      (a) => !a.externalmods || a.externalmods.ai !== true
-    )
-    const description = (message.description || '').trim()
-    const hasDescription = description.length > 0
-    const hasRealPhotos = realPhotos.length > 0
-
-    if (!message.item || !message.item.trim()) {
-      return `Please add a short title for what you are ${noun}.`
-    }
-    if (!hasDescription && !hasRealPhotos) {
-      return 'Please add a description or a photo.'
-    }
-    if (
-      !hasRealPhotos &&
-      description.length < MIN_DESCRIPTION_LENGTH_NO_PHOTO
-    ) {
-      return `Please add a longer description (at least ${MIN_DESCRIPTION_LENGTH_NO_PHOTO} characters) or upload a real photo so people understand what you're ${verbing}.`
-    }
-  }
-  return null
-}
-
 const defaultOffer = {
   id: 0,
   type: 'Offer',
@@ -592,10 +548,40 @@ export const useComposeStore = defineStore({
       return (Math.min(state._progress, state.max - 1) * 100) / state.max
     },
     messageValid: (state) => (postType) => {
-      return computeInvalidReason(state.messages, postType) === null
-    },
-    messageInvalidReason: (state) => (postType) => {
-      return computeInvalidReason(state.messages, postType)
+      // Is there at least one valid message of this type
+      let valid = false
+
+      if (state.messages?.length) {
+        const messages = state.messages.filter((m) => {
+          return m?.type === postType.value
+        })
+
+        valid = true
+
+        for (const message of messages) {
+          const atts = message.attachments ? message.attachments : []
+
+          // Count only real (non-AI) photos - AI illustrations don't count as "having a photo"
+          const realPhotos = atts.filter(
+            (a) => !a.externalmods || a.externalmods.ai !== true
+          )
+          const hasDescription =
+            message.description && message.description.trim()
+          const hasRealPhotos = realPhotos.length > 0
+
+          // A message is valid if there is an item, and either a description or real photos.
+          // AI-only photos require a description.
+          if (
+            !message.item ||
+            !message.item.trim() ||
+            (!hasDescription && !hasRealPhotos)
+          ) {
+            valid = false
+          }
+        }
+      }
+
+      return valid
     },
     postcodeValid: (state) => {
       return state.postcode?.name

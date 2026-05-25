@@ -20,7 +20,6 @@ let closed = ref(false)
 let ids = ref([])
 let notblank = ref(false)
 let messageValid = ref(false)
-let messageInvalidReason = ref(null)
 let uploadingPhoto = ref(false)
 let noGroups = ref(false)
 let postcodeValid = ref(false)
@@ -164,10 +163,6 @@ export function setup(type) {
 
   messageValid = computed(() => {
     return composeStore.messageValid(postType)
-  })
-
-  messageInvalidReason = computed(() => {
-    return composeStore.messageInvalidReason(postType)
   })
 
   uploadingPhoto = computed(() => {

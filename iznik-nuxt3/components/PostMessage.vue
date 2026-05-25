@@ -88,12 +88,6 @@
         class="description"
         :size="textareaSize"
       />
-      <div
-        v-if="charsRemaining > 0"
-        class="description-counter description-counter--needs-more"
-      >
-        {{ charsRemaining }} more characters needed (or add a photo).
-      </div>
     </div>
   </div>
 </template>
@@ -207,17 +201,6 @@ const placeholder = computed(() => {
   return props.type === 'Offer'
     ? "e.g. colour, condition, size, whether it's working etc."
     : 'Size, colour, any specific requirements...'
-})
-
-const MIN_DESCRIPTION_NO_PHOTO = 80
-
-const charsRemaining = computed(() => {
-  const hasRealPhoto = currentAtts.value.some(
-    (a) => !a.externalmods || a.externalmods.ai !== true
-  )
-  if (hasRealPhoto) return 0
-  const len = (description.value || '').trim().length
-  return Math.max(0, MIN_DESCRIPTION_NO_PHOTO - len)
 })
 
 function $id(type) {
