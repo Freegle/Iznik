@@ -265,12 +265,21 @@ export function useChatMessageBase(chatId, messageId, pov = null) {
     if (chatmessage.value?.userid === myidComputed.value) {
       return me.value?.profile?.paththumb
     }
-    // For User2User chats, prefer the other user's profile from the user store.
-    // Fall back to chat.icon (which is the same image from the listing API)
-    // to avoid a blank avatar while the user store is still loading.
-    // In chat review, chat.icon is not populated so this gracefully degrades.
     if (chat.value?.chattype === 'User2User') {
-      return otheruserComputed.value?.profile?.paththumb || chat.value?.icon
+      const otherPaththumb = otheruserComputed.value?.profile?.paththumb
+      // chat.icon for a User2User chat is only correct from one
+      // participant's perspective (the Go API enriches relative to the
+      // requesting user — see iznik-server-go/chat/chatroom.go listChats
+      // icon branch). When a mod views the chat via pov, falling back to
+      // chat.icon for the non-pov user puts the pov user's photo on the
+      // wrong bubble (Discourse #9707). Return the (possibly empty)
+      // paththumb instead so ProfileImage renders a GeneratedAvatar.
+      if (pov) {
+        return otherPaththumb
+      }
+      // Participant view: chat.icon is the other user's image, safe as
+      // a fallback while the user store loads.
+      return otherPaththumb || chat.value?.icon
     }
     // For User2Mod: chat.icon is the group icon (member side) or member
     // profile (mod side). Prefer it over otheruser profile.
