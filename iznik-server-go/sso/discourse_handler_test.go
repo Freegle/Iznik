@@ -275,7 +275,7 @@ func TestValidateDiscourseSession_EarlyExits(t *testing.T) {
 // DiscourseSSO handler — paths that don't require a DB connection
 // -------------------------------------------------------------------------
 
-func TestDiscourseSSO_NoSecret(t *testing.T) {
+func TestDiscourseSSO_NoSecretReturns500(t *testing.T) {
 	os.Unsetenv("DISCOURSE_SECRET")
 	app := newSSOApp()
 	req := httptest.NewRequest(http.MethodGet, "/discourse_sso?sso=anything&sig=anything", nil)
@@ -286,7 +286,7 @@ func TestDiscourseSSO_NoSecret(t *testing.T) {
 	assert.Contains(t, string(body), "SSO not configured")
 }
 
-func TestDiscourseSSO_InvalidSignature(t *testing.T) {
+func TestDiscourseSSO_InvalidSignatureReturns403(t *testing.T) {
 	os.Setenv("DISCOURSE_SECRET", "test-secret")
 	defer os.Unsetenv("DISCOURSE_SECRET")
 
