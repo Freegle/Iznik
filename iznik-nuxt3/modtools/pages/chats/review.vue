@@ -157,8 +157,7 @@ function deleteAll(callback) {
 function deleteConfirmed() {
   visibleMessages.value.forEach((m) => {
     if (!m.widerchatreview) {
-      // TODO: This needs to use the store properly
-      // chatStore.reject({ id: m.id, chatid: null })
+      chatStore.reject({ id: m.id, chatid: null })
     }
   })
 }
