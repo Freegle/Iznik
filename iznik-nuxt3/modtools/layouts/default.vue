@@ -380,8 +380,8 @@ const discourseCount = computed(() => {
 
 const menuCount = computed(() => {
   const work = authStore?.work
-  if (!work || !work.total) return 0
-  return work.total
+  const workTotal = work?.total || 0
+  return workTotal + (chatStore.unreadCount || 0)
 })
 
 const mobileStore = useMobileStore()

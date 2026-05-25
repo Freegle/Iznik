@@ -1,18 +1,36 @@
 import { pipeline, env } from '@huggingface/transformers';
 import { createServer } from 'http';
+import { cpus } from 'os';
 
 const PORT = process.env.PORT || 3200;
 const EMBEDDING_DIM = 256;
 
+// How many threads the ONNX C runtime uses for a single inference.
+//   intraOpNumThreads — tiles each GEMM matmul across N threads, reducing
+//     per-inference latency proportional to core count (the parallel algorithm).
+//   interOpNumThreads — runs independent graph nodes concurrently; the Q, K, V
+//     projection matmuls in each transformer layer fire simultaneously.
+// Without onnxruntime-node installed @huggingface/transformers falls back to
+// WASM which ignores these options. With it, the native C++ runtime uses them.
+const NUM_THREADS = parseInt(process.env.ONNX_NUM_THREADS || String(cpus().length), 10);
+
 env.cacheDir = process.env.HF_CACHE_DIR || '/app/model-cache';
 
-console.log('Loading nomic-embed-text-v1.5 model...');
+console.log(JSON.stringify({ level: 'info', event: 'startup', num_threads: NUM_THREADS }));
+
 const extractor = await pipeline(
   'feature-extraction',
   'nomic-ai/nomic-embed-text-v1.5',
-  { quantized: true }
+  {
+    quantized: true,
+    session_options: {
+      intraOpNumThreads: NUM_THREADS,
+      interOpNumThreads: NUM_THREADS,
+    },
+  }
 );
-console.log('Model loaded.');
+
+console.log(JSON.stringify({ level: 'info', event: 'model_loaded', num_threads: NUM_THREADS }));
 
 const server = createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') {
@@ -57,7 +75,7 @@ const server = createServer(async (req, res) => {
       for (let j = 0; j < EMBEDDING_DIM; j++) {
         vec.push(output.data[i * dim + j]);
       }
-      // Re-normalize after truncation
+      // Re-normalize after Matryoshka truncation from 768 → 256 dims.
       let norm = 0;
       for (let j = 0; j < EMBEDDING_DIM; j++) norm += vec[j] * vec[j];
       norm = Math.sqrt(norm);
@@ -68,8 +86,6 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify({ embeddings }));
 
     const elapsedMs = Number(process.hrtime.bigint() - t0) / 1e6;
-    // Fingerprint first embedding so identical queries across calls can be
-    // cross-checked in Loki — deterministic extractor → identical fp.
     const fp = embeddings[0]
       .slice(0, 4)
       .map(v => v.toFixed(4))
@@ -98,5 +114,5 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Embedding sidecar listening on port ${PORT}`);
+  console.log(JSON.stringify({ level: 'info', event: 'listening', port: PORT }));
 });

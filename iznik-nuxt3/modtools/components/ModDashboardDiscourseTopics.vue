@@ -52,16 +52,13 @@ const { DiscourseTopics, maybeFetch } = useModDashboard(props, [
 const refreshTimer = ref(null)
 
 const top5 = computed(() => {
-  let ret = []
-
-  if (DiscourseTopics.value) {
+  if (!DiscourseTopics.value) return []
+  try {
     const topics = JSON.parse(DiscourseTopics.value)
-    if (topics && topics.latest_posts) {
-      ret = topics.latest_posts.slice(0, 5)
-    }
+    return topics?.latest_posts?.slice(0, 5) ?? []
+  } catch (e) {
+    return []
   }
-
-  return ret
 })
 
 function doRefresh() {
