@@ -7,6 +7,7 @@ const mockChatStore = {
   clear: vi.fn().mockResolvedValue({}),
   fetchReviewChatsMT: vi.fn().mockResolvedValue({}),
   messagesById: vi.fn().mockReturnValue([]),
+  reject: vi.fn().mockResolvedValue({}),
 }
 
 const mockAuthStore = {
@@ -193,6 +194,45 @@ describe('chats/review.vue page', () => {
 
       expect(wrapper.vm.showDeleteModal).toBe(true)
       expect(callback).toHaveBeenCalled()
+    })
+
+    it('deleteConfirmed rejects each visible message via the chat store', async () => {
+      // Regression: clicking "Delete All" → confirming the modal was a no-op
+      // because deleteConfirmed had its chatStore.reject() call commented out.
+      mockChatStore.messagesById.mockReturnValue([
+        { id: 1, chatid: 100, widerchatreview: false },
+        { id: 2, chatid: 200, widerchatreview: false },
+      ])
+      const wrapper = mountComponent()
+      await flushPromises()
+      wrapper.vm.show = 10
+      await wrapper.vm.$nextTick()
+      vi.clearAllMocks()
+
+      wrapper.vm.deleteConfirmed()
+      await flushPromises()
+
+      expect(mockChatStore.reject).toHaveBeenCalledTimes(2)
+      expect(mockChatStore.reject).toHaveBeenCalledWith({ id: 1, chatid: null })
+      expect(mockChatStore.reject).toHaveBeenCalledWith({ id: 2, chatid: null })
+    })
+
+    it('deleteConfirmed skips wider-chat-review messages (mod-only entries)', async () => {
+      mockChatStore.messagesById.mockReturnValue([
+        { id: 1, chatid: 100, widerchatreview: true },
+        { id: 2, chatid: 200, widerchatreview: false },
+      ])
+      const wrapper = mountComponent()
+      await flushPromises()
+      wrapper.vm.show = 10
+      await wrapper.vm.$nextTick()
+      vi.clearAllMocks()
+
+      wrapper.vm.deleteConfirmed()
+      await flushPromises()
+
+      expect(mockChatStore.reject).toHaveBeenCalledTimes(1)
+      expect(mockChatStore.reject).toHaveBeenCalledWith({ id: 2, chatid: null })
     })
   })
 
