@@ -11,13 +11,16 @@ use Illuminate\Support\Facades\DB;
 /**
  * Run the same sample through multiple models and report inter-model agreement.
  *
- * Workflow:
- *   1. php artisan eee:classify-item-types --limit=200   (reference run with Claude)
- *   2. php artisan eee:compare-models --sample=200       (compare all configured models)
- *   3. Review the agreement report, pick the production model.
+ * NOTE: this command compares model outputs against each other (using Claude as
+ * an arbitrary fixed pivot) — useful when no human labels exist yet. For real
+ * accuracy measurement against human ground truth, use:
  *
- * Only processes images that already have a Claude reference classification so
- * comparisons are apples-to-apples.
+ *   php artisan eee:score-vs-human
+ *
+ * Workflow:
+ *   1. php artisan eee:classify-item-types --limit=200   (Claude run as the pivot)
+ *   2. php artisan eee:compare-models --sample=200       (run all other models on same items)
+ *   3. php artisan eee:score-vs-human                    (score each model against humans)
  */
 class EeeCompareModelsCommand extends Command
 {
@@ -42,6 +45,8 @@ class EeeCompareModelsCommand extends Command
         $sample = (int) $this->option('sample');
         $force  = (bool) $this->option('force');
 
+        // Claude is used as a fixed pivot to define which messages to compare across models,
+        // NOT as ground truth. Ground-truth accuracy lives in `eee:score-vs-human`.
         $referenceModel     = 'claude';
         $referenceModelName = $this->vision->withDriver($referenceModel)->getModelName();
 
@@ -56,7 +61,8 @@ class EeeCompareModelsCommand extends Command
         // Remove reference model from comparison set — it's the baseline.
         $compareModels = array_values(array_filter($models, fn($m) => $m !== $referenceModel));
 
-        $this->info("EEE model comparison | reference: {$referenceModelName} | comparing: " . implode(', ', $compareModels));
+        $this->info("EEE inter-model agreement | pivot model: {$referenceModelName} | comparing: " . implode(', ', $compareModels));
+        $this->comment("(NB: this measures agreement between models, NOT accuracy. For accuracy vs humans, run eee:score-vs-human.)");
         $this->info("Sample size: {$sample}");
 
         // Pull the canonical sample IDs from eee_item_type_samples (the exact messages used
@@ -217,7 +223,7 @@ class EeeCompareModelsCommand extends Command
                 ];
             }
             $this->line("<comment>Attribute: {$label}</comment>");
-            $this->table(['Model', 'Comparable', 'Agreement w/ Claude'], $attrRows);
+            $this->table(['Model', 'Comparable', 'Agreement w/ pivot'], $attrRows);
         }
 
         // Optional CSV dump.
