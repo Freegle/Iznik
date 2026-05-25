@@ -264,4 +264,154 @@ class ChatProcessServiceTest extends TestCase
         $this->assertEquals(0, $updated->processingrequired);
         $this->assertEquals(1, $updated->processingsuccessful);
     }
+
+    // --- Content checks for Moderated members (regression: Discourse #9706) ---
+    //
+    // V1 ChatMessage::process() ran Spam::checkReview() on Moderated members'
+    // messages and held any that matched. That scan was dropped when chat
+    // processing was migrated to ChatProcessService, letting graphic/spam chat
+    // content through unflagged. These tests pin the restored behaviour.
+
+    public function test_moderated_user_message_with_concern_keyword_is_held_for_review(): void
+    {
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'testbadword_chat',
+            'category' => 'review',
+            'action' => 'flag',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+        ]);
+
+        $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Hello there testbadword_chat have a look',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->reviewrequired, 'Moderated member message matching a concern keyword should be held for review');
+        $this->assertEquals('Spam', $updated->reportreason);
+        $this->assertEquals(1, $updated->processingsuccessful);
+    }
+
+    public function test_moderated_user_clean_message_is_not_held(): void
+    {
+        $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Hi, is the lamp still available please?',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(0, $updated->reviewrequired, 'Clean message from a Moderated member should pass through');
+        $this->assertNull($updated->reportreason);
+    }
+
+    public function test_moderated_user_message_with_phone_number_is_held(): void
+    {
+        $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Text me on 07700 900123 to arrange',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->reviewrequired, 'Message containing a phone number should be held for review');
+    }
+
+    public function test_unmoderated_user_message_is_not_content_checked(): void
+    {
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'testbadword_chat',
+            'category' => 'review',
+            'action' => 'flag',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+        ]);
+
+        $sender = $this->createTestUser(['chatmodstatus' => 'Unmoderated']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Hello there testbadword_chat have a look',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(0, $updated->reviewrequired, 'Unmoderated members bypass content checks (V1 parity)');
+    }
+
+    public function test_fully_moderated_user_message_is_always_held(): void
+    {
+        $sender = $this->createTestUser(['chatmodstatus' => 'Fully']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Hi, is the lamp still available please?',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->reviewrequired, 'Fully moderated members have every message held');
+        $this->assertEquals('Spam', $updated->reportreason);
+    }
+
+    public function test_moderated_user_system_message_is_not_content_checked(): void
+    {
+        DB::table('concern_keywords')->insert([
+            'keyword' => 'testbadword_chat',
+            'category' => 'review',
+            'action' => 'flag',
+            'match_mode' => 'literal',
+            'scope' => 'global',
+        ]);
+
+        $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => 'System note containing testbadword_chat',
+            'type' => ChatMessage::TYPE_SYSTEM,
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(0, $updated->reviewrequired, 'System/templated messages are not content checked');
+    }
 }

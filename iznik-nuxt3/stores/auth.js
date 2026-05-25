@@ -266,12 +266,13 @@ export const useAuthStore = defineStore({
       return { unknown, worked }
     },
     async unsubscribe(email) {
-      const unknown = false
+      let unknown = false
       let worked = false
 
       try {
-        await this.$api.session.unsubscribe(email)
-        worked = true
+        const ret = await this.$api.session.unsubscribe(email)
+        unknown = ret?.unknown === true
+        worked = ret?.emailsent === true && !unknown
       } catch (e) {
         console.log('Unsubscribe error', e)
       }

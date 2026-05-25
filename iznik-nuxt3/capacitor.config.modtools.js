@@ -62,7 +62,7 @@ const config = {
       backgroundColor: '#00000000',
     },
     PushNotifications: {
-      presentationOptions: ['badge', 'sound', 'alert'],
+      presentationOptions: ['badge'],
     },
     Badge: {
       persist: true,

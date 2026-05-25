@@ -21,6 +21,10 @@ require (
 	github.com/stripe/stripe-go/v82 v82.5.1
 	github.com/tidwall/geodesic v0.3.5
 	github.com/valyala/fasthttp v1.55.0
+	// Required when building with -tags embed_native (native ONNX pool).
+	// ONNX Runtime C library must also be installed; see Dockerfile.
+	github.com/daulet/tokenizers v1.27.0
+	github.com/yalue/onnxruntime_go v1.30.1
 	golang.org/x/text v0.22.0
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.31.0

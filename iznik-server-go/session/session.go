@@ -395,11 +395,14 @@ func handleUnsubscribe(c *fiber.Ctx, email string) error {
 		"LIMIT 1", email).Scan(&userID)
 
 	if userID == 0 {
-		// Return success even for unknown emails to prevent email enumeration.
+		// Return unknown:true so the frontend can branch to a "Contact support" fallback
+		// rather than misleading the user with a fake "we sent you an email" message.
+		// Trade-off: this endpoint becomes a limited email-enumeration oracle.
 		return c.JSON(fiber.Map{
 			"ret":       0,
 			"status":    "Success",
-			"emailsent": true,
+			"emailsent": false,
+			"unknown":   true,
 		})
 	}
 
@@ -434,6 +437,7 @@ func handleUnsubscribe(c *fiber.Ctx, email string) error {
 		"ret":       0,
 		"status":    "Success",
 		"emailsent": true,
+		"unknown":   false,
 	})
 }
 

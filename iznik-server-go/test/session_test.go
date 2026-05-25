@@ -82,6 +82,7 @@ func TestUnsubscribeSuccess(t *testing.T) {
 	assert.Equal(t, float64(0), result["ret"])
 	assert.Equal(t, "Success", result["status"])
 	assert.Equal(t, true, result["emailsent"])
+	assert.Equal(t, false, result["unknown"])
 
 	// Verify a background task was queued.
 	db := database.DBConn
@@ -91,7 +92,9 @@ func TestUnsubscribeSuccess(t *testing.T) {
 }
 
 func TestUnsubscribeUnknownEmail(t *testing.T) {
-	// Should return success to prevent email enumeration.
+	// Returns unknown:true so the frontend can offer a "Contact support" fallback
+	// instead of misleading the user into thinking an email was sent.
+	// Trade-off: enables limited email enumeration via this endpoint.
 	body := `{"action":"Unsubscribe","email":"nonexistent-unsub-test@example.com"}`
 	resp := postSession(body)
 	assert.Equal(t, 200, resp.StatusCode)
@@ -99,7 +102,8 @@ func TestUnsubscribeUnknownEmail(t *testing.T) {
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 	assert.Equal(t, float64(0), result["ret"])
-	assert.Equal(t, true, result["emailsent"])
+	assert.Equal(t, false, result["emailsent"])
+	assert.Equal(t, true, result["unknown"])
 }
 
 func TestUnsubscribeMissingEmail(t *testing.T) {

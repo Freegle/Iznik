@@ -471,3 +471,9 @@ func (l *LokiClient) Close() {
 		l.fileMutex.Unlock()
 	}
 }
+
+// Drain waits for all in-flight async log goroutines to complete.
+// Call this in tests before cleaning up temporary directories used as LOKI_JSON_PATH.
+func (l *LokiClient) Drain() {
+	l.goroutineWg.Wait()
+}

@@ -442,6 +442,8 @@ services:
     environment:
       - PORT=3200
       - HF_CACHE_DIR=/app/model-cache
+    volumes:
+      - embedding_model_cache:/app/model-cache
 
   host-scripts:
     image: alpine:latest
@@ -709,11 +711,16 @@ services:
       - DONATION_TARGET=${DONATION_TARGET:-}
       - DONATIONS_EXCLUDE=${DONATIONS_EXCLUDE:-}
       - EMBEDDING_SIDECAR_URL=http://embedding-sidecar:3200
+      # Native ONNX pool: set both vars to bypass the HTTP sidecar for queries.
+      # Model cache volume is shared with embedding-sidecar so no re-download needed.
+      - EMBEDDING_ONNX_MODEL_PATH=${EMBEDDING_ONNX_MODEL_PATH:-}
+      - EMBEDDING_TOKENIZER_PATH=${EMBEDDING_TOKENIZER_PATH:-}
       - KNN_INDEX_PATH=/data/knn-locations.db
       - KNN_ADMIN_PORT=8195
     volumes:
       - apiv2_logs:/var/log/freegle
       - knn_data:/data
+      - embedding_model_cache:/app/model-cache
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8192/apiv2/online || exit 1"]
       interval: 10s
@@ -1691,6 +1698,8 @@ volumes:
   apiv2_logs:
     driver: local
   mcp-pseudonymizer-data:
+    driver: local
+  embedding_model_cache:
     driver: local
   mcp-audit-logs:
     driver: local

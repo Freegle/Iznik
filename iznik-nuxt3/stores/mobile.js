@@ -507,6 +507,18 @@ export const useMobileStore = defineStore({
         console.log('handleNotification badgeCount', data.count)
         this.setBadgeCount(data.count, Badge)
 
+        // Suppress foreground notification banners on Android ModTools — badge is
+        // already updated above; we don't want the tray notification to appear.
+        if (!this.isiOS && modtools) {
+          try {
+            await PushNotifications.removeDeliveredNotifications({
+              notifications: [notification],
+            })
+          } catch (e) {
+            console.log('removeDeliveredNotifications failed', e?.message)
+          }
+        }
+
         // When a push notification is received while the app is in the foreground,
         // immediately refresh chats to update unread counts and trigger message fetching.
         // This ensures new messages appear without waiting for the 30-second poll.

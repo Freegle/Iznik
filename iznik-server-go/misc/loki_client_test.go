@@ -18,6 +18,10 @@ import (
 // can exercise GetLoki() with different env-var configurations. Must only be
 // called from a single goroutine (no t.Parallel in these tests).
 func resetLokiSingleton() {
+	if lokiInstance != nil {
+		lokiInstance.Flush() // wait for in-flight async goroutines before closing
+		lokiInstance.Close() // flush and close the open log file before clearing
+	}
 	lokiOnce = sync.Once{}
 	lokiInstance = nil
 }
@@ -885,6 +889,8 @@ func TestNewLokiMiddleware_EnabledLoki_RequestPassesThrough(t *testing.T) {
 		os.Unsetenv("LOKI_ENABLED")
 		os.Unsetenv("LOKI_JSON_PATH")
 	})
+	// Drain + close before TempDir cleanup to prevent ENOTEMPTY races with async goroutine.
+	t.Cleanup(func() { GetLoki().Drain(); GetLoki().Close() })
 
 	app := fiber.New()
 	app.Use(NewLokiMiddleware(LokiMiddlewareConfig{
@@ -917,6 +923,8 @@ func TestNewLokiMiddleware_EnabledLoki_SetsXUserIDHeader(t *testing.T) {
 		os.Unsetenv("LOKI_ENABLED")
 		os.Unsetenv("LOKI_JSON_PATH")
 	})
+	// Drain + close before TempDir cleanup to prevent ENOTEMPTY races with async goroutine.
+	t.Cleanup(func() { GetLoki().Drain(); GetLoki().Close() })
 
 	app := fiber.New()
 	app.Use(NewLokiMiddleware(LokiMiddlewareConfig{
@@ -948,6 +956,8 @@ func TestNewLokiMiddleware_EnabledLoki_SetsXUserRoleHeader(t *testing.T) {
 		os.Unsetenv("LOKI_ENABLED")
 		os.Unsetenv("LOKI_JSON_PATH")
 	})
+	// Drain + close before TempDir cleanup to prevent ENOTEMPTY races with async goroutine.
+	t.Cleanup(func() { GetLoki().Drain(); GetLoki().Close() })
 
 	role := "moderator"
 	app := fiber.New()
@@ -981,6 +991,8 @@ func TestNewLokiMiddleware_EnabledLoki_SkipFuncTrue_Skips(t *testing.T) {
 		os.Unsetenv("LOKI_ENABLED")
 		os.Unsetenv("LOKI_JSON_PATH")
 	})
+	// Drain + close before TempDir cleanup to prevent ENOTEMPTY races with async goroutine.
+	t.Cleanup(func() { GetLoki().Drain(); GetLoki().Close() })
 
 	app := fiber.New()
 	app.Use(NewLokiMiddleware(LokiMiddlewareConfig{
