@@ -97,12 +97,9 @@ const emit = defineEmits(['next'])
 const microVolunteeringStore = useMicroVolunteeringStore()
 
 const CONDITION_OPTIONS = [
-  { value: 'as_new', label: 'As new' },
-  { value: 'good',   label: 'Good' },
-  { value: 'fair',   label: 'Fair' },
-  { value: 'poor',   label: 'Poor' },
-  { value: 'broken', label: 'Broken' },
-  { value: 'unsure', label: "Can't tell" },
+  { value: 'reusable', label: 'Reusable' },
+  { value: 'damaged',  label: 'Damaged' },
+  { value: 'unsure',   label: "Can't tell" },
 ]
 
 const WEIGHT_OPTIONS = [

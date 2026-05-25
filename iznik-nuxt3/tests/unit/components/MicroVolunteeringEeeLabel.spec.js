@@ -79,14 +79,13 @@ describe('MicroVolunteeringEeeLabel', () => {
       expect(text.toLowerCase()).toMatch(/help|train|teach|electrical|recycl/)
     })
 
-    it('shows condition options including as-new/good/fair/poor/broken', () => {
+    it('shows condition options matching the 3-value backend vocabulary', () => {
+      // Must align with label.ts VALID_LABELS['Condition'] = ['reusable','damaged','unsure']
+      // and with the normalisation applied during model scoring.
       const wrapper = createWrapper()
       const text = wrapper.text().toLowerCase()
-      expect(text).toContain('as new')
-      expect(text).toContain('good')
-      expect(text).toContain('fair')
-      expect(text).toContain('poor')
-      expect(text).toContain('broken')
+      expect(text).toContain('reusable')
+      expect(text).toContain('damaged')
     })
 
     it('shows weight bucket options', () => {
@@ -130,7 +129,7 @@ describe('MicroVolunteeringEeeLabel', () => {
 
       // Click one option per question. We rely on data-testid attributes on
       // each option group so the test is independent of button text/layout.
-      await wrapper.find('[data-testid="condition-good"]').trigger('click')
+      await wrapper.find('[data-testid="condition-reusable"]').trigger('click')
       await wrapper.find('[data-testid="weight-5_20kg"]').trigger('click')
       await wrapper.find('[data-testid="size-medium"]').trigger('click')
 
@@ -140,7 +139,7 @@ describe('MicroVolunteeringEeeLabel', () => {
 
     it('POSTs labels via microvolunteering store on submit', async () => {
       const wrapper = createWrapper()
-      await wrapper.find('[data-testid="condition-good"]').trigger('click')
+      await wrapper.find('[data-testid="condition-reusable"]').trigger('click')
       await wrapper.find('[data-testid="weight-5_20kg"]').trigger('click')
       await wrapper.find('[data-testid="size-medium"]').trigger('click')
 
@@ -153,7 +152,7 @@ describe('MicroVolunteeringEeeLabel', () => {
           messageid: testItem.messageid,
           attid: testItem.attid,
           eeelabels: {
-            condition: 'good',
+            condition: 'reusable',
             weight: '5_20kg',
             size: 'medium',
           },
@@ -183,7 +182,7 @@ describe('MicroVolunteeringEeeLabel', () => {
 
     it('emits "next" after a successful submit', async () => {
       const wrapper = createWrapper()
-      await wrapper.find('[data-testid="condition-good"]').trigger('click')
+      await wrapper.find('[data-testid="condition-reusable"]').trigger('click')
       await wrapper.find('[data-testid="weight-5_20kg"]').trigger('click')
       await wrapper.find('[data-testid="size-medium"]').trigger('click')
 

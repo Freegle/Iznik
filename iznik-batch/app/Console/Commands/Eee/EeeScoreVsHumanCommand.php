@@ -218,7 +218,7 @@ class EeeScoreVsHumanCommand extends Command
                 return abs($h - $m) <= 1;
 
             case 'condition':
-                return strtolower($clf['condition'] ?? '') === strtolower($humanLabel);
+                return $this->normaliseCondition($clf['condition']) === strtolower($humanLabel);
 
             case 'bucket':
                 $kg = is_numeric($clf['weight_kg_min']) ? (float) $clf['weight_kg_min'] : null;
@@ -241,6 +241,21 @@ class EeeScoreVsHumanCommand extends Command
         if ($min !== null && $value < $min) return false;
         if ($max !== null && $value >= $max) return false;
         return true;
+    }
+
+    /**
+     * Models output varied condition vocabulary (Reusable/Good/Fair/Used,
+     * Damaged/Broken/Poor, Unknown). Map them onto the 2-value vocabulary
+     * humans use ('reusable'/'damaged'); anything else returns null so it
+     * does not match either category.
+     */
+    protected function normaliseCondition(?string $raw): ?string
+    {
+        if ($raw === null) return null;
+        $s = strtolower(trim($raw));
+        if (in_array($s, ['reusable', 'good', 'fair', 'as new', 'used'], true)) return 'reusable';
+        if (in_array($s, ['damaged', 'broken', 'poor'], true)) return 'damaged';
+        return null;
     }
 
     protected function maxSizeCm(?string $sizeCm): ?float

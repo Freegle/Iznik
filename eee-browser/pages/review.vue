@@ -184,25 +184,13 @@
 
               <!-- Condition -->
               <div v-else-if="currentFieldDef?.type === 'condition'" class="grid grid-cols-3 gap-3">
-                <button @click="submitLabel('as_new')" :disabled="submitting"
-                  class="bg-emerald-900/70 hover:bg-emerald-800 disabled:opacity-50 text-emerald-300 border border-emerald-700 rounded-lg px-3 py-3 text-sm font-bold transition">
-                  As new<br><span class="text-xs font-normal">1</span>
-                </button>
-                <button @click="submitLabel('good')" :disabled="submitting"
+                <button @click="submitLabel('reusable')" :disabled="submitting"
                   class="bg-green-900/70 hover:bg-green-800 disabled:opacity-50 text-green-300 border border-green-700 rounded-lg px-3 py-3 text-sm font-bold transition">
-                  Good<br><span class="text-xs font-normal">2</span>
+                  Reusable<br><span class="text-xs font-normal">R</span>
                 </button>
-                <button @click="submitLabel('fair')" :disabled="submitting"
-                  class="bg-yellow-900/70 hover:bg-yellow-800 disabled:opacity-50 text-yellow-300 border border-yellow-700 rounded-lg px-3 py-3 text-sm font-bold transition">
-                  Fair<br><span class="text-xs font-normal">3</span>
-                </button>
-                <button @click="submitLabel('poor')" :disabled="submitting"
-                  class="bg-orange-900/70 hover:bg-orange-800 disabled:opacity-50 text-orange-300 border border-orange-700 rounded-lg px-3 py-3 text-sm font-bold transition">
-                  Poor<br><span class="text-xs font-normal">4</span>
-                </button>
-                <button @click="submitLabel('broken')" :disabled="submitting"
+                <button @click="submitLabel('damaged')" :disabled="submitting"
                   class="bg-red-900/70 hover:bg-red-800 disabled:opacity-50 text-red-300 border border-red-700 rounded-lg px-3 py-3 text-sm font-bold transition">
-                  Broken<br><span class="text-xs font-normal">5</span>
+                  Damaged<br><span class="text-xs font-normal">D</span>
                 </button>
                 <button @click="submitLabel('unsure')" :disabled="submitting"
                   class="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 border border-gray-600 rounded-lg px-3 py-3 text-sm font-bold transition">
@@ -381,7 +369,7 @@ const FIELDS: Field[] = [
   },
   {
     field: 'Condition', short: 'Condition', weight: 3, dbColumn: 'condition', type: 'condition', total: 0,
-    intro: 'Rate the apparent condition of this item on a 5-level scale. "As new" = barely used, no wear. "Good" = minor wear, fully functional. "Fair" = visible wear or small defects, still usable. "Poor" = significant damage or missing parts, needs repair. "Broken" = non-functional or severely damaged. Use "Can\'t tell" if the photo makes it impossible to judge.',
+    intro: 'Decide whether the item is "Reusable" (works, can be passed on as-is — light wear is fine) or "Damaged" (broken, missing parts, or needs repair before reuse). Use "Can\'t tell" if the photo makes it impossible to judge.',
   },
   {
     field: 'Weight (kg)', short: 'Weight', weight: 3, dbColumn: 'weight_kg_min', type: 'bucket', buckets: WEIGHT_BUCKETS, total: 0,
@@ -597,8 +585,8 @@ const handleKeydown = (e: KeyboardEvent) => {
     }
   }
   if (ft === 'condition') {
-    const conditionMap: Record<string, string> = { '1': 'as_new', '2': 'good', '3': 'fair', '4': 'poor', '5': 'broken' }
-    if (conditionMap[e.key]) { e.preventDefault(); submitLabel(conditionMap[e.key]) }
+    const conditionMap: Record<string, string> = { 'r': 'reusable', 'd': 'damaged' }
+    if (conditionMap[e.key.toLowerCase()]) { e.preventDefault(); submitLabel(conditionMap[e.key.toLowerCase()]) }
   }
   if (e.key.toLowerCase() === 'u' || e.key === '?') { e.preventDefault(); submitLabel('unsure') }
   if (e.key.toLowerCase() === 's') { e.preventDefault(); skipItem() }

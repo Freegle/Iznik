@@ -23,6 +23,19 @@ const SIZE_BUCKETS: Record<string, [number | null, number | null]> = {
   large:  [100, null],
 }
 
+/**
+ * Normalise the model's free-text condition output to the 2-value vocabulary
+ * accepted by human labellers. Returns null for unknown / empty values so
+ * they don't accidentally match either category.
+ */
+function normaliseCondition(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const s = String(raw).trim().toLowerCase()
+  if (['reusable', 'good', 'fair', 'as new', 'used'].includes(s)) return 'reusable'
+  if (['damaged', 'broken', 'poor'].includes(s)) return 'damaged'
+  return null
+}
+
 function inBucket(value: number, buckets: Record<string, [number | null, number | null]>, key: string): boolean {
   const range = buckets[key]
   if (!range) return false
@@ -95,8 +108,10 @@ function isCorrect(fieldDef: FieldDef, quorumLabel: string, clf: any): boolean {
     }
 
     case 'condition':
-      // human: 'reusable'/'damaged'. Model: 'Reusable'/'Damaged'/'Unknown'
-      return clf.condition?.toLowerCase() === quorumLabel.toLowerCase()
+      // human: 'reusable'/'damaged'. Models output varied vocab
+      // ('Reusable','Good','Fair','As new','Used' → reusable;
+      //  'Damaged','Broken','Poor' → damaged; 'Unknown' → no match).
+      return normaliseCondition(clf.condition) === quorumLabel.toLowerCase()
 
     case 'bucket':
       const modelKg = parseFloat(clf.weight_kg_min)
