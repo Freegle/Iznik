@@ -314,6 +314,11 @@ return [
         'outgoing_min_per_hour' => env('FREEGLE_EMAIL_HEALTH_OUTGOING_MIN_PER_HOUR', 10),
         'daytime_start' => env('FREEGLE_EMAIL_HEALTH_DAYTIME_START', 7),
         'daytime_end' => env('FREEGLE_EMAIL_HEALTH_DAYTIME_END', 22),
+        // Hard outgoing-stall check window. Runs 24/7: zero outgoing emails
+        // across this window is a near-certain smarthost/spooler stall at any
+        // hour, so it catches night-time outages the daytime-only volume floor
+        // would miss.
+        'outgoing_stall_window_hours' => env('FREEGLE_EMAIL_HEALTH_OUTGOING_STALL_WINDOW_HOURS', 1),
     ],
 
     'dedup' => [

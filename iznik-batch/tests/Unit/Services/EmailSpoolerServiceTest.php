@@ -859,4 +859,67 @@ class EmailSpoolerServiceTest extends TestCase
 
         $this->spooler->spool($mailable, $email);
     }
+
+    /**
+     * Test that a file orphaned in sending/ (left by a process that died
+     * mid-send) is reclaimed back to pending/ on startup.
+     *
+     * The spooler runs single-process (numprocs=1), so at daemon startup
+     * nothing is in flight — reclaiming is race-free and lossless.
+     */
+    public function test_reclaim_orphaned_sending_moves_file_back_to_pending(): void
+    {
+        // Simulate a process that died after moving the file to sending/.
+        $id = 'test_orphan_' . uniqid();
+        $data = [
+            'id' => $id,
+            'to' => [['address' => $this->uniqueEmail('recipient'), 'name' => '']],
+            'from' => [['address' => $this->uniqueEmail('noreply'), 'name' => 'Freegle']],
+            'subject' => 'Orphaned Subject',
+            'html' => '<p>Test</p>',
+            'attempts' => 0,
+            'created_at' => now()->toIso8601String(),
+        ];
+
+        file_put_contents(
+            $this->testSpoolDir . '/sending/' . $id . '.json',
+            json_encode($data)
+        );
+
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(1, $reclaimed);
+        $this->assertFileDoesNotExist($this->testSpoolDir . '/sending/' . $id . '.json');
+        $this->assertFileExists($this->testSpoolDir . '/pending/' . $id . '.json');
+    }
+
+    /**
+     * Test that reclaim is a no-op (returns 0) when sending/ is empty.
+     */
+    public function test_reclaim_orphaned_sending_noop_when_empty(): void
+    {
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(0, $reclaimed);
+    }
+
+    /**
+     * Test that reclaim handles multiple orphaned files in one pass.
+     */
+    public function test_reclaim_orphaned_sending_handles_multiple_files(): void
+    {
+        for ($i = 0; $i < 3; $i++) {
+            $id = 'test_orphan_' . $i . '_' . uniqid();
+            file_put_contents(
+                $this->testSpoolDir . '/sending/' . $id . '.json',
+                json_encode(['id' => $id])
+            );
+        }
+
+        $reclaimed = $this->spooler->reclaimOrphanedSending();
+
+        $this->assertEquals(3, $reclaimed);
+        $this->assertCount(0, glob($this->testSpoolDir . '/sending/*.json'));
+        $this->assertCount(3, glob($this->testSpoolDir . '/pending/*.json'));
+    }
 }

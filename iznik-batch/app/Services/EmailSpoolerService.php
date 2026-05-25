@@ -278,6 +278,36 @@ class EmailSpoolerService
     }
 
     /**
+     * Reclaim files orphaned in sending/ by a previous process that died
+     * mid-send (restart/OOM/crash). Safe to call only when no send is in
+     * flight — i.e. at daemon startup. The spooler runs single-process
+     * (numprocs=1), so at startup nothing is being sent. Files go back to
+     * pending/ for a normal retry; nothing is dead-lettered, so an extended
+     * smarthost outage never loses mail.
+     */
+    public function reclaimOrphanedSending(): int
+    {
+        $reclaimed = 0;
+
+        foreach (glob($this->sendingDir . '/*.json') as $sendingPath) {
+            $filename = basename($sendingPath);
+            if (rename($sendingPath, $this->pendingDir . '/' . $filename)) {
+                $reclaimed++;
+            } else {
+                Log::warning('Could not reclaim orphaned spool file', ['file' => $filename]);
+            }
+        }
+
+        if ($reclaimed > 0) {
+            Log::warning('Reclaimed orphaned spool files from sending/ on startup', [
+                'count' => $reclaimed,
+            ]);
+        }
+
+        return $reclaimed;
+    }
+
+    /**
      * Process pending emails from the spool.
      *
      * Retries indefinitely until the email is sent. Logs an alert if any
