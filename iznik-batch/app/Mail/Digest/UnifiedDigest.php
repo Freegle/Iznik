@@ -99,6 +99,10 @@ class UnifiedDigest extends MjmlMailable
             ->to($this->user->email_preferred)
             ->applyLogging('UnifiedDigest');
 
+        // Attach the X-Freegle-* tracking headers and RFC 8058
+        // List-Unsubscribe headers that MjmlMailable provides.
+        $this->configureMessage();
+
         // Render AMP variant if enabled.
         if ($this->isAmpEnabled()) {
             $ampPosts = $this->prepareAmpPosts();
@@ -353,11 +357,17 @@ class UnifiedDigest extends MjmlMailable
             $messageId = $post['message']->id;
             $token = $this->generateToken($userId, $messageId);
 
-            $post['ampReplyUrl'] = "{$ampApiBase}/amp/digest/reply?" . http_build_query([
-                'rt' => $token,
-                'uid' => $userId,
-                'mid' => $messageId,
-            ]);
+            // Path-style id matches the chat AMP route shape and lets the Go
+            // handler treat the message ID as the HMAC resource without
+            // re-deriving it from a query param.
+            $post['ampReplyUrl'] = sprintf(
+                '%s/amp/digest/%d/reply?rt=%s&uid=%d&exp=%d',
+                rtrim($ampApiBase, '/'),
+                $messageId,
+                $token['token'],
+                $userId,
+                $token['expiry']
+            );
 
             // Fallback URL for non-AMP clients or AMP form errors.
             $post['fallbackReplyUrl'] = $post['messageUrl'];

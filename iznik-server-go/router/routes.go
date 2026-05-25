@@ -1756,4 +1756,20 @@ func SetupRoutes(app *fiber.App) {
 	// @Param body body object true "Message body with 'message' field"
 	// @Success 200 {object} amp.ReplyResponse
 	ampGroup.Post("/chat/:id/reply", amp.PostChatReply)
+
+	// Post reply to a digest-email post (immediate-mode UnifiedDigest)
+	// @Router /amp/digest/{id}/reply [post]
+	// @Summary Post reply to digest email post
+	// @Description Submits an inline reply to a post from an immediate-digest email; opens/finds a chat with the poster
+	// @Tags AMP
+	// @Accept json
+	// @Produce json
+	// @Param id path int true "Message ID (the post being replied to)"
+	// @Param rt query string true "Token (HMAC)"
+	// @Param uid query int true "User ID"
+	// @Param exp query int true "Token expiry timestamp"
+	// @Param tid query int false "Email tracking ID for analytics"
+	// @Param body body object true "Message body with 'message' field"
+	// @Success 200 {object} amp.ReplyResponse
+	ampGroup.Post("/digest/:id/reply", amp.PostDigestReply)
 }

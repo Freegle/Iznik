@@ -3493,41 +3493,7 @@ class IncomingMailService
      */
     private function parseSubject(string $subj): array
     {
-        $type = null;
-        $item = null;
-        $location = null;
-
-        $p = strpos($subj, ':');
-
-        if ($p !== false) {
-            $startp = $p;
-            $rest = trim(substr($subj, $p + 1));
-            $p = strlen($rest) - 1;
-
-            if (substr($rest, -1) == ')') {
-                $count = 0;
-
-                do {
-                    $curr = substr($rest, $p, 1);
-
-                    if ($curr == '(') {
-                        $count--;
-                    } elseif ($curr == ')') {
-                        $count++;
-                    }
-
-                    $p--;
-                } while ($count > 0 && $p > 0);
-
-                if ($count == 0) {
-                    $type = trim(substr($subj, 0, $startp));
-                    $location = trim(substr($rest, $p + 2, strlen($rest) - $p - 3));
-                    $item = trim(substr($rest, 0, $p));
-                }
-            }
-        }
-
-        return [$type, $item, $location];
+        return \App\Support\SubjectParser::parse($subj);
     }
 
     /**
@@ -3759,11 +3725,17 @@ class IncomingMailService
      */
     private function addEmailToUser(int $userId, ?string $email): void
     {
-        if (empty($email)) {
+        $email = trim((string) $email);
+
+        if ($email === '') {
             return;
         }
 
-        $email = trim($email);
+        // Reject anything that isn't a syntactically valid address — bounce
+        // envelope-froms like `MAILER-DAEMON` or `<>` reach this code path.
+        if (!preg_match(Message::EMAIL_REGEXP, $email)) {
+            return;
+        }
 
         // Don't add system addresses
         $groupDomain = config('freegle.mail.group_domain', 'groups.ilovefreegle.org');

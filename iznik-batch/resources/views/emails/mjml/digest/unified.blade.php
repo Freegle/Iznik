@@ -106,6 +106,25 @@
             </mj-column>
         </mj-section>
 
+        {{-- Donations CTA (V1 single.html parity — "Donating helps too!") --}}
+        <mj-section background-color="#ffffff" padding="0 20px 20px">
+            <mj-column>
+                <mj-divider border-color="#eeeeee" border-width="1px" padding="0 0 16px 0" />
+                <mj-button
+                    href="https://freegle.in/paypal1510"
+                    background-color="#338808"
+                    color="#ffffff"
+                    font-size="14px"
+                    font-weight="600"
+                    inner-padding="10px 25px"
+                    border-radius="3px"
+                    align="center"
+                >
+                    Donating helps too!
+                </mj-button>
+            </mj-column>
+        </mj-section>
+
         @else
         {{-- ═══════════════════════════════════════════════════════════════ --}}
         {{-- DAILY MODE: multi-post digest with thumbnail nav               --}}

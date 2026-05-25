@@ -334,10 +334,13 @@ Schedule::command('tn:sync')
 //     ->runInBackground();
 //
 // Immediate mode - notifications for users who want instant alerts.
-Schedule::command('mail:digest:unified --mode=immediate')
-    ->everyMinute()
-    ->withoutOverlapping()
-    ->runInBackground();
+// Disabled until V1 `mail:digest -1` on bulk3 is turned off in the same
+// deploy — otherwise users would receive duplicate immediate emails.
+// Enable in a follow-up commit coordinated with the V1 shutdown.
+// Schedule::command('mail:digest:unified --mode=immediate')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->runInBackground();
 
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')

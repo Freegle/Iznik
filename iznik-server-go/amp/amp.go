@@ -25,9 +25,11 @@ import (
 
 	"github.com/freegle/iznik-server-go/chat"
 	"github.com/freegle/iznik-server-go/database"
-	"github.com/freegle/iznik-server-go/utils"
+	"github.com/freegle/iznik-server-go/message"
 	"github.com/freegle/iznik-server-go/misc"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 )
 
 // AMPChatMessage extends ChatMessageQuery with AMP-specific display fields.
@@ -64,6 +66,26 @@ func getAMPSecret() string {
 		log.Printf("[AMP] WARNING: No AMP secret configured (checked AMP_SECRET and FREEGLE_AMP_SECRET)")
 	}
 	return secret
+}
+
+// recordAmpReplyTracking marks an email_tracking row as replied via AMP and
+// inserts a click record. No-op when the tracking ID is absent (older
+// emails sent before email_tracking was wired up). Kept as a small helper
+// so PostChatReply and PostDigestReply share the same write pattern
+// instead of duplicating two raw statements.
+func recordAmpReplyTracking(db *gorm.DB, emailTrackingID *uint64, linkURL, linkPosition string) {
+	if emailTrackingID == nil {
+		return
+	}
+	db.Exec(
+		"UPDATE email_tracking SET replied_at = NOW(), replied_via = 'amp' WHERE id = ?",
+		*emailTrackingID,
+	)
+	db.Exec(
+		"INSERT INTO email_tracking_clicks (email_tracking_id, link_url, link_position, action, clicked_at) "+
+			"VALUES (?, ?, ?, 'amp_reply', NOW())",
+		*emailTrackingID, linkURL, linkPosition,
+	)
 }
 
 // computeHMAC generates an HMAC-SHA256 signature.
@@ -463,22 +485,7 @@ func PostChatReply(c *fiber.Ctx) error {
 	// Update chat room latest message time
 	db.Exec(`UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?`, chatID)
 
-	// Track the AMP reply if we have an email tracking ID
-	if emailTrackingID != nil {
-		// Record that this email resulted in an AMP reply
-		db.Exec(`
-			UPDATE email_tracking
-			SET replied_at = NOW(),
-			    replied_via = 'amp'
-			WHERE id = ?
-		`, *emailTrackingID)
-
-		// Also insert a tracking click record for analytics
-		db.Exec(`
-			INSERT INTO email_tracking_clicks (email_tracking_id, link_url, link_position, action, clicked_at)
-			VALUES (?, 'amp://reply', 'amp_reply_form', 'amp_reply', NOW())
-		`, *emailTrackingID)
-	}
+	recordAmpReplyTracking(db, emailTrackingID, "amp://reply", "amp_reply_form")
 
 	// Log to Loki for dashboard analytics
 	misc.GetLoki().LogChatReply("amp", chatID, userID, &messageID, emailTrackingID)
@@ -486,5 +493,128 @@ func PostChatReply(c *fiber.Ctx) error {
 	return c.JSON(ReplyResponse{
 		Success: true,
 		Message: "Message sent!",
+	})
+}
+
+// PostDigestReply handles AMP form submissions from immediate-digest emails.
+// The resource ID is a message ID (the post the user is replying to). We
+// validate the HMAC token against that message ID, look up the post's owner,
+// find-or-create a User2User chat between the replier and the post owner,
+// and insert the reply as a chat message — mirroring what the website "Reply"
+// button does for the same post.
+//
+// @Summary Post reply from AMP digest email
+// @Description Submits an inline reply to a digest-email post (one-time token)
+// @Tags AMP
+// @Accept json
+// @Produce json
+// @Param id path int true "Message ID (the post being replied to)"
+// @Param rt query string true "Token (HMAC)"
+// @Param uid query int true "User ID"
+// @Param exp query int true "Token expiry timestamp"
+// @Param tid query int false "Email tracking ID for analytics"
+// @Param body body object true "Message body with 'message' field"
+// @Success 200 {object} ReplyResponse
+// @Failure 400 {object} ReplyResponse
+// @Router /amp/digest/{id}/reply [post]
+func PostDigestReply(c *fiber.Ctx) error {
+	userID, messageID, err := ValidateToken(c)
+	if err != nil || userID == 0 || messageID == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(ReplyResponse{
+			Success: false,
+			Message: "Invalid token",
+		})
+	}
+
+	var emailTrackingID *uint64
+	if tidStr := c.Query("tid"); tidStr != "" {
+		if tid, err := strconv.ParseUint(tidStr, 10, 64); err == nil {
+			emailTrackingID = &tid
+		}
+	}
+
+	var body struct {
+		Message string `json:"message"`
+	}
+	if err := c.BodyParser(&body); err != nil || strings.TrimSpace(body.Message) == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(ReplyResponse{
+			Success: false,
+			Message: "Please enter a message.",
+		})
+	}
+
+	replyText := strings.TrimSpace(body.Message)
+	if len(replyText) > 10000 {
+		return c.Status(fiber.StatusBadRequest).JSON(ReplyResponse{
+			Success: false,
+			Message: "Message is too long. Please keep it under 10,000 characters.",
+		})
+	}
+
+	db := database.DBConn
+
+	// Look up the post owner using the Message model so we benefit from
+	// any hooks/scopes the model defines, and reject deleted/orphan posts.
+	var post message.Message
+	if err := db.Select("id", "fromuser").
+		Where("id = ? AND deleted IS NULL", messageID).
+		First(&post).Error; err != nil || post.Fromuser == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(ReplyResponse{
+			Success: false,
+			Message: "This post is no longer available.",
+		})
+	}
+	fromUser := post.Fromuser
+
+	if fromUser == userID {
+		return c.Status(fiber.StatusBadRequest).JSON(ReplyResponse{
+			Success: false,
+			Message: "You can't reply to your own post.",
+		})
+	}
+
+	// Find-or-create the User2User chat via the shared helper so this
+	// handler doesn't duplicate the (user1,user2) ordering logic.
+	chatID, err := chat.GetOrCreateUser2UserChat(db, userID, fromUser)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(ReplyResponse{
+			Success: false,
+			Message: "Failed to send reply. Please try on Freegle.",
+		})
+	}
+
+	// Insert the chat message via GORM so the create goes through the
+	// model the rest of the API uses. Type=Interested + refmsgid links
+	// the reply back to the originating post, matching what the website
+	// "Reply" button on a post does (see chat.CreateChatMessage).
+	refmsgid := messageID
+	chatMsg := chat.ChatMessage{
+		Chatid:             chatID,
+		Userid:             userID,
+		Type:               utils.CHAT_MESSAGE_INTERESTED,
+		Refmsgid:           &refmsgid,
+		Message:            replyText,
+		Date:               time.Now(),
+		Processingrequired: true,
+	}
+	if err := db.Create(&chatMsg).Error; err != nil || chatMsg.ID == 0 {
+		return c.Status(fiber.StatusInternalServerError).JSON(ReplyResponse{
+			Success: false,
+			Message: "Failed to send reply. Please try on Freegle.",
+		})
+	}
+	chatMessageID := chatMsg.ID
+
+	// ChatRoom struct doesn't model the latestmessage column (it's not
+	// returned in normal reads), so touch it with a small raw UPDATE.
+	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatID)
+
+	recordAmpReplyTracking(db, emailTrackingID, "amp://digest-reply", "amp_digest_reply_form")
+
+	misc.GetLoki().LogChatReply("amp_digest", chatID, userID, &chatMessageID, emailTrackingID)
+
+	return c.JSON(ReplyResponse{
+		Success: true,
+		Message: "Reply sent! The poster will get your message.",
 	})
 }
