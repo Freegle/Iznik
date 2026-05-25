@@ -150,7 +150,7 @@
           >
           <span v-else class="preline forcebreak">{{ emessage }}</span>
         </div>
-        <PromiseModal
+        <LazyPromiseModal
           v-if="showPromise"
           :messages="[refmsg]"
           :selected-message="refmsgid"
@@ -199,10 +199,6 @@ const OutcomeModal = defineAsyncComponent(() =>
 )
 
 const RenegeModal = defineAsyncComponent(() => import('./RenegeModal'))
-const PromiseModal = defineAsyncComponent(() =>
-  import('~/components/PromiseModal')
-)
-
 const props = defineProps({
   chatid: {
     type: Number,

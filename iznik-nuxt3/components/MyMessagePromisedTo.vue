@@ -46,7 +46,7 @@
         </div>
       </b-button>
     </div>
-    <PromiseModal
+    <LazyPromiseModal
       v-if="showPromiseModal"
       :messages="[message]"
       :selected-message="message.id"
@@ -72,9 +72,6 @@ import { useMiscStore } from '~/stores/misc'
 import { useMe } from '~/composables/useMe'
 import AddToCalendar from '~/components/AddToCalendar'
 
-const PromiseModal = defineAsyncComponent(() =>
-  import('~/components/PromiseModal')
-)
 const RenegeModal = defineAsyncComponent(() => import('./RenegeModal'))
 
 const props = defineProps({
