@@ -81,7 +81,7 @@
               <thead>
                 <tr class="border-b border-gray-800 text-xs text-gray-500 uppercase tracking-wider">
                   <th class="text-left px-5 py-3 font-medium">Model</th>
-                  <th class="text-center px-4 py-3 font-medium text-green-400">Accuracy</th>
+                  <th class="text-center px-4 py-3 font-medium text-green-400">Accuracy vs human</th>
                   <th class="text-center px-4 py-3 font-medium">Data completeness</th>
                   <th class="text-center px-4 py-3 font-medium">Cost / image</th>
                 </tr>
@@ -99,7 +99,7 @@
                   </td>
                   <td class="px-4 py-3 text-center">
                     <span v-if="m.isReference" class="text-xs text-blue-400 font-medium">reference</span>
-                    <span v-else-if="m.sonnetAgreement !== null" class="font-medium" :class="scoreColor(m.sonnetAgreement)">{{ m.sonnetAgreement }}%</span>
+                    <span v-else-if="m.accuracy !== null" class="font-medium" :class="scoreColor(m.accuracy)">{{ m.accuracy }}%</span>
                     <span v-else class="text-xs text-gray-600 italic">—</span>
                   </td>
                   <td class="px-4 py-3 text-center">
@@ -112,7 +112,13 @@
               </tbody>
             </table>
             <div class="px-5 py-2 border-t border-gray-800 text-xs text-gray-600">
-              Accuracy: % agreement with Claude Sonnet on EEE verdict (proxy — Sonnet treated as reference until human labels are available). Data completeness weighted by field importance.
+              <template v-if="modelScores.accuracySource === 'human'">
+                Accuracy: % match against {{ modelScores.humanLabelCount }} human-labelled EEE quorum items (plurality vote across reviewers).
+              </template>
+              <template v-else>
+                Accuracy: % agreement with Claude Sonnet on EEE verdict (proxy — Sonnet treated as reference until human labels are available).
+              </template>
+              Data completeness weighted by field importance.
             </div>
           </div>
 

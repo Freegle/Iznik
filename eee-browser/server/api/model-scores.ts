@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { openLabelsDb } from '~/server/utils/labelsDb'
 
 const MODEL_DISPLAY: Record<string, string> = {
   'claude-opus-4-7': 'Claude Opus',
@@ -153,11 +154,67 @@ export default defineEventHandler(async () => {
 
     const totalWeight = Object.values(COMPLETENESS_WEIGHTS).reduce((a, b) => a + b, 0)
 
-    // Agreement with Sonnet on is_eee — used as accuracy proxy until human labels are available
+    // Accuracy vs human labels (plurality quorum across reviewers, mirroring /api/review/stats).
+    // Falls back to Sonnet agreement when no human labels exist.
     const SONNET = 'claude-sonnet-4-6'
+
+    const humanAccuracy: Record<string, number | null> = {}
+    let humanLabelCount = 0
+    try {
+      const labelsDb = openLabelsDb()
+      const labels = labelsDb.prepare(`
+        SELECT messageid, attid, labeller, label
+        FROM eee_field_labels WHERE field = 'EEE'
+      `).all() as any[]
+
+      // Plurality quorum per item
+      const votesByItem = new Map<string, Map<string, number>>()
+      for (const r of labels) {
+        const key = `${r.messageid}-${r.attid}`
+        if (!votesByItem.has(key)) votesByItem.set(key, new Map())
+        const v = votesByItem.get(key)!
+        v.set(r.label, (v.get(r.label) ?? 0) + 1)
+      }
+      const quorum = new Map<string, string>()
+      for (const [key, votes] of votesByItem) {
+        const max = Math.max(...votes.values())
+        const winners = [...votes.entries()].filter(([, n]) => n === max).map(([l]) => l)
+        if (winners.length === 1 && winners[0] !== 'unsure') quorum.set(key, winners[0])
+      }
+      labelsDb.close()
+      humanLabelCount = quorum.size
+
+      if (quorum.size > 0) {
+        // Score each model against quorum
+        const stats: Record<string, { correct: number; total: number }> = {}
+        for (const [key, expected] of quorum) {
+          const [mid, aid] = key.split('-').map(Number)
+          const rows = db.prepare(`
+            SELECT DISTINCT model, is_eee FROM eee_classifications
+            WHERE messageid = ? AND attid = ?
+              AND prompt_version IN ('1.4.1','1.4.2')
+              AND is_eee IS NOT NULL
+              AND model NOT IN (${EXCLUDE_MODELS.map(() => '?').join(',')})
+          `).all(mid, aid, ...EXCLUDE_MODELS) as any[]
+          for (const r of rows) {
+            const correct = ((r.is_eee === 1) === (expected === 'eee')) ? 1 : 0
+            if (!stats[r.model]) stats[r.model] = { correct: 0, total: 0 }
+            stats[r.model].total++
+            stats[r.model].correct += correct
+          }
+        }
+        for (const m of Object.keys(stats)) {
+          const s = stats[m]
+          humanAccuracy[m] = s.total > 0 ? Math.round((s.correct / s.total) * 1000) / 10 : null
+        }
+      }
+    } catch (e) {
+      console.warn('Could not read human labels DB:', (e as Error).message)
+    }
+
+    // Fallback: Sonnet agreement for models with no human accuracy
     const sonnetAgreeRows = db.prepare(`
       SELECT c.model,
-        COUNT(*) AS n,
         ROUND(SUM(CASE WHEN c.is_eee = s.is_eee THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) AS sonnet_agree
       FROM eee_classifications c
       JOIN eee_classifications s
@@ -174,12 +231,19 @@ export default defineEventHandler(async () => {
       sonnetAgreement[row.model] = row.sonnet_agree
     }
 
+    const usingHuman = humanLabelCount >= 50
+
     const scored = basicStats.map((r: any) => {
       const modelCompleteness = completeness[r.model] ?? {}
       const weightedCompleteness = completenessFields.reduce((sum, f) => {
         return sum + (modelCompleteness[f] ?? 0) * COMPLETENESS_WEIGHTS[f]
       }, 0) / totalWeight
       const isSonnet = r.model === SONNET
+      // When human labels exist (≥50 quorum items), use them for every model — including Sonnet.
+      // Otherwise fall back to Sonnet-agreement (and mark Sonnet itself as the reference).
+      const accuracy = usingHuman
+        ? (humanAccuracy[r.model] ?? null)
+        : (isSonnet ? null : (sonnetAgreement[r.model] ?? null))
 
       return {
         model: r.model,
@@ -188,7 +252,8 @@ export default defineEventHandler(async () => {
         imgOkPct: r.img_ok_pct,
         imgPartial: r.img_ok_pct < 99,
         weightedCompleteness: Math.round(weightedCompleteness * 10) / 10,
-        isReference: isSonnet,
+        isReference: !usingHuman && isSonnet,
+        accuracy,
         sonnetAgreement: isSonnet ? null : (sonnetAgreement[r.model] ?? null),
         costPerImage: r.n > 0 ? r.total_cost / r.n : 0,
         totalCost: r.total_cost,
@@ -196,7 +261,7 @@ export default defineEventHandler(async () => {
     }).sort((a: any, b: any) => {
       if (a.isReference) return -1
       if (b.isReference) return 1
-      return (b.sonnetAgreement ?? 0) - (a.sonnetAgreement ?? 0)
+      return (b.accuracy ?? 0) - (a.accuracy ?? 0)
     })
 
     db.close()
@@ -209,6 +274,8 @@ export default defineEventHandler(async () => {
       completenessFields,
       completeness,
       completenessWeights: COMPLETENESS_WEIGHTS,
+      accuracySource: usingHuman ? 'human' : 'sonnet',
+      humanLabelCount,
     }
   } catch (error) {
     throw createError({ statusCode: 500, statusMessage: `Database error: ${(error as Error).message}` })
