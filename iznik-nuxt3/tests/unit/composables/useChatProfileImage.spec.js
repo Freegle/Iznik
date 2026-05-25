@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest'
 function useChatProfileImage({
   messageUserid,
   myid,
+  pov,
   chattype,
   chatIcon,
   meProfile,
@@ -23,7 +24,14 @@ function useChatProfileImage({
     return meProfile
   }
   if (chattype === 'User2User') {
-    // Prefer user store profile; fall back to chat.icon while loading.
+    // When pov is set (mod viewing the chat), chat.icon comes from one
+    // participant's perspective and is wrong for the opposite bubble —
+    // don't fall back to it. See Discourse #9707.
+    if (pov) {
+      return otheruserProfile
+    }
+    // Participant view: chat.icon is the other user's image, safe as a
+    // fallback while the user store loads.
     return otheruserProfile || chatIcon
   }
   // User2Mod: chat.icon is group/member icon, preferred.
@@ -128,7 +136,7 @@ describe('User2User — Freegle site (useChat.js)', () => {
     })
   })
 
-  describe('user store not yet loaded — falls back to chat.icon', () => {
+  describe('user store not yet loaded — falls back to chat.icon (no pov)', () => {
     it('shows chat.icon while otheruser profile is loading', () => {
       expect(
         useChatProfileImage({
@@ -140,6 +148,58 @@ describe('User2User — Freegle site (useChat.js)', () => {
           otheruserProfile: undefined, // not loaded yet
         })
       ).toBe('/chat-icon.jpg')
+    })
+  })
+
+  describe('mod viewing User2User chat modal with pov (Discourse #9707)', () => {
+    // Go API enriches the chat from user1's perspective for non-participant
+    // mods, so chat.icon ends up as user2's image. With pov set to user2,
+    // user1's empty paththumb must NOT fall back to chat.icon (which is
+    // user2's image) — that's the cause of the wrong-avatar bug.
+    const u1Profile = '' // BELAL — no profile image
+    const u2Profile = '/david.jpg'
+    const chatIcon = u2Profile // mirrors what the Go API returns
+
+    it("user2 (David) own message shows user2's profile", () => {
+      expect(
+        useChatProfileImage({
+          messageUserid: 2,
+          myid: 2,
+          pov: 2,
+          chattype: 'User2User',
+          chatIcon,
+          meProfile: u2Profile,
+          otheruserProfile: u1Profile,
+        })
+      ).toBe(u2Profile)
+    })
+
+    it("user1 (BELAL) message does NOT fall back to chat.icon (David's photo)", () => {
+      expect(
+        useChatProfileImage({
+          messageUserid: 1,
+          myid: 2,
+          pov: 2,
+          chattype: 'User2User',
+          chatIcon,
+          meProfile: u2Profile,
+          otheruserProfile: u1Profile,
+        })
+      ).not.toBe(chatIcon)
+    })
+
+    it("user1 (BELAL) message returns empty paththumb so GeneratedAvatar can render", () => {
+      expect(
+        useChatProfileImage({
+          messageUserid: 1,
+          myid: 2,
+          pov: 2,
+          chattype: 'User2User',
+          chatIcon,
+          meProfile: u2Profile,
+          otheruserProfile: u1Profile,
+        })
+      ).toBeFalsy()
     })
   })
 })
