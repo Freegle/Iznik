@@ -1153,6 +1153,21 @@ const testWithFixtures = test.extend({
         throw new Error('Email is required for posting a message')
       }
 
+      // The compose flow requires ≥80 chars of description when there's no
+      // real photo. e2e tests post without uploading photos, so pad short
+      // descriptions to meet the threshold and pass validation.
+      const MIN_DESCRIPTION_NO_PHOTO = 80
+      let paddedDescription = description
+      if (paddedDescription.length < MIN_DESCRIPTION_NO_PHOTO) {
+        const padding = ' (automated e2e test post — please ignore and delete)'
+        paddedDescription =
+          paddedDescription + padding.repeat(
+            Math.ceil(
+              (MIN_DESCRIPTION_NO_PHOTO - paddedDescription.length) / padding.length
+            )
+          )
+      }
+
       if (mobile && type.toLowerCase() === 'wanted') {
         // Mobile find flow: /find/mobile/photos → skip → /find/mobile/details → /find/mobile/whereami
         await page.gotoAndVerify('/find/mobile/photos', {
@@ -1182,7 +1197,7 @@ const testWithFixtures = test.extend({
         await mobileItemInput.fill(item)
 
         const mobileDescInput = page.locator('#description')
-        await mobileDescInput.fill(description)
+        await mobileDescInput.fill(paddedDescription)
 
         // Click Next to proceed to whereami (postcode + email + submit on one page)
         const mobileNextBtn = page.locator('button.btn', { hasText: 'Next' })
@@ -1230,7 +1245,7 @@ const testWithFixtures = test.extend({
           '[id^="description"], textarea.description, textarea.form-control'
         )
         await descInput.click()
-        await descInput.fill(description)
+        await descInput.fill(paddedDescription)
 
         // Wait for Vue reactivity to process the form changes and make the Next button available
         // This replaces the fixed 2000ms wait with a responsive check
@@ -1697,7 +1712,7 @@ const testWithFixtures = test.extend({
       return {
         id: postId,
         item,
-        description,
+        description: paddedDescription,
       }
     }
 
