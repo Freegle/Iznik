@@ -334,13 +334,16 @@ Schedule::command('tn:sync')
 //     ->runInBackground();
 //
 // Immediate mode - notifications for users who want instant alerts.
-// Disabled until V1 `mail:digest -1` on bulk3 is turned off in the same
-// deploy — otherwise users would receive duplicate immediate emails.
-// Enable in a follow-up commit coordinated with the V1 shutdown.
-// Schedule::command('mail:digest:unified --mode=immediate')
-//     ->everyMinute()
-//     ->withoutOverlapping()
-//     ->runInBackground();
+// Pilot rollout: FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST defaults to a single
+// pilot recipient so this can run in parallel with V1 `mail:digest -1` on
+// bulk3 without producing duplicate sends for the wider user base. Clear
+// the env var (or set '*') to flip the feature on for everyone once V1 is
+// retired.
+Schedule::command('mail:digest:unified --mode=immediate')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:digest:unified'))
+    ->runInBackground();
 
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
