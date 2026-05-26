@@ -1015,22 +1015,40 @@ onMounted(async () => {
           return q
       }
     }
+    // Inside the standard isochrone but not in any quintile polygon: this node
+    // has no LSOA deprivation data (motorway, industrial area, untagged road,
+    // etc.).  Returning 3 here was wrong — it inflated deprived counts and
+    // pinned the swingometer hard right.  Return -1 so callers can still count
+    // this freegler as "inside" for notification numbers without skewing the
+    // deprivation percentage.
     const std = data.standard
     if (hasRing(std) && pointInRing(fLng, fLat, std.geometry.coordinates[0]))
-      return 3
+      return -1
     return 0
   }
 
   const UNLOCATED_FRACTION = 0.35
 
   function updateFreeglersInside(data) {
+    // insideCount     — all freeglers inside the standard isochrone (q≠0), used
+    //                   for the "X would be notified" count bar.
+    // quintileTaggedCount — freeglers inside a Q1–Q5 polygon (q≥1).  Used as
+    //                   the denominator for the swingometer so that untagged
+    //                   freeglers (q==-1) don't distort the deprivation %.
+    // deprivedCount   — freeglers in Q1–Q3 polygons (swingometer numerator).
     let insideCount = 0
+    let quintileTaggedCount = 0
     let deprivedCount = 0
     freeglersGrid.forEach((g, i) => {
       const q = quintileOfFreegler(g.lng, g.lat, data)
-      if (q > 0) {
+      if (q !== 0) {
+        // q == -1: inside standard isochrone but no quintile tag (untagged road).
+        // q == 1-5: inside a quintile polygon.
         insideCount += g.count
-        if (q <= 3) deprivedCount += g.count
+        if (q >= 1) {
+          quintileTaggedCount += g.count
+          if (q <= 3) deprivedCount += g.count
+        }
         if (freeglersMarkers[i])
           freeglersMarkers[i].setStyle({ fillOpacity: 1, opacity: 1 })
       } else if (freeglersMarkers[i])
@@ -1065,14 +1083,18 @@ onMounted(async () => {
       bar.style.display = ''
     }
 
-    if (insideCount > 0) {
-      const pct = Math.round((deprivedCount / insideCount) * 100)
+    // Use quintileTaggedCount (not insideCount) as denominator so untagged
+    // freeglers (q==-1) don't dilute/inflate the deprivation percentage.
+    // This matches the API's methodology: FairnessScore = Q1-3 / (Q1-5).
+    if (quintileTaggedCount > 0) {
+      const pct = Math.round((deprivedCount / quintileTaggedCount) * 100)
       setSwingometer(pct)
 
       if (ripplePlaying) {
         const imbalance = Math.abs(pct - localBaseline)
         if (rippleMaxImbalance === null || imbalance > Math.abs(rippleMaxImbalance.pct - localBaseline)) {
-          rippleMaxImbalance = { pct, minute: rippleStep }
+          // rippleStep is 0-based frame index; actual drive time = (step+1)*0.5 min.
+          rippleMaxImbalance = { pct, minute: (rippleStep + 1) * 0.5 }
         }
       }
     }
@@ -1525,7 +1547,7 @@ onMounted(async () => {
     btn.textContent = '⏳ Loading…'
     document.getElementById(
       'rippling-info'
-    ).textContent = `Fetching 30 frames (drive)…`
+    ).textContent = `Fetching 60 frames (drive)…`
 
     clearLayers()
     timelineBuilt = false
@@ -1537,8 +1559,13 @@ onMounted(async () => {
     map.setView([currentLat, currentLng], 13, { animate: false })
 
     const fairness = parseInt(fairnessSlider.value) / 100
-    const promises = Array.from({ length: 30 }, (_, i) => {
-      const m = i + 1
+    // 60 frames at 0.5-min steps: 0.5, 1.0, 1.5, ..., 30.0 minutes.
+    // The API accepts fractional minutes. Finer steps produce a smooth
+    // crawl-outward effect on the map rather than visible jumps.
+    const RIPPLE_FRAMES = 60
+    const RIPPLE_STEP_MINS = 0.5
+    const promises = Array.from({ length: RIPPLE_FRAMES }, (_, i) => {
+      const m = ((i + 1) * RIPPLE_STEP_MINS).toFixed(1)
       const url = apiUrl(
         `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
           6
@@ -1551,8 +1578,8 @@ onMounted(async () => {
     rippleFrames = await Promise.all(promises)
 
     // Always fetch at 30 minutes so all dots in the full animation range are
-    // available. The animation expands from 1→30 min, so we need every freegler
-    // that might be reachable at minute 30 to be in allFreeglers from the start.
+    // available. The animation expands from 0.5→30 min, so we need every
+    // freegler reachable at minute 30 in allFreeglers from the start.
     await fetchFreeglers(30)
     drawFreeglersLayer()
 
@@ -1581,7 +1608,7 @@ onMounted(async () => {
     btn.classList.remove('rpl-stop')
     document.getElementById(
       'rippling-info'
-    ).textContent = `by ${currentMode} · 1–30 min`
+    ).textContent = `by ${currentMode} · 0.5–30 min`
     document.getElementById('rippling-freegler-bar').style.display = 'none'
     document.getElementById('rippling-timeline').style.display = 'none'
     if (currentLat !== null) fetchAndDrawGroups(currentLat, currentLng)
@@ -1596,8 +1623,8 @@ onMounted(async () => {
       btn.classList.remove('rpl-stop')
       let doneText = `${currentMode} · done`
       if (rippleMaxImbalance !== null) {
-        const bias = rippleMaxImbalance.pct < 60 ? 'affluent' : 'deprived'
-        const diff = Math.abs(rippleMaxImbalance.pct - 60)
+        const bias = rippleMaxImbalance.pct < localBaseline ? 'affluent' : 'deprived'
+        const diff = Math.abs(rippleMaxImbalance.pct - localBaseline)
         doneText += ` · peak ${bias} bias: ${diff}% at ${rippleMaxImbalance.minute} min`
       }
       document.getElementById('rippling-info').textContent = doneText
@@ -1606,12 +1633,14 @@ onMounted(async () => {
     }
 
     const data = rippleFrames[rippleStep]
-    const minute = rippleStep + 1
+    // Actual drive minutes: frame 0 = 0.5 min, frame 59 = 30 min.
+    const mDrive = (rippleStep + 1) * 0.5
+    const minuteLabel = Number.isInteger(mDrive) ? String(mDrive) : mDrive.toFixed(1)
     document.getElementById(
       'rippling-info'
-    ).textContent = `${currentMode} · ${minute} min`
+    ).textContent = `${currentMode} · ${minuteLabel} min`
     updateTimeline(rippleStep, rippleFrames.length)
-    timeSlider.value = minute
+    timeSlider.value = Math.round(mDrive)
 
     const spd =
       parseInt(document.getElementById('rippling-speed-slider').value) || 3
