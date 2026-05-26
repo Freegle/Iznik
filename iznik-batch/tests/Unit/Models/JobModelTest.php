@@ -165,6 +165,70 @@ class JobModelTest extends TestCase
         $this->assertEquals('Visible Job', $result->first()->title);
     }
 
+    public function test_near_location_varies_picks_from_top_cpc_pool(): void
+    {
+        // When there are more jobs available than the limit, nearLocation
+        // shuffles within a candidate pool sized to limit * VARIETY_POOL_MULTIPLIER
+        // so consecutive immediate-mode digests don't always show the same
+        // ads. Verify (a) the result size stays at limit and (b) every
+        // returned job comes from the top (limit*M) by CPC — anything
+        // below that pool size must never be picked.
+        DB::table('jobs')->delete();
+        $srid = config('freegle.srid', 3857);
+        $lat = 51.5074;
+        $lng = -0.1278;
+
+        $limit = 4;
+        $poolSize = $limit * Job::VARIETY_POOL_MULTIPLIER; // 12
+        $totalJobs = $poolSize + 5; // 17 — five jobs below the pool that must never appear.
+
+        // CPCs strictly descending so we know exactly which IDs belong in
+        // the eligible top-12 pool versus the always-excluded tail.
+        $insertedIdsByRank = [];
+        for ($i = 0; $i < $totalJobs; $i++) {
+            $cpc = round(1.00 - ($i * 0.01), 4); // 1.00, 0.99, ... well above MINIMUM_CPC.
+            DB::table('jobs')->insert([
+                'title' => 'Job rank ' . $i,
+                'location' => 'London',
+                'company' => 'Test',
+                'city' => 'London',
+                'url' => 'https://example.com/job/' . $i,
+                'cpc' => $cpc,
+                'visible' => 1,
+                'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
+            ]);
+            $insertedIdsByRank[] = DB::getPdo()->lastInsertId();
+        }
+
+        $eligibleIds = array_slice($insertedIdsByRank, 0, $poolSize);
+        $excludedIds = array_slice($insertedIdsByRank, $poolSize);
+
+        // Run the query several times; track which IDs ever appear.
+        $allSeen = [];
+        for ($call = 0; $call < 8; $call++) {
+            $result = Job::nearLocation($lat, $lng, $limit);
+            $this->assertCount($limit, $result, 'Result count must always equal limit');
+            foreach ($result as $job) {
+                $this->assertNotContains(
+                    (string) $job->id,
+                    $excludedIds,
+                    'No job below the variety pool may ever be selected'
+                );
+                $allSeen[$job->id] = true;
+            }
+        }
+
+        // With limit=4 picked from a pool of 12 the probability of seeing
+        // only 4 IDs across 8 calls is vanishingly small (~1 in 1e6), so
+        // requiring strictly more than $limit unique IDs proves the
+        // shuffle is actually doing something.
+        $this->assertGreaterThan(
+            $limit,
+            count($allSeen),
+            'Repeated calls should surface more than $limit unique jobs from the pool'
+        );
+    }
+
     public function test_near_location_orders_by_cpc_desc(): void
     {
         DB::table('jobs')->delete();

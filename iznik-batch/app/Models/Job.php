@@ -24,6 +24,15 @@ class Job extends Model
     public const MINIMUM_CPC = 0.02;
 
     /**
+     * Candidate-pool multiplier used to break the "same N jobs forever"
+     * effect for high-frequency recipients (immediate-mode digests, chat
+     * notifications). We fetch this many times $limit candidates by CPC,
+     * then randomly pick $limit — so the highest-CPC jobs still dominate
+     * the pool but each send shows a slightly different mix.
+     */
+    public const VARIETY_POOL_MULTIPLIER = 3;
+
+    /**
      * Query jobs near a location using bounding box search.
      *
      * @param float $lat Latitude
@@ -33,15 +42,19 @@ class Job extends Model
     public static function nearLocation(float $lat, float $lng, int $limit = 4): Collection
     {
         // Use same bounding box approach as iznik-server for efficient spatial index usage.
-        // Expand the box iteratively until we find enough jobs.
+        // Expand the box iteratively until we find enough jobs. Fetch a
+        // larger candidate pool so the random selection below has room to
+        // vary the picks across consecutive sends.
         $step = 0.02;
         $ambit = $step;
         $srid = config('freegle.srid', 3857);
 
+        $candidatePool = $limit * self::VARIETY_POOL_MULTIPLIER;
+
         $results = collect();
         $gotIds = [];
 
-        while ($results->count() < $limit && $ambit < 1) {
+        while ($results->count() < $candidatePool && $ambit < 1) {
             $swlat = $lat - $ambit;
             $nelat = $lat + $ambit;
             $swlng = $lng - $ambit;
@@ -57,7 +70,7 @@ class Job extends Model
                     $query->whereNotIn('id', $gotIds);
                 })
                 ->orderByDesc('cpc')
-                ->limit($limit - $results->count())
+                ->limit($candidatePool - $results->count())
                 ->get();
 
             foreach ($jobs as $job) {
@@ -66,6 +79,15 @@ class Job extends Model
             }
 
             $ambit += $step;
+        }
+
+        // Randomize the candidate pool so consecutive immediate-mode digests
+        // (or chat notifications) to the same user don't show identical job
+        // rows every time. The pool is already CPC-biased, so the picks
+        // remain weighted toward higher-CPC ads — we're just breaking the
+        // exact top-N determinism.
+        if ($results->count() > $limit) {
+            $results = $results->shuffle();
         }
 
         // Add images to jobs using the pre-computed canonical_title column.
