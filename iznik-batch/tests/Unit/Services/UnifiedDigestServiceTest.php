@@ -507,6 +507,66 @@ class UnifiedDigestServiceTest extends TestCase
     }
 
     /**
+     * Immediate mode must fan out into one email per post so the recipient
+     * gets a discrete notification for each new item, not a rolled-up batch.
+     * Daily mode keeps the old single-rolled-up behaviour.
+     */
+    public function test_immediate_mode_sends_one_email_per_post(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group);
+        $this->createMembership($poster, $group);
+
+        // Three separate posts with different subjects so dedup leaves them all.
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: First item (TestLocation)']);
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Second item (TestLocation)']);
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Third item (TestLocation)']);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $recipient->id);
+
+        // One user processed, three emails sent.
+        $this->assertEquals(1, $stats['users_processed']);
+        $this->assertEquals(3, $stats['emails_sent']);
+    }
+
+    /**
+     * Daily mode must NOT fan out — every new post since the previous send
+     * is bundled into a single rolled-up email regardless of how many there
+     * are.
+     */
+    public function test_daily_mode_bundles_all_posts_into_one_email(): void
+    {
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group);
+        $this->createMembership($poster, $group);
+
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B (TestLocation)']);
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: C (TestLocation)']);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['users_processed']);
+        $this->assertEquals(1, $stats['emails_sent']);
+    }
+
+    /**
      * Empty allowlist means "no restriction" — every simplemail=Full user is
      * eligible. This is the "fully on" state once we're done piloting.
      */

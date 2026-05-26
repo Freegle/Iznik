@@ -70,9 +70,11 @@ class UnifiedDigestService
             try {
                 $result = $this->sendDigestToUser($user, $mode, $dryRun);
 
-                if ($result === 'sent') {
-                    $stats['emails_sent']++;
-                } elseif ($result === 'no_posts') {
+                // Immediate-mode can fan out into multiple emails (one per
+                // post) so the per-user return is an array, not a bare string.
+                if ($result['status'] === 'sent') {
+                    $stats['emails_sent'] += $result['count'];
+                } elseif ($result['status'] === 'no_posts') {
                     $stats['no_new_posts']++;
                 }
             } catch (\Exception $e) {
@@ -203,17 +205,22 @@ class UnifiedDigestService
     /**
      * Send a digest to a specific user.
      *
+     * Immediate mode sends ONE email per post (V1 parity, and matches what
+     * "immediate" means to the recipient — each new post arrives as its own
+     * notification). Daily mode bundles every new post since the previous
+     * send into a single rolled-up digest.
+     *
      * @param User $user
      * @param string $mode
-     * @return string 'sent', 'no_posts', or 'skipped'
+     * @return array{status: 'sent'|'no_posts'|'skipped', count: int}
      */
-    protected function sendDigestToUser(User $user, string $mode, bool $dryRun = false): string
+    protected function sendDigestToUser(User $user, string $mode, bool $dryRun = false): array
     {
         $email = $user->email_preferred;
 
         if (!$email) {
             Log::debug("UnifiedDigestService: User {$user->id} has no email address");
-            return 'skipped';
+            return ['status' => 'skipped', 'count' => 0];
         }
 
         // Get or create digest tracking record.
@@ -223,31 +230,72 @@ class UnifiedDigestService
         $posts = $this->getPostsForUser($user, $digestTracker, $mode);
 
         if ($posts->isEmpty()) {
-            return 'no_posts';
+            return ['status' => 'no_posts', 'count' => 0];
         }
 
         // Deduplicate cross-posted items.
         $deduplicatedPosts = $this->deduplicatePosts($posts);
 
         // Filter out user's own posts.
-        $deduplicatedPosts = $deduplicatedPosts->filter(fn($post) => $post['message']->fromuser !== $user->id);
+        $deduplicatedPosts = $deduplicatedPosts->filter(fn($post) => $post['message']->fromuser !== $user->id)->values();
 
         if ($deduplicatedPosts->isEmpty()) {
-            return 'no_posts';
+            // Nothing to send, but still advance the tracker past these posts
+            // so the next tick doesn't re-fetch and re-filter the same set.
+            if (!$dryRun) {
+                $this->updateDigestTracker($digestTracker, $posts);
+            }
+            return ['status' => 'no_posts', 'count' => 0];
         }
 
         // Get deduplicated sponsors for the user's groups.
         $sponsors = $this->getSponsorsForUser($user);
 
-        if (!$dryRun) {
-            // Send the email.
-            Mail::send(new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors));
+        if ($mode === self::MODE_IMMEDIATE) {
+            // One email per post. Advance the tracker after each send so a
+            // mid-loop crash doesn't cause us to re-mail already-sent posts
+            // on the next cron tick.
+            $sent = 0;
+            foreach ($deduplicatedPosts as $deduped) {
+                if (!$dryRun) {
+                    Mail::send(new UnifiedDigest($user, collect([$deduped]), $mode, $sponsors));
+                    $this->advanceImmediateTracker($digestTracker, $deduped['message']);
+                }
+                $sent++;
+            }
 
-            // Update tracker.
+            // Mop up the trailing edge of the raw batch: cross-posted items
+            // merged into a single logical post may have raw rows with
+            // arrivals later than the representative we picked above. Ensure
+            // the tracker is past every raw row in this batch so the next
+            // tick doesn't refetch and treat them as fresh posts.
+            if (!$dryRun) {
+                $this->updateDigestTracker($digestTracker, $posts);
+            }
+
+            return ['status' => 'sent', 'count' => $sent];
+        }
+
+        // Daily mode: one rolled-up digest covers everything.
+        if (!$dryRun) {
+            Mail::send(new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors));
             $this->updateDigestTracker($digestTracker, $posts);
         }
 
-        return 'sent';
+        return ['status' => 'sent', 'count' => 1];
+    }
+
+    /**
+     * Move the tracker past a single immediate-mode post so a mid-loop
+     * crash doesn't cause re-mailing of already-sent posts.
+     */
+    protected function advanceImmediateTracker(UserDigest $tracker, Message $post): void
+    {
+        $tracker->update([
+            'lastmsgid' => $post->id,
+            'lastmsgdate' => $post->arrival,
+            'lastsent' => now(),
+        ]);
     }
 
     /**
