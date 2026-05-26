@@ -3368,6 +3368,19 @@ jobs:
             sed -i 's/org\.ilovefreegle\.direct/org.ilovefreegle.modtools/g' android/app/build.gradle
             sed -i 's/>Freegle</>ModTools</g' android/app/src/main/res/values/strings.xml
             sed -i 's/@drawable\/fr_icon/@drawable\/ic_stat_modtools/g' android/app/src/main/AndroidManifest.xml
+            # Move MainActivity into the ModTools Java package so the push plugin's
+            # Class.forName(getPackageName() + ".MainActivity") resolves at runtime.
+            # Without this the v7.0.2 plugin throws ClassNotFoundException for
+            # background notifications in ModTools (caught — silent failure).
+            SRC_MAIN="android/app/src/main/java/org/ilovefreegle/direct/MainActivity.java"
+            DST_DIR="android/app/src/main/java/org/ilovefreegle/modtools"
+            if [ -f "$SRC_MAIN" ]; then
+              mkdir -p "$DST_DIR"
+              sed 's/^package org\.ilovefreegle\.direct;/package org.ilovefreegle.modtools;/' "$SRC_MAIN" > "$DST_DIR/MainActivity.java"
+              rm "$SRC_MAIN"
+              sed -i 's/org\.ilovefreegle\.direct\.MainActivity/org.ilovefreegle.modtools.MainActivity/g' android/app/src/main/AndroidManifest.xml
+              echo "✅ MainActivity moved to org.ilovefreegle.modtools"
+            fi
             # ModTools has no ads — remove AD_ID permission added transitively by Firebase
             MANIFEST="android/app/src/main/AndroidManifest.xml"
             if ! grep -q 'AD_ID' "$MANIFEST"; then
@@ -3581,6 +3594,19 @@ jobs:
             sed -i 's/org\.ilovefreegle\.direct/org.ilovefreegle.modtools/g' android/app/build.gradle
             sed -i 's/>Freegle</>ModTools</g' android/app/src/main/res/values/strings.xml
             sed -i 's/@drawable\/fr_icon/@drawable\/ic_stat_modtools/g' android/app/src/main/AndroidManifest.xml
+            # Move MainActivity into the ModTools Java package so the push plugin's
+            # Class.forName(getPackageName() + ".MainActivity") resolves at runtime.
+            # Without this the v7.0.2 plugin throws ClassNotFoundException for
+            # background notifications in ModTools (caught — silent failure).
+            SRC_MAIN="android/app/src/main/java/org/ilovefreegle/direct/MainActivity.java"
+            DST_DIR="android/app/src/main/java/org/ilovefreegle/modtools"
+            if [ -f "$SRC_MAIN" ]; then
+              mkdir -p "$DST_DIR"
+              sed 's/^package org\.ilovefreegle\.direct;/package org.ilovefreegle.modtools;/' "$SRC_MAIN" > "$DST_DIR/MainActivity.java"
+              rm "$SRC_MAIN"
+              sed -i 's/org\.ilovefreegle\.direct\.MainActivity/org.ilovefreegle.modtools.MainActivity/g' android/app/src/main/AndroidManifest.xml
+              echo "✅ MainActivity moved to org.ilovefreegle.modtools"
+            fi
             # ModTools has no ads — remove AD_ID permission added transitively by Firebase
             MANIFEST="android/app/src/main/AndroidManifest.xml"
             if ! grep -q 'AD_ID' "$MANIFEST"; then
