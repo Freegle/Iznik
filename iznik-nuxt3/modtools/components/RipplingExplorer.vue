@@ -603,7 +603,7 @@ onMounted(async () => {
 
   let lastIsoData = null
 
-  function drawPolygons(data, transitionMs) {
+  function drawPolygons(data, transitionMs, skipStandard = false) {
     lastIsoData = data
     const dur = transitionMs || 0
     const outgoing = Object.assign({}, layers)
@@ -686,7 +686,7 @@ onMounted(async () => {
         })
       })
 
-    if (hasRing(data.standard)) {
+    if (!skipStandard && hasRing(data.standard)) {
       addPoly(
         'standard',
         geoToLeaflet(data.standard.geometry.coordinates[0]),
@@ -1431,9 +1431,19 @@ onMounted(async () => {
       }
     }
 
-    if (ripplePlaying) {
-      clearTimeout(rippleTimer)
-      rippleTimer = setTimeout(stepRipple, 2000)
+    // Pause the rAF loop for 2 s so the cross-posting flash is visible.
+    // Snapshot the current position into the anchor so resume picks up
+    // exactly where it paused (rather than rewinding to the old anchor).
+    if (ripplePlaying && rippleRafId !== null) {
+      const pausedAt = currentFramePosition(performance.now())
+      cancelAnimationFrame(rippleRafId)
+      rippleRafId = null
+      setTimeout(() => {
+        if (!ripplePlaying) return
+        rippleAnchorFrame = pausedAt
+        rippleAnchorTime = performance.now()
+        rippleRafId = requestAnimationFrame(animateRipple)
+      }, 2000)
     }
   }
 
@@ -1502,13 +1512,15 @@ onMounted(async () => {
   function jumpToFrame(frameIdx) {
     if (!rippleFrames.length) return
     frameIdx = Math.max(0, Math.min(frameIdx, rippleFrames.length - 1))
-    rippleStep = frameIdx
-    // Sync rippleScheduleIdx to the first schedule entry at or beyond frameIdx
-    // so that Resume continues from the right position after a manual scrub.
-    if (rippleSchedule.length) {
-      rippleScheduleIdx = rippleSchedule.findIndex((fi) => fi >= frameIdx)
-      if (rippleScheduleIdx < 0) rippleScheduleIdx = rippleSchedule.length
+    // Cancel any in-flight rAF; we're jumping to a discrete frame.
+    if (rippleRafId !== null) {
+      cancelAnimationFrame(rippleRafId)
+      rippleRafId = null
     }
+    rippleStep = frameIdx
+    // Anchor playback time so Resume continues smoothly from this frame.
+    rippleAnchorFrame = frameIdx
+    rippleAnchorTime = 0
     const data = rippleFrames[frameIdx]
     updateTimeline(frameIdx, rippleFrames.length)
     if (data) {
@@ -1519,115 +1531,158 @@ onMounted(async () => {
     }
   }
 
-  // Source frames: 120 frames at 0.25-min steps = 0.25..30 min drive.
-  // Fine granularity ensures the boundary genuinely moves at each step in the
-  // populated zone, rather than dwelling on the same polygon shape.
-  const RIPPLE_FRAMES = 120
-  const RIPPLE_STEP_MINS = 0.25
+  // ---------------------------------------------------------------------------
+  // Ripple animation architecture
+  // ---------------------------------------------------------------------------
+  // The notification cron will step drive-time radius by 1 minute per N wall-
+  // clock minutes (config in freegle.php).  We therefore fetch one keyframe per
+  // drive-minute (30 frames covering 0..30 min) and morph smoothly between them
+  // on the client using RADIAL INTERPOLATION:
+  //
+  //   1.  Each polygon ring is reparameterised as `radius(θ)` — for each of
+  //       N_ANGLES equally-spaced angles around the message origin, ray-cast
+  //       outwards and record the distance to the polygon boundary.
+  //   2.  Interpolation between frames is then `r_t[i] = r_a[i] + t*(r_b[i]-r_a[i])`
+  //       for each angle — constant cost, no vertex-correspondence problem.
+  //   3.  At rAF time, the interpolated radius array is converted back to
+  //       lat/lng and applied to a single Leaflet polygon.
+  //
+  // This is physically correct (each ray sweeps outward as drive time grows)
+  // and works regardless of source-frame vertex counts.
+  // ---------------------------------------------------------------------------
+  const RIPPLE_FRAMES = 30          // 30 keyframes = 1 per drive-minute
+  const RIPPLE_STEP_MINS = 1
+  const N_ANGLES = 360              // resolution of the radial parameterisation
 
   let rippleFrames = []
   let rippleStep = 0
-  let rippleTimer = null
   let ripplePlaying = false
   let crossPostingDetected = false
   let rippleMaxImbalance = null  // {pct, minute} — worst affluence bias seen during animation
 
-  // Population-based animation schedule.
-  // rippleSchedule[i] is the index into rippleFrames[] to display at animation tick i.
-  // Built in startRipple(); each tick advances by ~1/N_POP_STEPS of total freeglers.
-  let rippleSchedule = []
-  let rippleScheduleIdx = 0
+  // rAF playback state.  rippleAnchorFrame + rippleAnchorTime define the
+  // reference point for "current playback position"; current frame fraction
+  // at any rAF tick = anchorFrame + (now - anchorTime) / msPerFrame.
+  let rippleRafId = null
+  let rippleAnchorFrame = 0
+  let rippleAnchorTime = 0
+  let rippleLastStatsFrame = -1
 
-  // Number of equal-population animation steps in the populated zone.
-  // 300 steps means each step adds ~0.33% of total freeglers, giving a very
-  // gradual crawl through populated areas rather than sudden jumps.
-  const N_POP_STEPS = 300
+  // ---------------------------------------------------------------------------
+  // Radial polygon parameterisation
+  // ---------------------------------------------------------------------------
+  // Each closed polygon ring is converted into a Float32Array of length N_ANGLES
+  // holding the distance (in lat/lng units, scaled by cos(lat) for longitude)
+  // from the origin to the polygon boundary at each evenly-spaced angle.
+  //
+  // For each angle θ_i we ray-cast outwards from the origin and find every
+  // intersection with a ring edge; we keep the maximum t-value so concave
+  // shapes (motorway extensions, river fingers) trace to the OUTER boundary
+  // rather than to a closer cavity edge.
+  // ---------------------------------------------------------------------------
 
   /**
-   * Build a population-based animation schedule from the pre-fetched frames.
-   *
-   * Returns an array of frame indices (into rippleFrames[]) to display in
-   * sequence.  Two phases:
-   *   Phase 1 – Before the first freegler: show every PRE_SKIP-th frame so
-   *             the boundary visibly expands from the origin without dwelling.
-   *   Phase 2 – From the first freegler onward: N_POP_STEPS equal-population
-   *             thresholds.  Each threshold maps to the first frame whose
-   *             cumulative freegler count meets or exceeds it, so the animation
-   *             slows down exactly where freeglers are dense and speeds past
-   *             empty outer regions.
-   *
-   * Multiple consecutive schedule entries can point to the same frame index
-   * when a single frame spans several population thresholds (dense zone); the
-   * 0.25-min resolution means those frames still represent genuine new territory.
+   * Compute distance from origin to polygon along ray at angle θ.
+   * Uses ray-segment intersection across all polygon edges; returns the
+   * farthest intersection so concave inward dents don't truncate the radius.
    */
-  function buildRippleSchedule(frames) {
-    if (!freeglersGrid.length) {
-      // No grid loaded: fall back to showing every frame at equal pace.
-      return frames.map((_, i) => i)
+  function radiusAtAngle(ring, originLng, originLat, cosLat, cosT, sinT) {
+    // Ray direction in (lng-equivalent, lat) space: lng scaled by 1/cosLat so
+    // that the ray is equiangular in metres-equivalent space.
+    const dx = cosT / cosLat
+    const dy = sinT
+    let maxT = 0
+    for (let i = 0; i < ring.length - 1; i++) {
+      const ax = ring[i][0] - originLng
+      const ay = ring[i][1] - originLat
+      const bx = ring[i + 1][0] - originLng
+      const by = ring[i + 1][1] - originLat
+      const ex = bx - ax
+      const ey = by - ay
+      // Solve: (ax, ay) + s*(ex, ey) = t*(dx, dy), with s ∈ [0,1], t ≥ 0.
+      const det = dx * ey - dy * ex
+      if (Math.abs(det) < 1e-12) continue
+      const t = (ax * ey - ay * ex) / det
+      const s = (ax * dy - ay * dx) / det
+      if (t >= 0 && s >= 0 && s <= 1 && t > maxT) maxT = t
     }
+    return maxT
+  }
 
-    // --- Step 1: cumulative freegler count per frame ---
-    const cumulative = frames.map((data) => {
-      if (!data || !hasRing(data.standard)) return 0
-      const ring = data.standard.geometry.coordinates[0]
-      let n = 0
-      freeglersGrid.forEach((g) => {
-        if (pointInRing(g.lng, g.lat, ring)) n += g.count
-      })
-      return n
+  /**
+   * Reparameterise a polygon ring as a radius-per-angle array.
+   * Returns Float32Array(N_ANGLES) with radii in the same coordinate
+   * convention as radiusAtAngle (lat units; longitude pre-scaled).
+   */
+  function ringToRadii(ring, originLng, originLat) {
+    const cosLat = Math.cos((originLat * Math.PI) / 180)
+    const radii = new Float32Array(N_ANGLES)
+    if (!ring || ring.length < 3) return radii
+    // Ensure ring is closed.
+    const closed =
+      ring[0][0] === ring[ring.length - 1][0] &&
+      ring[0][1] === ring[ring.length - 1][1]
+        ? ring
+        : [...ring, ring[0]]
+    for (let i = 0; i < N_ANGLES; i++) {
+      const theta = (i / N_ANGLES) * 2 * Math.PI
+      radii[i] = radiusAtAngle(
+        closed,
+        originLng,
+        originLat,
+        cosLat,
+        Math.cos(theta),
+        Math.sin(theta)
+      )
+    }
+    return radii
+  }
+
+  /**
+   * Convert a radii array back to a Leaflet-friendly [lat, lng] coordinate ring.
+   */
+  function radiiToLatLngRing(radii, originLng, originLat) {
+    const cosLat = Math.cos((originLat * Math.PI) / 180)
+    const out = new Array(N_ANGLES + 1)
+    for (let i = 0; i < N_ANGLES; i++) {
+      const theta = (i / N_ANGLES) * 2 * Math.PI
+      const r = radii[i]
+      const lng = originLng + (r * Math.cos(theta)) / cosLat
+      const lat = originLat + r * Math.sin(theta)
+      out[i] = [lat, lng]
+    }
+    out[N_ANGLES] = out[0]
+    return out
+  }
+
+  /**
+   * Linearly interpolate between two radii arrays.
+   */
+  function lerpRadii(a, b, t) {
+    const out = new Float32Array(N_ANGLES)
+    for (let i = 0; i < N_ANGLES; i++) {
+      out[i] = a[i] + t * (b[i] - a[i])
+    }
+    return out
+  }
+
+  /**
+   * Precompute radii for every keyframe's standard ring.  Called once after
+   * frames are loaded so the rAF hot path is pure arithmetic.
+   */
+  function precomputeRadii(frames, originLng, originLat) {
+    const zeroRadii = new Float32Array(N_ANGLES)
+    frames.forEach((data) => {
+      if (data && hasRing(data.standard)) {
+        data._radii = ringToRadii(
+          data.standard.geometry.coordinates[0],
+          originLng,
+          originLat
+        )
+      } else {
+        data._radii = zeroRadii
+      }
     })
-    // Ensure monotonically non-decreasing (guard against null/bad frames).
-    for (let i = 1; i < cumulative.length; i++) {
-      if (cumulative[i] < cumulative[i - 1]) cumulative[i] = cumulative[i - 1]
-    }
-
-    const total = cumulative[cumulative.length - 1] || 0
-    if (total === 0) {
-      // No freeglers anywhere: show all frames at equal pace.
-      return frames.map((_, i) => i)
-    }
-
-    // --- Step 2: find first frame that contains any freegler ---
-    const firstFreegler = cumulative.findIndex((c) => c > 0)
-
-    const schedule = []
-
-    // --- Phase 1: fast march through the pre-freegler zone ---
-    // Show every PRE_SKIP-th frame so the boundary is seen to grow, but we
-    // don't dwell in the empty area.  Always include the frame just before
-    // the first freegler so there is a clean hand-off.
-    const PRE_SKIP = 3
-    for (let fi = 0; fi < firstFreegler; fi += PRE_SKIP) {
-      schedule.push(fi)
-    }
-    if (firstFreegler > 0) {
-      const prev = firstFreegler - 1
-      if (!schedule.length || schedule[schedule.length - 1] !== prev) {
-        schedule.push(prev)
-      }
-    }
-
-    // --- Phase 2: N_POP_STEPS equal-population steps ---
-    const stepSize = total / N_POP_STEPS
-    const startFi = Math.max(0, firstFreegler)
-    for (let k = 1; k <= N_POP_STEPS; k++) {
-      const threshold = k * stepSize
-      let found = frames.length - 1
-      for (let fi = startFi; fi < frames.length; fi++) {
-        if (cumulative[fi] >= threshold) {
-          found = fi
-          break
-        }
-      }
-      schedule.push(found)
-    }
-
-    // Always end on the very last frame.
-    if (schedule[schedule.length - 1] !== frames.length - 1) {
-      schedule.push(frames.length - 1)
-    }
-
-    return schedule
   }
 
   document.getElementById('rippling-btn').addEventListener('click', () => {
@@ -1640,7 +1695,10 @@ onMounted(async () => {
     .addEventListener('input', function () {
       const frameIdx = parseInt(this.value)
       if (ripplePlaying) {
-        clearTimeout(rippleTimer)
+        if (rippleRafId !== null) {
+          cancelAnimationFrame(rippleRafId)
+          rippleRafId = null
+        }
         ripplePlaying = false
         const btn = document.getElementById('rippling-btn')
         btn.textContent = '▶ Resume'
@@ -1681,9 +1739,10 @@ onMounted(async () => {
     map.setView([currentLat, currentLng], 13, { animate: false })
 
     const fairness = parseInt(fairnessSlider.value) / 100
-    // RIPPLE_FRAMES frames at RIPPLE_STEP_MINS-min steps: 0.25, 0.50, ..., 30.0 min.
-    // Fine granularity means the boundary genuinely moves at each animation
-    // step in the populated zone, rather than dwelling on the same shape.
+    // One keyframe per drive-minute: 1, 2, …, RIPPLE_FRAMES minutes.  This
+    // matches the granularity at which the (future) notification cron will
+    // step the ripple in production.  Between keyframes the client morphs
+    // smoothly via radial interpolation.
     const promises = Array.from({ length: RIPPLE_FRAMES }, (_, i) => {
       const m = ((i + 1) * RIPPLE_STEP_MINS).toFixed(2)
       const url = apiUrl(
@@ -1697,19 +1756,22 @@ onMounted(async () => {
     })
     rippleFrames = await Promise.all(promises)
 
-    // Always fetch at 30 minutes so all dots in the full animation range are
-    // available. The animation expands from 0.25→30 min, so we need every
-    // freegler reachable at minute 30 in allFreeglers from the start.
-    await fetchFreeglers(30)
+    // Reparameterise every keyframe's standard ring as a radii array, once,
+    // so the rAF hot path is pure arithmetic.
+    precomputeRadii(rippleFrames, currentLng, currentLat)
+
+    // Fetch all freeglers reachable at the maximum drive time so the dots
+    // are loaded before the animation needs them.
+    await fetchFreeglers(RIPPLE_FRAMES * RIPPLE_STEP_MINS)
     drawFreeglersLayer()
 
-    // Build a population-based animation schedule: each tick covers
-    // ~1/N_POP_STEPS of total freeglers.  The boundary crawls quickly through
-    // empty early frames and slows down exactly where freeglers are dense.
-    rippleSchedule = buildRippleSchedule(rippleFrames)
-    rippleScheduleIdx = 0
-    rippleStep = rippleSchedule[0] ?? 0
+    // Create the single morphing polygon layer used by the rAF loop.
+    ensureMorphLayer()
 
+    rippleStep = 0
+    rippleAnchorFrame = 0
+    rippleAnchorTime = 0
+    rippleLastStatsFrame = -1
     ripplePlaying = true
     crossPostingDetected = false
     rippleMaxImbalance = null
@@ -1720,31 +1782,97 @@ onMounted(async () => {
     buildTimeline(rippleFrames.length)
     document.getElementById('rippling-timeline').style.display = ''
 
-    stepRipple()
+    rippleRafId = requestAnimationFrame(animateRipple)
   }
 
   function stopRipple() {
     ripplePlaying = false
     crossPostingDetected = false
     rippleFrames = []
-    rippleSchedule = []
-    rippleScheduleIdx = 0
     timelineBuilt = false
-    clearTimeout(rippleTimer)
+    if (rippleRafId !== null) {
+      cancelAnimationFrame(rippleRafId)
+      rippleRafId = null
+    }
+    removeMorphLayer()
     const btn = document.getElementById('rippling-btn')
     btn.textContent = '▶ Animate ripple'
     btn.classList.remove('rpl-stop')
     document.getElementById(
       'rippling-info'
-    ).textContent = `by ${currentMode} · ${RIPPLE_STEP_MINS}–30 min`
+    ).textContent = `by ${currentMode} · ${RIPPLE_STEP_MINS}–${RIPPLE_FRAMES} min`
     document.getElementById('rippling-freegler-bar').style.display = 'none'
     document.getElementById('rippling-timeline').style.display = 'none'
     if (currentLat !== null) fetchAndDrawGroups(currentLat, currentLng)
     else drawGroupsOverlay()
   }
 
-  function stepRipple() {
-    if (rippleScheduleIdx >= rippleSchedule.length) {
+  /**
+   * The single morphing standard-ring polygon, rebuilt every rAF tick.
+   * Kept separate from the quintile polygons (which are drawn at keyframe
+   * boundaries by drawPolygons) so the hot path only updates one path.
+   */
+  let morphLayer = null
+  function ensureMorphLayer() {
+    if (morphLayer && map.hasLayer(morphLayer)) return
+    morphLayer = L.polygon([], {
+      color: '#cc0000',
+      weight: 2.5,
+      fillColor: 'none',
+      fillOpacity: 0,
+      opacity: 1,
+    }).addTo(map)
+    // Disable any path d-transition on the morph layer — we're driving the
+    // shape ourselves at 60 fps, so a CSS transition would lag the rAF loop.
+    const el = morphLayer.getElement()
+    if (el) el.style.transition = 'none'
+  }
+  function removeMorphLayer() {
+    if (morphLayer && map.hasLayer(morphLayer)) map.removeLayer(morphLayer)
+    morphLayer = null
+  }
+
+  /**
+   * Map the user's speed slider (1..10) to milliseconds per keyframe.
+   * Default speed 3 → ~800 ms per drive-minute → 24 s for the full 30-min ripple.
+   */
+  function getMsPerFrame() {
+    const spd =
+      parseInt(document.getElementById('rippling-speed-slider').value) || 3
+    return Math.max(50, Math.round(2400 / Math.pow(spd, 1.2)))
+  }
+
+  /**
+   * Compute the fractional frame position at a given rAF timestamp.
+   * Anchor + elapsed model so jumpToFrame and Pause/Resume work cleanly.
+   */
+  function currentFramePosition(now) {
+    if (rippleAnchorTime === 0) rippleAnchorTime = now
+    const elapsed = now - rippleAnchorTime
+    return rippleAnchorFrame + elapsed / getMsPerFrame()
+  }
+
+  function animateRipple(now) {
+    rippleRafId = null
+    if (!ripplePlaying || !rippleFrames.length) return
+
+    const position = currentFramePosition(now)
+    const maxIdx = rippleFrames.length - 1
+
+    // ------------------------------------------------------------------
+    // Done?
+    // ------------------------------------------------------------------
+    if (position >= maxIdx) {
+      // Pin to the last keyframe.  Remove the morph layer and let drawPolygons
+      // own the standard ring in the static end state, matching pre-ripple UI.
+      rippleStep = maxIdx
+      const last = rippleFrames[maxIdx]
+      removeMorphLayer()
+      if (last) {
+        drawPolygons(last, 0)
+        updateStats(last)
+        updateFreeglersInside(last)
+      }
       ripplePlaying = false
       const btn = document.getElementById('rippling-btn')
       btn.textContent = '▶ Replay'
@@ -1760,84 +1888,88 @@ onMounted(async () => {
       return
     }
 
-    // Advance to the frame specified by the population schedule.
-    rippleStep = rippleSchedule[rippleScheduleIdx]
-    rippleScheduleIdx++
-    // Burn through consecutive entries that map to the same source frame: they
-    // produce no visual change so there is no point pausing on each one.
-    // This collapses the "dwell" that the population-based schedule creates at
-    // frames where many thresholds cluster, which otherwise manifests as a
-    // long invisible delay before the boundary actually moves.
-    while (
-      rippleScheduleIdx < rippleSchedule.length &&
-      rippleSchedule[rippleScheduleIdx] === rippleStep
-    ) {
-      rippleScheduleIdx++
-    }
-    const data = rippleFrames[rippleStep]
+    // ------------------------------------------------------------------
+    // Interpolate the standard ring between two keyframes (every rAF tick).
+    // ------------------------------------------------------------------
+    const frameA = Math.floor(position)
+    const frameB = Math.min(frameA + 1, maxIdx)
+    const t = position - frameA
+    const radii = lerpRadii(rippleFrames[frameA]._radii, rippleFrames[frameB]._radii, t)
+    drawMorphedRing(radii)
 
-    // Actual drive minutes: frame 0 = RIPPLE_STEP_MINS, frame N-1 = 30 min.
-    const mDrive = (rippleStep + 1) * RIPPLE_STEP_MINS
-    const minuteLabel = Number.isInteger(mDrive) ? String(mDrive) : mDrive.toFixed(2)
-    document.getElementById(
-      'rippling-info'
-    ).textContent = `${currentMode} · ${minuteLabel} min`
-    updateTimeline(rippleStep, rippleFrames.length)
-    timeSlider.value = Math.round(mDrive)
+    // ------------------------------------------------------------------
+    // Update per-keyframe state (stats, quintiles, timeline) only when we
+    // cross into a new keyframe.  This keeps the rAF loop cheap.
+    // ------------------------------------------------------------------
+    if (frameA !== rippleLastStatsFrame) {
+      rippleLastStatsFrame = frameA
+      rippleStep = frameA
+      const data = rippleFrames[frameA]
+      const mDrive = (frameA + 1) * RIPPLE_STEP_MINS
+      document.getElementById(
+        'rippling-info'
+      ).textContent = `${currentMode} · ${mDrive} min`
+      updateTimeline(frameA, rippleFrames.length)
+      timeSlider.value = Math.round(mDrive)
 
-    const spd =
-      parseInt(document.getElementById('rippling-speed-slider').value) || 3
-    // Aim for a smooth 20-60 second total animation across ~120 visible frames.
-    // Old formula (20000/spd^1.4) gave ~4.3 s per step — far too long.
-    const delay = Math.round(1500 / Math.pow(spd, 1.4))
+      if (data) {
+        // Draw the quintile polygons only (skip standard — that's the
+        // morphLayer's job).  Quintile fills are translucent so a discrete
+        // swap every drive-minute is visually acceptable.
+        drawPolygons(data, 0, /* skipStandard */ true)
+        updateStats(data)
+        updateFreeglersInside(data)
+        drawGroupsOverlay()
+        drawFreeglersLayer()
 
-    if (data) {
-      drawPolygons(data, Math.round(delay * 0.8))
-      updateStats(data)
-      updateFreeglersInside(data)
-      drawGroupsOverlay()
-      drawFreeglersLayer()
-
-      const hours = frameToHours(rippleStep, rippleFrames.length)
-      if (
-        !crossPostingDetected &&
-        hours >= 24 &&
-        groupFeatures.length > 0 &&
-        data.standard &&
-        hasRing(data.standard)
-      ) {
-        const isoRing = data.standard.geometry.coordinates[0]
-        const hit = checkCrossPosting(isoRing)
-        if (hit) {
-          crossPostingDetected = true
-          markCrossPosting(hours, hit.properties.nameshort, hit)
+        const hours = frameToHours(frameA, rippleFrames.length)
+        if (
+          !crossPostingDetected &&
+          hours >= 24 &&
+          groupFeatures.length > 0 &&
+          data.standard &&
+          hasRing(data.standard)
+        ) {
+          const isoRing = data.standard.geometry.coordinates[0]
+          const hit = checkCrossPosting(isoRing)
+          if (hit) {
+            crossPostingDetected = true
+            markCrossPosting(hours, hit.properties.nameshort, hit)
+          }
         }
-      }
 
-      // Zoom map to keep the expanding boundary in view.
-      // Use a lookahead frame (from the schedule) to avoid sudden zoom jumps.
-      if (rippleScheduleIdx % 2 === 0) {
-        const aheadIdx = Math.min(rippleScheduleIdx + 5, rippleSchedule.length - 1)
-        const lookahead = rippleFrames[rippleSchedule[aheadIdx]]
-        const zoomData =
-          lookahead && hasRing(lookahead.standard) ? lookahead : data
-        if (hasRing(zoomData.standard)) {
-          try {
-            const ring = zoomData.standard.geometry.coordinates[0]
-            const bounds = L.latLngBounds(ring.map(([lng, lat]) => [lat, lng]))
-            if (bounds.isValid())
-              map.fitBounds(bounds, {
-                padding: [60, 60],
-                maxZoom: 13,
-                animate: true,
-                duration: 0.4,
-              })
-          } catch (e) {}
+        // Re-fit the map periodically to keep the boundary in view.
+        if (frameA % 3 === 0) {
+          const ahead = rippleFrames[Math.min(frameA + 3, maxIdx)]
+          const zoomData = ahead && hasRing(ahead.standard) ? ahead : data
+          if (hasRing(zoomData.standard)) {
+            try {
+              const ring = zoomData.standard.geometry.coordinates[0]
+              const bounds = L.latLngBounds(ring.map(([lng, lat]) => [lat, lng]))
+              if (bounds.isValid())
+                map.fitBounds(bounds, {
+                  padding: [60, 60],
+                  maxZoom: 13,
+                  animate: true,
+                  duration: 0.4,
+                })
+            } catch (e) {}
+          }
         }
       }
     }
 
-    if (ripplePlaying) rippleTimer = setTimeout(stepRipple, delay)
+    rippleRafId = requestAnimationFrame(animateRipple)
+  }
+
+  /**
+   * Apply an interpolated radii array to the morphing polygon layer.
+   * Cheap: N_ANGLES vertex projections + one setLatLngs call.
+   */
+  function drawMorphedRing(radii) {
+    if (!morphLayer || !map.hasLayer(morphLayer)) ensureMorphLayer()
+    const latlngs = radiiToLatLngRing(radii, currentLng, currentLat)
+    morphLayer.setLatLngs(latlngs)
   }
 })
 
