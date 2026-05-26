@@ -953,3 +953,12 @@ Schedule::command('integrations:sync-reachvolunteering')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('integrations:sync-reachvolunteering'))
     ->runInBackground();
+
+// Sync EEELabel micro-volunteering rows to the eee-browser labels DB so
+// volunteer labels show up on the model-accuracy dashboard. Idempotent
+// (upserts) and uses an incremental cursor, so frequent runs are safe.
+Schedule::command('eee:sync-mv-labels')
+    ->everyTenMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('eee:sync-mv-labels'))
+    ->runInBackground();

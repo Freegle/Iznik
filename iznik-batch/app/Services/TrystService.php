@@ -185,9 +185,10 @@ class TrystService
             return null;
         }
 
-        $email = $recipient->emails->where('preferred', 1)->first();
+        // V1 parity: skip our own per-user-alias domains so the mail can't loop back as chat.
+        $emailAddr = $recipient->email_preferred;
 
-        if (!$email) {
+        if (!$emailAddr) {
             return null;
         }
 
@@ -199,7 +200,7 @@ class TrystService
                 calendarLink: $calendarLink,
                 recipientUserId: $recipient->id,
                 recipientName: $recipient->displayname,
-                recipientEmail: $email->email,
+                recipientEmail: $emailAddr,
             ));
 
             return $calendarLink;

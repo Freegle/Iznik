@@ -55,23 +55,19 @@ class NewsfeedModNotifService
         foreach ($modIds as $modId) {
             $modsChecked++;
 
-            $mod = DB::table('users')
-                ->join('users_emails', function ($join) {
-                    $join->on('users_emails.userid', '=', 'users.id')
-                        ->where('users_emails.preferred', '=', 1);
-                })
-                ->where('users.id', $modId)
-                ->select([
-                    'users.id',
-                    'users.fullname',
-                    'users.settings',
-                    'users_emails.email',
-                ])
-                ->first();
-
-            if (!$mod || !$mod->email) {
+            // V1 parity: pick the mod's preferred external email; skip mods
+            // who only have internal-alias addresses.
+            $modModel = \App\Models\User::find($modId);
+            $email = $modModel?->email_preferred;
+            if (!$modModel || !$email) {
                 continue;
             }
+            $mod = (object) [
+                'id' => $modModel->id,
+                'fullname' => $modModel->fullname,
+                'settings' => $modModel->settings,
+                'email' => $email,
+            ];
 
             // Skip the system modtools address.
             if (strtolower($mod->email) === self::SYSTEM_MOD_EMAIL) {

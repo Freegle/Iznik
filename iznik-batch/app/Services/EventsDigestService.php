@@ -148,39 +148,34 @@ class EventsDigestService
             // per recipient, and skipping them inflated the V2 dry-run from
             // ~49k (V1 baseline) to 722k sends.
             $members = User::query()
-                ->select(['users_emails.email', 'users.id as userId'])
+                ->select(['users.id as userId'])
                 ->join('memberships', 'memberships.userid', '=', 'users.id')
-                ->join('users_emails', function ($join) {
-                    $join->on('users_emails.userid', '=', 'memberships.userid')
-                        ->where('users_emails.preferred', '=', 1);
-                })
                 ->where('memberships.groupid', $groupRow->id)
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED)
                 ->where('memberships.eventsallowed', 1)
                 ->where('memberships.emailfrequency', '!=', 0)
-                ->whereNotNull('users_emails.email')
                 ->receivingOurMails()
                 ->get();
 
             foreach ($members as $member) {
+                // V1 parity: pick the user's preferred external email and skip
+                // when they have none (only internal-alias addresses).
+                $email = User::find($member->userId)?->email_preferred;
+                if (!$email) {
+                    continue;
+                }
+
                 if (!$dryRun) {
-                    $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($member->email);
-                    // SafeMail catches permanent (bounce + skip) and transient
-                    // (mail-host hiccup mid-run) SMTP failures so one bad address
-                    // or one closed-connection doesn't crash the rest of the
-                    // ~94k-recipient run. The mailable's own envelope() sets the
-                    // to: address, so use sendMailable() (Mail::send-style) not
-                    // send() (which would Mail::to(...) and duplicate the
-                    // recipient).
+                    $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
                     SafeMail::sendMailable(
                         new EventsDigestMail(
-                            recipientEmail: $member->email,
+                            recipientEmail: $email,
                             groupName: $groupRow->nameshort,
                             events: $eventData,
                             unsubscribeUrl: $unsubscribeUrl,
                             userId: $member->userId,
                         ),
-                        $member->email,
+                        $email,
                     );
                 }
                 $sent++;
