@@ -500,7 +500,7 @@
         @hidden="showShareModal = false"
       />
       <MessageEditModal v-if="showEditModal" :id="id" @hidden="hidden" />
-      <PromiseModal
+      <LazyPromiseModal
         v-if="showPromiseModal"
         :messages="[message]"
         :selected-message="message.id"
@@ -545,9 +545,6 @@ const MessageShareModal = defineAsyncComponent(() =>
 )
 const NoticeMessage = defineAsyncComponent(() =>
   import('~/components/NoticeMessage')
-)
-const PromiseModal = defineAsyncComponent(() =>
-  import('~/components/PromiseModal')
 )
 const OutcomeModal = defineAsyncComponent(() => import('./OutcomeModal'))
 const MessageEditModal = defineAsyncComponent(() =>

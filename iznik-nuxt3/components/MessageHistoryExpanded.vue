@@ -67,7 +67,7 @@
         }}</span>
       </div>
     </div>
-    <ProfileModal
+    <LazyProfileModal
       v-if="showProfile && message && fromuser"
       :id="fromuser.id"
       @hidden="showProfile = false"
@@ -84,10 +84,6 @@ import { useMessageStore } from '~/stores/message'
 import { useGroupStore } from '~/stores/group'
 import { timeago } from '~/composables/useTimeFormat'
 import { useMe } from '~/composables/useMe'
-
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
-)
 
 const props = defineProps({
   id: {

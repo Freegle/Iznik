@@ -571,7 +571,7 @@
     />
 
     <!-- Profile Modal -->
-    <ProfileModal
+    <LazyProfileModal
       v-if="showProfileModal && poster?.id"
       :id="poster.id"
       @hidden="showProfileModal = false"
@@ -613,9 +613,6 @@ const MessagePhotosModal = defineAsyncComponent(() =>
 )
 const MessageShareModal = defineAsyncComponent(() =>
   import('~/components/MessageShareModal')
-)
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
 )
 const MessageReportModal = defineAsyncComponent(() =>
   import('~/components/MessageReportModal')
