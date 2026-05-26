@@ -237,8 +237,9 @@ func TestGetMicrovolunteering_CheckMessageApproved(t *testing.T) {
 	// Get JWT token for this user
 	token := getToken(t, userID)
 
-	// Make authenticated request
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	// Scope to CheckMessage — EEELabel now runs ahead in the default
+	// ordering and would shadow the message challenge this test exercises.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=CheckMessage", nil))
 
 	assert.Equal(t, 200, resp.StatusCode)
 
