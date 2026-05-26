@@ -24,14 +24,24 @@ type AIImageChallenge struct {
 	UsageCount uint64 `json:"usage_count"`
 }
 
+// EEELabelChallenge represents a Freegle item to be labelled for EEE
+// (Electrical / Electronic Equipment) classification training.
+type EEELabelChallenge struct {
+	Messageid uint64 `json:"messageid"`
+	Attid     uint64 `json:"attid"`
+	ItemName  string `json:"itemName"`
+	ImageURL  string `json:"imageUrl"`
+}
+
 // Challenge represents a micro-volunteering challenge
 type Challenge struct {
-	Type    string            `json:"type"`
-	Msgid   *uint64           `json:"msgid,omitempty"`
-	Terms   []SearchTerm      `json:"terms,omitempty"`
-	Photos  []Photo           `json:"photos,omitempty"`
-	URL     *string           `json:"url,omitempty"`
-	AIImage *AIImageChallenge `json:"aiimage,omitempty"`
+	Type     string             `json:"type"`
+	Msgid    *uint64            `json:"msgid,omitempty"`
+	Terms    []SearchTerm       `json:"terms,omitempty"`
+	Photos   []Photo            `json:"photos,omitempty"`
+	URL      *string            `json:"url,omitempty"`
+	AIImage  *AIImageChallenge  `json:"aiimage,omitempty"`
+	EEELabel *EEELabelChallenge `json:"eeelabel,omitempty"`
 }
 
 // SearchTerm represents a search term for matching
@@ -54,6 +64,7 @@ const (
 	ChallengeSurvey         = "Survey2"
 	ChallengeInvite         = "Invite"
 	ChallengeAIImageReview  = "AIImageReview"
+	ChallengeEEELabel       = "EEELabel"
 )
 
 // Trust levels
@@ -70,7 +81,25 @@ const (
 	ApprovalQuorum       = 2
 	DissentingQuorum     = 3
 	AIImageReviewQuorum  = 5
+	EEELabelQuorum       = 3
 )
+
+// EEE label vocabularies — kept here so the server rejects invalid client
+// submissions and the Vue component / sync command have a single source of
+// truth via a comment.
+//
+//   Condition: reusable | damaged | unsure
+//   Weight:    under_1kg | 1_5kg | 5_20kg | 20_100kg | over_100kg | unsure
+//   Size:      tiny | small | medium | large | unsure
+var (
+	validEEEConditions = map[string]bool{"reusable": true, "damaged": true, "unsure": true}
+	validEEEWeights    = map[string]bool{"under_1kg": true, "1_5kg": true, "5_20kg": true, "20_100kg": true, "over_100kg": true, "unsure": true}
+	validEEESizes      = map[string]bool{"tiny": true, "small": true, "medium": true, "large": true, "unsure": true}
+)
+
+func isValidEEECondition(v string) bool { return validEEEConditions[v] }
+func isValidEEEWeight(v string) bool    { return validEEEWeights[v] }
+func isValidEEESize(v string) bool      { return validEEESizes[v] }
 
 // CoinFlip picks between AI image review and approved message review when both
 // are available. Overridable from tests so both branches can be exercised
@@ -127,6 +156,7 @@ func GetChallenge(c *fiber.Ctx) error {
 			ChallengeInvite,
 			ChallengeCheckMessage,
 			ChallengeAIImageReview,
+			ChallengeEEELabel,
 			ChallengePhotoRotate,
 		}
 	}
@@ -203,6 +233,16 @@ func GetChallenge(c *fiber.Ctx) error {
 		}
 	} else if wantAIImage {
 		if challenge := getAIImageReviewChallenge(db, userID); challenge != nil {
+			return c.JSON(challenge)
+		}
+	}
+
+	// Try EEE label challenge — present after AI image review so heavier
+	// existing flows (CheckMessage, AIImageReview) still get served first
+	// when present, but EEELabel runs ahead of PhotoRotate which is rarely
+	// satisfied.
+	if contains(challengeTypes, ChallengeEEELabel) {
+		if challenge := getEEELabelChallenge(db, userID); challenge != nil {
 			return c.JSON(challenge)
 		}
 	}
@@ -521,6 +561,72 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 	}
 }
 
+// getEEELabelChallenge returns a Freegle attachment for the user to label
+// for EEE (Electrical / Electronic Equipment) classification. Picks the most
+// recent OFFER attachments that the user has not yet labelled and that have
+// not yet reached EEELabelQuorum.
+func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
+	type AttachmentResult struct {
+		Attid       uint64 `json:"attid"`
+		Msgid       uint64 `json:"msgid"`
+		Externaluid string `json:"externaluid"`
+		Subject     string `json:"subject"`
+	}
+
+	var att AttachmentResult
+
+	err := db.Raw(`
+		SELECT ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject
+		FROM messages_attachments ma_att
+		INNER JOIN messages m ON m.id = ma_att.msgid
+		LEFT JOIN microactions ma
+			ON ma.eee_attachment_id = ma_att.id
+			AND ma.userid = ?
+			AND ma.actiontype = ?
+		WHERE ma_att.externaluid IS NOT NULL
+			AND ma_att.externaluid != ''
+			AND m.type = 'Offer'
+			AND m.deleted IS NULL
+			AND ma.id IS NULL
+			AND (SELECT COUNT(*) FROM microactions WHERE eee_attachment_id = ma_att.id AND actiontype = ?) < ?
+		ORDER BY m.arrival DESC
+		LIMIT 1
+	`, userID, ChallengeEEELabel, ChallengeEEELabel, EEELabelQuorum).Scan(&att).Error
+
+	if err != nil || att.Attid == 0 {
+		return nil
+	}
+
+	return &Challenge{
+		Type: ChallengeEEELabel,
+		EEELabel: &EEELabelChallenge{
+			Messageid: att.Msgid,
+			Attid:     att.Attid,
+			ItemName:  cleanSubject(att.Subject),
+			ImageURL:  misc.GetImageDeliveryUrl(att.Externaluid, ""),
+		},
+	}
+}
+
+// cleanSubject strips the "OFFER: " prefix and the trailing "(Location PC)"
+// from a Freegle subject line so volunteers see the bare item name.
+func cleanSubject(subject string) string {
+	s := strings.TrimSpace(subject)
+	// Strip leading "OFFER:" / "WANTED:" / etc.
+	lower := strings.ToLower(s)
+	for _, prefix := range []string{"offer:", "offered:", "wanted:", "request:", "requested:", "taken:", "received:"} {
+		if strings.HasPrefix(lower, prefix) {
+			s = strings.TrimSpace(s[len(prefix):])
+			break
+		}
+	}
+	// Strip trailing parenthesised location, e.g. " (Hanwell W7)"
+	if i := strings.LastIndex(s, "("); i > 0 && strings.HasSuffix(strings.TrimSpace(s), ")") {
+		s = strings.TrimSpace(s[:i])
+	}
+	return s
+}
+
 // PostResponseRequest represents the body for POST /microvolunteering
 type PostResponseRequest struct {
 	Msgid          uint64  `json:"msgid"`
@@ -534,6 +640,11 @@ type PostResponseRequest struct {
 	Deg            int     `json:"deg"`
 	AIImageID      uint64  `json:"aiimageid"`
 	ContainsPeople *bool   `json:"containspeople,omitempty"`
+	// EEELabel response fields
+	EEEAttachmentID uint64  `json:"eee_attachment_id,omitempty"`
+	EEECondition    *string `json:"eee_condition,omitempty"`
+	EEEWeight       *string `json:"eee_weight,omitempty"`
+	EEESize         *string `json:"eee_size,omitempty"`
 }
 
 // PostResponse records a user's response to a micro-volunteering challenge
@@ -665,6 +776,24 @@ func PostResponse(c *fiber.Ctx) error {
 			// After recording the vote, check if reject quorum is reached.
 			checkAIImageRejectQuorum(db, req.AIImageID)
 		}
+
+		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+
+	} else if req.EEEAttachmentID > 0 && req.EEECondition != nil && req.EEEWeight != nil && req.EEESize != nil {
+		// Response to an EEELabel challenge — Condition / Weight / Size labels.
+		// All three are stored on a single microactions row. result is set to
+		// 'Approve' as a placeholder because the column is NOT NULL.
+		if !isValidEEECondition(*req.EEECondition) ||
+			!isValidEEEWeight(*req.EEEWeight) ||
+			!isValidEEESize(*req.EEESize) {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid EEE label values")
+		}
+
+		db.Exec(`INSERT INTO microactions (actiontype, userid, eee_attachment_id, eee_condition, eee_weight, eee_size, result, version, score_negative)
+			VALUES (?, ?, ?, ?, ?, ?, 'Approve', ?, 0)
+			ON DUPLICATE KEY UPDATE eee_condition = ?, eee_weight = ?, eee_size = ?, version = ?`,
+			ChallengeEEELabel, myid, req.EEEAttachmentID, *req.EEECondition, *req.EEEWeight, *req.EEESize, Version,
+			*req.EEECondition, *req.EEEWeight, *req.EEESize, Version)
 
 		return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 

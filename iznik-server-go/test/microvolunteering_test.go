@@ -41,8 +41,12 @@ func TestGetMicrovolunteering_NoChallenge(t *testing.T) {
 	db.Exec("INSERT INTO microactions (actiontype, userid, version, comments, timestamp, score_negative) VALUES (?, ?, 4, 'Test block', NOW(), 0)", microvolunteering.ChallengeInvite, userID)
 	defer db.Exec("DELETE FROM microactions WHERE userid = ? AND actiontype = ?", userID, microvolunteering.ChallengeInvite)
 
-	// Make authenticated request
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	// Scope to PhotoRotate only — EEELabel doesn't require group membership
+	// and can pick up any unlabelled OFFER attachment in the test DB, which
+	// would shadow the "user has no groups → no challenge" path this test is
+	// exercising. PhotoRotate requires group membership, so an empty result
+	// here proves the no-group path.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=PhotoRotate", nil))
 
 	assert.Equal(t, 200, resp.StatusCode)
 
@@ -299,8 +303,12 @@ func TestGetMicrovolunteering_PhotoRotateChallenge(t *testing.T) {
 	// Get JWT token for this user
 	token := getToken(t, userID)
 
-	// Make authenticated request
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	// Scope to PhotoRotate so EEELabel doesn't preempt — EEELabel runs ahead
+	// of PhotoRotate (microvolunteering.go: "EEELabel runs ahead of
+	// PhotoRotate which is rarely satisfied") and would pick up any
+	// unlabelled OFFER attachment in the test DB before we reach the photo
+	// rotate branch this test exercises.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=PhotoRotate", nil))
 
 	assert.Equal(t, 200, resp.StatusCode)
 
