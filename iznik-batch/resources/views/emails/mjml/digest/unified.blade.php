@@ -20,10 +20,19 @@
         {{-- Card: image left + content right (matches browse page layout) --}}
         <mj-section background-color="#ffffff" padding="0" border-radius="4px">
             {{-- Image column --}}
+            {{-- Use displayImageUrl (direct delivery URL) rather than the
+                 trackedImageUrl tracking-proxy wrapper. Gmail's image proxy
+                 (ci3.googleusercontent.com/meips/...) was returning 404 for
+                 the tracking URL — most likely it dislikes the cross-domain
+                 302 from api.ilovefreegle.org to delivery.ilovefreegle.org,
+                 or it cached a transient failure. Direct delivery is what
+                 the AMP template already uses for the same reason. Click
+                 tracking on the message link still fires via the <a href>;
+                 only the image-view scroll-depth ping is lost on the hero. --}}
             <mj-column width="38%" padding="0" vertical-align="top">
                 <mj-image
                     href="{{ $post['messageUrl'] }}"
-                    src="{{ $post['trackedImageUrl'] }}"
+                    src="{{ $post['displayImageUrl'] }}"
                     alt="{{ $post['itemName'] }}"
                     padding="0"
                     fluid-on-mobile="true"
@@ -216,7 +225,9 @@
                             @php $thumbIsOffer = $thumbPost['type'] === 'Offer'; @endphp
                             <td style="padding: 0 3px 0 0; vertical-align: middle;">
                                 <a href="#msg-{{ $thumbPost['message']->id }}" style="display: block; line-height: 0;">
-                                    <img src="{{ $thumbPost['trackedImageUrl'] }}" alt="{{ $thumbPost['itemName'] }}" width="44" height="44" style="display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 4px; border: 2px solid {{ $thumbIsOffer ? '#6ab04c' : '#74b9ff' }};" />
+                                    {{-- Direct delivery URL (not tracked) so Gmail's image proxy
+                                         doesn't 404 on the cross-domain 302 from the tracking endpoint. --}}
+                                    <img src="{{ $thumbPost['displayImageUrl'] }}" alt="{{ $thumbPost['itemName'] }}" width="44" height="44" style="display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 4px; border: 2px solid {{ $thumbIsOffer ? '#6ab04c' : '#74b9ff' }};" />
                                 </a>
                             </td>
                             @endforeach
@@ -244,9 +255,11 @@
 
         <mj-section background-color="#ffffff" padding="0">
             <mj-column width="38%" padding="0" vertical-align="top">
+                {{-- Direct delivery URL (not tracked) — see hero comment above
+                     for why; same Gmail meips 404 applies here. --}}
                 <mj-image
                     href="{{ $post['messageUrl'] }}"
-                    src="{{ $post['trackedImageUrl'] }}"
+                    src="{{ $post['displayImageUrl'] }}"
                     alt="{{ $post['itemName'] }}"
                     padding="0"
                     fluid-on-mobile="true"
