@@ -155,10 +155,10 @@ class UnifiedDigestServiceTest extends TestCase
         $group = $this->createTestGroup();
 
         // Recipient wants daily digests.
-        $recipient->update([
-            'settings' => json_encode(['simplemail' => User::SIMPLE_MAIL_BASIC]),
-            'lastaccess' => now(),
-        ]);
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
 
         $this->createMembership($poster, $group);
         $this->createMembership($recipient, $group);
@@ -262,10 +262,10 @@ class UnifiedDigestServiceTest extends TestCase
         $group2 = $this->createTestGroup();
 
         // Recipient wants daily digests.
-        $recipient->update([
-            'settings' => json_encode(['simplemail' => User::SIMPLE_MAIL_BASIC]),
-            'lastaccess' => now(),
-        ]);
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
 
         $this->createMembership($poster, $group1);
         $this->createMembership($poster, $group2);
@@ -381,10 +381,10 @@ class UnifiedDigestServiceTest extends TestCase
 
         // User has Basic setting (daily only). Basic isn't NULL so the
         // per-group fallback below cannot rescue them either.
-        $user->update([
-            'settings' => json_encode(['simplemail' => User::SIMPLE_MAIL_BASIC]),
-            'lastaccess' => now(),
-        ]);
+        $user->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
 
         $this->createMembership($user, $group);
 
