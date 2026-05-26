@@ -1067,10 +1067,10 @@ onMounted(async () => {
       : totalLocated
 
     const bar = document.getElementById('rippling-freegler-bar')
-    if (estimatedInsideLocated >= 0 && totalLocated > 0) {
-      // Total estimate: estimatedInsideLocated / (1 - UNLOCATED_FRACTION)
-      // The deprived fraction is read from the sample which is a random uniform
-      // subset — the fraction is statistically representative even when capped.
+    // Only show the count bar when there is at least 1 freegler inside the
+    // isochrone.  Showing "~0 would be notified" at the start of the ripple
+    // (when the tiny 0.5-min polygon contains no freeglers) is misleading.
+    if (estimatedInsideLocated > 0 && totalLocated > 0) {
       const totalEstimate = Math.round(estimatedInsideLocated / (1 - UNLOCATED_FRACTION))
       const unlocatedShare = totalEstimate - estimatedInsideLocated
       bar.innerHTML =
@@ -1081,14 +1081,18 @@ onMounted(async () => {
           : '') +
         `</div><div style="font-size:10px;color:#aaa;font-style:italic;margin-top:3px">TrashNothing members use a separate algorithm</div>`
       bar.style.display = ''
+    } else {
+      bar.style.display = 'none'
     }
 
-    // Use quintileTaggedCount (not insideCount) as denominator so untagged
-    // freeglers (q==-1) don't dilute/inflate the deprivation percentage.
-    // This matches the API's methodology: FairnessScore = Q1-3 / (Q1-5).
-    if (quintileTaggedCount > 0) {
-      const pct = Math.round((deprivedCount / quintileTaggedCount) * 100)
-      setSwingometer(pct)
+    // The quintile polygon approach for classifying freeglers is unreliable:
+    // a 19-point concave hull for 6,000 scattered Q1 nodes smears over Q4/Q5
+    // areas, producing a deprived-biased reading.  Instead, use the routing
+    // server's own fairness_score (Q1-3 nodes / all tagged nodes) which is
+    // correct.  updateStats(data) already rendered the needle at this value;
+    // we just need to track the peak bias for the animation summary.
+    if (data.fairness_score !== undefined && data.fairness_score >= 0) {
+      const pct = Math.round(data.fairness_score * 100)
 
       if (ripplePlaying) {
         const imbalance = Math.abs(pct - localBaseline)
@@ -1583,7 +1587,21 @@ onMounted(async () => {
     await fetchFreeglers(30)
     drawFreeglersLayer()
 
-    rippleStep = 0
+    // Find the first frame that contains any freegler so the animation starts
+    // at a meaningful point rather than showing "~0 would be notified" while
+    // the tiny early isochrones grow invisibly small.
+    let firstFreegler = 0
+    if (freeglersGrid.length > 0) {
+      for (let fi = 0; fi < rippleFrames.length; fi++) {
+        const fd = rippleFrames[fi]
+        if (!fd || !hasRing(fd.standard)) continue
+        const ring = fd.standard.geometry.coordinates[0]
+        const hasAny = freeglersGrid.some((g) => pointInRing(g.lng, g.lat, ring))
+        if (hasAny) { firstFreegler = fi; break }
+      }
+    }
+
+    rippleStep = firstFreegler
     ripplePlaying = true
     crossPostingDetected = false
     rippleMaxImbalance = null
@@ -1682,7 +1700,9 @@ onMounted(async () => {
               map.fitBounds(bounds, {
                 padding: [60, 60],
                 maxZoom: 13,
-                animate: false,
+                // Animated zoom gives a smooth crawl-outward feel.
+                animate: true,
+                duration: 0.4,
               })
           } catch (e) {}
         }
@@ -1707,6 +1727,16 @@ onUnmounted(() => {
 /* Leaflet overrides — unscoped so Leaflet's own DOM nodes are styled */
 #rippling-root * {
   box-sizing: border-box;
+}
+
+/* Smooth polygon boundary crawl: CSS d-attribute transitions let the browser
+   interpolate SVG path shapes between frames when the vertex count is stable.
+   Leaflet's setLatLngs calls path.setAttribute('d', …) directly, so any CSS
+   transition on `d` takes effect here.  When vertex counts change the browser
+   falls back to a discrete jump — that's acceptable since rapid count changes
+   only occur during fast isochrone growth. */
+#rippling-map .leaflet-overlay-pane path {
+  transition: d 450ms ease-out;
 }
 
 #rippling-panel {
