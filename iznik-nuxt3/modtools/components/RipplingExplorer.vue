@@ -620,6 +620,14 @@ onMounted(async () => {
     function addPoly(key, coords, opts, targetFill, targetOpacity, tooltip) {
       const existing = layers[key]
       if (existing && map.hasLayer(existing)) {
+        // Set the SVG `d` transition to 70% of the step delay so the shape
+        // morph always finishes before the next frame fires.  Without this the
+        // CSS fixed 450ms would overflow shorter delays, causing stuttering.
+        const el = existing.getElement()
+        if (el) {
+          const dDur = dur > 0 ? Math.round(dur * 0.7) : 0
+          el.style.transition = dDur > 0 ? `d ${dDur}ms ease-out` : 'none'
+        }
         existing.setLatLngs(coords)
         existing.setStyle({ ...opts, fillOpacity: targetFill, opacity: targetOpacity })
         existing.setTooltipContent(tooltip)
@@ -1754,6 +1762,18 @@ onMounted(async () => {
 
     // Advance to the frame specified by the population schedule.
     rippleStep = rippleSchedule[rippleScheduleIdx]
+    rippleScheduleIdx++
+    // Burn through consecutive entries that map to the same source frame: they
+    // produce no visual change so there is no point pausing on each one.
+    // This collapses the "dwell" that the population-based schedule creates at
+    // frames where many thresholds cluster, which otherwise manifests as a
+    // long invisible delay before the boundary actually moves.
+    while (
+      rippleScheduleIdx < rippleSchedule.length &&
+      rippleSchedule[rippleScheduleIdx] === rippleStep
+    ) {
+      rippleScheduleIdx++
+    }
     const data = rippleFrames[rippleStep]
 
     // Actual drive minutes: frame 0 = RIPPLE_STEP_MINS, frame N-1 = 30 min.
@@ -1767,7 +1787,9 @@ onMounted(async () => {
 
     const spd =
       parseInt(document.getElementById('rippling-speed-slider').value) || 3
-    const delay = Math.round(20000 / Math.pow(spd, 1.4))
+    // Aim for a smooth 20-60 second total animation across ~120 visible frames.
+    // Old formula (20000/spd^1.4) gave ~4.3 s per step — far too long.
+    const delay = Math.round(1500 / Math.pow(spd, 1.4))
 
     if (data) {
       drawPolygons(data, Math.round(delay * 0.8))
@@ -1815,7 +1837,6 @@ onMounted(async () => {
       }
     }
 
-    rippleScheduleIdx++
     if (ripplePlaying) rippleTimer = setTimeout(stepRipple, delay)
   }
 })
@@ -1842,7 +1863,7 @@ onUnmounted(() => {
    falls back to a discrete jump — that's acceptable since rapid count changes
    only occur during fast isochrone growth. */
 #rippling-map .leaflet-overlay-pane path {
-  transition: d 450ms ease-out;
+  transition: d 150ms ease-out;
 }
 
 #rippling-panel {
