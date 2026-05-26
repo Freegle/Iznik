@@ -1038,20 +1038,23 @@ onMounted(async () => {
   const UNLOCATED_FRACTION = 0.35
 
   function updateFreeglersInside(data) {
-    // insideCount     — all freeglers inside the standard isochrone (q≠0), used
-    //                   for the "X would be notified" count bar.
-    // quintileTaggedCount — freeglers inside a Q1–Q5 polygon (q≥1).  Used as
-    //                   the denominator for the swingometer so that untagged
-    //                   freeglers (q==-1) don't distort the deprivation %.
-    // deprivedCount   — freeglers in Q1–Q3 polygons (swingometer numerator).
+    // Two ways to know how many freeglers are inside the current boundary:
+    //
+    //   (a) Schedule-provided cumulative count.  The ripple-schedule endpoint
+    //       already computed exactly this server-side, so when it's present
+    //       we trust it — that's the actual notification count the cron will
+    //       deliver, no sampling/extrapolation needed.
+    //   (b) Polygon containment of the local freegler grid.  Used in static
+    //       view (no schedule) and as a fallback.
+    //
+    // Either way we ALSO walk the grid to highlight individual dots inside
+    // vs outside the boundary — that's purely visual.
     let insideCount = 0
     let quintileTaggedCount = 0
     let deprivedCount = 0
     freeglersGrid.forEach((g, i) => {
       const q = quintileOfFreegler(g.lng, g.lat, data)
       if (q !== 0) {
-        // q == -1: inside standard isochrone but no quintile tag (untagged road).
-        // q == 1-5: inside a quintile polygon.
         insideCount += g.count
         if (q >= 1) {
           quintileTaggedCount += g.count
@@ -1063,16 +1066,18 @@ onMounted(async () => {
         freeglersMarkers[i].setStyle({ fillOpacity: 0.12, opacity: 0.2 })
     })
 
-    // In normal view: totalLocated = full count within the current isochrone.
-    // During ripple animation: allFreeglers was fetched at 30 min (full range);
-    // insideCount is the sample count inside the current (smaller) polygon.
-    // Scale by totalLocated/sampleSize to estimate the true count inside.
     const totalLocated = totalLocatedFromServer || allFreeglers.length
     const sampleSize = allFreeglers.length
     const isRipple = ripplePlaying || rippleFrames.length > 0
-    const estimatedInsideLocated = isRipple && sampleSize > 0
-      ? Math.round(insideCount * (totalLocated / sampleSize))
-      : totalLocated
+    // Prefer the schedule's authoritative cumulative_users when present.
+    let estimatedInsideLocated
+    if (data && data.cumulative_users !== undefined && data.cumulative_users !== null) {
+      estimatedInsideLocated = data.cumulative_users
+    } else if (isRipple && sampleSize > 0) {
+      estimatedInsideLocated = Math.round(insideCount * (totalLocated / sampleSize))
+    } else {
+      estimatedInsideLocated = totalLocated
+    }
 
     const bar = document.getElementById('rippling-freegler-bar')
     // Only show the count bar when there is at least 1 freegler inside the
@@ -1738,23 +1743,42 @@ onMounted(async () => {
       .style.setProperty('--tl-pct', '0%')
     map.setView([currentLat, currentLng], 13, { animate: false })
 
-    const fairness = parseInt(fairnessSlider.value) / 100
-    // One keyframe per drive-minute: 1, 2, …, RIPPLE_FRAMES minutes.  This
-    // matches the granularity at which the (future) notification cron will
-    // step the ripple in production.  Between keyframes the client morphs
-    // smoothly via radial interpolation.
-    const promises = Array.from({ length: RIPPLE_FRAMES }, (_, i) => {
-      const m = ((i + 1) * RIPPLE_STEP_MINS).toFixed(2)
-      const url = apiUrl(
-        `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
-          6
-        )}&minutes=${m}&mode=${currentMode}&fairness=${fairness}`
-      )
-      return fetch(url)
-        .then((r) => r.json())
-        .catch(() => null)
-    })
-    rippleFrames = await Promise.all(promises)
+    // Density-driven schedule.  One HTTP call returns the full ticks-tuple of
+    // (drive-time, cumulative_users, polygon) — the server picks each tick's
+    // drive-time so an equal-population batch is encapsulated at each step.
+    // The "curve" parameter shapes the cumulative-fraction-vs-tick mapping
+    // (linear by default; front-loaded / back-loaded available).
+    const curveShape = 'linear'
+    const scheduleURL = apiUrl(
+      `/v1/ripple-schedule?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
+        6
+      )}&mode=${currentMode}&ticks=${RIPPLE_FRAMES}&max_minutes=${RIPPLE_FRAMES * RIPPLE_STEP_MINS}&curve=${curveShape}`
+    )
+    let scheduleResp
+    try {
+      scheduleResp = await fetch(scheduleURL).then((r) => r.json())
+    } catch (e) {
+      scheduleResp = null
+    }
+    if (!scheduleResp || !scheduleResp.schedule || scheduleResp.schedule.length === 0) {
+      document.getElementById('rippling-info').textContent =
+        'No ripple data — try a different location'
+      btn.disabled = false
+      btn.textContent = '▶ Animate ripple'
+      ripplePlaying = false
+      return
+    }
+    // Wrap each schedule entry to look like the previous "frame" shape, so the
+    // rest of the animation code is unchanged.  `standard` carries the polygon;
+    // `drive_min` and `cumulative_users` are exposed for display/stats.
+    rippleFrames = scheduleResp.schedule.map((entry) => ({
+      standard: entry.polygon,
+      drive_min: entry.drive_min,
+      cumulative_users: entry.cumulative_users,
+      tick: entry.tick,
+    }))
+    // Make the total reachable count available for the freegler bar display.
+    totalLocatedFromServer = scheduleResp.total_freeglers || totalLocatedFromServer
 
     // Reparameterise every keyframe's standard ring as a radii array, once,
     // so the rAF hot path is pure arithmetic.
@@ -1905,19 +1929,28 @@ onMounted(async () => {
       rippleLastStatsFrame = frameA
       rippleStep = frameA
       const data = rippleFrames[frameA]
-      const mDrive = (frameA + 1) * RIPPLE_STEP_MINS
+      // The density-driven schedule provides drive_min and cumulative_users
+      // per tick, set by the server.  Drive-time is non-monotonic in spacing
+      // (small in dense regions, jumps across voids) — the info text shows
+      // the actual values so the moderator can see the algorithm working.
+      const mDrive = data && data.drive_min !== undefined
+        ? data.drive_min
+        : (frameA + 1) * RIPPLE_STEP_MINS
+      const minuteLabel = Number.isInteger(mDrive) ? String(mDrive) : mDrive.toFixed(2)
+      const tickLabel = `tick ${frameA + 1}/${rippleFrames.length}`
+      const usersLabel = data && data.cumulative_users !== undefined
+        ? ` · ${data.cumulative_users.toLocaleString()} reached`
+        : ''
       document.getElementById(
         'rippling-info'
-      ).textContent = `${currentMode} · ${mDrive} min`
+      ).textContent = `${tickLabel} · ${minuteLabel} drive-min${usersLabel}`
       updateTimeline(frameA, rippleFrames.length)
-      timeSlider.value = Math.round(mDrive)
+      timeSlider.value = Math.min(30, Math.round(mDrive))
 
       if (data) {
-        // Draw the quintile polygons only (skip standard — that's the
-        // morphLayer's job).  Quintile fills are translucent so a discrete
-        // swap every drive-minute is visually acceptable.
-        drawPolygons(data, 0, /* skipStandard */ true)
-        updateStats(data)
+        // The schedule polygons are pure drive-time (no fairness/quintile
+        // info).  Suppress the quintile redraw — there's nothing to draw —
+        // and let the morph layer own the standard ring.
         updateFreeglersInside(data)
         drawGroupsOverlay()
         drawFreeglersLayer()
