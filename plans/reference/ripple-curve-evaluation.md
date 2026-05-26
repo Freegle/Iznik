@@ -96,18 +96,42 @@ From the 5,000-post extraction (4,264 posts kept, 10,005 (post, replier) pairs):
    in-time AND highest waste (because notifications pile up at the end
    when the post has already been taken).
 
+## Lifetime sensitivity sweep (step-70, urban first-replier)
+
+| Lifetime | In-time | Wasted% | Tick interval |
+|----------|---------|---------|----------------|
+| 0.5d | 93.7% | 1.5%  | 25 min  |
+| **1d**   | **93.1%** | **2.6%** | **48 min** |
+| 2d   | 92.3% | 5.4%  | 96 min  |
+| 3d   | 92.0% | 7.6%  | 2.4 hr  |
+| 5d   | 91.8% | 10.2% | 4.0 hr  |
+| 7d   | 91.6% | 11.9% | 5.6 hr  |
+| 14d  | 91.1% | 14.8% | 11.2 hr |
+| 30d  | 90.9% | 17.2% | 24.0 hr |
+
+**Lifetime sensitivity is asymmetric**: in-time drops only 3 pp across
+0.5d → 30d (because the tick-1 burst catches most first-repliers
+regardless), but wasted % scales linearly with lifetime (the trailing
+30 % is spread over more wall-clock time, so more of it lands after the
+post is already taken).
+
+**1 day is the sweet spot.**  Only 0.4 pp behind 0.5d on in-time but
+with a sensible cron cadence (one tick every 48 minutes).  0.5d would
+mean a tick every 25 minutes which is wasteful in cron-firing cost
+and doesn't actually improve outcomes meaningfully.
+
 ## Recommendation
 
 | Parameter | Recommended value | Rationale |
 |-----------|------------------|-----------|
-| Curve     | **step-70%+linear** | 92 % urban / 86 % rural first-replier in-time; 8 % / 6 % wasted notifications; 98 % of catches in tick 1 |
-| Lifetime  | **3 days**       | Captures p75 reply window; longer is wasted notification volume |
-| Ticks     | 30               | Tick interval ~2.4 hr at 3-day lifetime; finer than that doesn't materially help in-time but adds load |
-| Max isochrone | 30 drive-min | Beyond this only catches ~5 % more replies; diminishing return on Dijkstra cost |
-| Circuit-breaker | Stop on `promised`/`taken` outcome | Replies-count cutoff hurts reach-in-time; status-based cutoff is honest |
+| Curve     | **step-70%+linear** | 93 % urban / 87 % rural first-replier in-time at 1d lifetime |
+| Lifetime  | **1 day**        | Sweet spot from sensitivity sweep — 93.1% in-time / 2.6% wasted |
+| Ticks     | 30               | Tick interval 48 min at 1d; smaller ticks add cron load without benefit |
+| Max isochrone | 30 drive-min | Beyond this only catches ~5 % more replies |
+| Circuit-breaker | Stop on `promised`/`taken` outcome | Status-based cutoff is honest |
 
-Expected first-replier reach-in-time with these defaults: **~92 % urban,
-86 % rural**, with **~7-8 % wasted notifications**.
+Expected first-replier reach-in-time with these defaults: **~93 % urban,
+~87 % rural**, with **~2-3 % wasted notifications**.
 
 The step-70% curve is essentially "legacy-style bombardment for 70 % of
 reachable users at tick 1, then ripple the remaining 30 % over the next

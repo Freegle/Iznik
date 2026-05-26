@@ -31,7 +31,7 @@ class MonitorAlgorithmCommand extends Command
         {--routing-container=spatial-live : routing-go container name (suffix only, the project prefix is added)}
         {--routing-url=http://localhost:8194 : routing server URL as seen from inside the routing container}
         {--ticks=30 : number of cron ticks in the simulated schedule}
-        {--lifetime-days=3 : simulated post lifetime}
+        {--lifetime-days=1 : simulated post lifetime (data-driven sweet spot)}
         {--max-minutes=30 : max drive-time isochrone}
         {--limit=2000 : max posts to sample for the run}
         {--workers=8 : concurrent eval workers}
