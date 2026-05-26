@@ -156,36 +156,66 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 // curveFraction maps "elapsed fraction" (k/ticks ∈ [0,1]) to "notified fraction"
 // (∈ [0,1]) under a named curve shape.
 //
-// Simulator evaluation against 483 historical posts (see
-// plans/reference/ripple-curve-evaluation.md) ranks the shapes:
-//   front-heavy ≫ front-sqrt > front-cubic > front-quad > linear ≫ back
+// Simulator evaluation against 4,264 historical posts (see
+// plans/reference/ripple-curve-evaluation.md) ranks the front-loaded shapes:
+//   step-70%+linear ≈ front-x^0.15 > front-x^0.2 > front-heavy x^0.3 > …
 //
-// "front-heavy" (x^0.3) is the recommended production default — at tick 1 of
-// 30 it covers 37 % of reachable users in one go, which captures the bulk of
-// nearby fast-reply scenarios.  Other shapes are kept for comparison.
-func curveFraction(shape string, x float64) float64 {
+// "step-70%+linear" is the recommended production default: 70 % of users
+// notified immediately at tick 1, the remaining 30 % linearly across the
+// rest of the lifetime.  Hits 92 % first-replier in-time in urban areas
+// with only 8 % wasted notifications.  Mimics legacy "notify-everyone-
+// within-2-miles" bombardment for the bulk of users while still rippling
+// the long tail outward over the lifetime.
+//
+// The numStepsForStep parameter is needed for the step curve since the
+// "what does tick 1 cover" depends on the tick granularity.  Caller
+// passes the total tick count.
+func curveFraction(shape string, x float64, numTicks int) float64 {
 	switch shape {
+	case "step-70":
+		return stepCurve(0.70, numTicks, x)
+	case "step-50":
+		return stepCurve(0.50, numTicks, x)
+	case "front-x015", "x^0.15":
+		// Continuous near-equivalent of step-70.  Tick 1 covers 60 %.
+		return math.Pow(x, 0.15)
+	case "front-x02", "x^0.2":
+		return math.Pow(x, 0.2)
 	case "front-heavy":
-		// x^0.3 — the recommended production curve.
+		// x^0.3 — kept for comparison; previous default.
 		return math.Pow(x, 0.3)
 	case "front-sqrt":
-		// x^0.5 — slightly less aggressive than front-heavy.
 		return math.Sqrt(x)
 	case "front-cubic":
-		// 1 - (1-x)^3 — cubic ease-out, front-loaded but smoother.
 		return 1.0 - math.Pow(1.0-x, 3)
 	case "front", "front-quad":
-		// 1 - (1-x)^2 — quadratic ease-out.
 		return 1.0 - math.Pow(1.0-x, 2)
 	case "back":
-		// x^2 — quadratic ease-in; consistently the worst curve.
 		return x * x
 	case "linear":
 		return x
 	default:
 		// Unknown shape -> recommended default.
-		return math.Pow(x, 0.3)
+		return stepCurve(0.70, numTicks, x)
 	}
+}
+
+// stepCurve: fraction s of users notified at tick 1, remaining (1-s) linear
+// across ticks 2..N.  Within the first tick (x ≤ 1/N) we ramp smoothly to s
+// so the curve is monotone — production cron snaps to tick boundaries so
+// the ramp is invisible there, but the simulator can evaluate fractional x.
+func stepCurve(s float64, numTicks int, x float64) float64 {
+	if x <= 0 {
+		return 0
+	}
+	if numTicks < 1 {
+		return s
+	}
+	oneTick := 1.0 / float64(numTicks)
+	if x <= oneTick {
+		return s * (x / oneTick)
+	}
+	return s + (1-s)*(x-oneTick)/(1-oneTick)
 }
 
 // rippleScheduleEntry is a single tick of the density-driven ripple schedule.
@@ -234,14 +264,16 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 
 		// Curve shape determines how cumulative-user targets are spaced
 		// across the tick range.  See curveFraction() for the supported
-		// shapes; "front-heavy" (x^0.3) is the data-driven default.
-		curve := c.Query("curve", "front-heavy")
+		// shapes; "step-70" is the data-driven default.
+		curve := c.Query("curve", "step-70")
 		validCurves := map[string]bool{
 			"linear": true, "front-heavy": true, "front-sqrt": true,
 			"front-cubic": true, "front": true, "front-quad": true, "back": true,
+			"step-70": true, "step-50": true, "x^0.15": true, "x^0.2": true,
+			"front-x015": true, "front-x02": true,
 		}
 		if !validCurves[curve] {
-			curve = "front-heavy"
+			curve = "step-70"
 		}
 
 		modeStr := c.Query("mode", "drive")
@@ -334,7 +366,7 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 			// Curve maps "elapsed fraction" (k/ticks) → "notified fraction"
 			// (∈ [0,1]); multiply by total to get the target cumulative count.
 			x := float64(k) / float64(ticks)
-			frac := curveFraction(curve, x)
+			frac := curveFraction(curve, x, ticks)
 			target := int(math.Round(frac * float64(total)))
 			if target < 1 {
 				target = 1

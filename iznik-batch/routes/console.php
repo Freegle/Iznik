@@ -1164,3 +1164,6 @@ Schedule::command('eee:sync-mv-labels')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('eee:sync-mv-labels'))
     ->runInBackground();
+
+// ripple:monitor command exists but is not yet scheduled — pending decision
+// on production rollout.  See plans/reference/ripple-curve-evaluation.md.

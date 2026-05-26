@@ -1748,9 +1748,10 @@ onMounted(async () => {
     // drive-time so an equal-population batch is encapsulated at each step.
     // The "curve" parameter shapes the cumulative-fraction-vs-tick mapping.
     // Default to the data-driven recommended curve — see
-    // plans/reference/ripple-curve-evaluation.md.  front-heavy (x^0.3)
-    // hit ~80 % reach-in-time against the 483-post historical sample.
-    const curveShape = 'front-heavy'
+    // plans/reference/ripple-curve-evaluation.md.  step-70 (70 % notified
+    // at tick 1 then linear) hits 92 % urban / 86 % rural first-replier
+    // reach-in-time on the 4,264-post historical sample with ~7 % waste.
+    const curveShape = 'step-70'
     const scheduleURL = apiUrl(
       `/v1/ripple-schedule?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
         6

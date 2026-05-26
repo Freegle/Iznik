@@ -108,6 +108,7 @@ var (
 	rebuildCache   = flag.Bool("rebuild-cache", false, "ignore existing cache and re-fetch everything")
 	limit          = flag.Int("limit", 0, "max posts to evaluate (0 = all)")
 	groupBy        = flag.String("group-by", "", "stratify results by post attribute: \"\"=all, \"ru\"=RU category, \"ru-coarse\"=Urban/Rural/Other")
+	jsonOutput     = flag.String("json-output", "", "if set, write structured results JSON here (for Layer-3 monitoring)")
 )
 
 // ruCoarse maps a fine-grained ONS RU category (A1, B1, ...) to one of three
@@ -168,12 +169,36 @@ func main() {
 	}
 
 	// ----- run simulation against several curves -----
+	// Step-curve: notify a fixed initial fraction `s` at tick 1, then linear
+	// across the remaining ticks for the residual (1-s) fraction.  Mimics
+	// "legacy bombardment + ripple tail".
+	stepCurve := func(s float64) func(float64) float64 {
+		return func(x float64) float64 {
+			if x <= 0 {
+				return 0
+			}
+			// Tick 1 lands at x = 1/N; everything ≤ 1/N is the initial burst.
+			// For x > 1/N: y = s + (1-s) * (x - 1/N) / (1 - 1/N).
+			oneTick := 1.0 / float64(*ticks)
+			if x <= oneTick {
+				return s * (x / oneTick) // smooth ramp to s within first tick
+			}
+			return s + (1-s)*(x-oneTick)/(1-oneTick)
+		}
+	}
+
 	curves := []curve{
 		{Name: "linear", F: func(x float64) float64 { return x }},
 		{Name: "front-quad (1-(1-x)^2)", F: func(x float64) float64 { return 1 - math.Pow(1-x, 2) }},
 		{Name: "front-cubic (1-(1-x)^3)", F: func(x float64) float64 { return 1 - math.Pow(1-x, 3) }},
 		{Name: "front-sqrt (x^0.5)", F: func(x float64) float64 { return math.Sqrt(x) }},
 		{Name: "front-heavy (x^0.3)", F: func(x float64) float64 { return math.Pow(x, 0.3) }},
+		// Even more aggressive: x^0.2 puts 51 % in tick 1; x^0.15 puts 60 %.
+		{Name: "front-x^0.2", F: func(x float64) float64 { return math.Pow(x, 0.2) }},
+		{Name: "front-x^0.15", F: func(x float64) float64 { return math.Pow(x, 0.15) }},
+		// Step curves: explicit initial-burst-then-linear.
+		{Name: "step-50%+linear", F: stepCurve(0.50)},
+		{Name: "step-70%+linear", F: stepCurve(0.70)},
 		{Name: "back-quad (x^2)", F: func(x float64) float64 { return x * x }},
 		{Name: "linear+stop@3replies", F: func(x float64) float64 { return x }, StopAtReplies: 3},
 		{Name: "front-cubic+stop@3", F: func(x float64) float64 { return 1 - math.Pow(1-x, 3) }, StopAtReplies: 3},
@@ -182,6 +207,158 @@ func main() {
 	log.Printf("simulating %d curves over %d posts...", len(curves), len(posts))
 	results := simulate(posts, cache, curves)
 	printResults(results)
+
+	if *jsonOutput != "" {
+		if err := writeJSONResults(*jsonOutput, posts, results); err != nil {
+			log.Fatalf("write json-output: %v", err)
+		}
+		log.Printf("structured results written to %s", *jsonOutput)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Structured output for Layer-3 monitoring (Laravel cron consumes this).
+// ---------------------------------------------------------------------------
+
+type jsonGroupRow struct {
+	Group                    string  `json:"group"`
+	Curve                    string  `json:"curve"`
+	PairsTotal               int     `json:"pairs_total"`
+	PairsInTime              int     `json:"pairs_in_time"`
+	PairsLate                int     `json:"pairs_late"`
+	PairsUnreachable         int     `json:"pairs_unreachable"`
+	NotifyVol                int     `json:"notify_vol"`
+	InTimePct                float64 `json:"in_time_pct"`
+	FirstRepliersTotal       int     `json:"first_repliers_total"`
+	FirstRepliersInTime      int     `json:"first_repliers_in_time"`
+	FirstRepliersLate        int     `json:"first_repliers_late"`
+	FirstRepliersUnreachable int     `json:"first_repliers_unreachable"`
+	FirstRepliersInTimePct   float64 `json:"first_repliers_in_time_pct"`
+	TickCaught               []int   `json:"tick_caught"` // histogram by tick index (0-based)
+}
+
+type jsonSummary struct {
+	Ticks                 int            `json:"ticks"`
+	LifetimeDays          float64        `json:"lifetime_days"`
+	MaxMinutes            float64        `json:"max_minutes"`
+	Mode                  string         `json:"mode"`
+	PostsEvaluated        int            `json:"posts_evaluated"`
+	ReplyP50Hours         float64        `json:"reply_p50_hours"`
+	ReplyP75Hours         float64        `json:"reply_p75_hours"`
+	ReplierRankP50        float64        `json:"replier_rank_p50"`
+	ReplierDriveMinP75    float64        `json:"replier_drive_min_p75"`
+	Rows                  []jsonGroupRow `json:"rows"`
+}
+
+func writeJSONResults(path string, posts []extractedPost, groups map[string][]curveResult) error {
+	out := jsonSummary{
+		Ticks:          *ticks,
+		LifetimeDays:   *lifetimeDays,
+		MaxMinutes:     *maxMinutes,
+		Mode:           *mode,
+		PostsEvaluated: len(posts),
+		Rows:           make([]jsonGroupRow, 0, 32),
+	}
+	// Reply-time / rank / drive-min summary stats from the data itself.
+	// Independent of any curve choice — they describe the underlying sample.
+	{
+		var replyHours, ranks, dmin []float64
+		// Need the cache to translate rank/drive-min, but it's not in scope here.
+		// We pass the cache via the global byID built in simulate(); instead just
+		// compute reply-times from the data (always available) and leave the rank/
+		// drive-min stats to be filled out below by a quick re-read of the cache.
+		_ = ranks
+		_ = dmin
+		for _, p := range posts {
+			arrival, err := time.Parse("2006-01-02 15:04:05", p.Arrival)
+			if err != nil {
+				continue
+			}
+			for _, r := range p.Repliers {
+				rt, err := time.Parse("2006-01-02 15:04:05", r.ReplyTime)
+				if err != nil {
+					continue
+				}
+				replyHours = append(replyHours, rt.Sub(arrival).Hours())
+			}
+		}
+		out.ReplyP50Hours = percentile(replyHours, 0.50)
+		out.ReplyP75Hours = percentile(replyHours, 0.75)
+	}
+	// Pull rank/drive-min summary from the cache file directly.
+	if cache, err := loadCache(*cachePath); err == nil {
+		var ranks, dmin []float64
+		for _, cp := range cache.Posts {
+			if cp.TotalReachable == 0 {
+				continue
+			}
+			for _, ep := range cp.Repliers {
+				if ep.Rank != nil {
+					ranks = append(ranks, float64(*ep.Rank)/float64(cp.TotalReachable))
+				}
+				if ep.DriveMin != nil {
+					dmin = append(dmin, *ep.DriveMin)
+				}
+			}
+		}
+		out.ReplierRankP50 = percentile(ranks, 0.50)
+		out.ReplierDriveMinP75 = percentile(dmin, 0.75)
+	}
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		for _, r := range groups[k] {
+			pct := 0.0
+			if r.PairsTotal > 0 {
+				pct = 100.0 * float64(r.PairsReachedInTime) / float64(r.PairsTotal)
+			}
+			firstPct := 0.0
+			if r.FirstRepliersTotal > 0 {
+				firstPct = 100.0 * float64(r.FirstRepliersInTime) / float64(r.FirstRepliersTotal)
+			}
+			out.Rows = append(out.Rows, jsonGroupRow{
+				Group:                    k,
+				Curve:                    r.Name,
+				PairsTotal:               r.PairsTotal,
+				PairsInTime:              r.PairsReachedInTime,
+				PairsLate:                r.PairsReachableButLate,
+				PairsUnreachable:         r.PairsUnreachable,
+				NotifyVol:                r.NotificationsSent,
+				InTimePct:                pct,
+				FirstRepliersTotal:       r.FirstRepliersTotal,
+				FirstRepliersInTime:      r.FirstRepliersInTime,
+				FirstRepliersLate:        r.FirstRepliersLate,
+				FirstRepliersUnreachable: r.FirstRepliersUnreachable,
+				FirstRepliersInTimePct:   firstPct,
+				TickCaught:               r.TickCaught,
+			})
+		}
+	}
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
+}
+
+func percentile(xs []float64, p float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	sorted := make([]float64, len(xs))
+	copy(sorted, xs)
+	sort.Float64s(sorted)
+	idx := int(p * float64(len(sorted)-1))
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(sorted) {
+		idx = len(sorted) - 1
+	}
+	return sorted[idx]
 }
 
 // ---------------------------------------------------------------------------
@@ -370,6 +547,26 @@ type curveResult struct {
 	PairsReachableButLate int  // we'd have notified them eventually but after they replied
 	PairsUnreachable  int     // never reached by max isochrone
 	NotificationsSent int     // total notifications across simulated runs
+
+	// First-replier breakdown (the replier whose reply_time was earliest).
+	// Arguably this is what matters most: catching the FIRST person who'd
+	// reply, since they're the most likely to actually claim the item.
+	FirstRepliersTotal   int
+	FirstRepliersInTime  int
+	FirstRepliersLate    int
+	FirstRepliersUnreachable int
+
+	// Per-tick "caught" histogram: how many in-time pairs were notified
+	// at each tick.  TickCaught[0] = caught at tick 1 (immediate batch),
+	// TickCaught[1] = caught at tick 2, etc.  Sums to PairsReachedInTime.
+	TickCaught []int
+
+	// Wasted notifications: emails sent at ticks that fired AFTER the post
+	// was already marked Taken/Promised/Withdrawn.  Counts the additional
+	// users notified at those late ticks; these emails go to people whose
+	// reply would no longer be useful.  A more aggressive front-load
+	// trades a bigger initial burst for fewer wasted later notifications.
+	NotificationsWasted int
 }
 
 // groupKey returns the bucket label for a post under the current --group-by
@@ -485,11 +682,23 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[strin
 				}
 			}
 
-			for _, idx := range replyOrder {
+			// Lazy-init the per-tick histogram once we know the tick count.
+			if results[ci].TickCaught == nil {
+				results[ci].TickCaught = make([]int, *ticks)
+			}
+
+			for replyIdx, idx := range replyOrder {
+				isFirstReplier := replyIdx == 0
 				results[ci].PairsTotal++
+				if isFirstReplier {
+					results[ci].FirstRepliersTotal++
+				}
 				ep := cp.Repliers[idx]
 				if ep.Rank == nil {
 					results[ci].PairsUnreachable++
+					if isFirstReplier {
+						results[ci].FirstRepliersUnreachable++
+					}
 					continue
 				}
 				rank := *ep.Rank
@@ -508,14 +717,24 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[strin
 				}
 				if notifyTick == -1 {
 					results[ci].PairsReachableButLate++
+					if isFirstReplier {
+						results[ci].FirstRepliersLate++
+					}
 					continue
 				}
 				wallSec := float64(notifyTick-1) * tickSec
 				notifyTime := arrival.Add(time.Duration(wallSec * float64(time.Second)))
 				if !notifyTime.After(replyTime) {
 					results[ci].PairsReachedInTime++
+					results[ci].TickCaught[notifyTick-1]++
+					if isFirstReplier {
+						results[ci].FirstRepliersInTime++
+					}
 				} else {
 					results[ci].PairsReachableButLate++
+					if isFirstReplier {
+						results[ci].FirstRepliersLate++
+					}
 				}
 			}
 
@@ -523,6 +742,35 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[strin
 			// Accurately reflects circuit-breaker savings for stop@N variants.
 			if stopTick > 0 {
 				results[ci].NotificationsSent += cumRank[stopTick-1]
+			}
+
+			// Wasted notifications: count emails sent at ticks that fired
+			// AFTER the post's recorded outcome time (Taken/Promised/etc).
+			// If the post never had an outcome we conservatively assume no
+			// waste — the schedule's notifications might still have been
+			// useful within the lifetime.
+			if p.OutcomeAt != nil && *p.OutcomeAt != "" {
+				outcomeT, err := time.Parse("2006-01-02 15:04:05", *p.OutcomeAt)
+				if err == nil && outcomeT.After(arrival) {
+					outcomeElapsed := outcomeT.Sub(arrival).Seconds()
+					if tickSec > 0 {
+						// Index of the tick during which the outcome happened.
+						// Notifications at ticks AFTER this are wasted.
+						firstWastedTick := int(outcomeElapsed/tickSec) + 2 // tick numbers are 1-based
+						if firstWastedTick <= stopTick {
+							// Volume sent at ticks [firstWastedTick, stopTick]
+							// = cumRank[stopTick-1] - cumRank[firstWastedTick-2]
+							endCum := cumRank[stopTick-1]
+							priorCum := 0
+							if firstWastedTick >= 2 {
+								priorCum = cumRank[firstWastedTick-2]
+							}
+							if endCum > priorCum {
+								results[ci].NotificationsWasted += endCum - priorCum
+							}
+						}
+					}
+				}
 			}
 		}
 		// Write back updated results for this group (slices-of-struct in a
@@ -557,14 +805,34 @@ func printResults(groups map[string][]curveResult) {
 }
 
 func printResultsRows(results []curveResult) {
+	fmt.Printf("%-30s  %7s  %7s  %12s  %8s  %s\n",
+		"", "all", "1st", "notify-vol", "wasted%", "where caught")
 	for _, r := range results {
-		pct := 0.0
+		allPct := 0.0
 		if r.PairsTotal > 0 {
-			pct = 100.0 * float64(r.PairsReachedInTime) / float64(r.PairsTotal)
+			allPct = 100.0 * float64(r.PairsReachedInTime) / float64(r.PairsTotal)
 		}
-		fmt.Printf("%-30s  %10d  %10d  %10d  %10d  %12d   in-time=%.1f%%\n",
-			r.Name, r.PairsTotal,
-			r.PairsReachedInTime, r.PairsReachableButLate, r.PairsUnreachable,
-			r.NotificationsSent, pct)
+		firstPct := 0.0
+		if r.FirstRepliersTotal > 0 {
+			firstPct = 100.0 * float64(r.FirstRepliersInTime) / float64(r.FirstRepliersTotal)
+		}
+		wastedPct := 0.0
+		if r.NotificationsSent > 0 {
+			wastedPct = 100.0 * float64(r.NotificationsWasted) / float64(r.NotificationsSent)
+		}
+		c1, c2to5, cRest := 0, 0, 0
+		for k, n := range r.TickCaught {
+			switch {
+			case k == 0:
+				c1 += n
+			case k < 5:
+				c2to5 += n
+			default:
+				cRest += n
+			}
+		}
+		caught := fmt.Sprintf("t1=%d t2-5=%d t6+=%d", c1, c2to5, cRest)
+		fmt.Printf("%-30s  %6.1f%%  %6.1f%%  %12d  %7.1f%%  %s\n",
+			r.Name, allPct, firstPct, r.NotificationsSent, wastedPct, caught)
 	}
 }

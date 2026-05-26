@@ -1,8 +1,8 @@
 # Ripple Notification Algorithm — Curve Evaluation
 
-Last updated: 2026-05-27.  Source data: 483 historical Freegle posts with
-1,128 (post, replier) pairs extracted from production, evaluated via
-`iznik-routing-go/cmd/ripplesim`.
+Last updated: 2026-05-27.  Source data: **4,264 historical Freegle posts**
+with **10,005 (post, replier) pairs** extracted from production over the
+last 6 months, evaluated via `iznik-routing-go/cmd/ripplesim`.
 
 ## What the simulator measures
 
@@ -12,78 +12,114 @@ replier *before* they actually replied?  We don't claim more replies would
 have happened — only that the schedule that reliably hits this metric is
 closer to the right shape.
 
+Four metrics are reported per (curve, group):
+
+| Metric | What it means |
+|--------|---------------|
+| **All in-time %** | Fraction of (post, replier) pairs where our schedule would have notified the replier before they replied |
+| **1st in-time %** | Same, but only counting the FIRST replier per post.  Arguably more important — 50 % of posts only get one reply |
+| **Notify-vol** | Total notifications sent across the simulated runs |
+| **Wasted %** | Fraction of those notifications sent AFTER the post had already been taken / promised — effectively wasted email |
+
+Plus a per-tick "where caught" histogram: how many of the in-time pairs
+were notified at tick 1, ticks 2–5, ticks 6+.
+
 The simulator does **not** depend on data from the algorithm being changed;
 the only inputs are user reply locations and reply times, which are
 algorithm-independent facts.  See `cmd/ripplesim/main.go` for details.
 
 ## Sample distribution (the constraint the algorithm has to fit)
 
-From the 790 reachable (post, replier) pairs:
+From the 5,000-post extraction (4,264 posts kept, 10,005 (post, replier) pairs):
 
-| Stat | Time-to-reply | Replier rank percentile | Replier drive-time |
-|------|---------------|--------------------------|---------------------|
-| min  | 13 min        | 0.00 (closest)           | 0.91 min            |
-| p25  | 3 hr          | 0.12                     | 7.9 min             |
-| p50  | 16 hr         | 0.29                     | 10.3 min            |
-| p75  | 48 hr         | 0.56                     | 16.3 min            |
-| p90  | 57 hr         | 0.73                     | 26.3 min            |
-| max  | 242 hr (10 d) | 0.95                     | 28.4 min            |
+| Stat | Time-to-FIRST-reply | Time-to-ANY-reply | Replies per post |
+|------|---------------------|-------------------|-------------------|
+| p25  | 1.4 hr              | 2.5 hr            | 1                 |
+| p50  | **7.7 hr**          | 14.8 hr           | 1                 |
+| p75  | 28.9 hr             | 45.9 hr           | 3                 |
+| p90  | 181 hr (7.5 d)      | 245 hr (10 d)     | 5                 |
+| p95  | 401 hr              | 523 hr            | 7                 |
 
-**Reads as**: half of replies arrive within 16 hours, three-quarters within
-48 hours.  Half come from users in the closest 29 % of reachable freeglers;
-three-quarters from users within ~16 drive-min.  5.7 % of replies came from
-users beyond the 30-min isochrone cap — unreachable by any version of this
-algorithm with the current max.
+**Reads as**:
 
-## Reach-in-time sweep: curve × lifetime
+- **Half of posts get their first reply within 7.7 hours.**  Three-quarters
+  within ~29 hours.  Any schedule whose first batch doesn't fire until day 2
+  is far too slow.
+- **50 % of posts only ever get one reply** — so the first-replier metric
+  applies to half the dataset; whatever we do for "later" repliers only
+  matters for the other half.
+- 88 % of posts are Offers, 12 % Wanted.  65 % end up marked Taken; the
+  remaining 35 % have no recorded outcome (could be silently taken,
+  withdrawn, or expired).
 
-Numbers are `% of reachable historical repliers our schedule would have
-notified before their actual reply time` (higher is better; ceiling is
-100 % minus the 5.7 % unreachable pool = 94.3 %).
+## Curve sweep on 5k sample (ticks=30, lifetime=3d, max-min=30)
 
-| Curve              | 0.5d | 1d  | 2d  | 3d  | 5d  | 7d  | 14d | 30d |
-|--------------------|------|-----|-----|-----|-----|-----|-----|-----|
-| linear             | 72%  | 64% | 56% | 50% | 44% | 41% | 34% | 28% |
-| front-quad (1-(1-x)²) | 78% | 72% | 64% | 60% | 56% | 52% | 44% | 38% |
-| front-cubic (1-(1-x)³) | 81% | 76% | 70% | 66% | 61% | 58% | 52% | 45% |
-| front-sqrt (x^0.5) | 83%  | 79% | 72% | 70% | 67% | 65% | 61% | 57% |
-| **front-heavy (x^0.3)** | **88%** | **86%** | **83%** | **80%** | **79%** | **78%** | **77%** | **74%** |
-| back-quad (x²)     | 61%  | 52% | 40% | 34% | 28% | 25% | 19% | 12% |
+| Curve | URBAN 1st in-time | URBAN wasted% | RURAL 1st in-time | RURAL wasted% |
+|-------|-------------------|---------------|-------------------|---------------|
+| linear            | 48.8% | 24.3% | 49.2% | 19.4% |
+| front-quad        | 60.1% | 16.8% | 58.2% | 13.1% |
+| front-cubic       | 66.3% | 12.7% | 62.8% | 9.7% |
+| front-sqrt (x^0.5) | 72.8% | 16.3% | 67.3% | 12.9% |
+| front-heavy (x^0.3) | 84.5% | 11.2% | 77.6% | 8.8% |
+| front-x^0.2       | 89.4% | 8.1%  | 82.9% | 6.3% |
+| **front-x^0.15**  | **91.2%** | **6.3%** | **85.6%** | **4.9%** |
+| **step-70%+linear** | **92.0%** | 7.6%  | **86.0%** | 6.0%  |
+| back-quad         | 30.3% | 31.8% | 33.6% | 25.7% |
 
 ## Reading the table
 
-1. **Front-heavy (x^0.3) dominates every column.**  Why: at x = 1/30 (tick 1
-   of 30), x^0.3 = 0.367 — tick 1 covers 37 % of reachable users in one go.
-   The same percentage regardless of lifetime, which is why front-heavy
-   is roughly lifetime-insensitive.
+1. **More aggressive front-loading wins on BOTH metrics.**  This was a
+   surprise — we expected a tradeoff (aggressive → high in-time but high
+   waste).  Instead: if you blast 90 % of notifications immediately, only
+   the trailing 10 % can be sent late enough to be wasted.  Spreading the
+   load across the lifetime puts most notifications in the "late" zone
+   where they coincide with the post being taken.
 
-2. **Linear degrades sharply with longer lifetimes** because the
-   notification rate per tick is `total / N` — spreading the same 30 ticks
-   over 30 days means each one fires ~1 day apart, missing the bulk of
-   historical replies that arrive in the first 48 hours.
+2. **The top two curves (front-x^0.15 and step-70%) are within 1 pp on
+   first-replier in-time and within 1.5 pp on waste.**  step-70% is
+   slightly better at catching first repliers; front-x^0.15 has slightly
+   lower waste.  Either is defensible.  **step-70%+linear** is more
+   interpretable: "blast 70 % immediately, then ripple the remaining 30 %
+   linearly across the 3-day lifetime".
 
-3. **Back-loaded is uniformly bad.**  Confirms intuition: delaying the
-   first batch costs us in the short reply window.
+3. **Per-tick caught histogram** (step-70%, urban): t1=4885 / t2-5=36 /
+   t6+=56.  98 % of in-time catches happen at tick 1.  The trailing
+   linear ticks are only catching the long tail.
 
-4. **`stop@3replies` reduces the in-time metric** in the simulator
-   because the simulator counts every historical replier including ones
-   who arrived after we stopped.  In reality those later replies wouldn't
-   have happened (the item is taken), so the metric is somewhat unfair to
-   the circuit-breaker.  Circuit-breakers should be evaluated on
-   notification-volume saving, not reach-in-time.
+4. **First-replier and all-replier metrics converge** at the most
+   aggressive curves.  For step-70% urban they're both 92.0 %, meaning
+   when we catch the first replier we also catch the rest.  For linear
+   urban they diverge (55.2 % all vs 48.8 % first) because the slow ramp
+   catches later repliers more readily than the first.
+
+5. **Back-loaded is the worst on every axis.**  Includes both lowest
+   in-time AND highest waste (because notifications pile up at the end
+   when the post has already been taken).
 
 ## Recommendation
 
 | Parameter | Recommended value | Rationale |
 |-----------|------------------|-----------|
-| Curve     | **front-heavy (x^0.3)** | Highest reach-in-time at every lifetime; matches the observed shape of historical reply distance distribution (most repliers are close) |
+| Curve     | **step-70%+linear** | 92 % urban / 86 % rural first-replier in-time; 8 % / 6 % wasted notifications; 98 % of catches in tick 1 |
 | Lifetime  | **3 days**       | Captures p75 reply window; longer is wasted notification volume |
 | Ticks     | 30               | Tick interval ~2.4 hr at 3-day lifetime; finer than that doesn't materially help in-time but adds load |
-| Max isochrone | 30 drive-min | Beyond this only catches 5.7 % more replies; diminishing return on Dijkstra cost |
-| Circuit-breaker | Stop on `promised`/`taken` (not on 3 replies alone) | Replies-count cutoff hurts reach-in-time; status-based cutoff is honest |
+| Max isochrone | 30 drive-min | Beyond this only catches ~5 % more replies; diminishing return on Dijkstra cost |
+| Circuit-breaker | Stop on `promised`/`taken` outcome | Replies-count cutoff hurts reach-in-time; status-based cutoff is honest |
 
-Expected reach-in-time with these defaults: **~80 %** (extrapolating from
-the 80.4 % the simulator measured on the 483-post sample).
+Expected first-replier reach-in-time with these defaults: **~92 % urban,
+86 % rural**, with **~7-8 % wasted notifications**.
+
+The step-70% curve is essentially "legacy-style bombardment for 70 % of
+reachable users at tick 1, then ripple the remaining 30 % over the next
+3 days".  This:
+- preserves the immediate-notification behaviour for nearby users (which
+  the legacy 2-mile notifier already does well), and
+- adds long-tail expansion for users beyond the legacy 2-mile box, with
+  a deprivation-fairness extension if turned on.
+
+The trailing 30 % is where the new algorithm provides value over legacy:
+it reaches users the legacy system never would (further out, harder to
+get to by drive-time), without bombarding them all at once.
 
 ## Caveats
 
