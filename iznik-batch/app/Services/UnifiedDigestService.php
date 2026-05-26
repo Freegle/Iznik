@@ -220,7 +220,7 @@ class UnifiedDigestService
         $digestTracker = $this->getOrCreateDigestTracker($user, $mode);
 
         // Get all posts from user's groups since last digest.
-        $posts = $this->getPostsForUser($user, $digestTracker);
+        $posts = $this->getPostsForUser($user, $digestTracker, $mode);
 
         if ($posts->isEmpty()) {
             return 'no_posts';
@@ -274,16 +274,38 @@ class UnifiedDigestService
     /**
      * Get all posts for a user from their member groups since last digest.
      *
+     * V1 parity: which groups contribute depends on whether the user has a
+     * global simplemail setting.
+     *   - simplemail set (Full/Basic): the global setting governs every group
+     *     — include posts from ALL approved memberships.
+     *   - simplemail NULL: per-group emailfrequency decides; for immediate
+     *     mode include only groups with emailfrequency=-1, for daily mode
+     *     only groups with emailfrequency=24. Otherwise a user who set just
+     *     one group to immediate would receive an immediate digest covering
+     *     posts from all their daily-frequency groups too.
+     *
      * @param User $user
      * @param UserDigest $tracker
+     * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
      * @return Collection
      */
-    protected function getPostsForUser(User $user, UserDigest $tracker): Collection
+    protected function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
-        // Get group IDs user is a member of.
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->pluck('groupid');
+        $globalSimplemail = is_array($user->settings)
+            ? ($user->settings['simplemail'] ?? null)
+            : null;
+
+        $membershipQuery = $user->memberships()
+            ->where('collection', Membership::COLLECTION_APPROVED);
+
+        if ($globalSimplemail === null) {
+            $freq = $mode === self::MODE_IMMEDIATE
+                ? Membership::EMAIL_FREQUENCY_IMMEDIATE
+                : Membership::EMAIL_FREQUENCY_DAILY;
+            $membershipQuery->where('emailfrequency', $freq);
+        }
+
+        $groupIds = $membershipQuery->pluck('groupid');
 
         if ($groupIds->isEmpty()) {
             return collect();

@@ -449,6 +449,64 @@ class UnifiedDigestServiceTest extends TestCase
     }
 
     /**
+     * V1 parity: when a user has no global simplemail, only the groups whose
+     * per-group emailfrequency matches the digest mode contribute posts.
+     * A user with one group set to immediate (-1) and another set to daily
+     * (24) must get an immediate digest containing only posts from the
+     * immediate group — not posts from the daily group.
+     */
+    public function test_immediate_mode_post_selection_respects_per_group_emailfrequency(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['notificationmails' => true];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        // Need a separate user to post the items because the service strips
+        // out the recipient's own posts before sending.
+        $poster = $this->createTestUser();
+
+        $immediateGroup = $this->createTestGroup();
+        $dailyGroup = $this->createTestGroup();
+
+        $this->createMembership($recipient, $immediateGroup, [
+            'emailfrequency' => \App\Models\Membership::EMAIL_FREQUENCY_IMMEDIATE,
+        ]);
+        $this->createMembership($recipient, $dailyGroup, [
+            'emailfrequency' => \App\Models\Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        // Poster also joins so messages_groups rows exist via createTestMessage.
+        $this->createMembership($poster, $immediateGroup);
+        $this->createMembership($poster, $dailyGroup);
+
+        $immediatePost = $this->createTestMessage($poster, $immediateGroup, [
+            'subject' => 'OFFER: Immediate group item (TestLocation)',
+        ]);
+        $dailyPost = $this->createTestMessage($poster, $dailyGroup, [
+            'subject' => 'OFFER: Daily group item (TestLocation)',
+        ]);
+
+        $reflection = new \ReflectionClass($this->service);
+        $getPosts = $reflection->getMethod('getPostsForUser');
+        $getPosts->setAccessible(true);
+
+        // Fresh tracker (no lastmsgdate) — first-digest path keeps a 24h
+        // window which both posts fall inside.
+        $trackerCreate = $reflection->getMethod('getOrCreateDigestTracker');
+        $trackerCreate->setAccessible(true);
+        $tracker = $trackerCreate->invoke($this->service, $recipient, UnifiedDigestService::MODE_IMMEDIATE);
+
+        $posts = $getPosts->invoke($this->service, $recipient, $tracker, UnifiedDigestService::MODE_IMMEDIATE);
+
+        $postIds = $posts->pluck('id')->all();
+        $this->assertContains($immediatePost->id, $postIds, 'Immediate-frequency group post must be included');
+        $this->assertNotContains($dailyPost->id, $postIds, 'Daily-frequency group post must NOT be included in immediate digest');
+    }
+
+    /**
      * Empty allowlist means "no restriction" — every simplemail=Full user is
      * eligible. This is the "fully on" state once we're done piloting.
      */
