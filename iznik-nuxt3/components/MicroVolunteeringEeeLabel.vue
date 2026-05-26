@@ -132,13 +132,10 @@ async function submit(callback) {
   }
 
   await microVolunteeringStore.respond({
-    messageid: props.item.messageid,
-    attid: props.item.attid,
-    eeelabels: {
-      condition: condition.value,
-      weight:    weight.value,
-      size:      size.value,
-    },
+    eee_attachment_id: props.item.attid,
+    eee_condition:     condition.value,
+    eee_weight:        weight.value,
+    eee_size:          size.value,
   })
 
   callback?.()

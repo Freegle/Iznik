@@ -149,13 +149,10 @@ describe('MicroVolunteeringEeeLabel', () => {
       expect(mockMicroVolunteeringStore.respond).toHaveBeenCalledTimes(1)
       expect(mockMicroVolunteeringStore.respond).toHaveBeenCalledWith(
         expect.objectContaining({
-          messageid: testItem.messageid,
-          attid: testItem.attid,
-          eeelabels: {
-            condition: 'reusable',
-            weight: '5_20kg',
-            size: 'medium',
-          },
+          eee_attachment_id: testItem.attid,
+          eee_condition: 'reusable',
+          eee_weight: '5_20kg',
+          eee_size: 'medium',
         }),
       )
     })
@@ -171,11 +168,9 @@ describe('MicroVolunteeringEeeLabel', () => {
 
       expect(mockMicroVolunteeringStore.respond).toHaveBeenCalledWith(
         expect.objectContaining({
-          eeelabels: {
-            condition: 'unsure',
-            weight: 'unsure',
-            size: 'unsure',
-          },
+          eee_condition: 'unsure',
+          eee_weight: 'unsure',
+          eee_size: 'unsure',
         }),
       )
     })

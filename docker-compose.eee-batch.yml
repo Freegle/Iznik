@@ -48,3 +48,6 @@ services:
       - EEE_OPENAI_MODEL=${EEE_OPENAI_MODEL:-gpt-4o}
       - EEE_TOGETHER_MODEL=${EEE_TOGETHER_MODEL:-}
       - EEE_OLLAMA_BASE_URL=${EEE_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      # Secret shared with freegle-eee-browser for syncing MV labels to its SQLite.
+      - EEE_SYNC_SECRET=${EEE_SYNC_SECRET:-}
+      - EEE_SYNC_URL=${EEE_SYNC_URL:-https://freegle-eee-browser.fly.dev}
