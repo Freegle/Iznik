@@ -205,6 +205,16 @@ func GetChallenge(c *fiber.Ctx) error {
 		}
 	}
 
+	// Try EEELabel first (ahead of AIImageReview/CheckMessage). The EEE
+	// labelling pipeline relies on volunteer labels reaching quorum quickly,
+	// and AIImageReview / CheckMessage have plentiful backlogs that would
+	// otherwise crowd it out entirely.
+	if contains(challengeTypes, ChallengeEEELabel) {
+		if challenge := getEEELabelChallenge(db, userID); challenge != nil {
+			return c.JSON(challenge)
+		}
+	}
+
 	// Randomize between approved message review and AI image review (50/50) so that
 	// AI image review actually gets served — otherwise CheckMessage always has work
 	// and AI image review is never reached.
@@ -233,16 +243,6 @@ func GetChallenge(c *fiber.Ctx) error {
 		}
 	} else if wantAIImage {
 		if challenge := getAIImageReviewChallenge(db, userID); challenge != nil {
-			return c.JSON(challenge)
-		}
-	}
-
-	// Try EEE label challenge — present after AI image review so heavier
-	// existing flows (CheckMessage, AIImageReview) still get served first
-	// when present, but EEELabel runs ahead of PhotoRotate which is rarely
-	// satisfied.
-	if contains(challengeTypes, ChallengeEEELabel) {
-		if challenge := getEEELabelChallenge(db, userID); challenge != nil {
 			return c.JSON(challenge)
 		}
 	}

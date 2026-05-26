@@ -12,9 +12,12 @@ return new class extends Migration
             return;
         }
 
-        // Part 1 — INSTANT in MySQL 8.0+: append the EEELabel enum value
-        // and add four new nullable columns at the end of the table.
-        // Both operations skip the row rewrite that ENUM-mid-list edits force.
+        // Single INPLACE + LOCK=NONE ALTER on prod (Percona 8.0 + Galera TOI).
+        // INSTANT can't be used here — Galera TOI doesn't support it for ENUM
+        // extension / multi-clause ALTERs (see FreegleDocker memory
+        // reference_galera_enum_alter). INPLACE is still online, ms-scale
+        // metadata lock only. eee_attachment_id is used (not msgid) so the new
+        // unique key does not clash with the existing (userid,msgid) key.
         if (!Schema::hasColumn('microactions', 'eee_attachment_id')) {
             DB::statement("
                 ALTER TABLE microactions
@@ -27,18 +30,6 @@ return new class extends Migration
                     'ItemSize','ItemWeight','Survey','Survey2','Invite','AIImageReview',
                     'EEELabel'
                   ),
-                  ALGORITHM=INSTANT
-            ");
-        }
-
-        // Part 2 — INPLACE + LOCK=NONE (still online, no table lock).
-        // Index/unique-key adds cannot be INSTANT. Uses eee_attachment_id, not
-        // msgid, so it does not clash with the existing (userid,msgid) unique
-        // key used by CheckMessage.
-        $indexes = DB::select("SHOW INDEX FROM microactions WHERE Key_name IN ('idx_eee_attachment_id','userid_7')");
-        if (empty($indexes)) {
-            DB::statement("
-                ALTER TABLE microactions
                   ADD INDEX idx_eee_attachment_id (eee_attachment_id),
                   ADD UNIQUE KEY userid_7 (userid, eee_attachment_id),
                   ALGORITHM=INPLACE, LOCK=NONE
