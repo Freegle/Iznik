@@ -156,24 +156,31 @@ class VolunteeringDigestService
             // User::scopeReceivingOurMails so this query matches the V1
             // sendOurMails() criteria. Without those, the V2 dry-run was
             // 1.34× V1's send count (149k vs 111k).
+            // V1 parity: never send to one of our own per-user-alias domains
+            // (users.ilovefreegle.org, groups.ilovefreegle.org, etc.) — those
+            // loop back through IncomingMailService::handleDirectMail and
+            // materialise as User2User chat messages from the noreply system
+            // user. Use externalEmailJoinSubquery so the join picks each user's
+            // best non-internal email (preferred DESC, validated DESC), falling
+            // back to a less-preferred external address when preferred=1 is the
+            // internal alias.
             $members = User::query()
                 ->select([
-                    'users_emails.email',
+                    'ue.email',
                     'users.id as userId',
                     'locations.lat',
                     'locations.lng',
                 ])
                 ->join('memberships', 'memberships.userid', '=', 'users.id')
-                ->join('users_emails', function ($join) {
-                    $join->on('users_emails.userid', '=', 'memberships.userid')
-                        ->where('users_emails.preferred', '=', 1);
+                ->joinSub(User::externalEmailJoinSubquery(), 'ue', function ($join) {
+                    $join->on('ue.userid', '=', 'memberships.userid');
                 })
                 ->leftJoin('locations', 'locations.id', '=', 'users.lastlocation')
                 ->where('memberships.groupid', $groupRow->id)
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED)
                 ->where('memberships.volunteeringallowed', 1)
                 ->where('memberships.emailfrequency', '!=', 0)
-                ->whereNotNull('users_emails.email')
+                ->whereNotNull('ue.email')
                 ->receivingOurMails()
                 ->get();
 

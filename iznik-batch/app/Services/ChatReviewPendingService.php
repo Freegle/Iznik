@@ -137,17 +137,14 @@ class ChatReviewPendingService
     private function getModEmails(int $groupId): array
     {
         return DB::table('memberships')
-            ->join('users_emails', function ($join) {
-                $join->on('users_emails.userid', '=', 'memberships.userid')
-                    ->where('users_emails.preferred', '=', 1);
-            })
+            ->joinSub(\App\Models\User::externalEmailJoinSubquery(), 'ue', 'ue.userid', '=', 'memberships.userid')
             ->join('users', 'users.id', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupId)
             ->whereIn('memberships.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
             ->whereNull('users.deleted')
-            ->where('users_emails.email', '!=', self::SYSTEM_MOD_EMAIL)
-            ->pluck('users_emails.email')
+            ->where('ue.email', '!=', self::SYSTEM_MOD_EMAIL)
+            ->pluck('ue.email')
             ->toArray();
     }
 }

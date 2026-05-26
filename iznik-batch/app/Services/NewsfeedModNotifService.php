@@ -56,16 +56,13 @@ class NewsfeedModNotifService
             $modsChecked++;
 
             $mod = DB::table('users')
-                ->join('users_emails', function ($join) {
-                    $join->on('users_emails.userid', '=', 'users.id')
-                        ->where('users_emails.preferred', '=', 1);
-                })
+                ->joinSub(\App\Models\User::externalEmailJoinSubquery(), 'ue', 'ue.userid', '=', 'users.id')
                 ->where('users.id', $modId)
                 ->select([
                     'users.id',
                     'users.fullname',
                     'users.settings',
-                    'users_emails.email',
+                    'ue.email',
                 ])
                 ->first();
 

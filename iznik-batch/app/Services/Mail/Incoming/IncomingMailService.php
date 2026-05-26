@@ -2893,6 +2893,23 @@ class IncomingMailService
             return $this->dropped("Direct mail from unknown user");
         }
 
+        // Don't loop our own outbound mail back in as a chat. Members' preferred
+        // email is their users.ilovefreegle.org alias, so digests/notifications
+        // we send to them (Volunteer Roundup, Community Event Roundup, etc.)
+        // arrive here with From: noreply@ilovefreegle.org. handleDirectMail
+        // would otherwise materialise every outbound digest as a User2User chat
+        // between the Freegle noreply system user and the recipient.
+        $noreplyAddr = strtolower(config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'));
+        if (strtolower(trim((string) $email->fromAddress)) === $noreplyAddr) {
+            Log::info('Direct mail from system noreply - dropping (outbound loopback)', [
+                'from' => $email->fromAddress,
+                'to' => $email->envelopeTo,
+                'subject' => $email->subject,
+            ]);
+
+            return $this->dropped("Direct mail from system noreply address");
+        }
+
         // Don't create a chat between the same user
         if ($senderUser->id === $recipientUser->id) {
             Log::info('Direct mail to self - dropping', [

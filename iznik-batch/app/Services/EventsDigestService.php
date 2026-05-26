@@ -147,18 +147,19 @@ class EventsDigestService
             // "deliverable" — V1 events.php enforced these via sendOurMails()
             // per recipient, and skipping them inflated the V2 dry-run from
             // ~49k (V1 baseline) to 722k sends.
+            // Use externalEmailJoinSubquery so we never send to a per-user
+            // alias on one of our own domains (V1 parity).
             $members = User::query()
-                ->select(['users_emails.email', 'users.id as userId'])
+                ->select(['ue.email', 'users.id as userId'])
                 ->join('memberships', 'memberships.userid', '=', 'users.id')
-                ->join('users_emails', function ($join) {
-                    $join->on('users_emails.userid', '=', 'memberships.userid')
-                        ->where('users_emails.preferred', '=', 1);
+                ->joinSub(User::externalEmailJoinSubquery(), 'ue', function ($join) {
+                    $join->on('ue.userid', '=', 'memberships.userid');
                 })
                 ->where('memberships.groupid', $groupRow->id)
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED)
                 ->where('memberships.eventsallowed', 1)
                 ->where('memberships.emailfrequency', '!=', 0)
-                ->whereNotNull('users_emails.email')
+                ->whereNotNull('ue.email')
                 ->receivingOurMails()
                 ->get();
 

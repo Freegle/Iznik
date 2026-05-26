@@ -72,16 +72,15 @@ class GroupClosedReminderService
             ->value('userid');
 
         $query = DB::table('memberships')
-            ->join('users_emails', 'users_emails.userid', '=', 'memberships.userid')
+            ->joinSub(\App\Models\User::externalEmailJoinSubquery(), 'ue', 'ue.userid', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupId)
             ->whereIn('memberships.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
-            ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-            ->where('users_emails.preferred', 1);
+            ->where('memberships.collection', Membership::COLLECTION_APPROVED);
 
         if ($systemUserId) {
             $query->where('memberships.userid', '!=', $systemUserId);
         }
 
-        return $query->pluck('users_emails.email')->all();
+        return $query->pluck('ue.email')->all();
     }
 }

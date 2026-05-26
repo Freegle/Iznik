@@ -107,6 +107,12 @@ class AlertService
                 ->where('userid', $userId)
                 ->whereNull('bounced')
                 ->where('preferred', 1)
+                ->where(function ($q) {
+                    // Don't mail to our own per-user-alias domains — loops back as chat.
+                    foreach (\App\Models\User::internalEmailNotLikePatterns() as $p) {
+                        $q->where('email', 'NOT LIKE', $p);
+                    }
+                })
                 ->get(['id', 'email']);
 
             foreach ($emails as $emailRow) {

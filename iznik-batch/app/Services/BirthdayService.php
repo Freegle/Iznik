@@ -121,10 +121,9 @@ class BirthdayService
 
     private function getPreferredEmail(int $userId): ?string
     {
-        return DB::table('users_emails')
-            ->where('userid', $userId)
-            ->where('preferred', 1)
-            ->value('email');
+        // V1 parity: pick the best external email (preferred DESC, validated DESC),
+        // excluding our own per-user-alias domains so the mail can't loop back as chat.
+        return \App\Models\User::find($userId)?->email_preferred;
     }
 
     private function canReceiveOurMails(int $userId): bool

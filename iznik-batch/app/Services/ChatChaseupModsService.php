@@ -95,11 +95,8 @@ class ChatChaseupModsService
                 continue;
             }
 
-            // Get member details
-            $memberEmail = DB::table('users_emails')
-                ->where('userid', $memberId)
-                ->orderByDesc('preferred')
-                ->value('email');
+            // Get member details (skip our own per-user-alias domains so the mail doesn't loop back).
+            $memberEmail = \App\Models\User::find($memberId)?->email_preferred;
 
             $member = DB::table('users')->where('id', $memberId)->first();
             $memberName = $member?->fullname
@@ -123,10 +120,7 @@ class ChatChaseupModsService
                 ->toArray();
 
             foreach ($mods as $modId) {
-                $modEmail = DB::table('users_emails')
-                    ->where('userid', $modId)
-                    ->orderByDesc('preferred')
-                    ->value('email');
+                $modEmail = \App\Models\User::find($modId)?->email_preferred;
 
                 if (!$modEmail) {
                     continue;
