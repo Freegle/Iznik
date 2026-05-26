@@ -81,7 +81,7 @@ func TestAIImageReview_GetChallenge(t *testing.T) {
 	// Create a test AI image with high usage.
 	imgID := createTestAIImage(t, "test-sofa-"+prefix, 100)
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result microvolunteering.Challenge
@@ -114,7 +114,7 @@ func TestAIImageReview_UsageCountOrder(t *testing.T) {
 	createTestAIImage(t, "low-use-"+prefix, 5)
 	highID := createTestAIImage(t, "high-use-"+prefix, 500)
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result microvolunteering.Challenge
@@ -261,7 +261,7 @@ func TestAIImageReview_QuorumReached(t *testing.T) {
 	assert.Equal(t, int64(5), voteCount)
 
 	// The checker should NOT get this image since quorum is reached.
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+checkerToken, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+checkerToken+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result map[string]interface{}
@@ -296,7 +296,7 @@ func TestAIImageReview_SkipAlreadyReviewed(t *testing.T) {
 		microvolunteering.ChallengeAIImageReview, userID, reviewedID)
 
 	// Should get the unreviewed image.
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result microvolunteering.Challenge
@@ -357,7 +357,7 @@ func TestAIImageReview_RandomizationWithCheckMessage(t *testing.T) {
 	aiCount := 0
 
 	for i := 0; i < 40; i++ {
-		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
 		assert.Equal(t, 200, resp.StatusCode)
 
 		var result microvolunteering.Challenge
