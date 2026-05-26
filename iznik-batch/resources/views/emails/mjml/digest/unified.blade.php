@@ -59,6 +59,14 @@
                     @endif
                     <span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
                 </mj-text>
+                {{-- First posted (V1 single.html parity — only shown when the
+                     message has been reposted, otherwise this duplicates the
+                     arrival time above). --}}
+                @if($post['firstPostedFormatted'] ?? null)
+                <mj-text padding="4px 0 0 0" font-size="11px" color="#999999">
+                    First posted&nbsp;{{ $post['firstPostedFormatted'] }}
+                </mj-text>
+                @endif
             </mj-column>
         </mj-section>
 
@@ -106,12 +114,69 @@
             </mj-column>
         </mj-section>
 
-        {{-- Donations CTA (V1 single.html parity — "Donating helps too!") --}}
+        {{-- Jobs section (V1 single.html parity — "Jobs near you" + CTA).
+             Mirrors the ChatNotification jobs section so the layout and link
+             tracking shape match. Falls back to a standalone "Donating helps
+             too!" button when the user has no nearby jobs so we always keep
+             the donation CTA the V1 template carried. --}}
+        @if(isset($jobAds) && $jobAds->isNotEmpty())
+        <mj-section background-color="#F7F6EC" padding="20px 20px 10px 20px" border-top="1px solid #e9ecef">
+            <mj-column>
+                <mj-text font-size="16px" font-weight="bold" color="#333333" align="center" padding-bottom="10px">
+                    Jobs near you
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        <mj-section background-color="#F7F6EC" padding="5px 20px">
+            <mj-column>
+                <mj-table cellpadding="0" cellspacing="0" width="100%">
+                    @foreach($jobAds as $job)
+                    <tr>
+                        @if($job->image_url ?? null)
+                        <td style="width: 50px; padding: 6px 8px 6px 0; vertical-align: middle;">
+                            <a href="{{ $job->tracked_url }}">
+                                <img src="{{ $job->image_url }}" width="40" height="40" alt="" style="border-radius: 4px; display: block;" />
+                            </a>
+                        </td>
+                        @endif
+                        <td style="padding: 6px 0; vertical-align: middle;">
+                            <a href="{{ $job->tracked_url }}" style="color: #338808; font-weight: bold; text-decoration: none; font-size: 14px;">
+                                {{ $job->title }}
+                            </a>
+                            @if($job->location ?? null)
+                            <br/><span style="color: #666666; font-size: 12px;">{{ $job->location }}</span>
+                            @endif
+                        </td>
+                    </tr>
+                    @endforeach
+                </mj-table>
+            </mj-column>
+        </mj-section>
+        <mj-section background-color="#F7F6EC" padding="0 20px 10px 20px">
+            <mj-column>
+                <mj-text font-size="12px" color="#666666" line-height="1.4">
+                    If you are interested and click, it will raise a little to help keep Freegle running and free to use.
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        <mj-section background-color="#F7F6EC" padding="0 20px 20px 20px">
+            <mj-column width="50%">
+                <mj-button href="{{ $jobsUrl }}" background-color="#00008B" color="#ffffff" font-size="14px" inner-padding="10px 25px" border-radius="3px" width="90%">
+                    View more jobs
+                </mj-button>
+            </mj-column>
+            <mj-column width="50%">
+                <mj-button href="{{ $donateUrl }}" background-color="#338808" color="#ffffff" font-size="14px" inner-padding="10px 25px" border-radius="3px" width="90%">
+                    Donating helps too!
+                </mj-button>
+            </mj-column>
+        </mj-section>
+        @else
         <mj-section background-color="#ffffff" padding="0 20px 20px">
             <mj-column>
                 <mj-divider border-color="#eeeeee" border-width="1px" padding="0 0 16px 0" />
                 <mj-button
-                    href="https://freegle.in/paypal1510"
+                    href="{{ $donateUrl ?? 'https://freegle.in/paypal1510' }}"
                     background-color="#338808"
                     color="#ffffff"
                     font-size="14px"
@@ -124,6 +189,7 @@
                 </mj-button>
             </mj-column>
         </mj-section>
+        @endif
 
         @else
         {{-- ═══════════════════════════════════════════════════════════════ --}}
@@ -240,6 +306,19 @@
             </mj-column>
         </mj-section>
         @endforeach
+        @endif
+
+        {{-- Per-group / per-frequency line (V1 single.html parity).
+             Only useful in immediate mode where the email is about one
+             specific group's post — daily digests cover all groups. --}}
+        @if(($primaryGroupName ?? null) && ($frequencyText ?? null))
+        <mj-section background-color="#f5f5f5" padding="10px 20px 0 20px">
+            <mj-column>
+                <mj-text font-size="11px" color="#666666" align="center" line-height="1.5">
+                    You're a member of <strong>{{ $primaryGroupName }}</strong> and asked to receive updates <strong>{{ $frequencyText }}</strong>.
+                </mj-text>
+            </mj-column>
+        </mj-section>
         @endif
 
         @include('emails.mjml.partials.footer', ['email' => $user->email_preferred, 'settingsUrl' => $settingsUrl, 'unsubscribeUrl' => $unsubscribeUrl])

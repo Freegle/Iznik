@@ -85,6 +85,37 @@ class UnifiedDigest extends MjmlMailable
      */
     public function build(): static
     {
+        // Jobs section — V1 single.html parity. Same shape ChatNotification
+        // already uses, so the MJML loop is a drop-in.
+        $jobAdsData = $this->user->getJobAds();
+        $jobAds = $jobAdsData['jobs'] ?? collect();
+        $jobCount = count($jobAds);
+        foreach ($jobAds as $index => $job) {
+            $job->tracked_url = $this->trackedUrl(
+                $this->userSite . '/job/' . $job->id .
+                    '?source=email&campaign=unified_digest&position=' . $index .
+                    '&list_length=' . $jobCount,
+                'job_ad_' . $index,
+                'job_click'
+            );
+        }
+        $jobsUrl = $this->trackedUrl($this->userSite . '/jobs', 'jobs_view_more', 'jobs_view_more');
+        $donateUrl = $this->trackedUrl(config('freegle.donate.url', 'https://freegle.in/paypal1510'), 'donate', 'donate');
+
+        // Per-group footer: "you're a member of {group}, set to receive
+        // {frequency}". For immediate mode use the post's group; for daily
+        // mode it doesn't single one out so we leave it null.
+        $primaryGroupName = null;
+        if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
+            $firstPost = $this->posts->first();
+            $groupId = $firstPost['postedToGroups'][0] ?? null;
+            if ($groupId) {
+                $row = DB::table('groups')->where('id', $groupId)->first(['nameshort', 'namefull']);
+                $primaryGroupName = $row ? ($row->namefull ?: $row->nameshort) : null;
+            }
+        }
+        $frequencyText = $this->mode === UnifiedDigestService::MODE_IMMEDIATE ? 'immediately' : 'daily';
+
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
             'posts' => $this->preparedPosts,
@@ -95,6 +126,11 @@ class UnifiedDigest extends MjmlMailable
             'unsubscribeUrl' => $this->trackedUrl($this->userSite . '/unsubscribe', 'footer_unsubscribe', 'unsubscribe'),
             'browseUrl' => $this->trackedUrl($this->userSite . '/browse', 'browse_cta', 'browse'),
             'userSite' => $this->userSite,
+            'jobAds' => $jobAds,
+            'jobsUrl' => $jobsUrl,
+            'donateUrl' => $donateUrl,
+            'primaryGroupName' => $primaryGroupName,
+            'frequencyText' => $frequencyText,
         ], $this->getTrackingData()), 'emails.text.digest.unified')
             ->to($this->user->email_preferred)
             ->applyLogging('UnifiedDigest');
@@ -102,6 +138,42 @@ class UnifiedDigest extends MjmlMailable
         // Attach the X-Freegle-* tracking headers and RFC 8058
         // List-Unsubscribe headers that MjmlMailable provides.
         $this->configureMessage();
+
+        // V1-parity headers added on every digest (immediate + daily).
+        // - X-Freegle-Mail-Type: legacy V1 header name TN consumes (sits next
+        //   to the V2-style X-Freegle-Email-Type that MjmlMailable already adds).
+        // - Feedback-ID: Google FBL spec — {qualifier}:{userid}:{type}:{sender}.
+        //   In immediate mode qualifier is the message id; in daily we
+        //   use 0 since the email isn't tied to one specific message.
+        // - Reply-To (immediate only): even though From is the replyto-
+        //   address and most clients reply to From, some (and some webmails)
+        //   prefer Reply-To when set, so we set both.
+        $messageQualifier = 0;
+        $replyToAddr = null;
+        $replyToName = null;
+        if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
+            $firstPost = $this->posts->first();
+            $message = $firstPost['message'];
+            $messageQualifier = $message->id;
+            $domain = config('freegle.mail.user_domain');
+            $replyToAddr = "replyto-{$message->id}-{$this->user->id}@{$domain}";
+            $replyToName = $message->fromname ?: 'Freegler';
+        }
+        $userId = $this->user->id ?? 0;
+        $result->withSymfonyMessage(function ($symfonyMessage) use (
+            $messageQualifier, $userId, $replyToAddr, $replyToName
+        ) {
+            $headers = $symfonyMessage->getHeaders();
+            if (!$headers->has('Feedback-ID')) {
+                $headers->addTextHeader('Feedback-ID', "{$messageQualifier}:{$userId}:Digest:freegle");
+            }
+            if (!$headers->has('X-Freegle-Mail-Type')) {
+                $headers->addTextHeader('X-Freegle-Mail-Type', 'Digest');
+            }
+            if ($replyToAddr) {
+                $symfonyMessage->replyTo(new \Symfony\Component\Mime\Address($replyToAddr, $replyToName));
+            }
+        });
 
         // Render AMP variant if enabled.
         if ($this->isAmpEnabled()) {
@@ -297,6 +369,19 @@ class UnifiedDigest extends MjmlMailable
             $posterAvatarUrl = $this->resolveAvatarUrl($posterUser, 36);
             $posterName = $posterUser?->displayname ?? $message->fromname ?? 'Freegler';
 
+            // firstPosted: show "First posted ..." line only when the message has
+            // actually been reposted to this group — i.e. the pivot arrival is
+            // materially after the original messages.date. Matches V1
+            // Digest.php's `count($atts['postings']) > 1` rule and uses the same
+            // "Mon, 25th May 9:00am" format the V1 template renders.
+            $firstPostedFormatted = null;
+            $originalDate = $message->date instanceof Carbon
+                ? $message->date
+                : ($message->date ? Carbon::parse($message->date) : null);
+            if ($originalDate && $arrival->diffInMinutes($originalDate) > 60) {
+                $firstPostedFormatted = $originalDate->setTimezone('Europe/London')->format('D, jS F g:ia');
+            }
+
             return [
                 'message' => $message,
                 'messageText' => $messageText,
@@ -315,6 +400,7 @@ class UnifiedDigest extends MjmlMailable
                 'distanceText' => $distanceText,
                 'posterName' => $posterName,
                 'posterAvatarUrl' => $posterAvatarUrl,
+                'firstPostedFormatted' => $firstPostedFormatted,
             ];
         });
     }
