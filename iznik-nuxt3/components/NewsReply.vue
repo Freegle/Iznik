@@ -282,7 +282,7 @@
       imgflag="Newsfeed"
       @hidden="showNewsPhotoModal = false"
     />
-    <ProfileModal
+    <LazyProfileModal
       v-if="showProfileModal"
       :id="userid"
       @hidden="showProfileModal = false"
@@ -333,9 +333,6 @@ const NewsPhotoModal = defineAsyncComponent(() =>
 )
 const NewsLovesModal = defineAsyncComponent(() => import('./NewsLovesModal'))
 const NewsEditModal = defineAsyncComponent(() => import('./NewsEditModal'))
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
-)
 const ConfirmModal = defineAsyncComponent(() =>
   import('~/components/ConfirmModal.vue')
 )

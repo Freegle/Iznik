@@ -132,7 +132,7 @@
         @confirm="hide"
         @hidden="showChatReport = false"
       />
-      <ProfileModal
+      <LazyProfileModal
         v-if="showProfileModal"
         :id="otheruser?.id"
         close-on-message
@@ -205,9 +205,6 @@ import { useRouter } from '#imports'
 import { useAuthStore } from '~/stores/auth'
 import { useMe } from '~/composables/useMe'
 
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
-)
 const ChatBlockModal = defineAsyncComponent(() =>
   import('~/components/ChatBlockModal')
 )

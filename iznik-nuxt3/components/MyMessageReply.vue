@@ -100,7 +100,7 @@
     </div>
 
     <!-- Modals -->
-    <PromiseModal
+    <LazyPromiseModal
       v-if="replyuser && showPromiseModal"
       :messages="[message]"
       :selected-message="message.id"
@@ -116,7 +116,7 @@
       :selected-user="replyuser?.id"
       @hidden="showRenegeModal = false"
     />
-    <ProfileModal
+    <LazyProfileModal
       v-if="showProfileModal"
       :id="replyuser?.id"
       @hidden="showProfileModal = false"
@@ -139,10 +139,6 @@ const UserRatings = defineAsyncComponent(() =>
 )
 const PromiseModal = defineAsyncComponent(() => import('./PromiseModal'))
 const RenegeModal = defineAsyncComponent(() => import('./RenegeModal'))
-const ProfileModal = defineAsyncComponent(() =>
-  import('~/components/ProfileModal')
-)
-
 const props = defineProps({
   message: {
     type: Object,
