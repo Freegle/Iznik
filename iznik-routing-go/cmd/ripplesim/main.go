@@ -148,9 +148,13 @@ func main() {
 	// ----- run simulation against several curves -----
 	curves := []curve{
 		{Name: "linear", F: func(x float64) float64 { return x }},
-		{Name: "front", F: func(x float64) float64 { return 1 - math.Pow(1-x, 2) }},
-		{Name: "back", F: func(x float64) float64 { return x * x }},
+		{Name: "front-quad (1-(1-x)^2)", F: func(x float64) float64 { return 1 - math.Pow(1-x, 2) }},
+		{Name: "front-cubic (1-(1-x)^3)", F: func(x float64) float64 { return 1 - math.Pow(1-x, 3) }},
+		{Name: "front-sqrt (x^0.5)", F: func(x float64) float64 { return math.Sqrt(x) }},
+		{Name: "front-heavy (x^0.3)", F: func(x float64) float64 { return math.Pow(x, 0.3) }},
+		{Name: "back-quad (x^2)", F: func(x float64) float64 { return x * x }},
 		{Name: "linear+stop@3replies", F: func(x float64) float64 { return x }, StopAtReplies: 3},
+		{Name: "front-cubic+stop@3", F: func(x float64) float64 { return 1 - math.Pow(1-x, 3) }, StopAtReplies: 3},
 	}
 
 	log.Printf("simulating %d curves over %d posts...", len(curves), len(posts))
@@ -357,7 +361,15 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) []curveRe
 	}
 
 	lifetimeSec := *lifetimeDays * 24 * 3600
-	tickSec := lifetimeSec / float64(*ticks)
+	// Tick 1 fires at t=0 (post arrival), tick N fires at t=lifetime.
+	// So the N ticks span [0, lifetime] inclusive: tick K fires at
+	// t = (K-1) * lifetime / (N-1).  Without this, tick 1 was delayed
+	// by a full tickSec and we missed every replier inside that initial
+	// window — historically the bulk of them respond within 24 hours.
+	var tickSec float64
+	if *ticks > 1 {
+		tickSec = lifetimeSec / float64(*ticks-1)
+	}
 
 	for _, p := range posts {
 		cp, ok := byID[p.PostID]
@@ -421,7 +433,7 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) []curveRe
 					results[ci].PairsReachableButLate++
 					continue
 				}
-				wallSec := float64(notifyTick) * tickSec
+				wallSec := float64(notifyTick-1) * tickSec
 				notifyTime := arrival.Add(time.Duration(wallSec * float64(time.Second)))
 				if !notifyTime.After(replyTime) {
 					results[ci].PairsReachedInTime++
