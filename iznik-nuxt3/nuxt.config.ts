@@ -2,6 +2,11 @@ import eslintPlugin from 'vite-plugin-eslint2'
 import { VitePWA } from 'vite-plugin-pwa'
 import { sentryVitePlugin } from '@sentry/vite-plugin'
 import config from './config'
+import { branding } from './branding.config'
+
+// Cached, brand-aware page-title string used in both `app.head.title` and
+// the og:title / twitter:title meta tags so they stay in lockstep.
+const fullTitle = `${branding.siteName} - ${branding.tagline}`
 
 // Mobile version change:
 // - config.js: MOBILE_VERSION eg 3.1.9
@@ -600,7 +605,7 @@ export default defineNuxtConfig({
       htmlAttrs: {
         lang: 'en',
       },
-      title: "Freegle - Don't throw it away, give it away!",
+      title: fullTitle,
       script: [
         {
           // Capture URL search params before Nuxt router hydration strips them.
@@ -978,25 +983,23 @@ export default defineNuxtConfig({
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { hid: 'author', name: 'author', content: 'Freegle' },
+        { hid: 'author', name: 'author', content: branding.siteName },
         { name: 'supported-color-schemes', content: 'light' },
         { name: 'color-scheme', content: 'light' },
         {
           name: 'facebook-domain-verification',
-          content: 'zld0jt8mvf06rt1c3fnxvls3zntxj6',
+          content: branding.facebookDomainVerification,
         },
         { hid: 'og:type', property: 'og:type', content: 'website' },
         {
           hid: 'description',
           name: 'description',
-          content:
-            "Give and get stuff for free in your local community.  Don't just recycle - reuse, freecycle and freegle!",
+          content: branding.description,
         },
         {
           hid: 'apple-mobile-web-app-title',
           name: 'apple-mobile-web-app-title',
-          content:
-            "Give and get stuff for free in your local community.  Don't just recycle - reuse, freecycle and freegle!",
+          content: branding.description,
         },
 
         {
@@ -1008,9 +1011,9 @@ export default defineNuxtConfig({
         {
           hid: 'og:title',
           property: 'og:title',
-          content: "Freegle - Don't throw it away, give it away!",
+          content: fullTitle,
         },
-        { hid: 'og:site_name', property: 'og:site_name', content: 'Freegle' },
+        { hid: 'og:site_name', property: 'og:site_name', content: branding.siteName },
         {
           hid: 'og:url',
           property: 'og:url',
@@ -1024,19 +1027,17 @@ export default defineNuxtConfig({
         {
           hid: 'og:description',
           property: 'og:description',
-          content:
-            "Give and get stuff for free in your local community.  Don't just recycle - reuse, freecycle and freegle!",
+          content: branding.description,
         },
         {
           hid: 'twitter:title',
           name: 'twitter:title',
-          content: "Freegle - Don't throw it away, give it away!",
+          content: fullTitle,
         },
         {
           hid: 'twitter:description',
           name: 'twitter:description',
-          content:
-            "Give and get stuff for free in your local community.  Don't just recycle - reuse, freecycle and freegle!",
+          content: branding.description,
         },
         {
           hid: 'twitter:image',
@@ -1046,14 +1047,14 @@ export default defineNuxtConfig({
         {
           hid: 'twitter:image:alt',
           name: 'twitter:image:alt',
-          content: 'The Freegle logo',
+          content: branding.logoAlt,
         },
         {
           hid: 'twitter:card',
           name: 'twitter:card',
           content: 'summary_large_image',
         },
-        { hid: 'twitter:site', name: 'twitter:site', content: 'thisisfreegle' },
+        { hid: 'twitter:site', name: 'twitter:site', content: branding.twitterHandle },
         {
           hid: 'OMG-Verify-V1',
           name: 'OMG-Verify-V1',
