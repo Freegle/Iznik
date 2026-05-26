@@ -644,7 +644,14 @@ export default defineNuxtConfig({
         // The order in which we load scripts is excruciatingly and critically important - see below.
         //
         // But we want to reduce LCP, so we defer all this by loading with async.
-        {
+        //
+        // Gated on config.ADS_SCRIPT_ENABLED so deployments that don't run ads
+        // (modtools layer, third-party re-skins) can omit this ~5 kB inline
+        // script and the Prebid auction it triggers. Default true preserves
+        // Freegle's existing behaviour.
+        ...(config.ADS_SCRIPT_ENABLED
+          ? [
+              {
           type: 'text/javascript',
           body: true,
           async: true,
@@ -978,7 +985,9 @@ export default defineNuxtConfig({
           } catch (e) {
             console.error('Error initialising ads and consent:', e.message);
           }`,
-        },
+              },
+            ]
+          : []),
       ],
       meta: [
         { charset: 'utf-8' },

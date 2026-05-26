@@ -78,6 +78,13 @@ const CONFIG = {
   PLAYWIRE_PUB_ID: process.env.PLAYWIRE_PUB_ID,
   PLAYWIRE_WEBSITE_ID: process.env.PLAYWIRE_WEBSITE_ID,
 
+  // Inline Prebid + Google Tag init script in app.head.script. Enabled by
+  // default — Freegle relies on this for its ad auction. Set
+  // ADS_SCRIPT_ENABLED=false to omit the ~5 kB inline script (and stop
+  // identifying the page to ad brokers) for builds that don't render ads
+  // (modtools, layered re-skins, embedded views).
+  ADS_SCRIPT_ENABLED: process.env.ADS_SCRIPT_ENABLED !== 'false',
+
   AD_PREBID_CONFIG: [
     {
       code: '/22794232631/freegle_sticky',
