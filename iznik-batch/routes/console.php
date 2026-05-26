@@ -334,11 +334,14 @@ Schedule::command('tn:sync')
 //     ->runInBackground();
 //
 // Immediate mode - notifications for users who want instant alerts.
+// Eligibility mirrors V1: a user matches if their global simplemail
+// setting is Full, OR they have no global setting and at least one
+// approved membership with per-group emailfrequency=-1 (immediate).
 // Pilot rollout: FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST defaults to a single
-// pilot recipient so this can run in parallel with V1 `mail:digest -1` on
-// bulk3 without producing duplicate sends for the wider user base. Clear
-// the env var (or set '*') to flip the feature on for everyone once V1 is
-// retired.
+// recipient so this can run in parallel with V1 `mail:digest -1` on bulk3
+// without producing duplicate sends for the wider user base. Clear the
+// env var (or set '*') to flip the feature on for everyone once V1 is
+// retired. No --limit so we drain the full queue every minute.
 Schedule::command('mail:digest:unified --mode=immediate')
     ->everyMinute()
     ->withoutOverlapping()

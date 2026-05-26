@@ -379,7 +379,8 @@ class UnifiedDigestServiceTest extends TestCase
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
 
-        // User has Basic setting (daily only).
+        // User has Basic setting (daily only). Basic isn't NULL so the
+        // per-group fallback below cannot rescue them either.
         $user->update([
             'settings' => json_encode(['simplemail' => User::SIMPLE_MAIL_BASIC]),
             'lastaccess' => now(),
@@ -391,6 +392,59 @@ class UnifiedDigestServiceTest extends TestCase
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $user->id);
 
         // User should not be processed for immediate mode.
+        $this->assertEquals(0, $stats['users_processed']);
+    }
+
+    /**
+     * V1 parity: a user with no global simplemail setting but at least one
+     * approved membership configured for per-group immediate frequency
+     * (emailfrequency=-1) must be eligible for immediate digests. This mirrors
+     * the existing daily/Basic fallback that catches users with per-group
+     * daily (emailfrequency=24) but no global simplemail.
+     */
+    public function test_immediate_mode_includes_users_with_per_group_immediate_membership(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $user = $this->createTestUser();
+        // No simplemail key at all in settings — purely per-group control.
+        $user->settings = ['notificationmails' => true];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
+
+        $group = $this->createTestGroup();
+        // createMembership() defaults to EMAIL_FREQUENCY_IMMEDIATE, which is
+        // exactly the per-group setting this path looks for.
+        $this->createMembership($user, $group);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $user->id);
+
+        $this->assertEquals(1, $stats['users_processed']);
+    }
+
+    /**
+     * Counter-test for the per-group immediate path: a user with no simplemail
+     * AND only non-immediate per-group frequencies must NOT be picked up.
+     * Otherwise the fallback would over-match.
+     */
+    public function test_immediate_mode_skips_users_whose_only_membership_is_daily(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $user = $this->createTestUser();
+        $user->settings = ['notificationmails' => true];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, [
+            'emailfrequency' => \App\Models\Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $user->id);
+
         $this->assertEquals(0, $stats['users_processed']);
     }
 

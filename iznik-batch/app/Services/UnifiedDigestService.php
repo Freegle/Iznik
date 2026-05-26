@@ -136,11 +136,28 @@ class UnifiedDigestService
 
         // Filter by simple mail setting.
         if ($mode === self::MODE_IMMEDIATE) {
-            // Full mode = immediate notifications.
-            $query->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.simplemail')) = ?", [User::SIMPLE_MAIL_FULL]);
+            // V1 parity: a user is eligible for immediate notifications if EITHER
+            // the global simplemail setting is Full OR they have no global
+            // simplemail set but at least one approved membership configured for
+            // immediate per-group frequency (emailfrequency=-1). The two arms
+            // mirror the daily/Basic case below — global setting OR per-group
+            // setting when the global is unset.
+            $query->where(function ($q) {
+                $q->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.simplemail')) = ?", [User::SIMPLE_MAIL_FULL])
+                    ->orWhere(function ($q2) {
+                        $q2->whereRaw("JSON_EXTRACT(settings, '$.simplemail') IS NULL")
+                            ->whereExists(function ($subquery) {
+                                $subquery->select(DB::raw(1))
+                                    ->from('memberships')
+                                    ->whereColumn('memberships.userid', 'users.id')
+                                    ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+                                    ->where('memberships.collection', Membership::COLLECTION_APPROVED);
+                            });
+                    });
+            });
 
             // Safety gate — FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST. Default (or
-            // '*') allows every simplemail=Full user; a comma-separated list
+            // '*') allows every eligible user; a comma-separated list
             // restricts to those addresses. The checked-in config default
             // pins this to a single pilot address so prod deploys start
             // restricted; ops clears the env var (or sets it to '*') to
