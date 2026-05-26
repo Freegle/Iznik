@@ -580,6 +580,11 @@ func groupKey(p extractedPost) string {
 		return "?"
 	case "ru-coarse":
 		return ruCoarse(p.RUCategory)
+	case "type":
+		if p.Type == "" {
+			return "?"
+		}
+		return p.Type
 	default:
 		return "all"
 	}

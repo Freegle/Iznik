@@ -165,6 +165,29 @@ get to by drive-time), without bombarding them all at once.
    That can only be measured by Layer-2 parallel-run with the legacy
    system in production.
 
+## Does the optimal curve vary by post type? — answered
+
+Stratification by `--group-by=type` at lifetime=1d:
+
+| Curve | Offer 1st in-time | Offer wasted | Wanted 1st in-time | Wanted wasted |
+|-------|--------------------|---------------|---------------------|----------------|
+| linear            | 58.7% | 9.3% | 84.0% | 0.0%* |
+| front-heavy x^0.3 | 84.9% | 4.3% | 93.0% | 0.0%* |
+| front-x^0.15      | 90.3% | 2.4% | 95.4% | 0.0%* |
+| step-70%+linear   | 90.7% | 2.9% | 94.3% | 0.0%* |
+
+\* Wanted posts don't get a "Taken" outcome in our schema (only Offers
+do), so the wasted-notification metric is always 0 for them.  This is
+a measurement limitation, not real behaviour.
+
+**Conclusions**:
+
+- **Wanted posts are 4-5 pp easier to reach in-time** than Offers under
+  the same curve.  Probably because Wanted posts have fewer replies per
+  post (less competition) and a more eager responder demographic.
+- **Same curve wins for both types** — step-70 and front-x^0.15 dominate
+  regardless of post type.  No need for per-type parameters.
+
 ## Does the optimal curve vary by area type? — answered
 
 `rippleextract` now records each post's ONS RU classification (A1..F2)
