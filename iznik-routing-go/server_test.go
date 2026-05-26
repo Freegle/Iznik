@@ -203,6 +203,8 @@ func TestIsochroneEndpoint_DefaultMinutes(t *testing.T) {
 // TestNearbyGroups_NoDBReturnsEmptyCollection verifies that /v1/groups/nearby
 // returns a valid GeoJSON FeatureCollection (empty) when no MySQL is configured.
 func TestNearbyGroups_NoDBReturnsEmptyCollection(t *testing.T) {
+	// Clear MYSQL_HOST so ensureGroupsDB cannot reconnect even if groupsDB is nil.
+	t.Setenv("MYSQL_HOST", "")
 	groupsDB = nil // ensure no DB for this test
 	app := newInternalApp(t)
 	req := httptest.NewRequest(http.MethodGet, "/v1/groups/nearby?lat=51.75&lng=-1.25", nil)

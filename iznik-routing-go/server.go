@@ -205,13 +205,16 @@ func handleNearbyFreeglers(g *Graph, spatialURL string) fiber.Handler {
 			}
 		}
 
+		// Record the total located count before any sampling cap.
+		totalLocated := len(pts)
+
 		// Uniform random sample if over the display cap.
 		if len(pts) > maxFreeglersReturned {
 			rand.Shuffle(len(pts), func(i, j int) { pts[i], pts[j] = pts[j], pts[i] })
 			pts = pts[:maxFreeglersReturned]
 		}
 
-		return c.JSON(fiber.Map{"freeglers": pts})
+		return c.JSON(fiber.Map{"freeglers": pts, "total_located": totalLocated})
 	}
 }
 

@@ -335,6 +335,10 @@ onMounted(async () => {
   let debounceTimer = null
   let isochroneGeneration = 0
   let fitViewOnNextIsochrone = false
+  // Local deprivation baseline: fraction of Q1–Q3 freeglers within the 30-min
+  // drive standard isochrone (fairness=0) for the current location.
+  // Starts at 60 (national approximate); updated by fetchLocalBaseline().
+  let localBaseline = 60
 
   const timeSlider = document.getElementById('rippling-time-slider')
   const fairnessSlider = document.getElementById('rippling-fairness-slider')
@@ -477,8 +481,30 @@ onMounted(async () => {
       .addTo(map)
     if (fly) map.flyTo([lat, lng], Math.max(map.getZoom(), 13))
     fitViewOnNextIsochrone = true
+    fetchLocalBaseline(lat, lng)
     fetchAndDrawGroups(lat, lng)
     updateIsochrone()
+  }
+
+  // Fetch the natural deprivation fraction for this location: the proportion of
+  // freeglers within a 30-minute drive (no fairness adjustment) that are in
+  // deprived quintiles (Q1–Q3). This becomes the "proportionate" baseline for
+  // the swingometer so that the needle measures algorithmic effect, not the
+  // area's inherent demographics.
+  async function fetchLocalBaseline(lat, lng) {
+    try {
+      const url = apiUrl(
+        `/v1/fairness?lat=${lat.toFixed(6)}&lng=${lng.toFixed(6)}&minutes=30&mode=drive&fairness=0`
+      )
+      const r = await fetch(url)
+      if (!r.ok) return
+      const data = await r.json()
+      if (data.fairness_score !== undefined && data.fairness_score >= 0) {
+        localBaseline = Math.round(data.fairness_score * 100)
+      }
+    } catch (e) {
+      // Keep previous baseline on error
+    }
   }
 
   function scheduleUpdate() {
@@ -706,11 +732,13 @@ onMounted(async () => {
     const existing = svgEl.querySelector('#rpl-fairness-clip')
     if (existing) existing.remove()
 
-    const stdLyr = layers.standard
-    const stdEl = stdLyr && stdLyr.getElement && stdLyr.getElement()
-    const stdD = stdEl && stdEl.getAttribute('d')
-
-    if (!stdD) {
+    // Rebuild the clip path from geographic coordinates via latLngToLayerPoint
+    // rather than reading the SVG <path d="…"> attribute directly.
+    // Reading 'd' is unreliable: Leaflet may have a <g transform> inside the
+    // SVG that offsets element-local coordinates from the SVG root's user
+    // space, causing the clip to drift during zoom/pan and produce straight-
+    // line rendering artifacts at the SVG viewport boundary.
+    if (!lastIsoData || !hasRing(lastIsoData.standard)) {
       Object.entries(layers).forEach(([k, lyr]) => {
         if (k !== 'standard') {
           const el = lyr.getElement && lyr.getElement()
@@ -719,6 +747,16 @@ onMounted(async () => {
       })
       return
     }
+
+    const geoRing = lastIsoData.standard.geometry.coordinates[0]
+    const smoothed = chaikinSmooth(geoRing)
+    const pts = smoothed
+      .map(([lng, lat]) => {
+        const p = map.latLngToLayerPoint([lat, lng])
+        return `${p.x.toFixed(1)},${p.y.toFixed(1)}`
+      })
+      .join(' L ')
+    const stdD = `M ${pts} Z`
 
     const clipPath = document.createElementNS(
       'http://www.w3.org/2000/svg',
@@ -729,9 +767,10 @@ onMounted(async () => {
       'http://www.w3.org/2000/svg',
       'path'
     )
+    const B = 1e6
     combinedPath.setAttribute(
       'd',
-      'M -99999 -99999 L 99999 -99999 L 99999 99999 L -99999 99999 Z ' + stdD
+      `M -${B} -${B} L ${B} -${B} L ${B} ${B} L -${B} ${B} Z ${stdD}`
     )
     combinedPath.setAttribute('clip-rule', 'evenodd')
     clipPath.appendChild(combinedPath)
@@ -746,7 +785,9 @@ onMounted(async () => {
   }
 
   function swingometerAngleXY(pct) {
-    const angle = Math.max(-90, Math.min(90, ((pct - 60) / 40) * 90))
+    // Centre the needle on localBaseline (not a fixed 60%), so the gauge
+    // measures deviation from the area's natural demographics.
+    const angle = Math.max(-90, Math.min(90, ((pct - localBaseline) / 40) * 90))
     const rad = (angle * Math.PI) / 180
     const R = 42
     return {
@@ -763,11 +804,14 @@ onMounted(async () => {
     const { x, y } = swingometerAngleXY(pct)
     needle.setAttribute('x2', x)
     needle.setAttribute('y2', y)
+    // ±8% band around local baseline is "Balanced"
+    const lo = localBaseline - 8
+    const hi = localBaseline + 8
     const swingLabel =
-      pct < 52 ? 'Affluent bias' : pct > 68 ? 'Deprived bias' : 'Balanced'
-    const swingColor = pct < 52 ? '#4477aa' : pct > 68 ? '#d73027' : '#1a9850'
-    const aboveBaseline = pct >= 60
-    const diff = Math.abs(pct - 60)
+      pct < lo ? 'Affluent bias' : pct > hi ? 'Deprived bias' : 'Balanced'
+    const swingColor = pct < lo ? '#4477aa' : pct > hi ? '#d73027' : '#1a9850'
+    const aboveBaseline = pct >= localBaseline
+    const diff = Math.abs(pct - localBaseline)
     labelEl.textContent = swingLabel
     labelEl.style.color = swingColor
     pctEl.innerHTML = `${pct}% of Freeglers within reach are in deprived areas<br>
@@ -775,7 +819,7 @@ onMounted(async () => {
         aboveBaseline ? '#1a9850' : '#d73027'
       };font-weight:600">${aboveBaseline ? '▲' : '▼'} ${diff}% ${
       aboveBaseline ? 'above' : 'below'
-    } proportionate</span>`
+    } proportionate for this area (${localBaseline}%)</span>`
   }
 
   function updateStats(data) {
@@ -839,7 +883,9 @@ onMounted(async () => {
           const data = await fetch(url).then((r) => r.json())
           if (data.fairness_score === undefined) break
           best = mid
-          if (data.fairness_score < 0.6) lo = mid
+          // Search for the fairness value that achieves the LOCAL baseline
+          // fraction, not the hardcoded national average.
+          if (data.fairness_score < localBaseline / 100) lo = mid
           else hi = mid
         } catch (e) {
           break
@@ -858,6 +904,9 @@ onMounted(async () => {
   let allFreeglers = []
   let freeglersMarkers = []
   let freeglersMapTimer = null
+  // Total located freeglers in the area BEFORE the 2000-point display cap.
+  // allFreeglers.length may be capped; use this for estimates.
+  let totalLocatedFromServer = 0
 
   async function fetchFreeglers() {
     if (currentLat === null) return
@@ -869,8 +918,14 @@ onMounted(async () => {
       const r = await fetch(url)
       const data = await r.json()
       allFreeglers = (data.freeglers || []).filter((e) => e && e.lat && e.lng)
+      // Use server-reported total (before any sampling cap) for estimates.
+      totalLocatedFromServer =
+        typeof data.total_located === 'number'
+          ? data.total_located
+          : allFreeglers.length
     } catch (e) {
       allFreeglers = []
+      totalLocatedFromServer = 0
     }
   }
 
@@ -907,8 +962,10 @@ onMounted(async () => {
   function drawFreeglersLayer() {
     freeglersMarkers.forEach((m) => map.removeLayer(m))
     freeglersMarkers = []
-    if (!showFreeglers) return
+    // Always build the grid so updateFreeglersInside can compute the count and
+    // deprivation percentage even when dots are hidden (toggle off or zoom < 11).
     buildFreeglersGrid()
+    if (!showFreeglers) return
     if (map.getZoom() < FREEGLER_DOT_MIN_ZOOM) return
     freeglersGrid.forEach((g) => {
       const m = L.circleMarker([g.lat, g.lng], {
@@ -964,8 +1021,6 @@ onMounted(async () => {
   const UNLOCATED_FRACTION = 0.35
 
   function updateFreeglersInside(data) {
-    if (freeglersGrid.length === 0 && allFreeglers.length > 0)
-      buildFreeglersGrid()
     let insideCount = 0
     let deprivedCount = 0
     freeglersGrid.forEach((g, i) => {
@@ -979,20 +1034,21 @@ onMounted(async () => {
         freeglersMarkers[i].setStyle({ fillOpacity: 0.12, opacity: 0.2 })
     })
 
-    const totalLocated = allFreeglers.length
+    // Use the server-reported total (before any 2000-point sampling cap) as the
+    // denominator so the estimate is correct even for large urban areas.
+    const totalLocated = totalLocatedFromServer || allFreeglers.length
     const bar = document.getElementById('rippling-freegler-bar')
     if (insideCount >= 0 && totalLocated > 0) {
-      const fraction = insideCount / totalLocated
-      const estimatedUnlocated = Math.round(
-        totalLocated * (UNLOCATED_FRACTION / (1 - UNLOCATED_FRACTION))
-      )
-      const unlocatedShare = Math.round(estimatedUnlocated * fraction)
-      const totalEstimate = insideCount + unlocatedShare
+      // Total estimate: located / (1 - UNLOCATED_FRACTION)
+      // The deprived fraction is read from the sample which is a random uniform
+      // subset — the fraction is statistically representative even when capped.
+      const totalEstimate = Math.round(totalLocated / (1 - UNLOCATED_FRACTION))
+      const unlocatedShare = totalEstimate - totalLocated
       bar.innerHTML =
         `<div style="font-size:13px;font-weight:600;color:#333;line-height:1.4">~${totalEstimate.toLocaleString()} would be notified</div>` +
-        `<div style="font-size:10px;color:#666;margin-top:1px">${insideCount.toLocaleString()} with known location` +
+        `<div style="font-size:10px;color:#666;margin-top:1px">${totalLocated.toLocaleString()} with known location` +
         (unlocatedShare > 0
-          ? ` + ~${unlocatedShare.toLocaleString()} unlocated share`
+          ? ` + ~${unlocatedShare.toLocaleString()} estimated unlocated`
           : '') +
         `</div><div style="font-size:10px;color:#aaa;font-style:italic;margin-top:3px">TrashNothing members use a separate algorithm</div>`
       bar.style.display = ''

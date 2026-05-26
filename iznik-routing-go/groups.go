@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
@@ -127,11 +128,13 @@ type groupsCollection struct {
 }
 
 var groupsDB *sql.DB
+var groupsDBMu sync.Mutex
 
-func initGroupsDB() {
+// groupsDSN builds the MySQL DSN from environment variables.
+func groupsDSN() string {
 	host := os.Getenv("MYSQL_HOST")
 	if host == "" {
-		return
+		return ""
 	}
 	port := os.Getenv("MYSQL_PORT")
 	if port == "" {
@@ -146,7 +149,15 @@ func initGroupsDB() {
 	if dbname == "" {
 		dbname = "iznik"
 	}
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", user, pass, host, port, dbname)
+	return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", user, pass, host, port, dbname)
+}
+
+// initGroupsDB attempts to connect to MySQL at startup.
+func initGroupsDB() {
+	dsn := groupsDSN()
+	if dsn == "" {
+		return
+	}
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
 		log.Printf("groups: MySQL open error: %v", err)
@@ -158,7 +169,57 @@ func initGroupsDB() {
 		return
 	}
 	groupsDB = db
+	host := os.Getenv("MYSQL_HOST")
+	port := os.Getenv("MYSQL_PORT")
+	if port == "" {
+		port = "3306"
+	}
+	dbname := os.Getenv("MYSQL_DBNAME")
+	if dbname == "" {
+		dbname = "iznik"
+	}
 	log.Printf("groups: MySQL connected (%s:%s/%s)", host, port, dbname)
+}
+
+// ensureGroupsDB returns the groups DB connection, reconnecting lazily if
+// the initial startup connection failed (e.g. the DB tunnel was not yet up).
+func ensureGroupsDB() *sql.DB {
+	groupsDBMu.Lock()
+	defer groupsDBMu.Unlock()
+	if groupsDB != nil {
+		if err := groupsDB.Ping(); err == nil {
+			return groupsDB
+		}
+		// Stale connection — close and reconnect.
+		groupsDB.Close()
+		groupsDB = nil
+	}
+	dsn := groupsDSN()
+	if dsn == "" {
+		return nil
+	}
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		log.Printf("groups: MySQL reconnect open error: %v", err)
+		return nil
+	}
+	if err := db.Ping(); err != nil {
+		log.Printf("groups: MySQL reconnect ping error: %v", err)
+		db.Close()
+		return nil
+	}
+	groupsDB = db
+	host := os.Getenv("MYSQL_HOST")
+	port := os.Getenv("MYSQL_PORT")
+	if port == "" {
+		port = "3306"
+	}
+	dbname := os.Getenv("MYSQL_DBNAME")
+	if dbname == "" {
+		dbname = "iznik"
+	}
+	log.Printf("groups: MySQL reconnected (%s:%s/%s)", host, port, dbname)
+	return groupsDB
 }
 
 // handleNearbyGroups returns a GeoJSON FeatureCollection of Freegle groups near
@@ -171,7 +232,8 @@ func initGroupsDB() {
 // to avoid incorrect Mercator conversion.
 func handleNearbyGroups() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if groupsDB == nil {
+		db := ensureGroupsDB()
+		if db == nil {
 			return c.JSON(groupsCollection{Type: "FeatureCollection", Features: []groupFeature{}})
 		}
 		latS := c.Query("lat")
@@ -192,7 +254,7 @@ func handleNearbyGroups() fiber.Handler {
 		boxLatMin := latF - 1.5
 		boxLatMax := latF + 1.5
 
-		rows, err := groupsDB.Query(`
+		rows, err := db.Query(`
 			SELECT id, nameshort, ST_AsText(polyindex) AS wkt,
 			       ST_Contains(polyindex,
 			           ST_GeomFromText(CONCAT('POINT(', ?, ' ', ?, ')'), 3857)) AS contains_pt
