@@ -1097,8 +1097,8 @@ onMounted(async () => {
       if (ripplePlaying) {
         const imbalance = Math.abs(pct - localBaseline)
         if (rippleMaxImbalance === null || imbalance > Math.abs(rippleMaxImbalance.pct - localBaseline)) {
-          // rippleStep is 0-based frame index; actual drive time = (step+1)*0.5 min.
-          rippleMaxImbalance = { pct, minute: (rippleStep + 1) * 0.5 }
+          // rippleStep is 0-based frame index; actual drive time = (step+1)*RIPPLE_STEP_MINS.
+          rippleMaxImbalance = { pct, minute: (rippleStep + 1) * RIPPLE_STEP_MINS }
         }
       }
     }
@@ -1495,6 +1495,12 @@ onMounted(async () => {
     if (!rippleFrames.length) return
     frameIdx = Math.max(0, Math.min(frameIdx, rippleFrames.length - 1))
     rippleStep = frameIdx
+    // Sync rippleScheduleIdx to the first schedule entry at or beyond frameIdx
+    // so that Resume continues from the right position after a manual scrub.
+    if (rippleSchedule.length) {
+      rippleScheduleIdx = rippleSchedule.findIndex((fi) => fi >= frameIdx)
+      if (rippleScheduleIdx < 0) rippleScheduleIdx = rippleSchedule.length
+    }
     const data = rippleFrames[frameIdx]
     updateTimeline(frameIdx, rippleFrames.length)
     if (data) {
@@ -1505,12 +1511,116 @@ onMounted(async () => {
     }
   }
 
+  // Source frames: 120 frames at 0.25-min steps = 0.25..30 min drive.
+  // Fine granularity ensures the boundary genuinely moves at each step in the
+  // populated zone, rather than dwelling on the same polygon shape.
+  const RIPPLE_FRAMES = 120
+  const RIPPLE_STEP_MINS = 0.25
+
   let rippleFrames = []
   let rippleStep = 0
   let rippleTimer = null
   let ripplePlaying = false
   let crossPostingDetected = false
   let rippleMaxImbalance = null  // {pct, minute} — worst affluence bias seen during animation
+
+  // Population-based animation schedule.
+  // rippleSchedule[i] is the index into rippleFrames[] to display at animation tick i.
+  // Built in startRipple(); each tick advances by ~1/N_POP_STEPS of total freeglers.
+  let rippleSchedule = []
+  let rippleScheduleIdx = 0
+
+  // Number of equal-population animation steps in the populated zone.
+  // 300 steps means each step adds ~0.33% of total freeglers, giving a very
+  // gradual crawl through populated areas rather than sudden jumps.
+  const N_POP_STEPS = 300
+
+  /**
+   * Build a population-based animation schedule from the pre-fetched frames.
+   *
+   * Returns an array of frame indices (into rippleFrames[]) to display in
+   * sequence.  Two phases:
+   *   Phase 1 – Before the first freegler: show every PRE_SKIP-th frame so
+   *             the boundary visibly expands from the origin without dwelling.
+   *   Phase 2 – From the first freegler onward: N_POP_STEPS equal-population
+   *             thresholds.  Each threshold maps to the first frame whose
+   *             cumulative freegler count meets or exceeds it, so the animation
+   *             slows down exactly where freeglers are dense and speeds past
+   *             empty outer regions.
+   *
+   * Multiple consecutive schedule entries can point to the same frame index
+   * when a single frame spans several population thresholds (dense zone); the
+   * 0.25-min resolution means those frames still represent genuine new territory.
+   */
+  function buildRippleSchedule(frames) {
+    if (!freeglersGrid.length) {
+      // No grid loaded: fall back to showing every frame at equal pace.
+      return frames.map((_, i) => i)
+    }
+
+    // --- Step 1: cumulative freegler count per frame ---
+    const cumulative = frames.map((data) => {
+      if (!data || !hasRing(data.standard)) return 0
+      const ring = data.standard.geometry.coordinates[0]
+      let n = 0
+      freeglersGrid.forEach((g) => {
+        if (pointInRing(g.lng, g.lat, ring)) n += g.count
+      })
+      return n
+    })
+    // Ensure monotonically non-decreasing (guard against null/bad frames).
+    for (let i = 1; i < cumulative.length; i++) {
+      if (cumulative[i] < cumulative[i - 1]) cumulative[i] = cumulative[i - 1]
+    }
+
+    const total = cumulative[cumulative.length - 1] || 0
+    if (total === 0) {
+      // No freeglers anywhere: show all frames at equal pace.
+      return frames.map((_, i) => i)
+    }
+
+    // --- Step 2: find first frame that contains any freegler ---
+    const firstFreegler = cumulative.findIndex((c) => c > 0)
+
+    const schedule = []
+
+    // --- Phase 1: fast march through the pre-freegler zone ---
+    // Show every PRE_SKIP-th frame so the boundary is seen to grow, but we
+    // don't dwell in the empty area.  Always include the frame just before
+    // the first freegler so there is a clean hand-off.
+    const PRE_SKIP = 3
+    for (let fi = 0; fi < firstFreegler; fi += PRE_SKIP) {
+      schedule.push(fi)
+    }
+    if (firstFreegler > 0) {
+      const prev = firstFreegler - 1
+      if (!schedule.length || schedule[schedule.length - 1] !== prev) {
+        schedule.push(prev)
+      }
+    }
+
+    // --- Phase 2: N_POP_STEPS equal-population steps ---
+    const stepSize = total / N_POP_STEPS
+    const startFi = Math.max(0, firstFreegler)
+    for (let k = 1; k <= N_POP_STEPS; k++) {
+      const threshold = k * stepSize
+      let found = frames.length - 1
+      for (let fi = startFi; fi < frames.length; fi++) {
+        if (cumulative[fi] >= threshold) {
+          found = fi
+          break
+        }
+      }
+      schedule.push(found)
+    }
+
+    // Always end on the very last frame.
+    if (schedule[schedule.length - 1] !== frames.length - 1) {
+      schedule.push(frames.length - 1)
+    }
+
+    return schedule
+  }
 
   document.getElementById('rippling-btn').addEventListener('click', () => {
     if (ripplePlaying) stopRipple()
@@ -1551,7 +1661,7 @@ onMounted(async () => {
     btn.textContent = '⏳ Loading…'
     document.getElementById(
       'rippling-info'
-    ).textContent = `Fetching 60 frames (drive)…`
+    ).textContent = `Fetching ${RIPPLE_FRAMES} frames (drive)…`
 
     clearLayers()
     timelineBuilt = false
@@ -1563,13 +1673,11 @@ onMounted(async () => {
     map.setView([currentLat, currentLng], 13, { animate: false })
 
     const fairness = parseInt(fairnessSlider.value) / 100
-    // 60 frames at 0.5-min steps: 0.5, 1.0, 1.5, ..., 30.0 minutes.
-    // The API accepts fractional minutes. Finer steps produce a smooth
-    // crawl-outward effect on the map rather than visible jumps.
-    const RIPPLE_FRAMES = 60
-    const RIPPLE_STEP_MINS = 0.5
+    // RIPPLE_FRAMES frames at RIPPLE_STEP_MINS-min steps: 0.25, 0.50, ..., 30.0 min.
+    // Fine granularity means the boundary genuinely moves at each animation
+    // step in the populated zone, rather than dwelling on the same shape.
     const promises = Array.from({ length: RIPPLE_FRAMES }, (_, i) => {
-      const m = ((i + 1) * RIPPLE_STEP_MINS).toFixed(1)
+      const m = ((i + 1) * RIPPLE_STEP_MINS).toFixed(2)
       const url = apiUrl(
         `/v1/fairness?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
           6
@@ -1582,26 +1690,18 @@ onMounted(async () => {
     rippleFrames = await Promise.all(promises)
 
     // Always fetch at 30 minutes so all dots in the full animation range are
-    // available. The animation expands from 0.5→30 min, so we need every
+    // available. The animation expands from 0.25→30 min, so we need every
     // freegler reachable at minute 30 in allFreeglers from the start.
     await fetchFreeglers(30)
     drawFreeglersLayer()
 
-    // Find the first frame that contains any freegler so the animation starts
-    // at a meaningful point rather than showing "~0 would be notified" while
-    // the tiny early isochrones grow invisibly small.
-    let firstFreegler = 0
-    if (freeglersGrid.length > 0) {
-      for (let fi = 0; fi < rippleFrames.length; fi++) {
-        const fd = rippleFrames[fi]
-        if (!fd || !hasRing(fd.standard)) continue
-        const ring = fd.standard.geometry.coordinates[0]
-        const hasAny = freeglersGrid.some((g) => pointInRing(g.lng, g.lat, ring))
-        if (hasAny) { firstFreegler = fi; break }
-      }
-    }
+    // Build a population-based animation schedule: each tick covers
+    // ~1/N_POP_STEPS of total freeglers.  The boundary crawls quickly through
+    // empty early frames and slows down exactly where freeglers are dense.
+    rippleSchedule = buildRippleSchedule(rippleFrames)
+    rippleScheduleIdx = 0
+    rippleStep = rippleSchedule[0] ?? 0
 
-    rippleStep = firstFreegler
     ripplePlaying = true
     crossPostingDetected = false
     rippleMaxImbalance = null
@@ -1619,6 +1719,8 @@ onMounted(async () => {
     ripplePlaying = false
     crossPostingDetected = false
     rippleFrames = []
+    rippleSchedule = []
+    rippleScheduleIdx = 0
     timelineBuilt = false
     clearTimeout(rippleTimer)
     const btn = document.getElementById('rippling-btn')
@@ -1626,7 +1728,7 @@ onMounted(async () => {
     btn.classList.remove('rpl-stop')
     document.getElementById(
       'rippling-info'
-    ).textContent = `by ${currentMode} · 0.5–30 min`
+    ).textContent = `by ${currentMode} · ${RIPPLE_STEP_MINS}–30 min`
     document.getElementById('rippling-freegler-bar').style.display = 'none'
     document.getElementById('rippling-timeline').style.display = 'none'
     if (currentLat !== null) fetchAndDrawGroups(currentLat, currentLng)
@@ -1634,7 +1736,7 @@ onMounted(async () => {
   }
 
   function stepRipple() {
-    if (rippleStep >= rippleFrames.length) {
+    if (rippleScheduleIdx >= rippleSchedule.length) {
       ripplePlaying = false
       const btn = document.getElementById('rippling-btn')
       btn.textContent = '▶ Replay'
@@ -1650,10 +1752,13 @@ onMounted(async () => {
       return
     }
 
+    // Advance to the frame specified by the population schedule.
+    rippleStep = rippleSchedule[rippleScheduleIdx]
     const data = rippleFrames[rippleStep]
-    // Actual drive minutes: frame 0 = 0.5 min, frame 59 = 30 min.
-    const mDrive = (rippleStep + 1) * 0.5
-    const minuteLabel = Number.isInteger(mDrive) ? String(mDrive) : mDrive.toFixed(1)
+
+    // Actual drive minutes: frame 0 = RIPPLE_STEP_MINS, frame N-1 = 30 min.
+    const mDrive = (rippleStep + 1) * RIPPLE_STEP_MINS
+    const minuteLabel = Number.isInteger(mDrive) ? String(mDrive) : mDrive.toFixed(2)
     document.getElementById(
       'rippling-info'
     ).textContent = `${currentMode} · ${minuteLabel} min`
@@ -1687,9 +1792,11 @@ onMounted(async () => {
         }
       }
 
-      if (rippleStep % 2 === 0) {
-        const ahead = Math.min(rippleStep + 5, rippleFrames.length - 1)
-        const lookahead = rippleFrames[ahead]
+      // Zoom map to keep the expanding boundary in view.
+      // Use a lookahead frame (from the schedule) to avoid sudden zoom jumps.
+      if (rippleScheduleIdx % 2 === 0) {
+        const aheadIdx = Math.min(rippleScheduleIdx + 5, rippleSchedule.length - 1)
+        const lookahead = rippleFrames[rippleSchedule[aheadIdx]]
         const zoomData =
           lookahead && hasRing(lookahead.standard) ? lookahead : data
         if (hasRing(zoomData.standard)) {
@@ -1700,7 +1807,6 @@ onMounted(async () => {
               map.fitBounds(bounds, {
                 padding: [60, 60],
                 maxZoom: 13,
-                // Animated zoom gives a smooth crawl-outward feel.
                 animate: true,
                 duration: 0.4,
               })
@@ -1709,7 +1815,7 @@ onMounted(async () => {
       }
     }
 
-    rippleStep++
+    rippleScheduleIdx++
     if (ripplePlaying) rippleTimer = setTimeout(stepRipple, delay)
   }
 })
