@@ -981,4 +981,55 @@ class ContentCheckServiceTest extends TestCase
         $result = $this->service->checkVagueItem('and the or');
         $this->assertNull($result);
     }
+
+    // =========================================================================
+    // checkPhoneNumbers — AssertFlip regression for commit d829f1a1b
+    //
+    // Commit d829f1a1b changed the phone-number regex boundary from \b to
+    // (?<!\d).  \b requires a word-boundary (no letter/digit on both sides),
+    // whereas (?<!\d) only requires "not preceded by a digit", so a letter
+    // immediately before the leading 0 now passes — turning product codes,
+    // model numbers, and reference codes that embed a 10-digit sequence into
+    // false positives.
+    //
+    // ASSERTFLIP STEP 2 (inverted / failing test):
+    //   false-positive strings assert false → test FAILS on current HEAD.
+    //   real phone numbers assert true → still pass after the fix.
+    //   Run after tightening the regex to confirm all cases green.
+    // =========================================================================
+
+    #[DataProvider('phoneRegexFalsePositivesProvider')]
+    public function test_phone_regex_does_not_flag_alpha_prefixed_codes(
+        string $body,
+        bool $expectFlag
+    ): void {
+        $result = $this->service->checkPhoneNumbers('', $body);
+        if ($expectFlag) {
+            $this->assertNotNull($result, "checkPhoneNumbers should flag '$body' as a phone number");
+            $this->assertSame(ContentCheckService::CHECK_PHONE_NUMBER, $result['check']);
+        } else {
+            $this->assertNull($result, "checkPhoneNumbers falsely flagged '$body' as a phone number (regex over-matches)");
+        }
+    }
+
+    public static function phoneRegexFalsePositivesProvider(): array
+    {
+        return [
+            // --- false positives introduced by d829f1a1b ---
+            // A letter immediately before the leading 0 is not a digit, so
+            // (?<!\d) passes; \b (the original anchor) would have blocked it
+            // because a letter IS a word character and creates no boundary
+            // before another word character (0).
+            // These should NOT be flagged — assert false (inverted/STEP 2).
+            'model code alpha-prefix F07700900123'     => ['Samsung model F07700900123', false],
+            'part number alpha-prefix A07712345678'    => ['Part no A07712345678', false],
+            'reference code alpha-prefix e07712345678' => ['eBay ref e07712345678', false],
+            'catalogue code alpha-prefix B07700900123' => ['Cat code B07700900123', false],
+
+            // --- genuine UK phone numbers (must still be flagged after fix) ---
+            // These assert true — they should pass before and after any fix.
+            'real mobile space-separated 07700 900123' => ['07700 900123', true],
+            '+44 format Ring +44 7700 900123'          => ['Ring +44 7700 900123', true],
+        ];
+    }
 }
