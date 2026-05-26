@@ -357,7 +357,12 @@ func TestAIImageReview_RandomizationWithCheckMessage(t *testing.T) {
 	aiCount := 0
 
 	for i := 0; i < 40; i++ {
-		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
+		// Scope to the two types whose randomization this test asserts.
+		// (My earlier blanket sed scoped to AIImageReview only, which made the
+		// 50/50 distribution collapse to 100% AIImageReview.) EEELabel is
+		// excluded so it doesn't shadow the coin-flip path now that it runs
+		// ahead in the default ordering.
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=CheckMessage,AIImageReview", nil))
 		assert.Equal(t, 200, resp.StatusCode)
 
 		var result microvolunteering.Challenge
