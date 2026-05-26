@@ -214,12 +214,12 @@ class JobModelTest extends TestCase
         $this->assertEquals('Low CPC', $result[2]->title);
     }
 
-    public function test_near_location_leaves_image_url_null_when_no_ai_image(): void
+    public function test_near_location_adds_placeholder_image_for_jobs_without_ai_images(): void
     {
-        // When a job has no matching ai_images row, image_url stays null so
-        // the email template can skip the image cell entirely. The old
-        // briefcase.png placeholder rendered as a blocky thumbnail at 40x40,
-        // so dropping it produces a cleaner text-only row.
+        // When a job has no matching ai_images row, image_url falls back to
+        // briefcase.png — a friendly cartoon briefcase rendered in the same
+        // AI-image house style as the per-title illustrations so rows look
+        // consistent alongside ones with a real AI image.
         DB::table('jobs')->delete();
         DB::table('ai_images')->delete();
         $srid = config('freegle.srid', 3857);
@@ -241,7 +241,8 @@ class JobModelTest extends TestCase
 
         $this->assertCount(1, $result);
         $job = $result->first();
-        $this->assertNull($job->image_url);
+        $this->assertNotNull($job->image_url);
+        $this->assertStringContainsString('briefcase.png', $job->image_url);
     }
 
     public function test_near_location_uses_ai_image_when_available(): void

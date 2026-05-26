@@ -69,11 +69,10 @@ class Job extends Model
         }
 
         // Add images to jobs using the pre-computed canonical_title column.
-        // Only set image_url when there is an actual AI-generated image —
-        // the email templates already skip the image cell when image_url is
-        // null (`@if($job->image_url ?? null)`), which renders a clean
-        // text-only row rather than a low-res briefcase placeholder that
-        // looked blocky inline.
+        // Falls back to a briefcase placeholder rendered in the same
+        // AI-image house style (white line drawing on muted-green
+        // background) so rows without a per-title illustration still look
+        // consistent next to siblings that do have one.
         if ($results->isNotEmpty()) {
             $canonicalTitles = $results->pluck('canonical_title')->filter()->unique()->values()->toArray();
             $images = collect();
@@ -84,8 +83,10 @@ class Job extends Model
                     ->pluck('externaluid', 'name');
             }
 
+            $placeholderUrl = config('freegle.images.email_assets') . '/briefcase.png';
+
             foreach ($results as $job) {
-                $job->image_url = self::buildImageUrl($images[$job->canonical_title] ?? null);
+                $job->image_url = self::buildImageUrl($images[$job->canonical_title] ?? null) ?? $placeholderUrl;
             }
         }
 
