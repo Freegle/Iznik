@@ -908,9 +908,12 @@ onMounted(async () => {
   // allFreeglers.length may be capped; use this for estimates.
   let totalLocatedFromServer = 0
 
-  async function fetchFreeglers() {
+  // minutesOverride lets callers (e.g. the ripple animation) fetch at a
+  // specific time budget rather than the current slider value.
+  async function fetchFreeglers(minutesOverride) {
     if (currentLat === null) return
-    const minutes = parseInt(timeSlider.value)
+    const minutes =
+      minutesOverride !== undefined ? minutesOverride : parseInt(timeSlider.value)
     const url = apiUrl(
       `/v1/nearby-freeglers?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(6)}&minutes=${minutes}&mode=${currentMode}`
     )
@@ -1034,19 +1037,27 @@ onMounted(async () => {
         freeglersMarkers[i].setStyle({ fillOpacity: 0.12, opacity: 0.2 })
     })
 
-    // Use the server-reported total (before any 2000-point sampling cap) as the
-    // denominator so the estimate is correct even for large urban areas.
+    // In normal view: totalLocated = full count within the current isochrone.
+    // During ripple animation: allFreeglers was fetched at 30 min (full range);
+    // insideCount is the sample count inside the current (smaller) polygon.
+    // Scale by totalLocated/sampleSize to estimate the true count inside.
     const totalLocated = totalLocatedFromServer || allFreeglers.length
+    const sampleSize = allFreeglers.length
+    const isRipple = ripplePlaying || rippleFrames.length > 0
+    const estimatedInsideLocated = isRipple && sampleSize > 0
+      ? Math.round(insideCount * (totalLocated / sampleSize))
+      : totalLocated
+
     const bar = document.getElementById('rippling-freegler-bar')
-    if (insideCount >= 0 && totalLocated > 0) {
-      // Total estimate: located / (1 - UNLOCATED_FRACTION)
+    if (estimatedInsideLocated >= 0 && totalLocated > 0) {
+      // Total estimate: estimatedInsideLocated / (1 - UNLOCATED_FRACTION)
       // The deprived fraction is read from the sample which is a random uniform
       // subset — the fraction is statistically representative even when capped.
-      const totalEstimate = Math.round(totalLocated / (1 - UNLOCATED_FRACTION))
-      const unlocatedShare = totalEstimate - totalLocated
+      const totalEstimate = Math.round(estimatedInsideLocated / (1 - UNLOCATED_FRACTION))
+      const unlocatedShare = totalEstimate - estimatedInsideLocated
       bar.innerHTML =
         `<div style="font-size:13px;font-weight:600;color:#333;line-height:1.4">~${totalEstimate.toLocaleString()} would be notified</div>` +
-        `<div style="font-size:10px;color:#666;margin-top:1px">${totalLocated.toLocaleString()} with known location` +
+        `<div style="font-size:10px;color:#666;margin-top:1px">${estimatedInsideLocated.toLocaleString()} with known location` +
         (unlocatedShare > 0
           ? ` + ~${unlocatedShare.toLocaleString()} estimated unlocated`
           : '') +
@@ -1059,8 +1070,8 @@ onMounted(async () => {
       setSwingometer(pct)
 
       if (ripplePlaying) {
-        const imbalance = Math.abs(pct - 60)
-        if (rippleMaxImbalance === null || imbalance > Math.abs(rippleMaxImbalance.pct - 60)) {
+        const imbalance = Math.abs(pct - localBaseline)
+        if (rippleMaxImbalance === null || imbalance > Math.abs(rippleMaxImbalance.pct - localBaseline)) {
           rippleMaxImbalance = { pct, minute: rippleStep }
         }
       }
@@ -1539,7 +1550,10 @@ onMounted(async () => {
     })
     rippleFrames = await Promise.all(promises)
 
-    await fetchFreeglers()
+    // Always fetch at 30 minutes so all dots in the full animation range are
+    // available. The animation expands from 1→30 min, so we need every freegler
+    // that might be reachable at minute 30 to be in allFreeglers from the start.
+    await fetchFreeglers(30)
     drawFreeglersLayer()
 
     rippleStep = 0
