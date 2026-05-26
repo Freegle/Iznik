@@ -46,12 +46,9 @@
                     {{ $post['locationName'] }}
                 </mj-text>
                 @endif
-                {{-- Description snippet --}}
-                @if($post['messageText'])
-                <mj-text padding="0 0 12px 0" font-size="13px" color="#555555" line-height="1.5">
-                    {{ \Illuminate\Support\Str::limit($post['messageText'], 120, '…') }}
-                </mj-text>
-                @endif
+                {{-- The full description is rendered in its own section
+                     below; no snippet here, since the immediate digest is
+                     one post and a 120-char preview duplicates the body. --}}
                 {{-- Distance + time row --}}
                 <mj-text padding="0" font-size="12px" color="#888888">
                     @if($post['distanceText'])
@@ -161,12 +158,12 @@
         </mj-section>
         <mj-section background-color="#F7F6EC" padding="0 20px 20px 20px">
             <mj-column width="50%">
-                <mj-button href="{{ $jobsUrl }}" background-color="#00008B" color="#ffffff" font-size="14px" inner-padding="10px 25px" border-radius="3px" width="90%">
+                <mj-button href="{{ $jobsUrl }}" background-color="{{ $accentColor }}" color="#ffffff" font-size="14px" inner-padding="10px 25px" border-radius="5px" width="90%">
                     View more jobs
                 </mj-button>
             </mj-column>
             <mj-column width="50%">
-                <mj-button href="{{ $donateUrl }}" background-color="#338808" color="#ffffff" font-size="14px" inner-padding="10px 25px" border-radius="3px" width="90%">
+                <mj-button href="{{ $donateUrl }}" background-color="{{ $accentColor }}" color="#ffffff" font-size="14px" inner-padding="10px 25px" border-radius="5px" width="90%">
                     Donating helps too!
                 </mj-button>
             </mj-column>
@@ -177,12 +174,12 @@
                 <mj-divider border-color="#eeeeee" border-width="1px" padding="0 0 16px 0" />
                 <mj-button
                     href="{{ $donateUrl ?? 'https://freegle.in/paypal1510' }}"
-                    background-color="#338808"
+                    background-color="{{ $accentColor }}"
                     color="#ffffff"
                     font-size="14px"
                     font-weight="600"
                     inner-padding="10px 25px"
-                    border-radius="3px"
+                    border-radius="5px"
                     align="center"
                 >
                     Donating helps too!

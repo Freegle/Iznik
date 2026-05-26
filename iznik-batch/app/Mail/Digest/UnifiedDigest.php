@@ -354,8 +354,10 @@ class UnifiedDigest extends MjmlMailable
             );
 
             // Format arrival time for display in UK local time (BST in summer, GMT in winter).
+            // Always include minutes (e.g. "Sun 1 Mar, 11:00am") so the time
+            // shape is consistent — V1 single.html-style "Mon, 25th May 9:00am".
             $arrival = $message->arrival instanceof Carbon ? $message->arrival : Carbon::parse($message->arrival);
-            $arrivalFormatted = $arrival->setTimezone('Europe/London')->format($arrival->minute === 0 ? 'D j M, ga' : 'D j M, g:ia'); // e.g. "Sun 1 Mar, 9pm" or "Sun 1 Mar, 9:47am"
+            $arrivalFormatted = $arrival->setTimezone('Europe/London')->format('D j M, g:ia');
             $arrivalIso = $arrival->toIso8601String();
 
             // Calculate distance from user.
