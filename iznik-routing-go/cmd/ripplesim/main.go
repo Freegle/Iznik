@@ -463,7 +463,28 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[strin
 				return ta.Before(tb)
 			})
 
-			repliesSoFar := 0
+			// --- Compute the schedule's effective "stop tick" for this post.
+			// If stop@N is in force, the schedule stops at the tick during
+			// which the Nth reply arrives.  Find that tick honestly from the
+			// reply timestamps so the volume count and in-time check use the
+			// same stop point.
+			stopTick := *ticks
+			if c.StopAtReplies > 0 && len(replyOrder) >= c.StopAtReplies {
+				nthReplyIdx := replyOrder[c.StopAtReplies-1]
+				nthReplyTime, err := time.Parse("2006-01-02 15:04:05", p.Repliers[nthReplyIdx].ReplyTime)
+				if err == nil {
+					nthReplyElapsedSec := nthReplyTime.Sub(arrival).Seconds()
+					// Number of ticks that had fired by then (tick K fires at
+					// (K-1) * tickSec; we want all ticks where (K-1)*tickSec <= elapsed).
+					if tickSec > 0 {
+						firedByThen := int(nthReplyElapsedSec/tickSec) + 1
+						if firedByThen < stopTick {
+							stopTick = firedByThen
+						}
+					}
+				}
+			}
+
 			for _, idx := range replyOrder {
 				results[ci].PairsTotal++
 				ep := cp.Repliers[idx]
@@ -477,22 +498,15 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[strin
 					continue
 				}
 
-				// Stop-at-replies circuit-breaker.
-				lastTick := *ticks
-				if c.StopAtReplies > 0 && repliesSoFar >= c.StopAtReplies {
-					lastTick = 0 // schedule stopped before this replier
-				}
-
-				// Find smallest tick k ∈ [1, lastTick] s.t. cumRank[k-1] >= rank.
+				// Find smallest tick k ∈ [1, stopTick] s.t. cumRank[k-1] >= rank.
 				notifyTick := -1
-				for k := 1; k <= lastTick; k++ {
+				for k := 1; k <= stopTick; k++ {
 					if cumRank[k-1] >= rank {
 						notifyTick = k
 						break
 					}
 				}
 				if notifyTick == -1 {
-					// schedule never reaches this replier
 					results[ci].PairsReachableButLate++
 					continue
 				}
@@ -503,19 +517,12 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[strin
 				} else {
 					results[ci].PairsReachableButLate++
 				}
-				repliesSoFar++
 			}
 
-			// Count notifications sent under this curve (independent of replies).
-			// At tick k we notify cumRank[k-1] - cumRank[k-2] users (the "new" batch).
-			lastTick := *ticks
-			if c.StopAtReplies > 0 {
-				// Approximate: assume schedule runs until StopAtReplies replies arrive.
-				// For aggregate notification count this is a lower bound; we use total here.
-				lastTick = *ticks
-			}
-			if lastTick > 0 {
-				results[ci].NotificationsSent += cumRank[lastTick-1]
+			// Notifications sent under this curve = cumRank at the stop tick.
+			// Accurately reflects circuit-breaker savings for stop@N variants.
+			if stopTick > 0 {
+				results[ci].NotificationsSent += cumRank[stopTick-1]
 			}
 		}
 		// Write back updated results for this group (slices-of-struct in a
