@@ -157,7 +157,10 @@ class UnifiedDigest extends MjmlMailable
             $messageQualifier = $message->id;
             $domain = config('freegle.mail.user_domain');
             $replyToAddr = "replyto-{$message->id}-{$this->user->id}@{$domain}";
-            $replyToName = $message->fromname ?: 'Freegler';
+            // Match the From display-name resolution in envelope(): prefer
+            // the User's displayname over the legacy messages.fromname.
+            $posterUser = $message->relationLoaded('fromUser') ? $message->fromUser : null;
+            $replyToName = $posterUser?->displayname ?: ($message->fromname ?: 'Freegler');
         }
         $userId = $this->user->id ?? 0;
         $result->withSymfonyMessage(function ($symfonyMessage) use (
@@ -207,11 +210,28 @@ class UnifiedDigest extends MjmlMailable
         if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
             $post = $this->posts->first();
             $message = $post['message'];
-            $domain = config('freegle.mail.user_domain');
-            $replyToAddr = "replyto-{$message->id}-{$this->user->id}@{$domain}";
-            $posterDisplayName = ($message->fromname ?: 'Freegler') . ' via ' . config('freegle.branding.name');
+            // Resolve poster name from the user relation first (displayname is
+            // what shows everywhere else in the email body); fall back to the
+            // legacy fromname column and finally 'Freegler'. Avoids the
+            // mismatch where the inbox shows "Freegler via Freegle" because
+            // messages.fromname is empty, while the body correctly shows
+            // "Ewalina via Freegle" from the User model.
+            $posterUser = $message->relationLoaded('fromUser') ? $message->fromUser : null;
+            $posterName = $posterUser?->displayname ?: ($message->fromname ?: 'Freegler');
+            $posterDisplayName = $posterName . ' via ' . config('freegle.branding.name');
+
+            // From MUST stay as the Gmail-registered noreply sender for AMP
+            // for Email to render — Gmail's Dynamic Mail allowlist keys on
+            // the From: domain. Putting the per-message replyto address in
+            // From caused Gmail to fall back to the HTML alternative and
+            // surface the AMP part as an attachment. Reply-To is set via the
+            // withSymfonyMessage callback in content() so replies still hit
+            // the per-message inbound address.
             return new Envelope(
-                from: new Address($replyToAddr, $posterDisplayName),
+                from: new Address(
+                    config('freegle.mail.noreply_addr'),
+                    $posterDisplayName
+                ),
                 subject: $this->getSubject(),
             );
         }
@@ -347,8 +367,11 @@ class UnifiedDigest extends MjmlMailable
                 : null;
 
             // Create tracked URL for this message (with position tracking).
+            // ?reply=1 tells the message page to auto-open the reply compose
+            // form on mount — saves the recipient an extra click since the
+            // CTA is literally labelled "Reply".
             $messageUrl = $this->trackedUrl(
-                $this->userSite . '/message/' . $message->id,
+                $this->userSite . '/message/' . $message->id . '?reply=1',
                 "post_{$index}",
                 'view_message'
             );

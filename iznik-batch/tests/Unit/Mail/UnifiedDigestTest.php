@@ -204,8 +204,14 @@ class UnifiedDigestTest extends TestCase
         $this->assertArrayHasKey('digest_number', $metadata);
     }
 
-    public function test_immediate_mode_envelope_from_is_replyto_address(): void
+    public function test_immediate_mode_envelope_from_is_noreply_for_amp(): void
     {
+        // Gmail's AMP-for-Email dynamic-mail allowlist keys on the From:
+        // domain. If From: were the per-message replyto-{id}-{uid}@... address
+        // (an ephemeral, per-recipient sender), Gmail wouldn't render the AMP
+        // version and would surface it as an attachment. Keep From: pinned to
+        // the registered noreply sender; Reply-To carries the per-message
+        // routing instead (covered by the test below).
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
@@ -223,17 +229,50 @@ class UnifiedDigestTest extends TestCase
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
         $envelope = $mail->envelope();
 
-        $expected = "replyto-{$message->id}-{$user->id}@" . config('freegle.mail.user_domain');
-        $this->assertEquals($expected, $envelope->from->address);
+        $this->assertEquals(config('freegle.mail.noreply_addr'), $envelope->from->address);
     }
 
-    public function test_immediate_mode_sets_reply_to_header_matching_from(): void
+    public function test_immediate_mode_from_displayname_uses_poster_displayname(): void
     {
-        // The immediate digest relies on From and Reply-To both being the
-        // replyto-{msgId}-{userId} address so a user can hit "Reply" in any
-        // mail client and have the message routed back to the original
-        // poster. This test asserts that contract via the same spool path
-        // production uses.
+        // The inbox preview shows the From display-name ("Ewalina via Freegle"),
+        // and the body shows the same name resolved from User->displayname.
+        // Both must agree; the previous code only consulted messages.fromname,
+        // which was often empty and produced "Freegler via Freegle" in the
+        // inbox while the body said "Ewalina".
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser([
+            'fullname' => 'Ewalina Test',
+            'displayname' => 'Ewalina',
+        ]);
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sofa (London)',
+            'fromname' => '', // empty, so the resolver must use User->displayname
+        ]);
+        // Force the fromUser relation so the mailable can read displayname.
+        $message->setRelation('fromUser', $poster);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $envelope = $mail->envelope();
+
+        $this->assertStringContainsString('Ewalina', $envelope->from->name);
+        $this->assertStringNotContainsString('Freegler', $envelope->from->name);
+    }
+
+    public function test_immediate_mode_sets_reply_to_header_with_replyto_address(): void
+    {
+        // From is the noreply sender (so Gmail trusts the AMP part), and the
+        // per-message replyto-{msgId}-{userId} address goes in Reply-To.
+        // Clients that honour Reply-To (which is most of them, per RFC 5322)
+        // will then route a "Reply" back to the original poster via the
+        // inbound mail handler that decodes that address.
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
@@ -249,18 +288,19 @@ class UnifiedDigestTest extends TestCase
         ]);
 
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
-        $expected = "replyto-{$message->id}-{$user->id}@" . config('freegle.mail.user_domain');
+        $expectedReplyTo = "replyto-{$message->id}-{$user->id}@" . config('freegle.mail.user_domain');
+        $noreply = config('freegle.mail.noreply_addr');
 
         $data = $this->spoolAndLoad($mail, $user->email_preferred);
 
-        // From address (envelope) is the replyto- address.
+        // From is the noreply sender (NOT the per-message replyto address).
         $fromAddresses = array_column($data['from'] ?? [], 'address');
-        $this->assertContains($expected, $fromAddresses);
+        $this->assertContains($noreply, $fromAddresses);
+        $this->assertNotContains($expectedReplyTo, $fromAddresses);
 
-        // Reply-To header is set explicitly to the same address so clients
-        // that prefer Reply-To over From still route the user's reply back.
+        // Reply-To carries the per-message routing address.
         $replyToAddresses = array_column($data['reply_to'] ?? [], 'address');
-        $this->assertContains($expected, $replyToAddresses);
+        $this->assertContains($expectedReplyTo, $replyToAddresses);
     }
 
     public function test_immediate_mode_sets_v1_parity_headers(): void
