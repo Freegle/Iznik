@@ -173,6 +173,87 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(0, $stats['emails_sent']);
     }
 
+    public function test_deduplication_same_subject_different_body_not_deduped(): void
+    {
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        // Two messages with same subject but different body text.
+        $message1 = $this->createTestMessage($user, $group1, [
+            'subject' => 'OFFER: Garden tools (London)',
+            'textbody' => 'I have a spade and a fork available for collection.',
+        ]);
+        $message2 = $this->createTestMessage($user, $group2, [
+            'subject' => 'OFFER: Garden tools (London)',
+            'textbody' => 'Lawnmower available, needs collecting this weekend.',
+        ]);
+
+        $message1->groupid = $group1->id;
+        $message2->groupid = $group2->id;
+
+        $posts = collect([$message1, $message2]);
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        // Should NOT be deduplicated because bodies are different.
+        $this->assertCount(2, $deduplicated);
+    }
+
+    public function test_deduplication_same_subject_same_body_deduped(): void
+    {
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        $bodyText = 'I have a lovely sofa available for collection.';
+
+        // Two messages with same subject AND same body.
+        $message1 = $this->createTestMessage($user, $group1, [
+            'subject' => 'OFFER: Sofa (London)',
+            'textbody' => $bodyText,
+        ]);
+        $message2 = $this->createTestMessage($user, $group2, [
+            'subject' => 'OFFER: Sofa (London)',
+            'textbody' => $bodyText,
+        ]);
+
+        $message1->groupid = $group1->id;
+        $message2->groupid = $group2->id;
+
+        $posts = collect([$message1, $message2]);
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        // Should be deduplicated because both subject and body match.
+        $this->assertCount(1, $deduplicated);
+        $this->assertCount(2, $deduplicated->first()['postedToGroups']);
+    }
+
+    public function test_deduplication_null_body_treated_as_matching(): void
+    {
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        // Two messages with same subject and both null bodies.
+        $message1 = $this->createTestMessage($user, $group1, [
+            'subject' => 'OFFER: Table (London)',
+            'textbody' => null,
+        ]);
+        $message2 = $this->createTestMessage($user, $group2, [
+            'subject' => 'OFFER: Table (London)',
+            'textbody' => null,
+        ]);
+
+        $message1->groupid = $group1->id;
+        $message2->groupid = $group2->id;
+
+        $posts = collect([$message1, $message2]);
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        // Should be deduplicated - null bodies both normalize to ''.
+        $this->assertCount(1, $deduplicated);
+    }
+
     public function test_sponsors_are_included_and_deduplicated(): void
     {
         $poster = $this->createTestUser();
@@ -289,45 +370,12 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertCount(0, $sponsors);
     }
 
-    public function test_deduplication_with_same_message_on_multiple_groups(): void
-    {
-        // Multi-group model: same messages.id has two messages_groups rows.
-        // The digest query joins messages with messages_groups, so the same message
-        // appears twice with different groupids. deduplicatePosts should merge them.
-        $user = $this->createTestUser();
-        $group1 = $this->createTestGroup();
-        $group2 = $this->createTestGroup();
-
-        $message = $this->createTestMessage($user, $group1, [
-            'subject' => 'OFFER: Multi-Group Item (TestTown)',
-        ]);
-
-        // Add the same message to a second group (simulating the multi-group model).
-        DB::table('messages_groups')->insert([
-            'msgid' => $message->id,
-            'groupid' => $group2->id,
-            'collection' => 'Approved',
-            'arrival' => now(),
-        ]);
-
-        // Simulate what getPostsForUser returns: two rows for the same message
-        // with different groupid attributes (from the join).
-        $row1 = clone $message;
-        $row1->groupid = $group1->id;
-        $row2 = clone $message;
-        $row2->groupid = $group2->id;
-
-        $posts = collect([$row1, $row2]);
-        $deduplicated = $this->service->deduplicatePosts($posts);
-
-        $this->assertCount(1, $deduplicated, 'Same message on two groups should deduplicate to one');
-        $this->assertCount(2, $deduplicated->first()['postedToGroups'], 'Both groups should be in postedToGroups');
-        $this->assertContains($group1->id, $deduplicated->first()['postedToGroups']);
-        $this->assertContains($group2->id, $deduplicated->first()['postedToGroups']);
-    }
-
     public function test_immediate_mode_requires_full_setting(): void
     {
+        // Open the allowlist so this test only proves the simplemail filter,
+        // not the allowlist gate (which has its own tests below).
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
 
@@ -344,5 +392,128 @@ class UnifiedDigestServiceTest extends TestCase
 
         // User should not be processed for immediate mode.
         $this->assertEquals(0, $stats['users_processed']);
+    }
+
+    /**
+     * Empty allowlist means "no restriction" — every simplemail=Full user is
+     * eligible. This is the "fully on" state once we're done piloting.
+     */
+    public function test_immediate_mode_allowlist_empty_allows_everyone(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '']);
+
+        $user = $this->createTestUser();
+        $user->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $user->id);
+
+        $this->assertEquals(1, $stats['users_processed']);
+    }
+
+    /**
+     * Explicit '*' is equivalent to empty — no restriction.
+     */
+    public function test_immediate_mode_allowlist_wildcard_allows_everyone(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $user = $this->createTestUser();
+        $user->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $user->id);
+
+        $this->assertEquals(1, $stats['users_processed']);
+    }
+
+    /**
+     * Specific allowlist entries let only matching addresses through. This is
+     * the pilot mode — one or two test recipients while we validate end-to-end
+     * before clearing the env var to flip immediate emails on for everyone.
+     */
+    public function test_immediate_mode_allowlist_filters_to_specified_addresses(): void
+    {
+        $allowed = $this->createTestUser();
+        $allowed->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $allowed->lastaccess = now();
+        $allowed->save();
+        $allowed->refresh();
+        $group = $this->createTestGroup();
+        $this->createMembership($allowed, $group);
+
+        $blocked = $this->createTestUser();
+        $blocked->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $blocked->lastaccess = now();
+        $blocked->save();
+        $blocked->refresh();
+        $this->createMembership($blocked, $group);
+
+        // Pick the allowed user's preferred email and use it as the allowlist.
+        $allowedEmail = $allowed->emails()->first()->email;
+        config(['freegle.digest.immediate_allowlist' => $allowedEmail]);
+
+        // Allowed user is processed.
+        $statsAllowed = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $allowed->id);
+        $this->assertEquals(1, $statsAllowed['users_processed']);
+
+        // Other user with same Full setting is filtered out.
+        $statsBlocked = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $blocked->id);
+        $this->assertEquals(0, $statsBlocked['users_processed']);
+    }
+
+    /**
+     * The default value checked into config (a single pilot email) must
+     * restrict immediate emails to that address — otherwise deploying the
+     * cron in prod without a custom env var would email everyone.
+     */
+    public function test_immediate_mode_uses_pinned_pilot_default(): void
+    {
+        // Don't override — use whatever's baked into config/freegle.php.
+        $pilot = config('freegle.digest.immediate_allowlist');
+        $this->assertNotEquals('', $pilot, 'Pinned default must not be empty');
+        $this->assertNotEquals('*', $pilot, 'Pinned default must not be wildcard');
+
+        $blocked = $this->createTestUser();
+        $blocked->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $blocked->lastaccess = now();
+        $blocked->save();
+        $blocked->refresh();
+        $group = $this->createTestGroup();
+        $this->createMembership($blocked, $group);
+
+        // User's email is not the pilot address → must be skipped.
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $blocked->id);
+        $this->assertEquals(0, $stats['users_processed']);
+    }
+
+    /**
+     * Allowlist must not affect daily mode — that's a separate, already-running
+     * flow that we don't want to gate behind this setting.
+     */
+    public function test_immediate_allowlist_does_not_affect_daily_mode(): void
+    {
+        // Pin to an address that nobody in this test has, then run daily.
+        config(['freegle.digest.immediate_allowlist' => 'nobody-test@example.invalid']);
+
+        $user = $this->createTestUser();
+        $user->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $user->id);
+
+        $this->assertEquals(1, $stats['users_processed']);
     }
 }

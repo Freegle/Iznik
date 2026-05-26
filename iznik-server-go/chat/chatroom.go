@@ -553,6 +553,55 @@ func GetOrCreateUser2ModChat(db *gorm.DB, userID uint64, groupID uint64) (uint64
 	return chatID, nil
 }
 
+// GetOrCreateUser2UserChat finds or creates a User2User chat room between
+// two users (either ordering). The unique key (user1, user2, chattype)
+// makes INSERT ... ON DUPLICATE KEY UPDATE safe under concurrent requests:
+// LAST_INSERT_ID(id) returns the existing row's ID on conflict so two
+// callers always collapse to the same chat. Roster rows for both
+// participants are seeded so notifications reach everyone.
+func GetOrCreateUser2UserChat(db *gorm.DB, userA, userB uint64) (uint64, error) {
+	if userA == 0 || userB == 0 || userA == userB {
+		return 0, fmt.Errorf("invalid user pair: %d, %d", userA, userB)
+	}
+
+	// Check for existing chat first to avoid an INSERT roundtrip in the
+	// hot path where the chat already exists.
+	var chatID uint64
+	db.Raw(`SELECT id FROM chat_rooms
+		WHERE ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?))
+		AND chattype = ?
+		LIMIT 1`,
+		userA, userB, userB, userA, utils.CHAT_TYPE_USER2USER).Scan(&chatID)
+
+	if chatID == 0 {
+		sqlDB, err := db.DB()
+		if err != nil {
+			return 0, fmt.Errorf("failed to get sql.DB: %w", err)
+		}
+		now := time.Now()
+		sqlResult, err := sqlDB.Exec(
+			`INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, ?)
+			 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), latestmessage = VALUES(latestmessage)`,
+			userA, userB, utils.CHAT_TYPE_USER2USER, now)
+		if err != nil {
+			return 0, fmt.Errorf("failed to insert chat room: %w", err)
+		}
+		lastID, err := sqlResult.LastInsertId()
+		if err != nil || lastID == 0 {
+			return 0, fmt.Errorf("failed to get last insert id: %w", err)
+		}
+		chatID = uint64(lastID)
+	}
+
+	// Seed roster entries for both participants so notifications fire.
+	db.Exec(`INSERT IGNORE INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW())`,
+		chatID, userA, utils.CHAT_STATUS_ONLINE)
+	db.Exec(`INSERT IGNORE INTO chat_roster (chatid, userid, status, date) VALUES (?, ?, ?, NOW())`,
+		chatID, userB, utils.CHAT_STATUS_ONLINE)
+
+	return chatID, nil
+}
+
 // =============================================================================
 // POST handler (roster updates, nudge, typing, actions)
 // =============================================================================

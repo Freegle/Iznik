@@ -297,7 +297,6 @@ workflows:
             branches:
               ignore:
                 - modtools
-                - production
       - freegle/build-android-modtools-debug:
           requires:
             - freegle/build-and-test
