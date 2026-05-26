@@ -103,11 +103,21 @@ class AlertService
                 continue;
             }
 
-            $emails = DB::table('users_emails')
-                ->where('userid', $userId)
-                ->whereNull('bounced')
-                ->where('preferred', 1)
-                ->get(['id', 'email']);
+            // V1 parity: pick the user's preferred external email (skipping
+            // our own per-user-alias domains so the mail can't loop back as
+            // chat), then find its row id for alerts_tracking.
+            $preferredEmail = \App\Models\User::find($userId)?->email_preferred;
+            $emails = collect();
+            if ($preferredEmail) {
+                $row = DB::table('users_emails')
+                    ->where('userid', $userId)
+                    ->where('email', $preferredEmail)
+                    ->whereNull('bounced')
+                    ->first(['id', 'email']);
+                if ($row) {
+                    $emails = collect([$row]);
+                }
+            }
 
             foreach ($emails as $emailRow) {
                 $email = $emailRow->email;

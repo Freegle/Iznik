@@ -2779,6 +2779,49 @@ class IncomingMailServiceTest extends TestCase
         $this->assertEquals(RoutingResult::DROPPED, $result);
     }
 
+    public function test_direct_mail_from_noreply_system_user_is_dropped(): void
+    {
+        // Members' preferred email is often their users.ilovefreegle.org alias,
+        // so any digest we send to that alias comes back through this MX. Without
+        // a guard, handleDirectMail materialises every outbound digest as a
+        // User2User chat from the Freegle noreply system user to the recipient,
+        // and post-content-check-restore those chats get flagged for review.
+        $noreply = strtolower(config('freegle.mail.noreply_addr', 'noreply@ilovefreegle.org'));
+
+        $noreplyUser = $this->createTestUser(['email_preferred' => $noreply]);
+        $recipient   = $this->createTestUser(['email_preferred' => $this->uniqueEmail('recipient')]);
+
+        $recipientAlias = "someslug-{$recipient->id}@users.ilovefreegle.org";
+
+        $email = $this->createMinimalEmail([
+            'From'    => $noreply,
+            'To'      => $recipientAlias,
+            'Subject' => '[ExampleFreegle] Volunteer Opportunity Roundup',
+        ], 'Charities are looking for helpers...');
+
+        $parsed = $this->parser->parse($email, $noreply, $recipientAlias);
+
+        $beforeRooms = DB::table('chat_rooms')
+            ->where(function ($q) use ($noreplyUser, $recipient) {
+                $q->where('user1', $noreplyUser->id)->orWhere('user2', $noreplyUser->id);
+            })
+            ->count();
+
+        $result = $this->service->route($parsed);
+
+        $this->assertEquals(RoutingResult::DROPPED, $result, 'Outbound digests must not be re-ingested as chat');
+
+        $afterRooms = DB::table('chat_rooms')
+            ->where(function ($q) use ($noreplyUser) {
+                $q->where('user1', $noreplyUser->id)->orWhere('user2', $noreplyUser->id);
+            })
+            ->count();
+        $this->assertEquals($beforeRooms, $afterRooms, 'No chat_rooms should have been created');
+
+        $msg = DB::table('chat_messages')->where('userid', $noreplyUser->id)->count();
+        $this->assertEquals(0, $msg, 'No chat_messages should have been created from the noreply user');
+    }
+
     // ========================================
     // Merged User Tests
     // ========================================

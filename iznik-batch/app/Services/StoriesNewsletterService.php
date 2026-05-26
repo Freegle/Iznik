@@ -190,10 +190,8 @@ class StoriesNewsletterService
                 continue;
             }
 
-            $email = DB::table('users_emails')
-                ->where('userid', $userId)
-                ->orderByDesc('preferred')
-                ->value('email');
+            // V1 parity: skip our own per-user-alias domains so the mail can't loop back as chat.
+            $email = \App\Models\User::find($userId)?->email_preferred;
 
             if (!$email) {
                 continue;
