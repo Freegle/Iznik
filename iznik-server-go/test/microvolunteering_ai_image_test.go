@@ -81,7 +81,7 @@ func TestAIImageReview_GetChallenge(t *testing.T) {
 	// Create a test AI image with high usage.
 	imgID := createTestAIImage(t, "test-sofa-"+prefix, 100)
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result microvolunteering.Challenge
@@ -114,7 +114,7 @@ func TestAIImageReview_UsageCountOrder(t *testing.T) {
 	createTestAIImage(t, "low-use-"+prefix, 5)
 	highID := createTestAIImage(t, "high-use-"+prefix, 500)
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result microvolunteering.Challenge
@@ -261,7 +261,7 @@ func TestAIImageReview_QuorumReached(t *testing.T) {
 	assert.Equal(t, int64(5), voteCount)
 
 	// The checker should NOT get this image since quorum is reached.
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+checkerToken, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+checkerToken+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result map[string]interface{}
@@ -296,7 +296,7 @@ func TestAIImageReview_SkipAlreadyReviewed(t *testing.T) {
 		microvolunteering.ChallengeAIImageReview, userID, reviewedID)
 
 	// Should get the unreviewed image.
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result microvolunteering.Challenge
@@ -357,7 +357,12 @@ func TestAIImageReview_RandomizationWithCheckMessage(t *testing.T) {
 	aiCount := 0
 
 	for i := 0; i < 40; i++ {
-		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+		// Scope to the two types whose randomization this test asserts.
+		// (My earlier blanket sed scoped to AIImageReview only, which made the
+		// 50/50 distribution collapse to 100% AIImageReview.) EEELabel is
+		// excluded so it doesn't shadow the coin-flip path now that it runs
+		// ahead in the default ordering.
+		resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=CheckMessage,AIImageReview", nil))
 		assert.Equal(t, 200, resp.StatusCode)
 
 		var result microvolunteering.Challenge

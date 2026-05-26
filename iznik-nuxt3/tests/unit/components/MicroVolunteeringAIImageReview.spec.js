@@ -352,12 +352,13 @@ describe('MicroVolunteeringAIImageReview', () => {
       await prevBtn.trigger('click')
       expect(wrapper.find('.review-image').attributes('src')).toBe(urlInitial)
 
-      // Next button should now appear since there is a newer image ahead
+      // Next button should now be enabled since there is a newer image ahead
       const nextBtn = wrapper
         .findAll('button')
         .find((b) => /^next$/i.test(b.text()))
       expect(nextBtn).toBeDefined()
       expect(nextBtn.exists()).toBe(true)
+      expect(nextBtn.attributes('disabled')).toBeUndefined()
 
       // clicking Next should advance back to urlA
       await nextBtn.trigger('click')

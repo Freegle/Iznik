@@ -23,7 +23,7 @@ parameters:
     description: "Forwarded from trigger — true when build_modtools_production was set"
 
 orbs:
-  freegle: freegle/tests@1.1.319
+  freegle: freegle/tests@1.1.320
 
 jobs:
   mark-ci-passed:
@@ -297,7 +297,6 @@ workflows:
             branches:
               ignore:
                 - modtools
-                - production
       - freegle/build-android-modtools-debug:
           requires:
             - freegle/build-and-test

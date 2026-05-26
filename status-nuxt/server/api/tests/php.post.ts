@@ -7,7 +7,7 @@ export default defineEventHandler(async (event) => {
   console.log('Starting PHP tests...')
 
   const body = await readBody(event).catch(() => ({}))
-  const filter = body?.filter ? `--filter "${body.filter}"` : ''
+  const filter = body?.filter || ''
 
   if (filter) {
     console.log(`Running PHP tests with filter: ${body.filter}`)
@@ -95,7 +95,10 @@ async function waitForHealthyAndRunTests(filter: string) {
     appendTestLogs('php', `Warning: Test environment setup issue: ${error.message}\n`)
   }
 
-  // Run tests
+  // Run tests with schema refresh inline before run-phpunit.sh
+  // The schema refresh ensures test databases have the latest schema from iznik
+  // (which has all migrations applied). This is done inline in the spawn command
+  // to avoid shell escaping issues with execSync through multiple docker layers.
   const testPath = filter || '/var/www/iznik/test/ut/php/'
   setTestState('php', { message: 'Running PHPUnit tests...' })
 

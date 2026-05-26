@@ -298,7 +298,6 @@ const test = base.test.extend({
       /Failed to load resource: net::ERR_ABORTED/, // Can happen during page navigation when requests are cancelled
       /Failed to load resource: net::ERR_CONNECTION_REFUSED/, // Can happen when server is starting up
       /Failed to load resource: net::ERR_NAME_NOT_RESOLVED/, // External CDNs (Facebook, Google, etc.) not DNS-resolvable in isolated Docker test environment
-      /Failed to load resource: net::ERR_ADDRESS_UNREACHABLE.*dns\.google/, // dns.google DoH used by EmailValidator for best-effort domain validation; unreachable in some CI Docker environments (JS catch block already suppresses the error)
       /has been blocked by CORS policy/, // CORS errors can happen in test environments due to ads
       /Failed to save credentials NotSupportedError: The user agent does not support public key credentials./, // Can happen in test environments
       /Refused to frame/, // Can happen in test.

@@ -48,7 +48,10 @@ func TestMicrovolunteering_CoinFlipZeroFallsBackToMessage(t *testing.T) {
 		WHERE externaluid IS NOT NULL AND externaluid != ''
 	`, reviewerID)
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	// Scope to the two challenge types this test exercises — EEELabel now
+	// runs ahead of AIImageReview in the default ordering and would shadow
+	// the coin-flip path.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=CheckMessage,AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result microvolunteering.Challenge
@@ -89,7 +92,10 @@ func TestMicrovolunteering_CoinFlipOneFallsBackToAIImage(t *testing.T) {
 
 	imgID := createTestAIImage(t, "coinflip-one-"+prefix, 77)
 
-	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token, nil))
+	// Scope to the two challenge types this test exercises — EEELabel now
+	// runs ahead of AIImageReview in the default ordering and would shadow
+	// the coin-flip path.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=CheckMessage,AIImageReview", nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var result microvolunteering.Challenge

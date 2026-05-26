@@ -94,6 +94,26 @@ docker info >/dev/null 2>&1 || { echo "ERROR: Docker daemon did not start after 
 ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || \
 ln -sf /usr/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || true
 
+# Allocate a 2GB swap file so a transient memory spike (Playwright workers +
+# Laravel + Go all hitting peak together) doesn't OOM-kill the runner agent
+# and produce an infrastructure_fail / heartbeat-timeout. fallocate is
+# instant on ext4; if it fails (XFS without preallocation), fall back to dd.
+if ! swapon --show | grep -q '/swapfile'; then
+  if fallocate -l 2G /swapfile 2>/dev/null; then
+    :
+  else
+    dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  fi
+  chmod 600 /swapfile
+  mkswap /swapfile >/dev/null
+  swapon /swapfile
+  echo "/swapfile none swap sw 0 0" >> /etc/fstab
+  # Discourage swap unless under real pressure. Default vm.swappiness=60 is
+  # too eager and would push hot test caches out to disk under normal load.
+  echo 'vm.swappiness=10' > /etc/sysctl.d/99-swap.conf
+  sysctl -p /etc/sysctl.d/99-swap.conf >/dev/null
+fi
+
 # Configure CircleCI runner
 mkdir -p /opt/circleci-runner
 
@@ -131,7 +151,13 @@ mkdir -p /home/circleci/workdir
 chown circleci:circleci /home/circleci/workdir
 
 while true; do
-  sudo -u circleci /opt/circleci-runner/circleci-runner machine \
+  # Run the runner agent at higher CPU priority (nice -5) than test workloads.
+  # The agent's heartbeat goroutine shares the same process as test driving,
+  # so under CPU saturation (Playwright + Laravel + Go all peaking) it can
+  # miss the heartbeat tick and trigger infrastructure_fail / heartbeat-timeout.
+  # Negative niceness needs root, which start.sh already has — nice -n -5
+  # runs before sudo -u circleci so the renice applies to the process group.
+  nice -n -5 sudo -u circleci /opt/circleci-runner/circleci-runner machine \
     --config "\$CONFIG" >> "\$LOG" 2>&1 || true
   echo "\$(date): Runner exited, restarting in 5s" >> "\$LOG"
   sleep 5

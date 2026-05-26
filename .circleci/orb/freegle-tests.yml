@@ -2581,6 +2581,20 @@ jobs:
 
               echo "[${elapsed_min}m] iznik-batch: $LARAVEL_DISPLAY | Go: $GO_DISPLAY | Playwright: $PLAYWRIGHT_DISPLAY | Vitest: $VITEST_DISPLAY"
 
+              # Every 2 minutes, emit a one-line VM resource snapshot to step
+              # stdout. CircleCI streams stdout in real time and keeps the
+              # partial step log even when the runner agent dies with
+              # heartbeat-timeout — so these lines are the only post-mortem
+              # data that survives an infrastructure_fail. Keep the format
+              # short so it doesn't drown the test progress lines.
+              if [ $elapsed_min -gt 0 ] && [ $((elapsed_min % 2)) -eq 0 ] && [ $((elapsed % 60)) -lt 10 ]; then
+                load=$(cut -d' ' -f1-3 /proc/loadavg)
+                mem=$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{printf "free=%dMB/%dMB", a/1024, t/1024}' /proc/meminfo)
+                swap=$(awk '/SwapTotal/{t=$2}/SwapFree/{f=$2}END{if(t>0)printf "swap=%dMB/%dMB", (t-f)/1024, t/1024; else printf "swap=off"}' /proc/meminfo)
+                top3=$(ps -eo pcpu,pid,comm --sort=-pcpu | awk 'NR>1 && NR<=4 {printf "%s(%s%%) ", $3, $1}')
+                echo "[${elapsed_min}m] [VM-DIAG] load=$load $mem $swap top: ${top3}"
+              fi
+
               # Every 5 minutes, dump Vitest output so a hang is diagnosable
               if [ "$VITEST_STATUS" = "running" ] && [ $elapsed_min -gt 0 ] && [ $((elapsed_min % 5)) -eq 0 ] && [ $((elapsed % 60)) -lt 10 ]; then
                 echo "--- Vitest output @ ${elapsed_min}m (last 40 lines of ~/test-output/vitest.out) ---"
@@ -2720,6 +2734,47 @@ jobs:
       - store_artifacts:
           path: ~/test-output
           destination: test-output
+
+      # Forensics for infrastructure_fail / heartbeat-timeout investigations.
+      # When the CircleCI runner agent stops responding (heartbeat-timeout),
+      # CircleCI marks the job infrastructure_fail and we lose visibility into
+      # *why* — the runner process may have been CPU-starved, OOM-killed, lost
+      # network, or the VM itself died. Capture the runner agent log + VM
+      # resource snapshot so the next infra_fail has post-mortem data.
+      # Runs on_fail only so successful jobs don't carry the noise.
+      - run:
+          name: Capture VM diagnostics for infra_fail post-mortem
+          when: on_fail
+          command: |
+            set +e
+            DIAG=~/test-output/vm-diagnostics
+            mkdir -p "$DIAG"
+            echo "=== uname ==="                                > "$DIAG/system.txt"
+            uname -a                                            >> "$DIAG/system.txt" 2>&1
+            echo "=== uptime ==="                               >> "$DIAG/system.txt"
+            uptime                                              >> "$DIAG/system.txt" 2>&1
+            echo "=== free -m ==="                              >> "$DIAG/system.txt"
+            free -m                                             >> "$DIAG/system.txt" 2>&1
+            echo "=== df -h ==="                                >> "$DIAG/system.txt"
+            df -h                                               >> "$DIAG/system.txt" 2>&1
+            echo "=== top -bn1 (first 30) ==="                  >> "$DIAG/system.txt"
+            top -bn1 | head -30                                 >> "$DIAG/system.txt" 2>&1
+            echo "=== dmesg | tail -80 (OOM-killer if any) ===" >> "$DIAG/system.txt"
+            sudo dmesg | tail -80                               >> "$DIAG/system.txt" 2>&1
+            echo "=== docker ps -a ==="                         >> "$DIAG/system.txt"
+            docker ps -a                                        >> "$DIAG/system.txt" 2>&1
+            echo "=== docker stats --no-stream ==="             >> "$DIAG/system.txt"
+            timeout 10 docker stats --no-stream                 >> "$DIAG/system.txt" 2>&1
+            # circleci-runner log — the agent process is what fails to
+            # heartbeat. Its own log shows whether it crashed, was signalled,
+            # auth-failed, or was simply not scheduled to run.
+            sudo cp /var/log/circleci-runner.log "$DIAG/circleci-runner.log" 2>/dev/null \
+              || journalctl -u circleci-runner --no-pager | tail -400 > "$DIAG/circleci-runner.journal" 2>&1
+            true
+
+      - store_artifacts:
+          path: ~/test-output/vm-diagnostics
+          destination: vm-diagnostics
 
       # Upload coverage — split into small steps to stay under CircleCI's 2048-char limit.
       - run:

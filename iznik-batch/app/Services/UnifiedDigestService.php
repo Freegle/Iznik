@@ -92,6 +92,31 @@ class UnifiedDigestService
     }
 
     /**
+     * Parse the immediate-mode allowlist from config.
+     *
+     * Returns:
+     *   ['*']   — wildcard (empty config OR explicit '*'), allow all users
+     *   [...]   — list of email addresses, restrict to those
+     *
+     * The checked-in default is a single pilot email so production
+     * deployments start restricted; clearing the env var or setting it to
+     * '*' opens the floodgates for real.
+     */
+    protected function getImmediateAllowlist(): array
+    {
+        $raw = trim((string) config('freegle.digest.immediate_allowlist', ''));
+        if ($raw === '' || $raw === '*') {
+            return ['*'];
+        }
+        $parts = array_filter(array_map('trim', explode(',', $raw)), fn ($s) => $s !== '');
+        // Mixed '*' + addresses → treat as wildcard.
+        if (in_array('*', $parts, true)) {
+            return ['*'];
+        }
+        return $parts === [] ? ['*'] : array_values($parts);
+    }
+
+    /**
      * Get users who should receive digests based on mode.
      *
      * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
@@ -113,6 +138,26 @@ class UnifiedDigestService
         if ($mode === self::MODE_IMMEDIATE) {
             // Full mode = immediate notifications.
             $query->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.simplemail')) = ?", [User::SIMPLE_MAIL_FULL]);
+
+            // Safety gate — FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST. Default (or
+            // '*') allows every simplemail=Full user; a comma-separated list
+            // restricts to those addresses. The checked-in config default
+            // pins this to a single pilot address so prod deploys start
+            // restricted; ops clears the env var (or sets it to '*') to
+            // flip immediate emails on for everyone.
+            $allowlist = $this->getImmediateAllowlist();
+            if ($allowlist !== ['*']) {
+                $lowercased = array_map('strtolower', $allowlist);
+                $query->whereExists(function ($q) use ($lowercased) {
+                    $q->select(DB::raw(1))
+                        ->from('users_emails')
+                        ->whereColumn('users_emails.userid', 'users.id')
+                        ->whereIn(DB::raw('LOWER(users_emails.email)'), $lowercased);
+                });
+                Log::info('UnifiedDigestService: immediate mode restricted to allowlist', [
+                    'allowlist_count' => count($allowlist),
+                ]);
+            }
         } else {
             // Basic mode = daily digest.
             // Include users with Basic setting OR users without simplemail set but with daily frequency memberships.
@@ -269,11 +314,22 @@ class UnifiedDigestService
             $key = $this->getDeduplicationKey($post);
 
             if (isset($processed[$key])) {
-                // Add this group to the existing post's groups list.
+                // Key matches - also check body similarity before deduplicating.
                 $existingIndex = $processed[$key];
                 $existing = $deduplicated[$existingIndex];
-                $existing['postedToGroups'][] = $post->groupid;
-                $deduplicated[$existingIndex] = $existing;
+
+                if ($this->bodiesMatch($existing['message'], $post)) {
+                    // Same key AND similar body - true duplicate, merge groups.
+                    $existing['postedToGroups'][] = $post->groupid;
+                    $deduplicated[$existingIndex] = $existing;
+                } else {
+                    // Same key but different body - treat as separate post.
+                    $index = $deduplicated->count();
+                    $deduplicated->push([
+                        'message' => $post,
+                        'postedToGroups' => [$post->groupid],
+                    ]);
+                }
             } else {
                 // New unique post.
                 $index = $deduplicated->count();
@@ -286,6 +342,34 @@ class UnifiedDigestService
         }
 
         return $deduplicated;
+    }
+
+    /**
+     * Check if two messages have matching body content.
+     */
+    protected function bodiesMatch(Message $a, Message $b): bool
+    {
+        // TrashNothing posts with same tnpostid are always duplicates.
+        if ($a->tnpostid && $b->tnpostid && $a->tnpostid === $b->tnpostid) {
+            return true;
+        }
+
+        return $this->normalizeBody($a->textbody) === $this->normalizeBody($b->textbody);
+    }
+
+    /**
+     * Normalize body text for comparison.
+     */
+    protected function normalizeBody(?string $body): string
+    {
+        if ($body === null) {
+            return '';
+        }
+
+        $normalized = strtolower(trim($body));
+        $normalized = preg_replace('/\s+/', ' ', $normalized);
+
+        return substr($normalized, 0, 200);
     }
 
     /**
