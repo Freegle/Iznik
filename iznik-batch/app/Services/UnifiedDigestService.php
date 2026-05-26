@@ -70,9 +70,11 @@ class UnifiedDigestService
             try {
                 $result = $this->sendDigestToUser($user, $mode, $dryRun);
 
-                if ($result === 'sent') {
-                    $stats['emails_sent']++;
-                } elseif ($result === 'no_posts') {
+                // Immediate-mode can fan out into multiple emails (one per
+                // post) so the per-user return is an array, not a bare string.
+                if ($result['status'] === 'sent') {
+                    $stats['emails_sent'] += $result['count'];
+                } elseif ($result['status'] === 'no_posts') {
                     $stats['no_new_posts']++;
                 }
             } catch (\Exception $e) {
@@ -136,11 +138,28 @@ class UnifiedDigestService
 
         // Filter by simple mail setting.
         if ($mode === self::MODE_IMMEDIATE) {
-            // Full mode = immediate notifications.
-            $query->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.simplemail')) = ?", [User::SIMPLE_MAIL_FULL]);
+            // V1 parity: a user is eligible for immediate notifications if EITHER
+            // the global simplemail setting is Full OR they have no global
+            // simplemail set but at least one approved membership configured for
+            // immediate per-group frequency (emailfrequency=-1). The two arms
+            // mirror the daily/Basic case below — global setting OR per-group
+            // setting when the global is unset.
+            $query->where(function ($q) {
+                $q->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.simplemail')) = ?", [User::SIMPLE_MAIL_FULL])
+                    ->orWhere(function ($q2) {
+                        $q2->whereRaw("JSON_EXTRACT(settings, '$.simplemail') IS NULL")
+                            ->whereExists(function ($subquery) {
+                                $subquery->select(DB::raw(1))
+                                    ->from('memberships')
+                                    ->whereColumn('memberships.userid', 'users.id')
+                                    ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+                                    ->where('memberships.collection', Membership::COLLECTION_APPROVED);
+                            });
+                    });
+            });
 
             // Safety gate — FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST. Default (or
-            // '*') allows every simplemail=Full user; a comma-separated list
+            // '*') allows every eligible user; a comma-separated list
             // restricts to those addresses. The checked-in config default
             // pins this to a single pilot address so prod deploys start
             // restricted; ops clears the env var (or sets it to '*') to
@@ -186,51 +205,97 @@ class UnifiedDigestService
     /**
      * Send a digest to a specific user.
      *
+     * Immediate mode sends ONE email per post (V1 parity, and matches what
+     * "immediate" means to the recipient — each new post arrives as its own
+     * notification). Daily mode bundles every new post since the previous
+     * send into a single rolled-up digest.
+     *
      * @param User $user
      * @param string $mode
-     * @return string 'sent', 'no_posts', or 'skipped'
+     * @return array{status: 'sent'|'no_posts'|'skipped', count: int}
      */
-    protected function sendDigestToUser(User $user, string $mode, bool $dryRun = false): string
+    protected function sendDigestToUser(User $user, string $mode, bool $dryRun = false): array
     {
         $email = $user->email_preferred;
 
         if (!$email) {
             Log::debug("UnifiedDigestService: User {$user->id} has no email address");
-            return 'skipped';
+            return ['status' => 'skipped', 'count' => 0];
         }
 
         // Get or create digest tracking record.
         $digestTracker = $this->getOrCreateDigestTracker($user, $mode);
 
         // Get all posts from user's groups since last digest.
-        $posts = $this->getPostsForUser($user, $digestTracker);
+        $posts = $this->getPostsForUser($user, $digestTracker, $mode);
 
         if ($posts->isEmpty()) {
-            return 'no_posts';
+            return ['status' => 'no_posts', 'count' => 0];
         }
 
         // Deduplicate cross-posted items.
         $deduplicatedPosts = $this->deduplicatePosts($posts);
 
         // Filter out user's own posts.
-        $deduplicatedPosts = $deduplicatedPosts->filter(fn($post) => $post['message']->fromuser !== $user->id);
+        $deduplicatedPosts = $deduplicatedPosts->filter(fn($post) => $post['message']->fromuser !== $user->id)->values();
 
         if ($deduplicatedPosts->isEmpty()) {
-            return 'no_posts';
+            // Nothing to send, but still advance the tracker past these posts
+            // so the next tick doesn't re-fetch and re-filter the same set.
+            if (!$dryRun) {
+                $this->updateDigestTracker($digestTracker, $posts);
+            }
+            return ['status' => 'no_posts', 'count' => 0];
         }
 
         // Get deduplicated sponsors for the user's groups.
         $sponsors = $this->getSponsorsForUser($user);
 
-        if (!$dryRun) {
-            // Send the email.
-            Mail::send(new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors));
+        if ($mode === self::MODE_IMMEDIATE) {
+            // One email per post. Advance the tracker after each send so a
+            // mid-loop crash doesn't cause us to re-mail already-sent posts
+            // on the next cron tick.
+            $sent = 0;
+            foreach ($deduplicatedPosts as $deduped) {
+                if (!$dryRun) {
+                    Mail::send(new UnifiedDigest($user, collect([$deduped]), $mode, $sponsors));
+                    $this->advanceImmediateTracker($digestTracker, $deduped['message']);
+                }
+                $sent++;
+            }
 
-            // Update tracker.
+            // Mop up the trailing edge of the raw batch: cross-posted items
+            // merged into a single logical post may have raw rows with
+            // arrivals later than the representative we picked above. Ensure
+            // the tracker is past every raw row in this batch so the next
+            // tick doesn't refetch and treat them as fresh posts.
+            if (!$dryRun) {
+                $this->updateDigestTracker($digestTracker, $posts);
+            }
+
+            return ['status' => 'sent', 'count' => $sent];
+        }
+
+        // Daily mode: one rolled-up digest covers everything.
+        if (!$dryRun) {
+            Mail::send(new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors));
             $this->updateDigestTracker($digestTracker, $posts);
         }
 
-        return 'sent';
+        return ['status' => 'sent', 'count' => 1];
+    }
+
+    /**
+     * Move the tracker past a single immediate-mode post so a mid-loop
+     * crash doesn't cause re-mailing of already-sent posts.
+     */
+    protected function advanceImmediateTracker(UserDigest $tracker, Message $post): void
+    {
+        $tracker->update([
+            'lastmsgid' => $post->id,
+            'lastmsgdate' => $post->arrival,
+            'lastsent' => now(),
+        ]);
     }
 
     /**
@@ -257,16 +322,38 @@ class UnifiedDigestService
     /**
      * Get all posts for a user from their member groups since last digest.
      *
+     * V1 parity: which groups contribute depends on whether the user has a
+     * global simplemail setting.
+     *   - simplemail set (Full/Basic): the global setting governs every group
+     *     — include posts from ALL approved memberships.
+     *   - simplemail NULL: per-group emailfrequency decides; for immediate
+     *     mode include only groups with emailfrequency=-1, for daily mode
+     *     only groups with emailfrequency=24. Otherwise a user who set just
+     *     one group to immediate would receive an immediate digest covering
+     *     posts from all their daily-frequency groups too.
+     *
      * @param User $user
      * @param UserDigest $tracker
+     * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
      * @return Collection
      */
-    protected function getPostsForUser(User $user, UserDigest $tracker): Collection
+    protected function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
-        // Get group IDs user is a member of.
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->pluck('groupid');
+        $globalSimplemail = is_array($user->settings)
+            ? ($user->settings['simplemail'] ?? null)
+            : null;
+
+        $membershipQuery = $user->memberships()
+            ->where('collection', Membership::COLLECTION_APPROVED);
+
+        if ($globalSimplemail === null) {
+            $freq = $mode === self::MODE_IMMEDIATE
+                ? Membership::EMAIL_FREQUENCY_IMMEDIATE
+                : Membership::EMAIL_FREQUENCY_DAILY;
+            $membershipQuery->where('emailfrequency', $freq);
+        }
+
+        $groupIds = $membershipQuery->pluck('groupid');
 
         if ($groupIds->isEmpty()) {
             return collect();

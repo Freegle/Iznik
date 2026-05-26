@@ -16,7 +16,7 @@ class SendUnifiedDigestCommand extends Command
     protected $signature = "mail:digest:unified
                             {--mode=daily : Digest mode - 'daily' or 'immediate'}
                             {--user= : Process only this user ID (for testing)}
-                            {--limit=1000 : Maximum users to process per run}
+                            {--limit= : Cap users processed per run (default: unlimited)}
                             {--dry-run : Show what would be sent without actually sending}";
 
     /**
@@ -40,7 +40,7 @@ class SendUnifiedDigestCommand extends Command
 
         $mode = $this->option('mode');
         $userId = $this->option('user') ? (int) $this->option('user') : null;
-        $limit = (int) $this->option('limit');
+        $limit = $this->option('limit') !== null ? (int) $this->option('limit') : null;
         $dryRun = $this->option('dry-run');
 
         // Validate mode.
@@ -54,7 +54,8 @@ class SendUnifiedDigestCommand extends Command
             $this->info('DRY RUN — no changes will be made.');
         }
 
-        $this->info("Sending unified digests (mode: {$mode}, limit: {$limit})...");
+        $limitLabel = $limit !== null ? (string) $limit : 'unlimited';
+        $this->info("Sending unified digests (mode: {$mode}, limit: {$limitLabel})...");
 
         if ($userId) {
             $this->info("Processing single user ID: {$userId}");

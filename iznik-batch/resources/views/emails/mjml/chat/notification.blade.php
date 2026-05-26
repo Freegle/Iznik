@@ -379,8 +379,12 @@
                 <img src="{{ $job->image_url }}" width="40" height="40" alt="" style="border-radius: 4px; display: block;" />
               </a>
             </td>
-            @endif
             <td style="padding: 6px 0; vertical-align: middle;">
+            @else
+            {{-- No image: span both columns so the title fills the row instead of
+                 being squeezed into the right column reserved by sibling rows. --}}
+            <td colspan="2" style="padding: 6px 0; vertical-align: middle;">
+            @endif
               <a href="{{ $job->tracked_url }}" style="color: {{ $accentColor }}; font-weight: bold; text-decoration: none; font-size: 14px;">
                 {{ $job->title }}
               </a>

@@ -155,10 +155,10 @@ class UnifiedDigestServiceTest extends TestCase
         $group = $this->createTestGroup();
 
         // Recipient wants daily digests.
-        $recipient->update([
-            'settings' => json_encode(['simplemail' => User::SIMPLE_MAIL_BASIC]),
-            'lastaccess' => now(),
-        ]);
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
 
         $this->createMembership($poster, $group);
         $this->createMembership($recipient, $group);
@@ -262,10 +262,10 @@ class UnifiedDigestServiceTest extends TestCase
         $group2 = $this->createTestGroup();
 
         // Recipient wants daily digests.
-        $recipient->update([
-            'settings' => json_encode(['simplemail' => User::SIMPLE_MAIL_BASIC]),
-            'lastaccess' => now(),
-        ]);
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
 
         $this->createMembership($poster, $group1);
         $this->createMembership($poster, $group2);
@@ -379,11 +379,12 @@ class UnifiedDigestServiceTest extends TestCase
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
 
-        // User has Basic setting (daily only).
-        $user->update([
-            'settings' => json_encode(['simplemail' => User::SIMPLE_MAIL_BASIC]),
-            'lastaccess' => now(),
-        ]);
+        // User has Basic setting (daily only). Basic isn't NULL so the
+        // per-group fallback below cannot rescue them either.
+        $user->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
 
         $this->createMembership($user, $group);
 
@@ -392,6 +393,177 @@ class UnifiedDigestServiceTest extends TestCase
 
         // User should not be processed for immediate mode.
         $this->assertEquals(0, $stats['users_processed']);
+    }
+
+    /**
+     * V1 parity: a user with no global simplemail setting but at least one
+     * approved membership configured for per-group immediate frequency
+     * (emailfrequency=-1) must be eligible for immediate digests. This mirrors
+     * the existing daily/Basic fallback that catches users with per-group
+     * daily (emailfrequency=24) but no global simplemail.
+     */
+    public function test_immediate_mode_includes_users_with_per_group_immediate_membership(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $user = $this->createTestUser();
+        // No simplemail key at all in settings — purely per-group control.
+        $user->settings = ['notificationmails' => true];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
+
+        $group = $this->createTestGroup();
+        // createMembership() defaults to EMAIL_FREQUENCY_IMMEDIATE, which is
+        // exactly the per-group setting this path looks for.
+        $this->createMembership($user, $group);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $user->id);
+
+        $this->assertEquals(1, $stats['users_processed']);
+    }
+
+    /**
+     * Counter-test for the per-group immediate path: a user with no simplemail
+     * AND only non-immediate per-group frequencies must NOT be picked up.
+     * Otherwise the fallback would over-match.
+     */
+    public function test_immediate_mode_skips_users_whose_only_membership_is_daily(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $user = $this->createTestUser();
+        $user->settings = ['notificationmails' => true];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group, [
+            'emailfrequency' => \App\Models\Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $user->id);
+
+        $this->assertEquals(0, $stats['users_processed']);
+    }
+
+    /**
+     * V1 parity: when a user has no global simplemail, only the groups whose
+     * per-group emailfrequency matches the digest mode contribute posts.
+     * A user with one group set to immediate (-1) and another set to daily
+     * (24) must get an immediate digest containing only posts from the
+     * immediate group — not posts from the daily group.
+     */
+    public function test_immediate_mode_post_selection_respects_per_group_emailfrequency(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['notificationmails' => true];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        // Need a separate user to post the items because the service strips
+        // out the recipient's own posts before sending.
+        $poster = $this->createTestUser();
+
+        $immediateGroup = $this->createTestGroup();
+        $dailyGroup = $this->createTestGroup();
+
+        $this->createMembership($recipient, $immediateGroup, [
+            'emailfrequency' => \App\Models\Membership::EMAIL_FREQUENCY_IMMEDIATE,
+        ]);
+        $this->createMembership($recipient, $dailyGroup, [
+            'emailfrequency' => \App\Models\Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        // Poster also joins so messages_groups rows exist via createTestMessage.
+        $this->createMembership($poster, $immediateGroup);
+        $this->createMembership($poster, $dailyGroup);
+
+        $immediatePost = $this->createTestMessage($poster, $immediateGroup, [
+            'subject' => 'OFFER: Immediate group item (TestLocation)',
+        ]);
+        $dailyPost = $this->createTestMessage($poster, $dailyGroup, [
+            'subject' => 'OFFER: Daily group item (TestLocation)',
+        ]);
+
+        $reflection = new \ReflectionClass($this->service);
+        $getPosts = $reflection->getMethod('getPostsForUser');
+        $getPosts->setAccessible(true);
+
+        // Fresh tracker (no lastmsgdate) — first-digest path keeps a 24h
+        // window which both posts fall inside.
+        $trackerCreate = $reflection->getMethod('getOrCreateDigestTracker');
+        $trackerCreate->setAccessible(true);
+        $tracker = $trackerCreate->invoke($this->service, $recipient, UnifiedDigestService::MODE_IMMEDIATE);
+
+        $posts = $getPosts->invoke($this->service, $recipient, $tracker, UnifiedDigestService::MODE_IMMEDIATE);
+
+        $postIds = $posts->pluck('id')->all();
+        $this->assertContains($immediatePost->id, $postIds, 'Immediate-frequency group post must be included');
+        $this->assertNotContains($dailyPost->id, $postIds, 'Daily-frequency group post must NOT be included in immediate digest');
+    }
+
+    /**
+     * Immediate mode must fan out into one email per post so the recipient
+     * gets a discrete notification for each new item, not a rolled-up batch.
+     * Daily mode keeps the old single-rolled-up behaviour.
+     */
+    public function test_immediate_mode_sends_one_email_per_post(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group);
+        $this->createMembership($poster, $group);
+
+        // Three separate posts with different subjects so dedup leaves them all.
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: First item (TestLocation)']);
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Second item (TestLocation)']);
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Third item (TestLocation)']);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $recipient->id);
+
+        // One user processed, three emails sent.
+        $this->assertEquals(1, $stats['users_processed']);
+        $this->assertEquals(3, $stats['emails_sent']);
+    }
+
+    /**
+     * Daily mode must NOT fan out — every new post since the previous send
+     * is bundled into a single rolled-up email regardless of how many there
+     * are.
+     */
+    public function test_daily_mode_bundles_all_posts_into_one_email(): void
+    {
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group);
+        $this->createMembership($poster, $group);
+
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B (TestLocation)']);
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: C (TestLocation)']);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['users_processed']);
+        $this->assertEquals(1, $stats['emails_sent']);
     }
 
     /**
