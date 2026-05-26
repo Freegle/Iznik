@@ -1746,9 +1746,11 @@ onMounted(async () => {
     // Density-driven schedule.  One HTTP call returns the full ticks-tuple of
     // (drive-time, cumulative_users, polygon) — the server picks each tick's
     // drive-time so an equal-population batch is encapsulated at each step.
-    // The "curve" parameter shapes the cumulative-fraction-vs-tick mapping
-    // (linear by default; front-loaded / back-loaded available).
-    const curveShape = 'linear'
+    // The "curve" parameter shapes the cumulative-fraction-vs-tick mapping.
+    // Default to the data-driven recommended curve — see
+    // plans/reference/ripple-curve-evaluation.md.  front-heavy (x^0.3)
+    // hit ~80 % reach-in-time against the 483-post historical sample.
+    const curveShape = 'front-heavy'
     const scheduleURL = apiUrl(
       `/v1/ripple-schedule?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
         6

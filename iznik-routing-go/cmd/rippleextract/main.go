@@ -43,7 +43,11 @@ type Post struct {
 	FromUser  int       `json:"fromuser"`
 	Outcome   *string   `json:"outcome"`
 	OutcomeAt *string   `json:"outcome_at"`
-	Repliers  []Replier `json:"repliers"`
+	// RU category (e.g. "A1" Urban Major Conurbation, "F1" Rural Hamlets)
+	// — derived from the post's postcode via transport_postcode_classification.
+	// Empty if the postcode isn't classified (rare, mostly outside England).
+	RUCategory *string   `json:"ru_category"`
+	Repliers   []Replier `json:"repliers"`
 }
 
 var (
@@ -155,12 +159,16 @@ func main() {
 		              m.type,
 		              IFNULL(m.fromuser, 0),
 		              mo.outcome,
-		              DATE_FORMAT(mo.timestamp, '%Y-%m-%d %H:%i:%s') AS outcome_at
+		              DATE_FORMAT(mo.timestamp, '%Y-%m-%d %H:%i:%s') AS outcome_at,
+		              tpc.ru_category
 		         FROM messages m
 		         INNER JOIN messages_spatial ms ON ms.msgid = m.id
 		         LEFT JOIN messages_outcomes mo
 		           ON mo.msgid = m.id
 		          AND mo.outcome IN ('Taken','Promised','Withdrawn','Repost')
+		         LEFT JOIN locations l ON l.id = m.locationid AND l.type = 'Postcode'
+		         LEFT JOIN transport_postcode_classification tpc
+		           ON tpc.postcode = REPLACE(l.name, ' ', '')
 		         WHERE m.id IN (` + strings.Join(ph, ",") + `)`
 		r, err := db.Query(q2, args...)
 		if err != nil {
@@ -168,8 +176,8 @@ func main() {
 		}
 		for r.Next() {
 			var p Post
-			var outcome, outcomeAt sql.NullString
-			if err := r.Scan(&p.PostID, &p.Lat, &p.Lng, &p.Arrival, &p.Type, &p.FromUser, &outcome, &outcomeAt); err != nil {
+			var outcome, outcomeAt, ruCat sql.NullString
+			if err := r.Scan(&p.PostID, &p.Lat, &p.Lng, &p.Arrival, &p.Type, &p.FromUser, &outcome, &outcomeAt, &ruCat); err != nil {
 				log.Fatalf("step2 scan: %v", err)
 			}
 			if outcome.Valid {
@@ -177,6 +185,9 @@ func main() {
 			}
 			if outcomeAt.Valid {
 				p.OutcomeAt = &outcomeAt.String
+			}
+			if ruCat.Valid {
+				p.RUCategory = &ruCat.String
 			}
 			posts[p.PostID] = &p
 		}

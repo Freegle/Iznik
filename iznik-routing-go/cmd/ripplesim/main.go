@@ -55,15 +55,16 @@ type extractedReplier struct {
 }
 
 type extractedPost struct {
-	PostID    int                `json:"post_id"`
-	Lat       float64            `json:"lat"`
-	Lng       float64            `json:"lng"`
-	Arrival   string             `json:"arrival"`
-	Type      string             `json:"type"`
-	FromUser  int                `json:"fromuser"`
-	Outcome   *string            `json:"outcome"`
-	OutcomeAt *string            `json:"outcome_at"`
-	Repliers  []extractedReplier `json:"repliers"`
+	PostID     int                `json:"post_id"`
+	Lat        float64            `json:"lat"`
+	Lng        float64            `json:"lng"`
+	Arrival    string             `json:"arrival"`
+	Type       string             `json:"type"`
+	FromUser   int                `json:"fromuser"`
+	Outcome    *string            `json:"outcome"`
+	OutcomeAt  *string            `json:"outcome_at"`
+	RUCategory *string            `json:"ru_category"`
+	Repliers   []extractedReplier `json:"repliers"`
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +107,28 @@ var (
 	workers        = flag.Int("workers", 8, "concurrent eval workers")
 	rebuildCache   = flag.Bool("rebuild-cache", false, "ignore existing cache and re-fetch everything")
 	limit          = flag.Int("limit", 0, "max posts to evaluate (0 = all)")
+	groupBy        = flag.String("group-by", "", "stratify results by post attribute: \"\"=all, \"ru\"=RU category, \"ru-coarse\"=Urban/Rural/Other")
 )
+
+// ruCoarse maps a fine-grained ONS RU category (A1, B1, ...) to one of three
+// coarse buckets so the simulator output is readable when there are too few
+// pairs per fine category.
+func ruCoarse(cat *string) string {
+	if cat == nil || *cat == "" {
+		return "?"
+	}
+	c := *cat
+	if len(c) == 0 {
+		return "?"
+	}
+	switch c[0] {
+	case 'A', 'B', 'C':
+		return "urban"
+	case 'D', 'E', 'F':
+		return "rural"
+	}
+	return "?"
+}
 
 func main() {
 	flag.Parse()
@@ -350,14 +372,45 @@ type curveResult struct {
 	NotificationsSent int     // total notifications across simulated runs
 }
 
-func simulate(posts []extractedPost, cache *cacheFile, curves []curve) []curveResult {
+// groupKey returns the bucket label for a post under the current --group-by
+// setting.  Empty string = all-in-one (no stratification).
+func groupKey(p extractedPost) string {
+	switch *groupBy {
+	case "ru":
+		if p.RUCategory != nil && *p.RUCategory != "" {
+			return *p.RUCategory
+		}
+		return "?"
+	case "ru-coarse":
+		return ruCoarse(p.RUCategory)
+	default:
+		return "all"
+	}
+}
+
+// simulate returns results keyed by group label (or {"all": [...]} if not grouping).
+func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[string][]curveResult {
 	byID := make(map[int]*cachedPost, len(cache.Posts))
 	for i := range cache.Posts {
 		byID[cache.Posts[i].PostID] = &cache.Posts[i]
 	}
-	results := make([]curveResult, len(curves))
-	for ci, c := range curves {
-		results[ci].Name = c.Name
+	groups := map[string][]curveResult{}
+	getGroup := func(k string) []curveResult {
+		r, ok := groups[k]
+		if !ok {
+			r = make([]curveResult, len(curves))
+			for ci, c := range curves {
+				r[ci].Name = c.Name
+			}
+			groups[k] = r
+		}
+		return r
+	}
+	// Only pre-seed the "all" bucket when not stratifying — otherwise it
+	// pollutes the output with an empty group.
+	var results []curveResult
+	if *groupBy == "" {
+		results = getGroup("all")
 	}
 
 	lifetimeSec := *lifetimeDays * 24 * 3600
@@ -380,6 +433,16 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) []curveRe
 		if err != nil {
 			continue
 		}
+
+		// Pick the group bucket for this post.  When not grouping, everything
+		// goes into "all".  Either way `results` points at the slice we mutate.
+		var key string
+		if *groupBy == "" {
+			key = "all"
+		} else {
+			key = groupKey(p)
+		}
+		results = getGroup(key)
 
 		for ci, c := range curves {
 			// Pre-compute the cumulative-rank schedule for this post.
@@ -455,17 +518,38 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) []curveRe
 				results[ci].NotificationsSent += cumRank[lastTick-1]
 			}
 		}
+		// Write back updated results for this group (slices-of-struct in a
+		// map need re-assignment after mutation if we didn't keep a pointer).
+		groups[key] = results
 	}
 
-	return results
+	return groups
 }
 
-func printResults(results []curveResult) {
-	fmt.Println()
-	fmt.Println("Simulation results")
-	fmt.Println("==================")
-	fmt.Printf("%-30s  %10s  %10s  %10s  %10s  %12s\n",
-		"curve", "pairs", "in-time", "late", "unreached", "notify-vol")
+func printResults(groups map[string][]curveResult) {
+	// Sort group keys for stable output.
+	keys := make([]string, 0, len(groups))
+	for k := range groups {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		results := groups[k]
+		fmt.Println()
+		if k == "all" {
+			fmt.Println("Simulation results")
+			fmt.Println("==================")
+		} else {
+			fmt.Printf("Simulation results — group %q\n", k)
+			fmt.Println("=======================================")
+		}
+		fmt.Printf("%-30s  %10s  %10s  %10s  %10s  %12s\n",
+			"curve", "pairs", "in-time", "late", "unreached", "notify-vol")
+		printResultsRows(results)
+	}
+}
+
+func printResultsRows(results []curveResult) {
 	for _, r := range results {
 		pct := 0.0
 		if r.PairsTotal > 0 {

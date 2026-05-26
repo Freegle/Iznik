@@ -154,20 +154,37 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 }
 
 // curveFraction maps "elapsed fraction" (k/ticks ∈ [0,1]) to "notified fraction"
-// (∈ [0,1]) under a named curve shape.  Default linear means equal-population
-// per wall-clock tick; "front" front-loads notifications into the first portion
-// of the lifetime; "back" back-loads them.  Adding shapes later is one new case.
+// (∈ [0,1]) under a named curve shape.
+//
+// Simulator evaluation against 483 historical posts (see
+// plans/reference/ripple-curve-evaluation.md) ranks the shapes:
+//   front-heavy ≫ front-sqrt > front-cubic > front-quad > linear ≫ back
+//
+// "front-heavy" (x^0.3) is the recommended production default — at tick 1 of
+// 30 it covers 37 % of reachable users in one go, which captures the bulk of
+// nearby fast-reply scenarios.  Other shapes are kept for comparison.
 func curveFraction(shape string, x float64) float64 {
 	switch shape {
-	case "front":
-		// Quadratic ease-out: y = 1 - (1-x)^2
+	case "front-heavy":
+		// x^0.3 — the recommended production curve.
+		return math.Pow(x, 0.3)
+	case "front-sqrt":
+		// x^0.5 — slightly less aggressive than front-heavy.
+		return math.Sqrt(x)
+	case "front-cubic":
+		// 1 - (1-x)^3 — cubic ease-out, front-loaded but smoother.
+		return 1.0 - math.Pow(1.0-x, 3)
+	case "front", "front-quad":
+		// 1 - (1-x)^2 — quadratic ease-out.
 		return 1.0 - math.Pow(1.0-x, 2)
 	case "back":
-		// Quadratic ease-in: y = x^2
+		// x^2 — quadratic ease-in; consistently the worst curve.
 		return x * x
-	default:
-		// Linear
+	case "linear":
 		return x
+	default:
+		// Unknown shape -> recommended default.
+		return math.Pow(x, 0.3)
 	}
 }
 
@@ -216,10 +233,15 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		}
 
 		// Curve shape determines how cumulative-user targets are spaced
-		// across the tick range.  Linear = equal users per tick.
-		curve := c.Query("curve", "linear")
-		if curve != "linear" && curve != "front" && curve != "back" {
-			curve = "linear"
+		// across the tick range.  See curveFraction() for the supported
+		// shapes; "front-heavy" (x^0.3) is the data-driven default.
+		curve := c.Query("curve", "front-heavy")
+		validCurves := map[string]bool{
+			"linear": true, "front-heavy": true, "front-sqrt": true,
+			"front-cubic": true, "front": true, "front-quad": true, "back": true,
+		}
+		if !validCurves[curve] {
+			curve = "front-heavy"
 		}
 
 		modeStr := c.Query("mode", "drive")
