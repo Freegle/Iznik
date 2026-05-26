@@ -156,61 +156,49 @@ class VolunteeringDigestService
             // User::scopeReceivingOurMails so this query matches the V1
             // sendOurMails() criteria. Without those, the V2 dry-run was
             // 1.34× V1's send count (149k vs 111k).
-            // V1 parity: never send to one of our own per-user-alias domains
-            // (users.ilovefreegle.org, groups.ilovefreegle.org, etc.) — those
-            // loop back through IncomingMailService::handleDirectMail and
-            // materialise as User2User chat messages from the noreply system
-            // user. Use externalEmailJoinSubquery so the join picks each user's
-            // best non-internal email (preferred DESC, validated DESC), falling
-            // back to a less-preferred external address when preferred=1 is the
-            // internal alias.
             $members = User::query()
                 ->select([
-                    'ue.email',
                     'users.id as userId',
                     'locations.lat',
                     'locations.lng',
                 ])
                 ->join('memberships', 'memberships.userid', '=', 'users.id')
-                ->joinSub(User::externalEmailJoinSubquery(), 'ue', function ($join) {
-                    $join->on('ue.userid', '=', 'memberships.userid');
-                })
                 ->leftJoin('locations', 'locations.id', '=', 'users.lastlocation')
                 ->where('memberships.groupid', $groupRow->id)
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED)
                 ->where('memberships.volunteeringallowed', 1)
                 ->where('memberships.emailfrequency', '!=', 0)
-                ->whereNotNull('ue.email')
                 ->receivingOurMails()
                 ->get();
 
             foreach ($members as $member) {
+                $user = User::find($member->userId);
+
+                // V1 parity: skip users whose only emails are on our own per-user
+                // alias domains — those loop back through IncomingMailService
+                // and materialise as chat messages from the noreply system user.
+                $email = $user?->email_preferred;
+                if (!$email) {
+                    continue;
+                }
+
                 $jobAds = collect();
-                if ($member->lat && $member->lng) {
-                    $user = User::find($member->userId);
-                    if ($user) {
-                        $jobAds = $user->getJobAds()['jobs'];
-                    }
+                if ($member->lat && $member->lng && $user) {
+                    $jobAds = $user->getJobAds()['jobs'];
                 }
 
                 if (!$dryRun) {
-                    $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($member->email);
-                    // SafeMail catches permanent (bounce + skip) and transient
-                    // (mail-host hiccup mid-run) SMTP failures so one bad
-                    // address or one closed-connection doesn't crash the
-                    // surrounding ~20k-recipient run. sendMailable() uses
-                    // Mail::send-style because VolunteeringDigestMail's
-                    // envelope() already sets the to: address.
+                    $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
                     SafeMail::sendMailable(
                         new VolunteeringDigestMail(
-                            recipientEmail: $member->email,
+                            recipientEmail: $email,
                             groupName: $groupRow->nameshort,
                             volunteerings: $volData,
                             unsubscribeUrl: $unsubscribeUrl,
                             jobAds: $jobAds,
                             userId: $member->userId,
                         ),
-                        $member->email,
+                        $email,
                     );
                 }
                 $sent++;

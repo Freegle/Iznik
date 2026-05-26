@@ -136,15 +136,23 @@ class ChatReviewPendingService
 
     private function getModEmails(int $groupId): array
     {
-        return DB::table('memberships')
-            ->joinSub(\App\Models\User::externalEmailJoinSubquery(), 'ue', 'ue.userid', '=', 'memberships.userid')
+        // V1 parity: pick each mod's preferred external email; skip those with
+        // only internal-alias addresses, and skip the system modtools user.
+        $modIds = DB::table('memberships')
             ->join('users', 'users.id', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupId)
             ->whereIn('memberships.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
             ->whereNull('users.deleted')
-            ->where('ue.email', '!=', self::SYSTEM_MOD_EMAIL)
-            ->pluck('ue.email')
-            ->toArray();
+            ->pluck('memberships.userid');
+
+        $emails = [];
+        foreach ($modIds as $modId) {
+            $email = \App\Models\User::find($modId)?->email_preferred;
+            if ($email && $email !== self::SYSTEM_MOD_EMAIL) {
+                $emails[] = $email;
+            }
+        }
+        return $emails;
     }
 }

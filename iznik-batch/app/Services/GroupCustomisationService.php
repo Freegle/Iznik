@@ -114,7 +114,6 @@ class GroupCustomisationService
             ->value('userid');
 
         $query = DB::table('memberships')
-            ->joinSub(\App\Models\User::externalEmailJoinSubquery(), 'ue', 'ue.userid', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupId)
             ->whereIn('memberships.role', [Membership::ROLE_OWNER, Membership::ROLE_MODERATOR])
             ->where('memberships.collection', Membership::COLLECTION_APPROVED);
@@ -123,6 +122,15 @@ class GroupCustomisationService
             $query->where('memberships.userid', '!=', $systemUserId);
         }
 
-        return $query->pluck('ue.email')->all();
+        // V1 parity: pick each mod's preferred external email; skip mods who
+        // only have internal-alias addresses.
+        $emails = [];
+        foreach ($query->pluck('memberships.userid') as $modId) {
+            $email = \App\Models\User::find($modId)?->email_preferred;
+            if ($email) {
+                $emails[] = $email;
+            }
+        }
+        return $emails;
     }
 }

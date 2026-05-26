@@ -1282,6 +1282,19 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 	}
 
 	// Step 1: Check concern_keywords with literal/regex match modes.
+	//
+	// Mirror PHP ContentCheckService::checkConcernKeywords filters:
+	//   - scope='global' only (per-group worry words are scoped to a specific
+	//     group_id and must not match chat messages from other groups; chat
+	//     messages have no group context here, so per-group keywords are
+	//     dropped entirely)
+	//   - category != 'allowed' (allowed-category place names like 'road' /
+	//     'Butt Road' / 'Cock Lane' are tracked for context, not flagging)
+	//
+	// Without these filters, every chat message containing common place-name
+	// or per-group worry tokens (e.g. 'road', 'donate', 'charity') was
+	// labelled "Known spam keyword" in MT chat review even when the original
+	// flag came from a URL or other content check.
 	type spamWord struct {
 		Word    string  `gorm:"column:word"`
 		Type    string  `gorm:"column:type"`
@@ -1289,7 +1302,7 @@ func enrichReviewReason(db *gorm.DB, message string, reportreason *string) strin
 		Exclude *string `gorm:"column:exclude"`
 	}
 	var keywords []spamWord
-	db.Raw("SELECT keyword AS word, match_mode AS type, action, exclude FROM concern_keywords WHERE match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND LENGTH(TRIM(keyword)) > 0").Scan(&keywords)
+	db.Raw("SELECT keyword AS word, match_mode AS type, action, exclude FROM concern_keywords WHERE match_mode IN ('literal', 'regex') AND action IN ('block', 'flag') AND scope = 'global' AND category != 'allowed' AND LENGTH(TRIM(keyword)) > 0").Scan(&keywords)
 
 	for _, kw := range keywords {
 		word := strings.TrimSpace(kw.Word)

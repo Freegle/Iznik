@@ -147,41 +147,35 @@ class EventsDigestService
             // "deliverable" — V1 events.php enforced these via sendOurMails()
             // per recipient, and skipping them inflated the V2 dry-run from
             // ~49k (V1 baseline) to 722k sends.
-            // Use externalEmailJoinSubquery so we never send to a per-user
-            // alias on one of our own domains (V1 parity).
             $members = User::query()
-                ->select(['ue.email', 'users.id as userId'])
+                ->select(['users.id as userId'])
                 ->join('memberships', 'memberships.userid', '=', 'users.id')
-                ->joinSub(User::externalEmailJoinSubquery(), 'ue', function ($join) {
-                    $join->on('ue.userid', '=', 'memberships.userid');
-                })
                 ->where('memberships.groupid', $groupRow->id)
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED)
                 ->where('memberships.eventsallowed', 1)
                 ->where('memberships.emailfrequency', '!=', 0)
-                ->whereNotNull('ue.email')
                 ->receivingOurMails()
                 ->get();
 
             foreach ($members as $member) {
+                // V1 parity: pick the user's preferred external email and skip
+                // when they have none (only internal-alias addresses).
+                $email = User::find($member->userId)?->email_preferred;
+                if (!$email) {
+                    continue;
+                }
+
                 if (!$dryRun) {
-                    $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($member->email);
-                    // SafeMail catches permanent (bounce + skip) and transient
-                    // (mail-host hiccup mid-run) SMTP failures so one bad address
-                    // or one closed-connection doesn't crash the rest of the
-                    // ~94k-recipient run. The mailable's own envelope() sets the
-                    // to: address, so use sendMailable() (Mail::send-style) not
-                    // send() (which would Mail::to(...) and duplicate the
-                    // recipient).
+                    $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
                     SafeMail::sendMailable(
                         new EventsDigestMail(
-                            recipientEmail: $member->email,
+                            recipientEmail: $email,
                             groupName: $groupRow->nameshort,
                             events: $eventData,
                             unsubscribeUrl: $unsubscribeUrl,
                             userId: $member->userId,
                         ),
-                        $member->email,
+                        $email,
                     );
                 }
                 $sent++;

@@ -599,6 +599,51 @@ func TestReviewReasonEnrichment(t *testing.T) {
 		{"freegle_email_excluded", "Email noreply@ilovefreegle.org for info", "Spam", "Spam"},
 	}
 
+	// Seed concern_keywords rows that previously leaked through enrichReviewReason
+	// (per-group scope and allowed-category place names) so the regression assertions
+	// below cover the scope='global' AND category != 'allowed' filter on the query.
+	leakRows := []struct {
+		keyword  string
+		category string
+		mode     string
+		action   string
+		scope    string
+		groupID  uint64
+	}{
+		// allowed-category global: 'road' is a literal/flag/allowed row in prod.
+		{"alias-road-" + prefix, "allowed", "literal", "flag", "global", 0},
+		// per-group worry word: would match every chat globally without scope filter.
+		{"alias-charity-" + prefix, "review", "literal", "flag", "group", uint64(groupID)},
+		// global review (legitimate) — should still match.
+		{"alias-spamword-" + prefix, "review", "literal", "flag", "global", 0},
+	}
+	for _, r := range leakRows {
+		db.Exec(
+			"INSERT INTO concern_keywords (keyword, category, match_mode, action, scope, group_id) VALUES (?, ?, ?, ?, ?, ?)",
+			r.keyword, r.category, r.mode, r.action, r.scope, r.groupID)
+	}
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM concern_keywords WHERE keyword LIKE ?", "alias-%-"+prefix)
+	})
+
+	scopeTests := []struct {
+		name     string
+		message  string
+		expected string
+	}{
+		{"allowed_category_does_not_flag", "We went down the alias-road-" + prefix + " yesterday", "Spam"},
+		{"group_scope_does_not_flag_in_chat", "Please alias-charity-" + prefix + " do this", "Spam"},
+		{"global_review_keyword_does_flag", "Has the alias-spamword-" + prefix + " word", "Known spam keyword"},
+	}
+	for _, tc := range scopeTests {
+		tests = append(tests, struct {
+			name     string
+			message  string
+			reason   string
+			expected string
+		}{tc.name, tc.message, "Spam", tc.expected})
+	}
+
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var reportreason *string
