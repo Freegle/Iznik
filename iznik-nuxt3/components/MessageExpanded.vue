@@ -594,6 +594,7 @@ import {
   onMounted,
   onUnmounted,
 } from 'vue'
+import { useRoute } from '#imports'
 import { useMiscStore } from '~/stores/misc'
 import { useMobileStore } from '~/stores/mobile'
 import { useMe } from '~/composables/useMe'
@@ -922,6 +923,15 @@ onMounted(() => {
 
   // Start auto-scroll hint for thumbnail carousel
   startThumbnailAutoScroll()
+
+  // If the user arrived via a "Reply" CTA in an email (?reply=1), open
+  // the compose form straight away so they don't need to click Reply
+  // again. expandReply() only sets the ref — the template still gates
+  // the actual MessageReplySection render on replyable/replied/etc.,
+  // so this is safe to call unconditionally.
+  if (useRoute().query.reply) {
+    expandReply()
+  }
 })
 
 onUnmounted(() => {
