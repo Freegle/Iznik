@@ -269,6 +269,8 @@ func newApp(g *Graph, spatialURL string, requireAuth bool) *fiber.App {
 	v1.Get("/isochrone", handleIsochrone(g))
 	v1.Get("/fairness", handleFairness(g))
 	v1.Get("/nearby-freeglers", handleNearbyFreeglers(g, spatialURL))
+	v1.Get("/ripple-schedule", handleRippleSchedule(g, spatialURL))
+	v1.Post("/ripple-eval", handleRippleEval(g, spatialURL))
 	v1.Get("/groups/nearby", handleNearbyGroups())
 	return app
 }
