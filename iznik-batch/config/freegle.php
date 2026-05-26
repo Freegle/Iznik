@@ -86,6 +86,18 @@ return [
         'sync_date_file' => env('FREEGLE_TN_SYNC_DATE_FILE', '/etc/tn_sync_last_date.txt'),
     ],
 
+    'digest' => [
+        // Safety gate for the unified-digest IMMEDIATE mode.
+        //   ''  or '*'      → allow all users (the normal production state)
+        //   'a@x.com,b@y'   → restrict immediate emails to those addresses
+        //
+        // The default checked in here is a single pilot recipient so that
+        // when the cron is enabled in production only that user receives
+        // immediate emails. Clear it (or set to '*') in env to flip the
+        // feature on for everyone. Daily-mode digests are NOT gated.
+        'immediate_allowlist' => env('FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST', 'edward@ehibbert.org.uk'),
+    ],
+
     // Firebase Cloud Messaging for push notifications
     'firebase' => [
         'credentials_path' => env('FIREBASE_CREDENTIALS_PATH', '/etc/firebase.json'),

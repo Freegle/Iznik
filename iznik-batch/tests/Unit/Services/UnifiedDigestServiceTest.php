@@ -372,6 +372,10 @@ class UnifiedDigestServiceTest extends TestCase
 
     public function test_immediate_mode_requires_full_setting(): void
     {
+        // Open the allowlist so this test only proves the simplemail filter,
+        // not the allowlist gate (which has its own tests below).
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
 
@@ -388,5 +392,128 @@ class UnifiedDigestServiceTest extends TestCase
 
         // User should not be processed for immediate mode.
         $this->assertEquals(0, $stats['users_processed']);
+    }
+
+    /**
+     * Empty allowlist means "no restriction" — every simplemail=Full user is
+     * eligible. This is the "fully on" state once we're done piloting.
+     */
+    public function test_immediate_mode_allowlist_empty_allows_everyone(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '']);
+
+        $user = $this->createTestUser();
+        $user->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $user->id);
+
+        $this->assertEquals(1, $stats['users_processed']);
+    }
+
+    /**
+     * Explicit '*' is equivalent to empty — no restriction.
+     */
+    public function test_immediate_mode_allowlist_wildcard_allows_everyone(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $user = $this->createTestUser();
+        $user->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $user->id);
+
+        $this->assertEquals(1, $stats['users_processed']);
+    }
+
+    /**
+     * Specific allowlist entries let only matching addresses through. This is
+     * the pilot mode — one or two test recipients while we validate end-to-end
+     * before clearing the env var to flip immediate emails on for everyone.
+     */
+    public function test_immediate_mode_allowlist_filters_to_specified_addresses(): void
+    {
+        $allowed = $this->createTestUser();
+        $allowed->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $allowed->lastaccess = now();
+        $allowed->save();
+        $allowed->refresh();
+        $group = $this->createTestGroup();
+        $this->createMembership($allowed, $group);
+
+        $blocked = $this->createTestUser();
+        $blocked->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $blocked->lastaccess = now();
+        $blocked->save();
+        $blocked->refresh();
+        $this->createMembership($blocked, $group);
+
+        // Pick the allowed user's preferred email and use it as the allowlist.
+        $allowedEmail = $allowed->emails()->first()->email;
+        config(['freegle.digest.immediate_allowlist' => $allowedEmail]);
+
+        // Allowed user is processed.
+        $statsAllowed = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $allowed->id);
+        $this->assertEquals(1, $statsAllowed['users_processed']);
+
+        // Other user with same Full setting is filtered out.
+        $statsBlocked = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $blocked->id);
+        $this->assertEquals(0, $statsBlocked['users_processed']);
+    }
+
+    /**
+     * The default value checked into config (a single pilot email) must
+     * restrict immediate emails to that address — otherwise deploying the
+     * cron in prod without a custom env var would email everyone.
+     */
+    public function test_immediate_mode_uses_pinned_pilot_default(): void
+    {
+        // Don't override — use whatever's baked into config/freegle.php.
+        $pilot = config('freegle.digest.immediate_allowlist');
+        $this->assertNotEquals('', $pilot, 'Pinned default must not be empty');
+        $this->assertNotEquals('*', $pilot, 'Pinned default must not be wildcard');
+
+        $blocked = $this->createTestUser();
+        $blocked->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $blocked->lastaccess = now();
+        $blocked->save();
+        $blocked->refresh();
+        $group = $this->createTestGroup();
+        $this->createMembership($blocked, $group);
+
+        // User's email is not the pilot address → must be skipped.
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $blocked->id);
+        $this->assertEquals(0, $stats['users_processed']);
+    }
+
+    /**
+     * Allowlist must not affect daily mode — that's a separate, already-running
+     * flow that we don't want to gate behind this setting.
+     */
+    public function test_immediate_allowlist_does_not_affect_daily_mode(): void
+    {
+        // Pin to an address that nobody in this test has, then run daily.
+        config(['freegle.digest.immediate_allowlist' => 'nobody-test@example.invalid']);
+
+        $user = $this->createTestUser();
+        $user->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $user->id);
+
+        $this->assertEquals(1, $stats['users_processed']);
     }
 }
