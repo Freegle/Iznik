@@ -2,6 +2,11 @@ import eslintPlugin from 'vite-plugin-eslint2'
 import { VitePWA } from 'vite-plugin-pwa'
 import { sentryVitePlugin } from '@sentry/vite-plugin'
 import config from './config'
+import { branding } from './branding.config'
+
+// Cached, brand-aware page-title string used in both `app.head.title` and
+// the og:title / twitter:title meta tags so they stay in lockstep.
+const fullTitle = `${branding.siteName} - ${branding.tagline}`
 
 // Mobile version change:
 // - config.js: MOBILE_VERSION eg 3.1.9
@@ -600,7 +605,7 @@ export default defineNuxtConfig({
       htmlAttrs: {
         lang: 'en',
       },
-      title: "Freegle - Don't throw it away, give it away!",
+      title: fullTitle,
       script: [
         {
           // Capture URL search params before Nuxt router hydration strips them.
@@ -639,7 +644,14 @@ export default defineNuxtConfig({
         // The order in which we load scripts is excruciatingly and critically important - see below.
         //
         // But we want to reduce LCP, so we defer all this by loading with async.
-        {
+        //
+        // Gated on config.ADS_SCRIPT_ENABLED so deployments that don't run ads
+        // (modtools layer, third-party re-skins) can omit this ~5 kB inline
+        // script and the Prebid auction it triggers. Default true preserves
+        // Freegle's existing behaviour.
+        ...(config.ADS_SCRIPT_ENABLED
+          ? [
+              {
           type: 'text/javascript',
           body: true,
           async: true,
@@ -973,30 +985,30 @@ export default defineNuxtConfig({
           } catch (e) {
             console.error('Error initialising ads and consent:', e.message);
           }`,
-        },
+              },
+            ]
+          : []),
       ],
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { hid: 'author', name: 'author', content: 'Freegle' },
+        { hid: 'author', name: 'author', content: branding.siteName },
         { name: 'supported-color-schemes', content: 'light' },
         { name: 'color-scheme', content: 'light' },
         {
           name: 'facebook-domain-verification',
-          content: 'zld0jt8mvf06rt1c3fnxvls3zntxj6',
+          content: branding.facebookDomainVerification,
         },
         { hid: 'og:type', property: 'og:type', content: 'website' },
         {
           hid: 'description',
           name: 'description',
-          content:
-            "Give and get stuff for free in your local community.  Don't just recycle - reuse, freecycle and freegle!",
+          content: branding.description,
         },
         {
           hid: 'apple-mobile-web-app-title',
           name: 'apple-mobile-web-app-title',
-          content:
-            "Give and get stuff for free in your local community.  Don't just recycle - reuse, freecycle and freegle!",
+          content: branding.description,
         },
 
         {
@@ -1008,9 +1020,9 @@ export default defineNuxtConfig({
         {
           hid: 'og:title',
           property: 'og:title',
-          content: "Freegle - Don't throw it away, give it away!",
+          content: fullTitle,
         },
-        { hid: 'og:site_name', property: 'og:site_name', content: 'Freegle' },
+        { hid: 'og:site_name', property: 'og:site_name', content: branding.siteName },
         {
           hid: 'og:url',
           property: 'og:url',
@@ -1024,19 +1036,17 @@ export default defineNuxtConfig({
         {
           hid: 'og:description',
           property: 'og:description',
-          content:
-            "Give and get stuff for free in your local community.  Don't just recycle - reuse, freecycle and freegle!",
+          content: branding.description,
         },
         {
           hid: 'twitter:title',
           name: 'twitter:title',
-          content: "Freegle - Don't throw it away, give it away!",
+          content: fullTitle,
         },
         {
           hid: 'twitter:description',
           name: 'twitter:description',
-          content:
-            "Give and get stuff for free in your local community.  Don't just recycle - reuse, freecycle and freegle!",
+          content: branding.description,
         },
         {
           hid: 'twitter:image',
@@ -1046,14 +1056,14 @@ export default defineNuxtConfig({
         {
           hid: 'twitter:image:alt',
           name: 'twitter:image:alt',
-          content: 'The Freegle logo',
+          content: branding.logoAlt,
         },
         {
           hid: 'twitter:card',
           name: 'twitter:card',
           content: 'summary_large_image',
         },
-        { hid: 'twitter:site', name: 'twitter:site', content: 'thisisfreegle' },
+        { hid: 'twitter:site', name: 'twitter:site', content: branding.twitterHandle },
         {
           hid: 'OMG-Verify-V1',
           name: 'OMG-Verify-V1',
@@ -1128,7 +1138,14 @@ export default defineNuxtConfig({
 
     weserv: {
       provider: 'weserv',
-      baseURL: config.TUS_UPLOADER.replace(':8080', ''),
+      // Source URL passed to weserv as `?url=…<image-id>`. Reads
+      // IMAGE_SRC_URL so deployments where TUS is on a non-:8080 port
+      // (e.g. behind a 443 prefix-routed proxy) can configure it
+      // explicitly instead of relying on `.replace(':8080', '')`.
+      // When IMAGE_SRC_URL is unset, config.js falls back to the
+      // previous strip-:8080 behaviour, so existing Freegle deploys
+      // see no change.
+      baseURL: config.IMAGE_SRC_URL,
       weservURL: config.IMAGE_DELIVERY,
     },
 

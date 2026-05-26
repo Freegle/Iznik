@@ -25,6 +25,7 @@ const mockFetchMT = vi.fn()
 const mockFetch = vi.fn()
 const mockEdit = vi.fn()
 const mockPurge = vi.fn()
+const mockUnsubscribe = vi.fn()
 const mockAddEmail = vi.fn()
 const mockById = vi.fn()
 
@@ -35,6 +36,7 @@ vi.mock('~/stores/user', () => ({
     fetch: mockFetch,
     edit: mockEdit,
     purge: mockPurge,
+    unsubscribe: mockUnsubscribe,
     addEmail: mockAddEmail,
     config: {},
   }),
@@ -96,6 +98,16 @@ describe('ModSupportUser', () => {
       },
       global: {
         plugins: [createPinia()],
+        directives: {
+          // bootstrap-vue-next's tooltip directive isn't registered in tests.
+          // A no-op directive keeps mount silent while leaving the `title`
+          // attribute on the element (tooltip text is verified separately).
+          'b-tooltip': {
+            mounted() {},
+            updated() {},
+            unmounted() {},
+          },
+        },
         stubs: {
           'b-card': {
             template: '<div class="card"><slot /><slot name="header" /></div>',
@@ -233,6 +245,7 @@ describe('ModSupportUser', () => {
     mockFetch.mockResolvedValue()
     mockEdit.mockResolvedValue()
     mockPurge.mockResolvedValue()
+    mockUnsubscribe.mockResolvedValue()
     mockAddEmail.mockResolvedValue()
 
     // Re-establish default API mock implementations cleared by clearAllMocks.
@@ -469,6 +482,18 @@ describe('ModSupportUser', () => {
       const wrapper = await mountComponent()
       wrapper.vm.purgeConfirmed()
       expect(mockPurge).toHaveBeenCalledWith(123)
+    })
+
+    it('unsubscribe sets unsubscribeConfirm to true', async () => {
+      const wrapper = await mountComponent()
+      wrapper.vm.unsubscribe()
+      expect(wrapper.vm.unsubscribeConfirm).toBe(true)
+    })
+
+    it('unsubscribeConfirmed calls store unsubscribe', async () => {
+      const wrapper = await mountComponent()
+      wrapper.vm.unsubscribeConfirmed()
+      expect(mockUnsubscribe).toHaveBeenCalledWith(123)
     })
 
     it('spamReport sets showSpamModal to true', async () => {

@@ -56,8 +56,23 @@
         <b-button variant="white" class="me-2 mb-1" @click="spamReport">
           <v-icon icon="ban" /> Spammer
         </b-button>
-        <b-button variant="white" class="me-2 mb-1" @click="purge">
+        <b-button
+          v-b-tooltip.hover
+          variant="white"
+          class="me-2 mb-1"
+          title="Immediately and completely delete all data for this user. Cannot be undone."
+          @click="purge"
+        >
           <v-icon icon="trash-alt" /> Purge
+        </b-button>
+        <b-button
+          v-b-tooltip.hover
+          variant="white"
+          class="me-2 mb-1"
+          title="Put this user into the 14-day limbo state — account hidden immediately; data is permanently deleted after 14 days unless they log back in."
+          @click="unsubscribe"
+        >
+          <v-icon icon="user-times" /> Unsubscribe
         </b-button>
         <b-button
           variant="white"
@@ -548,8 +563,17 @@
       :title="
         'Purge ' + user.displayname + ' ' + user.email + ' from the system?'
       "
-      message="<p><strong>This can't be undone.</strong></p><p>Are you completely sure you want to do this?</p>"
+      message="<p><strong>This will immediately and completely delete all data for this user.</strong></p><p>This can't be undone. Are you completely sure you want to do this?</p>"
       @confirm="purgeConfirmed"
+    />
+    <ConfirmModal
+      v-if="unsubscribeConfirm"
+      ref="unsubscribeConfirmRef"
+      :title="
+        'Unsubscribe ' + user.displayname + ' ' + user.email + '?'
+      "
+      message="<p><strong>This will put them into the 14-day limbo state.</strong></p><p>Their account is hidden immediately. If they don't log back in within 14 days their data is permanently deleted. If they do, the account is restored intact.</p>"
+      @confirm="unsubscribeConfirmed"
     />
     <ConfirmModal
       v-if="showPasswordConfirm"
@@ -605,6 +629,7 @@ const userStore = useUserStore()
 const user = computed(() => userStore.byId(props.id))
 const expanded = ref(true)
 const purgeConfirm = ref(false)
+const unsubscribeConfirm = ref(false)
 const showAllMemberships = ref(false)
 const showAllMembershipHistories = ref(false)
 const showAllMessageHistories = ref(false)
@@ -631,6 +656,7 @@ const showProfile = ref(false)
 const logs = ref(null)
 const profileRef = ref(null)
 const purgeConfirmRef = ref(null)
+const unsubscribeConfirmRef = ref(null)
 const spamConfirm = ref(null)
 const showPasswordConfirm = ref(false)
 const passwordConfirmRef = ref(null)
@@ -856,6 +882,15 @@ function purgeConfirmed() {
 function purge() {
   purgeConfirm.value = true
   purgeConfirmRef.value?.show()
+}
+
+function unsubscribeConfirmed() {
+  userStore.unsubscribe(props.id)
+}
+
+function unsubscribe() {
+  unsubscribeConfirm.value = true
+  unsubscribeConfirmRef.value?.show()
 }
 
 function spamReport() {

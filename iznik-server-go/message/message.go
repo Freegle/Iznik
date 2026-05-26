@@ -640,14 +640,23 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				}
 
 				if message.Fromuser != myid {
-					// Shouldn't see promise details, but should see if it's promised to them.
-					for i := range message.MessagePromises {
-						if message.MessagePromises[i].Userid == myid {
+					// Privacy: a non-owner viewer shouldn't see *other people's*
+					// promise rows. But they CAN see their own row if they're a
+					// promisee — that row records terms they are themselves a
+					// party to (e.g. agreement details they're being asked to
+					// accept), so hiding it from them is unhelpful.
+					//
+					// Filter the slice in place: keep only rows where
+					// Userid == myid, drop the rest. PromisedToYou is set as a
+					// side effect for clients that don't read the slice.
+					filtered := message.MessagePromises[:0]
+					for _, p := range message.MessagePromises {
+						if p.Userid == myid {
+							filtered = append(filtered, p)
 							message.PromisedToYou = true
 						}
 					}
-
-					message.MessagePromises = nil
+					message.MessagePromises = filtered
 				} else {
 					message.Refchatids = refchatids
 				}
