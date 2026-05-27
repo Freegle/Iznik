@@ -1089,7 +1089,17 @@ func TestPostSessionForgetMod(t *testing.T) {
 	assert.Nil(t, deleted, "Moderator should not be deleted")
 }
 
-func TestForgetBlanksMessagePersonalData(t *testing.T) {
+// TestForgetPreservesMessagesDuringGrace asserts that a self-service Forget puts the
+// user into the 14-day recovery window WITHOUT destroying their message content or
+// hiding their posts from groups. The GDPR erasure is the responsibility of the
+// background users:cleanup job (Laravel UserManagementService::forgetInactiveUsers),
+// which only fires after the grace period.
+//
+// Regression for the paddimckone@gmail.com incident (2026-05-27): handleForget used to
+// eagerly blank messages + flip messages_groups.deleted=1 inline, so even when the user
+// recovered their account by signing back in (PATCH /user {"deleted": null} clears
+// users.deleted) the posts were permanently gone.
+func TestForgetPreservesMessagesDuringGrace(t *testing.T) {
 	prefix := uniquePrefix("forget_msgs")
 	userID := CreateTestUser(t, prefix, "User")
 	_, token := CreateTestSession(t, userID)
@@ -1106,7 +1116,7 @@ func TestForgetBlanksMessagePersonalData(t *testing.T) {
 	assert.NotZero(t, result.RowsAffected)
 	assert.NotZero(t, msgID)
 
-	// Create a messages_groups row so we can verify it gets marked deleted.
+	// Create a messages_groups row — must remain deleted=0 after Forget.
 	groupID := CreateTestGroup(t, prefix)
 	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupID)
 
@@ -1123,26 +1133,79 @@ func TestForgetBlanksMessagePersonalData(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&apiResult)
 	assert.Equal(t, float64(0), apiResult["ret"])
 
-	// Verify personal data has been blanked on the message.
+	// User is in limbo (users.deleted set) but message content is intact.
+	var userDeleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&userDeleted)
+	assert.NotNil(t, userDeleted, "User should be soft-deleted")
+
 	type MsgFields struct {
 		Envelopefrom *string
 		Fromip       *string
 		Fromname     *string
 		Fromaddr     *string
 		Textbody     *string
+		Message      *string
+		Deleted      *string
 	}
 	var msg MsgFields
-	db.Raw("SELECT envelopefrom, fromip, fromname, fromaddr, textbody FROM messages WHERE id = ?", msgID).Scan(&msg)
-	assert.Nil(t, msg.Envelopefrom, "envelopefrom should be NULL after Forget")
-	assert.Nil(t, msg.Fromip, "fromip should be NULL after Forget")
-	assert.Nil(t, msg.Fromname, "fromname should be NULL after Forget")
-	assert.Nil(t, msg.Fromaddr, "fromaddr should be NULL after Forget")
-	assert.Nil(t, msg.Textbody, "textbody should be NULL after Forget")
+	db.Raw("SELECT envelopefrom, fromip, fromname, fromaddr, textbody, message, deleted FROM messages WHERE id = ?", msgID).Scan(&msg)
+	assert.NotNil(t, msg.Envelopefrom, "envelopefrom must survive Forget (grace period)")
+	assert.NotNil(t, msg.Fromip, "fromip must survive Forget (grace period)")
+	assert.NotNil(t, msg.Fromname, "fromname must survive Forget (grace period)")
+	assert.NotNil(t, msg.Fromaddr, "fromaddr must survive Forget (grace period)")
+	assert.NotNil(t, msg.Textbody, "textbody must survive Forget (grace period)")
+	assert.NotNil(t, msg.Message, "message must survive Forget (grace period)")
+	assert.Nil(t, msg.Deleted, "messages.deleted must remain NULL during grace period")
 
-	// Verify messages_groups.deleted is set to 1 (V1 parity: forget() sets this).
 	var mgDeleted int
 	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ?", msgID).Scan(&mgDeleted)
-	assert.Equal(t, 1, mgDeleted, "messages_groups.deleted should be 1 after Forget")
+	assert.Equal(t, 0, mgDeleted, "messages_groups.deleted must remain 0 during grace period")
+}
+
+// TestForgetRemovesApprovedMemberships locks in V1 parity for User::delete: when a
+// user deletes their account they should drop out of group member lists immediately
+// (otherwise mod tools still show them as a current member).
+func TestForgetRemovesApprovedMemberships(t *testing.T) {
+	prefix := uniquePrefix("forget_membs")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	var before int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND collection = ?", userID, "Approved").Scan(&before)
+	assert.Equal(t, int64(1), before, "precondition: user is an Approved member")
+
+	body, _ := json.Marshal(map[string]interface{}{"action": "Forget"})
+	req := httptest.NewRequest("POST", "/api/session?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var after int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND collection = ?", userID, "Approved").Scan(&after)
+	assert.Equal(t, int64(0), after, "Forget should drop approved memberships (V1 parity)")
+}
+
+// TestForgetWritesDeletionLog locks in V1 parity for User::delete($log=TRUE): the
+// deletion must be recorded in logs so mod tools have an audit trail.
+func TestForgetWritesDeletionLog(t *testing.T) {
+	prefix := uniquePrefix("forget_log")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	body, _ := json.Marshal(map[string]interface{}{"action": "Forget"})
+	req := httptest.NewRequest("POST", "/api/session?jwt="+token, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE user = ? AND type = ? AND subtype = ?",
+		userID, "User", "Deleted").Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "Forget should write a logs row (type=User, subtype=Deleted)")
 }
 
 // ---------------------------------------------------------------------------

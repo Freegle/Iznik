@@ -16,6 +16,7 @@ import (
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/housekeeper"
+	log2 "github.com/freegle/iznik-server-go/log"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
@@ -611,13 +612,21 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	// Signal the auth middleware to skip the post-handler session check.
 	c.Locals("skipPostAuthCheck", true)
 
+	// V1 parity (User::delete): drop approved memberships so the user no longer appears
+	// in group member lists during the grace period.
+	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED)
+
 	// Soft-delete: user can recover by logging back in within ~14 days.
+	// GDPR erasure of message content (and any other personal data) is performed by the
+	// background users:cleanup job once the grace period has elapsed (Laravel
+	// UserManagementService::forgetInactiveUsers → User::forget). Doing it here would
+	// destroy data that the user could otherwise restore by signing back in — which is
+	// exactly the recovery affordance the soft-delete is supposed to preserve.
 	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", myid)
 
-	// GDPR erasure: blank personal data from all messages posted by this user (V1 parity).
-	// message is NOT NULL with no default, so use '' not NULL; all other blanked columns are nullable.
-	db.Exec("UPDATE messages SET fromip = NULL, message = '', envelopefrom = NULL, fromname = NULL, fromaddr = NULL, messageid = NULL, textbody = NULL, htmlbody = NULL, deleted = NOW() WHERE fromuser = ?", myid)
-	db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid IN (SELECT id FROM messages WHERE fromuser = ?)", myid)
+	// V1 parity (User::delete with $log=TRUE): record the deletion in the audit log.
+	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
+		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, myid, myid)
 
 	// Destroy session so the user is logged out.
 	db.Exec("DELETE FROM sessions WHERE userid = ?", myid)
