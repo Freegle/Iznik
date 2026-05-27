@@ -416,6 +416,13 @@ class EmailSpoolerService
                     $this->applyCustomHeaders($symfonyMessage, $data);
 
                     // Build the body - either with AMP or standard multipart/alternative.
+                    // Coalesce nulls to empty strings: TextPart's constructor
+                    // rejects null and a spooled mailable that produced only one
+                    // of html/text would otherwise crash the whole processSpool
+                    // iteration.
+                    $textBody = $data['text'] ?? '';
+                    $htmlBody = $data['html'] ?? '';
+
                     if (!empty($data['amp_html'])) {
                         // DEBUG: Uncomment to save AMP HTML for validation testing.
                         // $ampFile = '/tmp/amp-email-' . ($data['id'] ?? uniqid()) . '.html';
@@ -423,21 +430,26 @@ class EmailSpoolerService
                         // Log::debug('AMP HTML saved for validation', ['file' => $ampFile]);
 
                         // AMP emails need multipart/alternative with text, AMP, and HTML parts.
-                        $textPart = new TextPart($data['text'] ?? '', 'utf-8', 'plain');
+                        $textPart = new TextPart($textBody, 'utf-8', 'plain');
                         $ampPart = new TextPart($data['amp_html'], 'utf-8', 'x-amp-html');
-                        $htmlPart = new TextPart($data['html'], 'utf-8', 'html');
+                        $htmlPart = new TextPart($htmlBody, 'utf-8', 'html');
                         $alternativePart = new AlternativePart($textPart, $ampPart, $htmlPart);
                         $symfonyMessage->setBody($alternativePart);
-                    } elseif (!empty($data['text'])) {
+                    } elseif ($textBody !== '' && $htmlBody !== '') {
                         // Non-AMP: Build multipart/alternative with text and HTML parts.
                         // This ensures the plain text body is included for email clients
                         // that prefer or require it (e.g., TrashNothing parsing).
-                        $textPart = new TextPart($data['text'], 'utf-8', 'plain');
-                        $htmlPart = new TextPart($data['html'], 'utf-8', 'html');
+                        $textPart = new TextPart($textBody, 'utf-8', 'plain');
+                        $htmlPart = new TextPart($htmlBody, 'utf-8', 'html');
                         $alternativePart = new AlternativePart($textPart, $htmlPart);
                         $symfonyMessage->setBody($alternativePart);
+                    } elseif ($textBody !== '' && $htmlBody === '') {
+                        // Text-only mailable (rare — e.g. plain support refer).
+                        // Mail::html() has already set an empty HTML body; replace
+                        // with the text part so the recipient sees something.
+                        $symfonyMessage->setBody(new TextPart($textBody, 'utf-8', 'plain'));
                     }
-                    // If no text body, Mail::html() has already set HTML-only body.
+                    // If text is empty, Mail::html() has already set HTML-only body.
                 });
 
                 // Move to sent directory.
