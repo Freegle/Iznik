@@ -79,6 +79,19 @@ class SendUnifiedDigestCommand extends Command
             return Command::FAILURE;
         }
 
+        // Daily mode is intentionally NOT live: V1's bulk3
+        // `digest.php -i 1/2/4/8/24` crons still own daily and our
+        // users_digests table doesn't exist on prod. Refuse with a
+        // clear message rather than letting it fail mid-run with
+        // "Base table not found". Local/CI tests run against a test
+        // DB that DOES have the table via the iznik-batch migration
+        // (2026_01_06_120000_create_users_digests_table.php).
+        if ($mode === UnifiedDigestService::MODE_DAILY
+            && ! \Illuminate\Support\Facades\Schema::hasTable('users_digests')) {
+            $this->warn('Daily mode is not enabled here — V1 owns daily sends. users_digests table not present.');
+            return Command::SUCCESS;
+        }
+
         if ($groupId && $mode !== UnifiedDigestService::MODE_IMMEDIATE) {
             $this->error('--group is only supported with --mode=immediate.');
             return Command::FAILURE;
