@@ -146,10 +146,11 @@ class UnifiedDigestTest extends TestCase
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
         $mail->build();
 
-        // Verify tracking was initialised with correct metadata.
+        // Verify tracking was initialised with the mode-specific email_type
+        // so sysadmin filters can split immediate vs daily.
         $tracking = $mail->getTracking();
         $this->assertNotNull($tracking);
-        $this->assertEquals('UnifiedDigest', $tracking->email_type);
+        $this->assertEquals('UnifiedDigestDaily', $tracking->email_type);
     }
 
     public function test_cross_post_text_shown_for_multiple_groups(): void

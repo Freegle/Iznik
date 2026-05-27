@@ -55,7 +55,7 @@ class UnifiedDigest extends MjmlMailable
         $userId = $this->user->exists ? $this->user->id : null;
 
         $this->initTracking(
-            'UnifiedDigest',
+            $this->getEmailType(),
             $this->user->email_preferred,
             $userId,
             null,
@@ -78,6 +78,18 @@ class UnifiedDigest extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id ?? null;
+    }
+
+    /**
+     * Split UnifiedDigest into immediate vs daily for sysadmin dropdowns
+     * and tracking stats. Legacy rows written before this split keep the
+     * plain 'UnifiedDigest' value; getDigestNumber() includes both.
+     */
+    public function getEmailType(): string
+    {
+        return $this->mode === UnifiedDigestService::MODE_IMMEDIATE
+            ? 'UnifiedDigestImmediate'
+            : 'UnifiedDigestDaily';
     }
 
     /**
@@ -494,7 +506,7 @@ class UnifiedDigest extends MjmlMailable
     {
         return (int) DB::table('email_tracking')
             ->where('userid', $this->user->id)
-            ->where('email_type', 'UnifiedDigest')
+            ->whereIn('email_type', ['UnifiedDigest', 'UnifiedDigestImmediate', 'UnifiedDigestDaily'])
             ->count();
     }
 
