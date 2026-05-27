@@ -334,14 +334,21 @@ Schedule::command('tn:sync')
 //     ->runInBackground();
 //
 // Immediate mode - V1-parity per-group iteration.
-// DISABLED 2026-05-27 — re-enable was rolled back after discovering
-// users_digests table missing on prod (broke the monitor script).
-// Cron itself uses only groups_digests so technically unaffected, but
-// pausing until the table-state confusion is resolved.
-// Schedule::command('mail:digest:unified --mode=immediate')
-//     ->everyMinute()
-//     ->sendOutputTo(cronLog('mail:digest:unified'))
-//     ->runInBackground();
+// Re-enabled 2026-05-27 (second attempt). Walks V1's groups_digests
+// cursor and defers messages whose AI-generated attachment hasn't
+// arrived yet (up to ATTACHMENT_WAIT_DEADLINE_MINUTES, then falls
+// back to the type-specific placeholder). Overlap prevention is
+// flock-based via PreventsOverlapping in the command itself; we do
+// NOT chain ->withoutOverlapping() here because Laravel's cache-based
+// variant allowed six concurrent processes during the first rollout.
+//
+// Daily mode is intentionally NOT enabled here — V1's bulk3
+// `digest.php -i 1/2/4/8/24` crons still own daily. Our daily code
+// references users_digests which doesn't exist on prod.
+Schedule::command('mail:digest:unified --mode=immediate')
+    ->everyMinute()
+    ->sendOutputTo(cronLog('mail:digest:unified'))
+    ->runInBackground();
 
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
