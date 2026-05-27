@@ -333,15 +333,20 @@ Schedule::command('tn:sync')
 //     ->withoutOverlapping()
 //     ->runInBackground();
 //
-// Immediate mode - V1-parity per-group iteration, sharded 4-way.
+// Immediate mode - V1-parity per-group iteration, sharded 8-way.
 //
 // A single worker manages ~250 emails/min; arrival rate × avg
 // immediate-frequency members per group is ~308/min, so one worker
-// falls ~60/min behind permanently. 4 shards (groups partitioned by
-// MOD(groupid, 4)) give us ~1000/min headroom with no group ever
+// falls ~60/min behind permanently. 8 shards (groups partitioned by
+// MOD(groupid, 8)) give substantial headroom with no group ever
 // touched by more than one worker — disjoint partitions mean no
 // advisory locking needed between shards. Each shard has its own
 // flock file via the lockKeySuffix() hook on the command.
+//
+// Container has 6 cores; 8 shards slightly oversubscribes but each
+// shard spends significant time in SMTP I/O so the extra concurrency
+// still buys throughput. Raise further if backlog persists; lower if
+// CPU saturates.
 //
 // Walks V1's groups_digests cursor and defers messages whose AI-
 // generated attachment hasn't arrived yet (up to
@@ -351,8 +356,9 @@ Schedule::command('tn:sync')
 // Daily mode is intentionally NOT enabled here — V1's bulk3
 // `digest.php -i 1/2/4/8/24` crons still own daily. Our daily code
 // references users_digests which doesn't exist on prod.
-foreach (range(0, 3) as $shardIndex) {
-    Schedule::command("mail:digest:unified --mode=immediate --shard={$shardIndex} --shards=4")
+$immediateShardCount = 8;
+foreach (range(0, $immediateShardCount - 1) as $shardIndex) {
+    Schedule::command("mail:digest:unified --mode=immediate --shard={$shardIndex} --shards={$immediateShardCount}")
         ->everyMinute()
         ->sendOutputTo(cronLog("mail:digest:unified.shard{$shardIndex}"))
         ->runInBackground();
