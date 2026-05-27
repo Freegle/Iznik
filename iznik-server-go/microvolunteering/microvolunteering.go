@@ -565,6 +565,12 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 // for EEE (Electrical / Electronic Equipment) classification. Picks the most
 // recent OFFER attachments that the user has not yet labelled and that have
 // not yet reached EEELabelQuorum.
+//
+// Performance: the query is driven off `messages.arrival` (index `arrival_2`)
+// with a 30-day window, so the planner does a backward range scan over ~100k
+// recent messages instead of a full scan of `messages_attachments` (8.6M
+// rows). The original join-from-attachments form took 20s+ on prod and tripped
+// the 5s API timeout — see commit message for full EXPLAIN comparison.
 func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 	type AttachmentResult struct {
 		Attid       uint64 `json:"attid"`
@@ -577,17 +583,19 @@ func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	err := db.Raw(`
 		SELECT ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject
-		FROM messages_attachments ma_att
-		INNER JOIN messages m ON m.id = ma_att.msgid
-		LEFT JOIN microactions ma
-			ON ma.eee_attachment_id = ma_att.id
-			AND ma.userid = ?
-			AND ma.actiontype = ?
-		WHERE ma_att.externaluid IS NOT NULL
-			AND ma_att.externaluid != ''
+		FROM messages m
+		INNER JOIN messages_attachments ma_att ON ma_att.msgid = m.id
+		WHERE m.arrival > DATE_SUB(NOW(), INTERVAL 30 DAY)
 			AND m.type = 'Offer'
 			AND m.deleted IS NULL
-			AND ma.id IS NULL
+			AND ma_att.externaluid IS NOT NULL
+			AND ma_att.externaluid != ''
+			AND NOT EXISTS (
+				SELECT 1 FROM microactions ma
+				WHERE ma.eee_attachment_id = ma_att.id
+				  AND ma.userid = ?
+				  AND ma.actiontype = ?
+			)
 			AND (SELECT COUNT(*) FROM microactions WHERE eee_attachment_id = ma_att.id AND actiontype = ?) < ?
 		ORDER BY m.arrival DESC
 		LIMIT 1
