@@ -347,7 +347,12 @@ return [
         'secret' => env('LOVE_JUNK_SECRET', ''),
     ],
 
-    'geocoder' => env('FREEGLE_GEOCODER_URL', ''),
+    // Default matches V1's hardcoded GEOCODER constant (iznik.conf.php). The
+    // Laravel migration parameterised this via env, but .env.background was
+    // never updated — so for months WhatJobsService::geocodeAddress() silently
+    // returned null on the first line, leaving the live jobs table pinned at
+    // ~400 rows (only DB cache + UK postcode fallback could ever match).
+    'geocoder' => env('FREEGLE_GEOCODER_URL', 'https://geocode.ilovefreegle.org'),
 
     'whatjobs' => [
         'feed1' => env('WHATJOBS_FEED1', ''),
