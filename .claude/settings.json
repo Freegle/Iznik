@@ -71,6 +71,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/.claude/check-worktree-escape.sh",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Stop": [
