@@ -509,13 +509,19 @@ export const useMobileStore = defineStore({
 
         // Suppress foreground notification banners on Android ModTools — badge is
         // already updated above; we don't want the tray notification to appear.
+        // Pass the integer tray id (data.notId), NOT the Capacitor notification
+        // object: notification.id is the Firebase message id (string), which the
+        // Android plugin tries to unbox into int → NullPointerException crash.
         if (!this.isiOS && modtools) {
-          try {
-            await PushNotifications.removeDeliveredNotifications({
-              notifications: [notification],
-            })
-          } catch (e) {
-            console.log('removeDeliveredNotifications failed', e?.message)
+          const notId = parseInt(data.notId)
+          if (Number.isFinite(notId)) {
+            try {
+              await PushNotifications.removeDeliveredNotifications({
+                notifications: [{ id: notId }],
+              })
+            } catch (e) {
+              console.log('removeDeliveredNotifications failed', e?.message)
+            }
           }
         }
 
