@@ -168,20 +168,21 @@ Distribution of `emailfrequency` among repliers in the 12-month sample:
 | Other digest (1-12h) | 90 | 0.2 % |
 | No membership record | 641 | 1.3 % |
 
-Repeating the lead-time table for **immediate-setting users only**
-(`--filter-email-freq=immediate`), urban first-repliers:
+Repeating the lead-time table for **first-replier catches only, immediate-setting users only**
+(the production-relevant cohort), urban:
 
 | Curve | 1st in-time | p50 lead | p75 lead | p90 lead |
 |-------|-------------|----------|----------|----------|
-| linear            | 51.1 % | 12.5 h | 72.8 h | 396.4 h |
-| front-cubic       | 67.5 % |  8.5 h | 33.3 h | 320.6 h |
-| front-heavy x^0.3 | 83.6 % |  5.9 h | 25.3 h | 243.1 h |
-| **step-70**       | **92.0 %** | **5.2 h** | **23.7 h** | **215.3 h** |
+| linear            | 51.1 % | 7.3 h | 30.0 h | 257.8 h |
+| front-cubic       | 67.5 % | 5.1 h | 21.2 h | 185.0 h |
+| front-heavy x^0.3 | 83.6 % | 3.8 h | 15.7 h | 140.0 h |
+| **step-70**       | **92.0 %** | **3.3 h** | **13.9 h** | **116.7 h** |
 
-The lead-time picture is much more favourable when we look only at
-users who would actually see the notification immediately.  step-70's
-real-world lead time is **5 hours median**, **24 hours p75** — that is
-"saw the email, acted within the next working day".
+step-70's real-world lead time for the first replier (the person who
+matters most) on immediate settings is **3.3 hours median** and **14
+hours p75** — i.e. we email them an average of just over 3 hours before
+they would reply, and ¾ of the time within 14 hours.  That is about as
+"just in time" as you can be without seeing the future.
 
 In-time catch rate is essentially identical across filters
 (93 % all / 92 % immediate / 93 % digest), so the algorithm catches

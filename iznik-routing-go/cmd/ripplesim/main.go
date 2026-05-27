@@ -571,17 +571,20 @@ type curveResult struct {
 	NotificationsWasted int
 
 	// Lead-time tracking: how far AHEAD of the actual reply did we notify
-	// the eventual replier?  Smaller lead time = more "just in time" —
-	// notifications timed close to when the user would respond.  Larger
-	// lead time = "notified too early" — the recipient had to remember /
-	// hold the email for hours or days before acting.
+	// the eventual replier?  Smaller lead time = more "just in time".
+	// Larger lead time = "notified too early".
 	//
-	// Sum and count are kept so consumers can compute mean.  We also
-	// surface p50 / p90 via the sorted slice (kept compact to avoid huge
-	// memory).  Units: hours.
+	// Two separate distributions: across ALL in-time catches, and across
+	// FIRST-REPLIER in-time catches only.  The latter is the production-
+	// relevant figure (the first replier is who ends up with the item).
+	// Units: hours.
 	LeadHoursSum    float64
 	LeadHoursCount  int
-	LeadHoursSample []float64 // up to MaxLeadSamples values for percentile reporting
+	LeadHoursSample []float64
+
+	FirstLeadHoursSum    float64
+	FirstLeadHoursCount  int
+	FirstLeadHoursSample []float64
 }
 
 const maxLeadSamples = 50000
@@ -767,16 +770,21 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[strin
 				if !notifyTime.After(replyTime) {
 					results[ci].PairsReachedInTime++
 					results[ci].TickCaught[notifyTick-1]++
-					if isFirstReplier {
-						results[ci].FirstRepliersInTime++
-					}
-					// Lead time = how far AHEAD of the reply did we notify
-					// them?  Lower is better — closer to "just in time".
 					leadHrs := replyTime.Sub(notifyTime).Hours()
+					// Track lead-time across all in-time catches AND
+					// separately across first-replier in-time catches.
 					results[ci].LeadHoursSum += leadHrs
 					results[ci].LeadHoursCount++
 					if len(results[ci].LeadHoursSample) < maxLeadSamples {
 						results[ci].LeadHoursSample = append(results[ci].LeadHoursSample, leadHrs)
+					}
+					if isFirstReplier {
+						results[ci].FirstRepliersInTime++
+						results[ci].FirstLeadHoursSum += leadHrs
+						results[ci].FirstLeadHoursCount++
+						if len(results[ci].FirstLeadHoursSample) < maxLeadSamples {
+							results[ci].FirstLeadHoursSample = append(results[ci].FirstLeadHoursSample, leadHrs)
+						}
 					}
 				} else {
 					results[ci].PairsReachableButLate++
@@ -853,16 +861,12 @@ func printResults(groups map[string][]curveResult) {
 }
 
 func printResultsRows(results []curveResult) {
-	// Lead-time tells us how far AHEAD of the actual reply each in-time
-	// catch was notified.  Lower = more "just in time".  p50/p75/p90
-	// rather than just mean because the long-tail repliers skew the mean.
-	fmt.Printf("%-30s  %7s  %7s  %7s  %7s  %7s  %7s\n",
-		"", "all", "1st", "waste%", "p50-h", "p75-h", "p90-h")
+	// First-replier metrics are the focus: the first replier is who
+	// actually gets the item, so catching them in time is what really
+	// matters.  Lead times here are restricted to first-replier catches.
+	fmt.Printf("%-30s  %8s  %7s  %7s  %7s  %7s\n",
+		"", "1st-in%", "waste%", "1st-p50", "1st-p75", "1st-p90")
 	for _, r := range results {
-		allPct := 0.0
-		if r.PairsTotal > 0 {
-			allPct = 100.0 * float64(r.PairsReachedInTime) / float64(r.PairsTotal)
-		}
 		firstPct := 0.0
 		if r.FirstRepliersTotal > 0 {
 			firstPct = 100.0 * float64(r.FirstRepliersInTime) / float64(r.FirstRepliersTotal)
@@ -871,10 +875,10 @@ func printResultsRows(results []curveResult) {
 		if r.NotificationsSent > 0 {
 			wastedPct = 100.0 * float64(r.NotificationsWasted) / float64(r.NotificationsSent)
 		}
-		p50 := percentile(r.LeadHoursSample, 0.50)
-		p75 := percentile(r.LeadHoursSample, 0.75)
-		p90 := percentile(r.LeadHoursSample, 0.90)
-		fmt.Printf("%-30s  %6.1f%%  %6.1f%%  %6.1f%%  %6.1fh  %6.1fh  %6.1fh\n",
-			r.Name, allPct, firstPct, wastedPct, p50, p75, p90)
+		p50 := percentile(r.FirstLeadHoursSample, 0.50)
+		p75 := percentile(r.FirstLeadHoursSample, 0.75)
+		p90 := percentile(r.FirstLeadHoursSample, 0.90)
+		fmt.Printf("%-30s  %7.1f%%  %6.1f%%  %6.1fh  %6.1fh  %6.1fh\n",
+			r.Name, firstPct, wastedPct, p50, p75, p90)
 	}
 }
