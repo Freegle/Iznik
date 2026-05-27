@@ -27,12 +27,10 @@ class SendUnifiedDigestCommandTest extends TestCase
         );
     }
 
-    public function test_command_iterates_until_no_work_then_exits(): void
+    public function test_command_advances_cursor_after_processing(): void
     {
-        // Two messages in the same group → first iteration sends both,
-        // second iteration finds nothing → loop exits early even though
-        // --max-iterations=10 would allow many more. Asserts the early-
-        // exit behaviour so we don't waste CPU spinning on an empty queue.
+        // Two messages in the same group → both should be processed in
+        // one iteration; cursor advances to the latest.
         $poster = $this->createTestUser();
         $recipient = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -45,16 +43,15 @@ class SendUnifiedDigestCommandTest extends TestCase
         DB::table('messages_groups')->where('msgid', $a->id)->update(['arrival' => now()->subMinutes(10)]);
         DB::table('messages_groups')->where('msgid', $b->id)->update(['arrival' => now()->subMinutes(10)]);
 
-        // Force email type on so the command actually attempts a run.
         config(['freegle.mail.enabled_types' => UnifiedDigestService::EMAIL_TYPE]);
 
+        // Limit iterations to 2 to keep the test fast (one active iter
+        // + one idle that sleeps 1s = ~1s total wall clock).
         $this->artisan('mail:digest:unified', [
             '--mode' => UnifiedDigestService::MODE_IMMEDIATE,
-            '--max-iterations' => 10,
+            '--max-iterations' => 2,
         ])->assertExitCode(0);
 
-        // Cursor should have advanced to b (both messages processed in
-        // iteration #1). Iteration #2 finds emails_sent=0 → loop breaks.
         $cursor = DB::table('groups_digests')
             ->where('groupid', $group->id)
             ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)

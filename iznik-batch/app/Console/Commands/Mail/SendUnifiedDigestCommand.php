@@ -127,11 +127,16 @@ class SendUnifiedDigestCommand extends Command
         // Iterate within one invocation so the worker keeps the wall clock
         // busy instead of exiting after one pass and idling until the next
         // cron tick. The flock prevents two ticks from overlapping, so
-        // looping inside is the right place to amortise process startup
-        // and JIT warm-up. Exit early once an iteration finds no work in
-        // our shard (next tick will pick up any new arrivals).
+        // looping inside is the right place to amortise process startup.
+        //
+        // Don't break on an idle iteration — new messages can arrive at
+        // any time during our run, and another shard may be processing
+        // one of our groups (no — partitions are disjoint, but messages
+        // are still arriving from outside the digest system). Match the
+        // mail:chat:user2user pattern: sleep(1) when nothing to do, keep
+        // looping until max-iterations is hit. The next cron tick takes
+        // over from there.
         $stats = ['groups_processed' => 0, 'users_processed' => 0, 'emails_sent' => 0, 'no_new_posts_groups' => 0, 'errors' => 0];
-        $touchedUsers = [];
 
         for ($i = 0; $i < $maxIterations; $i++) {
             $r = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards);
@@ -143,10 +148,11 @@ class SendUnifiedDigestCommand extends Command
                 }
             }
 
-            // If this iteration did no useful work, no point spinning.
-            $idle = ($r['emails_sent'] ?? 0) === 0;
-            if ($idle) {
-                break;
+            // Sleep briefly between idle iterations so we don't hammer
+            // the DB with empty queries. Active iterations roll straight
+            // into the next without a sleep.
+            if (($r['emails_sent'] ?? 0) === 0 && $i + 1 < $maxIterations) {
+                sleep(1);
             }
         }
 
