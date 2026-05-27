@@ -399,6 +399,31 @@ class WhatJobsService
         [['lead'], 'General Manager'],
     ];
 
+    /**
+     * Content-based spam signals derived from sampling the 225k-job WhatJobs
+     * feed (2026-05-27). Each pattern is precision-tuned against verified
+     * spam advertisers (ApexFocusGroup, Cashback.co.uk, Reps.co.uk/Utility
+     * Warehouse MLM) and verified legitimate ones (EE, Brakes, Evri, Durham
+     * Univ, My Four Wheels). Any one pattern in isolation has too many
+     * false-positives — e.g. `earn_per_unit` hits legitimate "earn £46,500"
+     * driver listings from Brakes — but two or more matches together had
+     * zero false positives across the top 9 legitimate companies in the
+     * 225k-job sample. Drops 43k of 225k feed jobs (19%).
+     */
+    private const SPAM_PATTERNS = [
+        'focus_group'    => '/\bfocus\s+group\b|\bpanell?ists?\b/i',
+        'now_accepting'  => '/\bnow\s+accepting\b/i',
+        'earn_per_unit'  => '/\bearn\b[^.]{0,30}\bper\s+(week|day|hour|month)\b/i',
+        'research_study' => '/\bresearch\s+study\s+opportunity\b/i',
+        'flex_earnings'  => '/\bflexible\s+earnings?\s+opportunity\b/i',
+        'be_own_boss'    => '/\bbe\s+your\s+own\s+boss\b|\bwork\s+your\s+own\s+hours\b/i',
+        'money_range_pm' => '/[£$]\s*\d{2,5}\s*[-–]\s*[£$]?\s*\d{3,6}\+?\s*(per\s+month|\/\s*month)/i',
+        'mlm_brand'      => '/\b(utility\s+warehouse|amway|forever\s+living|tupperware|herbalife)\b/i',
+        'paid_survey'    => '/\bpaid\s+(surveys?|focus\s+groups?)\b/i',
+    ];
+
+    private const SPAM_SCORE_THRESHOLD = 2;
+
     /** @var array<string, int|array> per-run drop counts; reset at start of sync() */
     private array $dropStats = [];
 
@@ -518,6 +543,7 @@ class WhatJobsService
             'kept'                => $kept,
             'low_cpc'             => $this->dropStats['low_cpc']      ?? 0,
             'too_old'             => $this->dropStats['too_old']      ?? 0,
+            'spam_content'        => $this->dropStats['spam_content'] ?? 0,
             'geocode_fail'        => $this->dropStats['geocode_fail'] ?? 0,
             'no_jobid'            => $this->dropStats['no_jobid']     ?? 0,
             'too_old_by_cpc'      => $this->dropStats['too_old_by_cpc']      ?? [],
@@ -526,6 +552,27 @@ class WhatJobsService
             'geocode_by_reason'   => $this->dropStats['geocode_by_reason']   ?? [],
             'geocode_tuples'      => $tupleSummary,
         ]);
+    }
+
+    /**
+     * Score a job's title+body against SPAM_PATTERNS. Returns true when at
+     * least SPAM_SCORE_THRESHOLD patterns match. Single-pattern hits are
+     * allowed because legitimate listings often hit one in isolation
+     * (e.g. a Brakes driver "earn £46,500" listing hits earn_per_unit alone).
+     */
+    public function isSpamJob(string $title, string $body): bool
+    {
+        $text = $title . ' ' . $body;
+        $matches = 0;
+        foreach (self::SPAM_PATTERNS as $pattern) {
+            if (preg_match($pattern, $text)) {
+                $matches++;
+                if ($matches >= self::SPAM_SCORE_THRESHOLD) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     protected function downloadFeed(string $url): ?string
@@ -655,6 +702,10 @@ class WhatJobsService
             if ($timePosted && strtotime($timePosted) < $cutoff) {
                 $this->dropStats['too_old'] = ($this->dropStats['too_old'] ?? 0) + 1;
                 $this->dropStats['too_old_by_cpc'][$cpcBucket] = ($this->dropStats['too_old_by_cpc'][$cpcBucket] ?? 0) + 1;
+                continue;
+            }
+            if ($this->isSpamJob($title, $description)) {
+                $this->dropStats['spam_content'] = ($this->dropStats['spam_content'] ?? 0) + 1;
                 continue;
             }
 
