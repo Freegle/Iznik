@@ -2,14 +2,15 @@
 
 namespace App\Services;
 
+use App\Mail\Concerns\BulkRenderable;
 use App\Mail\Volunteering\VolunteeringDigestMail;
+use App\Services\BulkMail\BulkMjmlCompiler;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
 class VolunteeringDigestService
 {
@@ -179,6 +180,12 @@ class VolunteeringDigestService
                 ->receivingOurMails()
                 ->get();
 
+            // One BulkMjmlCompiler per group: members without nearby jobs all
+            // share one cached body, so we go from N MJML compiles to ~1.
+            // Members with jobs fall back to per-user compile (jobs differ).
+            $bulkEnabled = (bool) config('freegle.bulk_mail.enabled', true);
+            $bulkCompiler = $bulkEnabled ? app(BulkMjmlCompiler::class) : null;
+
             foreach ($members as $member) {
                 $user = User::find($member->userId);
 
@@ -197,21 +204,26 @@ class VolunteeringDigestService
 
                 if (!$dryRun) {
                     $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
+                    $mailable = new VolunteeringDigestMail(
+                        recipientEmail: $email,
+                        groupName: $groupRow->nameshort,
+                        volunteerings: $volData,
+                        unsubscribeUrl: $unsubscribeUrl,
+                        jobAds: $jobAds,
+                        userId: $member->userId,
+                    );
+
+                    if ($bulkCompiler !== null && $mailable instanceof BulkRenderable) {
+                        $mailable->setPrerenderedHtml($bulkCompiler->htmlFor($mailable));
+                    }
+
                     // spool() builds the message (incl. MJML render) up front and
                     // only swallows permanent address failures internally; a
                     // transient render/build error re-throws. Without this catch
                     // it would escape the per-member foreach and abort the whole
-                    // digest run — the resilience SafeMail::sendMailable used to
-                    // provide. Skip the one recipient and keep the loop going.
+                    // digest run. Skip the one recipient and keep the loop going.
                     try {
-                        app(\App\Services\EmailSpoolerService::class)->spool(new VolunteeringDigestMail(
-                            recipientEmail: $email,
-                            groupName: $groupRow->nameshort,
-                            volunteerings: $volData,
-                            unsubscribeUrl: $unsubscribeUrl,
-                            jobAds: $jobAds,
-                            userId: $member->userId,
-                        ), $email);
+                        app(\App\Services\EmailSpoolerService::class)->spool($mailable, $email);
                     } catch (\Throwable $e) {
                         Log::warning('Skipping volunteering digest for member after spool failure; continuing loop', [
                             'email' => $email,

@@ -162,31 +162,36 @@ Inside `dispatch()`:
 
 ## Migration scope
 
-This PR migrates **all batch-send mailables** in iznik-batch where the same
-content fans out to multiple recipients. Per-recipient one-shots (welcome,
-verify-email, forgot-password, etc.) keep using the existing
-`MjmlCompilerService` directly.
+This PR migrates batch-send mailables in iznik-batch where the same content
+fans out to multiple recipients AND the per-recipient body variation is
+small enough to fit the merge-var model.
 
-| Mailable | Service / call site | Multiplier source |
-|---|---|---|
-| `UnifiedDigest` (immediate) | `UnifiedDigestService::processGroupImmediate` | 1 message → N group members |
-| `StoriesNewsletterMail` | `StoriesNewsletterService` | 1 newsletter → N subscribers |
-| `AskMail` | `StoriesAskService` | 1 ask → N targets |
-| `AskForDonation` | `DonationSummaryService` (ask path) | 1 ask → N donors |
-| `ChaseAdminMail` | `SendAdminCommand` / `ChaseAdminCommand` | 1 chase → N admins of a group |
-| `ModNotifMail` | `SendModNotifsCommand` | 1 notif → N mods of a group |
-| `NewsfeedModNotifMail` | `NewsfeedModNotifService` | 1 notif → N mods of a group |
-| `ChitchatReportMail` | `NewsfeedModNotifService` (chitchat path) | 1 report → N mods |
-| `AlertNoMessagesMail` | `AlertNoMessagesCommand` | 1 alert → N mods of a group |
-| `UnifiedDigest` (daily) | `UnifiedDigestService::sendDailyDigests` | Per-user content, but shared item bodies — investigate |
+Migrated:
 
-Out of scope (no multiplier; keep current path):
-- Welcome, verify-email, forgot-password, merge-offer
-- Birthday, engage (per-user content)
-- Chat notifications (per-user)
-- Volunteering and events digests (per-user; investigate later)
-- Donation thank-you, gift-aid chase-up (per-donor)
-- Auto-repost, chase-up promised, deadline-reached, mod-std-message (per-message-per-poster)
+| Mailable | Service / call site | Multiplier source | Notes |
+|---|---|---|---|
+| `UnifiedDigest` (immediate) | `UnifiedDigestService::processGroupImmediate` | 1 message → N group members | Users with nearby jobs fall to unique-shape (jobs differ); users without share |
+| `StoriesNewsletterMail` | `StoriesNewsletterService` | 1 newsletter → N subscribers | Single cached body per run — only footer email differs |
+| `AskMail` | `StoriesAskService` | 1 ask → N targets | Two merge vars (name, email) |
+| `ChaseAdminMail` | `ChaseAdminCommand` | 1 chase → N mods of a group | userName + trackingPixelUrl per mod |
+| `EventsDigestMail` | `EventsDigestService` | 1 group's events → N members | Two merge vars (email, unsubscribeUrl) |
+| `VolunteeringDigestMail` | `VolunteeringDigestService` | 1 group's vols → N members | Members without jobs share; with-jobs go solo |
+
+Deliberately skipped — content is per-recipient or audience size is 1, so
+the cache primitive gives no benefit:
+
+| Mailable | Why skipped |
+|---|---|
+| `ModNotifMail` | Each mod's `htmlSummary` is unique → cache hit = 0 |
+| `NewsfeedModNotifMail` | Each mod's `posts` is filtered by their groups → cache hit = 0 |
+| `ChitchatReportMail` | One email to a fixed support address list, not a fan-out |
+| `AlertNoMessagesMail` | Single recipient (mentors address) |
+| `AskForDonation` | Per-user `$itemSubject` + many per-user tracked URLs — viable but complex; deferred |
+| `UnifiedDigest` (daily) | Per-user content; shapeKey returns unique-per-user → cache no-op, no regression |
+
+Truly per-recipient mailables (welcome, verify-email, forgot-password,
+chat-notification, birthday, donation thank-you, etc.) keep using the
+existing per-send compile path. No change.
 
 ## Test strategy
 

@@ -2,12 +2,13 @@
 
 namespace App\Mail\Event;
 
+use App\Mail\Concerns\BulkRenderable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\TrackableEmail;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class EventsDigestMail extends MjmlMailable
+class EventsDigestMail extends MjmlMailable implements BulkRenderable
 {
     use TrackableEmail;
 
@@ -58,5 +59,41 @@ class EventsDigestMail extends MjmlMailable
             'unsubscribeUrl' => $this->unsubscribeUrl,
             'email'          => $this->recipientEmail,
         ]);
+    }
+
+    /**
+     * All members of one group's events-digest send share the same events list
+     * and group name. Per-recipient body variation: footer email and the
+     * unsubscribe URL (which embeds the recipient's email).
+     */
+    public function shapeKey(): string
+    {
+        return 'events-digest-'.sha1(
+            $this->groupName.'|'.json_encode($this->events, JSON_THROW_ON_ERROR)
+        );
+    }
+
+    public function bulkTemplate(): string
+    {
+        return 'emails.mjml.event.events-digest';
+    }
+
+    public function bulkData(): array
+    {
+        return [
+            'groupName'      => $this->groupName,
+            'events'         => $this->events,
+            'userSite'       => config('freegle.sites.user'),
+            'unsubscribeUrl' => '{{unsubscribeUrl}}',
+            'email'          => '{{recipientEmail}}',
+        ];
+    }
+
+    public function mergeVars(): array
+    {
+        return [
+            'recipientEmail' => $this->recipientEmail,
+            'unsubscribeUrl' => $this->unsubscribeUrl,
+        ];
     }
 }

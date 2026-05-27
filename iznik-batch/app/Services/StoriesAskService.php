@@ -2,11 +2,12 @@
 
 namespace App\Services;
 
+use App\Mail\Concerns\BulkRenderable;
 use App\Mail\Stories\AskMail;
 use App\Models\Group;
 use App\Models\Message;
+use App\Services\BulkMail\BulkMjmlCompiler;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
 
 class StoriesAskService
 {
@@ -26,6 +27,11 @@ class StoriesAskService
      */
     public function askForStories(bool $dryRun = false): array
     {
+        // One BulkMjmlCompiler per ask run: every recipient shares the same
+        // storiesUrl + unsubscribeUrl, so one MJML compile feeds N substitutions.
+        $bulkEnabled = (bool) config('freegle.bulk_mail.enabled', true);
+        $bulkCompiler = $bulkEnabled ? app(BulkMjmlCompiler::class) : null;
+
         $earliest = max(
             strtotime(self::EARLIEST_DATE),
             strtotime('midnight 90 days ago')
@@ -105,12 +111,18 @@ class StoriesAskService
                     ?: 'Freegle User';
 
                 if ($email) {
-                    app(\App\Services\EmailSpoolerService::class)->spool(new AskMail(
+                    $mailable = new AskMail(
                         recipientName: $name,
                         recipientEmail: $email,
                         storiesUrl: config('freegle.sites.user') . '/stories',
                         unsubscribeUrl: config('freegle.sites.user') . '/unsubscribe',
-                    ));
+                    );
+
+                    if ($bulkCompiler !== null && $mailable instanceof BulkRenderable) {
+                        $mailable->setPrerenderedHtml($bulkCompiler->htmlFor($mailable));
+                    }
+
+                    app(\App\Services\EmailSpoolerService::class)->spool($mailable);
                 }
             }
         }

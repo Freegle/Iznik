@@ -2,14 +2,15 @@
 
 namespace App\Services;
 
+use App\Mail\Concerns\BulkRenderable;
 use App\Mail\Event\EventsDigestMail;
+use App\Services\BulkMail\BulkMjmlCompiler;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
 class EventsDigestService
 {
@@ -165,6 +166,12 @@ class EventsDigestService
                 ->receivingOurMails()
                 ->get();
 
+            // One BulkMjmlCompiler per group: all members of this group share
+            // events + groupName, so one MJML compile feeds every member's
+            // substitution.
+            $bulkEnabled = (bool) config('freegle.bulk_mail.enabled', true);
+            $bulkCompiler = $bulkEnabled ? app(BulkMjmlCompiler::class) : null;
+
             foreach ($members as $member) {
                 // V1 parity: pick the user's preferred external email and skip
                 // when they have none (only internal-alias addresses).
@@ -175,20 +182,25 @@ class EventsDigestService
 
                 if (!$dryRun) {
                     $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
+                    $mailable = new EventsDigestMail(
+                        recipientEmail: $email,
+                        groupName: $groupRow->nameshort,
+                        events: $eventData,
+                        unsubscribeUrl: $unsubscribeUrl,
+                        userId: $member->userId,
+                    );
+
+                    if ($bulkCompiler !== null && $mailable instanceof BulkRenderable) {
+                        $mailable->setPrerenderedHtml($bulkCompiler->htmlFor($mailable));
+                    }
+
                     // spool() builds the message (incl. MJML render) up front and
                     // only swallows permanent address failures internally; a
                     // transient render/build error re-throws. Without this catch
                     // it would escape the per-member foreach and abort the whole
-                    // digest run — the resilience SafeMail::sendMailable used to
-                    // provide. Skip the one recipient and keep the loop going.
+                    // digest run. Skip the one recipient and keep the loop going.
                     try {
-                        app(\App\Services\EmailSpoolerService::class)->spool(new EventsDigestMail(
-                            recipientEmail: $email,
-                            groupName: $groupRow->nameshort,
-                            events: $eventData,
-                            unsubscribeUrl: $unsubscribeUrl,
-                            userId: $member->userId,
-                        ), $email);
+                        app(\App\Services\EmailSpoolerService::class)->spool($mailable, $email);
                     } catch (\Throwable $e) {
                         Log::warning('Skipping events digest for member after spool failure; continuing loop', [
                             'email' => $email,
