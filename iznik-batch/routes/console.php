@@ -334,18 +334,16 @@ Schedule::command('tn:sync')
 //     ->runInBackground();
 //
 // Immediate mode - notifications for users who want instant alerts.
-// Eligibility mirrors V1: a user matches if their global simplemail
-// setting is Full, OR they have no global setting and at least one
-// approved membership with per-group emailfrequency=-1 (immediate).
-// Fully rolled out 2026-05-27: V1's bulk3 `digest.php -i -1` cron was
-// disabled at the same time and FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST
-// defaults to '*' (everyone). Set the env var (comma-separated list)
-// to re-pilot. No --limit so we drain the full queue every minute.
-Schedule::command('mail:digest:unified --mode=immediate')
-    ->everyMinute()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('mail:digest:unified'))
-    ->runInBackground();
+// TEMPORARILY DISABLED 2026-05-27 during rollout: withoutOverlapping()
+// failed to prevent parallel runs (6 concurrent processes observed), so
+// the wildcard-allowlist tick stacked rather than serialising. Re-enable
+// after the overlap-prevention mechanism is fixed and trackers are
+// bootstrapped to avoid each new opt-in pulling a 24h backlog.
+// Schedule::command('mail:digest:unified --mode=immediate')
+//     ->everyMinute()
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('mail:digest:unified'))
+//     ->runInBackground();
 
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
