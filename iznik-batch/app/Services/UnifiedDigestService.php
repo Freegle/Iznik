@@ -233,8 +233,23 @@ class UnifiedDigestService
 
         $emailsSent = 0;
         $touched = [];
+        $lastProcessed = null;
+        $deferred = false;
 
         foreach ($messages as $message) {
+            // Defer messages without a usable attachment so the email
+            // doesn't render with a generic placeholder while AI image
+            // generation is still in flight. After
+            // ATTACHMENT_WAIT_DEADLINE_MINUTES we send anyway (the
+            // placeholder is a known-good static URL — never a broken
+            // link, just visually weaker). If we defer, STOP processing
+            // this group's batch so later messages don't leapfrog the
+            // deferred one and trigger a cursor jump that skips it.
+            if (!$this->isImmediateMessageReady($message)) {
+                $deferred = true;
+                break;
+            }
+
             $sponsorsCache = null;
             foreach ($users as $uid => $user) {
                 if ((int) $message->fromuser === (int) $uid) {
@@ -255,18 +270,74 @@ class UnifiedDigestService
                 $emailsSent++;
                 $touched[$uid] = true;
             }
+
+            $lastProcessed = $message;
         }
 
-        // Skip cursor advance when --user is restricting recipients: only
-        // some group members got mailed, so advancing would skip everyone
-        // else for these messages on the next real run. --user is a
-        // testing affordance and must not mutate production cursor state.
-        if ($userFilter === null) {
-            $last = $messages->last();
-            $this->advanceGroupCursor($groupid, $last->mg_arrival, (int) $last->mg_msgid, $dryRun);
+        // Advance the cursor to the LAST SUCCESSFULLY PROCESSED message,
+        // not the last message in the candidate batch. If we deferred,
+        // the deferred message and everything after it stay in the
+        // "after cursor" range so the next tick re-considers them.
+        //
+        // Skip the advance entirely when --user is restricting recipients:
+        // only some members got mailed, so advancing would skip everyone
+        // else for these messages on the next unrestricted run. --user
+        // is a testing affordance and must not mutate prod cursor state.
+        if ($lastProcessed && $userFilter === null) {
+            $this->advanceGroupCursor(
+                $groupid,
+                $lastProcessed->mg_arrival,
+                (int) $lastProcessed->mg_msgid,
+                $dryRun
+            );
+        }
+
+        if ($deferred) {
+            Log::debug("UnifiedDigestService: deferred unattached messages in group {$groupid}");
         }
 
         return ['emails' => $emailsSent, 'users' => array_keys($touched)];
+    }
+
+    /**
+     * Number of minutes to wait for an AI-generated attachment before
+     * giving up and mailing with the offer/wanted placeholder. Long
+     * enough to cover normal generation latency, short enough that a
+     * permanently-stuck AI job doesn't hold immediate notifications
+     * back forever.
+     */
+    public const ATTACHMENT_WAIT_DEADLINE_MINUTES = 5;
+
+    /**
+     * Whether this message is ready to be mailed as part of an immediate
+     * digest. A message is ready if either:
+     *   - it has a usable attachment (user-uploaded or AI-generated and
+     *     fully written to messages_attachments), OR
+     *   - it arrived more than ATTACHMENT_WAIT_DEADLINE_MINUTES ago, in
+     *     which case we mail it with the type-specific placeholder
+     *     rather than holding the notification indefinitely.
+     *
+     * The placeholder fallback is a static URL hosted on the site
+     * (offer_placeholder / wanted_placeholder); known-good, never broken.
+     */
+    protected function isImmediateMessageReady(Message $message): bool
+    {
+        if ($message->attachments && $message->attachments->isNotEmpty()) {
+            $usable = $message->attachments->first(function ($a) {
+                return !empty($a->externaluid)
+                    || !empty($a->externalurl)
+                    || (int) ($a->archived ?? 0) === 1;
+            });
+            if ($usable) {
+                return true;
+            }
+        }
+
+        $arrival = $message->mg_arrival
+            ?? ($message->arrival instanceof \Carbon\Carbon ? $message->arrival : \Carbon\Carbon::parse($message->arrival ?? $message->date));
+        $arrival = $arrival instanceof \Carbon\Carbon ? $arrival : \Carbon\Carbon::parse($arrival);
+
+        return $arrival->lessThanOrEqualTo(now()->subMinutes(self::ATTACHMENT_WAIT_DEADLINE_MINUTES));
     }
 
     /**

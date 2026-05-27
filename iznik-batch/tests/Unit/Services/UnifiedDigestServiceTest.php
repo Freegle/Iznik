@@ -767,4 +767,107 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertNull($cursor->msgdate, 'Dry run must not advance the cursor');
     }
+
+    public function test_immediate_defers_recent_message_with_no_attachment(): void
+    {
+        // Newly-posted message that hasn't acquired an AI-generated
+        // attachment yet — defer rather than mail with a stock placeholder
+        // while generation is still in flight. The cursor must NOT
+        // advance past it so the next tick retries.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Recent no-image (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(0, $stats['emails_sent']);
+
+        $cursor = DB::table('groups_digests')
+            ->where('groupid', $group->id)
+            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->first();
+        $this->assertNull($cursor->msgdate, 'Cursor must not advance past a deferred message');
+    }
+
+    public function test_immediate_sends_attached_message_even_if_recent(): void
+    {
+        // Has a usable attachment immediately (user-uploaded photo).
+        // No need to wait for AI; mail right away.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: With photo (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $msg->id,
+            'externaluid' => 'freegletusd-' . str_repeat('a', 32),
+            'primary' => 1,
+            'archived' => 0,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(1, $stats['emails_sent']);
+    }
+
+    public function test_immediate_sends_unattached_message_after_deadline(): void
+    {
+        // Older than ATTACHMENT_WAIT_DEADLINE_MINUTES and still no
+        // attachment — give up waiting and send with the placeholder
+        // rather than holding the notification indefinitely.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Stuck no-image (TestLocation)']);
+        $oldArrival = now()->subMinutes(UnifiedDigestService::ATTACHMENT_WAIT_DEADLINE_MINUTES + 1);
+        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => $oldArrival]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(1, $stats['emails_sent']);
+
+        $cursor = DB::table('groups_digests')
+            ->where('groupid', $group->id)
+            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->first();
+        $this->assertNotNull($cursor->msgdate, 'Cursor must advance after we give up waiting');
+    }
+
+    public function test_immediate_deferral_blocks_later_messages_in_same_group(): void
+    {
+        // If msg A (older) is deferred, msg B (newer) MUST NOT be sent
+        // even if it's ready — otherwise advancing the cursor to B's
+        // position would skip A on the next tick.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
+        $now = now();
+
+        // Msg A: arrived now, no attachment → deferred.
+        $a = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A no-img (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $a->id)->update(['arrival' => $now]);
+
+        // Msg B: arrived later, has attachment → would be ready, but
+        // must wait behind A.
+        $b = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B with photo (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $b->id)->update(['arrival' => $now->copy()->addSecond()]);
+        DB::table('messages_attachments')->insert([
+            'msgid' => $b->id,
+            'externaluid' => 'freegletusd-' . str_repeat('b', 32),
+            'primary' => 1,
+            'archived' => 0,
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        $this->assertEquals(0, $stats['emails_sent'], 'Later ready msg B must wait until A is dealt with');
+
+        $cursor = DB::table('groups_digests')
+            ->where('groupid', $group->id)
+            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->first();
+        $this->assertNull($cursor->msgdate, 'Cursor must not advance past the deferred A');
+    }
 }

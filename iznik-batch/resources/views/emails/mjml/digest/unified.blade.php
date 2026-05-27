@@ -96,16 +96,21 @@
                     <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 6px;" />
                     Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 40) }}</strong>
                 </mj-text>
-                {{-- Primary CTA --}}
+                {{-- Primary CTA. width="100%" + inner-padding="13px 0"
+                     made Gmail render the button as a full-width green
+                     bar with the "Reply" text left-aligned. Drop the
+                     width override and give the button horizontal
+                     inner-padding so it auto-sizes to text+padding and
+                     align="center" centers it in the column. Same shape
+                     in every client; text always sits in the middle. --}}
                 <mj-button
                     href="{{ $post['messageUrl'] }}"
                     background-color="{{ $accentColor }}"
                     color="#ffffff"
                     font-size="16px"
                     font-weight="600"
-                    inner-padding="13px 0"
+                    inner-padding="13px 48px"
                     border-radius="5px"
-                    width="100%"
                     align="center"
                     padding="0 0 10px 0"
                 >
