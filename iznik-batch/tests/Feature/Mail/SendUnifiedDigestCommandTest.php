@@ -21,9 +21,11 @@ class SendUnifiedDigestCommandTest extends TestCase
 
     protected function seedImmediateCursor(Group $group): void
     {
+        // msgid has a FK to messages.id (ON DELETE SET NULL), so the value
+        // must be NULL or a real message id — never 0.
         GroupDigest::updateOrCreate(
             ['groupid' => $group->id, 'frequency' => Membership::EMAIL_FREQUENCY_IMMEDIATE],
-            ['msgdate' => null, 'msgid' => 0]
+            ['msgdate' => null, 'msgid' => null]
         );
     }
 
