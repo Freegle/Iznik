@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Mail\Concerns\BulkRenderable;
 use App\Mail\Digest\UnifiedDigest;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Membership;
@@ -9,10 +10,10 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
+use App\Services\BulkMail\BulkMjmlCompiler;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
 /**
  * Service for sending unified Freegle digests.
@@ -249,6 +250,12 @@ class UnifiedDigestService
         $lastProcessed = null;
         $deferred = false;
 
+        // Per-message process-local cache of compiled HTML keyed by recipient
+        // shape. Lets us call the MJML sidecar once per shape instead of once
+        // per recipient. Fresh instance per message so memory is bounded —
+        // see BulkMjmlCompiler / docs/superpowers/specs spec for context.
+        $bulkEnabled = (bool) config('freegle.bulk_mail.enabled', true);
+
         foreach ($messages as $message) {
             // Defer messages without a usable attachment so the email
             // doesn't render with a generic placeholder while AI image
@@ -264,6 +271,8 @@ class UnifiedDigestService
             }
 
             $sponsorsCache = null;
+            $bulkCompiler = $bulkEnabled ? app(BulkMjmlCompiler::class) : null;
+
             foreach ($users as $uid => $user) {
                 if ((int) $message->fromuser === (int) $uid) {
                     continue;
@@ -283,6 +292,15 @@ class UnifiedDigestService
                     $deduped = collect([
                         ['message' => $message, 'postedToGroups' => [$groupid]],
                     ]);
+                    $mailable = new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache);
+
+                    if ($bulkCompiler !== null && $mailable instanceof BulkRenderable) {
+                        // Shape-cached compile: one MJML sidecar call per
+                        // shape bucket, N cheap substitutions for N users.
+                        $html = $bulkCompiler->htmlFor($mailable);
+                        $mailable->setPrerenderedHtml($html);
+                    }
+
                     // Spool through EmailSpoolerService so transient SMTP
                     // failures get retried by the processor rather than
                     // dropping a recipient. Permanent address-rejection
@@ -300,7 +318,7 @@ class UnifiedDigestService
                     // recipient, and let the message still count as processed.
                     try {
                         app(\App\Services\EmailSpoolerService::class)->spool(
-                            new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
+                            $mailable,
                             $user->email_preferred,
                             emailType: 'digest_immediate',
                         );
@@ -316,6 +334,14 @@ class UnifiedDigestService
                 }
                 $emailsSent++;
                 $touched[$uid] = true;
+            }
+
+            if ($bulkCompiler !== null) {
+                Log::debug('UnifiedDigestService: bulk compile stats for message', [
+                    'message_id' => $message->id,
+                    'compiles' => $bulkCompiler->compileCount(),
+                    'hits' => $bulkCompiler->hitCounts(),
+                ]);
             }
 
             $lastProcessed = $message;

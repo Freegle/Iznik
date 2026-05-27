@@ -517,7 +517,7 @@
         </mj-section>
         @endif
 
-        @include('emails.mjml.partials.footer', ['email' => $user->email_preferred, 'settingsUrl' => $settingsUrl, 'unsubscribeUrl' => $unsubscribeUrl])
+        @include('emails.mjml.partials.footer', ['email' => $userEmail ?? $user->email_preferred, 'settingsUrl' => $settingsUrl, 'unsubscribeUrl' => $unsubscribeUrl])
 
         @if(isset($trackingPixelMjml))
         {!! $trackingPixelMjml !!}

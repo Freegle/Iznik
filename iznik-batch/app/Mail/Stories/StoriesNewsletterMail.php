@@ -2,11 +2,12 @@
 
 namespace App\Mail\Stories;
 
+use App\Mail\Concerns\BulkRenderable;
 use App\Mail\MjmlMailable;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class StoriesNewsletterMail extends MjmlMailable
+class StoriesNewsletterMail extends MjmlMailable implements BulkRenderable
 {
     public function __construct(
         public readonly int    $userId,
@@ -60,5 +61,54 @@ class StoriesNewsletterMail extends MjmlMailable
             'unsubscribeUrl' => $this->unsubscribeUrl,
             'settingsUrl'    => $this->settingsUrl,
         ], 'emails.text.stories.newsletter');
+    }
+
+    /**
+     * All recipients of a newsletter run share the same body — same stories,
+     * same hero image, same CTAs, same unsubscribe/settings URLs (constructed
+     * from userSite only). The only thing that differs per-recipient is the
+     * "sent to {email}" line in the footer. Shape on the content hash so two
+     * concurrent send batches with different stories don't share a cache.
+     */
+    public function shapeKey(): string
+    {
+        return 'stories-newsletter-'.sha1(
+            json_encode($this->stories, JSON_THROW_ON_ERROR).'|'
+            .$this->headerImageUrl.'|'
+            .$this->tellUrl.'|'
+            .$this->giveUrl.'|'
+            .$this->findUrl.'|'
+            .$this->previewText.'|'
+            .$this->unsubscribeUrl.'|'
+            .$this->settingsUrl
+        );
+    }
+
+    public function bulkTemplate(): string
+    {
+        return 'emails.mjml.stories.newsletter';
+    }
+
+    public function bulkData(): array
+    {
+        return [
+            'name'           => $this->recipientName,
+            'email'          => '{{recipientEmail}}',
+            'stories'        => $this->stories,
+            'headerImageUrl' => $this->headerImageUrl,
+            'tellUrl'        => $this->tellUrl,
+            'giveUrl'        => $this->giveUrl,
+            'findUrl'        => $this->findUrl,
+            'previewText'    => $this->previewText,
+            'unsubscribeUrl' => $this->unsubscribeUrl,
+            'settingsUrl'    => $this->settingsUrl,
+        ];
+    }
+
+    public function mergeVars(): array
+    {
+        return [
+            'recipientEmail' => $this->recipientEmail,
+        ];
     }
 }

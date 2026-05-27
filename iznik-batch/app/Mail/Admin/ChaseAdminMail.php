@@ -2,6 +2,7 @@
 
 namespace App\Mail\Admin;
 
+use App\Mail\Concerns\BulkRenderable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\TrackableEmail;
@@ -9,7 +10,7 @@ use App\Models\User;
 use Illuminate\Mail\Mailables\Address;
 use Illuminate\Mail\Mailables\Envelope;
 
-class ChaseAdminMail extends MjmlMailable
+class ChaseAdminMail extends MjmlMailable implements BulkRenderable
 {
     use TrackableEmail;
     use LoggableEmail;
@@ -103,6 +104,46 @@ class ChaseAdminMail extends MjmlMailable
     protected function getSubject(): string
     {
         return "ADMIN: Action needed - pending suggested admin for {$this->groupName}";
+    }
+
+    /**
+     * All recipients of one admin-chase email share content: same admin, same
+     * group, same pending duration. The only per-mod variation is the greeting
+     * "Dear {first name}" and the tracking pixel URL.
+     */
+    public function shapeKey(): string
+    {
+        return 'chase-admin-'.$this->adminId.'|h='.$this->pendingHours.'|g='.$this->groupName;
+    }
+
+    public function bulkTemplate(): string
+    {
+        return 'emails.mjml.admin.chase';
+    }
+
+    public function bulkData(): array
+    {
+        return array_merge([
+            'adminSubject' => $this->adminSubject,
+            'groupName' => $this->groupName,
+            'pendingHours' => $this->pendingHours,
+            'pendingTimeText' => $this->pendingTimeText,
+            'modToolsUrl' => $this->modToolsUrl,
+            'adminId' => $this->adminId,
+            'userName' => '{{userName}}',
+        ], [
+            'tracking' => $this->tracking,
+            'trackingPixelMjml' => '<mj-image src="{{trackingPixelUrl}}" width="1px" height="1px" alt="" padding="0" />',
+            'trackingPixelHtml' => '',
+        ]);
+    }
+
+    public function mergeVars(): array
+    {
+        return [
+            'userName' => $this->user ? ($this->user->firstname ?: ($this->user->fullname ?: 'there')) : 'there',
+            'trackingPixelUrl' => $this->tracking?->getPixelUrl() ?? '',
+        ];
     }
 
     /**

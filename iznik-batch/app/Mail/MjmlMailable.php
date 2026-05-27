@@ -18,6 +18,16 @@ abstract class MjmlMailable extends Mailable
     protected array $mjmlData = [];
 
     /**
+     * Optional pre-rendered HTML body. When set, mjmlView() skips the Blade
+     * render + MJML sidecar compile and uses this string directly. Used by
+     * BulkMjmlCompiler to inject a per-recipient HTML body that was computed
+     * by substituting merge vars into a shape-cached compiled template.
+     *
+     * Null means the standard path runs (Blade + MJML compile per send).
+     */
+    protected ?string $prerenderedHtml = null;
+
+    /**
      * Trace ID for log correlation. Initialized early with default value.
      */
     protected string $traceId = '';
@@ -169,6 +179,19 @@ abstract class MjmlMailable extends Mailable
             throw new \RuntimeException($error);
         }
 
+        // Bulk path short-circuit: if BulkMjmlCompiler already produced a
+        // recipient-specific HTML body via shape caching + merge-var
+        // substitution, use it verbatim. Skip Blade and MJML compile.
+        if ($this->prerenderedHtml !== null) {
+            $this->html($this->prerenderedHtml);
+
+            if ($textTemplate && view()->exists($textTemplate)) {
+                $this->text($textTemplate, $this->mjmlData);
+            }
+
+            return $this;
+        }
+
         // Render the Blade template to get MJML content with retry on empty.
         try {
             $mjmlContent = $this->renderMjmlTemplate();
@@ -195,6 +218,49 @@ abstract class MjmlMailable extends Mailable
         }
 
         return $this;
+    }
+
+    /**
+     * Set the HTML body directly, bypassing the Blade + MJML pipeline on the
+     * next mjmlView() call. Used exclusively by BulkMjmlCompiler.
+     *
+     * Subclasses' build() implementations are unchanged: they still call
+     * mjmlView(...) as usual; mjmlView() now checks $prerenderedHtml first
+     * and short-circuits if set.
+     */
+    public function setPrerenderedHtml(string $html): static
+    {
+        $this->prerenderedHtml = $html;
+
+        return $this;
+    }
+
+    /**
+     * Render the mailable's MJML template + compile to HTML, returning the
+     * body without setting it on the mailable.
+     *
+     * Called by BulkMjmlCompiler once per shape (the first recipient in the
+     * shape). The bulk-data array — supplied by the subclass via
+     * BulkRenderable::bulkData() — passes literal "{{name}}" placeholder
+     * strings for per-recipient fields, so the rendered HTML contains those
+     * placeholders. Subsequent recipients in the shape get this HTML with
+     * their own values substituted in.
+     *
+     * @param string $template     The Blade template path the mailable uses.
+     * @param array  $sharedData   The bulkData() array from the subclass.
+     */
+    public function renderHtmlForBulkCache(string $template, array $sharedData): string
+    {
+        if (!view()->exists($template)) {
+            throw new \RuntimeException("MJML template not found: {$template}");
+        }
+
+        // Stash on the instance so renderMjmlTemplate() can pick them up.
+        $this->mjmlTemplate = $template;
+        $this->mjmlData = array_merge($this->getDefaultData(), $sharedData);
+
+        $mjml = $this->renderMjmlTemplate();
+        return $this->compileMjml($mjml);
     }
 
     /**

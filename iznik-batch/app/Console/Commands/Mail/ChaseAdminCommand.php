@@ -4,13 +4,14 @@ namespace App\Console\Commands\Mail;
 
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\ChaseAdminMail;
+use App\Mail\Concerns\BulkRenderable;
 use App\Models\Group;
 use App\Models\User;
+use App\Services\BulkMail\BulkMjmlCompiler;
 use App\Traits\GracefulShutdown;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
 class ChaseAdminCommand extends Command
 {
@@ -168,6 +169,12 @@ class ChaseAdminCommand extends Command
 
         $sent = 0;
 
+        // One BulkMjmlCompiler per admin chase: all mods of the group share
+        // the same admin/group/pending data → one MJML compile, N
+        // substitutions for N mods.
+        $bulkEnabled = (bool) config('freegle.bulk_mail.enabled', true);
+        $bulkCompiler = $bulkEnabled ? app(BulkMjmlCompiler::class) : null;
+
         foreach ($moderators as $mod) {
             $email = $mod->email_preferred;
 
@@ -193,6 +200,10 @@ class ChaseAdminCommand extends Command
                     $pendingHours,
                     $admin->id
                 );
+
+                if ($bulkCompiler !== null && $mailable instanceof BulkRenderable) {
+                    $mailable->setPrerenderedHtml($bulkCompiler->htmlFor($mailable));
+                }
 
                 app(\App\Services\EmailSpoolerService::class)->spool($mailable);
 

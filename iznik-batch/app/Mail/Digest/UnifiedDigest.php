@@ -2,6 +2,7 @@
 
 namespace App\Mail\Digest;
 
+use App\Mail\Concerns\BulkRenderable;
 use App\Mail\Contracts\RetryableMailable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
@@ -24,7 +25,7 @@ use Illuminate\Support\Facades\DB;
  * Contains posts from all communities the user is a member of,
  * with cross-posted items deduplicated.
  */
-class UnifiedDigest extends MjmlMailable implements RetryableMailable
+class UnifiedDigest extends MjmlMailable implements RetryableMailable, BulkRenderable
 {
     use AmpEmail;
     use AvatarResolver;
@@ -41,6 +42,13 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     protected array $groupLookup = [];
 
     protected int $digestNumber;
+
+    /**
+     * Cached User::getJobAds() result. Avoids running the (cross-table /
+     * spatial) jobs query three times per send for the bulk path (once each
+     * for shapeKey, bulkData, mergeVars).
+     */
+    protected ?Collection $cachedJobAds = null;
 
     public function __construct(
         public User $user,
@@ -201,8 +209,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     {
         // Jobs section — V1 single.html parity. Same shape ChatNotification
         // already uses, so the MJML loop is a drop-in.
-        $jobAdsData = $this->user->getJobAds();
-        $jobAds = $jobAdsData['jobs'] ?? collect();
+        $jobAds = $this->getCachedJobAds();
         $jobCount = count($jobAds);
         foreach ($jobAds as $index => $job) {
             $job->tracked_url = $this->trackedUrl(
@@ -245,6 +252,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
+            'userEmail' => $this->user->email_preferred ?? '',
             'posts' => $this->preparedPosts,
             'postCount' => $this->posts->count(),
             'mode' => $this->mode,
@@ -353,6 +361,253 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         }
 
         return $result;
+    }
+
+    /**
+     * Bucket recipients that share compiled HTML. See BulkRenderable.
+     *
+     * For immediate-mode digests, the structural inputs that change the
+     * rendered template are:
+     *   - the message (drives all the shared content)
+     *   - sponsor set (shared across users in the same group anyway)
+     *   - has_distance: changes the @if branch in the post card
+     *   - has_jobs: when true, the jobs loop has a per-user body (each user
+     *     has their own job set), so users with jobs go solo — unique shape
+     *     per user, no cache sharing. Phase 1 simplification.
+     */
+    public function shapeKey(): string
+    {
+        if ($this->mode !== UnifiedDigestService::MODE_IMMEDIATE) {
+            // Daily digest is per-user (each user has their own union of posts).
+            // Force a unique shape so the bulk path produces correct output
+            // even though there's no sharing benefit. See spec for follow-up
+            // work on per-post fragment sharing.
+            return 'unique-daily-'.$this->user->id;
+        }
+
+        if ($this->getCachedJobAds()->isNotEmpty()) {
+            return 'unique-jobs-'.$this->user->id.'-'.($this->posts->first()['message']->id ?? 0);
+        }
+
+        $messageId = $this->posts->first()['message']->id ?? 0;
+        $sponsorIds = $this->sponsors->pluck('id')->sort()->implode(',');
+
+        // has_distance depends on BOTH the user having a location AND the
+        // message having lat/lng (preparePosts computes the actual text). Use
+        // the rendered distanceText from preparedPosts so the bucket reflects
+        // the same @if branch the template will take. Users-with-location
+        // viewing a message-without-lat-lng land in the same bucket as
+        // users-without-location.
+        $firstPrepared = $this->preparedPosts->first();
+        $hasDistance = ($firstPrepared['distanceText'] ?? null) !== null ? '1' : '0';
+
+        return sha1("immediate|{$messageId}|{$sponsorIds}|{$hasDistance}");
+    }
+
+    /**
+     * Memoised wrapper around $this->user->getJobAds(). Returns the 'jobs'
+     * collection (possibly empty). Cached for the lifetime of this Mailable.
+     */
+    protected function getCachedJobAds(): Collection
+    {
+        if ($this->cachedJobAds === null) {
+            $this->cachedJobAds = $this->user->getJobAds()['jobs'] ?? collect();
+        }
+        return $this->cachedJobAds;
+    }
+
+    public function bulkTemplate(): string
+    {
+        return 'emails.mjml.digest.unified';
+    }
+
+    /**
+     * Data for the SHARED compile pass. Per-recipient fields are literal
+     * "{{name}}" placeholder strings; shared fields are real values.
+     *
+     * Mirrors the data array that build() passes to mjmlView(), but with
+     * placeholder substitutions in place of trackedUrl()-derived values.
+     */
+    public function bulkData(): array
+    {
+        $bulkPosts = $this->preparePostsForBulk();
+        $bulkJobAds = $this->buildBulkJobAds();
+
+        return array_merge([
+            'user' => $this->user,
+            'userEmail' => '{{userEmail}}',
+            'posts' => $bulkPosts,
+            'postCount' => $this->posts->count(),
+            'mode' => $this->mode,
+            'sponsors' => $this->sponsors,
+            'settingsUrl' => '{{settingsUrl}}',
+            'unsubscribeUrl' => '{{unsubscribeUrl}}',
+            'browseUrl' => '{{browseUrl}}',
+            'userSite' => $this->userSite,
+            'jobAds' => $bulkJobAds,
+            'jobsUrl' => '{{jobsUrl}}',
+            'donateUrl' => '{{donateUrl}}',
+            'primaryGroupName' => $this->getPrimaryGroupName(),
+            'frequencyText' => $this->mode === UnifiedDigestService::MODE_IMMEDIATE ? 'immediately' : 'daily',
+        ], [
+            // Overrides for getTrackingData() so the tracking pixel URL is a
+            // merge placeholder instead of the first recipient's real URL.
+            'tracking' => $this->tracking,
+            'trackingPixelMjml' => '<mj-image src="{{trackingPixelUrl}}" width="1px" height="1px" alt="" padding="0" />',
+            'trackingPixelHtml' => '',
+        ]);
+    }
+
+    /**
+     * Per-recipient substitution map. Keys match the literal "{{name}}"
+     * placeholders in bulkData(); values are the real per-recipient strings.
+     */
+    public function mergeVars(): array
+    {
+        $vars = [
+            'userEmail' => $this->user->email_preferred ?? '',
+            'browseUrl' => $this->trackedUrl($this->userSite.'/browse', 'browse_cta', 'browse'),
+            'donateUrl' => $this->trackedUrl(
+                config('freegle.donate.url', 'https://freegle.in/paypal1510'),
+                'donate',
+                'donate'
+            ),
+            'jobsUrl' => $this->trackedUrl($this->userSite.'/jobs', 'jobs_view_more', 'jobs_view_more'),
+            'unsubscribeUrl' => $this->trackedUrl($this->userSite.'/unsubscribe', 'footer_unsubscribe', 'unsubscribe'),
+            'settingsUrl' => $this->trackedUrl($this->userSite.'/settings', 'footer_settings', 'settings'),
+            'messageUrl' => $this->preparedPosts->isNotEmpty()
+                ? $this->preparedPosts->first()['messageUrl']
+                : '',
+            'trackingPixelUrl' => $this->tracking?->getPixelUrl() ?? '',
+        ];
+
+        // distanceText is only emitted by the template when the user has a
+        // location (handled via shape key). Provide the value when present.
+        if ($this->user->lastlocation !== null && $this->preparedPosts->isNotEmpty()) {
+            $first = $this->preparedPosts->first();
+            $vars['distanceText'] = $first['distanceText'] ?? '';
+        }
+
+        // Job slots — same indexing as buildBulkJobAds().
+        $jobAds = $this->getCachedJobAds();
+        $jobCount = count($jobAds);
+        foreach ($jobAds as $idx => $job) {
+            $vars["job_{$idx}_url"] = $this->trackedUrl(
+                $this->userSite.'/job/'.$job->id.
+                    '?source=email&campaign=unified_digest&position='.$idx.
+                    '&list_length='.$jobCount,
+                'job_ad_'.$idx,
+                'job_click'
+            );
+        }
+
+        return $vars;
+    }
+
+    /**
+     * Build a placeholder version of $this->preparedPosts where per-recipient
+     * fields (messageUrl, distanceText) are literal "{{name}}" strings.
+     *
+     * Shared fields (itemName, locationName, posterAvatarUrl, arrival timestamps,
+     * displayImageUrl, etc.) are real values — same as preparePosts().
+     */
+    protected function preparePostsForBulk(): Collection
+    {
+        return $this->posts->map(function ($post) {
+            $message = $post['message'];
+            $postedToGroups = $post['postedToGroups'];
+            $isOffer = $message->type === 'Offer';
+
+            $postedToText = count($postedToGroups) > 1
+                ? $this->formatPostedTo($postedToGroups)
+                : null;
+
+            $imageUrl = $this->getMessageImageUrl($message);
+            $placeholderUrl = $isOffer
+                ? config('freegle.images.offer_placeholder')
+                : config('freegle.images.wanted_placeholder');
+            $displayImageUrl = $imageUrl ?? $placeholderUrl;
+
+            $messageText = $message->textbody
+                ? EmojiUtils::decodeEmojis($message->textbody)
+                : null;
+
+            $arrival = $message->arrival instanceof Carbon ? $message->arrival : Carbon::parse($message->arrival);
+            $arrivalFormatted = $arrival->setTimezone('Europe/London')->format('D j M, g:ia');
+            $arrivalIso = $arrival->toIso8601String();
+
+            // distanceText: truthy placeholder when the user has a location
+            // (the template @if branches on it). Shape key includes
+            // has_distance, so within a shape this is consistent.
+            $distanceText = $this->user->lastlocation !== null ? '{{distanceText}}' : null;
+
+            $posterUser = $message->relationLoaded('fromUser') ? $message->fromUser : null;
+            $posterAvatarUrl = $this->resolveAvatarUrl($posterUser, 36);
+            $posterName = $posterUser?->displayname ?? $message->fromname ?? 'Freegler';
+
+            $firstPostedFormatted = null;
+            $originalDate = $message->date instanceof Carbon
+                ? $message->date
+                : ($message->date ? Carbon::parse($message->date) : null);
+            if ($originalDate && $arrival->diffInMinutes($originalDate) > 60) {
+                $firstPostedFormatted = $originalDate->setTimezone('Europe/London')->format('D, jS F g:ia');
+            }
+
+            return [
+                'message' => $message,
+                'messageText' => $messageText,
+                'messageUrl' => '{{messageUrl}}',
+                'imageUrl' => $imageUrl,
+                'displayImageUrl' => $displayImageUrl,
+                'trackedImageUrl' => null,
+                'isPlaceholder' => $imageUrl === null,
+                'postedToText' => $postedToText,
+                'type' => $message->type,
+                'subject' => $message->subject,
+                'itemName' => $this->extractItemName($message->subject),
+                'locationName' => $this->extractLocationName($message->subject),
+                'arrivalFormatted' => $arrivalFormatted,
+                'arrivalIso' => $arrivalIso,
+                'distanceText' => $distanceText,
+                'posterName' => $posterName,
+                'posterAvatarUrl' => $posterAvatarUrl,
+                'firstPostedFormatted' => $firstPostedFormatted,
+            ];
+        });
+    }
+
+    /**
+     * Build a placeholder version of the user's jobs collection — same shape
+     * and count as the real jobs but with each tracked_url replaced by a
+     * position-indexed "{{job_N_url}}" placeholder.
+     */
+    protected function buildBulkJobAds(): Collection
+    {
+        return $this->getCachedJobAds()->map(function ($job, $idx) {
+            $clone = clone $job;
+            $clone->tracked_url = '{{job_'.$idx.'_url}}';
+            return $clone;
+        });
+    }
+
+    /**
+     * Look up the primary group name (the post's first group) for the per-group
+     * footer line. Shared across all recipients of one message.
+     */
+    protected function getPrimaryGroupName(): ?string
+    {
+        if ($this->mode !== UnifiedDigestService::MODE_IMMEDIATE || $this->posts->isEmpty()) {
+            return null;
+        }
+
+        $firstPost = $this->posts->first();
+        $groupId = $firstPost['postedToGroups'][0] ?? null;
+        if (!$groupId) {
+            return null;
+        }
+
+        $row = DB::table('groups')->where('id', $groupId)->first(['nameshort', 'namefull']);
+        return $row ? ($row->namefull ?: $row->nameshort) : null;
     }
 
     /**

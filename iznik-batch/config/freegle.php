@@ -118,6 +118,17 @@ return [
         'daily_allowlist' => env('FREEGLE_DIGEST_DAILY_ALLOWLIST', ''),
     ],
 
+    // Bulk-send MJML compile cache: when true, mailables that implement
+    // App\Mail\Concerns\BulkRenderable run their template compile once per
+    // recipient SHAPE and substitute per-recipient merge vars into the
+    // cached HTML. Cuts MJML sidecar load on batch sends (immediate digest,
+    // newsletters, donation asks, mod notifications). Flip to false to
+    // fall every send back to the per-recipient compile path (a roll-back
+    // hatch if a regression slips through).
+    'bulk_mail' => [
+        'enabled' => env('FREEGLE_BULK_MAIL_ENABLED', true),
+    ],
+
     // Firebase Cloud Messaging for push notifications
     'firebase' => [
         'credentials_path' => env('FIREBASE_CREDENTIALS_PATH', '/etc/firebase.json'),

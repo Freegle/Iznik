@@ -2,12 +2,13 @@
 
 namespace App\Services;
 
+use App\Mail\Concerns\BulkRenderable;
 use App\Mail\Stories\StoriesNewsletterMail;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Group;
+use App\Services\BulkMail\BulkMjmlCompiler;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
 class StoriesNewsletterService
 {
@@ -181,6 +182,13 @@ class StoriesNewsletterService
             ->distinct()
             ->select('users.id');
 
+        // One BulkMjmlCompiler for the whole newsletter run. All eligible
+        // recipients share the same content (stories, hero, CTAs) — the only
+        // body variation is the "sent to {email}" footer line. ⇒ exactly one
+        // MJML sidecar call instead of N.
+        $bulkEnabled = (bool) config('freegle.bulk_mail.enabled', true);
+        $bulkCompiler = $bulkEnabled ? app(BulkMjmlCompiler::class) : null;
+
         // Stream eligible members in keyset-paginated chunks; pluck()-ing the entire
         // eligible newsletter userbase (hundreds of thousands of ids) at once exhausts memory.
         foreach ($eligibleMembers->lazyById(1000, 'users.id', 'id') as $member) {
@@ -201,7 +209,7 @@ class StoriesNewsletterService
                 ?? trim(($user->firstname ?? '') . ' ' . ($user->lastname ?? ''))
                 ?: 'Freegle Member';
 
-            app(\App\Services\EmailSpoolerService::class)->spool(new StoriesNewsletterMail(
+            $mailable = new StoriesNewsletterMail(
                 userId: $userId,
                 recipientName: $name,
                 recipientEmail: $email,
@@ -213,9 +221,22 @@ class StoriesNewsletterService
                 previewText: $preview,
                 unsubscribeUrl: "{$userSite}/unsubscribe",
                 settingsUrl: "{$userSite}/settings",
-            ));
+            );
+
+            if ($bulkCompiler !== null && $mailable instanceof BulkRenderable) {
+                $mailable->setPrerenderedHtml($bulkCompiler->htmlFor($mailable));
+            }
+
+            app(\App\Services\EmailSpoolerService::class)->spool($mailable);
 
             $stats['sent']++;
+        }
+
+        if ($bulkCompiler !== null) {
+            Log::info('StoriesNewsletterService: bulk compile stats', [
+                'compiles' => $bulkCompiler->compileCount(),
+                'hits' => $bulkCompiler->hitCounts(),
+            ]);
         }
 
         return $stats;
