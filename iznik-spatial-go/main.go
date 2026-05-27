@@ -183,6 +183,7 @@ func main() {
 	// GET /v1/:dataset/within_coords — like /within but returns items with coordinates.
 	// Used by the routing server to find freeglers within an isochrone polygon without
 	// the centre-distance bias of a KNN query.
+	// Polygon can be passed as a query parameter (for short polygons) or via POST body.
 	api.Get("/v1/:dataset/within_coords", func(c *fiber.Ctx) error {
 		name := c.Params("dataset")
 		state, ok := srv.getDataset(name)
@@ -194,6 +195,68 @@ func main() {
 		if polygonWKT == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "polygon parameter required"})
 		}
+		pg, err := parsePolygonParam(polygonWKT)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		idx := state.getIndex()
+		if idx == nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
+		}
+
+		items, err := idx.QueryWithinFull(*pg)
+		if err == ErrTooManyResults {
+			return c.Status(fiber.StatusRequestEntityTooLarge).JSON(fiber.Map{
+				"error": ErrTooManyResults.Error(),
+			})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		type result struct {
+			Extra map[string]any `json:"extra,omitempty"`
+		}
+		results := make([]result, len(items))
+		for i, item := range items {
+			results[i] = result{Extra: item.Extra}
+		}
+		return c.JSON(fiber.Map{"results": results})
+	})
+
+	// POST /v1/:dataset/within_coords — same as GET but accepts polygon in request body.
+	// For large polygons (e.g., 77-point isochrones), POST avoids URL length limits.
+	// Accepts Content-Type: text/plain (raw WKT) or application/x-www-form-urlencoded (polygon=WKT).
+	api.Post("/v1/:dataset/within_coords", func(c *fiber.Ctx) error {
+		name := c.Params("dataset")
+		state, ok := srv.getDataset(name)
+		if !ok {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
+		}
+
+		var polygonWKT string
+		contentType := c.Get("Content-Type")
+
+		// Try to extract polygon from body based on content type.
+		if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+			// Parse form data: polygon=WKT
+			var req struct {
+				Polygon string `form:"polygon"`
+			}
+			if err := c.BodyParser(&req); err == nil {
+				polygonWKT = req.Polygon
+			}
+		}
+		// If not found or no specific content type, try raw body.
+		if polygonWKT == "" {
+			polygonWKT = string(c.Body())
+		}
+
+		if polygonWKT == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "polygon parameter required"})
+		}
+
 		pg, err := parsePolygonParam(polygonWKT)
 		if err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})

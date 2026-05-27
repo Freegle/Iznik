@@ -6,9 +6,9 @@ import (
 	"log"
 	"math"
 	"net/http"
-	"net/url"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -84,8 +84,8 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 		}
 		wkt := ringToWKT(ring[0])
 
-		reqURL := spatialURL + "/v1/userapproxlocs/within_coords?polygon=" + url.QueryEscape(wkt)
-		resp, err := http.Get(reqURL) //nolint:gosec
+		reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
+		resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
 		if err != nil || resp.StatusCode != 200 {
 			log.Printf("ripple-eval: within_coords failed (err=%v)", err)
 			return c.JSON(empty)
@@ -305,8 +305,8 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		}
 		wkt := ringToWKT(ring[0])
 
-		reqURL := spatialURL + "/v1/userapproxlocs/within_coords?polygon=" + url.QueryEscape(wkt)
-		resp, err := http.Get(reqURL) //nolint:gosec
+		reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
+		resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
 		if err != nil || resp.StatusCode != 200 {
 			log.Printf("ripple-schedule: within_coords failed (err=%v)", err)
 			return c.JSON(empty)

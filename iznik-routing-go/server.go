@@ -8,7 +8,6 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -164,8 +163,8 @@ func handleNearbyFreeglers(g *Graph, spatialURL string) fiber.Handler {
 		// Convert the outer ring to a WKT POLYGON for the within_coords query.
 		wkt := ringToWKT(ring[0])
 
-		reqURL := spatialURL + "/v1/userapproxlocs/within_coords?polygon=" + url.QueryEscape(wkt)
-		resp, err := http.Get(reqURL) //nolint:gosec
+		reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
+		resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
 		if err != nil || resp.StatusCode != 200 {
 			log.Printf("nearby-freeglers: within_coords request failed (status=%v err=%v)", func() int {
 				if resp != nil {
