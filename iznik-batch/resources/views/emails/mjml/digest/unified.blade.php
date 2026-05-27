@@ -65,14 +65,6 @@
                     @endif
                     <span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
                 </mj-text>
-                {{-- First posted (V1 single.html parity — only shown when the
-                     message has been reposted, otherwise this duplicates the
-                     arrival time above). --}}
-                @if($post['firstPostedFormatted'] ?? null)
-                <mj-text padding="4px 0 0 0" font-size="11px" color="#999999">
-                    First posted&nbsp;{{ $post['firstPostedFormatted'] }}
-                </mj-text>
-                @endif
             </mj-column>
         </mj-section>
 
@@ -96,6 +88,15 @@
                     <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 6px;" />
                     Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 40) }}</strong>
                 </mj-text>
+                {{-- First posted (V1 single.html parity — only shown when the
+                     message has actually been reposted to this group). Subtle
+                     line under "Posted by …", no styling change to the
+                     attribution row itself. --}}
+                @if($post['firstPostedFormatted'] ?? null)
+                <mj-text padding="0 0 16px 0" font-size="11px" color="#999999">
+                    First posted&nbsp;{{ $post['firstPostedFormatted'] }}
+                </mj-text>
+                @endif
                 {{-- Primary CTA. width="100%" + inner-padding="13px 0"
                      made Gmail render the button as a full-width green
                      bar with the "Reply" text left-aligned. Drop the

@@ -65,6 +65,11 @@ class SmtpFailureClassifier
         '/stream_socket_client\(\): Unable to connect/i',
         '/Connection reset by peer/i',
         '/has been closed unexpectedly/i',
+        // Symfony's UnexpectedResponseException wording when the server hangs
+        // up between SMTP commands and the socket returns nothing — same root
+        // cause as "has been closed unexpectedly" but a different code path.
+        // 2026-05-27 mail:engage hit this on MAIL FROM after EHLO completed.
+        '/got empty code/i',
         '/\b421\b/',                          // Service not available
     ];
 
