@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands\Mail;
 
+use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Traits\FeatureFlags;
 use App\Services\UnifiedDigestService;
 use Illuminate\Console\Command;
@@ -9,14 +10,24 @@ use Illuminate\Console\Command;
 class SendUnifiedDigestCommand extends Command
 {
     use FeatureFlags;
+    use PreventsOverlapping;
 
     /**
      * The name and signature of the console command.
+     *
+     * --limit semantics:
+     *   - immediate mode: caps the number of GROUPS processed per run
+     *     (one row from groups_digests per iteration)
+     *   - daily mode: caps the number of USERS processed per run
+     *
+     * --group lets a manual sanity run target a single group (immediate
+     * mode only). --user works in either mode.
      */
     protected $signature = "mail:digest:unified
                             {--mode=daily : Digest mode - 'daily' or 'immediate'}
-                            {--user= : Process only this user ID (for testing)}
-                            {--limit= : Cap users processed per run (default: unlimited)}
+                            {--user= : Restrict recipients to one user ID (for testing)}
+                            {--group= : Restrict to one group ID (immediate mode only, for testing)}
+                            {--limit= : Cap per-run work — groups (immediate) or users (daily)}
                             {--dry-run : Show what would be sent without actually sending}";
 
     /**
@@ -38,15 +49,38 @@ class SendUnifiedDigestCommand extends Command
             return Command::SUCCESS;
         }
 
+        // flock-based overlap prevention. Replaces Laravel's
+        // ->withoutOverlapping() on the schedule which silently failed and
+        // allowed six concurrent processes during the 2026-05-27 rollout.
+        // The lock is auto-released on process death (LOCK_NB + flock), so
+        // a crashed run can't wedge subsequent ticks.
+        if (! $this->acquireLock()) {
+            $this->info('Already running, exiting.');
+            return Command::SUCCESS;
+        }
+
+        try {
+            return $this->doHandle($service);
+        } finally {
+            $this->releaseLock();
+        }
+    }
+
+    protected function doHandle(UnifiedDigestService $service): int
+    {
         $mode = $this->option('mode');
         $userId = $this->option('user') ? (int) $this->option('user') : null;
+        $groupId = $this->option('group') ? (int) $this->option('group') : null;
         $limit = $this->option('limit') !== null ? (int) $this->option('limit') : null;
         $dryRun = $this->option('dry-run');
 
-        // Validate mode.
         if (! in_array($mode, [UnifiedDigestService::MODE_DAILY, UnifiedDigestService::MODE_IMMEDIATE])) {
             $this->error("Invalid mode '{$mode}'. Must be 'daily' or 'immediate'.");
+            return Command::FAILURE;
+        }
 
+        if ($groupId && $mode !== UnifiedDigestService::MODE_IMMEDIATE) {
+            $this->error('--group is only supported with --mode=immediate.');
             return Command::FAILURE;
         }
 
@@ -58,22 +92,38 @@ class SendUnifiedDigestCommand extends Command
         $this->info("Sending unified digests (mode: {$mode}, limit: {$limitLabel})...");
 
         if ($userId) {
-            $this->info("Processing single user ID: {$userId}");
+            $this->info("Restricting recipients to user ID: {$userId}");
+        }
+        if ($groupId) {
+            $this->info("Restricting to group ID: {$groupId}");
         }
 
-        // Run the service.
-        $stats = $service->sendDigests($mode, $userId, $limit, $dryRun);
+        $stats = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId);
 
         $this->newLine();
-        $this->table(
-            ['Metric', 'Count'],
-            [
-                ['Users Processed', $stats['users_processed']],
-                ['Emails Sent', $stats['emails_sent']],
-                ['No New Posts', $stats['no_new_posts']],
-                ['Errors', $stats['errors']],
-            ]
-        );
+
+        if ($mode === UnifiedDigestService::MODE_IMMEDIATE) {
+            $this->table(
+                ['Metric', 'Count'],
+                [
+                    ['Groups Processed', $stats['groups_processed']],
+                    ['Users Touched', $stats['users_processed']],
+                    ['Emails Sent', $stats['emails_sent']],
+                    ['Groups With No New Posts', $stats['no_new_posts_groups']],
+                    ['Errors', $stats['errors']],
+                ]
+            );
+        } else {
+            $this->table(
+                ['Metric', 'Count'],
+                [
+                    ['Users Processed', $stats['users_processed']],
+                    ['Emails Sent', $stats['emails_sent']],
+                    ['No New Posts', $stats['no_new_posts']],
+                    ['Errors', $stats['errors']],
+                ]
+            );
+        }
 
         if ($stats['errors'] > 0) {
             $this->warn("There were {$stats['errors']} errors. Check logs for details.");
