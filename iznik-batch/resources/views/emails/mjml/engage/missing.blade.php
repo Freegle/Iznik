@@ -2,10 +2,11 @@
   @include('emails.mjml.partials.head', ['preview' => 'We miss you on Freegle!'])
   <mj-body background-color="#f4f4f4">
 
-    {{-- Header --}}
-    <mj-section mj-class="bg-success" padding="0">
+    {{-- Header — vertical padding on the SECTION (not the text) so mj-column
+         vertical-align="middle" works; same fix pattern as bf82093b4. --}}
+    <mj-section mj-class="bg-success" padding="15px 0">
       <mj-column width="65%" vertical-align="middle">
-        <mj-text font-size="22px" font-weight="bold" color="#ffffff" padding="15px 25px">
+        <mj-text font-size="22px" font-weight="bold" color="#ffffff" padding="0 25px">
           We miss you!
         </mj-text>
       </mj-column>
@@ -15,7 +16,7 @@
           src="{{ config('freegle.branding.logo_url', 'https://www.ilovefreegle.org/icon.png') }}"
           alt="Freegle"
           align="right"
-          padding="15px 20px"
+          padding="0 20px"
         />
       </mj-column>
     </mj-section>
