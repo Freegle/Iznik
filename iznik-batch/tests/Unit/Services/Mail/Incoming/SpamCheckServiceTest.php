@@ -671,11 +671,18 @@ class SpamCheckServiceTest extends TestCase
     {
         // A common post subject like "Washing Machine" legitimately appears on many
         // groups in messages_history. An email reply to a chat notification echoes
-        // that subject, so subject-reuse must NOT fire on the reply.
+        // that subject as "Re: Washing Machine", so subject-reuse must NOT fire on
+        // the reply when the chat-reply flag is set.
+        //
+        // pruneSubject() (matching V1 Message::getPrunedSubject) strips the
+        // location suffix but not the "Re:" prefix, so the reply prunes to
+        // "Re: Washing Machine". Seed messages_history with that exact pruned
+        // form so the LIKE prefix match actually hits and the without-flag
+        // assertion below has something to flag.
         for ($i = 0; $i < SpamCheckService::SUBJECT_THRESHOLD + 1; $i++) {
             $group = $this->createTestGroup();
             DB::table('messages_history')->insert([
-                'prunedsubject' => 'Washing Machine',
+                'prunedsubject' => 'Re: Washing Machine',
                 'groupid' => $group->id,
                 'arrival' => now(),
             ]);
