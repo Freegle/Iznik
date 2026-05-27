@@ -412,6 +412,53 @@ class UnifiedDigestTest extends TestCase
         $this->assertNull($url);
     }
 
+    public function test_html_body_preserves_user_line_breaks(): void
+    {
+        // Regression: HTML renderer used {{ $messageText }} which escapes
+        // chars but doesn't convert \n to <br>, so multi-paragraph user
+        // descriptions collapsed into a single wall of text in Gmail / web
+        // mail clients (which treat raw \n as whitespace). The template
+        // now uses {!! nl2br(e(…)) !!} — same pattern as the chat
+        // notification template — so per-line breaks survive.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $body = "First line of description\nSecond line\n\nNew paragraph after blank";
+        $message = $this->createTestMessage($poster, $group, [
+            'subject'  => 'OFFER: Sofa (London)',
+            'textbody' => $body,
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'recipient@example.com');
+
+        $html = $spooled['html'] ?? '';
+        $this->assertNotEmpty($html, 'Spooled HTML body should not be empty');
+
+        // Every \n in the source should map to a <br> in the captured HTML.
+        // Match `<br>` or `<br />` (different MJML/HTML serializers emit
+        // both) and assert at least three breaks for the three \n above.
+        $brCount = preg_match_all('/<br\s*\/?>/i', $html);
+        $this->assertGreaterThanOrEqual(
+            3,
+            $brCount,
+            'Multi-line user description should render with <br> per newline; got ' . $brCount . ' <br> tags in HTML body'
+        );
+
+        // And the user content must still be present (i.e. nl2br didn't
+        // mangle it). Look for the distinct first-line tail.
+        $this->assertStringContainsString('First line of description', $html);
+        $this->assertStringContainsString('New paragraph after blank', $html);
+    }
+
     public function test_amp_content_excluded_when_disabled(): void
     {
         // Force AMP off via config before constructing the mailable.

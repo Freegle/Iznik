@@ -68,13 +68,16 @@
             </mj-column>
         </mj-section>
 
-        {{-- Full body text --}}
+        {{-- Full body text. nl2br(e(…)) so user-typed paragraph breaks
+             render as <br> in HTML clients (which otherwise collapse \n to
+             a space and run the whole description into one paragraph).
+             e() still escapes user content before nl2br adds the <br>. --}}
         @if($post['messageText'])
         <mj-section background-color="#ffffff" padding="0 20px">
             <mj-column>
                 <mj-divider border-color="#eeeeee" border-width="1px" padding="0" />
                 <mj-text font-size="15px" color="#333333" line-height="1.65" padding="16px 0">
-                    {{ $post['messageText'] }}
+                    {!! nl2br(e($post['messageText'])) !!}
                 </mj-text>
             </mj-column>
         </mj-section>
