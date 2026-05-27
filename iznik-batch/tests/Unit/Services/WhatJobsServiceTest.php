@@ -728,4 +728,99 @@ class WhatJobsServiceTest extends TestCase
             @unlink($path);
         }
     }
+
+    // =========================================================================
+    // isSpamJob — content-based spam detection
+    //
+    // Patterns and the ≥2-pattern threshold come from sampling 225,603 WhatJobs
+    // feed entries on 2026-05-27. Three verified spam advertisers hit 3-4
+    // patterns per job; the top 9 legitimate companies hit zero.
+    // =========================================================================
+
+    public function test_is_spam_detects_focus_group_scam(): void
+    {
+        $svc = new WhatJobsService();
+        $title = 'Customer Service Representative Agent Work From Home - Part Time Focus Group Panelists';
+        $body  = 'Now accepting applicants for Focus Group studies. Earn up to £700 per week part-time working from home.';
+        $this->assertTrue($svc->isSpamJob($title, $body));
+    }
+
+    public function test_is_spam_detects_research_study_wfh_scam(): void
+    {
+        $svc = new WhatJobsService();
+        $title = 'Work from home – Part time research study opportunity';
+        $body  = 'Work From Home – Flexible Earnings Opportunity. Be your own boss.';
+        $this->assertTrue($svc->isSpamJob($title, $body));
+    }
+
+    public function test_is_spam_detects_mlm_money_range(): void
+    {
+        $svc = new WhatJobsService();
+        $title = 'Work From Home - £500 - £3000+ per month, Full time or Part time.';
+        $body  = 'Work Your Own Hours. Home Based Opportunity with Utility Warehouse.';
+        $this->assertTrue($svc->isSpamJob($title, $body));
+    }
+
+    public function test_is_spam_allows_legit_driver_with_earnings(): void
+    {
+        // Brakes Class 2 driver listing — earn_per_unit hits but no other
+        // pattern; single signal is allowed.
+        $svc = new WhatJobsService();
+        $title = 'Driver - Class 2';
+        $body  = '£42,922 pa with the opportunity to earn £46,500 including attendance bonus & overtime plus great benefits. Monday to Friday 45hrs per week.';
+        $this->assertFalse($svc->isSpamJob($title, $body));
+    }
+
+    public function test_is_spam_allows_legit_sales_advisor(): void
+    {
+        // EE Sales Advisor — uncapped commission listing, hits zero patterns.
+        $svc = new WhatJobsService();
+        $title = 'Sales Advisor - Uncapped Commission (Doncaster)';
+        $body  = "A great starting salary of £26,116 rising to £26,738 after 8 months, plus an uncapped monthly commission scheme. Online GP, Paid Carer's Leave.";
+        $this->assertFalse($svc->isSpamJob($title, $body));
+    }
+
+    public function test_is_spam_allows_legit_remote_internship(): void
+    {
+        // Borgen Project remote internship — hits zero patterns.
+        $svc = new WhatJobsService();
+        $title = 'Political Affairs Internship Part-Time - Remote Worldwide';
+        $body  = 'The Borgen Project is an international organization that works at the political level to improve living conditions for people impacted by war.';
+        $this->assertFalse($svc->isSpamJob($title, $body));
+    }
+
+    public function test_parse_feed_drops_spam_jobs(): void
+    {
+        $svc = $this->makeServiceWithFixedGeocode([53.8, -1.5, 53.9, -1.4, WhatJobsService::boxPoly(53.8, -1.5, 53.9, -1.4)]);
+
+        $today = date('Y-m-d', strtotime('-1 day'));
+        $xml = $this->makeFeedXml([
+            [
+                'job_reference' => 'spam-1',
+                'title' => 'Work From Home - Part Time Focus Group Panelists',
+                'body'  => 'Now accepting applicants. Earn £700 per week.',
+                'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK',
+                'cpc' => '0.50', 'url' => 'https://x', 'category' => 'Other',
+                'posted_at' => $today,
+            ],
+            [
+                'job_reference' => 'legit-1',
+                'title' => 'Software Engineer',
+                'body'  => 'Senior Software Engineer with 5 years experience required.',
+                'city' => 'Leeds', 'state' => 'West Yorkshire', 'country' => 'UK',
+                'cpc' => '0.50', 'url' => 'https://y', 'category' => 'IT',
+                'posted_at' => $today,
+            ],
+        ]);
+        $path = $this->makeFeedFile($xml);
+        $cache = [];
+
+        try {
+            $jobs = iterator_to_array($svc->parseFeed($path, 2, $cache));
+            $this->assertCount(1, $jobs);
+            $this->assertSame('legit-1', $jobs[0]['job_reference']);
+        } finally {
+            @unlink($path);
+        }
+    }
 }

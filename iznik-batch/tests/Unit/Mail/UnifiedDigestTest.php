@@ -334,6 +334,83 @@ class UnifiedDigestTest extends TestCase
         $this->assertSame('Digest', $headers['X-Freegle-Mail-Type']);
     }
 
+    public function test_image_url_prefers_primary_attachment_over_ai(): void
+    {
+        // V1 parity: Attachment::getByIds orders by `primary` DESC, id.
+        // Our getMessageImageUrl must do the same so a user-uploaded
+        // photo (primary=1) wins over an AI-generated fallback (primary=0)
+        // even when the AI one has a lower attachment id.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        // AI attachment first (lower id), user photo second (higher id).
+        $aiId = \Illuminate\Support\Facades\DB::table('messages_attachments')->insertGetId([
+            'msgid' => $message->id,
+            'externaluid' => 'freegletusd-' . str_repeat('a', 32),
+            'externalmods' => json_encode(['ai' => true]),
+            'primary' => 0,
+            'archived' => 0,
+        ]);
+        $primaryId = \Illuminate\Support\Facades\DB::table('messages_attachments')->insertGetId([
+            'msgid' => $message->id,
+            'externaluid' => 'freegletusd-' . str_repeat('p', 32),
+            'primary' => 1,
+            'archived' => 0,
+        ]);
+
+        $message->load('attachments');
+
+        $mail = new UnifiedDigest($user, collect([['message' => $message, 'postedToGroups' => [$group->id]]]), UnifiedDigestService::MODE_IMMEDIATE);
+        $rc = new \ReflectionClass($mail);
+        $m = $rc->getMethod('getMessageImageUrl');
+        $m->setAccessible(true);
+        $url = $m->invoke($mail, $message);
+
+        // The primary attachment's id should be in the URL, NOT the AI one's.
+        $this->assertStringContainsString("timg_{$primaryId}.jpg", $url);
+        $this->assertStringNotContainsString("timg_{$aiId}.jpg", $url);
+    }
+
+    public function test_image_url_skips_attachments_with_no_data(): void
+    {
+        // V1's getByIds excludes rows that haven't been fully populated:
+        // (data IS NOT NULL AND LENGTH(data) > 0) OR archived = 1 OR
+        // externaluid IS NOT NULL OR externalurl IS NOT NULL. Without that
+        // filter we'd pick an in-flight attachment row and 404.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        // Half-written attachment: primary=1 but no externaluid/url/archived.
+        \Illuminate\Support\Facades\DB::table('messages_attachments')->insert([
+            'msgid' => $message->id,
+            'externaluid' => null,
+            'externalurl' => null,
+            'primary' => 1,
+            'archived' => 0,
+        ]);
+
+        $message->load('attachments');
+
+        $mail = new UnifiedDigest($user, collect([['message' => $message, 'postedToGroups' => [$group->id]]]), UnifiedDigestService::MODE_IMMEDIATE);
+        $rc = new \ReflectionClass($mail);
+        $m = $rc->getMethod('getMessageImageUrl');
+        $m->setAccessible(true);
+        $url = $m->invoke($mail, $message);
+
+        // Half-written row was filtered out; nothing usable left → null.
+        $this->assertNull($url);
+    }
+
     public function test_amp_content_excluded_when_disabled(): void
     {
         // Force AMP off via config before constructing the mailable.

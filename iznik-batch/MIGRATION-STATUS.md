@@ -226,7 +226,6 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | `get_app_release_versions.php` | `data:fetch-app-versions` | - | Fetch app versions from iOS App Store and Google Play |
 | `jobs_illustrations.php` | `jobs:generate-illustrations` | - | AI illustrations for canonical job categories |
 | `messages_illustrations.php` | `messages:generate-illustrations` | - | AI illustrations for messages without photos |
-| `whatjobs_spam.php` | `cleanup:whatjobs-spam` | - | Delete spammy WhatJobs postings |
 | `archive_attachments.php` | `cleanup:archive-profile-images` | - | Delete older duplicate profile images, keeping only the most recent per user |
 | `newsfeed_link_previews.php` | `newsfeed:generate-link-previews` | - | Fetch and cache link previews for URLs in recent newsfeed posts (also covers `previews.php`) |
 
@@ -292,7 +291,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`user_ratings.php`~~ | ~~Every 10 min~~ | ~~Low~~ | ~~User ratings~~ — **Migrated: `users:update-ratings`** |
 | `eximlogs.php` | Every 10 min | Low | Exim mail logs — **Skip: external (mail server logs)** |
 | `paypal_download.php` | Every 4 hrs (30 min past) | Low | Fallback PayPal transaction downloader — donateipn catches them normally; this is the safety net. Needs PayPal API SDK in Laravel. **TODO: consider whether we also need an equivalent Stripe-side safety net (a periodic fetch of recent Stripe charges/payment intents to reconcile against `users_donations`) in case the Stripe webhook ever misses an event.** |
-| ~~`whatjobs_spam.php`~~ | ~~Every 10 min~~ | ~~Low~~ | ~~WhatJobs spam~~ — **Migrated: `cleanup:whatjobs-spam`** |
+| ~~`whatjobs_spam.php`~~ | ~~Every 10 min~~ | ~~Low~~ | ~~WhatJobs spam~~ — **Retired**: bodyhash-frequency check was a poor spam signal; legitimate WhatJobs listings routinely share boilerplate descriptions across recruiters and the >50 threshold ate ~99% of the feed once geocoding worked. Replacing with content-based heuristics. |
 | ~~`jobs_illustrations.php`~~ | ~~Every 30 min~~ | ~~Low~~ | ~~Job illustrations~~ — **Migrated: `jobs:generate-illustrations`** |
 | ~~`message_unindexed.php`~~ | ~~Every 30 min~~ | ~~Low~~ | ~~Unindexed messages~~ — **Migrated: `messages:update-index` — PR #393** |
 | ~~`chat_latestmessage.php`~~ | ~~Every 60 min~~ | ~~Low~~ | ~~Chat latest message~~ — **Migrated: `chats:update-counts`** |

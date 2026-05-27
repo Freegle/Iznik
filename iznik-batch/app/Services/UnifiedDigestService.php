@@ -44,8 +44,12 @@ class UnifiedDigestService
      * @param int|null $userId Specific user ID to process (for testing)
      * @return array Statistics about the operation
      */
-    public function sendDigests(string $mode, ?int $userId = null, ?int $limit = null, bool $dryRun = false): array
+    public function sendDigests(string $mode, ?int $userId = null, ?int $limit = null, bool $dryRun = false, ?int $groupId = null, int $shard = 0, int $shards = 1): array
     {
+        if ($mode === self::MODE_IMMEDIATE) {
+            return $this->sendImmediateDigests($limit, $dryRun, $groupId, $userId, $shard, $shards);
+        }
+
         $stats = [
             'users_processed' => 0,
             'emails_sent' => 0,
@@ -70,8 +74,6 @@ class UnifiedDigestService
             try {
                 $result = $this->sendDigestToUser($user, $mode, $dryRun);
 
-                // Immediate-mode can fan out into multiple emails (one per
-                // post) so the per-user return is an array, not a bare string.
                 if ($result['status'] === 'sent') {
                     $stats['emails_sent'] += $result['count'];
                 } elseif ($result['status'] === 'no_posts') {
@@ -91,6 +93,319 @@ class UnifiedDigestService
         Log::info('UnifiedDigestService: Digest send complete', $stats);
 
         return $stats;
+    }
+
+    /**
+     * V1-parity per-group iteration for immediate-mode digests.
+     *
+     * Mirrors iznik-server/include/mail/Digest.php exactly: walk the V1
+     * `groups_digests` table, find new messages per group since that group's
+     * cursor, send one notification to every member at emailfrequency=-1
+     * (minus the poster), then advance the cursor. Using V1's table directly
+     * (rather than a parallel per-user table) keeps both systems' notion of
+     * "where we got up to" in sync, so re-enabling V1 in an emergency
+     * fallback doesn't double-send.
+     *
+     * Cursor comparison uses a (arrival, msgid) tuple — V1 only uses arrival
+     * and relies on its microsecond uniqueness, but tightening this here is
+     * strictly safer for the rare collision case at no extra cost.
+     *
+     * @param int|null $groupLimit Cap groups processed per run (manual sanity)
+     * @param bool $dryRun Skip Mail::send and cursor advance
+     * @param int|null $groupId Restrict to a single group (manual testing)
+     * @param int|null $userId Restrict recipients to one user (manual testing)
+     * @param int $shard Shard index (0..shards-1) for parallel workers
+     * @param int $shards Total shard count; groups partitioned by MOD(groupid, shards)
+     * @return array Statistics about the operation
+     */
+    public function sendImmediateDigests(?int $groupLimit = null, bool $dryRun = false, ?int $groupId = null, ?int $userId = null, int $shard = 0, int $shards = 1): array
+    {
+        $stats = [
+            'groups_processed' => 0,
+            'users_processed' => 0,
+            'emails_sent' => 0,
+            'no_new_posts_groups' => 0,
+            'errors' => 0,
+        ];
+
+        if (!self::isEmailTypeEnabled(self::EMAIL_TYPE)) {
+            Log::info('UnifiedDigest emails disabled via FREEGLE_MAIL_ENABLED_TYPES');
+            return $stats;
+        }
+
+        $query = DB::table('groups_digests as gd')
+            ->where('gd.frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->whereExists(function ($q) {
+                $q->select(DB::raw(1))->from('memberships')
+                    ->whereColumn('memberships.groupid', 'gd.groupid')
+                    ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+                    ->where('memberships.collection', Membership::COLLECTION_APPROVED);
+            })
+            ->select('gd.groupid', 'gd.msgid as cursor_msgid', 'gd.msgdate as cursor_msgdate');
+
+        // Partition groups across parallel shards. MOD(groupid, shards) =
+        // shard means each group is owned by exactly one shard. Disjoint
+        // → safe to run shards concurrently with no overlap, no advisory
+        // locking between them.
+        if ($shards > 1) {
+            $query->whereRaw('MOD(gd.groupid, ?) = ?', [$shards, $shard]);
+        }
+
+        if ($groupId) {
+            $query->where('gd.groupid', $groupId);
+        }
+        if ($groupLimit) {
+            $query->limit($groupLimit);
+        }
+
+        $touchedUsers = [];
+
+        foreach ($query->cursor() as $row) {
+            try {
+                $result = $this->processGroupImmediate($row, $dryRun, $userId);
+                $stats['emails_sent'] += $result['emails'];
+                foreach ($result['users'] as $uid) {
+                    $touchedUsers[$uid] = true;
+                }
+                if ($result['emails'] === 0) {
+                    $stats['no_new_posts_groups']++;
+                }
+            } catch (\Exception $e) {
+                Log::error("UnifiedDigestService: Failed immediate send for group {$row->groupid}", [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
+                $stats['errors']++;
+            }
+            $stats['groups_processed']++;
+        }
+
+        $stats['users_processed'] = count($touchedUsers);
+        Log::info('UnifiedDigestService: Immediate digest send complete', $stats);
+        return $stats;
+    }
+
+    /**
+     * Process one group's immediate-mode notifications.
+     *
+     * @return array{emails: int, users: int[]}
+     */
+    protected function processGroupImmediate(object $cursorRow, bool $dryRun, ?int $userFilter = null): array
+    {
+        $groupid = (int) $cursorRow->groupid;
+        $cursorMsgdate = $cursorRow->cursor_msgdate;
+        $cursorMsgid = (int) ($cursorRow->cursor_msgid ?? 0);
+
+        $messages = $this->getGroupMessagesSinceCursor($groupid, $cursorMsgdate, $cursorMsgid);
+
+        if ($messages->isEmpty()) {
+            return ['emails' => 0, 'users' => []];
+        }
+
+        // Recipients: members at emailfrequency=-1, plus allowlist gate.
+        // V1 does NOT filter by users.lastaccess so we match that — strict
+        // V1 parity. Allowlist gate is our addition and stays.
+        $memberQuery = DB::table('memberships')
+            ->join('users', 'users.id', '=', 'memberships.userid')
+            ->where('memberships.groupid', $groupid)
+            ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->where('memberships.collection', Membership::COLLECTION_APPROVED)
+            ->whereNull('users.deleted');
+
+        if ($userFilter) {
+            $memberQuery->where('memberships.userid', $userFilter);
+        }
+
+        $memberIds = $memberQuery->pluck('memberships.userid')->all();
+
+        $allowlist = $this->getImmediateAllowlist();
+        if ($allowlist !== ['*'] && !empty($memberIds)) {
+            $lower = array_map('strtolower', $allowlist);
+            $memberIds = DB::table('users_emails')
+                ->whereIn('userid', $memberIds)
+                ->whereIn(DB::raw('LOWER(email)'), $lower)
+                ->pluck('userid')->unique()->all();
+        }
+
+        if (empty($memberIds)) {
+            // Advance cursor anyway — there's nothing to mail in this group
+            // (config gate, allowlist), so we shouldn't re-scan the same
+            // messages forever. V1 advances the cursor unconditionally too.
+            $last = $messages->last();
+            $this->advanceGroupCursor($groupid, $last->mg_arrival, (int) $last->mg_msgid, $dryRun);
+            return ['emails' => 0, 'users' => []];
+        }
+
+        $users = User::whereIn('id', $memberIds)
+            ->with(['emails', 'memberships'])
+            ->get()
+            ->keyBy('id');
+
+        $emailsSent = 0;
+        $touched = [];
+        $lastProcessed = null;
+        $deferred = false;
+
+        foreach ($messages as $message) {
+            // Defer messages without a usable attachment so the email
+            // doesn't render with a generic placeholder while AI image
+            // generation is still in flight. After
+            // ATTACHMENT_WAIT_DEADLINE_MINUTES we send anyway (the
+            // placeholder is a known-good static URL — never a broken
+            // link, just visually weaker). If we defer, STOP processing
+            // this group's batch so later messages don't leapfrog the
+            // deferred one and trigger a cursor jump that skips it.
+            if (!$this->isImmediateMessageReady($message)) {
+                $deferred = true;
+                break;
+            }
+
+            $sponsorsCache = null;
+            foreach ($users as $uid => $user) {
+                if ((int) $message->fromuser === (int) $uid) {
+                    continue;
+                }
+                if (!$user->email_preferred) {
+                    continue;
+                }
+                if (!$dryRun) {
+                    if ($sponsorsCache === null) {
+                        $sponsorsCache = $this->getSponsorsForUser($user);
+                    }
+                    $deduped = collect([
+                        ['message' => $message, 'postedToGroups' => [$groupid]],
+                    ]);
+                    Mail::send(new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache));
+                }
+                $emailsSent++;
+                $touched[$uid] = true;
+            }
+
+            $lastProcessed = $message;
+        }
+
+        // Advance the cursor to the LAST SUCCESSFULLY PROCESSED message,
+        // not the last message in the candidate batch. If we deferred,
+        // the deferred message and everything after it stay in the
+        // "after cursor" range so the next tick re-considers them.
+        //
+        // Skip the advance entirely when --user is restricting recipients:
+        // only some members got mailed, so advancing would skip everyone
+        // else for these messages on the next unrestricted run. --user
+        // is a testing affordance and must not mutate prod cursor state.
+        if ($lastProcessed && $userFilter === null) {
+            $this->advanceGroupCursor(
+                $groupid,
+                $lastProcessed->mg_arrival,
+                (int) $lastProcessed->mg_msgid,
+                $dryRun
+            );
+        }
+
+        if ($deferred) {
+            Log::debug("UnifiedDigestService: deferred unattached messages in group {$groupid}");
+        }
+
+        return ['emails' => $emailsSent, 'users' => array_keys($touched)];
+    }
+
+    /**
+     * Number of minutes to wait for an AI-generated attachment before
+     * giving up and mailing with the offer/wanted placeholder. Long
+     * enough to cover normal generation latency, short enough that a
+     * permanently-stuck AI job doesn't hold immediate notifications
+     * back forever.
+     */
+    public const ATTACHMENT_WAIT_DEADLINE_MINUTES = 5;
+
+    /**
+     * Whether this message is ready to be mailed as part of an immediate
+     * digest. A message is ready if either:
+     *   - it has a usable attachment (user-uploaded or AI-generated and
+     *     fully written to messages_attachments), OR
+     *   - it arrived more than ATTACHMENT_WAIT_DEADLINE_MINUTES ago, in
+     *     which case we mail it with the type-specific placeholder
+     *     rather than holding the notification indefinitely.
+     *
+     * The placeholder fallback is a static URL hosted on the site
+     * (offer_placeholder / wanted_placeholder); known-good, never broken.
+     */
+    protected function isImmediateMessageReady(Message $message): bool
+    {
+        if ($message->attachments && $message->attachments->isNotEmpty()) {
+            $usable = $message->attachments->first(function ($a) {
+                return !empty($a->externaluid)
+                    || !empty($a->externalurl)
+                    || (int) ($a->archived ?? 0) === 1;
+            });
+            if ($usable) {
+                return true;
+            }
+        }
+
+        $arrival = $message->mg_arrival
+            ?? ($message->arrival instanceof \Carbon\Carbon ? $message->arrival : \Carbon\Carbon::parse($message->arrival ?? $message->date));
+        $arrival = $arrival instanceof \Carbon\Carbon ? $arrival : \Carbon\Carbon::parse($arrival);
+
+        return $arrival->lessThanOrEqualTo(now()->subMinutes(self::ATTACHMENT_WAIT_DEADLINE_MINUTES));
+    }
+
+    /**
+     * Fetch messages in a group since the (arrival, msgid) cursor.
+     *
+     * Tuple comparison (NOT V1's plain arrival > msgdate) so that two
+     * messages with identical microsecond-precision arrival timestamps
+     * can't both fall past the cursor and one of them be missed.
+     */
+    protected function getGroupMessagesSinceCursor(int $groupid, ?string $cursorMsgdate, int $cursorMsgid): Collection
+    {
+        $query = Message::select(
+                'messages.*',
+                'messages_groups.groupid as mg_groupid',
+                'messages_groups.arrival as mg_arrival',
+                'messages_groups.msgid as mg_msgid'
+            )
+            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+            ->where('messages_groups.groupid', $groupid)
+            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages_groups.deleted', 0)
+            ->whereNull('messages.deleted')
+            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED]);
+
+        if ($cursorMsgdate) {
+            // (arrival, msgid) > (cursorMsgdate, cursorMsgid)
+            $query->whereRaw(
+                '(messages_groups.arrival > ? OR (messages_groups.arrival = ? AND messages_groups.msgid > ?))',
+                [$cursorMsgdate, $cursorMsgdate, $cursorMsgid]
+            );
+        }
+
+        return $query
+            ->orderBy('messages_groups.arrival', 'asc')
+            ->orderBy('messages_groups.msgid', 'asc')
+            ->with(['attachments', 'fromUser', 'groups'])
+            ->get();
+    }
+
+    /**
+     * Advance the per-group cursor after processing immediate-mode messages.
+     *
+     * Writes both msgid and msgdate so the next tick's tuple comparison
+     * lines up correctly even if two messages share an arrival timestamp.
+     */
+    protected function advanceGroupCursor(int $groupid, $msgdate, int $msgid, bool $dryRun): void
+    {
+        if ($dryRun) {
+            return;
+        }
+        DB::table('groups_digests')
+            ->where('groupid', $groupid)
+            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->update([
+                'msgid' => $msgid,
+                'msgdate' => $msgdate,
+                'ended' => now(),
+            ]);
     }
 
     /**
@@ -301,6 +616,18 @@ class UnifiedDigestService
     /**
      * Get or create a digest tracking record for a user.
      *
+     * Immediate mode: bootstrap fresh trackers with lastmsgdate=NOW so the
+     * user only receives notifications for posts arriving AFTER we start
+     * tracking them. The previous behaviour (null → "last 24h" window in
+     * getPostsForUser) caused a duplicate-flood the first time we processed
+     * each user: V1's bulk3 cron had been sending them immediate emails up
+     * to the moment we took over, so the 24h backlog we'd pull was every
+     * post V1 had just covered.
+     *
+     * Daily mode keeps the null sentinel so the existing "last 24h" first-
+     * tick behaviour still applies — a daily digest user genuinely expects
+     * a roll-up of what's new since yesterday on their first send.
+     *
      * @param User $user
      * @param string $mode
      * @return UserDigest
@@ -314,7 +641,7 @@ class UnifiedDigestService
             ],
             [
                 'lastmsgid' => null,
-                'lastmsgdate' => null,
+                'lastmsgdate' => $mode === self::MODE_IMMEDIATE ? now() : null,
             ]
         );
     }

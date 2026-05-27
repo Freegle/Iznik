@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ChatRoom;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Factory;
@@ -518,5 +519,287 @@ class PushNotificationService
         }
 
         return json_decode($membership->settings, TRUE) ?: [];
+    }
+
+    /**
+     * Send FCM push notifications for a chat message to all recipients
+     * computed by getChatMessageRecipients().
+     *
+     * Returns the total number of FCM tokens successfully notified.
+     */
+    public function notifyChatMessage(int $messageId): int
+    {
+        $recipients = $this->getChatMessageRecipients($messageId);
+
+        $count = 0;
+        foreach ($recipients['fd'] as $userId) {
+            $count += $this->sendChatMessagePush($userId, $messageId, FALSE);
+        }
+        foreach ($recipients['mt'] as $userId) {
+            $count += $this->sendChatMessagePush($userId, $messageId, TRUE);
+        }
+        return $count;
+    }
+
+    /**
+     * Send a chat-message FCM push to all of a user's registered devices for
+     * the appropriate app (FD or MT). Mirrors notify() but uses the
+     * chat-message payload and chat_messages/modtools channel.
+     */
+    private function sendChatMessagePush(int $userId, int $messageId, bool $modtools): int
+    {
+        if (! $this->messaging) {
+            return 0;
+        }
+
+        $payload = $this->buildChatMessagePayload($messageId, $userId, $modtools);
+        if (empty($payload)) {
+            return 0;
+        }
+
+        $apptype = $modtools ? self::APPTYPE_MODTOOLS : 'User';
+        $notifs = DB::select(
+            'SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?',
+            [$userId, $apptype]
+        );
+
+        $count = 0;
+        foreach ($notifs as $notif) {
+            if (! in_array($notif->type, [self::PUSH_FCM_ANDROID, self::PUSH_FCM_IOS])) {
+                continue;
+            }
+
+            try {
+                $this->sendFcm($userId, $notif->type, $notif->subscription, $payload, TRUE);
+
+                DB::table('users_push_notifications')
+                    ->where('userid', $userId)
+                    ->where('subscription', $notif->subscription)
+                    ->update(['lastsent' => now()]);
+
+                $count++;
+            } catch (\Throwable $e) {
+                $errorMsg = $e->getMessage();
+                Log::warning('Chat push notification failed', [
+                    'user_id' => $userId,
+                    'message_id' => $messageId,
+                    'type' => $notif->type,
+                    'error' => $errorMsg,
+                ]);
+
+                if (str_contains($errorMsg, 'UNREGISTERED') ||
+                    str_contains($errorMsg, 'NOT_FOUND') ||
+                    str_contains($errorMsg, 'SENDER_ID_MISMATCH') ||
+                    str_contains($errorMsg, 'Requested entity was not found') ||
+                    str_contains($errorMsg, 'Invalid registration token') ||
+                    str_contains($errorMsg, 'not a valid FCM registration token')) {
+                    DB::table('users_push_notifications')
+                        ->where('userid', $userId)
+                        ->where('subscription', $notif->subscription)
+                        ->delete();
+                }
+            }
+        }
+        return $count;
+    }
+
+    /**
+     * Compute push recipients for a chat message, mirroring V1
+     * ChatRoom::notifyMembers() (iznik-server/include/chat/ChatRoom.php:1458).
+     *
+     * Returns ['fd' => int[], 'mt' => int[]] — FD-app and MT-app recipient
+     * user IDs respectively. The sender is always excluded. Recipients
+     * without any group membership are excluded (V1 getMemberships()>0).
+     * Held or rejected messages return empty arrays.
+     *
+     * Out-of-scope for this method: U2U's $modstoo path (mods notified when
+     * message is held for review). That's tied to the review-release flow
+     * which is a separate ticket.
+     */
+    public function getChatMessageRecipients(int $messageId): array
+    {
+        $empty = ['fd' => [], 'mt' => []];
+
+        $msg = DB::table('chat_messages as cm')
+            ->join('chat_rooms as cr', 'cm.chatid', '=', 'cr.id')
+            ->where('cm.id', $messageId)
+            ->select('cm.userid as sender', 'cm.reviewrequired', 'cm.reviewrejected',
+                'cr.chattype', 'cr.user1', 'cr.user2', 'cr.groupid')
+            ->first();
+
+        if (! $msg || $msg->reviewrequired || $msg->reviewrejected) {
+            return $empty;
+        }
+
+        $sender = (int) $msg->sender;
+        $fd = [];
+        $mt = [];
+
+        switch ($msg->chattype) {
+            case ChatRoom::TYPE_USER2USER:
+                $fd = [(int) $msg->user1, (int) $msg->user2];
+                break;
+
+            case ChatRoom::TYPE_USER2MOD:
+                $fd = [(int) $msg->user1];
+                $mt = $this->getActiveGroupMods((int) $msg->groupid);
+                break;
+
+            // Mod2Mod: V1 notifyMembers has no case for it.
+        }
+
+        $chatId = (int) DB::table('chat_messages')->where('id', $messageId)->value('chatid');
+        $fd = $this->filterPushRecipients($fd, $sender, $chatId);
+        $mt = $this->filterPushRecipients($mt, $sender, $chatId);
+
+        return ['fd' => $fd, 'mt' => $mt];
+    }
+
+    /**
+     * Apply V1 recipient invariants: exclude sender, dedupe, drop users with
+     * zero memberships (ex-members must not be pushed), drop users who
+     * blocked this chat (chat_roster.status = 'Blocked' — V1 notifyIndividualMessages).
+     */
+    private function filterPushRecipients(array $userIds, int $excludeUser, int $chatId = 0): array
+    {
+        $userIds = array_values(array_unique(array_filter($userIds, function ($u) use ($excludeUser) {
+            return (int) $u !== 0 && (int) $u !== $excludeUser;
+        })));
+
+        if (empty($userIds)) {
+            return [];
+        }
+
+        $haveMembership = DB::table('memberships')
+            ->whereIn('userid', $userIds)
+            ->pluck('userid')
+            ->unique()
+            ->map(fn ($u) => (int) $u)
+            ->all();
+
+        $userIds = array_values(array_intersect($userIds, $haveMembership));
+
+        if ($chatId > 0 && ! empty($userIds)) {
+            $blocked = DB::table('chat_roster')
+                ->where('chatid', $chatId)
+                ->whereIn('userid', $userIds)
+                ->where('status', 'Blocked')
+                ->pluck('userid')
+                ->map(fn ($u) => (int) $u)
+                ->all();
+            if (! empty($blocked)) {
+                $userIds = array_values(array_diff($userIds, $blocked));
+            }
+        }
+
+        return $userIds;
+    }
+
+    /**
+     * Return user IDs of active moderators/owners for a group. "Active" mirrors
+     * V1: a mod whose membership settings.active is not explicitly false.
+     */
+    private function getActiveGroupMods(int $groupId): array
+    {
+        $rows = DB::select(
+            "SELECT DISTINCT userid, settings FROM memberships
+             WHERE groupid = ? AND role IN (?, ?)",
+            [$groupId, 'Owner', 'Moderator']
+        );
+
+        $active = [];
+        foreach ($rows as $row) {
+            if ($this->isActiveMod($row->settings)) {
+                $active[] = (int) $row->userid;
+            }
+        }
+        return $active;
+    }
+
+    /**
+     * Build the FCM payload for a single chat-message push notification.
+     *
+     * Mirrors V1 PushNotifications::notifyIndividualMessages payload shape
+     * (iznik-server/include/user/PushNotifications.php:474). Key fields the
+     * mobile app's handleNotification (iznik-nuxt3/stores/mobile.js) needs:
+     *
+     * - channel_id: 'chat_messages' (FD) or 'modtools' (MT) — controls
+     *   Android notification channel
+     * - notId: chatid — Android collapses by notId so successive messages
+     *   in the same chat REPLACE rather than stack
+     * - chatids/chatid: the chat room id, so the app can fetch messages
+     * - route: '/chats/{id}' — tap-through destination
+     *
+     * For U2M chats, mod-sent messages show "{GroupName} Volunteers" as the
+     * title to the member, matching V1 (hides individual mod identity).
+     */
+    public function buildChatMessagePayload(int $messageId, int $recipientUserId, bool $modtools): array
+    {
+        $row = DB::table('chat_messages as cm')
+            ->join('chat_rooms as cr', 'cm.chatid', '=', 'cr.id')
+            ->leftJoin('users as su', 'cm.userid', '=', 'su.id')
+            ->where('cm.id', $messageId)
+            ->select('cm.id as msgid', 'cm.message', 'cm.date',
+                'cm.userid as sender_id', 'su.fullname as sender_name',
+                'cr.id as chatid', 'cr.chattype', 'cr.user1', 'cr.groupid')
+            ->first();
+
+        if (! $row) {
+            return [];
+        }
+
+        $title = $this->resolveChatPushTitle($row);
+
+        $message = $row->message ?? '';
+        if (mb_strlen($message) > 256) {
+            $message = mb_substr($message, 0, 253) . '...';
+        }
+
+        $chatId = (int) $row->chatid;
+
+        return [
+            'badge' => '0',
+            'count' => '0',
+            'chatcount' => '1',
+            'notifcount' => '0',
+            'title' => $title,
+            'message' => $message,
+            'chatids' => (string) $chatId,
+            'chatid' => (string) $chatId,
+            'messageid' => (string) $row->msgid,
+            'notId' => (string) $chatId,
+            'timestamp' => (string) strtotime((string) $row->date),
+            'content-available' => '1',
+            'image' => $modtools ? 'www/images/modtools_logo.png' : 'www/images/user_logo.png',
+            'modtools' => $modtools ? '1' : '0',
+            'sound' => 'default',
+            'route' => '/chats/' . $chatId,
+            'category' => 'CHAT_MESSAGE',
+            'channel_id' => $modtools ? 'modtools' : 'chat_messages',
+            'threadId' => 'chat_' . $chatId,
+        ];
+    }
+
+    /**
+     * Title shown in the push banner. For U2M chats sent by a moderator to
+     * a member, hide the mod identity and show "{Group} Volunteers" (V1).
+     */
+    private function resolveChatPushTitle(object $row): string
+    {
+        $senderName = $row->sender_name ?: 'Someone';
+
+        if ($row->chattype === ChatRoom::TYPE_USER2MOD
+            && (int) $row->sender_id !== (int) $row->user1
+            && $row->groupid) {
+            $group = DB::table('groups')->where('id', $row->groupid)
+                ->select('namefull', 'nameshort')->first();
+            if ($group) {
+                $name = $group->namefull ?: $group->nameshort ?: 'Freegle';
+                return $name . ' Volunteers';
+            }
+            return 'Freegle Volunteers';
+        }
+
+        return $senderName;
     }
 }

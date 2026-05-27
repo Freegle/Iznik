@@ -109,6 +109,15 @@ class Job extends Model
 
             foreach ($results as $job) {
                 $job->image_url = self::buildImageUrl($images[$job->canonical_title] ?? null) ?? $placeholderUrl;
+
+                // The jobs feed stores location names lowercase ("manchester",
+                // "stoke-on-trent"). Render them title-cased so they read
+                // naturally in email bodies. Split on space, hyphen and
+                // apostrophe so "stoke-on-trent" becomes "Stoke-On-Trent"
+                // and "o'connell street" becomes "O'Connell Street".
+                if (!empty($job->location)) {
+                    $job->location = ucwords(strtolower($job->location), " -'");
+                }
             }
         }
 

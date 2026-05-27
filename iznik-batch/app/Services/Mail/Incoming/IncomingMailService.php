@@ -1951,7 +1951,7 @@ class IncomingMailService
             'platform' => 0, // Email source
             'reviewrequired' => $reviewRequired ? 1 : 0,
             'reportreason' => $dbReportReason,
-            'processingrequired' => 1, // Background chat_process.php cron handles visibility, roster, push notifications
+            'processingrequired' => 1, // ChatProcessService (chats:process-incoming) handles visibility, roster, and queues push
             'replyreceived' => 0,
         ];
 
@@ -2109,7 +2109,7 @@ class IncomingMailService
                     'type' => ChatMessage::TYPE_IMAGE,
                     'date' => now(),
                     'platform' => 0,
-                    'processingrequired' => 1, // Background chat_process.php cron handles visibility, roster, push notifications
+                    'processingrequired' => 1, // ChatProcessService (chats:process-incoming) handles visibility, roster, and queues push
                     'replyreceived' => 0,
                 ]);
 

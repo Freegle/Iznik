@@ -278,6 +278,34 @@ class JobModelTest extends TestCase
         $this->assertEquals('Low CPC', $result[2]->title);
     }
 
+    public function test_near_location_title_cases_lowercase_location(): void
+    {
+        // The jobs feed stores location names lowercase ("manchester",
+        // "stoke-on-trent"). nearLocation should title-case them so emails
+        // read naturally instead of "Senior Manager manchester".
+        DB::table('jobs')->delete();
+        DB::table('ai_images')->delete();
+        $srid = config('freegle.srid', 3857);
+        $lat = 51.5074;
+        $lng = -0.1278;
+
+        DB::table('jobs')->insert([
+            'title' => 'Test Job',
+            'location' => 'stoke-on-trent',
+            'company' => 'Test',
+            'city' => 'London',
+            'url' => 'https://example.com',
+            'cpc' => 0.05,
+            'visible' => 1,
+            'geometry' => DB::raw("ST_GeomFromText('POINT($lng $lat)', $srid)"),
+        ]);
+
+        $result = Job::nearLocation($lat, $lng);
+
+        $this->assertCount(1, $result);
+        $this->assertEquals('Stoke-On-Trent', $result->first()->location);
+    }
+
     public function test_near_location_adds_placeholder_image_for_jobs_without_ai_images(): void
     {
         // When a job has no matching ai_images row, image_url falls back to

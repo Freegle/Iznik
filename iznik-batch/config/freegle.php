@@ -91,11 +91,12 @@ return [
         //   ''  or '*'      → allow all users (the normal production state)
         //   'a@x.com,b@y'   → restrict immediate emails to those addresses
         //
-        // The default checked in here is a single pilot recipient so that
-        // when the cron is enabled in production only that user receives
-        // immediate emails. Clear it (or set to '*') in env to flip the
-        // feature on for everyone. Daily-mode digests are NOT gated.
-        'immediate_allowlist' => env('FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST', 'edward@ehibbert.org.uk'),
+        // Default is '*' (everyone) — V1's bulk3 `digest.php -i -1` cron was
+        // disabled on 2026-05-27 so this is the only source of immediate
+        // notifications. Set FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST in env to
+        // restrict (e.g. a comma-separated list for a re-pilot). Daily-mode
+        // digests are NOT gated.
+        'immediate_allowlist' => env('FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST', '*'),
     ],
 
     // Firebase Cloud Messaging for push notifications
@@ -346,7 +347,12 @@ return [
         'secret' => env('LOVE_JUNK_SECRET', ''),
     ],
 
-    'geocoder' => env('FREEGLE_GEOCODER_URL', ''),
+    // Default matches V1's hardcoded GEOCODER constant (iznik.conf.php). The
+    // Laravel migration parameterised this via env, but .env.background was
+    // never updated — so for months WhatJobsService::geocodeAddress() silently
+    // returned null on the first line, leaving the live jobs table pinned at
+    // ~400 rows (only DB cache + UK postcode fallback could ever match).
+    'geocoder' => env('FREEGLE_GEOCODER_URL', 'https://geocode.ilovefreegle.org'),
 
     'whatjobs' => [
         'feed1' => env('WHATJOBS_FEED1', ''),

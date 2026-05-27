@@ -512,6 +512,13 @@ class UnifiedDigest extends MjmlMailable
 
     /**
      * Get the message image URL via delivery service.
+     *
+     * V1 parity (iznik-server Attachment::getByIds ORDER BY `primary` DESC,
+     * id): prefer the user-uploaded photo (primary=1) over AI-generated
+     * fallbacks (primary=0). Also skip attachment rows that haven't been
+     * fully populated — same condition V1 uses to exclude in-flight rows
+     * with no data/externaluid/externalurl/archived flag set. Without this
+     * filter, we'd pick a half-written attachment and 404.
      */
     protected function getMessageImageUrl($message): ?string
     {
@@ -519,7 +526,14 @@ class UnifiedDigest extends MjmlMailable
             return null;
         }
 
-        $attachment = $message->attachments->first();
+        $attachment = $message->attachments
+            ->filter(fn($a) => !empty($a->externaluid) || !empty($a->externalurl) || (int) ($a->archived ?? 0) === 1)
+            ->sortByDesc('primary')
+            ->first();
+
+        if (!$attachment) {
+            return null;
+        }
 
         // If there's an external URL, use it directly.
         if (!empty($attachment->externalurl)) {
