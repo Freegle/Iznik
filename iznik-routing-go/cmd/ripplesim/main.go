@@ -567,7 +567,22 @@ type curveResult struct {
 	// reply would no longer be useful.  A more aggressive front-load
 	// trades a bigger initial burst for fewer wasted later notifications.
 	NotificationsWasted int
+
+	// Lead-time tracking: how far AHEAD of the actual reply did we notify
+	// the eventual replier?  Smaller lead time = more "just in time" —
+	// notifications timed close to when the user would respond.  Larger
+	// lead time = "notified too early" — the recipient had to remember /
+	// hold the email for hours or days before acting.
+	//
+	// Sum and count are kept so consumers can compute mean.  We also
+	// surface p50 / p90 via the sorted slice (kept compact to avoid huge
+	// memory).  Units: hours.
+	LeadHoursSum    float64
+	LeadHoursCount  int
+	LeadHoursSample []float64 // up to MaxLeadSamples values for percentile reporting
 }
+
+const maxLeadSamples = 50000
 
 // groupKey returns the bucket label for a post under the current --group-by
 // setting.  Empty string = all-in-one (no stratification).
@@ -735,6 +750,14 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[strin
 					if isFirstReplier {
 						results[ci].FirstRepliersInTime++
 					}
+					// Lead time = how far AHEAD of the reply did we notify
+					// them?  Lower is better — closer to "just in time".
+					leadHrs := replyTime.Sub(notifyTime).Hours()
+					results[ci].LeadHoursSum += leadHrs
+					results[ci].LeadHoursCount++
+					if len(results[ci].LeadHoursSample) < maxLeadSamples {
+						results[ci].LeadHoursSample = append(results[ci].LeadHoursSample, leadHrs)
+					}
 				} else {
 					results[ci].PairsReachableButLate++
 					if isFirstReplier {
@@ -810,8 +833,11 @@ func printResults(groups map[string][]curveResult) {
 }
 
 func printResultsRows(results []curveResult) {
-	fmt.Printf("%-30s  %7s  %7s  %12s  %8s  %s\n",
-		"", "all", "1st", "notify-vol", "wasted%", "where caught")
+	// Lead-time tells us how far AHEAD of the actual reply each in-time
+	// catch was notified.  Lower = more "just in time".  p50/p75/p90
+	// rather than just mean because the long-tail repliers skew the mean.
+	fmt.Printf("%-30s  %7s  %7s  %7s  %7s  %7s  %7s\n",
+		"", "all", "1st", "waste%", "p50-h", "p75-h", "p90-h")
 	for _, r := range results {
 		allPct := 0.0
 		if r.PairsTotal > 0 {
@@ -825,19 +851,10 @@ func printResultsRows(results []curveResult) {
 		if r.NotificationsSent > 0 {
 			wastedPct = 100.0 * float64(r.NotificationsWasted) / float64(r.NotificationsSent)
 		}
-		c1, c2to5, cRest := 0, 0, 0
-		for k, n := range r.TickCaught {
-			switch {
-			case k == 0:
-				c1 += n
-			case k < 5:
-				c2to5 += n
-			default:
-				cRest += n
-			}
-		}
-		caught := fmt.Sprintf("t1=%d t2-5=%d t6+=%d", c1, c2to5, cRest)
-		fmt.Printf("%-30s  %6.1f%%  %6.1f%%  %12d  %7.1f%%  %s\n",
-			r.Name, allPct, firstPct, r.NotificationsSent, wastedPct, caught)
+		p50 := percentile(r.LeadHoursSample, 0.50)
+		p75 := percentile(r.LeadHoursSample, 0.75)
+		p90 := percentile(r.LeadHoursSample, 0.90)
+		fmt.Printf("%-30s  %6.1f%%  %6.1f%%  %6.1f%%  %6.1fh  %6.1fh  %6.1fh\n",
+			r.Name, allPct, firstPct, wastedPct, p50, p75, p90)
 	}
 }

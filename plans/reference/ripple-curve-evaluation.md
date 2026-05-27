@@ -1,8 +1,10 @@
 # Ripple Notification Algorithm — Curve Evaluation
 
-Last updated: 2026-05-27.  Source data: **4,264 historical Freegle posts**
-with **10,005 (post, replier) pairs** extracted from production over the
-last 6 months, evaluated via `iznik-routing-go/cmd/ripplesim`.
+Last updated: 2026-05-27.  Source data: **20,977 historical Freegle posts**
+with **48,671 (post, replier) pairs** extracted from production over the
+last 12 months (i.e. essentially the whole population — only ~225 posts
+were dropped because all repliers lacked locations), evaluated via
+`iznik-routing-go/cmd/ripplesim`.
 
 ## What the simulator measures
 
@@ -95,6 +97,61 @@ From the 5,000-post extraction (4,264 posts kept, 10,005 (post, replier) pairs):
 5. **Back-loaded is the worst on every axis.**  Includes both lowest
    in-time AND highest waste (because notifications pile up at the end
    when the post has already been taken).
+
+## Are we notifying users "too early"?  Lead-time analysis
+
+A natural concern with any "blast everyone immediately" curve: even if
+we catch the eventual replier, we notified them *long before* they would
+actually reply.  That long lead time may waste their attention.
+
+Lead time = `reply_time - notification_time` (hours).  Lower is better
+("just in time").  We track p50/p75/p90 across in-time catches:
+
+| Curve | 1st in-time | p50 lead | p75 lead | p90 lead |
+|-------|-------------|----------|----------|----------|
+| linear | 62.6% | 20.6h | 102.8h | 426.3h |
+| front-cubic | 75.8% | 18.7h | 73.7h | 363.0h |
+| front-heavy x^0.3 | 87.3% | 16.8h | 55.8h | 331.5h |
+| **step-70** | **93.0%** | **15.9h** | **51.4h** | **308.7h** |
+| back-quad | 48.4% | 26.6h | 162.1h | 537.1h |
+
+**Counter-intuitively, step-70 has the LOWEST lead times** despite being
+the most aggressive front-loader.  Why?  Because aggressive front-loading
+catches more *fast-repliers* (whose lead time = their short reply time),
+which pulls the distribution toward lower values.  Less aggressive curves
+miss the fast-replier cohort and end up with longer mean lead times.
+
+### Can we time batches "just before reply"?
+
+Idea: schedule each batch to fire close to when those users typically
+reply.  Requires knowing reply time by rank.  Looking at the data:
+
+| Rank percentile | All-replier p50 reply time |
+|-----------------|------------------------------|
+| Closest 0-5%   | 19.2 h |
+| 5-10%          | 17.9 h |
+| 10-20%         | 16.3 h |
+| 20-30%         | 15.2 h |
+| 30-50%         | 14.5 h |
+| 50-70%         | 15.2 h |
+| 70-90%         | 14.4 h |
+| 90-100%        | 17.6 h |
+
+**Rank doesn't predict reply time.**  The spread across all rank buckets
+is only 5 hours.  We can't usefully time batches by rank because
+"someone replying within 14 hours" is equally likely at every distance.
+
+Note: the closest-rank bucket replies *slowest* in this view — a
+counter-intuitive result that is plausible because the closest 5 % is a
+small absolute number of users (so any single eager person doesn't shift
+the median much), whereas the broad mid-rank buckets include the eager
+respondents who occasionally reply quickly even from further away.
+
+**Conclusion**: lead times of 10-20 hours p50 and 5-22 days p90 are
+inherent to any curve that catches a meaningful share of repliers.
+Reducing them would require *per-user* engagement modelling rather
+than rank-based scheduling.  In production, the "too soon" cost is
+real but cannot be optimised away without different data.
 
 ## Lifetime sensitivity sweep (step-70, urban first-replier)
 
