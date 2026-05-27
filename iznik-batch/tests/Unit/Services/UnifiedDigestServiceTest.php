@@ -497,8 +497,11 @@ class UnifiedDigestServiceTest extends TestCase
      * group. The per-group cron walks groups_digests, so a row must exist
      * (V1 INSERT IGNOREs in production; tests need the same shape).
      */
-    protected function seedImmediateCursor(Group $group, ?string $msgdate = null, int $msgid = 0): void
+    protected function seedImmediateCursor(Group $group, ?string $msgdate = null, ?int $msgid = null): void
     {
+        // msgid has a FK to messages.id (ON DELETE SET NULL), so the value must
+        // be either NULL or a real message id. Tests that need a baseline cursor
+        // without a real message default to NULL.
         \App\Models\GroupDigest::updateOrCreate(
             [
                 'groupid' => $group->id,
