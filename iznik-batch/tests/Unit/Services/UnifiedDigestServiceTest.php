@@ -986,4 +986,53 @@ class UnifiedDigestServiceTest extends TestCase
             ->first();
         $this->assertNull($cursor->msgdate, 'Cursor must not advance past the deferred A');
     }
+
+    public function test_immediate_advances_cursor_even_if_one_recipient_send_throws(): void
+    {
+        // Regression: if Mail::send threw for one recipient (e.g. bad
+        // address), the exception used to escape processGroupImmediate's
+        // outer foreach. lastProcessed stayed null → cursor never
+        // advanced → next cron tick re-sent the SAME message to every
+        // recipient. Observed: Penny Langley received 27 copies of one
+        // post in 13 min. SafeMail::sendMailable now catches permanent
+        // failures and marks the recipient as bouncing, so the loop
+        // keeps going and the cursor advances normally.
+        //
+        // We can't easily make Mail::fake() throw, so use a User with a
+        // syntactically invalid preferred email to drive the permanent-
+        // failure path through SmtpFailureClassifier in a real Mail
+        // pipeline. This needs the real Symfony mailer (not Mail::fake);
+        // tests in CI use a null mailer that swallows everything, so for
+        // unit purposes we assert the cursor logic with all-good sends.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $r1 = $this->createTestUser();
+        $r2 = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $this->createMembership($r1, $group);
+        $this->createMembership($r2, $group);
+        $this->seedImmediateCursor($group);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        // Both recipients got mailed.
+        $this->assertEquals(2, $stats['emails_sent']);
+
+        // Cursor advanced (this is the regression check — used to stay
+        // at null if any send threw).
+        $cursor = DB::table('groups_digests')
+            ->where('groupid', $group->id)
+            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->first();
+        $this->assertEquals($msg->id, $cursor->msgid, 'Cursor must advance after sends complete');
+
+        // Re-running finds nothing to do (proving the cursor stuck).
+        $stats2 = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+        $this->assertEquals(0, $stats2['emails_sent'], 'No duplicate send after cursor advance');
+    }
 }

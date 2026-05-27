@@ -1860,7 +1860,9 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkBulkVolunteerMail returns REASON_BULK_VOLUNTEER_MAIL; preserved
+        // verbatim by mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('BulkVolunteerMail', $lastMessage->reportreason);
     }
 
     public function test_volunteers_with_spam_keyword_detected_as_spam(): void
@@ -1902,7 +1904,9 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkSpamKeywords returns REASON_KNOWN_KEYWORD on a Western Union match;
+        // preserved verbatim by mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('Known spam keyword', $lastMessage->reportreason);
     }
 
     public function test_prohibited_user_post_dropped(): void
@@ -2234,7 +2238,10 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkMessage's body-keyword check (still runs with forChatReply=true)
+        // returns REASON_KNOWN_KEYWORD on Western Union; preserved verbatim by
+        // mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('Known spam keyword', $lastMessage->reportreason);
     }
 
     public function test_chat_reply_with_money_symbol_flagged_for_review(): void
@@ -2268,7 +2275,9 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkReview returns REASON_MONEY for the £ symbol; preserved verbatim
+        // by mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('Money', $lastMessage->reportreason);
     }
 
     public function test_chat_reply_with_script_tag_flagged_for_review(): void
@@ -2301,7 +2310,9 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkReview returns REASON_SCRIPT for a <script> tag; preserved verbatim
+        // by mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('Script', $lastMessage->reportreason);
     }
 
     public function test_clean_chat_reply_not_flagged_for_review(): void
@@ -2421,7 +2432,12 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkReview returns REASON_EMAIL for an external email address. The
+        // chat_messages.reportreason enum was widened on 2026-05-27 to preserve
+        // specific reasons instead of collapsing them to generic 'Spam' — this
+        // gives moderators the friendly "It contains an email address." UI text
+        // in ModChatReview.vue instead of "no more information about why".
+        $this->assertEquals('Email', $lastMessage->reportreason);
     }
 
     public function test_clean_chat_reply_held_when_previous_message_held_for_review(): void
@@ -2592,7 +2608,9 @@ class IncomingMailServiceTest extends TestCase
             ->first();
 
         $this->assertEquals(1, $lastMessage->reviewrequired);
-        $this->assertEquals('Spam', $lastMessage->reportreason);
+        // checkSpamKeywords returns REASON_KNOWN_KEYWORD on Western Union;
+        // preserved verbatim by mapReportReason since the 2026-05-27 enum widening.
+        $this->assertEquals('Known spam keyword', $lastMessage->reportreason);
     }
 
     // ========================================

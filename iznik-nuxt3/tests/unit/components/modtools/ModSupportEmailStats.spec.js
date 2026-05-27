@@ -224,7 +224,20 @@ describe('ModSupportEmailStats', () => {
         value: 'ChatNotification',
       })
       expect(options).toContainEqual({ text: 'Welcome', value: 'WelcomeMail' })
-      expect(options).toContainEqual({ text: 'Digest', value: 'UnifiedDigest' })
+      // UnifiedDigest split into per-mode entries; the legacy bucket is kept
+      // so historical rows written before the split still surface.
+      expect(options).toContainEqual({
+        text: 'Digest (Immediate)',
+        value: 'UnifiedDigestImmediate',
+      })
+      expect(options).toContainEqual({
+        text: 'Digest (Daily)',
+        value: 'UnifiedDigestDaily',
+      })
+      expect(options).toContainEqual({
+        text: 'Digest (legacy)',
+        value: 'UnifiedDigest',
+      })
     })
   })
 

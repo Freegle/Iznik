@@ -11,6 +11,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
+use App\Support\SafeMail;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -275,7 +276,19 @@ class UnifiedDigestService
                     $deduped = collect([
                         ['message' => $message, 'postedToGroups' => [$groupid]],
                     ]);
-                    Mail::send(new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache));
+                    // SafeMail catches permanent address-rejection failures
+                    // (non-ASCII local-part, 550 etc) and marks the recipient
+                    // as bouncing instead of throwing. Critical for this loop:
+                    // a single bad address used to escape the foreach, which
+                    // meant the cursor never advanced and the NEXT cron tick
+                    // re-sent the whole batch to every recipient AGAIN —
+                    // observed Penny Langley getting 27 copies of the same
+                    // post in 13 min before catch. Transient SMTP hiccups
+                    // also get logged + skipped rather than killing the loop.
+                    SafeMail::sendMailable(
+                        new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
+                        $user->email_preferred
+                    );
                 }
                 $emailsSent++;
                 $touched[$uid] = true;
