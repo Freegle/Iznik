@@ -138,28 +138,30 @@
                 </mj-text>
             </mj-column>
         </mj-section>
-        <mj-section background-color="#F7F6EC" padding="5px 20px">
+        {{-- Mobile-tight: 12px side padding, 4px vertical row padding, 1.25 line-height
+             on the title, and a 44px icon column (40px image + 4px gap to text). --}}
+        <mj-section background-color="#F7F6EC" padding="5px 12px">
             <mj-column>
                 <mj-table cellpadding="0" cellspacing="0" width="100%">
                     @foreach($jobAds as $job)
                     <tr>
                         @if($job->image_url ?? null)
-                        <td style="width: 50px; padding: 6px 8px 6px 0; vertical-align: middle;">
+                        <td style="width: 44px; padding: 4px 4px 4px 0; vertical-align: middle;">
                             <a href="{{ $job->tracked_url }}">
                                 <img src="{{ $job->image_url }}" width="40" height="40" alt="" style="border-radius: 4px; display: block;" />
                             </a>
                         </td>
-                        <td style="padding: 6px 0; vertical-align: middle;">
+                        <td style="padding: 4px 0; vertical-align: middle;">
                         @else
                         {{-- No image: span both columns so the title fills the row instead of
                              being squeezed into the right column reserved by sibling rows. --}}
-                        <td colspan="2" style="padding: 6px 0; vertical-align: middle;">
+                        <td colspan="2" style="padding: 4px 0; vertical-align: middle;">
                         @endif
-                            <a href="{{ $job->tracked_url }}" style="color: #338808; font-weight: bold; text-decoration: none; font-size: 14px;">
+                            <a href="{{ $job->tracked_url }}" style="color: #338808; font-weight: bold; text-decoration: none; font-size: 14px; line-height: 1.25;">
                                 {{ $job->title }}
                             </a>
                             @if($job->location ?? null)
-                            <br/><span style="color: #666666; font-size: 12px;">{{ $job->location }}</span>
+                            <br/><span style="color: #666666; font-size: 12px; line-height: 1.3;">{{ $job->location }}</span>
                             @endif
                         </td>
                     </tr>
