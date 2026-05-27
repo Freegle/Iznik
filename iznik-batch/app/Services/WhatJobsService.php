@@ -11,7 +11,6 @@ class WhatJobsService
     const MINIMUM_CPC = 0.10;
     const MAX_AGE_DAYS = 7;
     const DISTRIBUTE = 0.0005;
-    const SPAM_THRESHOLD = 50;
     const BATCH_SIZE = 500;
     // Refuse to swap the live `jobs` table when parsed count is < this fraction
     // of the existing row count, provided the existing table has at least
@@ -489,7 +488,6 @@ class WhatJobsService
             return ['total' => $inserted, 'inserted' => 0, 'skipped_swap' => true, 'existing' => $existing];
         }
 
-        $this->deleteSpammyJobs();
         $this->swapTables();
         $this->analyseClickability();
         $this->updateClickability();
@@ -1174,25 +1172,6 @@ class WhatJobsService
         $flush();
 
         return $inserted;
-    }
-
-    public function deleteSpammyJobs(string $table = 'jobs_new'): int
-    {
-        $spams = DB::select(
-            "SELECT bodyhash FROM $table
-             GROUP BY bodyhash HAVING COUNT(*) > ? AND bodyhash IS NOT NULL",
-            [self::SPAM_THRESHOLD]
-        );
-
-        $deleted = 0;
-        foreach ($spams as $spam) {
-            do {
-                $rows = DB::delete("DELETE FROM $table WHERE bodyhash = ? LIMIT 100", [$spam->bodyhash]);
-            } while ($rows > 0);
-            $deleted++;
-        }
-
-        return $deleted;
     }
 
     public function swapTables(): void

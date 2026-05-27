@@ -604,14 +604,6 @@ Schedule::command('messages:update-spatial-index')
     ->sendOutputTo(cronLog('messages:update-spatial-index'))
     ->runInBackground();
 
-// Delete spammy WhatJobs postings (same bodyhash posted > 50 times across UK).
-// V1: cron/whatjobs_spam.php (every 10 minutes)
-Schedule::command('cleanup:whatjobs-spam')
-    ->everyTenMinutes()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('cleanup:whatjobs-spam'))
-    ->runInBackground();
-
 // Update common email domains table (domains used by > 1000 users).
 // V1: cron/domains_common.php (weekly, Friday 07:00)
 Schedule::command('domains:update-common')
