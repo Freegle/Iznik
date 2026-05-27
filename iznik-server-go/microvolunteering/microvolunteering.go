@@ -58,13 +58,13 @@ type Photo struct {
 
 // Challenge types
 const (
-	ChallengeCheckMessage   = "CheckMessage"
-	ChallengeSearchTerm     = "SearchTerm"
-	ChallengePhotoRotate    = "PhotoRotate"
-	ChallengeSurvey         = "Survey2"
-	ChallengeInvite         = "Invite"
-	ChallengeAIImageReview  = "AIImageReview"
-	ChallengeEEELabel       = "EEELabel"
+	ChallengeCheckMessage  = "CheckMessage"
+	ChallengeSearchTerm    = "SearchTerm"
+	ChallengePhotoRotate   = "PhotoRotate"
+	ChallengeSurvey        = "Survey2"
+	ChallengeInvite        = "Invite"
+	ChallengeAIImageReview = "AIImageReview"
+	ChallengeEEELabel      = "EEELabel"
 )
 
 // Trust levels
@@ -78,19 +78,19 @@ const (
 
 // Microvolunteering quorum constants
 const (
-	ApprovalQuorum       = 2
-	DissentingQuorum     = 3
-	AIImageReviewQuorum  = 5
-	EEELabelQuorum       = 3
+	ApprovalQuorum      = 2
+	DissentingQuorum    = 3
+	AIImageReviewQuorum = 5
+	EEELabelQuorum      = 3
 )
 
 // EEE label vocabularies — kept here so the server rejects invalid client
 // submissions and the Vue component / sync command have a single source of
 // truth via a comment.
 //
-//   Condition: reusable | damaged | unsure
-//   Weight:    under_1kg | 1_5kg | 5_20kg | 20_100kg | over_100kg | unsure
-//   Size:      tiny | small | medium | large | unsure
+//	Condition: reusable | damaged | unsure
+//	Weight:    under_1kg | 1_5kg | 5_20kg | 20_100kg | over_100kg | unsure
+//	Size:      tiny | small | medium | large | unsure
 var (
 	validEEEConditions = map[string]bool{"reusable": true, "damaged": true, "unsure": true}
 	validEEEWeights    = map[string]bool{"under_1kg": true, "1_5kg": true, "5_20kg": true, "20_100kg": true, "over_100kg": true, "unsure": true}
@@ -638,6 +638,7 @@ func cleanSubject(subject string) string {
 // PostResponseRequest represents the body for POST /microvolunteering
 type PostResponseRequest struct {
 	Msgid          uint64  `json:"msgid"`
+	Groupid        uint64  `json:"groupid"`
 	MsgCategory    *string `json:"msgcategory,omitempty"`
 	Response       *string `json:"response,omitempty"`
 	Comments       *string `json:"comments,omitempty"`
@@ -715,9 +716,10 @@ func PostResponse(c *fiber.Ctx) error {
 					req.Msgid).Scan(&rejectCount)
 
 				if rejectCount >= int64(ApprovalQuorum) {
-					// Quorum reached - send the message for review by setting spamreason
-					// and moving it back to Pending collection.
-					sendForReview(db, req.Msgid, "Members think there is something wrong with this message.")
+					// Quorum reached — send the message for review on the group
+					// the voter is acting in. Other groups the message is on are
+					// left alone; their members can flag it independently.
+					sendForReview(db, req.Msgid, req.Groupid, "Members think there is something wrong with this message.")
 				}
 			}
 		}
@@ -872,11 +874,20 @@ func ModFeedback(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
-// sendForReview moves a message back to Pending and records the spam reason.
-// This is the Go equivalent of V1's Message::sendForReview().
-func sendForReview(db *gorm.DB, msgid uint64, reason string) {
-	db.Exec("UPDATE messages SET spamreason = ? WHERE id = ?", reason, msgid)
-	db.Exec("UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ?", utils.COLLECTION_PENDING, reason, msgid)
+// sendForReview moves a message back to Pending on a single group and records
+// the spam reason on that group's row. Other groups the message is on are
+// left alone — each group's members must reach quorum independently to send
+// it for review on their group.
+//
+// If groupid is 0 (legacy clients that don't yet send a group context), no
+// update is made. The client is expected to pass the group the volunteer is
+// voting in via the request body.
+func sendForReview(db *gorm.DB, msgid uint64, groupid uint64, reason string) {
+	if groupid == 0 {
+		return
+	}
+	db.Exec("UPDATE messages_groups SET collection = ?, spamreason = ? WHERE msgid = ? AND groupid = ? AND collection = ?",
+		utils.COLLECTION_PENDING, reason, msgid, groupid, utils.COLLECTION_APPROVED)
 }
 
 // listMicroActions returns microvolunteering activity for moderator review.
@@ -897,10 +908,10 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 
 	if len(groupIDs) == 0 {
 		return c.JSON(fiber.Map{
-			"ret":                 0,
-			"status":              "Success",
-			"microvolunteerings":  make([]interface{}, 0),
-			"context":             fiber.Map{},
+			"ret":                0,
+			"status":             "Success",
+			"microvolunteerings": make([]interface{}, 0),
+			"context":            fiber.Map{},
 		})
 	}
 
@@ -918,20 +929,20 @@ func listMicroActions(c *fiber.Ctx, db *gorm.DB, myid uint64) error {
 	args = append(args, limitParam)
 
 	type MicroAction struct {
-		ID            uint64     `json:"id"`
-		Actiontype    string     `json:"actiontype"`
-		Userid        uint64     `json:"userid"`
-		Msgid         *uint64    `json:"msgid"`
-		Msgcategory   *string    `json:"msgcategory"`
-		Result        string     `json:"result"`
-		Timestamp     time.Time  `json:"timestamp"`
-		Comments      *string    `json:"comments"`
-		Item1         *uint64    `json:"item1"`
-		Item2         *uint64    `json:"item2"`
-		Rotatedimage  *uint64    `json:"rotatedimage"`
-		ScorePositive float64    `json:"score_positive"`
-		ScoreNegative float64    `json:"score_negative"`
-		Modfeedback   *string    `json:"modfeedback"`
+		ID            uint64    `json:"id"`
+		Actiontype    string    `json:"actiontype"`
+		Userid        uint64    `json:"userid"`
+		Msgid         *uint64   `json:"msgid"`
+		Msgcategory   *string   `json:"msgcategory"`
+		Result        string    `json:"result"`
+		Timestamp     time.Time `json:"timestamp"`
+		Comments      *string   `json:"comments"`
+		Item1         *uint64   `json:"item1"`
+		Item2         *uint64   `json:"item2"`
+		Rotatedimage  *uint64   `json:"rotatedimage"`
+		ScorePositive float64   `json:"score_positive"`
+		ScoreNegative float64   `json:"score_negative"`
+		Modfeedback   *string   `json:"modfeedback"`
 	}
 
 	var items []MicroAction

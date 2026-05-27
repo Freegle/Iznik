@@ -14,13 +14,13 @@
 
 ## Status (as of 2026-05-27)
 
-**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 11, 12, 13, 14, 15, 16 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, list dedup, TN dedup job, store/ModTools client changes.
+**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10, 11, 12, 13, 14, 15, 16 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview`, list dedup, TN dedup job, store/ModTools client changes.
 
 **Open work (❌):**
 
 | Task | Area | Summary |
 |------|------|---------|
-| 10 | Go | `sendForReview` still global; signature + callers need a groupid |
+| 10-followup | Nuxt | `POST /microvolunteering` callers must include `groupid` in the body, otherwise the server's new `groupid == 0` guard means quorum no longer triggers a Pending move |
 | 17 | Nuxt | `MyMessage.vue`, `OutcomeModal.vue` still use `groups[0]` |
 | 18 | Laravel | Add explicit dedup test for same-msgid-on-multiple-groups |
 | 19 | Audit | Write `plans/multi-group-stats-audit.md` |
@@ -948,9 +948,11 @@ git commit -m "test: verify mod action logs reference the specific target group"
 
 ---
 
-## Task 10: Go API — Microvolunteering sendForReview Per-Group ❌ NOT DONE
+## Task 10: Go API — Microvolunteering sendForReview Per-Group ✅ DONE
 
-Current code at [microvolunteering.go:877-880](iznik-server-go/microvolunteering/microvolunteering.go#L877-L880) still writes to `messages.spamreason` AND updates `messages_groups SET collection='Pending', spamreason=?` with no `groupid` filter — affecting all groups. The caller at [microvolunteering.go:720](iznik-server-go/microvolunteering/microvolunteering.go#L720) does not pass a groupid. Both signature and call sites still need to change as described below.
+Implemented at [microvolunteering.go:875-887](/iznik-server-go/microvolunteering/microvolunteering.go#L877-L892).
+
+The `UPDATE messages SET spamreason` write was dropped — `messages.spamreason` is on the chopping block in Task 20 and was no longer needed for cross-system reads (only a non-critical CLI validation command still references it).
 
 **Files:**
 - Modify: `iznik-server-go/microvolunteering/microvolunteering.go:712-717`
