@@ -116,7 +116,7 @@ export const useMobileStore = defineStore({
       this.initDeepLinks(App)
       await this.initPushNotifications(PushNotifications, Badge)
       await this.checkForAppUpdate()
-      this.initWakeUpActions(App)
+      this.initWakeUpActions(App, PushNotifications)
     },
 
     async getDeviceInfo(Device) {
@@ -191,9 +191,9 @@ export const useMobileStore = defineStore({
       return urlParams
     },
 
-    initWakeUpActions(App) {
+    initWakeUpActions(App, PushNotifications) {
       if (process.client) {
-        App.addListener('resume', (event) => {
+        App.addListener('resume', async (event) => {
           try {
             const notificationStore = useNotificationStore()
             notificationStore.fetchCount()
@@ -201,6 +201,20 @@ export const useMobileStore = defineStore({
             const chatStore = useChatStore()
             chatStore.fetchChats(null, false)
           } catch (e) {}
+
+          // Re-register for push notifications on every resume. iOS can invalidate
+          // the APNs device token after an OS upgrade (or other system event).
+          // Calling register() asks the OS for the current token; if it differs
+          // from the stored mobilePushId, the existing onRegistration listener
+          // will POST the fresh token to the backend (no-op when token is unchanged).
+          if (PushNotifications) {
+            try {
+              await PushNotifications.register()
+              dbg()?.info('Push register() called on resume')
+            } catch (e) {
+              dbg()?.warn('Push register() on resume failed', e)
+            }
+          }
         })
       }
     },
