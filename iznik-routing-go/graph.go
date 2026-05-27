@@ -116,17 +116,56 @@ var highwaySpeed = func() map[string][3]float32 {
 	return base
 }()
 
-// driveSpeedFactor scales drive speeds after both default + maxspeed lookups
-// to approximate realistic drive times.  OSM speed limits alone are 30-40 %
-// too optimistic vs OSRM / Google because we don't model junctions, urban
-// congestion or traffic.  Default 0.7 brings our times in line with OSRM
-// for typical UK routes.  Override via ROUTING_DRIVE_SPEED_FACTOR env var
-// (e.g. 1.0 to disable, 0.6 to approximate Google with typical UK traffic).
+// driveSpeedFactorsByClass scales drive speeds per OSM highway class to match
+// real-world UK driving speeds.  OSM speed limits alone are 30-40 % too
+// optimistic vs reality because we don't model junctions, urban congestion or
+// traffic.
 //
-// Measured on Oxford→Highclere + Newcastle→Alnwick, factor=0.7 produces
-// 40-45 min vs Google 45-53 min and OSRM 40 min.
-var driveSpeedFactor = func() float32 {
-	factor := float32(0.7)
+// Calibrated from the DfT congestion statistics (updated 14 May 2026, data
+// through Dec 2025):
+//
+//	Strategic Road Network (motorways + major A): 56.4 mph avg vs 70 mph limit → 0.81×
+//	Local A-roads, urban:                         17.2 mph avg vs 30 mph limit → 0.57×
+//	Local A-roads, rural:                         34.3 mph avg vs 60 mph limit → 0.57×
+//
+// Source:
+//
+//	https://www.gov.uk/government/statistical-data-sets/average-speed-delay-and-reliability-of-travel-times-cgn
+//	Tables CGN0404 (SRN) and CGN0503 (local A-roads).
+//
+// The urban-vs-rural shortfall is the same proportion (0.57×) on local
+// A-roads once normalised by speed limit — cities are slower because their
+// limits are lower, not because they have extra congestion on top.  So no
+// per-postcode density modifier is needed; per-road-class is enough.
+//
+// Residential/unclassified/service: not directly measured by DfT; set to 0.50
+// as a conservative estimate (slower than A-roads due to side friction).
+//
+// ROUTING_DRIVE_SPEED_FACTOR env var still applies as a uniform extra
+// multiplier on top of the per-class factor (1.0 = no extra scaling).
+var driveSpeedFactorsByClass = map[string]float32{
+	"motorway":      0.81,
+	"motorway_link": 0.81,
+	"trunk":         0.81,
+	"trunk_link":    0.81,
+	"primary":       0.57,
+	"primary_link":  0.57,
+	"secondary":     0.57,
+	"secondary_link": 0.57,
+	"tertiary":      0.57,
+	"tertiary_link": 0.57,
+	"residential":   0.50,
+	"unclassified":  0.50,
+	"living_street": 0.50,
+	"service":       0.50,
+	"track":         0.50,
+}
+
+// driveSpeedFactorOverride is an optional uniform multiplier applied on top
+// of the per-class factor.  Default 1.0 (no extra scaling); set
+// ROUTING_DRIVE_SPEED_FACTOR=0.95 etc. to globally tweak.
+var driveSpeedFactorOverride = func() float32 {
+	factor := float32(1.0)
 	if s := os.Getenv("ROUTING_DRIVE_SPEED_FACTOR"); s != "" {
 		if v, err := strconv.ParseFloat(s, 32); err == nil && v > 0 && v <= 2 {
 			factor = float32(v)
@@ -134,6 +173,15 @@ var driveSpeedFactor = func() float32 {
 	}
 	return factor
 }()
+
+// driveSpeedFactorFor returns the calibrated factor for a given OSM
+// highway=* tag.  Falls back to 0.57 (A-road equivalent) for unknown classes.
+func driveSpeedFactorFor(highwayTag string) float32 {
+	if f, ok := driveSpeedFactorsByClass[highwayTag]; ok {
+		return f * driveSpeedFactorOverride
+	}
+	return 0.57 * driveSpeedFactorOverride
+}
 
 // BuildGraph reads an OSM PBF file and returns a compact routing graph.
 // dep is optional; if non-nil, each node's Quintile is populated from it.
@@ -465,10 +513,10 @@ func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool) {
 		}
 	}
 
-	// Apply global drive-speed factor at the end so it covers both the
-	// highwaySpeed defaults and any maxspeed-tagged overrides.
-	if speeds[Drive] > 0 && driveSpeedFactor != 1.0 {
-		speeds[Drive] *= driveSpeedFactor
+	// Apply DfT-calibrated per-road-class factor at the end so it covers
+	// both the highwaySpeed defaults and any maxspeed-tagged overrides.
+	if speeds[Drive] > 0 {
+		speeds[Drive] *= driveSpeedFactorFor(highway)
 	}
 
 	oneway := tags["oneway"] == "yes" || tags["oneway"] == "1"

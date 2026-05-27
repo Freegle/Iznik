@@ -8,6 +8,15 @@
         Rippling Out Explorer
       </div>
       <div id="rippling-panel-body">
+        <div class="rpl-mode-row" id="rippling-view-mode" style="margin-bottom:8px">
+          <button class="rpl-mode-btn rpl-active" data-view="outbound">
+            <span class="rpl-icon">📡</span>Who could see my post
+          </button>
+          <button class="rpl-mode-btn" data-view="inbound">
+            <span class="rpl-icon">📥</span>Digest preview
+          </button>
+        </div>
+
         <div id="rippling-search-wrap">
           <input
             id="rippling-search-box"
@@ -18,42 +27,87 @@
           <ul id="rippling-search-results"></ul>
         </div>
 
-        <div class="rpl-mode-row">
-          <button class="rpl-mode-btn" data-mode="walk">
-            <span class="rpl-icon">🚶</span>Walk
-          </button>
-          <button class="rpl-mode-btn" data-mode="cycle">
-            <span class="rpl-icon">🚴</span>Cycle
-          </button>
-          <button class="rpl-mode-btn rpl-active" data-mode="drive">
-            <span class="rpl-icon">🚗</span>Drive
-          </button>
+        <div id="rippling-intro-outbound" class="rpl-intro">
+          Drop a marker.  The map shows how a post made there would
+          ripple out: who is eligible to see this post, in what order,
+          and how fast the wave spreads.
+        </div>
+        <div id="rippling-intro-inbound" class="rpl-intro" style="display:none">
+          Drop a marker.  The map shows what would appear in a digest
+          sent to a member at that spot — every post within their reach
+          (the radius below) over the last 24 hours, in the order set by
+          the sliders further down.
         </div>
 
-        <div class="rpl-slider-row">
+        <!-- Inbound: "What's in the digest" group — controls which posts -->
+        <div id="rippling-sim-contents" class="rpl-sim-group" style="display:none">
+          <div class="rpl-sim-group-title">What's in the digest</div>
+          <div class="rpl-sim-group-sub">
+            How far we look for posts.  Bigger reach = more posts in the
+            digest.
+          </div>
+        </div>
+
+        <div class="rpl-slider-row" id="rippling-time-row">
           <div class="rpl-slider-label">
-            <span>Travel time</span>
+            <span>Maximum reach</span>
           </div>
           <input
             id="rippling-time-slider"
             type="range"
             min="1"
-            max="30"
+            max="60"
             step="1"
-            value="15"
+            value="30"
           />
-          <div
-            style="
-              display: flex;
-              justify-content: space-between;
-              font-size: 10px;
-              color: #aaa;
-              margin-top: 2px;
-            "
-          >
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:#aaa;margin-top:2px">
             <span>Short</span><span>Long</span>
           </div>
         </div>
+
+        <!-- Inbound: pie chart + counts (the result of "what's in") -->
+        <div id="rippling-sim-pie-wrap" style="display:none">
+          <div style="display:flex;gap:8px;align-items:center;margin:6px 0">
+            <svg id="rippling-pie" width="56" height="56" viewBox="-1 -1 2 2" style="flex-shrink:0;transform:rotate(-90deg)">
+              <circle r="1" fill="#eee" />
+            </svg>
+            <div id="rippling-home-summary" style="font-size:11px;color:#555;line-height:1.4;flex:1"></div>
+          </div>
+        </div>
+
+        <!-- Inbound: "What order is it in?" group title — sits OUTSIDE the rail like the other heading, for visual consistency. -->
+        <div id="rippling-sim-sort-title" class="rpl-sim-group" style="display:none">
+          <div class="rpl-sim-group-title">What order is it in?</div>
+          <div class="rpl-sim-group-sub">
+            How we rank the posts inside the digest.  These don't change
+            what's <em>in</em> it, just the order.
+          </div>
+        </div>
+
+        <div id="rippling-inbound-row" style="display:none">
+          <div class="rpl-sim-knob">
+            <label>Closeness <span id="rippling-w-close-val">1.0</span></label>
+            <input id="rippling-w-close" type="range" min="0" max="2" step="0.1" value="1.0" />
+            <div class="rpl-sim-help">Higher = closer posts go higher in the digest.</div>
+          </div>
+          <div class="rpl-sim-knob">
+            <label>Eyeballs budget <span id="rippling-w-budget-val">1.0</span></label>
+            <input id="rippling-w-budget" type="range" min="0" max="2" step="0.1" value="1.0" />
+            <div class="rpl-sim-help">Higher = posts few people have viewed yet go higher (spreads attention to undersubscribed posts).</div>
+          </div>
+          <div class="rpl-sim-knob">
+            <label>Home-group anchor <span id="rippling-w-anchor-val">0.0</span></label>
+            <input id="rippling-w-anchor" type="range" min="0" max="2" step="0.1" value="0" />
+            <div class="rpl-sim-help">Higher = posts in the member's home group (the default group for their postcode) go higher in the digest.</div>
+          </div>
+          <button id="rippling-show-digest" class="rpl-digest-btn">
+            📄 Show digest mock-up
+          </button>
+
+          <div id="rippling-sim-summary" style="font-size:11px;color:#555;margin-top:6px;line-height:1.5;padding-top:6px;border-top:1px solid #f0f0f0"></div>
+        </div>
+
+
 
         <div class="rpl-slider-row">
           <div class="rpl-slider-label">
@@ -100,11 +154,7 @@
           </div>
         </div>
 
-        <div id="rippling-stats">
-          <div class="rpl-tip">
-            Click on the map or search to set an offer location.
-          </div>
-        </div>
+        <div id="rippling-stats"></div>
 
         <div class="rpl-ripple-row">
           <button id="rippling-btn">▶ Animate ripple</button>
@@ -185,6 +235,55 @@
             style="font-size: 11px; color: #666; line-height: 1.7"
           ></div>
         </div>
+      </div>
+    </div>
+
+    <div id="rippling-legend-inbound" style="display:none">
+      <h4>Legend</h4>
+      <div class="rpl-leg-item">
+        <div style="width:14px;height:14px;border-radius:50%;background:#cc0000;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,0.4);flex-shrink:0"></div>
+        Your location
+      </div>
+      <div class="rpl-leg-item">
+        <span style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#222">
+          <span style="width:9px;height:9px;border-radius:50%;background:#27ae60;border:1.5px solid #fff;box-shadow:0 0 1px rgba(0,0,0,0.4)"></span>
+          <span>1</span>
+        </span>
+        Active home-group · number = digest position
+      </div>
+      <div class="rpl-leg-item">
+        <span style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#222">
+          <span style="width:9px;height:9px;border-radius:50%;background:#1f77b4;border:1.5px solid #fff;box-shadow:0 0 1px rgba(0,0,0,0.4)"></span>
+          <span>2</span>
+        </span>
+        Active rippled in · from a neighbouring group
+      </div>
+      <div class="rpl-leg-item">
+        <span style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#222">
+          <span style="width:9px;height:9px;border-radius:50%;background:#27ae60;border:1.5px solid #fff;opacity:0.45"></span>
+          <span style="opacity:0.6">3</span>
+        </span>
+        Faded = already taken / promised
+      </div>
+      <div class="rpl-leg-item">
+        <div class="rpl-leg-swatch" style="background:rgba(125,60,152,0.07);border:1.5px dashed #7d3c98"></div>
+        Home-group area
+      </div>
+      <div class="rpl-leg-item">
+        <div class="rpl-leg-swatch" style="background:none;border:2.5px solid #cc0000"></div>
+        Maximum reach
+      </div>
+      <div class="rpl-leg-item">
+        <span style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#222">
+          <span style="width:9px;height:9px;border-radius:50%;background:#f39c12;border:1.5px solid #fff;box-shadow:0 0 1px rgba(0,0,0,0.4)"></span>
+        </span>
+        Promised — still in flight
+      </div>
+      <div class="rpl-leg-item">
+        <span style="display:inline-flex;align-items:center;gap:2px;font-size:10px;font-weight:700;color:#222">
+          <span style="width:9px;height:9px;border-radius:50%;background:#888;border:1.5px solid #fff;box-shadow:0 0 1px rgba(0,0,0,0.4)"></span>
+        </span>
+        Completed since last digest
       </div>
     </div>
 
@@ -284,6 +383,17 @@
         <div id="rippling-tl-tick-layer"></div>
       </div>
     </div>
+
+    <div id="rippling-digest-modal" style="display:none">
+      <div class="rpl-modal-backdrop"></div>
+      <div class="rpl-modal-card">
+        <div class="rpl-modal-header">
+          <span>📄 Digest mock-up</span>
+          <button id="rippling-digest-close" class="rpl-modal-close">×</button>
+        </div>
+        <div id="rippling-digest-list" class="rpl-modal-body"></div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -343,10 +453,10 @@ onMounted(async () => {
   const timeSlider = document.getElementById('rippling-time-slider')
   const fairnessSlider = document.getElementById('rippling-fairness-slider')
 
-  document.querySelectorAll('.rpl-mode-btn').forEach((btn) => {
+  document.querySelectorAll('.rpl-mode-btn[data-mode]').forEach((btn) => {
     btn.addEventListener('click', () => {
       document
-        .querySelectorAll('.rpl-mode-btn')
+        .querySelectorAll('.rpl-mode-btn[data-mode]')
         .forEach((b) => b.classList.remove('rpl-active'))
       btn.classList.add('rpl-active')
       currentMode = btn.dataset.mode
@@ -355,8 +465,617 @@ onMounted(async () => {
     })
   })
 
+  // ── Inbound / outbound view-mode toggle ────────────────────────────
+  // Outbound (default): "who'd see my post" — the rippling-out animation.
+  // Inbound:            "what would I see" — dots for posts I'd be eligible
+  //                     to see in my digest for a given day.
+  let viewMode = 'outbound'
+  let inboxLayer = null
+  let inboxIsoLayer = null
+  let lastRanked = [] // last digest-simulator response, used by the mock-up modal
+  let lastHomeGroups = []
+  let lastActiveCount = 0
+  let lastPromisedCount = 0
+  let lastTakenCount = 0
+  const inboundRow = document.getElementById('rippling-inbound-row')
+
+  document.querySelectorAll('.rpl-mode-btn[data-view]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document
+        .querySelectorAll('.rpl-mode-btn[data-view]')
+        .forEach((b) => b.classList.remove('rpl-active'))
+      btn.classList.add('rpl-active')
+      viewMode = btn.dataset.view
+      applyViewMode()
+      syncUrl()
+    })
+  })
+
+  // Keep the browser URL in sync with the current view + location so the
+  // page is bookmarkable / refreshable without losing state.
+  function syncUrl() {
+    const params = new URLSearchParams(window.location.search)
+    params.set('view', viewMode)
+    if (currentLat !== null && currentLng !== null) {
+      params.set('lat', currentLat.toFixed(6))
+      params.set('lng', currentLng.toFixed(6))
+      params.delete('postcode')
+      params.delete('q')
+    }
+    const newUrl =
+      window.location.pathname + (params.toString() ? '?' + params : '')
+    if (newUrl !== window.location.pathname + window.location.search) {
+      window.history.replaceState({}, '', newUrl)
+    }
+  }
+
+  function applyViewMode() {
+    const inbound = viewMode === 'inbound'
+    // Hide outbound-only controls in inbound mode — except the time
+    // slider, which both views need to control the maximum reach.
+    document.querySelectorAll('#rippling-panel-body > .rpl-slider-row, .rpl-ripple-row, #rippling-freegler-bar').forEach((el) => {
+      if (el.id === 'rippling-inbound-row') return
+      if (el.id === 'rippling-time-row') {
+        el.style.display = ''  // always shown
+        return
+      }
+      el.style.display = inbound ? 'none' : ''
+    })
+    // Hide the deprivation/freeglers/groups toggles in inbound mode — they
+    // describe outbound layers.
+    const layerToggles = document.querySelector('#rippling-panel-body > div[style*="flex-wrap"]')
+    if (layerToggles) layerToggles.style.display = inbound ? 'none' : ''
+    // Also the walk/cycle/drive travel-mode row is outbound-only.
+    const travelModeRow = document.querySelector('#rippling-panel-body > .rpl-mode-row:not(#rippling-view-mode)')
+    if (travelModeRow) travelModeRow.style.display = inbound ? 'none' : ''
+    inboundRow.style.display = inbound ? '' : 'none'
+    // Swap the legend.
+    const outboundLegend = document.getElementById('rippling-legend')
+    const inboundLegend = document.getElementById('rippling-legend-inbound')
+    if (outboundLegend) outboundLegend.style.display = inbound ? 'none' : ''
+    if (inboundLegend) inboundLegend.style.display = inbound ? '' : 'none'
+    // The swingometer / fairness stats panel and the groups sidebar list
+    // are outbound-only — hide them when switching to inbound.
+    const statsEl = document.getElementById('rippling-stats')
+    if (statsEl) statsEl.style.display = inbound ? 'none' : ''
+    const groupsSection = document.getElementById('rippling-groups-section')
+    if (groupsSection && inbound) groupsSection.style.display = 'none'
+    // Swap the intro text.
+    const introOutbound = document.getElementById('rippling-intro-outbound')
+    const introInbound = document.getElementById('rippling-intro-inbound')
+    if (introOutbound) introOutbound.style.display = inbound ? 'none' : ''
+    if (introInbound) introInbound.style.display = inbound ? '' : 'none'
+    // Show the "What's in the digest" / "Sort order" group wrappers in
+    // inbound mode only.
+    const contentsBox = document.getElementById('rippling-sim-contents')
+    const pieWrap = document.getElementById('rippling-sim-pie-wrap')
+    const sortTitle = document.getElementById('rippling-sim-sort-title')
+    if (contentsBox) contentsBox.style.display = inbound ? '' : 'none'
+    if (pieWrap) pieWrap.style.display = inbound ? '' : 'none'
+    if (sortTitle) sortTitle.style.display = inbound ? '' : 'none'
+
+    if (inbound) {
+      clearOutboundLayers()
+      if (ripplePlaying || rippleFrames.length > 0) stopRipple()
+      if (currentLat !== null) fetchInbox()
+    } else {
+      clearInboundLayers()
+      if (currentLat !== null) scheduleUpdate()
+    }
+  }
+
+  function clearOutboundLayers() {
+    Object.values(layers).forEach((l) => map.removeLayer(l))
+    layers = {}
+    // freeglersMarkers is declared later in the script (temporal dead zone),
+    // so we can't reference it by name from here.  Instead, fire a custom
+    // event that the freeglers-clearing block listens for.
+    document.dispatchEvent(new CustomEvent('rippling-clear-freeglers'))
+  }
+
+  function clearInboundLayers() {
+    if (inboxLayer) {
+      map.removeLayer(inboxLayer)
+      inboxLayer = null
+    }
+    if (inboxIsoLayer) {
+      map.removeLayer(inboxIsoLayer)
+      inboxIsoLayer = null
+    }
+  }
+
+  function renderPie(slices) {
+    // slices: [{count, color}, ...]
+    const svg = document.getElementById('rippling-pie')
+    if (!svg) return
+    const total = slices.reduce((s, x) => s + (x.count || 0), 0)
+    if (total === 0) {
+      svg.innerHTML = '<circle r="1" fill="#eee" />'
+      return
+    }
+    let acc = 0
+    const parts = []
+    for (const s of slices) {
+      if (!s.count) continue
+      const frac = s.count / total
+      if (frac >= 0.999) {
+        parts.push(`<circle r="1" fill="${s.color}" />`)
+        break
+      }
+      const a0 = acc * 2 * Math.PI
+      const a1 = (acc + frac) * 2 * Math.PI
+      const x0 = Math.cos(a0).toFixed(4)
+      const y0 = Math.sin(a0).toFixed(4)
+      const x1 = Math.cos(a1).toFixed(4)
+      const y1 = Math.sin(a1).toFixed(4)
+      const largeArc = frac > 0.5 ? 1 : 0
+      parts.push(
+        `<path d="M ${x0} ${y0} A 1 1 0 ${largeArc} 1 ${x1} ${y1} L 0 0 Z" fill="${s.color}" />`
+      )
+      acc += frac
+    }
+    svg.innerHTML = parts.join('')
+  }
+
+  // ── Digest-simulator sliders ──────────────────────────────────────
+  const knobs = {
+    close:  { input: document.getElementById('rippling-w-close'),  val: document.getElementById('rippling-w-close-val') },
+    budget: { input: document.getElementById('rippling-w-budget'), val: document.getElementById('rippling-w-budget-val') },
+    anchor: { input: document.getElementById('rippling-w-anchor'), val: document.getElementById('rippling-w-anchor-val') },
+  }
+  const showDigestBtn = document.getElementById('rippling-show-digest')
+  const simSummaryEl = document.getElementById('rippling-sim-summary')
+
+  let inboundDebounce = null
+  function scheduleInboundUpdate() {
+    if (viewMode !== 'inbound' || currentLat === null) return
+    clearTimeout(inboundDebounce)
+    inboundDebounce = setTimeout(fetchInbox, 200)
+  }
+
+  Object.entries(knobs).forEach(([k, ref]) => {
+    ref.input.addEventListener('input', () => {
+      ref.val.textContent = parseFloat(ref.input.value).toFixed(1)
+      scheduleInboundUpdate()
+    })
+  })
+
+  // Digest mock-up modal — opens a side panel listing the selection
+  // in digest order (title · group · distance · home flag).
+  showDigestBtn.addEventListener('click', openDigestModal)
+  const digestModalEl = document.getElementById('rippling-digest-modal')
+  document.getElementById('rippling-digest-close').addEventListener('click', () => {
+    digestModalEl.style.display = 'none'
+  })
+  digestModalEl.querySelector('.rpl-modal-backdrop').addEventListener('click', () => {
+    digestModalEl.style.display = 'none'
+  })
+  const escapeHTML = (s) =>
+    (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+  function setModalHeader(text) {
+    digestModalEl.querySelector('.rpl-modal-header span').textContent = text
+  }
+
+  function classifyPost(p) {
+    if (p.successful) return { color: '#888', label: 'completed', section: 'completed' }
+    if (p.promised) return { color: '#f39c12', label: 'promised', section: 'promised' }
+    return p.home_group
+      ? { color: '#27ae60', label: 'home group', section: 'active' }
+      : { color: '#1f77b4', label: 'rippled in', section: 'active' }
+  }
+
+  // Haversine distance in km between two lat/lng points.
+  function crowFliesKm(lat1, lng1, lat2, lng2) {
+    const R = 6371
+    const toRad = (d) => (d * Math.PI) / 180
+    const dLat = toRad(lat2 - lat1)
+    const dLng = toRad(lng2 - lng1)
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)))
+  }
+
+  function thumbUrlFor(p) {
+    if (p.thumb_externaluid)
+      return `https://ucarecdn.com/${p.thumb_externaluid}/-/scale_crop/120x120/center/-/format/auto/-/quality/smart/`
+    if (p.thumb_attachment_id)
+      return `https://images.ilovefreegle.org/tmimg_${p.thumb_attachment_id}.jpg`
+    return null
+  }
+
+  function formatTimeAgo(arrival) {
+    const t = new Date(arrival).getTime()
+    const ms = Date.now() - t
+    const h = ms / 3600000
+    if (h < 1) return `${Math.max(1, Math.round(ms / 60000))} min ago`
+    if (h < 24) return `${Math.round(h)} h ago`
+    return new Date(arrival).toLocaleString()
+  }
+
+  function buildDigestRow(p, rank) {
+    const cls = classifyPost(p)
+    const homeChip = p.home_group
+      ? `<span style="color:#27ae60;font-weight:600">home</span>`
+      : `<span style="color:#1f77b4">rippled in</span>`
+    const subject = escapeHTML(p.subject || '(no title)')
+    const msgtype = escapeHTML(p.msgtype)
+    const groupName = escapeHTML(p.groupname || (p.groupid ? `group ${p.groupid}` : 'no group'))
+    const kmStraight =
+      currentLat !== null ? crowFliesKm(currentLat, currentLng, p.lat, p.lng) : null
+    const distStr =
+      kmStraight !== null
+        ? `${kmStraight.toFixed(1)} km`
+        : `${p.drive_min.toFixed(0)} min in reach`
+    const when = formatTimeAgo(p.arrival)
+    const thumb = thumbUrlFor(p)
+    const thumbHTML = thumb
+      ? `<img src="${thumb}" loading="lazy" referrerpolicy="no-referrer" style="width:48px;height:48px;border-radius:4px;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'"/>`
+      : `<div style="width:48px;height:48px;border-radius:4px;background:#eee;flex-shrink:0"></div>`
+    // Score breakdown column — shows that the rank came from the
+    // weighted sum of the three signals.  Each component is rendered as
+    // a tiny labelled bar (filled to its 0..1 value).
+    const fmt = (n) => (n || 0).toFixed(2)
+    const bar = (label, val, color) => {
+      const pct = Math.max(0, Math.min(1, val || 0)) * 100
+      return (
+        `<div style="font-size:9px;color:#666;line-height:1.2;display:flex;align-items:center;gap:3px">` +
+        `<span style="width:38px;flex-shrink:0">${label}</span>` +
+        `<span style="flex:1;background:#eee;height:5px;border-radius:2px;position:relative;overflow:hidden">` +
+        `<span style="position:absolute;left:0;top:0;bottom:0;width:${pct.toFixed(0)}%;background:${color}"></span>` +
+        `</span></div>`
+      )
+    }
+    const scoreCol =
+      `<div style="width:100px;flex-shrink:0;padding:0 4px;display:flex;flex-direction:column;justify-content:center;gap:2px">` +
+      `<div style="font-size:11px;font-weight:700;color:#333;text-align:center;line-height:1">` +
+      `${fmt(p.score)}<div style="font-size:8px;font-weight:400;color:#888;margin-top:1px">score</div></div>` +
+      bar('close',  p.score_close,  '#3498db') +
+      bar('budget', p.score_budget, '#e67e22') +
+      bar('home',   p.score_anchor, '#27ae60') +
+      `</div>`
+    return (
+      `<div class="rpl-digest-row">` +
+      `<div class="rpl-digest-rank" style="background:${cls.color}">${rank}</div>` +
+      `<div class="rpl-digest-body">` +
+      `<div class="rpl-digest-title">${msgtype}: ${subject}</div>` +
+      `<div class="rpl-digest-meta">` +
+      `${homeChip} · ${groupName} · ${distStr} · ${when}` +
+      `</div></div>` +
+      scoreCol +
+      thumbHTML +
+      `</div>`
+    )
+  }
+
+  function openDigestModal() {
+    const listEl = document.getElementById('rippling-digest-list')
+    if (!lastRanked.length) {
+      const msg =
+        currentLat === null
+          ? 'Drop a location first.'
+          : 'No posts in the digest yet — either the data is still loading, or the server returned no results for this location.'
+      listEl.innerHTML = `<div style="padding:16px;color:#888">${msg}</div>`
+      setModalHeader('📄 Digest mock-up')
+      digestModalEl.style.display = ''
+      return
+    }
+
+    const intro =
+      `<div style="padding:10px 12px;font-size:11px;color:#555;background:#fff7e0;border-bottom:1px solid #f1d97d;line-height:1.4">` +
+      `<strong>This isn't how the digest will look</strong> — it's a list of what the digest would <em>contain</em> under the current sliders, in order.  The real email will be laid out by the unified-digest team.` +
+      `</div>`
+
+    const sections = { active: [], promised: [], completed: [] }
+    lastRanked.forEach((p) => {
+      const cls = classifyPost(p)
+      sections[cls.section].push(buildDigestRow(p, p._rank))
+    })
+
+    // Soft truncate any section longer than 100 — central London easily
+    // exceeds that and a 200-row digest scroll is its own problem.
+    const SOFT_CAP = 100
+    const truncate = (rows) => {
+      if (rows.length <= SOFT_CAP) return { html: rows.join(''), extra: 0 }
+      return {
+        html: rows.slice(0, SOFT_CAP).join(''),
+        extra: rows.length - SOFT_CAP,
+      }
+    }
+    const moreFooter = (n) =>
+      `<div style="padding:10px 12px;font-size:11px;color:#888;text-align:center;background:#fafafa;border-top:1px solid #eee">` +
+      `<em>… and ${n} more on the website.  Amazed you've scrolled this far.</em></div>`
+
+    const sectionHeader = (title, sub) =>
+      `<div style="padding:8px 12px;background:#f6f9f1;border-top:1px solid #ececec;border-bottom:1px solid #ececec;font-weight:600;color:#555;font-size:11px">${title}` +
+      (sub ? `<div style="font-weight:400;color:#888;font-size:10.5px;margin-top:2px">${sub}</div>` : '') +
+      `</div>`
+
+    let html = intro
+    if (sections.active.length) {
+      html += sectionHeader(`Top picks (${sections.active.length})`)
+      const r = truncate(sections.active)
+      html += r.html
+      if (r.extra) html += moreFooter(r.extra)
+    }
+    if (sections.promised.length) {
+      html += sectionHeader(
+        `Promised (${sections.promised.length})`,
+        'Someone has expressed interest but the post is still in flight.'
+      )
+      const r = truncate(sections.promised)
+      html += r.html
+      if (r.extra) html += moreFooter(r.extra)
+    }
+    if (sections.completed.length) {
+      html += sectionHeader(
+        `Since last digest, these came and went (${sections.completed.length})`,
+        '<em>Switch to immediate notifications to see these in time.</em>'
+      )
+      const r = truncate(sections.completed)
+      html += r.html
+      if (r.extra) html += moreFooter(r.extra)
+    }
+    listEl.innerHTML = html
+    setModalHeader('📄 Digest mock-up')
+    digestModalEl.style.display = ''
+  }
+
+  function openClusterDetail(posts) {
+    const listEl = document.getElementById('rippling-digest-list')
+    let html =
+      `<div style="padding:10px 12px;font-size:11px;color:#555;background:#fff7e0;border-bottom:1px solid #f1d97d">` +
+      `<strong>${posts.length} posts at this exact location.</strong> ` +
+      `Common with TrashNothing cross-posts that use a group centroid.` +
+      `</div>`
+    posts.forEach((p) => (html += buildDigestRow(p, p._rank)))
+    listEl.innerHTML = html
+    setModalHeader(`📍 ${posts.length} posts here`)
+    digestModalEl.style.display = ''
+  }
+
+  function openPostDetail(p, rank) {
+    const cls = classifyPost(p)
+    const groupName = p.groupname || (p.groupid ? `group ${p.groupid}` : 'no group')
+    const fmt = (n) => (n || 0).toFixed(2)
+    const subject = escapeHTML(p.subject || '(no title)')
+    const msgtype = escapeHTML(p.msgtype)
+    const thumb = thumbUrlFor(p)
+    const thumbHTML = thumb
+      ? `<img src="${thumb}" referrerpolicy="no-referrer" style="width:120px;height:120px;border-radius:6px;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'"/>`
+      : ''
+    const kmStraight =
+      currentLat !== null ? crowFliesKm(currentLat, currentLng, p.lat, p.lng) : null
+    const distStr =
+      kmStraight !== null
+        ? `${kmStraight.toFixed(1)} km as the crow flies · ${p.drive_min.toFixed(0)} min in reach`
+        : `${p.drive_min.toFixed(0)} min in reach`
+    const html = `
+      <div style="padding:16px;font-size:13px;line-height:1.5">
+        <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:10px">
+          <div class="rpl-digest-rank" style="background:${cls.color};width:32px;height:32px;font-size:13px;flex-shrink:0">${rank + 1}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:14px;color:#333;word-break:break-word">${msgtype}: ${subject}</div>
+            <div style="font-size:11px;color:#888;margin-top:2px">${formatTimeAgo(p.arrival)}</div>
+          </div>
+          ${thumbHTML}
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <tr><td style="color:#888;padding:4px 6px;width:130px">Status</td><td style="padding:4px 6px"><span style="color:${cls.color};font-weight:600">${cls.label}</span></td></tr>
+          <tr><td style="color:#888;padding:4px 6px">Group</td><td style="padding:4px 6px">${escapeHTML(groupName)}</td></tr>
+          <tr><td style="color:#888;padding:4px 6px">Distance</td><td style="padding:4px 6px">${distStr}</td></tr>
+          <tr><td style="color:#888;padding:4px 6px">Eyeballs so far</td><td style="padding:4px 6px">${p.views} view${p.views===1?'':'s'} · ${p.replies} ${p.replies===1?'reply':'replies'}</td></tr>
+          <tr><td style="color:#888;padding:4px 6px">Score</td><td style="padding:4px 6px"><strong>${fmt(p.score)}</strong> = close ${fmt(p.score_close)} + budget ${fmt(p.score_budget)} + anchor ${fmt(p.score_anchor)}</td></tr>
+        </table>
+      </div>`
+    document.getElementById('rippling-digest-list').innerHTML = html
+    setModalHeader(`Post #${rank + 1}`)
+    digestModalEl.style.display = ''
+  }
+
+  async function fetchInbox() {
+    if (currentLat === null) return
+    clearInboundLayers()
+    // Belt-and-braces: also wipe any outbound layers that may still be on
+    // the map (freeglers, isochrone polygons, group outlines) — these don't
+    // belong in the inbound view.
+    clearOutboundLayers()
+    // messages_spatial is updated in place; only "now" is meaningful.
+    const qs = new URLSearchParams({
+      lat: currentLat.toFixed(6),
+      lng: currentLng.toFixed(6),
+      // Maximum reach driven by the shared time slider at the top.
+      max_minutes: timeSlider.value,
+      w_closeness: knobs.close.input.value,
+      w_freshness: '0', // freshness disabled — time-of-arrival within a daily-digest window doesn't carry useful signal
+      w_budget: knobs.budget.input.value,
+      w_anchor: knobs.anchor.input.value,
+      // No cap: the sort order is what matters, not a hard cut.  Pass the
+      // backend ceiling (1000) so the full reachable pool comes back.
+      cap: '1000',
+      group_by_poster: 'false',
+    })
+    const url = apiUrl(`/v1/digest-simulator?${qs.toString()}`)
+    try {
+      const r = await fetch(url)
+      if (!r.ok) return
+      const data = await r.json()
+      drawInbox(data)
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function drawInbox(data) {
+    if (!data) return
+    const homeSummary = document.getElementById('rippling-home-summary')
+
+    const clusterNote = data.poster_groups && data.poster_groups.length
+      ? ` · ${data.poster_groups.length} same-poster cluster${data.poster_groups.length === 1 ? '' : 's'}`
+      : ''
+    // Total now appears as the headline number inside the pie area; keep
+    // the lower summary for cluster info only, when there are clusters.
+    simSummaryEl.innerHTML = clusterNote
+      ? `<strong>${data.poster_groups.length}</strong> same-poster cluster${data.poster_groups.length === 1 ? '' : 's'}.`
+      : ''
+
+    // Home-group polygons — draw before the isochrone so they sit underneath.
+    ;(data.home_groups || []).forEach((g) => {
+      if (!g.polygon) return
+      const layer = L.geoJSON(
+        { type: 'Feature', geometry: g.polygon },
+        {
+          style: {
+            color: '#7d3c98',
+            weight: 1.5,
+            fill: true,
+            fillColor: '#7d3c98',
+            fillOpacity: 0.05,
+            dashArray: '2,3',
+          },
+        }
+      )
+        .bindTooltip(`Home group: ${g.name}`, { sticky: true })
+        .addTo(map)
+      // Track on the same layer-set as the isochrone so it gets cleared on
+      // next refresh.
+      if (!inboxLayer) inboxLayer = L.featureGroup().addTo(map)
+      inboxLayer.addLayer(layer)
+    })
+
+    // Outline the isochrone — apply Chaikin smoothing client-side so the
+    // boundary reads as a curve rather than a staircase.
+    if (data.isochrone && data.isochrone.geometry) {
+      const ring = data.isochrone.geometry.coordinates[0]
+      if (ring && ring.length > 3) {
+        const smoothed = chaikinSmooth(ring).map(([lng, lat]) => [lat, lng])
+        inboxIsoLayer = L.polygon(smoothed, {
+          color: '#cc0000',
+          weight: 2.5,
+          fill: false,
+        }).addTo(map)
+      }
+    }
+
+    const group = inboxLayer || L.featureGroup().addTo(map)
+    inboxLayer = group
+    // Flatten selected + deferred into one ranked list (backend returns them
+    // score-sorted), then render each as a numbered marker showing its
+    // position in the digest.  Numbers > 99 read as "99+" to keep the badge
+    // visually tidy.
+    // Match the V1 production digest model: still-active posts at the top
+    // (sorted by score), then a "promised — still in flight" section, then
+    // a "completed since last digest" tail rendered grey, with an
+    // encouragement to switch to immediate mode for missed posts.  Within
+    // each section we keep the backend's score ordering.
+    const rawList = [].concat(data.selected || [], data.deferred || [])
+    const active = rawList.filter((p) => !p.successful && !p.promised)
+    const activeHome = active.filter((p) => p.home_group)
+    const activeCross = active.filter((p) => !p.home_group)
+    const promised = rawList.filter((p) => p.promised && !p.successful)
+    const taken = rawList.filter((p) => p.successful)
+    const ranked = active.concat(promised, taken)
+    // Stamp each post with its global rank (1-based) so the marker labels
+    // and modal can both reference the same position.
+    ranked.forEach((p, i) => (p._rank = i + 1))
+    // Keep this list around for the digest mock-up modal.
+    lastRanked = ranked
+    lastActiveCount = active.length
+    lastPromisedCount = promised.length
+    lastTakenCount = taken.length
+    lastHomeGroups = data.home_groups || []
+
+    const total = data.pool_size || 0
+    const homeHead = data.home_groups && data.home_groups.length
+      ? `<strong>Home:</strong> ${data.home_groups.map((g) => g.name).join(', ')}`
+      : `<strong>No home group at this point.</strong>`
+    homeSummary.innerHTML =
+      `<div style="font-size:13px;font-weight:700;color:#333;margin-bottom:2px">${total} post${total === 1 ? '' : 's'} in digest</div>` +
+      `${homeHead}<br>` +
+      `<span style="color:#27ae60">●</span> ${activeHome.length} active home-group · ` +
+      `<span style="color:#1f77b4">●</span> ${activeCross.length} rippled in<br>` +
+      `<span style="color:#f39c12">●</span> ${promised.length} promised · ` +
+      `<span style="color:#888">●</span> ${taken.length} completed`
+    renderPie([
+      { count: activeHome.length, color: '#27ae60' },
+      { count: activeCross.length, color: '#1f77b4' },
+      { count: promised.length, color: '#f39c12' },
+      { count: taken.length, color: '#888' },
+    ])
+    // Group posts that share the same lat/lng (typical for TrashNothing
+    // cross-posts using a group centroid) so they collapse into a single
+    // marker with a comma-separated list of digest positions.
+    const buckets = new Map()
+    ranked.forEach((p) => {
+      const key = p.lat.toFixed(5) + ',' + p.lng.toFixed(5)
+      if (!buckets.has(key)) buckets.set(key, [])
+      buckets.get(key).push(p)
+    })
+    const totalRanked = ranked.length
+    const colorFor = (p) => {
+      if (p.successful) return '#888'
+      if (p.promised) return '#f39c12'
+      return p.home_group ? '#27ae60' : '#1f77b4'
+    }
+    buckets.forEach((bucketPosts) => {
+      // Sort by rank within the cluster (already sorted globally).
+      const minRank = bucketPosts[0]._rank
+      // Pick the dominant colour by the first (highest-ranked) member.
+      const color = colorFor(bucketPosts[0])
+      const t = totalRanked > 1 ? (minRank - 1) / Math.max(totalRanked - 1, 1) : 0
+      const baseOpacity = 0.95 - 0.45 * t
+      const dotOpacity =
+        bucketPosts[0].successful || bucketPosts[0].promised ? 0.85 : baseOpacity
+      // Truncate the label list at 6 ranks to avoid overflow.
+      const ranks = bucketPosts.map((p) => p._rank)
+      let label = ranks.slice(0, 6).join(',')
+      if (ranks.length > 6) label += ',+' + (ranks.length - 6)
+      const icon = L.divIcon({
+        className: 'rpl-digest-marker',
+        html:
+          `<div style="display:flex;align-items:center;gap:2px;` +
+          `text-shadow:0 0 2px #fff,0 0 2px #fff;font-size:10px;` +
+          `font-weight:700;color:#222;line-height:1;white-space:nowrap">` +
+          `<div style="width:9px;height:9px;border-radius:50%;background:${color};` +
+          `border:1.5px solid #fff;box-shadow:0 0 1px rgba(0,0,0,0.4);` +
+          `opacity:${dotOpacity};flex-shrink:0"></div>` +
+          `<span>${label}</span></div>`,
+        iconSize: null,
+        iconAnchor: [4, 4],
+      })
+      const tip =
+        bucketPosts.length === 1
+          ? 'Click for details'
+          : `Click for ${bucketPosts.length} posts at this location`
+      L.marker([bucketPosts[0].lat, bucketPosts[0].lng], { icon })
+        .bindTooltip(tip, { sticky: true, direction: 'top' })
+        .on('click', () => {
+          if (bucketPosts.length === 1)
+            openPostDetail(bucketPosts[0], bucketPosts[0]._rank - 1)
+          else openClusterDetail(bucketPosts)
+        })
+        .addTo(group)
+    })
+
+    // Same-poster clusters: ring around the top post with the count.
+    ;(data.poster_groups || []).forEach((cl) => {
+      L.circleMarker([cl.top_lat, cl.top_lng], {
+        radius: 12,
+        color: '#9b59b6',
+        weight: 2,
+        fill: false,
+        dashArray: '3,3',
+      })
+        .bindTooltip(`Same poster: ${cl.count} posts (top + ${cl.count - 1} others)`, { sticky: true })
+        .addTo(group)
+    })
+  }
+
   timeSlider.addEventListener('input', () => {
-    if (currentLat !== null) scheduleUpdate()
+    if (currentLat === null) return
+    if (viewMode === 'inbound') scheduleInboundUpdate()
+    else scheduleUpdate()
   })
   fairnessSlider.addEventListener('input', () => {
     document.getElementById('rippling-fairness-val').textContent =
@@ -456,45 +1175,127 @@ onMounted(async () => {
 
   map.on('click', (e) => setLocation(e.latlng.lat, e.latlng.lng, false))
 
-  if (navigator.geolocation) {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        if (currentLat === null)
-          setLocation(pos.coords.latitude, pos.coords.longitude, true)
-      },
-      () => {}
-    )
+  // ── URL parameter handling ───────────────────────────────────────
+  //   ?view=inbound|outbound   — preselect a mode on load
+  //   ?lat=51.5&lng=-0.12      — drop the location marker straight away
+  //   ?postcode=OX1+1AB        — geocode via Nominatim and drop marker
+  // These let you bookmark "Trafalgar Square digest preview" etc.
+  //
+  // The actual apply is deferred to a microtask because setLocation
+  // references variables (ripplePlaying, freeglersMarkers) that are declared
+  // further down this onMounted body and live in the temporal dead zone
+  // until we reach them.
+  const urlParams = new URLSearchParams(window.location.search)
+  const pendingView = urlParams.get('view')
+  const pendingLat = parseFloat(urlParams.get('lat'))
+  const pendingLng = parseFloat(urlParams.get('lng'))
+  const pendingPostcode = urlParams.get('postcode') || urlParams.get('q')
+
+  async function applyUrlInit() {
+    if (pendingView === 'inbound' || pendingView === 'outbound') {
+      const btn = document.querySelector(`.rpl-mode-btn[data-view="${pendingView}"]`)
+      if (btn) btn.click()
+    }
+    if (!isNaN(pendingLat) && !isNaN(pendingLng)) {
+      setLocation(pendingLat, pendingLng, true)
+      return true
+    }
+    if (pendingPostcode) {
+      try {
+        const r = await fetch(
+          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+            pendingPostcode
+          )}&format=json&limit=1&countrycodes=gb`
+        )
+        const arr = await r.json()
+        if (arr && arr[0]) {
+          setLocation(parseFloat(arr[0].lat), parseFloat(arr[0].lon), true)
+          return true
+        }
+      } catch (e) {
+        // fall through to geolocation
+      }
+    }
+    return false
   }
+
+  // Defer until after onMounted's synchronous setup completes (so all the
+  // let-bindings further down are reached) — setTimeout(0) is enough.
+  setTimeout(async () => {
+    const urlSetLocation = await applyUrlInit()
+    if (!urlSetLocation && navigator.geolocation && currentLat === null) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (currentLat === null)
+            setLocation(pos.coords.latitude, pos.coords.longitude, true)
+        },
+        () => {}
+      )
+    }
+  }, 0)
 
   function setLocation(lat, lng, fly) {
     if (ripplePlaying || rippleFrames.length > 0) stopRipple()
     currentLat = lat
     currentLng = lng
+    syncUrl()
     if (marker) map.removeLayer(marker)
-    marker = L.circleMarker([lat, lng], {
-      radius: 8,
-      color: '#e8380d',
-      weight: 3,
-      fillColor: '#fff',
-      fillOpacity: 1,
-    })
-      .addTo(map)
+    const inbound = viewMode === 'inbound'
+    if (inbound) {
+      // Inbound mode: use a real divIcon marker (not a circleMarker) so
+      // we can put it in a dedicated topmost pane.  Otherwise digest
+      // post markers, which are L.markers in the default marker pane,
+      // can sit on top of the SVG circle and hide the red dot.
+      if (!map.getPane('locationPane')) {
+        const p = map.createPane('locationPane')
+        p.style.zIndex = 700  // above markerPane (600) and overlayPane (400)
+      }
+      marker = L.marker([lat, lng], {
+        pane: 'locationPane',
+        interactive: false,
+        icon: L.divIcon({
+          className: 'rpl-location-marker',
+          html: '<div style="width:16px;height:16px;border-radius:50%;background:#cc0000;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.5)"></div>',
+          iconSize: [16, 16],
+          iconAnchor: [8, 8],
+        }),
+      }).addTo(map)
+    } else {
+      marker = L.circleMarker([lat, lng], {
+        radius: 8,
+        color: '#e8380d',
+        weight: 3,
+        fillColor: '#fff',
+        fillOpacity: 1,
+      }).addTo(map)
+    }
     if (fly) map.flyTo([lat, lng], Math.max(map.getZoom(), 13))
+    if (inbound) {
+      // Inbound mode: don't recompute outbound isochrones; just refresh
+      // the posts-for-member dots.  Also wipe any freegler dots that may
+      // still be on the map from the outbound view.
+      clearOutboundLayers()
+      fetchInbox()
+      return
+    }
     fitViewOnNextIsochrone = true
     fetchLocalBaseline(lat, lng)
     fetchAndDrawGroups(lat, lng)
     updateIsochrone()
   }
 
-  // Fetch the natural deprivation fraction for this location: the proportion of
-  // freeglers within a 30-minute drive (no fairness adjustment) that are in
-  // deprived quintiles (Q1–Q3). This becomes the "proportionate" baseline for
-  // the swingometer so that the needle measures algorithmic effect, not the
-  // area's inherent demographics.
+  // Fetch the natural deprivation fraction for this location at the
+  // *maximum* reach the slider allows.  This is the regional baseline:
+  // "if we showed this post to every freegler the algorithm could
+  // possibly reach from here, what share of them would be in deprived
+  // quintiles?"  The swingometer then measures how the *current*
+  // (slider-set) reach deviates from that regional mix, so the needle
+  // should sit dead-centre when the slider is cranked to the top.
   async function fetchLocalBaseline(lat, lng) {
+    const maxReach = Number(timeSlider.max) || 60
     try {
       const url = apiUrl(
-        `/v1/fairness?lat=${lat.toFixed(6)}&lng=${lng.toFixed(6)}&minutes=30&mode=drive&fairness=0`
+        `/v1/fairness?lat=${lat.toFixed(6)}&lng=${lng.toFixed(6)}&minutes=${maxReach}&mode=drive&fairness=0`
       )
       const r = await fetch(url)
       if (!r.ok) return
@@ -912,6 +1713,13 @@ onMounted(async () => {
   let allFreeglers = []
   let freeglersMarkers = []
   let freeglersMapTimer = null
+
+  // clearOutboundLayers fires this so it can wipe freegler dots without
+  // referencing the freeglersMarkers binding before initialisation.
+  document.addEventListener('rippling-clear-freeglers', () => {
+    freeglersMarkers.forEach((m) => map.removeLayer(m))
+    freeglersMarkers = []
+  })
   // Total located freeglers in the area BEFORE the 2000-point display cap.
   // allFreeglers.length may be capped; use this for estimates.
   let totalLocatedFromServer = 0
@@ -977,6 +1785,7 @@ onMounted(async () => {
     // deprivation percentage even when dots are hidden (toggle off or zoom < 11).
     buildFreeglersGrid()
     if (!showFreeglers) return
+    if (viewMode === 'inbound') return  // freegler dots are outbound-only
     if (map.getZoom() < FREEGLER_DOT_MIN_ZOOM) return
     freeglersGrid.forEach((g) => {
       const m = L.circleMarker([g.lat, g.lng], {
@@ -2024,6 +2833,191 @@ onUnmounted(() => {
   box-sizing: border-box;
 }
 
+/* Inbound section groupings — make it visually clear that the
+   maximum-reach slider drives "what's in the digest" (pie chart) and
+   that the other sliders drive "sort order" (mock-up). */
+.rpl-sim-group {
+  margin-top: 8px;
+  padding-bottom: 2px;
+}
+.rpl-sim-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #4d8b1d;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1.5px solid #61ae24;
+  padding-bottom: 2px;
+  margin-bottom: 3px;
+}
+.rpl-sim-group-sub {
+  font-size: 10px;
+  color: #777;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+/* The maximum-reach slider row (#rippling-time-row) sits inside the
+   "What's in the digest" visual group when inbound mode is active —
+   give it a subtle left rail so it's clearly grouped with the heading
+   above and the pie chart below. */
+#rippling-panel-body:has(#rippling-sim-contents:not([style*='display: none'])) #rippling-time-row,
+#rippling-panel-body:has(#rippling-sim-contents:not([style*='display: none'])) #rippling-sim-pie-wrap {
+  border-left: 2px solid #d9eccb;
+  padding-left: 8px;
+  margin-left: -2px;
+}
+
+/* "Sort order" group — the inbound-row gets a similar left rail to
+   visually pair with its heading and the digest mock-up button it
+   contains. */
+#rippling-inbound-row {
+  border-left: 2px solid #d9eccb;
+  padding-left: 8px;
+  margin-left: -2px;
+  margin-top: 10px;
+}
+
+/* Intro text under the search box */
+.rpl-intro {
+  font-size: 10.5px;
+  color: #555;
+  background: #f6f9f1;
+  border-left: 3px solid #61ae24;
+  padding: 6px 8px;
+  border-radius: 3px;
+  line-height: 1.4;
+  margin: 8px 0;
+}
+
+/* Show digest mock-up button */
+.rpl-digest-btn {
+  margin-top: 8px;
+  width: 100%;
+  background: #61ae24;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rpl-digest-btn:hover {
+  background: #4d8b1d;
+}
+
+/* Modal */
+#rippling-digest-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 2000;
+}
+.rpl-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+.rpl-modal-card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(680px, 92%);
+  max-height: 80%;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+}
+.rpl-modal-header {
+  background: #61ae24;
+  color: #fff;
+  padding: 8px 12px;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+}
+.rpl-modal-close {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.rpl-modal-body {
+  padding: 0;
+  overflow-y: auto;
+}
+.rpl-digest-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 12px;
+}
+.rpl-digest-row:hover {
+  background: #fafafa;
+}
+.rpl-digest-rank {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.rpl-digest-body {
+  flex: 1;
+  min-width: 0;
+}
+.rpl-digest-title {
+  font-weight: 600;
+  color: #333;
+  word-break: break-word;
+}
+.rpl-digest-meta {
+  font-size: 10.5px;
+  color: #777;
+  margin-top: 2px;
+}
+
+/* Digest-simulator knobs */
+.rpl-sim-knob {
+  margin: 6px 0;
+  padding: 4px 6px 5px;
+  border: 1px solid #ececec;
+  border-radius: 4px;
+  background: #fafafa;
+}
+.rpl-sim-knob label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #555;
+  margin-bottom: 1px;
+}
+.rpl-sim-knob input[type='range'] {
+  width: 100%;
+  margin: 2px 0;
+}
+.rpl-sim-help {
+  font-size: 9.5px;
+  color: #888;
+  line-height: 1.3;
+  margin-top: 1px;
+}
+
 /* Smooth polygon boundary crawl: CSS d-attribute transitions let the browser
    interpolate SVG path shapes between frames when the vertex count is stable.
    Leaflet's setLatLngs calls path.setAttribute('d', …) directly, so any CSS
@@ -2336,7 +3330,8 @@ onUnmounted(() => {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
-#rippling-legend {
+#rippling-legend,
+#rippling-legend-inbound {
   position: absolute;
   bottom: 10px;
   left: 10px;
@@ -2348,7 +3343,8 @@ onUnmounted(() => {
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
-#rippling-legend h4 {
+#rippling-legend h4,
+#rippling-legend-inbound h4 {
   margin: 0 0 6px;
   font-size: 11px;
   color: #555;

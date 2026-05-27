@@ -31,7 +31,10 @@ var ErrDeltaNotSupported = errors.New("dataset does not support incremental upda
 var ErrTooManyResults = errors.New("polygon matches too many results; narrow the polygon")
 
 // maxWithinResults is the cap on IDs returned by a Within query.
-const maxWithinResults = 10_000
+// Raised from 10k so dense urban isochrones (central London ~50k freeglers
+// within 30-minute drive) don't trip the cap.  Memory cost is small (~4 bytes
+// per ID × 100k = ~400 KB per request).
+const maxWithinResults = 100_000
 
 // Dataset is the interface each spatial dataset must implement.
 type Dataset interface {
