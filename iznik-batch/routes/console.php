@@ -358,7 +358,13 @@ Schedule::command('tn:sync')
 // references users_digests which doesn't exist on prod.
 $immediateShardCount = 8;
 foreach (range(0, $immediateShardCount - 1) as $shardIndex) {
-    Schedule::command("mail:digest:unified --mode=immediate --shard={$shardIndex} --shards={$immediateShardCount}")
+    // --max-iterations=60 keeps the worker iterating internally for up to
+    // ~one minute so we don't sit idle between cron ticks (a single pass
+    // takes ~25s and the cron is every-minute, which left ~35s of dead
+    // time per cycle — observed as procs=0 in mid-tick samples). The
+    // flock self-bounces overlap so we can't double-up if a tick fires
+    // before the previous one's loop has exited.
+    Schedule::command("mail:digest:unified --mode=immediate --shard={$shardIndex} --shards={$immediateShardCount} --max-iterations=60")
         ->everyMinute()
         ->sendOutputTo(cronLog("mail:digest:unified.shard{$shardIndex}"))
         ->runInBackground();

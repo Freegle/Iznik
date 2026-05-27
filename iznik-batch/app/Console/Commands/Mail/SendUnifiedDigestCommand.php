@@ -30,6 +30,7 @@ class SendUnifiedDigestCommand extends Command
                             {--limit= : Cap per-run work — groups (immediate) or users (daily)}
                             {--shard=0 : Shard index for parallel immediate-mode workers (0..shards-1)}
                             {--shards=1 : Total number of shards (groups are partitioned by groupid MOD shards)}
+                            {--max-iterations=1 : Loop sendImmediateDigests this many times within one invocation (cron passes a higher value to fill the minute between ticks)}
                             {--dry-run : Show what would be sent without actually sending}";
 
     /**
@@ -112,7 +113,9 @@ class SendUnifiedDigestCommand extends Command
 
         $limitLabel = $limit !== null ? (string) $limit : 'unlimited';
         $shardLabel = $shards > 1 ? " shard={$shard}/{$shards}" : '';
-        $this->info("Sending unified digests (mode: {$mode}, limit: {$limitLabel}{$shardLabel})...");
+        $maxIterations = max(1, (int) $this->option('max-iterations'));
+        $iterLabel = $maxIterations > 1 ? " iterations≤{$maxIterations}" : '';
+        $this->info("Sending unified digests (mode: {$mode}, limit: {$limitLabel}{$shardLabel}{$iterLabel})...");
 
         if ($userId) {
             $this->info("Restricting recipients to user ID: {$userId}");
@@ -121,13 +124,31 @@ class SendUnifiedDigestCommand extends Command
             $this->info("Restricting to group ID: {$groupId}");
         }
 
-        // Stash shard info on the instance so lockKeySuffix() can read it
-        // before doHandle returns. Lock is acquired in handle() above so by
-        // the time we run this method the lock is already held — but the
-        // SUFFIX needed to be set before that. We move shard parsing to
-        // handle() below… actually since options parsing is cheap, just
-        // re-read in lockKeySuffix() and the suffix is consistent.
-        $stats = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards);
+        // Iterate within one invocation so the worker keeps the wall clock
+        // busy instead of exiting after one pass and idling until the next
+        // cron tick. The flock prevents two ticks from overlapping, so
+        // looping inside is the right place to amortise process startup
+        // and JIT warm-up. Exit early once an iteration finds no work in
+        // our shard (next tick will pick up any new arrivals).
+        $stats = ['groups_processed' => 0, 'users_processed' => 0, 'emails_sent' => 0, 'no_new_posts_groups' => 0, 'errors' => 0];
+        $touchedUsers = [];
+
+        for ($i = 0; $i < $maxIterations; $i++) {
+            $r = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards);
+
+            // Daily mode returns a different stat shape — match keys best-effort.
+            foreach (['groups_processed', 'users_processed', 'emails_sent', 'no_new_posts_groups', 'errors'] as $k) {
+                if (isset($r[$k])) {
+                    $stats[$k] += $r[$k];
+                }
+            }
+
+            // If this iteration did no useful work, no point spinning.
+            $idle = ($r['emails_sent'] ?? 0) === 0;
+            if ($idle) {
+                break;
+            }
+        }
 
         $this->newLine();
 
