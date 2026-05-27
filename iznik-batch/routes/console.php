@@ -637,11 +637,15 @@ Schedule::command('data:fetch-app-versions')
     ->runInBackground();
 
 // Sync WhatJobs job listings from XML feeds into the jobs table.
-// V1: cron/whatjobs.php (hourly 08:00-22:00)
+// V1: cron/whatjobs.php (hourly 08:00-22:00). With the Photon geocoder now
+// wired up, a cold-cache run hits Photon for ~60k unique (city,state,country)
+// tuples and can take hours; even warm runs comfortably exceed an hour. Run
+// every 3 hours instead of hourly so a long run doesn't queue up overlapping
+// scheduled invocations (the in-command Cache::lock TTL is matched to this).
 Schedule::command('integrations:sync-whatjobs')
-    ->hourlyAt(0)
+    ->cron('0 */3 * * *')
     ->between('08:00', '22:00')
-    ->withoutOverlapping()
+    ->withoutOverlapping(240)
     ->sendOutputTo(cronLog('integrations:sync-whatjobs'))
     ->runInBackground();
 
