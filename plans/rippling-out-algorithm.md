@@ -23,19 +23,27 @@ needs both questions answered separately and explicitly.
 ## What's wrong today
 
 Freegle posts belong to a single group, defined by a polygon on a map.
-A member living right at the edge of one group's polygon is
-geographically much closer to many of the *neighbouring* group's posts
-than to most of their own group's.  Today they don't see those
-neighbouring posts at all unless a volunteer manually cross-posts the
-item — a slow, ad-hoc process.  Members near group boundaries are
-systematically disadvantaged: items they could realistically collect
-remain invisible to them.
+Cross-posting to neighbouring groups *is* possible today, but it's
+manual and user-driven: a member can choose to cross-post when they
+make an offer, and most don't bother — even when it would help them
+find a recipient.  TrashNothing posts cross-post automatically through
+the feed.  Net result:
 
-There's also the converse: each group's polygon was drawn without
-reference to roads.  A motorway, river or lack of a bridge can mean
-that someone inside the same group polygon is actually a much harder
-drive than someone in a neighbouring group.  Geography doesn't follow
-group boundaries.
+- Members living near a group boundary often can't see items they'd
+  realistically collect, because the user who posted didn't tick the
+  cross-post box.
+- The cross-posts that *do* arrive are unpopular with locals, because
+  they're chosen by the poster (or by TrashNothing's blanket rules)
+  rather than by anything the local members care about.  Common
+  complaint: "this post shouldn't be in our group, the people here
+  aren't interested in it."
+
+Both complaints share a root cause — cross-posting today is driven by
+group membership and human choice rather than by whether a member could
+actually collect the item.  A motorway, river or lack of a bridge can
+mean somebody inside the same group polygon as the post is actually a
+much harder drive than someone in a neighbouring group.  Geography
+doesn't follow group boundaries.
 
 ## What we're doing about it
 
@@ -48,16 +56,27 @@ don't need one — we're choosing who to email, not navigating.
 
 Anyone whose home location falls inside that drive-time reach is
 **reachable** for this post, regardless of which Freegle group they
-belong to.  In effect this means the algorithm **cross-posts
-immediately** — a post in Camden will appear in the reachable pool of
-neighbouring Westminster, Islington and Hackney members, with no
-volunteer intervention.
+belong to.  In effect this becomes the **automatic cross-posting rule**
+— a Camden post will appear in the reachable pool of neighbouring
+Westminster, Islington and Hackney members.  But unlike today's
+user-tickbox cross-posts, the rule is "would this member realistically
+collect the item?" rather than "did the poster happen to tick the
+right box?".  That directly addresses both of today's cross-posting
+complaints:
 
-This is a big change from current behaviour and volunteers will need to
-adjust.  The evidence for doing it is strong: members near group
-boundaries are disadvantaged today and we have the spatial data to fix
-that.  Volunteers are no longer the bottleneck for cross-group
-visibility; the algorithm is the gatekeeper.
+- Boundary members no longer miss out on items just because the poster
+  didn't think to cross-post.
+- Members upstream don't get cross-posts from outside their reasonable
+  collection radius, because items they can't realistically collect
+  aren't in the reach to begin with.
+
+This is a behavioural change relative to today, and some members will
+notice the difference — particularly those who have grown to dislike
+cross-posts and may not immediately trust a new mechanism.  The
+evidence is strong: today's cross-posting is bad on both axes
+simultaneously (under-cross-posting from poster apathy, over-cross-
+posting from blanket rules like TrashNothing's), and replacing it with
+a drive-time-aware automatic rule is a strict improvement on both.
 
 ## Spreading reach over time, not all at once
 
@@ -97,10 +116,11 @@ If we just hand them everything in their reach, a digest user goes from
 43 posts a day in their digest to ~250.  Nobody reads a digest with
 250 posts in it.
 
-## A design problem in its own right
+## A design problem in its own right (still under discussion)
 
-We don't know yet what the right selection rule is.  We do know what
-shape it has to take:
+We don't know yet what the right selection rule is.  This section
+sketches the shape it has to take; specific selection schemes are
+still being thought through and discussed.  Outline only:
 
 - **The volume can't be allowed to balloon.**  As a starting principle,
   a member shouldn't see more than ~20 % more posts than they're used
