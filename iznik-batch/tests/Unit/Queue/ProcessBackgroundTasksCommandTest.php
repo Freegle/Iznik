@@ -76,6 +76,55 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertEquals(1, $task->attempts);
     }
 
+    public function test_processes_push_notify_chat_message_task(): void
+    {
+        // Insert a task simulating what ChatProcessService enqueues after
+        // a chat message passes spam/review/ban checks.
+        DB::table('background_tasks')->insert([
+            'task_type' => 'push_notify_chat_message',
+            'data' => json_encode(['message_id' => 12345]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyChatMessage')
+            ->once()
+            ->with(12345)
+            ->andReturn(2);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        $task = DB::table('background_tasks')->first();
+        $this->assertNotNull($task->processed_at);
+        $this->assertNull($task->failed_at);
+        $this->assertEquals(1, $task->attempts);
+    }
+
+    public function test_push_notify_chat_message_without_message_id_fails(): void
+    {
+        DB::table('background_tasks')->insert([
+            'task_type' => 'push_notify_chat_message',
+            'data' => json_encode([]),  // missing message_id
+            'created_at' => now(),
+        ]);
+
+        $this->mock(PushNotificationService::class);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+
+        // Bad task should be marked failed after MAX_ATTEMPTS=3 but not crash the worker.
+        $task = DB::table('background_tasks')->first();
+        $this->assertGreaterThanOrEqual(1, $task->attempts);
+        $this->assertNull($task->processed_at);
+        $this->assertStringContainsString('message_id', $task->error_message);
+    }
+
     public function test_processes_email_chitchat_report_task(): void
     {
         Mail::fake();

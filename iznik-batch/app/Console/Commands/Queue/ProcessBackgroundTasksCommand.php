@@ -216,6 +216,7 @@ class ProcessBackgroundTasksCommand extends Command
         bool $shouldSpool
     ): void {
         match ($taskType) {
+            BackgroundTask::TASK_PUSH_NOTIFY_CHAT_MESSAGE => $this->handlePushNotifyChatMessage($data, $pushService),
             BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS  => $this->handlePushNotifyGroupMods($data, $pushService),
             BackgroundTask::TASK_EMAIL_CHITCHAT_REPORT   => $this->handleEmailChitchatReport($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_CHARITY_SIGNUP    => $this->handleEmailCharitySignup($data, $spooler, $shouldSpool),
@@ -253,6 +254,24 @@ class ProcessBackgroundTasksCommand extends Command
 
         $count = $pushService->notifyGroupMods((int) $groupId);
         Log::info('Notified group mods', ['group_id' => $groupId, 'notified' => $count]);
+    }
+
+    /**
+     * Send chat-message push notifications to chat participants (and group
+     * mods for User2Mod chats). Enqueued by ChatProcessService after a
+     * message passes spam/review/ban checks — V1 parity for the push side
+     * of ChatMessage::process() lost in commit 5cbb607b7.
+     */
+    protected function handlePushNotifyChatMessage(array $data, PushNotificationService $pushService): void
+    {
+        $messageId = (int) ($data['message_id'] ?? 0);
+
+        if (! $messageId) {
+            throw new \RuntimeException('push_notify_chat_message requires message_id');
+        }
+
+        $count = $pushService->notifyChatMessage($messageId);
+        Log::info('Notified chat message', ['message_id' => $messageId, 'notified' => $count]);
     }
 
     /**

@@ -414,4 +414,91 @@ class ChatProcessServiceTest extends TestCase
         $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
         $this->assertEquals(0, $updated->reviewrequired, 'System/templated messages are not content checked');
     }
+
+    // --- Push notification enqueue (Discourse: chat push lost since 2026-05-08) ---
+    //
+    // V1 ChatMessage::process() called notifyMembers() after a message passed
+    // spam/review/ban checks. That FCM-push side was dropped when chat_process.php
+    // was migrated to ChatProcessService (commit 5cbb607b7), leaving users with
+    // no push for new chat messages — only the delayed digest email. Restore
+    // V1 parity by enqueuing a push_notify_chat_message background task for
+    // every successfully processed, non-held message.
+
+    public function test_successfully_processed_message_enqueues_push_notification_task(): void
+    {
+        $user1 = $this->createTestUser();
+        $user2 = $this->createTestUser();
+        $room = $this->createTestChatRoom($user1, $user2);
+
+        $msg = $this->createTestChatMessage($room, $user1, [
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $task = DB::table('background_tasks')
+            ->where('task_type', 'push_notify_chat_message')
+            ->orderByDesc('id')
+            ->first();
+
+        $this->assertNotNull($task, 'Expected a push_notify_chat_message task to be queued for a successfully processed message');
+        $data = json_decode($task->data, TRUE);
+        $this->assertEquals($msg->id, $data['message_id']);
+    }
+
+    public function test_held_for_review_message_does_not_enqueue_push(): void
+    {
+        // Fully-moderated sender → every message is held automatically.
+        $sender = $this->createTestUser(['chatmodstatus' => 'Fully']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $task = DB::table('background_tasks')
+            ->where('task_type', 'push_notify_chat_message')
+            ->first();
+
+        $this->assertNull($task, 'Held-for-review messages must not push — V1 invariant');
+
+        // Sanity: message was processed and held, not discarded.
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->reviewrequired);
+        $this->assertEquals(1, $updated->processingsuccessful);
+    }
+
+    public function test_spammer_message_does_not_enqueue_push(): void
+    {
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        DB::table('spam_users')->insert([
+            'userid' => $sender->id,
+            'collection' => 'Spammer',
+            'added' => now(),
+        ]);
+
+        $this->createTestChatMessage($room, $sender, [
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $task = DB::table('background_tasks')
+            ->where('task_type', 'push_notify_chat_message')
+            ->first();
+
+        $this->assertNull($task, 'Spammer messages must not push');
+    }
 }

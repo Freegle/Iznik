@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\BackgroundTask;
 use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\ChatRoster;
@@ -172,6 +173,18 @@ class ChatProcessService
             ->where('chatid', $chatid)
             ->where('status', ChatRoster::STATUS_CLOSED)
             ->update(['status' => ChatRoster::STATUS_OFFLINE]);
+
+        // V1 parity: ChatMessage::process() called notifyMembers() here when the
+        // message wasn't held/banned (the spam/ban paths above early-return).
+        // Hand off to a background task so we don't block this cron on FCM round-trips.
+        if (!$review) {
+            BackgroundTask::create([
+                'task_type' => BackgroundTask::TASK_PUSH_NOTIFY_CHAT_MESSAGE,
+                'data' => ['message_id' => $id],
+                'created_at' => now(),
+                'attempts' => 0,
+            ]);
+        }
 
         return true;
     }
