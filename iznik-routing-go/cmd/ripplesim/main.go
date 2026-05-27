@@ -52,6 +52,7 @@ type extractedReplier struct {
 	Lat       float64 `json:"lat"`
 	Lng       float64 `json:"lng"`
 	ReplyTime string  `json:"reply_time"` // "2025-01-15 11:30:00"
+	EmailFreq *int    `json:"email_freq,omitempty"`
 }
 
 type extractedPost struct {
@@ -109,6 +110,7 @@ var (
 	limit          = flag.Int("limit", 0, "max posts to evaluate (0 = all)")
 	groupBy        = flag.String("group-by", "", "stratify results by post attribute: \"\"=all, \"ru\"=RU category, \"ru-coarse\"=Urban/Rural/Other")
 	jsonOutput     = flag.String("json-output", "", "if set, write structured results JSON here (for Layer-3 monitoring)")
+	filterEmail    = flag.String("filter-email-freq", "", "only count repliers with this email-frequency setting: 'immediate' (=-1), 'digest' (>0), or '' for no filter")
 )
 
 // ruCoarse maps a fine-grained ONS RU category (A1, B1, ...) to one of three
@@ -709,6 +711,24 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[strin
 
 			for replyIdx, idx := range replyOrder {
 				isFirstReplier := replyIdx == 0
+				// Apply --filter-email-freq if set.  Skip repliers whose
+				// emailfrequency setting doesn't match.
+				replier := p.Repliers[idx]
+				if *filterEmail != "" {
+					if replier.EmailFreq == nil {
+						continue
+					}
+					switch *filterEmail {
+					case "immediate":
+						if *replier.EmailFreq != -1 {
+							continue
+						}
+					case "digest":
+						if *replier.EmailFreq <= 0 {
+							continue
+						}
+					}
+				}
 				results[ci].PairsTotal++
 				if isFirstReplier {
 					results[ci].FirstRepliersTotal++

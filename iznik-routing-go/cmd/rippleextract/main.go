@@ -32,6 +32,11 @@ type Replier struct {
 	Lat       float64 `json:"lat"`
 	Lng       float64 `json:"lng"`
 	ReplyTime string  `json:"reply_time"`
+	// Email-frequency setting on the membership for the post's group.
+	// -1 = immediate, 0 = off (?), 1..24 = digest hours.  Most users are 24
+	// (daily digest) so apparent "lead time" includes their digest wait;
+	// "true" attention cost is best measured on immediate-only repliers.
+	EmailFreq *int `json:"email_freq,omitempty"`
 }
 
 type Post struct {
@@ -210,13 +215,20 @@ func main() {
 			ph[i] = "?"
 			args[i] = id
 		}
+		// Join replier→approxloc for location AND replier→memberships
+		// (via the post's group) for the email-frequency setting.  The
+		// post's group is messages_groups.groupid.
 		q3 := `SELECT cm.refmsgid,
 		              cm.userid,
 		              DATE_FORMAT(cm.date, '%Y-%m-%d %H:%i:%s') AS reply_time,
 		              ual.lat,
-		              ual.lng
+		              ual.lng,
+		              m.emailfrequency
 		         FROM chat_messages cm
 		         LEFT JOIN users_approxlocs ual ON ual.userid = cm.userid
+		         LEFT JOIN messages_groups mg ON mg.msgid = cm.refmsgid
+		         LEFT JOIN memberships m
+		           ON m.userid = cm.userid AND m.groupid = mg.groupid
 		         WHERE cm.refmsgid IN (` + strings.Join(ph, ",") + `)
 		           AND cm.type = 'Interested'
 		           AND cm.reviewrejected = 0
@@ -229,7 +241,8 @@ func main() {
 			var pid, uid int
 			var rt string
 			var lat, lng sql.NullFloat64
-			if err := r.Scan(&pid, &uid, &rt, &lat, &lng); err != nil {
+			var emailFreq sql.NullInt64
+			if err := r.Scan(&pid, &uid, &rt, &lat, &lng, &emailFreq); err != nil {
 				log.Fatalf("step3 scan: %v", err)
 			}
 			p, ok := posts[pid]
@@ -240,12 +253,17 @@ func main() {
 				noLocation++
 				continue
 			}
-			p.Repliers = append(p.Repliers, Replier{
+			rep := Replier{
 				UserID:    uid,
 				Lat:       lat.Float64,
 				Lng:       lng.Float64,
 				ReplyTime: rt,
-			})
+			}
+			if emailFreq.Valid {
+				v := int(emailFreq.Int64)
+				rep.EmailFreq = &v
+			}
+			p.Repliers = append(p.Repliers, rep)
 			replierCount++
 		}
 		r.Close()

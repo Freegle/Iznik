@@ -147,11 +147,54 @@ small absolute number of users (so any single eager person doesn't shift
 the median much), whereas the broad mid-rank buckets include the eager
 respondents who occasionally reply quickly even from further away.
 
-**Conclusion**: lead times of 10-20 hours p50 and 5-22 days p90 are
+**Conclusion (initial)**: lead times of 10-20 hours p50 and 5-22 days p90 are
 inherent to any curve that catches a meaningful share of repliers.
-Reducing them would require *per-user* engagement modelling rather
-than rank-based scheduling.  In production, the "too soon" cost is
-real but cannot be optimised away without different data.
+
+### Refinement: digest users skew the lead-time picture
+
+The apparent lead time conflates *our notification time* with *the
+user's first opportunity to see the notification*.  Most members have
+their group set to a 24-hour digest (`emailfrequency = 24`), so even
+if we send the email at t=0 they don't actually receive it until their
+digest fires up to 24 hours later.
+
+Distribution of `emailfrequency` among repliers in the 12-month sample:
+
+| Setting | Count | Share |
+|---------|------:|------:|
+| 24-hour digest | 40,786 | 83.8 % |
+| Immediate (-1) | 3,638 | **7.5 %** |
+| Off (0) | 3,490 | 7.2 % |
+| Other digest (1-12h) | 90 | 0.2 % |
+| No membership record | 641 | 1.3 % |
+
+Repeating the lead-time table for **immediate-setting users only**
+(`--filter-email-freq=immediate`), urban first-repliers:
+
+| Curve | 1st in-time | p50 lead | p75 lead | p90 lead |
+|-------|-------------|----------|----------|----------|
+| linear            | 51.1 % | 12.5 h | 72.8 h | 396.4 h |
+| front-cubic       | 67.5 % |  8.5 h | 33.3 h | 320.6 h |
+| front-heavy x^0.3 | 83.6 % |  5.9 h | 25.3 h | 243.1 h |
+| **step-70**       | **92.0 %** | **5.2 h** | **23.7 h** | **215.3 h** |
+
+The lead-time picture is much more favourable when we look only at
+users who would actually see the notification immediately.  step-70's
+real-world lead time is **5 hours median**, **24 hours p75** — that is
+"saw the email, acted within the next working day".
+
+In-time catch rate is essentially identical across filters
+(93 % all / 92 % immediate / 93 % digest), so the algorithm catches
+both cohorts equally well — the long apparent lead time was purely a
+measurement artifact of the digest schedule.
+
+**Revised conclusion**: the "too soon" cost is much smaller than it
+first appeared.  For the 7.5 % of users who see notifications
+immediately, step-70 delivers them roughly 5 hours before they reply
+— close to "just in time".  For digest users, the curve choice
+doesn't matter for lead time because they're constrained by their
+own digest cadence; what matters is that the notification is *in
+their next digest*, which a t=0 schedule guarantees.
 
 ## Lifetime sensitivity sweep (step-70, urban first-replier)
 
