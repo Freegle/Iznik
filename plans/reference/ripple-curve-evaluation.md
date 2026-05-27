@@ -246,6 +246,36 @@ The trailing 30 % is where the new algorithm provides value over legacy:
 it reaches users the legacy system never would (further out, harder to
 get to by drive-time), without bombarding them all at once.
 
+## Headline numbers updated for factor=0.7 default (2026-05-27)
+
+The routing-go drive-speed factor was changed from 1.0 to 0.7 as the
+default (commit eafc224be).  This brings our drive times in line with
+OSRM, halving the worst-case lead-time overshoot.  All results below
+are with the new default unless noted.
+
+Urban first-replier in-time / wasted% under step-70 at 1-day lifetime:
+
+|                         | factor=1.0 (old) | factor=0.7 (new) |
+|-------------------------|------------------|------------------|
+| 1st in-time (all)       | 93.0 %           | 83.8 %           |
+| 1st in-time (immediate) | 92.0 %           | 83.0 %           |
+| wasted%                 | 2.5 %            | 2.7 %            |
+| p50 lead (immediate)    | 3.3 h            | 3.0 h            |
+| p75 lead (immediate)    | 13.9 h           | 14.0 h           |
+| **p90 lead** (immediate) | **215.3 h (9 d)** | **97.8 h (4 d)** |
+
+The 9 pp drop in catch rate is correct: those are repliers who lived
+further than 30 *real* drive-minutes from the post.  With factor=1.0
+we were artificially "reaching" them because our 30-min isochrone
+covered 45 km of road network instead of the real ~30 km.  Now the
+algorithm honestly only counts users within a realistic 30-minute
+drive — and the p90 lead-time tail (the worst-case "notified far too
+early" outliers) **halves**.
+
+The curve choice (step-70) and the lifetime choice (1 day) are
+unchanged; they remain the data-driven optima under realistic drive
+times.
+
 ## Drive-time accuracy: our routing is too optimistic
 
 A separate concern that affects the validity of every drive-time number

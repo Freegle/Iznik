@@ -117,14 +117,16 @@ var highwaySpeed = func() map[string][3]float32 {
 }()
 
 // driveSpeedFactor scales drive speeds after both default + maxspeed lookups
-// to approximate realistic drive times (OSM speed limits alone are 30-40 %
-// too optimistic vs OSRM / Google for the same route).  Default 1.0 = no
-// change (backwards-compatible).  Set ROUTING_DRIVE_SPEED_FACTOR=0.7 in env
-// to bring drive times in line with OSRM; 0.6 to approximate Google with
-// typical UK traffic.  Measured on Oxford→Highclere + Newcastle→Alnwick,
-// factor=0.7 produces 40-45 min vs Google 45-53 min and OSRM 40 min.
+// to approximate realistic drive times.  OSM speed limits alone are 30-40 %
+// too optimistic vs OSRM / Google because we don't model junctions, urban
+// congestion or traffic.  Default 0.7 brings our times in line with OSRM
+// for typical UK routes.  Override via ROUTING_DRIVE_SPEED_FACTOR env var
+// (e.g. 1.0 to disable, 0.6 to approximate Google with typical UK traffic).
+//
+// Measured on Oxford→Highclere + Newcastle→Alnwick, factor=0.7 produces
+// 40-45 min vs Google 45-53 min and OSRM 40 min.
 var driveSpeedFactor = func() float32 {
-	factor := float32(1.0)
+	factor := float32(0.7)
 	if s := os.Getenv("ROUTING_DRIVE_SPEED_FACTOR"); s != "" {
 		if v, err := strconv.ParseFloat(s, 32); err == nil && v > 0 && v <= 2 {
 			factor = float32(v)
