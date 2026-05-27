@@ -315,6 +315,57 @@ roughly match OSRM, then keep max-minutes=20 (= ~26 real-min).
 Either fix tightens the algorithm's geographic reach to what would
 plausibly be a real Freegle pickup radius.
 
+## Dense-area mail-volume: step-70 is ~4.5× the legacy group-digest volume
+
+The step-70 algorithm sends a notification for every post the user is
+geographically reachable from.  In central London this includes posts
+from Freegle groups the user isn't a member of — the source of the
+mail-volume increase.
+
+**Reference user**: Trafalgar Square, 51.508 -0.128.  Last 7 days of
+post / membership data:
+
+| Measurement                       | Value |
+|-----------------------------------|------:|
+| Posts/day within 15 km (≈ 30-min iso reach) | **270** |
+| Posts/day across all 23 central-London Freegle groups (sum)  | ~200 |
+| Average Freegle groups per central-London user | **3.95** |
+| Posts/day visible to a 4-group user via legacy digest        | ~60 |
+
+Step-70 reach pulls in posts from ~10 Freegle groups (its 30-min iso
+overlaps roughly that many), so it notifies on **~4.5× more posts**
+than the user's home-group digest currently does.
+
+| Setting                          | Posts seen / day | Emails / day | vs legacy |
+|----------------------------------|-----------------:|-------------:|-----------:|
+| Daily-digest user, legacy        | ~60              | 1            | 1×         |
+| Daily-digest user, step-70       | ~270             | 1 (still one digest) | 1× emails / 4.5× content |
+| Immediate user, legacy           | ~60              | ~60          | 1×         |
+| Immediate user, step-70 unthrottled | ~270         | ~270         | **~4.5×**  |
+
+(Earlier draft of this doc reported a 1,900× number; that anchored on
+the per-user 7-day throttle in `nearby.php`, which is the cross-group
+nearby-suggestion email — a side channel, NOT the main notification
+path.  The main path is per-group digests, which have no such
+throttle.  Apologies for the noise.)
+
+The 4.5× is driven entirely by cross-group reach.
+
+### What's required before any production rollout
+
+1. **Home-group-only first wave**: tick 1 notifies only members of the
+   post's home Freegle group.  Preserves current behaviour for digest
+   and immediate users; the trailing ripple adds cross-group reach
+   gradually.  This single change neutralises the 4.5× mail-volume
+   problem.
+2. **Per-user rate cap on the trailing ripple**: even with home-group
+   first-wave, the trailing 30 % expands cross-group.  Cap at e.g. 5
+   cross-group notifications per user per day so the long tail doesn't
+   inflate immediate-user inboxes.
+3. **Bundle-immediate**: if multiple notifications would land for the
+   same user within X minutes, combine into one email.  Helps even
+   without cross-group reach (e.g. fast-moving local groups).
+
 ## Caveats
 
 1. **Sample is 483 posts**.  Larger sample would tighten the numbers but
