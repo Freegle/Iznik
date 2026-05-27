@@ -28,6 +28,8 @@ class SendUnifiedDigestCommand extends Command
                             {--user= : Restrict recipients to one user ID (for testing)}
                             {--group= : Restrict to one group ID (immediate mode only, for testing)}
                             {--limit= : Cap per-run work — groups (immediate) or users (daily)}
+                            {--shard=0 : Shard index for parallel immediate-mode workers (0..shards-1)}
+                            {--shards=1 : Total number of shards (groups are partitioned by groupid MOD shards)}
                             {--dry-run : Show what would be sent without actually sending}";
 
     /**
@@ -72,7 +74,14 @@ class SendUnifiedDigestCommand extends Command
         $userId = $this->option('user') ? (int) $this->option('user') : null;
         $groupId = $this->option('group') ? (int) $this->option('group') : null;
         $limit = $this->option('limit') !== null ? (int) $this->option('limit') : null;
+        $shard = (int) $this->option('shard');
+        $shards = max(1, (int) $this->option('shards'));
         $dryRun = $this->option('dry-run');
+
+        if ($shard < 0 || $shard >= $shards) {
+            $this->error("--shard must be in [0, {$shards}); got {$shard}.");
+            return Command::FAILURE;
+        }
 
         if (! in_array($mode, [UnifiedDigestService::MODE_DAILY, UnifiedDigestService::MODE_IMMEDIATE])) {
             $this->error("Invalid mode '{$mode}'. Must be 'daily' or 'immediate'.");
@@ -102,7 +111,8 @@ class SendUnifiedDigestCommand extends Command
         }
 
         $limitLabel = $limit !== null ? (string) $limit : 'unlimited';
-        $this->info("Sending unified digests (mode: {$mode}, limit: {$limitLabel})...");
+        $shardLabel = $shards > 1 ? " shard={$shard}/{$shards}" : '';
+        $this->info("Sending unified digests (mode: {$mode}, limit: {$limitLabel}{$shardLabel})...");
 
         if ($userId) {
             $this->info("Restricting recipients to user ID: {$userId}");
@@ -111,7 +121,13 @@ class SendUnifiedDigestCommand extends Command
             $this->info("Restricting to group ID: {$groupId}");
         }
 
-        $stats = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId);
+        // Stash shard info on the instance so lockKeySuffix() can read it
+        // before doHandle returns. Lock is acquired in handle() above so by
+        // the time we run this method the lock is already held — but the
+        // SUFFIX needed to be set before that. We move shard parsing to
+        // handle() below… actually since options parsing is cheap, just
+        // re-read in lockKeySuffix() and the suffix is consistent.
+        $stats = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards);
 
         $this->newLine();
 
@@ -143,5 +159,21 @@ class SendUnifiedDigestCommand extends Command
         }
 
         return Command::SUCCESS;
+    }
+
+    /**
+     * Customise the lock filename so each immediate-mode shard gets its
+     * own flock — shards must not block each other. Read directly from
+     * the option layer; the values are parsed before handle() runs and
+     * before the trait calls acquireLock().
+     */
+    protected function lockKeySuffix(): ?string
+    {
+        $shards = max(1, (int) $this->option('shards'));
+        if ($shards === 1) {
+            return null; // single-shard runs use the default unsuffixed lock
+        }
+        $shard = (int) $this->option('shard');
+        return "shard-{$shard}-of-{$shards}";
     }
 }

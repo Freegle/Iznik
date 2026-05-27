@@ -44,10 +44,10 @@ class UnifiedDigestService
      * @param int|null $userId Specific user ID to process (for testing)
      * @return array Statistics about the operation
      */
-    public function sendDigests(string $mode, ?int $userId = null, ?int $limit = null, bool $dryRun = false, ?int $groupId = null): array
+    public function sendDigests(string $mode, ?int $userId = null, ?int $limit = null, bool $dryRun = false, ?int $groupId = null, int $shard = 0, int $shards = 1): array
     {
         if ($mode === self::MODE_IMMEDIATE) {
-            return $this->sendImmediateDigests($limit, $dryRun, $groupId, $userId);
+            return $this->sendImmediateDigests($limit, $dryRun, $groupId, $userId, $shard, $shards);
         }
 
         $stats = [
@@ -114,9 +114,11 @@ class UnifiedDigestService
      * @param bool $dryRun Skip Mail::send and cursor advance
      * @param int|null $groupId Restrict to a single group (manual testing)
      * @param int|null $userId Restrict recipients to one user (manual testing)
+     * @param int $shard Shard index (0..shards-1) for parallel workers
+     * @param int $shards Total shard count; groups partitioned by MOD(groupid, shards)
      * @return array Statistics about the operation
      */
-    public function sendImmediateDigests(?int $groupLimit = null, bool $dryRun = false, ?int $groupId = null, ?int $userId = null): array
+    public function sendImmediateDigests(?int $groupLimit = null, bool $dryRun = false, ?int $groupId = null, ?int $userId = null, int $shard = 0, int $shards = 1): array
     {
         $stats = [
             'groups_processed' => 0,
@@ -140,6 +142,14 @@ class UnifiedDigestService
                     ->where('memberships.collection', Membership::COLLECTION_APPROVED);
             })
             ->select('gd.groupid', 'gd.msgid as cursor_msgid', 'gd.msgdate as cursor_msgdate');
+
+        // Partition groups across parallel shards. MOD(groupid, shards) =
+        // shard means each group is owned by exactly one shard. Disjoint
+        // → safe to run shards concurrently with no overlap, no advisory
+        // locking between them.
+        if ($shards > 1) {
+            $query->whereRaw('MOD(gd.groupid, ?) = ?', [$shards, $shard]);
+        }
 
         if ($groupId) {
             $query->where('gd.groupid', $groupId);

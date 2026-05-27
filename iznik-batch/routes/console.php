@@ -333,22 +333,30 @@ Schedule::command('tn:sync')
 //     ->withoutOverlapping()
 //     ->runInBackground();
 //
-// Immediate mode - V1-parity per-group iteration.
-// Re-enabled 2026-05-27 (second attempt). Walks V1's groups_digests
-// cursor and defers messages whose AI-generated attachment hasn't
-// arrived yet (up to ATTACHMENT_WAIT_DEADLINE_MINUTES, then falls
-// back to the type-specific placeholder). Overlap prevention is
-// flock-based via PreventsOverlapping in the command itself; we do
-// NOT chain ->withoutOverlapping() here because Laravel's cache-based
-// variant allowed six concurrent processes during the first rollout.
+// Immediate mode - V1-parity per-group iteration, sharded 4-way.
+//
+// A single worker manages ~250 emails/min; arrival rate × avg
+// immediate-frequency members per group is ~308/min, so one worker
+// falls ~60/min behind permanently. 4 shards (groups partitioned by
+// MOD(groupid, 4)) give us ~1000/min headroom with no group ever
+// touched by more than one worker — disjoint partitions mean no
+// advisory locking needed between shards. Each shard has its own
+// flock file via the lockKeySuffix() hook on the command.
+//
+// Walks V1's groups_digests cursor and defers messages whose AI-
+// generated attachment hasn't arrived yet (up to
+// ATTACHMENT_WAIT_DEADLINE_MINUTES, then falls back to the type-
+// specific placeholder).
 //
 // Daily mode is intentionally NOT enabled here — V1's bulk3
 // `digest.php -i 1/2/4/8/24` crons still own daily. Our daily code
 // references users_digests which doesn't exist on prod.
-Schedule::command('mail:digest:unified --mode=immediate')
-    ->everyMinute()
-    ->sendOutputTo(cronLog('mail:digest:unified'))
-    ->runInBackground();
+foreach (range(0, 3) as $shardIndex) {
+    Schedule::command("mail:digest:unified --mode=immediate --shard={$shardIndex} --shards=4")
+        ->everyMinute()
+        ->sendOutputTo(cronLog("mail:digest:unified.shard{$shardIndex}"))
+        ->runInBackground();
+}
 
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')

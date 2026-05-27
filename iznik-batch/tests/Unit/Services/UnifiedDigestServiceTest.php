@@ -835,6 +835,85 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertNotNull($cursor->msgdate, 'Cursor must advance after we give up waiting');
     }
 
+    public function test_immediate_shard_partitions_groups_by_modulo(): void
+    {
+        // Each shard must own a disjoint slice of groups (MOD(groupid, N)
+        // = shard). Running shard 0 of 4 must process only groups where
+        // groupid % 4 == 0; running shard 1 must process only those where
+        // % 4 == 1; and so on. Union across all shards = every group.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+
+        // Create 8 groups; force their ids so we know each shard's slice.
+        // (createTestGroup doesn't let us pin the id, but we can sample
+        // many and just check that the shard filter is applied — we look
+        // at WHICH groups each shard sees.)
+        $groups = [];
+        for ($i = 0; $i < 8; $i++) {
+            $g = $this->createTestGroup();
+            $this->createMembership($poster, $g);
+            $this->createMembership($recipient, $g);
+            $this->seedImmediateCursor($g);
+            $this->createTestMessage($poster, $g, ['subject' => "OFFER: Item {$i} (TestLocation)"]);
+            DB::table('messages_groups')->where('msgid', DB::table('messages')->where('subject','like',"OFFER: Item {$i}%")->max('id'))
+                ->update(['arrival' => now()->subMinutes(10)]); // older than the AI-wait deadline so they all send
+            $groups[$i] = $g;
+        }
+
+        // Run shard 0 of 2: should process exactly the groups with even
+        // ids. Shard 1 should process exactly the groups with odd ids.
+        $statsShard0 = $this->service->sendDigests(
+            UnifiedDigestService::MODE_IMMEDIATE,
+            null, null, false, null, 0, 2
+        );
+        $statsShard1 = $this->service->sendDigests(
+            UnifiedDigestService::MODE_IMMEDIATE,
+            null, null, false, null, 1, 2
+        );
+
+        $evenGroupCount = collect($groups)->filter(fn($g) => $g->id % 2 === 0)->count();
+        $oddGroupCount = collect($groups)->filter(fn($g) => $g->id % 2 === 1)->count();
+
+        $this->assertEquals($evenGroupCount, $statsShard0['groups_processed'], 'Shard 0 must process even-id groups');
+        $this->assertEquals($oddGroupCount, $statsShard1['groups_processed'], 'Shard 1 must process odd-id groups');
+        $this->assertEquals(count($groups), $statsShard0['groups_processed'] + $statsShard1['groups_processed'], 'Shards must partition the group set');
+    }
+
+    public function test_immediate_shards_do_not_double_process_same_group(): void
+    {
+        // Stronger check than the partition test: pick one specific
+        // group and verify that exactly one shard (the one matching
+        // MOD(groupid, 4)) sees it and the other three don't.
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        DB::table('messages_groups')->where('msgid', $msg->id)->update(['arrival' => now()->subMinutes(10)]);
+
+        $owningShard = $group->id % 4;
+        for ($s = 0; $s < 4; $s++) {
+            // Reset cursor between shards so each run sees a clean state.
+            DB::table('groups_digests')
+                ->where('groupid', $group->id)
+                ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+                ->update(['msgid' => 0, 'msgdate' => null]);
+
+            $stats = $this->service->sendDigests(
+                UnifiedDigestService::MODE_IMMEDIATE,
+                null, null, false, null, $s, 4
+            );
+            if ($s === $owningShard) {
+                $this->assertEquals(1, $stats['groups_processed'], "Shard {$s} owns this group");
+                $this->assertEquals(1, $stats['emails_sent']);
+            } else {
+                $this->assertEquals(0, $stats['groups_processed'], "Shard {$s} must not see this group");
+                $this->assertEquals(0, $stats['emails_sent']);
+            }
+        }
+    }
+
     public function test_immediate_deferral_blocks_later_messages_in_same_group(): void
     {
         // If msg A (older) is deferred, msg B (newer) MUST NOT be sent
