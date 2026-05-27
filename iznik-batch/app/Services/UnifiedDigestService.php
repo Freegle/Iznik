@@ -257,8 +257,14 @@ class UnifiedDigestService
             }
         }
 
-        $last = $messages->last();
-        $this->advanceGroupCursor($groupid, $last->mg_arrival, (int) $last->mg_msgid, $dryRun);
+        // Skip cursor advance when --user is restricting recipients: only
+        // some group members got mailed, so advancing would skip everyone
+        // else for these messages on the next real run. --user is a
+        // testing affordance and must not mutate production cursor state.
+        if ($userFilter === null) {
+            $last = $messages->last();
+            $this->advanceGroupCursor($groupid, $last->mg_arrival, (int) $last->mg_msgid, $dryRun);
+        }
 
         return ['emails' => $emailsSent, 'users' => array_keys($touched)];
     }

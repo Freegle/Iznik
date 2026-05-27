@@ -740,6 +740,15 @@ class UnifiedDigestServiceTest extends TestCase
         // Only the targeted user gets the email.
         $this->assertEquals(1, $stats['users_processed']);
         $this->assertEquals(1, $stats['emails_sent']);
+
+        // Cursor must NOT advance when --user is set — the other group
+        // member ($other) still needs to receive this message on the next
+        // unrestricted run.
+        $cursor = DB::table('groups_digests')
+            ->where('groupid', $group->id)
+            ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
+            ->first();
+        $this->assertNull($cursor->msgdate, 'Cursor must not advance under a --user-restricted run');
     }
 
     public function test_immediate_dry_run_does_not_advance_cursor(): void
