@@ -731,7 +731,13 @@ class WhatJobsService
 
         $cacheKey = "$city,$state,$country";
 
-        if (isset($cache[$cacheKey])) {
+        // array_key_exists (not isset) so cached negative results (null)
+        // are reused — Photon currently rate-limits us with HTTP 429, so
+        // a tuple that fails the first lookup will keep failing every
+        // time it appears in the feed. With 60k+ distinct (city,state,
+        // country) tuples averaging 3-4 occurrences each, caching null
+        // turns ~225k Photon calls into ~60k.
+        if (array_key_exists($cacheKey, $cache)) {
             return $cache[$cacheKey];
         }
 
@@ -826,9 +832,9 @@ class WhatJobsService
             $this->recordGeocodeFail($reason, $city, $state, $country);
         }
 
-        if ($result) {
-            $cache[$cacheKey] = $result;
-        }
+        // Always cache, even on miss. The negative-cache key here is what
+        // makes the array_key_exists check above pay off.
+        $cache[$cacheKey] = $result;
 
         return $result;
     }
@@ -967,14 +973,34 @@ class WhatJobsService
         $url = rtrim($geocoderBase, '/') . '/api?q=' . urlencode($addr)
             . "&bbox=$bbswlng%2C$bbswlat%2C$bbnelng%2C$bbnelat";
 
-        try {
-            $response = Http::timeout(10)->get($url);
+        // Photon rate-limits us with HTTP 429. Without the backoff retry,
+        // a single burst poisons hundreds of (city,state,country) tuples
+        // with cached nulls. Honour Retry-After if present; otherwise back
+        // off with the suggested defaults (200ms, 800ms).
+        $retryDelaysMs = [200, 800];
+        $attempt       = 0;
+        $results       = null;
+        while (true) {
+            try {
+                $response = Http::timeout(10)->get($url);
+            } catch (\Throwable) {
+                return null;
+            }
+            $status = $response->status();
+            if ($status === 429 && $attempt < count($retryDelaysMs)) {
+                $retryAfter = $response->header('Retry-After');
+                $delayMs    = is_numeric($retryAfter)
+                    ? max(50, (int) $retryAfter * 1000)
+                    : $retryDelaysMs[$attempt];
+                usleep($delayMs * 1000);
+                $attempt++;
+                continue;
+            }
             if (!$response->successful()) {
                 return null;
             }
             $results = $response->json();
-        } catch (\Throwable) {
-            return null;
+            break;
         }
 
         $features = $results['features'] ?? [];
