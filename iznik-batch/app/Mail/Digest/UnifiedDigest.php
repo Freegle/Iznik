@@ -556,7 +556,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, BulkRende
             return [
                 'message' => $message,
                 'messageText' => $messageText,
-                'messageUrl' => '{{messageUrl}}',
+                'messageUrl' => $this->ph('messageUrl'),
                 'imageUrl' => $imageUrl,
                 'displayImageUrl' => $displayImageUrl,
                 'trackedImageUrl' => null,
