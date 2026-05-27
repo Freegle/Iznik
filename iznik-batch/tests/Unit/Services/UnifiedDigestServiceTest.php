@@ -416,7 +416,8 @@ class UnifiedDigestServiceTest extends TestCase
         config(['freegle.digest.immediate_allowlist' => '']);
 
         [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
         $this->assertEquals(1, $stats['emails_sent']);
@@ -427,7 +428,8 @@ class UnifiedDigestServiceTest extends TestCase
         config(['freegle.digest.immediate_allowlist' => '*']);
 
         [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
         $this->assertEquals(1, $stats['emails_sent']);
@@ -447,7 +449,8 @@ class UnifiedDigestServiceTest extends TestCase
         $allowedEmail = $allowed->emails()->first()->email;
         config(['freegle.digest.immediate_allowlist' => $allowedEmail]);
 
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
 
@@ -469,7 +472,8 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals('*', config('freegle.digest.immediate_allowlist'));
 
         [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
         $this->assertEquals(1, $stats['emails_sent']);
@@ -512,6 +516,21 @@ class UnifiedDigestServiceTest extends TestCase
                 'msgid' => $msgid,
             ]
         );
+    }
+
+    /**
+     * Push the given message's messages_groups.arrival back past the
+     * isImmediateMessageReady() defer deadline so the digest doesn't
+     * postpone it waiting for an attachment. Most immediate tests don't
+     * care about the defer behaviour; this keeps them terse.
+     */
+    protected function makeImmediateReady(Message $message): void
+    {
+        DB::table('messages_groups')
+            ->where('msgid', $message->id)
+            ->update([
+                'arrival' => now()->subMinutes(UnifiedDigestService::ATTACHMENT_WAIT_DEADLINE_MINUTES + 1),
+            ]);
     }
 
     /**
@@ -560,7 +579,8 @@ class UnifiedDigestServiceTest extends TestCase
         ]);
         $this->seedImmediateCursor($group);
 
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
 
@@ -592,9 +612,12 @@ class UnifiedDigestServiceTest extends TestCase
         config(['freegle.digest.immediate_allowlist' => '*']);
 
         [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B (TestLocation)']);
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: C (TestLocation)']);
+        $msgA = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
+        $msgB = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B (TestLocation)']);
+        $msgC = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: C (TestLocation)']);
+        $this->makeImmediateReady($msgA);
+        $this->makeImmediateReady($msgB);
+        $this->makeImmediateReady($msgC);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
 
@@ -608,8 +631,10 @@ class UnifiedDigestServiceTest extends TestCase
         config(['freegle.digest.immediate_allowlist' => '*']);
 
         [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
+        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
         $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B (TestLocation)']);
+        $this->makeImmediateReady($msg1);
+        $this->makeImmediateReady($msg2);
 
         $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
 
@@ -637,7 +662,12 @@ class UnifiedDigestServiceTest extends TestCase
 
         [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
 
-        $sharedArrival = now()->format('Y-m-d H:i:s.u');
+        // Backdate past the immediate-defer deadline so isImmediateMessageReady
+        // doesn't postpone these; same arrival for both messages to force the
+        // tuple-tiebreak path we're testing.
+        $sharedArrival = now()
+            ->subMinutes(UnifiedDigestService::ATTACHMENT_WAIT_DEADLINE_MINUTES + 1)
+            ->format('Y-m-d H:i:s.u');
         $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
         DB::table('messages_groups')->where('msgid', $msg1->id)->update(['arrival' => $sharedArrival]);
         $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: B (TestLocation)']);
@@ -685,7 +715,8 @@ class UnifiedDigestServiceTest extends TestCase
             $this->createMembership($poster, $g);
             $this->createMembership($recipient, $g);
             $this->seedImmediateCursor($g);
-            $this->createTestMessage($poster, $g, ['subject' => "OFFER: Item {$i} (TestLocation)"]);
+            $msg = $this->createTestMessage($poster, $g, ['subject' => "OFFER: Item {$i} (TestLocation)"]);
+            $this->makeImmediateReady($msg);
         }
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, null, 1);
@@ -706,7 +737,8 @@ class UnifiedDigestServiceTest extends TestCase
             $this->createMembership($poster, $g);
             $this->createMembership($recipient, $g);
             $this->seedImmediateCursor($g);
-            $this->createTestMessage($poster, $g, ['subject' => 'OFFER: Item (TestLocation)']);
+            $msg = $this->createTestMessage($poster, $g, ['subject' => 'OFFER: Item (TestLocation)']);
+            $this->makeImmediateReady($msg);
         }
 
         $stats = $this->service->sendDigests(
@@ -736,7 +768,8 @@ class UnifiedDigestServiceTest extends TestCase
         $this->createMembership($targeted, $group);
         $this->createMembership($other, $group);
         $this->seedImmediateCursor($group);
-        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $targeted->id);
 
@@ -898,10 +931,11 @@ class UnifiedDigestServiceTest extends TestCase
         $owningShard = $group->id % 4;
         for ($s = 0; $s < 4; $s++) {
             // Reset cursor between shards so each run sees a clean state.
+            // msgid must be NULL (not 0) — there's a FK to messages.id.
             DB::table('groups_digests')
                 ->where('groupid', $group->id)
                 ->where('frequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-                ->update(['msgid' => 0, 'msgdate' => null]);
+                ->update(['msgid' => null, 'msgdate' => null]);
 
             $stats = $this->service->sendDigests(
                 UnifiedDigestService::MODE_IMMEDIATE,
