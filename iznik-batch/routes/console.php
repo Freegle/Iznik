@@ -337,11 +337,10 @@ Schedule::command('tn:sync')
 // Eligibility mirrors V1: a user matches if their global simplemail
 // setting is Full, OR they have no global setting and at least one
 // approved membership with per-group emailfrequency=-1 (immediate).
-// Pilot rollout: FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST defaults to a single
-// recipient so this can run in parallel with V1 `mail:digest -1` on bulk3
-// without producing duplicate sends for the wider user base. Clear the
-// env var (or set '*') to flip the feature on for everyone once V1 is
-// retired. No --limit so we drain the full queue every minute.
+// Fully rolled out 2026-05-27: V1's bulk3 `digest.php -i -1` cron was
+// disabled at the same time and FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST
+// defaults to '*' (everyone). Set the env var (comma-separated list)
+// to re-pilot. No --limit so we drain the full queue every minute.
 Schedule::command('mail:digest:unified --mode=immediate')
     ->everyMinute()
     ->withoutOverlapping()

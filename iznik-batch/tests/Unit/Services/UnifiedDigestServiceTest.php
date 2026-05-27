@@ -643,28 +643,27 @@ class UnifiedDigestServiceTest extends TestCase
     }
 
     /**
-     * The default value checked into config (a single pilot email) must
-     * restrict immediate emails to that address — otherwise deploying the
-     * cron in prod without a custom env var would email everyone.
+     * The default value checked into config must be '*' so the rolled-out
+     * cron emails every eligible user — V1's bulk3 immediate-digest cron was
+     * disabled on 2026-05-27 and this Laravel job is now the only source of
+     * immediate notifications. A regression that re-pinned the default to a
+     * specific address would silently drop all but that user's notifications.
      */
-    public function test_immediate_mode_uses_pinned_pilot_default(): void
+    public function test_immediate_mode_default_is_wildcard(): void
     {
-        // Don't override — use whatever's baked into config/freegle.php.
-        $pilot = config('freegle.digest.immediate_allowlist');
-        $this->assertNotEquals('', $pilot, 'Pinned default must not be empty');
-        $this->assertNotEquals('*', $pilot, 'Pinned default must not be wildcard');
+        $this->assertEquals('*', config('freegle.digest.immediate_allowlist'));
 
-        $blocked = $this->createTestUser();
-        $blocked->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
-        $blocked->lastaccess = now();
-        $blocked->save();
-        $blocked->refresh();
+        $user = $this->createTestUser();
+        $user->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $user->lastaccess = now();
+        $user->save();
+        $user->refresh();
         $group = $this->createTestGroup();
-        $this->createMembership($blocked, $group);
+        $this->createMembership($user, $group);
 
-        // User's email is not the pilot address → must be skipped.
-        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $blocked->id);
-        $this->assertEquals(0, $stats['users_processed']);
+        // No address-specific restriction → user is included.
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE, $user->id);
+        $this->assertEquals(1, $stats['users_processed']);
     }
 
     /**

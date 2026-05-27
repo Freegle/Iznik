@@ -91,11 +91,12 @@ return [
         //   ''  or '*'      → allow all users (the normal production state)
         //   'a@x.com,b@y'   → restrict immediate emails to those addresses
         //
-        // The default checked in here is a single pilot recipient so that
-        // when the cron is enabled in production only that user receives
-        // immediate emails. Clear it (or set to '*') in env to flip the
-        // feature on for everyone. Daily-mode digests are NOT gated.
-        'immediate_allowlist' => env('FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST', 'edward@ehibbert.org.uk'),
+        // Default is '*' (everyone) — V1's bulk3 `digest.php -i -1` cron was
+        // disabled on 2026-05-27 so this is the only source of immediate
+        // notifications. Set FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST in env to
+        // restrict (e.g. a comma-separated list for a re-pilot). Daily-mode
+        // digests are NOT gated.
+        'immediate_allowlist' => env('FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST', '*'),
     ],
 
     // Firebase Cloud Messaging for push notifications
