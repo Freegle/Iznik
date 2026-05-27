@@ -84,8 +84,8 @@ class EventsDigestMail extends MjmlMailable implements BulkRenderable
             'groupName'      => $this->groupName,
             'events'         => $this->events,
             'userSite'       => config('freegle.sites.user'),
-            'unsubscribeUrl' => '{{unsubscribeUrl}}',
-            'email'          => '{{recipientEmail}}',
+            'unsubscribeUrl' => $this->ph('unsubscribeUrl'),
+            'email'          => $this->ph('recipientEmail'),
         ];
     }
 

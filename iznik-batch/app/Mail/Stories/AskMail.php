@@ -64,10 +64,10 @@ class AskMail extends MjmlMailable implements BulkRenderable
     public function bulkData(): array
     {
         return [
-            'name'           => '{{recipientName}}',
+            'name'           => $this->ph('recipientName'),
             'storiesUrl'     => $this->storiesUrl,
             'unsubscribeUrl' => $this->unsubscribeUrl,
-            'email'          => '{{recipientEmail}}',
+            'email'          => $this->ph('recipientEmail'),
         ];
     }
 

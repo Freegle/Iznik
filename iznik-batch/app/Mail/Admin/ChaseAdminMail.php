@@ -130,10 +130,10 @@ class ChaseAdminMail extends MjmlMailable implements BulkRenderable
             'pendingTimeText' => $this->pendingTimeText,
             'modToolsUrl' => $this->modToolsUrl,
             'adminId' => $this->adminId,
-            'userName' => '{{userName}}',
+            'userName' => $this->ph('userName'),
         ], [
             'tracking' => $this->tracking,
-            'trackingPixelMjml' => '<mj-image src="{{trackingPixelUrl}}" width="1px" height="1px" alt="" padding="0" />',
+            'trackingPixelMjml' => '<mj-image src="'.$this->ph('trackingPixelUrl').'" width="1px" height="1px" alt="" padding="0" />',
             'trackingPixelHtml' => '',
         ]);
     }

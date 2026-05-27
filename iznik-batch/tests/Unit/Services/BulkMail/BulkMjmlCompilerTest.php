@@ -15,7 +15,8 @@ class BulkMjmlCompilerTest extends TestCase
     public function test_substitute_replaces_simple_placeholders(): void
     {
         $compiler = $this->makeCompiler();
-        $html = '<a href="{{url}}">{{label}}</a>';
+        $t = $compiler->batchToken();
+        $html = '<a href="{{'.$t.':url}}">{{'.$t.':label}}</a>';
         $out = $compiler->substitute($html, ['url' => 'https://example.com', 'label' => 'Click']);
         $this->assertSame('<a href="https://example.com">Click</a>', $out);
     }
@@ -23,8 +24,9 @@ class BulkMjmlCompilerTest extends TestCase
     public function test_substitute_html_escapes_values(): void
     {
         $compiler = $this->makeCompiler();
+        $t = $compiler->batchToken();
         // Quotes and < > & all need encoding for HTML-safe attribute/text content.
-        $out = $compiler->substitute('Hi {{name}}!', ['name' => 'A & B <Co>']);
+        $out = $compiler->substitute('Hi {{'.$t.':name}}!', ['name' => 'A & B <Co>']);
         $this->assertSame('Hi A &amp; B &lt;Co&gt;!', $out);
     }
 
@@ -32,8 +34,9 @@ class BulkMjmlCompilerTest extends TestCase
     {
         // Matches Blade's {{ $url }} behaviour: caller passes plain &, we encode to &amp;.
         $compiler = $this->makeCompiler();
+        $t = $compiler->batchToken();
         $out = $compiler->substitute(
-            '<a href="{{url}}">link</a>',
+            '<a href="{{'.$t.':url}}">link</a>',
             ['url' => 'https://x/?a=1&b=2']
         );
         $this->assertSame('<a href="https://x/?a=1&amp;b=2">link</a>', $out);
@@ -42,8 +45,9 @@ class BulkMjmlCompilerTest extends TestCase
     public function test_substitute_throws_on_unbound_placeholder(): void
     {
         $compiler = $this->makeCompiler();
+        $t = $compiler->batchToken();
         try {
-            $compiler->substitute('Hi {{name}}, {{missing}}!', ['name' => 'x']);
+            $compiler->substitute('Hi {{'.$t.':name}}, {{'.$t.':missing}}!', ['name' => 'x']);
             $this->fail('Expected UnboundPlaceholderException');
         } catch (UnboundPlaceholderException $e) {
             $this->assertSame(['missing'], $e->missingKeys);
@@ -53,8 +57,9 @@ class BulkMjmlCompilerTest extends TestCase
     public function test_substitute_lists_all_missing_placeholders(): void
     {
         $compiler = $this->makeCompiler();
+        $t = $compiler->batchToken();
         try {
-            $compiler->substitute('{{a}} {{b}} {{c}}', []);
+            $compiler->substitute('{{'.$t.':a}} {{'.$t.':b}} {{'.$t.':c}}', []);
             $this->fail('Expected UnboundPlaceholderException');
         } catch (UnboundPlaceholderException $e) {
             $this->assertSame(['a', 'b', 'c'], $e->missingKeys);
@@ -64,8 +69,9 @@ class BulkMjmlCompilerTest extends TestCase
     public function test_substitute_dedupes_repeated_missing_placeholder(): void
     {
         $compiler = $this->makeCompiler();
+        $t = $compiler->batchToken();
         try {
-            $compiler->substitute('{{x}} {{x}} {{x}}', []);
+            $compiler->substitute('{{'.$t.':x}} {{'.$t.':x}} {{'.$t.':x}}', []);
             $this->fail('Expected UnboundPlaceholderException');
         } catch (UnboundPlaceholderException $e) {
             $this->assertSame(['x'], $e->missingKeys);
@@ -74,24 +80,46 @@ class BulkMjmlCompilerTest extends TestCase
 
     public function test_substitute_allows_curly_braces_not_matching_placeholder_pattern(): void
     {
-        // Single braces, braces around invalid chars, etc. should not trip
-        // the validation regex.
+        // Plain {{name}} without our batch token is NOT one of our merge
+        // placeholders — it could be user-controlled content. Substitute
+        // must leave it alone.
         $compiler = $this->makeCompiler();
-        $out = $compiler->substitute('{name} {{ space }} {{1notavar}} done', []);
-        $this->assertSame('{name} {{ space }} {{1notavar}} done', $out);
+        $out = $compiler->substitute('{name} {{ space }} {{1notavar}} {{messageUrl}} done', []);
+        $this->assertSame('{name} {{ space }} {{1notavar}} {{messageUrl}} done', $out);
+    }
+
+    public function test_substitute_leaves_unbatched_placeholders_alone(): void
+    {
+        // Security: if user-controlled content happens to contain a literal
+        // "{{messageUrl}}", it MUST NOT be substituted as if it were our
+        // merge var. The batch-token namespacing makes this safe.
+        $compiler = $this->makeCompiler();
+        $t = $compiler->batchToken();
+        $userText = 'A subject containing {{messageUrl}} from a user';
+        $template = $userText.' followed by our real merge: {{'.$t.':messageUrl}}';
+        $out = $compiler->substitute($template, ['messageUrl' => 'https://x']);
+        // Our merge substituted, user text left intact.
+        $this->assertStringContainsString('{{messageUrl}}', $out);
+        $this->assertStringContainsString('https://x', $out);
+        // Crucially the user's "{{messageUrl}}" wasn't substituted.
+        $this->assertSame(
+            'A subject containing {{messageUrl}} from a user followed by our real merge: https://x',
+            $out
+        );
     }
 
     public function test_html_for_compiles_once_per_shape(): void
     {
         $compiler = $this->makeCompiler();
+        $tk = '{{'.$compiler->batchToken().':who}}';
 
         // Three mailables, two distinct shapes (A used twice, B once). Each
         // mailable returns its bulkHtml verbatim from renderHtmlForBulkCache(),
         // so the BulkMjmlCompiler's own counter is what tells us whether the
         // cache was used.
-        $m1 = $this->makeBulkMailable('shape-A', ['who' => 'alice'], '<root>{{who}}</root>');
-        $m2 = $this->makeBulkMailable('shape-A', ['who' => 'bob'],   '<root>{{who}}</root>');
-        $m3 = $this->makeBulkMailable('shape-B', ['who' => 'carol'], '<root>{{who}} v2</root>');
+        $m1 = $this->makeBulkMailable('shape-A', ['who' => 'alice'], '<root>'.$tk.'</root>');
+        $m2 = $this->makeBulkMailable('shape-A', ['who' => 'bob'],   '<root>'.$tk.'</root>');
+        $m3 = $this->makeBulkMailable('shape-B', ['who' => 'carol'], '<root>'.$tk.' v2</root>');
 
         $h1 = $compiler->htmlFor($m1);
         $h2 = $compiler->htmlFor($m2);
@@ -114,12 +142,13 @@ class BulkMjmlCompilerTest extends TestCase
     public function test_html_for_caches_first_recipients_html_for_subsequent_recipients(): void
     {
         $compiler = $this->makeCompiler();
+        $tk = '{{'.$compiler->batchToken().':who}}';
 
         // First call seeds the cache with the FIRST mailable's bulkHtml.
         // A second mailable with the SAME shape but DIFFERENT bulkHtml should
         // be served the first cached HTML (only its mergeVars differ).
-        $first  = $this->makeBulkMailable('same-shape', ['who' => 'alice'], '<root>{{who}} A</root>');
-        $second = $this->makeBulkMailable('same-shape', ['who' => 'bob'],   '<root>{{who}} B</root>');
+        $first  = $this->makeBulkMailable('same-shape', ['who' => 'alice'], '<root>'.$tk.' A</root>');
+        $second = $this->makeBulkMailable('same-shape', ['who' => 'bob'],   '<root>'.$tk.' B</root>');
 
         $h1 = $compiler->htmlFor($first);
         $h2 = $compiler->htmlFor($second);
@@ -134,13 +163,14 @@ class BulkMjmlCompilerTest extends TestCase
     public function test_clear_resets_cache(): void
     {
         $compiler = $this->makeCompiler();
+        $tk = '{{'.$compiler->batchToken().':who}}';
 
-        $compiler->htmlFor($this->makeBulkMailable('s', ['who' => 'a'], '<r>{{who}}</r>'));
-        $compiler->htmlFor($this->makeBulkMailable('s', ['who' => 'b'], '<r>{{who}}</r>'));
+        $compiler->htmlFor($this->makeBulkMailable('s', ['who' => 'a'], '<r>'.$tk.'</r>'));
+        $compiler->htmlFor($this->makeBulkMailable('s', ['who' => 'b'], '<r>'.$tk.'</r>'));
         $this->assertSame(1, $compiler->compileCount());
 
         $compiler->clear();
-        $compiler->htmlFor($this->makeBulkMailable('s', ['who' => 'c'], '<r>{{who}}</r>'));
+        $compiler->htmlFor($this->makeBulkMailable('s', ['who' => 'c'], '<r>'.$tk.'</r>'));
         $this->assertSame(1, $compiler->compileCount()); // counter reset by clear(), then 1 fresh compile
     }
 

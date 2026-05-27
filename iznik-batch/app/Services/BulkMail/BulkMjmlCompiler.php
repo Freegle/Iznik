@@ -39,9 +39,32 @@ class BulkMjmlCompiler
     /** @var int Number of times the sidecar was actually called */
     private int $compileCount = 0;
 
+    /**
+     * Random per-instance token used to namespace placeholder names. Prevents
+     * user-controlled content that happens to contain a literal "{{messageUrl}}"
+     * (e.g. a message subject) from being substituted as if it were one of our
+     * merge vars. The mailable calls $this->ph('messageUrl') and gets back
+     * "{{<token>:messageUrl}}" — a string a user can't realistically produce
+     * by hand. 16-byte hex → 32 random hex chars → collision odds 1/16^32.
+     */
+    private readonly string $batchToken;
+
     public function __construct(
         private readonly MjmlCompilerService $mjml
-    ) {}
+    ) {
+        $this->batchToken = bin2hex(random_bytes(16));
+    }
+
+    /**
+     * Token used in placeholder names for this compiler instance. Mailables
+     * read this via MjmlMailable::setBulkToken() (called by us in htmlFor)
+     * so their bulkData() emits the namespaced placeholders the compiled
+     * HTML carries.
+     */
+    public function batchToken(): string
+    {
+        return $this->batchToken;
+    }
 
     /**
      * Render the recipient's HTML body.
@@ -60,6 +83,12 @@ class BulkMjmlCompiler
      */
     public function htmlFor(MjmlMailable&BulkRenderable $mailable): string
     {
+        // Hand the mailable our batch token before it computes bulkData/
+        // mergeVars/shapeKey, so its placeholders embed the token and can't
+        // collide with user-controlled content like a message subject that
+        // happens to contain "{{messageUrl}}".
+        $mailable->setBulkToken($this->batchToken);
+
         $shape = $mailable->shapeKey();
 
         if (!isset($this->cache[$shape])) {
@@ -95,11 +124,13 @@ class BulkMjmlCompiler
     {
         $replacements = [];
         foreach ($vars as $key => $value) {
-            // Match Blade's e() helper exactly — same flag set Laravel uses
-            // for {{ $var }} interpolation — so the bulk-substituted output
-            // is byte-identical to what Blade would have produced for the
-            // same value.
-            $replacements['{{'.$key.'}}'] = htmlspecialchars(
+            // Placeholder is "{{<token>:<key>}}" — the token namespace makes
+            // it unforgeable from user content. See $batchToken docblock.
+            // Value escaping matches Blade's e() helper exactly so the bulk-
+            // substituted output is byte-identical to what Blade would have
+            // produced for {{ $var }}.
+            $placeholder = '{{'.$this->batchToken.':'.$key.'}}';
+            $replacements[$placeholder] = htmlspecialchars(
                 (string) $value,
                 ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5,
                 'UTF-8'
@@ -108,10 +139,11 @@ class BulkMjmlCompiler
 
         $result = strtr($html, $replacements);
 
-        // Fail-loud on any remaining placeholders. If a placeholder slips
-        // through to a sent email it appears as visible garbage to the
-        // recipient. Better to crash the send loop than ship broken output.
-        if (preg_match_all('/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/', $result, $matches)) {
+        // Fail-loud on any remaining placeholders carrying our batch token.
+        // Plain "{{varname}}" elsewhere (e.g. a user's message subject) is
+        // ignored — it can't be one of ours because it lacks the token.
+        $pattern = '/\{\{'.preg_quote($this->batchToken, '/').':([a-zA-Z_][a-zA-Z0-9_]*)\}\}/';
+        if (preg_match_all($pattern, $result, $matches)) {
             $unique = array_values(array_unique($matches[1]));
             Log::error('BulkMjmlCompiler: unbound placeholders', [
                 'context' => $context,

@@ -106,19 +106,23 @@ class UnifiedDigestBulkTest extends TestCase
 
         $mail = $this->makeImmediateDigest($user, $poster, $group, $message);
 
+        // bulkData() requires a bulk token — set one explicitly for the test.
+        // Real sends get the token from BulkMjmlCompiler::htmlFor().
+        $token = 'testtoken123';
+        $mail->setBulkToken($token);
         $data = $mail->bulkData();
 
-        $this->assertSame('{{browseUrl}}', $data['browseUrl']);
-        $this->assertSame('{{donateUrl}}', $data['donateUrl']);
-        $this->assertSame('{{jobsUrl}}', $data['jobsUrl']);
-        $this->assertSame('{{settingsUrl}}', $data['settingsUrl']);
-        $this->assertSame('{{unsubscribeUrl}}', $data['unsubscribeUrl']);
-        $this->assertSame('{{userEmail}}', $data['userEmail']);
-        $this->assertStringContainsString('{{trackingPixelUrl}}', $data['trackingPixelMjml']);
+        $this->assertSame('{{'.$token.':browseUrl}}', $data['browseUrl']);
+        $this->assertSame('{{'.$token.':donateUrl}}', $data['donateUrl']);
+        $this->assertSame('{{'.$token.':jobsUrl}}', $data['jobsUrl']);
+        $this->assertSame('{{'.$token.':settingsUrl}}', $data['settingsUrl']);
+        $this->assertSame('{{'.$token.':unsubscribeUrl}}', $data['unsubscribeUrl']);
+        $this->assertSame('{{'.$token.':userEmail}}', $data['userEmail']);
+        $this->assertStringContainsString('{{'.$token.':trackingPixelUrl}}', $data['trackingPixelMjml']);
 
         // Posts collection: per-post messageUrl is a placeholder string.
         $firstPost = $data['posts']->first();
-        $this->assertSame('{{messageUrl}}', $firstPost['messageUrl']);
+        $this->assertSame('{{'.$token.':messageUrl}}', $firstPost['messageUrl']);
 
         // Shared fields are real values, not placeholders.
         $this->assertSame('Sofa', $firstPost['itemName']);

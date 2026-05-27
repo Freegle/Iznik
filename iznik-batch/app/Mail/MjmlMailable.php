@@ -28,6 +28,16 @@ abstract class MjmlMailable extends Mailable
     protected ?string $prerenderedHtml = null;
 
     /**
+     * Per-compile-instance random token used to namespace bulk-mode
+     * placeholder names — prevents user-controlled content (e.g. a message
+     * subject containing "{{messageUrl}}") from accidentally being treated
+     * as a merge placeholder. Set by BulkMjmlCompiler::htmlFor() before it
+     * calls bulkData()/mergeVars(). Empty string when no bulk render is
+     * active (non-bulk sends never see a placeholder).
+     */
+    protected string $bulkToken = '';
+
+    /**
      * Trace ID for log correlation. Initialized early with default value.
      */
     protected string $traceId = '';
@@ -233,6 +243,40 @@ abstract class MjmlMailable extends Mailable
         $this->prerenderedHtml = $html;
 
         return $this;
+    }
+
+    /**
+     * Hand the mailable a random token to namespace its merge-var
+     * placeholders. Called by BulkMjmlCompiler::htmlFor() once per send;
+     * the mailable then uses ph() in bulkData() to produce placeholders
+     * that user-typed text can't realistically collide with.
+     */
+    public function setBulkToken(string $token): static
+    {
+        $this->bulkToken = $token;
+
+        return $this;
+    }
+
+    /**
+     * Produce a token-namespaced placeholder for a merge var name. Use in
+     * BulkRenderable::bulkData() in place of literal "{{name}}" strings —
+     * the BulkMjmlCompiler substitutes these post-MJML-compile.
+     *
+     * Returns "{{<token>:name}}" — a string a user can't realistically
+     * produce in arbitrary content (32-char random hex prefix).
+     */
+    protected function ph(string $name): string
+    {
+        if ($this->bulkToken === '') {
+            throw new \LogicException(
+                'MjmlMailable::ph() called without a bulk token. '
+                .'BulkMjmlCompiler::htmlFor() must call setBulkToken() before '
+                .'asking the mailable for bulkData().'
+            );
+        }
+
+        return '{{'.$this->bulkToken.':'.$name.'}}';
     }
 
     /**

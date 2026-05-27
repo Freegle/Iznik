@@ -435,25 +435,25 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, BulkRende
 
         return array_merge([
             'user' => $this->user,
-            'userEmail' => '{{userEmail}}',
+            'userEmail' => $this->ph('userEmail'),
             'posts' => $bulkPosts,
             'postCount' => $this->posts->count(),
             'mode' => $this->mode,
             'sponsors' => $this->sponsors,
-            'settingsUrl' => '{{settingsUrl}}',
-            'unsubscribeUrl' => '{{unsubscribeUrl}}',
-            'browseUrl' => '{{browseUrl}}',
+            'settingsUrl' => $this->ph('settingsUrl'),
+            'unsubscribeUrl' => $this->ph('unsubscribeUrl'),
+            'browseUrl' => $this->ph('browseUrl'),
             'userSite' => $this->userSite,
             'jobAds' => $bulkJobAds,
-            'jobsUrl' => '{{jobsUrl}}',
-            'donateUrl' => '{{donateUrl}}',
+            'jobsUrl' => $this->ph('jobsUrl'),
+            'donateUrl' => $this->ph('donateUrl'),
             'primaryGroupName' => $this->getPrimaryGroupName(),
             'frequencyText' => $this->mode === UnifiedDigestService::MODE_IMMEDIATE ? 'immediately' : 'daily',
         ], [
             // Overrides for getTrackingData() so the tracking pixel URL is a
             // merge placeholder instead of the first recipient's real URL.
             'tracking' => $this->tracking,
-            'trackingPixelMjml' => '<mj-image src="{{trackingPixelUrl}}" width="1px" height="1px" alt="" padding="0" />',
+            'trackingPixelMjml' => '<mj-image src="'.$this->ph('trackingPixelUrl').'" width="1px" height="1px" alt="" padding="0" />',
             'trackingPixelHtml' => '',
         ]);
     }
@@ -539,7 +539,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, BulkRende
             // distanceText: truthy placeholder when the user has a location
             // (the template @if branches on it). Shape key includes
             // has_distance, so within a shape this is consistent.
-            $distanceText = $this->user->lastlocation !== null ? '{{distanceText}}' : null;
+            $distanceText = $this->user->lastlocation !== null ? $this->ph('distanceText') : null;
 
             $posterUser = $message->relationLoaded('fromUser') ? $message->fromUser : null;
             $posterAvatarUrl = $this->resolveAvatarUrl($posterUser, 36);
@@ -585,7 +585,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, BulkRende
     {
         return $this->getCachedJobAds()->map(function ($job, $idx) {
             $clone = clone $job;
-            $clone->tracked_url = '{{job_'.$idx.'_url}}';
+            $clone->tracked_url = $this->ph('job_'.$idx.'_url');
             return $clone;
         });
     }

@@ -93,7 +93,7 @@ class StoriesNewsletterMail extends MjmlMailable implements BulkRenderable
     {
         return [
             'name'           => $this->recipientName,
-            'email'          => '{{recipientEmail}}',
+            'email'          => $this->ph('recipientEmail'),
             'stories'        => $this->stories,
             'headerImageUrl' => $this->headerImageUrl,
             'tellUrl'        => $this->tellUrl,

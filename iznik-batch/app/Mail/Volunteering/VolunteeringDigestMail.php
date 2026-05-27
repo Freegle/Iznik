@@ -108,7 +108,7 @@ class VolunteeringDigestMail extends MjmlMailable implements BulkRenderable
         // regression either, and the shape key keeps that bucket isolated.
         $jobAds = $this->jobAds->map(function ($job, $idx) {
             $clone = clone $job;
-            $clone->tracked_url = '{{job_'.$idx.'_url}}';
+            $clone->tracked_url = $this->ph('job_'.$idx.'_url');
             return $clone;
         });
 
@@ -116,11 +116,11 @@ class VolunteeringDigestMail extends MjmlMailable implements BulkRenderable
             'groupName'      => $this->groupName,
             'volunteerings'  => $this->volunteerings,
             'userSite'       => $userSite,
-            'unsubscribeUrl' => '{{unsubscribeUrl}}',
-            'email'          => '{{recipientEmail}}',
+            'unsubscribeUrl' => $this->ph('unsubscribeUrl'),
+            'email'          => $this->ph('recipientEmail'),
             'jobAds'         => $jobAds,
-            'jobsUrl'        => '{{jobsUrl}}',
-            'donateUrl'      => '{{donateUrl}}',
+            'jobsUrl'        => $this->ph('jobsUrl'),
+            'donateUrl'      => $this->ph('donateUrl'),
         ];
     }
 
