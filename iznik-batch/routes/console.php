@@ -334,16 +334,14 @@ Schedule::command('tn:sync')
 //     ->runInBackground();
 //
 // Immediate mode - V1-parity per-group iteration.
-// Re-enabled 2026-05-27 after the V1 bulk3 cron was disabled and the
-// service was rewritten to walk V1's groups_digests cursor (per-group)
-// instead of our users_digests (per-user). Overlap prevention is now
-// flock-based via the PreventsOverlapping trait inside the command
-// (Laravel's withoutOverlapping() silently allowed 6 concurrent
-// processes during the first rollout, so we don't rely on it here).
-Schedule::command('mail:digest:unified --mode=immediate')
-    ->everyMinute()
-    ->sendOutputTo(cronLog('mail:digest:unified'))
-    ->runInBackground();
+// DISABLED 2026-05-27 — re-enable was rolled back after discovering
+// users_digests table missing on prod (broke the monitor script).
+// Cron itself uses only groups_digests so technically unaffected, but
+// pausing until the table-state confusion is resolved.
+// Schedule::command('mail:digest:unified --mode=immediate')
+//     ->everyMinute()
+//     ->sendOutputTo(cronLog('mail:digest:unified'))
+//     ->runInBackground();
 
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
