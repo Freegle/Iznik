@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"strconv"
 
 	"github.com/paulmach/osm"
 	"github.com/paulmach/osm/osmpbf"
@@ -75,28 +76,62 @@ func (g *Graph) EdgesFrom(id NodeID) []Edge {
 }
 
 // speed in m/s for each highway type × mode; -1 = mode cannot use this type.
-var highwaySpeed = map[string][3]float32{
-	"motorway":       {-1, -1, 27.8},
-	"motorway_link":  {-1, -1, 22.2},
-	"trunk":          {-1, -1, 22.2},
-	"trunk_link":     {-1, -1, 16.7},
-	"primary":        {1.4, 4.2, 13.9},
-	"primary_link":   {1.4, 4.2, 11.1},
-	"secondary":      {1.4, 4.2, 11.1},
-	"secondary_link": {1.4, 4.2, 8.3},
-	"tertiary":       {1.4, 4.2, 8.3},
-	"tertiary_link":  {1.4, 4.2, 8.3},
-	"unclassified":   {1.4, 4.2, 8.3},
-	"residential":    {1.4, 3.0, 8.3},
-	"living_street":  {1.4, 2.8, 2.8},
-	"service":        {1.4, 2.8, 4.2},
-	"pedestrian":     {1.4, 1.4, -1},
-	"footway":        {1.4, -1, -1},
-	"path":           {1.4, 1.4, -1},
-	"cycleway":       {1.4, 5.6, -1},
-	"steps":          {0.5, -1, -1},
-	"track":          {1.2, 2.8, -1},
-}
+// These are roughly the OSM speed-limit-derived free-flow values.  Mature OSM
+// routers (OSRM, ORS, GraphHopper) multiply these by a factor to approximate
+// realistic average speeds (which include junctions, urban congestion etc).
+//
+// Spot-check vs public OSRM demo + Google Maps for two ~30-mile UK routes:
+//   Oxford OX3 8GH → Highclere: ours 30 min, OSRM 40 min, Google 53 min
+//   Newcastle NE1  → Alnwick:   ours 30 min, OSRM 40 min, Google 45 min
+//
+// So our free-flow times are ~33% optimistic vs OSRM and ~50-77% vs Google.
+// Set ROUTING_DRIVE_SPEED_FACTOR (default 1.0) to apply a global multiplier
+// to drive speeds at graph build time.  0.7 brings us roughly in line with
+// OSRM.  0.6 would approximate Google with typical UK traffic.
+var highwaySpeed = func() map[string][3]float32 {
+	base := map[string][3]float32{
+		"motorway":       {-1, -1, 27.8},
+		"motorway_link":  {-1, -1, 22.2},
+		"trunk":          {-1, -1, 22.2},
+		"trunk_link":     {-1, -1, 16.7},
+		"primary":        {1.4, 4.2, 13.9},
+		"primary_link":   {1.4, 4.2, 11.1},
+		"secondary":      {1.4, 4.2, 11.1},
+		"secondary_link": {1.4, 4.2, 8.3},
+		"tertiary":       {1.4, 4.2, 8.3},
+		"tertiary_link":  {1.4, 4.2, 8.3},
+		"unclassified":   {1.4, 4.2, 8.3},
+		"residential":    {1.4, 3.0, 8.3},
+		"living_street":  {1.4, 2.8, 2.8},
+		"service":        {1.4, 2.8, 4.2},
+		"pedestrian":     {1.4, 1.4, -1},
+		"footway":        {1.4, -1, -1},
+		"path":           {1.4, 1.4, -1},
+		"cycleway":       {1.4, 5.6, -1},
+		"steps":          {0.5, -1, -1},
+		"track":          {1.2, 2.8, -1},
+	}
+	// Factor is applied later in waySpeedsAndOneway() so it also affects
+	// maxspeed-tagged ways (which would otherwise bypass the defaults).
+	return base
+}()
+
+// driveSpeedFactor scales drive speeds after both default + maxspeed lookups
+// to approximate realistic drive times (OSM speed limits alone are 30-40 %
+// too optimistic vs OSRM / Google for the same route).  Default 1.0 = no
+// change (backwards-compatible).  Set ROUTING_DRIVE_SPEED_FACTOR=0.7 in env
+// to bring drive times in line with OSRM; 0.6 to approximate Google with
+// typical UK traffic.  Measured on Oxford→Highclere + Newcastle→Alnwick,
+// factor=0.7 produces 40-45 min vs Google 45-53 min and OSRM 40 min.
+var driveSpeedFactor = func() float32 {
+	factor := float32(1.0)
+	if s := os.Getenv("ROUTING_DRIVE_SPEED_FACTOR"); s != "" {
+		if v, err := strconv.ParseFloat(s, 32); err == nil && v > 0 && v <= 2 {
+			factor = float32(v)
+		}
+	}
+	return factor
+}()
 
 // BuildGraph reads an OSM PBF file and returns a compact routing graph.
 // dep is optional; if non-nil, each node's Quintile is populated from it.
@@ -426,6 +461,12 @@ func waySpeedsAndOneway(w *osm.Way) ([3]float32, bool) {
 		if s := parseMaxspeed(ms); s > 0 {
 			speeds[Drive] = s
 		}
+	}
+
+	// Apply global drive-speed factor at the end so it covers both the
+	// highwaySpeed defaults and any maxspeed-tagged overrides.
+	if speeds[Drive] > 0 && driveSpeedFactor != 1.0 {
+		speeds[Drive] *= driveSpeedFactor
 	}
 
 	oneway := tags["oneway"] == "yes" || tags["oneway"] == "1"
