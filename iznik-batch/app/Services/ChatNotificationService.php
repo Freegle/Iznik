@@ -457,11 +457,11 @@ class ChatNotificationService
             $previousMessages
         );
 
-        if ($this->spooler) {
-            $this->spooler->spool($mailable, $sendingTo->email_preferred, 'chat');
-        } else {
-            Mail::send($mailable);
-        }
+        // Spooler is always available via container; the constructor only
+        // accepts a nullable instance for legacy direct instantiation in
+        // tests. Resolve from the app to keep that path safe too.
+        $spooler = $this->spooler ?? app(EmailSpoolerService::class);
+        $spooler->spool($mailable, $sendingTo->email_preferred, 'chat');
     }
 
     /**

@@ -189,8 +189,7 @@ class VolunteeringDigestService
 
                 if (!$dryRun) {
                     $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
-                    SafeMail::sendMailable(
-                        new VolunteeringDigestMail(
+                    app(\App\Services\EmailSpoolerService::class)->spool(new VolunteeringDigestMail(
                             recipientEmail: $email,
                             groupName: $groupRow->nameshort,
                             volunteerings: $volData,
@@ -198,8 +197,7 @@ class VolunteeringDigestService
                             jobAds: $jobAds,
                             userId: $member->userId,
                         ),
-                        $email,
-                    );
+                        $email,);
                 }
                 $sent++;
             }

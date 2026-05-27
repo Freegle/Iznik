@@ -157,7 +157,7 @@ class NotificationChaseUpService
             // 2026-05-15 07:31 mail-host timeout aborted the whole chaseup
             // run — same class of failure we hit in mail:engage and
             // mail:events-digest.
-            SafeMail::send(new ChaseUpMail($user, $notifData, $subject), $email);
+            app(\App\Services\EmailSpoolerService::class)->spool(new ChaseUpMail($user, $notifData, $subject), $email);
         }
 
         return 1;

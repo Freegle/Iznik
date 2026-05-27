@@ -152,7 +152,7 @@ class AlertService
                         ?: 'Freegle Volunteer';
 
                     try {
-                        Mail::send(new AlertMail(
+                        app(\App\Services\EmailSpoolerService::class)->spool(new AlertMail(
                             recipientEmail: $email,
                             recipientName: $name,
                             fromAddress: $fromAddr,

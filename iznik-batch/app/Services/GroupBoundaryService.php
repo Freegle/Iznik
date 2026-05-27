@@ -52,7 +52,7 @@ class GroupBoundaryService
                 ]);
 
                 // V1 mailed GEEKS_ADDR on boundary errors — preserve that notification.
-                Mail::send(new BoundaryErrorMail($group->id, $group->nameshort, $e->getMessage()));
+                app(\App\Services\EmailSpoolerService::class)->spool(new BoundaryErrorMail($group->id, $group->nameshort, $e->getMessage()));
 
                 $errors++;
             }

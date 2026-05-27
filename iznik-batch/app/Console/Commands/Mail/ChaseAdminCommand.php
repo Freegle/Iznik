@@ -194,7 +194,7 @@ class ChaseAdminCommand extends Command
                     $admin->id
                 );
 
-                Mail::send($mailable);
+                app(\App\Services\EmailSpoolerService::class)->spool($mailable);
 
                 $stats['emails_sent']++;
                 $sent++;
@@ -251,9 +251,9 @@ class ChaseAdminCommand extends Command
             );
 
             if ($user) {
-                Mail::send($mailable);
+                app(\App\Services\EmailSpoolerService::class)->spool($mailable);
             } else {
-                Mail::to($testEmail)->send($mailable);
+                app(\App\Services\EmailSpoolerService::class)->spool($mailable, $testEmail);
             }
 
             $stats['emails_sent']++;

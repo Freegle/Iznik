@@ -167,16 +167,14 @@ class EventsDigestService
 
                 if (!$dryRun) {
                     $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
-                    SafeMail::sendMailable(
-                        new EventsDigestMail(
+                    app(\App\Services\EmailSpoolerService::class)->spool(new EventsDigestMail(
                             recipientEmail: $email,
                             groupName: $groupRow->nameshort,
                             events: $eventData,
                             unsubscribeUrl: $unsubscribeUrl,
                             userId: $member->userId,
                         ),
-                        $email,
-                    );
+                        $email,);
                 }
                 $sent++;
             }

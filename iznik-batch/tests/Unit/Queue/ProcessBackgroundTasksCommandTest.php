@@ -69,6 +69,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // Verify task was marked as processed.
         $task = DB::table('background_tasks')->first();
         $this->assertNotNull($task->processed_at);
@@ -97,6 +100,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         $task = DB::table('background_tasks')->first();
         $this->assertNotNull($task->processed_at);
         $this->assertNull($task->failed_at);
@@ -117,6 +123,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Bad task should be marked failed after MAX_ATTEMPTS=3 but not crash the worker.
         $task = DB::table('background_tasks')->first();
@@ -148,6 +157,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Verify email was sent.
         Mail::assertSent(ChitchatReportMail::class, function (ChitchatReportMail $mail) {
@@ -189,6 +201,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         Mail::assertSent(ChitchatReportMail::class, function (ChitchatReportMail $mail) {
             return $mail->reporterName === 'A Freegle user'
                 && $mail->reporterId === 42076407
@@ -225,6 +240,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         Mail::assertSent(ChitchatReportMail::class, function (ChitchatReportMail $mail) {
             return $mail->reporterId === 99001
                 && $mail->newsfeedId === 88001
@@ -252,6 +270,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
     }
 
     public function test_marks_failed_after_max_attempts(): void
@@ -269,6 +290,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Should be marked as permanently failed.
         $task = DB::table('background_tasks')->first();
@@ -292,6 +316,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Should have recorded the error but not permanently failed yet (attempts < 3).
         $task = DB::table('background_tasks')->first();
@@ -336,6 +363,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // Both should be processed.
         $tasks = DB::table('background_tasks')->get();
         $this->assertCount(2, $tasks);
@@ -365,6 +395,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Verify email was sent with correct data and defaults to external source.
         Mail::assertSent(DonateExternalMail::class, function (DonateExternalMail $mail) {
@@ -403,6 +436,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         Mail::assertSent(DonateExternalMail::class, function (DonateExternalMail $mail) {
             return $mail->source === DonateExternalMail::SOURCE_PAYPAL
                 && $mail->getChannelPhrase() === 'PayPal Donate'
@@ -433,6 +469,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         Mail::assertSent(DonateExternalMail::class, function (DonateExternalMail $mail) {
             return $mail->source === DonateExternalMail::SOURCE_STRIPE
                 && $mail->getChannelPhrase() === 'Stripe'
@@ -454,6 +493,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Should have recorded the error.
         $task = DB::table('background_tasks')->first();
@@ -482,6 +524,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Verify email was sent with correct data.
         Mail::assertSent(ForgotPasswordMail::class, function (ForgotPasswordMail $mail) {
@@ -516,6 +561,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // Verify email was sent with correct data.
         Mail::assertSent(UnsubscribeConfirmMail::class, function (UnsubscribeConfirmMail $mail) {
             return $mail->userId === 22222
@@ -536,6 +584,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 3,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Command should have exited cleanly after 3 iterations.
     }
@@ -583,6 +634,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Verify email was sent with correct from address and content.
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($group, $mod) {
@@ -648,6 +702,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // No email should be sent for empty stdmsg.
         Mail::assertNothingSent();
 
@@ -706,6 +763,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($group) {
             $this->assertEquals($group->nameshort, $mail->groupNameShort);
@@ -767,6 +827,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Verify a User2Mod chat room was created.
         $chatRoom = DB::table('chat_rooms')
@@ -842,6 +905,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Verify log entry was created.
         $log = DB::table('logs')
@@ -934,6 +1000,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // The Completed message should have null message body (unpromised).
         $completedMsg = DB::table('chat_messages')
             ->where('chatid', $chatRoomId)
@@ -1004,6 +1073,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // No Completed message should be created — the taker already got it.
         $completedMsg = DB::table('chat_messages')
             ->where('chatid', $chatRoomId)
@@ -1049,6 +1121,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Verify email was sent.
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($mod) {
@@ -1111,6 +1186,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // Email must be sent to the TN proxy — not skipped because the address is external.
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) use ($tnEmail) {
             return collect($mail->to)->pluck('address')->contains($tnEmail);
@@ -1168,6 +1246,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         $chatRoom = DB::table('chat_rooms')
             ->where('user1', $member->id)
@@ -1235,6 +1316,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         $chatRoom = DB::table('chat_rooms')
             ->where('user1', $member->id)
             ->where('groupid', $group->id)
@@ -1293,6 +1377,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // Verify a log entry was created (so modmail appears in mod logs).
         // V1 parity: modmails are logged as User/Mailed (not Message/Replied).
         $logEntry = DB::table('logs')
@@ -1339,6 +1426,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         Mail::assertNothingSent();
 
         $task = DB::table('background_tasks')->first();
@@ -1368,6 +1458,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Should fail with "Unknown task type" on the third (final) attempt.
         $task = DB::table('background_tasks')->first();
@@ -1399,6 +1492,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Should fail with "Unknown task type" on the third (final) attempt.
         $task = DB::table('background_tasks')->first();
@@ -1437,6 +1533,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         Mail::assertSent(ReferToSupportMail::class, function (ReferToSupportMail $mail) use ($user, $chatId) {
             $this->assertEquals('Alice Mod', $mail->userName);
             $this->assertEquals($user->id, $mail->userId);
@@ -1469,6 +1568,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         Mail::assertSent(VerifyEmailMail::class, function (VerifyEmailMail $mail) use ($user) {
             $this->assertEquals($user->id, $mail->userId);
@@ -1511,6 +1613,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // Should not send verification email for existing email.
         Mail::assertNothingSent();
 
@@ -1552,6 +1657,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Should send to both users.
         Mail::assertSent(MergeOfferMail::class, 2);
@@ -1624,6 +1732,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // Two emails: one to poster, one BCC.
         Mail::assertSent(ModStdMessageMail::class, 2);
 
@@ -1691,6 +1802,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // Two emails: one to member, one BCC to the mod.
         Mail::assertSent(ModStdMessageMail::class, 2);
@@ -1769,6 +1883,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // Only one email — to the poster. No BCC.
         Mail::assertSent(ModStdMessageMail::class, 1);
     }
@@ -1835,6 +1952,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // BCC address should have $groupname replaced with the group's nameshort.
         $expectedBcc = $group->nameshort . '-archive@example.com';
@@ -1909,6 +2029,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // Should still send BCC using the fallback config from the other mod.
         Mail::assertSent(ModStdMessageMail::class, 2);
         Mail::assertSent(ModStdMessageMail::class, function (ModStdMessageMail $mail) {
@@ -1957,6 +2080,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         \Illuminate\Support\Facades\Http::assertSent(function ($request) {
             return str_contains($request->url(), '/freegle/post/create')
                 && $request->header('Key')[0] === 'test-key-123';
@@ -2002,6 +2128,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // No HTTP call should be made for Wanted messages.
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }
@@ -2041,6 +2170,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         // No HTTP call when API key is empty.
         \Illuminate\Support\Facades\Http::assertNothingSent();
@@ -2086,6 +2218,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--sleep' => 0,
         ])->assertSuccessful();
 
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }
 
@@ -2112,6 +2247,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         \Illuminate\Support\Facades\Http::assertSent(function ($request) use ($msgId) {
             return str_contains($request->url(), "/freegle/post/{$msgId}/delete")
@@ -2140,6 +2278,9 @@ class ProcessBackgroundTasksCommandTest extends TestCase
             '--max-iterations' => 1,
             '--sleep' => 0,
         ])->assertSuccessful();
+
+        // Flush the spool so Mail::fake intercepts the actual SMTP send.
+        $this->artisan('mail:spool:process')->assertSuccessful();
 
         \Illuminate\Support\Facades\Http::assertNothingSent();
     }

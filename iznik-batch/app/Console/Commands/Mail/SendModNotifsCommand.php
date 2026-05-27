@@ -83,7 +83,7 @@ class SendModNotifsCommand extends Command
                 // local-part, 5xx etc), marks the recipient as bouncing via
                 // BounceService, and returns false so the loop continues with the
                 // next mod instead of crashing the whole job.
-                $delivered = SafeMail::send($mail, $notif['email'], $notif['name']);
+                $delivered = app(\App\Services\EmailSpoolerService::class)->spool($mail, $notif['email']);
 
                 if ($delivered) {
                     $service->recordSent($notif['user_id'], $notif['text_summary']);

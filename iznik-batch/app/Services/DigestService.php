@@ -156,10 +156,10 @@ class DigestService
     {
         if ($messages->count() === 1) {
             // Single message - send individual email.
-            Mail::send(new SingleDigest($user, $group, $messages->first(), $frequency));
+            app(\App\Services\EmailSpoolerService::class)->spool(new SingleDigest($user, $group, $messages->first(), $frequency));
         } else {
             // Multiple messages - send digest.
-            Mail::send(new MultipleDigest($user, $group, $messages, $frequency));
+            app(\App\Services\EmailSpoolerService::class)->spool(new MultipleDigest($user, $group, $messages, $frequency));
         }
     }
 
