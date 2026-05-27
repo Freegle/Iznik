@@ -246,6 +246,45 @@ The trailing 30 % is where the new algorithm provides value over legacy:
 it reaches users the legacy system never would (further out, harder to
 get to by drive-time), without bombarding them all at once.
 
+## Drive-time accuracy: our routing is too optimistic
+
+A separate concern that affects the validity of every drive-time number
+above: our `iznik-routing-go` Dijkstra is significantly faster than
+mature open-source routers.  Spot-check against two ~30-mile UK routes:
+
+| Route | Ours | OSRM (no traffic) | Google (live traffic) |
+|-------|------|-------------------|------------------------|
+| Oxford OX3 8GH → Highclere | 30 min | 40 min | 53 min |
+| Newcastle NE1 → Alnwick    | 30 min | 40 min | 45 min |
+
+Two systematic gaps:
+
+1. **No junction or turn penalties.**  OSRM adds ~10 seconds per
+   intersection turn; we add nothing.  This alone is the ~33 % gap
+   between our times and OSRM's free-flow times.
+2. **No traffic modelling.**  Google adds real-time congestion; OSRM
+   doesn't either, but its public demo at least uses junction-aware
+   times.
+
+GraphHopper's reference car-speed defaults (motorway 100, primary 65,
+residential 30 km/h) closely match ours, but GraphHopper multiplies
+by a global 0.9 factor to derive "realistic" speeds from posted limits
+— we don't even do that.
+
+### Implication for max-minutes choice
+
+The current default `max-minutes=30` reaches points that are realistically
+~45–55 driving minutes away.  That's *too far* for a free-item-pickup
+algorithm — most users wouldn't drive 45 minutes for a Freegle item.
+
+Pragmatic short-term fix: lower max-minutes to about 18 (so the apparent
+"18 our-minutes" corresponds to roughly 28 real-world minutes).  Or apply
+a global ~0.7× multiplier to the drive speeds in `graph.go` so our times
+roughly match OSRM, then keep max-minutes=20 (= ~26 real-min).
+
+Either fix tightens the algorithm's geographic reach to what would
+plausibly be a real Freegle pickup radius.
+
 ## Caveats
 
 1. **Sample is 483 posts**.  Larger sample would tighten the numbers but
