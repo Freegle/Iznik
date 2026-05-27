@@ -572,9 +572,20 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 			return fiber.NewError(fiber.StatusBadRequest, "User is not partner-linked")
 		}
 
+		// V1 parity (User::delete): drop approved memberships so the user immediately
+		// disappears from group member lists.
+		db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
+
 		db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
 
-		// GDPR erasure: blank personal data from all messages posted by this user (V1 parity).
+		// V1 parity (User::delete with $log=TRUE): audit trail for the deletion.
+		// byuser is NULL because there is no acting Freegle user in the partner flow.
+		db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, NULL)",
+			log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID)
+
+		// GDPR erasure: partner-deleted accounts have no recovery affordance (the partner
+		// owns the contract), so unlike the self-service flow we blank message content
+		// immediately rather than deferring to the 14-day grace cleanup.
 		db.Exec("UPDATE messages SET fromip = NULL, message = NULL, envelopefrom = NULL, fromname = NULL, fromaddr = NULL, messageid = NULL, textbody = NULL, htmlbody = NULL, deleted = NOW() WHERE fromuser = ?", targetID)
 		db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid IN (SELECT id FROM messages WHERE fromuser = ?)", targetID)
 

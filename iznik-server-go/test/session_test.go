@@ -1208,6 +1208,82 @@ func TestForgetWritesDeletionLog(t *testing.T) {
 	assert.Equal(t, int64(1), logCount, "Forget should write a logs row (type=User, subtype=Deleted)")
 }
 
+// TestForgetPartnerFlow exercises the partner-authenticated Forget path: a partner
+// (e.g. TrashNothing) can immediately erase a user it owns. Unlike the self-service
+// flow there is no recovery window, so message content IS blanked synchronously —
+// but parity with V1 still requires membership removal and an audit log entry.
+func TestForgetPartnerFlow(t *testing.T) {
+	prefix := uniquePrefix("forget_partner")
+	db := database.DBConn
+
+	// Create a user linked to the test partner (ljuserid is the partner-side id).
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	db.Exec("UPDATE users SET ljuserid = ? WHERE id = ?", uint64(99999), userID)
+
+	// Seed a message + messages_groups row so we can confirm partner erasure still
+	// blanks content (unlike the self-service grace path).
+	result := db.Exec(
+		"INSERT INTO messages (fromuser, subject, type, arrival, envelopefrom, fromip, fromname, fromaddr, textbody, message) "+
+			"VALUES (?, 'Partner forget msg', 'Offer', NOW(), 'envelope@example.com', '1.2.3.4', 'Sender', 'addr@example.com', 'body', 'body')",
+		userID,
+	)
+	var msgID uint64
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgID)
+	assert.NotZero(t, result.RowsAffected)
+	assert.NotZero(t, msgID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"action":  "Forget",
+		"partner": "testkey123",
+		"id":      userID,
+	})
+	req := httptest.NewRequest("POST", "/api/session", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// User soft-deleted.
+	var userDeleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", userID).Scan(&userDeleted)
+	assert.NotNil(t, userDeleted, "Partner Forget should soft-delete the user")
+
+	// Approved memberships dropped (V1 parity).
+	var membCount int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND collection = ?", userID, "Approved").Scan(&membCount)
+	assert.Equal(t, int64(0), membCount, "Partner Forget should drop approved memberships")
+
+	// Audit log row written with byuser = NULL (no acting Freegle user).
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE user = ? AND type = ? AND subtype = ? AND byuser IS NULL",
+		userID, "User", "Deleted").Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "Partner Forget should write a logs row with byuser=NULL")
+
+	// Partner contract: message content IS erased immediately.
+	type MsgFields struct {
+		Envelopefrom *string
+		Fromip       *string
+		Fromname     *string
+		Fromaddr     *string
+		Textbody     *string
+		Deleted      *string
+	}
+	var msg MsgFields
+	db.Raw("SELECT envelopefrom, fromip, fromname, fromaddr, textbody, deleted FROM messages WHERE id = ?", msgID).Scan(&msg)
+	assert.Nil(t, msg.Envelopefrom, "partner forget should NULL envelopefrom")
+	assert.Nil(t, msg.Fromip, "partner forget should NULL fromip")
+	assert.Nil(t, msg.Fromname, "partner forget should NULL fromname")
+	assert.Nil(t, msg.Fromaddr, "partner forget should NULL fromaddr")
+	assert.Nil(t, msg.Textbody, "partner forget should NULL textbody")
+	assert.NotNil(t, msg.Deleted, "partner forget should set messages.deleted")
+
+	var mgDeleted int
+	db.Raw("SELECT deleted FROM messages_groups WHERE msgid = ?", msgID).Scan(&mgDeleted)
+	assert.Equal(t, 1, mgDeleted, "partner forget should flip messages_groups.deleted=1")
+}
+
 // ---------------------------------------------------------------------------
 // POST /session - Related
 // ---------------------------------------------------------------------------
