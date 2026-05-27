@@ -87,7 +87,12 @@ func handleRippleEval(g *Graph, spatialURL string) fiber.Handler {
 		reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
 		resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
 		if err != nil || resp.StatusCode != 200 {
-			log.Printf("ripple-eval: within_coords failed (err=%v)", err)
+			log.Printf("ripple-eval: within_coords failed (status=%v err=%v)", func() int {
+				if resp != nil {
+					return resp.StatusCode
+				}
+				return 0
+			}(), err)
 			return c.JSON(empty)
 		}
 		defer resp.Body.Close()
@@ -308,7 +313,12 @@ func handleRippleSchedule(g *Graph, spatialURL string) fiber.Handler {
 		reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
 		resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
 		if err != nil || resp.StatusCode != 200 {
-			log.Printf("ripple-schedule: within_coords failed (err=%v)", err)
+			log.Printf("ripple-schedule: within_coords failed (status=%v err=%v)", func() int {
+				if resp != nil {
+					return resp.StatusCode
+				}
+				return 0
+			}(), err)
 			return c.JSON(empty)
 		}
 		defer resp.Body.Close()

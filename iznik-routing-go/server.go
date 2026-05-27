@@ -166,12 +166,14 @@ func handleNearbyFreeglers(g *Graph, spatialURL string) fiber.Handler {
 		reqURL := spatialURL + "/v1/userapproxlocs/within_coords"
 		resp, err := http.Post(reqURL, "text/plain", strings.NewReader(wkt)) //nolint:gosec
 		if err != nil || resp.StatusCode != 200 {
-			log.Printf("nearby-freeglers: within_coords request failed (status=%v err=%v)", func() int {
-				if resp != nil {
-					return resp.StatusCode
-				}
-				return 0
-			}(), err)
+			statusCode := 0
+			if resp != nil {
+				statusCode = resp.StatusCode
+			}
+			log.Printf("nearby-freeglers: within_coords request failed (status=%d err=%v)", statusCode, err)
+			if resp != nil {
+				resp.Body.Close()
+			}
 			return c.JSON(empty)
 		}
 		defer resp.Body.Close()
