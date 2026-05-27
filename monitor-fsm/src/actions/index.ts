@@ -178,49 +178,20 @@ const STOP_WORDS = new Set([
   'freegle', 'modtools', 'group', 'message', 'chat', 'email', 'post',
 ])
 
-// Check whether master already has a fix commit for this bug.
-// Searches recent git log (90 days) for fix()/feat() commits whose scope or
-// message matches the bug's code_area, featureArea, or summary keywords.
-// Returns the matching commit short-SHA + subject, or null if no match.
+// DISABLED — this heuristic produced a ~75% false-positive rate (3 of 4 newly
+// tracked bug topics auto-marked "fixed" by commits that didn't actually fix
+// them, e.g. #9715/#9716/#9719). Generic tokens like "chat"/"group"/"name"/
+// "android"/"modtools" routinely match unrelated recent fix commits. The cost
+// of running the full diagnose→reproduce→fix path on an occasional already-
+// fixed bug is far smaller than silently ignoring real reports. If we want to
+// re-enable an auto-fixed shortcut later it needs (at minimum) exact-string
+// matching of a distinctive symptom phrase, not bag-of-words keyword overlap.
 async function checkGitAlreadyFixed(
-  codeArea: string | null,
-  featureArea: string | null,
-  summary: string,
+  _codeArea: string | null,
+  _featureArea: string | null,
+  _summary: string,
 ): Promise<string | null> {
-  try {
-    const { stdout } = await exec('git', [
-      '-C', '/home/edward/FreegleDockerWSL',
-      'log', 'master',
-      '--since=90 days ago',
-      '--pretty=format:%h %s',
-      '--no-merges',
-    ], { maxBuffer: 2 * 1024 * 1024 })
-
-    const lines = stdout.split('\n').filter(Boolean)
-
-    // Build keyword set from code_area, featureArea, and first 6 words of summary
-    const rawKeywords = [
-      ...(codeArea ?? '').split(/[\/\-\s]+/),
-      ...(featureArea ?? '').split(/[\/\-\s]+/),
-      ...summary.split(/\s+/).slice(0, 6),
-    ]
-      .map(w => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
-      .filter(w => w.length >= 4 && !STOP_WORDS.has(w))
-
-    if (rawKeywords.length === 0) return null
-
-    for (const line of lines) {
-      const lower = line.toLowerCase()
-      // Only consider fix/feat commits — skip test/chore/docs/perf/ci
-      if (!/^\w+ fix|^\w+ feat/.test(lower)) continue
-      const matchCount = rawKeywords.filter(kw => lower.includes(kw)).length
-      // Require at least 2 keyword hits to avoid false positives
-      if (matchCount >= 2) return line.trim()
-    }
-    return null
-  } catch {
-    return null
-  }
+  return null
 }
 
 export const actions: ActionDefinition[] = [
@@ -1412,13 +1383,25 @@ TEST API — always use these exact commands to run and poll for tests:
   - Playwright:    POST http://localhost:8081/api/tests/playwright → poll http://localhost:8081/api/tests/playwright/status
   - Laravel/PHP:   POST http://localhost:8081/api/tests/laravel
   ALWAYS use port 8081 — not 38081 or any other port you discover.
-  Terminal states are "completed" (success) or "error" (failure).  "passed" and "failed" are NOT valid states.
-  Correct polling pattern (Go example):
-    curl -s -X POST http://localhost:8081/api/tests/go
-    until curl -s http://localhost:8081/api/tests/go/status | python3 -c "
+
+  CRITICAL: the status field is one of these EXACT strings (case- and
+  spelling-sensitive — DO NOT paraphrase, abbreviate, or guess):
+    • "running"   — test in progress
+    • "completed" — success (note the trailing "d" — NOT "complete")
+    • "failed"    — failure (note: "failed", NOT "error" / "fail" / "FAIL")
+  If you write s == "complete", s == "done", s == "success", s == "ok",
+  s == "error", or any other variant, your poll loop will NEVER exit and the
+  FSM will time you out. The literal two strings that mean "stop polling" are
+  "completed" and "failed". Nothing else.
+
+  COPY THIS POLL VERBATIM (substitute only <type> with go|vitest|playwright|laravel):
+    curl -s -X POST http://localhost:8081/api/tests/<type>
+    until curl -s http://localhost:8081/api/tests/<type>/status | python3 -c "
     import sys,json; d=json.load(sys.stdin); s=d.get('status','')
-    print(s); exit(0 if s in ['completed','error'] else 1)
+    print(s); exit(0 if s in ['completed','failed'] else 1)
     " 2>/dev/null; do sleep 5; done
+  Do NOT rewrite the python check to use s == 'X' or grep -q '"status":"X"'.
+  Use the in-list check above so all terminal states are handled.
 
 FORBIDDEN:
   - "I've scheduled a wakeup" / "I'll check back" / "I'll come back to this later" — none of that is possible; if you exit without pushing, the work is lost.
