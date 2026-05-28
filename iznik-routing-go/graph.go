@@ -422,6 +422,12 @@ func BuildGraphFromRaw(rawNodes []RawNodeSpec, rawWays []RawWaySpec, dep *Depriv
 		if !ok {
 			continue
 		}
+		// Apply the DfT-calibrated per-road-class factor to match the
+		// PBF path (waySpeedsAndOneway).  Without this, raw-built graphs
+		// (tests + offline tooling) would diverge from production.
+		if speeds[Drive] > 0 {
+			speeds[Drive] *= driveSpeedFactorFor(w.Highway)
+		}
 		for i := 0; i < len(w.NodeIDs)-1; i++ {
 			from, ok1 := osmToSeq[w.NodeIDs[i]]
 			to, ok2 := osmToSeq[w.NodeIDs[i+1]]
