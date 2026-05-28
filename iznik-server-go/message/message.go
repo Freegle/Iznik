@@ -2754,8 +2754,17 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		locStr := constructLocationString(db, req.ID)
 
 		if itemName != nil && locStr != "" {
-			// Use the group keyword for the type (V1: group settings, defaults to uppercase).
-			groupid := getPrimaryGroupForMessage(db, req.ID)
+			// Use the group keyword for the type (V1: group settings, defaults to
+			// uppercase). Prefer the contextual group from the request — keywords
+			// can differ per group — falling back to the primary group for legacy
+			// callers that don't supply one.
+			groupid := uint64(0)
+			if req.Groupid != nil && *req.Groupid > 0 {
+				groupid = *req.Groupid
+			}
+			if groupid == 0 {
+				groupid = getPrimaryGroupForMessage(db, req.ID)
+			}
 			keyword := getGroupKeyword(db, groupid, msgType)
 			newSubject := keyword + ": " + *itemName + " (" + locStr + ")"
 			db.Exec("UPDATE messages SET subject = ?, suggestedsubject = ? WHERE id = ?", newSubject, newSubject, req.ID)
@@ -3125,9 +3134,14 @@ func DeleteMessageEndpoint(c *fiber.Ctx) error {
 
 	db.Exec("UPDATE messages SET deleted = NOW() WHERE id = ?", msgid)
 
-	// Write audit-log entry when a moderator deletes a message.
+	// Write audit-log entry when a moderator deletes a message. Log against the
+	// group the mod acted on when supplied (?groupid=), else fall back to the
+	// primary group.
 	if isMod {
-		groupid := getPrimaryGroupForMessage(db, msgid)
+		groupid := uint64(c.QueryInt("groupid", 0))
+		if groupid == 0 {
+			groupid = getPrimaryGroupForMessage(db, msgid)
+		}
 		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, groupid, fromuser, myid, msgid, 0, "")
 	}
 

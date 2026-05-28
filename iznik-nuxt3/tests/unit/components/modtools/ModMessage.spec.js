@@ -536,6 +536,7 @@ describe('ModMessage', () => {
 
       expect(mockMessageStore.patch).toHaveBeenCalledWith({
         id: 123,
+        groupid: 789,
         msgtype: 'Offer',
         item: 'Test Item',
         location: 'SW1A 1AA',

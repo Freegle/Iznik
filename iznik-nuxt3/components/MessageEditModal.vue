@@ -276,6 +276,7 @@ async function save(finishSpinner) {
 
     const params = {
       id: props.id,
+      groupid: groupid.value,
       msgtype: type.value,
       item: edititem.value,
       location: postcode.value?.name,

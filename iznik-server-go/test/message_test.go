@@ -2239,6 +2239,60 @@ func TestPatchMessageLogEntry(t *testing.T) {
 
 // --- Test: DELETE /message/:id ---
 
+func TestPatchMessageSubjectUsesContextualGroupKeyword(t *testing.T) {
+	// When a multi-group message's subject is rebuilt during an edit, the
+	// keyword prefix (OFFER vs a group-specific override) must come from the
+	// group supplied in the request, not an arbitrary first group.
+	prefix := uniquePrefix("msgpatch_kw")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	// Different OFFER keyword per group.
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('keywords', JSON_OBJECT('OFFER', 'GIVING')) WHERE id = ?", groupA)
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('keywords', JSON_OBJECT('OFFER', 'FREEBIE')) WHERE id = ?", groupB)
+
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupA, "Member")
+	CreateTestMembership(t, ownerID, groupB, "Member")
+	_, ownerToken := CreateTestSession(t, ownerID)
+
+	msgID := CreateTestMessage(t, ownerID, groupA, prefix+" Test Item", 53.0, -1.0)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	// Edit supplying an item name (triggers subject rebuild) and groupB context.
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":      msgID,
+		"item":    "Wooden Chair",
+		"groupid": groupB,
+	})
+	req := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var subject string
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&subject)
+	assert.True(t, strings.HasPrefix(subject, "FREEBIE:"), "Subject should use groupB's keyword, got: "+subject)
+	assert.False(t, strings.HasPrefix(subject, "GIVING:"), "Subject must not use groupA's keyword")
+
+	// Now edit with groupA context — keyword should switch to GIVING.
+	body2, _ := json.Marshal(map[string]interface{}{
+		"id":      msgID,
+		"item":    "Wooden Chair",
+		"groupid": groupA,
+	})
+	req2 := httptest.NewRequest("PATCH", "/api/message?jwt="+ownerToken, bytes.NewBuffer(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := getApp().Test(req2)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	db.Raw("SELECT subject FROM messages WHERE id = ?", msgID).Scan(&subject)
+	assert.True(t, strings.HasPrefix(subject, "GIVING:"), "Subject should use groupA's keyword, got: "+subject)
+}
+
 func TestPatchMessageLocationName(t *testing.T) {
 	prefix := uniquePrefix("msgmod_patchloc")
 	db := database.DBConn

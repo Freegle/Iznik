@@ -14,7 +14,7 @@
 
 ## Status (as of 2026-05-27)
 
-**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14, 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21, 23, 24 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, per-group repost scheduling, per-group reject-to-draft, store/ModTools client changes.
+**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14 (+ hold/release/backToPending client plumbing), 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21, 23, 24, 25 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, per-group repost scheduling, per-group reject-to-draft, per-group edit-subject keyword + mod-delete audit log, store/ModTools client changes.
 
 **Open work (❌):**
 
@@ -23,7 +23,6 @@
 | 19 | Audit | Write `plans/multi-group-stats-audit.md` |
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
 | 22 | Audit | Write `plans/multi-group-v1-audit-results.md` |
-| 25 | Go | Edit subject + mod-delete audit log use primary group |
 | 26 | Nuxt | 4 remaining `groups[0]` sites: `useKeywords.js`, `MessageHistory.vue`, `ModLogGroup.vue`, `pages/message/[id].vue` (`MyMessage.vue:942` done in Task 17) |
 | 27 | Laravel | `UnifiedDigest.php` header group selection |
 | 28 | Go | Re-label `getPrimaryGroupForMessage` as legacy fallback |
@@ -1765,29 +1764,23 @@ The repost goroutine in [message.go:702-748](iznik-server-go/message/message.go#
 
 ---
 
-## Task 25: Go API — Per-Group Edit Subject Reconstruction ❌ NOT DONE
+## Task 25: Go API — Per-Group Edit Subject Reconstruction ✅ DONE
 
-[message.go:2695](iznik-server-go/message/message.go#L2695) and [message.go:3067](iznik-server-go/message/message.go#L3067) still call `getPrimaryGroupForMessage`.
+Both sites now prefer the contextual group, falling back to the primary group only for legacy callers.
 
-**Files:**
-- Modify: `iznik-server-go/message/message.go:2695` (edit handler — subject rebuild)
-- Modify: `iznik-server-go/message/message.go:3067` (mod-delete audit log)
+**What changed:**
+- **Edit subject rebuild** ([message.go, `applyPatchMessageCore`](iznik-server-go/message/message.go)): the keyword group is `req.Groupid` when supplied (`patchMessageRequest` already has a `Groupid` field), else `getPrimaryGroupForMessage`. Group keywords (e.g. a group overriding `OFFER` → `GIVING`) differ per group, so the prefix now matches the group the editor is acting in.
+- **Mod-delete audit log** ([message.go, `DeleteMessageEndpoint`](iznik-server-go/message/message.go)): this is the REST `DELETE /message/:id` path (no request body). It now reads an optional `?groupid=` query param and logs against it when supplied, falling back to the primary group for owner-initiated (global) deletes.
 
-Line 2695 uses `getPrimaryGroupForMessage` to pick the group whose keyword is used to rebuild the subject (e.g. "OFFER:" vs "WANTED:"). For multi-group this should use the contextual group from the request when available. Same with line 3067's audit log — should log to the specific group the action was taken on.
+**Test:** [TestPatchMessageSubjectUsesContextualGroupKeyword](iznik-server-go/test/message_test.go) — message on groupA (keyword `GIVING`) + groupB (keyword `FREEBIE`); editing with `groupid: groupB` rebuilds the subject as `FREEBIE: …`, and editing with `groupid: groupA` rebuilds it as `GIVING: …`. Full Go suite 2920/2920 ✓.
 
-- [ ] **Step 1: Update edit handler**
+**Client wiring (so the server gets the groupid rather than falling back):** every edit path that triggers subject reconstruction now sends `groupid`:
+- [ModMessage.vue](iznik-nuxt3/modtools/components/ModMessage.vue) save → `groupid: editgroup.value` (the group selected in the edit form).
+- [ModStdMessageModal.vue](iznik-nuxt3/modtools/components/ModStdMessageModal.vue) Edit → `groupid: groupid.value` (contextual group).
+- [MessageEditModal.vue](iznik-nuxt3/components/MessageEditModal.vue) owner edit → `groupid: groupid.value` (the message's group).
+- `PATCH /message/tn/:tnpostid` (TN partner) and the unused REST `DELETE /message/:id` rely on the server-side fallback; deadline/delivery/photo patches don't rebuild the subject so they don't need a groupid. Test assertions in `ModMessage.spec.js` updated accordingly (vitest green).
 
-In the edit handler around line 2695, prefer `req.Groupid` when present, falling back to `getPrimaryGroupForMessage` for legacy callers. Keywords vary between groups, so picking the wrong group produces a wrong subject prefix.
-
-- [ ] **Step 2: Update mod-delete audit log**
-
-Around line 3067, take a `groupid` from the request body (this `deleteMessage` handler is the GET-style legacy or owner-delete path — confirm by reading the route binding). If the caller can supply a group, log against that; otherwise the primary fallback is acceptable for owner-initiated delete (which is global).
-
-- [ ] **Step 3: Reduce `getPrimaryGroupForMessage` usage**
-
-Audit remaining call sites (lines 1638, 3361). Add a comment on the function explaining it's a legacy fallback to be used only when no contextual group is available — never as the primary lookup for mod actions.
-
-- [ ] **Step 4: Tests, commit**
+**Note:** the remaining `getPrimaryGroupForMessage` call sites are now all legacy/owner-global fallbacks (draft conversion fallback, JoinAndPost, mod context bootstrap, submit subject reconstruction). Re-labelling the function's doc comment as a legacy fallback is Task 28.
 
 ---
 

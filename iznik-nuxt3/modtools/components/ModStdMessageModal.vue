@@ -805,9 +805,11 @@ async function process(callback) {
       case 'Edit':
         if (message.value) {
           if (message.value.item && message.value.location) {
-            // Well-structured message
+            // Well-structured message. Pass the contextual group so the rebuilt
+            // subject uses that group's keyword.
             await messageStore.patch({
               id: message.value.id,
+              groupid: groupid.value,
               msgtype: message.value.type,
               item: message.value.item.name,
               location: message.value.location.name,
