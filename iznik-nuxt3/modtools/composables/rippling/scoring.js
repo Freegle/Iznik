@@ -40,3 +40,25 @@ export function escapeHTML(s) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
 }
+
+// Split a digest-simulator response into the three sections shown in the
+// V1 production digest:
+//
+//   * active   — still-claimable posts, sorted by score, home + cross
+//   * promised — someone has expressed interest, post still in flight
+//   * completed — already taken (since last digest)
+//
+// Mutates each post with a 1-based `_rank` matching its global position
+// in the ranked array (active → promised → taken).  Inputs are not
+// otherwise modified.
+export function partitionInboxData(data) {
+  const rawList = [].concat(data.selected || [], data.deferred || [])
+  const active = rawList.filter((p) => !p.successful && !p.promised)
+  const activeHome = active.filter((p) => p.home_group)
+  const activeCross = active.filter((p) => !p.home_group)
+  const promised = rawList.filter((p) => p.promised && !p.successful)
+  const taken = rawList.filter((p) => p.successful)
+  const ranked = active.concat(promised, taken)
+  ranked.forEach((p, i) => (p._rank = i + 1))
+  return { ranked, active, activeHome, activeCross, promised, taken }
+}

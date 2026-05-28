@@ -4,6 +4,7 @@ import {
   thumbUrlFor,
   formatTimeAgo,
   escapeHTML,
+  partitionInboxData,
 } from '~/modtools/composables/rippling/scoring.js'
 
 describe('rippling/scoring', () => {
@@ -98,6 +99,85 @@ describe('rippling/scoring', () => {
       // We don't assert on locale-specific formatting; just that it's
       // no longer the "X h ago" / "X min ago" form.
       expect(out).not.toMatch(/min ago|h ago/)
+    })
+  })
+
+  describe('partitionInboxData', () => {
+    const post = (overrides) => ({
+      msgid: 1,
+      successful: false,
+      promised: false,
+      home_group: false,
+      ...overrides,
+    })
+
+    it('returns empty arrays for an empty response', () => {
+      const r = partitionInboxData({})
+      expect(r.ranked).toEqual([])
+      expect(r.active).toEqual([])
+      expect(r.activeHome).toEqual([])
+      expect(r.activeCross).toEqual([])
+      expect(r.promised).toEqual([])
+      expect(r.taken).toEqual([])
+    })
+
+    it('flattens selected + deferred into one ranked list', () => {
+      const data = {
+        selected: [post({ msgid: 1 }), post({ msgid: 2 })],
+        deferred: [post({ msgid: 3 })],
+      }
+      const r = partitionInboxData(data)
+      expect(r.ranked.map((p) => p.msgid)).toEqual([1, 2, 3])
+    })
+
+    it('stamps each ranked post with a 1-based _rank', () => {
+      const data = {
+        selected: [post({ msgid: 1 }), post({ msgid: 2 })],
+        deferred: [post({ msgid: 3 })],
+      }
+      const r = partitionInboxData(data)
+      expect(r.ranked[0]._rank).toBe(1)
+      expect(r.ranked[1]._rank).toBe(2)
+      expect(r.ranked[2]._rank).toBe(3)
+    })
+
+    it('orders active → promised → taken in the ranked array (V1 digest model)', () => {
+      const data = {
+        selected: [
+          post({ msgid: 10, successful: true }), // taken
+          post({ msgid: 11 }), // active
+          post({ msgid: 12, promised: true }), // promised
+        ],
+      }
+      const r = partitionInboxData(data)
+      expect(r.ranked.map((p) => p.msgid)).toEqual([11, 12, 10])
+    })
+
+    it('splits active posts into home-group and rippled-in buckets', () => {
+      const data = {
+        selected: [
+          post({ msgid: 1, home_group: true }),
+          post({ msgid: 2, home_group: false }),
+          post({ msgid: 3, home_group: true }),
+        ],
+      }
+      const r = partitionInboxData(data)
+      expect(r.activeHome.map((p) => p.msgid)).toEqual([1, 3])
+      expect(r.activeCross.map((p) => p.msgid)).toEqual([2])
+    })
+
+    it('treats successful posts as taken even when also flagged promised', () => {
+      const data = {
+        selected: [post({ msgid: 5, successful: true, promised: true })],
+      }
+      const r = partitionInboxData(data)
+      expect(r.taken).toHaveLength(1)
+      expect(r.promised).toHaveLength(0)
+    })
+
+    it('handles missing selected/deferred fields gracefully', () => {
+      expect(() => partitionInboxData({ selected: null })).not.toThrow()
+      expect(() => partitionInboxData({ deferred: null })).not.toThrow()
     })
   })
 

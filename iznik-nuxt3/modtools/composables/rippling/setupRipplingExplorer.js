@@ -17,6 +17,7 @@ import {
   pointInRing,
   segmentsIntersect,
 } from './geometry.js'
+import { partitionInboxData } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
 
 export async function setupRipplingExplorer({ props, digestModal, legendMode }) {
@@ -268,21 +269,38 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     }
   }
 
-  function drawInbox(data) {
-    if (!data) return
+  // Writes the text summary + pie chart that sit above the sliders.
+  function updateInboxHomeSummary(data, parts) {
     const homeSummary = document.getElementById('rippling-home-summary')
-
-    const clusterNote = data.poster_groups && data.poster_groups.length
-      ? ` · ${data.poster_groups.length} same-poster cluster${data.poster_groups.length === 1 ? '' : 's'}`
-      : ''
-    // Total now appears as the headline number inside the pie area; keep
-    // the lower summary for cluster info only, when there are clusters.
-    simSummaryEl.innerHTML = clusterNote
+    const total = data.pool_size || 0
+    const homeHead = data.home_groups && data.home_groups.length
+      ? `<strong>Home:</strong> ${data.home_groups.map((g) => g.name).join(', ')}`
+      : `<strong>No home group at this point.</strong>`
+    homeSummary.innerHTML =
+      `<div style="font-size:13px;font-weight:700;color:#333;margin-bottom:2px">${total} post${total === 1 ? '' : 's'} in digest</div>` +
+      `${homeHead}<br>` +
+      `<span style="color:#27ae60">●</span> ${parts.activeHome.length} active home-group · ` +
+      `<span style="color:#1f77b4">●</span> ${parts.activeCross.length} rippled in<br>` +
+      `<span style="color:#f39c12">●</span> ${parts.promised.length} promised · ` +
+      `<span style="color:#888">●</span> ${parts.taken.length} completed`
+    renderPie([
+      { count: parts.activeHome.length, color: '#27ae60' },
+      { count: parts.activeCross.length, color: '#1f77b4' },
+      { count: parts.promised.length, color: '#f39c12' },
+      { count: parts.taken.length, color: '#888' },
+    ])
+    // Lower summary: cluster note only, when there are any clusters.
+    simSummaryEl.innerHTML = data.poster_groups && data.poster_groups.length
       ? `<strong>${data.poster_groups.length}</strong> same-poster cluster${data.poster_groups.length === 1 ? '' : 's'}.`
       : ''
+  }
 
-    // Home-group polygons — draw before the isochrone so they sit underneath.
-    ;(data.home_groups || []).forEach((g) => {
+  // Draws each home-group polygon on the map, lazily creating the inbox
+  // feature group on first use.
+  function drawHomeGroupPolygons(homeGroups) {
+    if (!homeGroups || !homeGroups.length) return
+    if (!inboxLayer) inboxLayer = L.featureGroup().addTo(map)
+    homeGroups.forEach((g) => {
       if (!g.polygon) return
       const layer = L.geoJSON(
         { type: 'Feature', geometry: g.polygon },
@@ -299,74 +317,28 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
       )
         .bindTooltip(`Home group: ${g.name}`, { sticky: true })
         .addTo(map)
-      // Track on the same layer-set as the isochrone so it gets cleared on
-      // next refresh.
-      if (!inboxLayer) inboxLayer = L.featureGroup().addTo(map)
       inboxLayer.addLayer(layer)
     })
+  }
 
-    // Outline the isochrone — apply Chaikin smoothing client-side so the
-    // boundary reads as a curve rather than a staircase.
-    if (data.isochrone && data.isochrone.geometry) {
-      const ring = data.isochrone.geometry.coordinates[0]
-      if (ring && ring.length > 3) {
-        const smoothed = chaikinSmooth(ring).map(([lng, lat]) => [lat, lng])
-        inboxIsoLayer = L.polygon(smoothed, {
-          color: '#cc0000',
-          weight: 2.5,
-          fill: false,
-        }).addTo(map)
-      }
-    }
+  // Outlines the maximum-reach isochrone as a smooth red polygon.  Chaikin
+  // smoothing on the client makes the grid-derived ring read as a curve
+  // rather than a staircase.
+  function drawInboxIsochrone(isochrone) {
+    if (!isochrone || !isochrone.geometry) return
+    const ring = isochrone.geometry.coordinates[0]
+    if (!ring || ring.length <= 3) return
+    const smoothed = chaikinSmooth(ring).map(([lng, lat]) => [lat, lng])
+    inboxIsoLayer = L.polygon(smoothed, {
+      color: '#cc0000',
+      weight: 2.5,
+      fill: false,
+    }).addTo(map)
+  }
 
-    const group = inboxLayer || L.featureGroup().addTo(map)
-    inboxLayer = group
-    // Flatten selected + deferred into one ranked list (backend returns them
-    // score-sorted), then render each as a numbered marker showing its
-    // position in the digest.  Numbers > 99 read as "99+" to keep the badge
-    // visually tidy.
-    // Match the V1 production digest model: still-active posts at the top
-    // (sorted by score), then a "promised — still in flight" section, then
-    // a "completed since last digest" tail rendered grey, with an
-    // encouragement to switch to immediate mode for missed posts.  Within
-    // each section we keep the backend's score ordering.
-    const rawList = [].concat(data.selected || [], data.deferred || [])
-    const active = rawList.filter((p) => !p.successful && !p.promised)
-    const activeHome = active.filter((p) => p.home_group)
-    const activeCross = active.filter((p) => !p.home_group)
-    const promised = rawList.filter((p) => p.promised && !p.successful)
-    const taken = rawList.filter((p) => p.successful)
-    const ranked = active.concat(promised, taken)
-    // Stamp each post with its global rank (1-based) so the marker labels
-    // and modal can both reference the same position.
-    ranked.forEach((p, i) => (p._rank = i + 1))
-    // Keep this list around for the digest mock-up modal.
-    lastRanked = ranked
-    lastActiveCount = active.length
-    lastPromisedCount = promised.length
-    lastTakenCount = taken.length
-    lastHomeGroups = data.home_groups || []
-
-    const total = data.pool_size || 0
-    const homeHead = data.home_groups && data.home_groups.length
-      ? `<strong>Home:</strong> ${data.home_groups.map((g) => g.name).join(', ')}`
-      : `<strong>No home group at this point.</strong>`
-    homeSummary.innerHTML =
-      `<div style="font-size:13px;font-weight:700;color:#333;margin-bottom:2px">${total} post${total === 1 ? '' : 's'} in digest</div>` +
-      `${homeHead}<br>` +
-      `<span style="color:#27ae60">●</span> ${activeHome.length} active home-group · ` +
-      `<span style="color:#1f77b4">●</span> ${activeCross.length} rippled in<br>` +
-      `<span style="color:#f39c12">●</span> ${promised.length} promised · ` +
-      `<span style="color:#888">●</span> ${taken.length} completed`
-    renderPie([
-      { count: activeHome.length, color: '#27ae60' },
-      { count: activeCross.length, color: '#1f77b4' },
-      { count: promised.length, color: '#f39c12' },
-      { count: taken.length, color: '#888' },
-    ])
-    // Group posts that share the same lat/lng (typical for TrashNothing
-    // cross-posts using a group centroid) so they collapse into a single
-    // marker with a comma-separated list of digest positions.
+  // Numbered post markers, co-located posts collapsed into one marker
+  // with a comma-separated rank list.
+  function drawDigestMarkers(ranked, group) {
     const buckets = new Map()
     ranked.forEach((p) => {
       const key = p.lat.toFixed(5) + ',' + p.lng.toFixed(5)
@@ -380,9 +352,7 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
       return p.home_group ? '#27ae60' : '#1f77b4'
     }
     buckets.forEach((bucketPosts) => {
-      // Sort by rank within the cluster (already sorted globally).
       const minRank = bucketPosts[0]._rank
-      // Pick the dominant colour by the first (highest-ranked) member.
       const color = colorFor(bucketPosts[0])
       const t = totalRanked > 1 ? (minRank - 1) / Math.max(totalRanked - 1, 1) : 0
       const baseOpacity = 0.95 - 0.45 * t
@@ -418,9 +388,12 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
         })
         .addTo(group)
     })
+  }
 
-    // Same-poster clusters: ring around the top post with the count.
-    ;(data.poster_groups || []).forEach((cl) => {
+  // Purple dashed ring around every position that has >1 post from the
+  // same Freegle user (helps spot TrashNothing-style cross-posters).
+  function drawPosterClusterRings(posterGroups, group) {
+    ;(posterGroups || []).forEach((cl) => {
       L.circleMarker([cl.top_lat, cl.top_lng], {
         radius: 12,
         color: '#9b59b6',
@@ -428,9 +401,31 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
         fill: false,
         dashArray: '3,3',
       })
-        .bindTooltip(`Same poster: ${cl.count} posts (top + ${cl.count - 1} others)`, { sticky: true })
+        .bindTooltip(
+          `Same poster: ${cl.count} posts (top + ${cl.count - 1} others)`,
+          { sticky: true }
+        )
         .addTo(group)
     })
+  }
+
+  function drawInbox(data) {
+    if (!data) return
+    const parts = partitionInboxData(data)
+    lastRanked = parts.ranked
+    lastActiveCount = parts.active.length
+    lastPromisedCount = parts.promised.length
+    lastTakenCount = parts.taken.length
+    lastHomeGroups = data.home_groups || []
+
+    updateInboxHomeSummary(data, parts)
+    drawHomeGroupPolygons(data.home_groups)
+    drawInboxIsochrone(data.isochrone)
+
+    const group = inboxLayer || L.featureGroup().addTo(map)
+    inboxLayer = group
+    drawDigestMarkers(parts.ranked, group)
+    drawPosterClusterRings(data.poster_groups, group)
   }
 
   timeSlider.addEventListener('input', () => {
@@ -1374,48 +1369,26 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     return reached
   }
 
-  function drawGroupsOverlay() {
-    const listEl = document.getElementById('rippling-groups-list')
-    const sectionEl = document.getElementById('rippling-groups-section')
-
-    if (!showGroups) {
-      sectionEl.style.display = 'none'
-      return
-    }
-    if (groupFeatures.length === 0) {
-      sectionEl.style.display = 'none'
-      return
-    }
-    sectionEl.style.display = ''
-
-    const reached = reachedGroupIds(lastIsoData)
-
-    // Find the nearest group by centroid distance first, so we can include it
-    // in both the polygon display and the sidebar list as a fallback home group.
-    let nearestGroupId = null
+  // Geographically-nearest group id, used as fallback "home" when
+  // ST_Contains misses (e.g. the click lands exactly on a polygon edge).
+  function findNearestGroupId() {
+    if (currentLat === null) return null
+    let nearestId = null
     let nearestDist = Infinity
-    if (currentLat !== null) {
-      groupFeatures.forEach((f) => {
-        const [cLng, cLat] = groupCentroid(f)
-        const d = distSq(currentLat, currentLng, cLat, cLng)
-        if (d < nearestDist) {
-          nearestDist = d
-          nearestGroupId = f.properties.id
-        }
-      })
-    }
+    groupFeatures.forEach((f) => {
+      const [cLng, cLat] = groupCentroid(f)
+      const d = distSq(currentLat, currentLng, cLat, cLng)
+      if (d < nearestDist) {
+        nearestDist = d
+        nearestId = f.properties.id
+      }
+    })
+    return nearestId
+  }
 
-    // Show: home (contains=true), reached cross-posting groups, and always
-    // the nearest group (acts as home when ST_Contains misses due to boundaries).
-    function groupIsRelevant(f) {
-      return (
-        f.properties.contains ||
-        reached.has(f.properties.id) ||
-        f.properties.id === nearestGroupId
-      )
-    }
-
-    const sorted = [...groupFeatures].filter(groupIsRelevant).sort((a, b) => {
+  // Returns groups sorted with home first, then by centroid distance.
+  function sortRelevantGroups(predicate) {
+    return [...groupFeatures].filter(predicate).sort((a, b) => {
       if (a.properties.contains !== b.properties.contains)
         return a.properties.contains ? -1 : 1
       if (currentLat === null) return 0
@@ -1426,34 +1399,24 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
         distSq(currentLat, currentLng, cB[1], cB[0])
       )
     })
+  }
 
-    // Compute which IDs should have visible polygons (same criteria as the list).
-    const visibleIds = new Set()
-    groupFeatures.forEach((f) => {
-      const coords =
-        f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]
-      if (!coords || coords.length < 4) return
-      if (groupIsRelevant(f)) {
-        visibleIds.add(f.properties.id)
-      }
-    })
-
-    // Remove layers for groups no longer visible
+  // Reconcile the map's Leaflet polygons with the set of relevant groups:
+  // remove layers for groups no longer in `visibleIds`, add layers for
+  // ones not yet on the map.
+  function syncGroupPolygons(visibleIds, nearestGroupId) {
     Object.keys(groupLayerMap).forEach((id) => {
       if (!visibleIds.has(Number(id))) {
         map.removeLayer(groupLayerMap[id])
         delete groupLayerMap[id]
       }
     })
-
-    // Add layers for newly visible groups
     groupFeatures.forEach((f) => {
       const coords =
         f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]
       if (!coords || coords.length < 4) return
       const id = f.properties.id
-      if (!visibleIds.has(id)) return
-      if (groupLayerMap[id]) return
+      if (!visibleIds.has(id) || groupLayerMap[id]) return
       const isHome = f.properties.contains || id === nearestGroupId
       const latlngs = coords.map(([lng, lat]) => [lat, lng])
       groupLayerMap[id] = L.polygon(latlngs, {
@@ -1469,12 +1432,22 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
           { sticky: true }
         )
     })
+  }
 
+  // Sidebar list of relevant groups, with green/red dot meaning "your
+  // home group / a cross-post-reachable group" vs "in view but the
+  // post wouldn't reach it".
+  function renderGroupSidebar(listEl, sorted, reached) {
     listEl.innerHTML = ''
+    if (sorted.length === 0) {
+      listEl.innerHTML =
+        '<span style="color:#aaa;font-style:italic">None visible in current view</span>'
+      return
+    }
     sorted.forEach((f) => {
       const isHome = f.properties.contains
       const postShows = isHome || reached.has(f.properties.id)
-      const dotColor = isHome ? '#27ae60' : postShows ? '#27ae60' : '#e74c3c'
+      const dotColor = postShows ? '#27ae60' : '#e74c3c'
       const item = document.createElement('div')
       item.style.cssText =
         'display:flex;align-items:center;gap:5px;padding:1px 0'
@@ -1486,11 +1459,38 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
         (isHome ? ' <span style="color:#888;font-size:10px">(home)</span>' : '')
       listEl.appendChild(item)
     })
+  }
 
-    if (sorted.length === 0) {
-      listEl.innerHTML =
-        '<span style="color:#aaa;font-style:italic">None visible in current view</span>'
+  function drawGroupsOverlay() {
+    const listEl = document.getElementById('rippling-groups-list')
+    const sectionEl = document.getElementById('rippling-groups-section')
+
+    if (!showGroups || groupFeatures.length === 0) {
+      sectionEl.style.display = 'none'
+      return
     }
+    sectionEl.style.display = ''
+
+    const reached = reachedGroupIds(lastIsoData)
+    const nearestGroupId = findNearestGroupId()
+    // Show: home (contains=true), reached cross-posting groups, and
+    // always the nearest group as a fallback home if ST_Contains missed.
+    const isRelevant = (f) =>
+      f.properties.contains ||
+      reached.has(f.properties.id) ||
+      f.properties.id === nearestGroupId
+
+    const visibleIds = new Set()
+    groupFeatures.forEach((f) => {
+      const coords =
+        f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]
+      if (coords && coords.length >= 4 && isRelevant(f)) {
+        visibleIds.add(f.properties.id)
+      }
+    })
+
+    syncGroupPolygons(visibleIds, nearestGroupId)
+    renderGroupSidebar(listEl, sortRelevantGroups(isRelevant), reached)
   }
 
   function checkCrossPosting(isoRing) {
