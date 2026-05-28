@@ -342,7 +342,7 @@
       <div class="footer-divider"></div>
       <p class="footer-charity">
         {{ $siteName ?? config('freegle.branding.name', 'Freegle') }} is registered as a charity with HMRC (ref. XT32865) and is run by volunteers. Which is nice.<br>
-        Registered address: Weaver's Field, Loud Bridge, Chipping PR3 2NX
+        Registered address: {{ config('freegle.branding.registered_address') }}
       </p>
     </div>
   </div>

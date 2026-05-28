@@ -17,4 +17,4 @@ You can also change how you receive emails in your settings: {{ $settingsUrl }}
 {{ config('freegle.sites.user') }}
 
 {{ config('freegle.branding.name') }} is registered as a charity with HMRC (ref. XT32865) and is run by volunteers.
-Registered address: Weaver's Field, Loud Bridge, Chipping PR3 2NX
+Registered address: {{ config('freegle.branding.registered_address') }}
