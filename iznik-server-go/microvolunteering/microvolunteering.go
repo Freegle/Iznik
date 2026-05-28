@@ -566,6 +566,14 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 // recent OFFER attachments that the user has not yet labelled and that have
 // not yet reached EEELabelQuorum.
 //
+// Per-message dedup: a message with multiple photos must only contribute
+// ONE attachment per challenge, otherwise the same item gets re-labelled
+// once per photo and the labels can't be joined back to the model's
+// classifications (the EEE classifier processes one attachment per message).
+// The chosen attachment uses the same canonical rule as message_list.go:255
+// — `primary` DESC, id ASC — so volunteers see the same photo that other
+// surfaces show.
+//
 // Performance: the query is driven off `messages.arrival` (index `arrival_2`)
 // with a 30-day window, so the planner does a backward range scan over ~100k
 // recent messages instead of a full scan of `messages_attachments` (8.6M
@@ -584,12 +592,17 @@ func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 	err := db.Raw(`
 		SELECT ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject
 		FROM messages m
-		INNER JOIN messages_attachments ma_att ON ma_att.msgid = m.id
+		INNER JOIN messages_attachments ma_att ON ma_att.id = (
+			SELECT id FROM messages_attachments
+			WHERE msgid = m.id
+			  AND externaluid IS NOT NULL
+			  AND externaluid != ''
+			ORDER BY `+"`primary`"+` DESC, id ASC
+			LIMIT 1
+		)
 		WHERE m.arrival > DATE_SUB(NOW(), INTERVAL 30 DAY)
 			AND m.type = 'Offer'
 			AND m.deleted IS NULL
-			AND ma_att.externaluid IS NOT NULL
-			AND ma_att.externaluid != ''
 			AND NOT EXISTS (
 				SELECT 1 FROM microactions ma
 				WHERE ma.eee_attachment_id = ma_att.id

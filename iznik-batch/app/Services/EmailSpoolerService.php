@@ -55,10 +55,20 @@ class EmailSpoolerService
      * mail pipeline, ensuring all withSymfonyMessage callbacks execute and all
      * headers are captured.
      */
-    public function spool(Mailable $mailable, string|array $to, ?string $emailType = null): string
+    public function spool(Mailable $mailable, string|array|null $to = null, ?string $emailType = null): string
     {
         $id = $this->generateId();
         $filename = $id . '.json';
+
+        // If the caller didn't pass $to explicitly, derive it from the
+        // mailable's own ->to (set via Mail::to()->send() pattern) or from
+        // its envelope() (the Mail::send($mailable) pattern, where the
+        // mailable carries its own recipient). This lets every send call in
+        // the codebase be converted to spool() mechanically without each
+        // caller having to know whether the mailable self-addresses.
+        if ($to === null || $to === [] || $to === '') {
+            $to = $this->deriveRecipientsFromMailable($mailable);
+        }
 
         // Normalize $to to array format with address/name structure.
         $toArray = is_string($to) ? [$to] : $to;
@@ -172,6 +182,45 @@ class EmailSpoolerService
      * but intercepts at the transport layer to capture the fully-built
      * Symfony Email with all headers applied.
      */
+    /**
+     * Derive a recipient list from a self-addressing mailable.
+     *
+     * Looks first at the mailable's public ->to array (set via Mail::to() or
+     * MyMailable::to()), then falls back to running the mailable through a
+     * lightweight capturing transport to pick up envelope()-declared
+     * recipients. Used when spool() is called without an explicit $to so
+     * direct-send call sites (Mail::send($mailable) pattern) can be converted
+     * mechanically.
+     *
+     * @return list<string>
+     */
+    protected function deriveRecipientsFromMailable(Mailable $mailable): array
+    {
+        if (!empty($mailable->to)) {
+            return array_values(array_filter(array_map(
+                fn ($entry) => is_array($entry) ? ($entry['address'] ?? null) : (string) $entry,
+                $mailable->to,
+            )));
+        }
+
+        // Fall back to envelope() recipients. We run the mailable through the
+        // capturing transport (same one spool() uses to materialise the
+        // Symfony Email) and read getTo() off the captured message. We DON'T
+        // cache the captured email here — spool() captures it again right
+        // after — because doing so would require restructuring the method to
+        // pass the cached value through, for one rarely-hit code path.
+        try {
+            $email = $this->captureBuiltMessage($mailable);
+            $addrs = $email->getTo() ?? [];
+            return array_values(array_map(fn ($a) => $a->getAddress(), $addrs));
+        } catch (\Throwable $e) {
+            // captureBuiltMessage failing here will fail again inside spool()
+            // and be handled by the existing isPermanentSmtpFailure branch,
+            // so just return [] and let that path do its job.
+            return [];
+        }
+    }
+
     protected function captureBuiltMessage(Mailable $mailable): Email
     {
         // Create a transport that captures instead of sending.
@@ -367,6 +416,13 @@ class EmailSpoolerService
                     $this->applyCustomHeaders($symfonyMessage, $data);
 
                     // Build the body - either with AMP or standard multipart/alternative.
+                    // Coalesce nulls to empty strings: TextPart's constructor
+                    // rejects null and a spooled mailable that produced only one
+                    // of html/text would otherwise crash the whole processSpool
+                    // iteration.
+                    $textBody = $data['text'] ?? '';
+                    $htmlBody = $data['html'] ?? '';
+
                     if (!empty($data['amp_html'])) {
                         // DEBUG: Uncomment to save AMP HTML for validation testing.
                         // $ampFile = '/tmp/amp-email-' . ($data['id'] ?? uniqid()) . '.html';
@@ -374,21 +430,26 @@ class EmailSpoolerService
                         // Log::debug('AMP HTML saved for validation', ['file' => $ampFile]);
 
                         // AMP emails need multipart/alternative with text, AMP, and HTML parts.
-                        $textPart = new TextPart($data['text'] ?? '', 'utf-8', 'plain');
+                        $textPart = new TextPart($textBody, 'utf-8', 'plain');
                         $ampPart = new TextPart($data['amp_html'], 'utf-8', 'x-amp-html');
-                        $htmlPart = new TextPart($data['html'], 'utf-8', 'html');
+                        $htmlPart = new TextPart($htmlBody, 'utf-8', 'html');
                         $alternativePart = new AlternativePart($textPart, $ampPart, $htmlPart);
                         $symfonyMessage->setBody($alternativePart);
-                    } elseif (!empty($data['text'])) {
+                    } elseif ($textBody !== '' && $htmlBody !== '') {
                         // Non-AMP: Build multipart/alternative with text and HTML parts.
                         // This ensures the plain text body is included for email clients
                         // that prefer or require it (e.g., TrashNothing parsing).
-                        $textPart = new TextPart($data['text'], 'utf-8', 'plain');
-                        $htmlPart = new TextPart($data['html'], 'utf-8', 'html');
+                        $textPart = new TextPart($textBody, 'utf-8', 'plain');
+                        $htmlPart = new TextPart($htmlBody, 'utf-8', 'html');
                         $alternativePart = new AlternativePart($textPart, $htmlPart);
                         $symfonyMessage->setBody($alternativePart);
+                    } elseif ($textBody !== '' && $htmlBody === '') {
+                        // Text-only mailable (rare — e.g. plain support refer).
+                        // Mail::html() has already set an empty HTML body; replace
+                        // with the text part so the recipient sees something.
+                        $symfonyMessage->setBody(new TextPart($textBody, 'utf-8', 'plain'));
                     }
-                    // If no text body, Mail::html() has already set HTML-only body.
+                    // If text is empty, Mail::html() has already set HTML-only body.
                 });
 
                 // Move to sent directory.

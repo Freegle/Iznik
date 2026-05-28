@@ -281,7 +281,9 @@
           <amp-timeago datetime="{{ $post['arrivalIso'] }}" locale="en" width="160" height="20" layout="fixed">{{ $post['arrivalFormatted'] }}</amp-timeago>
         </p>
         @if($post['messageText'])
-        <p class="post-preview">{{ \Illuminate\Support\Str::limit($post['messageText'], 100) }}</p>
+        {{-- nl2br after escaping so user paragraph breaks survive the
+             single-<p> truncation. AMP allows <br> inside <p>. --}}
+        <p class="post-preview">{!! nl2br(e(\Illuminate\Support\Str::limit($post['messageText'], 100))) !!}</p>
         @endif
         @if($post['postedToText'])
         <p class="post-groups">{{ $post['postedToText'] }}</p>
@@ -340,7 +342,7 @@
       <div class="footer-divider"></div>
       <p class="footer-charity">
         {{ $siteName ?? config('freegle.branding.name', 'Freegle') }} is registered as a charity with HMRC (ref. XT32865) and is run by volunteers. Which is nice.<br>
-        Registered address: Weaver's Field, Loud Bridge, Chipping PR3 2NX
+        Registered address: {{ config('freegle.branding.registered_address') }}
       </p>
     </div>
   </div>
