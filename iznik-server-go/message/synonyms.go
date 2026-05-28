@@ -71,6 +71,12 @@ var synonymMap = map[string][]string{
 	// Tumble dryer
 	"tumble": {"dryer"},
 	"dryer":  {"tumble"},
+
+	// Lawnmower — "lawnmower" (one word) and "mower" (from "lawn mower" two words)
+	// are separate tokens with zero overlap in the index (confirmed against live data).
+	// 445 searches/90 days; 90 lawnmower + 102 mower indexed offers, no shared messages.
+	"lawnmower": {"mower"},
+	"mower":     {"lawnmower"},
 }
 
 // ExpandQuery returns the full set of words to pass to the keyword search,

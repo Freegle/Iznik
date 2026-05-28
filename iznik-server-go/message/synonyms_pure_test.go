@@ -119,6 +119,21 @@ func TestExpandQuery_SynonymMap_Vacuum(t *testing.T) {
 	assert.Contains(t, result, "hoover")
 }
 
+func TestExpandQuery_SynonymMap_Lawnmower(t *testing.T) {
+	// "lawnmower" and "mower" are separate tokens in the index with zero overlap.
+	result := ExpandQuery("lawnmower")
+	assert.Equal(t, "lawnmower", result[0])
+	assert.Contains(t, result, "mower")
+}
+
+func TestExpandQuery_SynonymMap_Mower(t *testing.T) {
+	// Searching "lawn mower" → GetWords → ["lawn","mower"]; "mower" expands to
+	// include "lawnmower" so one-word-titled offers are also found.
+	result := ExpandQuery("mower")
+	assert.Equal(t, "mower", result[0])
+	assert.Contains(t, result, "lawnmower")
+}
+
 func TestExpandQuery_SynonymMap_Carpet(t *testing.T) {
 	result := ExpandQuery("carpet")
 	assert.Equal(t, "carpet", result[0])
