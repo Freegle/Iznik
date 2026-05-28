@@ -14,7 +14,7 @@
 
 ## Status (as of 2026-05-27)
 
-**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14 (+ hold/release/backToPending client plumbing), 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21, 23, 24, 25 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, per-group repost scheduling, per-group reject-to-draft, per-group edit-subject keyword + mod-delete audit log, store/ModTools client changes.
+**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14 (+ hold/release/backToPending client plumbing), 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21, 23, 24, 25, 26 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, per-group repost scheduling, per-group reject-to-draft, per-group edit-subject keyword + mod-delete audit log, remaining `groups[0]` client sites, store/ModTools client changes.
 
 **Open work (❌):**
 
@@ -23,7 +23,6 @@
 | 19 | Audit | Write `plans/multi-group-stats-audit.md` |
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
 | 22 | Audit | Write `plans/multi-group-v1-audit-results.md` |
-| 26 | Nuxt | 4 remaining `groups[0]` sites: `useKeywords.js`, `MessageHistory.vue`, `ModLogGroup.vue`, `pages/message/[id].vue` (`MyMessage.vue:942` done in Task 17) |
 | 27 | Laravel | `UnifiedDigest.php` header group selection |
 | 28 | Go | Re-label `getPrimaryGroupForMessage` as legacy fallback |
 | 29 | Laravel | `DeadlineReached` and other mailables track/render arbitrary group via `groups->first()` |
@@ -1784,35 +1783,18 @@ Both sites now prefer the contextual group, falling back to the primary group on
 
 ---
 
-## Task 26: Nuxt — Remaining `groups[0]` Sites ❌ NOT DONE
+## Task 26: Nuxt — Remaining `groups[0]` Sites ✅ DONE
 
-All five sites still match `groups[0]` — see grep results in the audit. Each needs the contextual-group treatment.
+(`MyMessage.vue:942` was handled in Task 17; the four sites below are this task.)
 
-**Files:**
-- Modify: `iznik-nuxt3/modtools/composables/useKeywords.js:47`
-- Modify: `iznik-nuxt3/components/MessageHistory.vue:204`
-- Modify: `iznik-nuxt3/modtools/components/ModLogGroup.vue:69`
-- Modify: `iznik-nuxt3/pages/message/[id].vue:35`
-- Modify: `iznik-nuxt3/components/MyMessage.vue:942`
+- **[useKeywords.js](iznik-nuxt3/modtools/composables/useKeywords.js)** — the `groups[0]` reference was inside a fully commented-out dead block (`keywordGroup`/`keywordGroupid`, both early-returning). Removed the dead block entirely; `setupKeywords` now exports only the live `typeOptions`.
+- **[MessageHistory.vue](iznik-nuxt3/components/MessageHistory.vue)** — `grouparrivalago` was a computed hardcoded to `groups[0].arrival`, but it's rendered inside `v-for="group in message.groups"`, so **every row showed the first group's arrival**. Converted to a function `grouparrivalago(arrival)` called as `grouparrivalago(group.arrival)` — each row now shows its own group's arrival. Real display bug fixed.
+- **[ModLogGroup.vue](iznik-nuxt3/modtools/components/ModLogGroup.vue)** — `loggroup` checked `message.groups[0]` *before* `log.groupid`, so a per-group log entry resolved to the wrong group. Reordered: `log.group` → `log.groupid` (preferring the matching `message.groups` entry, then the store lookups) → `message.groups[0]` as documented last resort. Existing tests still green (they cover the no-groupid and groupid-via-user cases).
+- **[pages/message/[id].vue](iznik-nuxt3/pages/message/[id].vue)** — the "post unavailable" check used `groups[0]?.collection === 'Rejected'`. Changed to `groups.every((g) => g.collection === 'Rejected')` so a message still Approved on any group remains visible.
 
-These were not covered by Task 14 (which focused on ModMessage/ModMessageButton/etc).
+**Tests:** MessageHistory 42/42 ✓, ModLogGroup 25/25 ✓, pages/message 9/9 ✓.
 
-- [ ] **Step 1: `useKeywords.js:47`** — returns `message.groups[0].groupid` as the keyword-source group. Take a `groupid` argument so the caller passes contextual group; fall back to `groups[0]` if not given.
-
-- [ ] **Step 2: `MessageHistory.vue:204`** — `timeago(message.value?.groups[0]?.arrival)`. Should show arrival for the current display context group, not `groups[0]`. Accept a `groupid` prop and look it up via `message.groups.find(g => g.groupid === groupid)`.
-
-- [ ] **Step 3: `ModLogGroup.vue:69`** — Falls back to `message.groups[0]` when `log.group` is null. Acceptable as a fallback, but add a comment explaining it's a last-resort. Verify with the existing test at `tests/unit/components/modtools/ModLogGroup.spec.js:114` (which currently locks in `groups[0]` behaviour — update the assertion if changing behaviour).
-
-- [ ] **Step 4: `pages/message/[id].vue:35`** — checks `message.groups[0]?.collection === 'Rejected'` to decide visibility. For multi-group, the message is rejected only if ALL groups are rejected (or, depending on intent, if the contextual group is rejected). Use `message.groups.every(g => g.collection === 'Rejected')` for the safer interpretation.
-
-- [ ] **Step 5: `MyMessage.vue:942`** — `composeStore.group = msg.groups[0].groupid` when entering edit/repost. This is the poster's flow. If the message is on multiple groups, edit is global (per design) but the compose target group still has to be one; pick the most recent posted group or let the user choose. Document the choice in the design table.
-
-- [ ] **Step 6: Run vitest, commit**
-
-```bash
-cd iznik-nuxt3 && git add modtools/composables/useKeywords.js components/MessageHistory.vue modtools/components/ModLogGroup.vue pages/message/[id].vue components/MyMessage.vue
-git commit -m "feat: remaining client sites use contextual group instead of groups[0]"
-```
+**Remaining `groups[0]` hits in the tree are intentional and out of scope:** the `shared[0] || groups[0]` fallbacks (Tasks 10/14/17/21), the documented contextual-group computeds in ModMessage/ModMessageButton/ModMessageCrosspost/ModMessageDuplicate/ModStdMessageModal (fall back when no prop), the `useModMessages` sort fallback (Task 16), and non-message contexts (community events, volunteer opportunities, member-list sort).
 
 ---
 

@@ -32,7 +32,9 @@
                   message.deleted ||
                   (message.groups &&
                     message.groups.length &&
-                    message.groups[0]?.collection === 'Rejected'))))
+                    message.groups.every(
+                      (g) => g.collection === 'Rejected'
+                    )))))
           "
           class="error-page"
         >
