@@ -1186,84 +1186,85 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
 
   const UNLOCATED_FRACTION = 0.35
 
-  function updateFreeglersInside(data) {
-    // Two ways to know how many freeglers are inside the current boundary:
-    //
-    //   (a) Schedule-provided cumulative count.  The ripple-schedule endpoint
-    //       already computed exactly this server-side, so when it's present
-    //       we trust it — that's the actual notification count the cron will
-    //       deliver, no sampling/extrapolation needed.
-    //   (b) Polygon containment of the local freegler grid.  Used in static
-    //       view (no schedule) and as a fallback.
-    //
-    // Either way we ALSO walk the grid to highlight individual dots inside
-    // vs outside the boundary — that's purely visual.
+  // Walk the freegler sample grid and style each dot inside/outside the
+  // boundary; return the count of freeglers inside.
+  function styleFreeglersByBoundary(data) {
     let insideCount = 0
-    let quintileTaggedCount = 0
-    let deprivedCount = 0
     freeglersGrid.forEach((g, i) => {
       const q = quintileOfFreegler(g.lng, g.lat, data)
       if (q !== 0) {
         insideCount += g.count
-        if (q >= 1) {
-          quintileTaggedCount += g.count
-          if (q <= 3) deprivedCount += g.count
-        }
         if (freeglersMarkers[i])
           freeglersMarkers[i].setStyle({ fillOpacity: 1, opacity: 1 })
       } else if (freeglersMarkers[i])
         freeglersMarkers[i].setStyle({ fillOpacity: 0.12, opacity: 0.2 })
     })
+    return insideCount
+  }
 
+  // Decide how many located freeglers are inside the boundary.  Prefer the
+  // schedule's authoritative `cumulative_users` when the server provided one;
+  // otherwise scale the sampled inside-count back up to the population, or
+  // fall back to the full located total in static view.
+  function estimateNotifiedCount(data, insideCount) {
+    if (data && data.cumulative_users !== undefined && data.cumulative_users !== null)
+      return data.cumulative_users
     const totalLocated = totalLocatedFromServer || allFreeglers.length
     const sampleSize = allFreeglers.length
     const isRipple = ripplePlaying || rippleFrames.length > 0
-    // Prefer the schedule's authoritative cumulative_users when present.
-    let estimatedInsideLocated
-    if (data && data.cumulative_users !== undefined && data.cumulative_users !== null) {
-      estimatedInsideLocated = data.cumulative_users
-    } else if (isRipple && sampleSize > 0) {
-      estimatedInsideLocated = Math.round(insideCount * (totalLocated / sampleSize))
-    } else {
-      estimatedInsideLocated = totalLocated
-    }
+    if (isRipple && sampleSize > 0)
+      return Math.round(insideCount * (totalLocated / sampleSize))
+    return totalLocated
+  }
 
+  // Render the "would be notified" panel at the bottom of the side bar.
+  // Hidden when the estimate is zero — showing "~0 would be notified" at the
+  // start of a ripple is misleading.
+  function renderFreeglerBar(estimatedInsideLocated) {
+    const totalLocated = totalLocatedFromServer || allFreeglers.length
     const bar = document.getElementById('rippling-freegler-bar')
-    // Only show the count bar when there is at least 1 freegler inside the
-    // isochrone.  Showing "~0 would be notified" at the start of the ripple
-    // (when the tiny 0.5-min polygon contains no freeglers) is misleading.
-    if (estimatedInsideLocated > 0 && totalLocated > 0) {
-      const totalEstimate = Math.round(estimatedInsideLocated / (1 - UNLOCATED_FRACTION))
-      const unlocatedShare = totalEstimate - estimatedInsideLocated
-      bar.innerHTML =
-        `<div style="font-size:13px;font-weight:600;color:#333;line-height:1.4">~${totalEstimate.toLocaleString()} would be notified</div>` +
-        `<div style="font-size:10px;color:#666;margin-top:1px">${estimatedInsideLocated.toLocaleString()} with known location` +
-        (unlocatedShare > 0
-          ? ` + ~${unlocatedShare.toLocaleString()} estimated unlocated`
-          : '') +
-        `</div><div style="font-size:10px;color:#aaa;font-style:italic;margin-top:3px">TrashNothing members use a separate algorithm</div>`
-      bar.style.display = ''
-    } else {
+    if (!(estimatedInsideLocated > 0 && totalLocated > 0)) {
       bar.style.display = 'none'
+      return
     }
+    const totalEstimate = Math.round(estimatedInsideLocated / (1 - UNLOCATED_FRACTION))
+    const unlocatedShare = totalEstimate - estimatedInsideLocated
+    bar.innerHTML =
+      `<div style="font-size:13px;font-weight:600;color:#333;line-height:1.4">~${totalEstimate.toLocaleString()} would be notified</div>` +
+      `<div style="font-size:10px;color:#666;margin-top:1px">${estimatedInsideLocated.toLocaleString()} with known location` +
+      (unlocatedShare > 0
+        ? ` + ~${unlocatedShare.toLocaleString()} estimated unlocated`
+        : '') +
+      `</div><div style="font-size:10px;color:#aaa;font-style:italic;margin-top:3px">TrashNothing members use a separate algorithm</div>`
+    bar.style.display = ''
+  }
 
-    // The quintile polygon approach for classifying freeglers is unreliable:
-    // a 19-point concave hull for 6,000 scattered Q1 nodes smears over Q4/Q5
-    // areas, producing a deprived-biased reading.  Instead, use the routing
-    // server's own fairness_score (Q1-3 nodes / all tagged nodes) which is
-    // correct.  updateStats(data) already rendered the needle at this value;
-    // we just need to track the peak bias for the animation summary.
-    if (data.fairness_score !== undefined && data.fairness_score >= 0) {
-      const pct = Math.round(data.fairness_score * 100)
-
-      if (ripplePlaying) {
-        const imbalance = Math.abs(pct - localBaseline)
-        if (rippleMaxImbalance === null || imbalance > Math.abs(rippleMaxImbalance.pct - localBaseline)) {
-          // rippleStep is 0-based frame index; actual drive time = (step+1)*RIPPLE_STEP_MINS.
-          rippleMaxImbalance = { pct, minute: (rippleStep + 1) * RIPPLE_STEP_MINS }
-        }
-      }
+  // The quintile polygon approach for classifying freeglers is unreliable:
+  // a 19-point concave hull for 6,000 scattered Q1 nodes smears over Q4/Q5
+  // areas, producing a deprived-biased reading.  Instead use the routing
+  // server's own fairness_score (Q1-3 nodes / all tagged nodes).  updateStats
+  // already renders the needle; this just tracks the peak for the summary.
+  function trackFairnessImbalance(data) {
+    if (!ripplePlaying) return
+    if (data.fairness_score === undefined || data.fairness_score < 0) return
+    const pct = Math.round(data.fairness_score * 100)
+    const imbalance = Math.abs(pct - localBaseline)
+    if (
+      rippleMaxImbalance === null ||
+      imbalance > Math.abs(rippleMaxImbalance.pct - localBaseline)
+    ) {
+      // rippleStep is 0-based frame index; actual drive time = (step+1)*RIPPLE_STEP_MINS.
+      rippleMaxImbalance = { pct, minute: (rippleStep + 1) * RIPPLE_STEP_MINS }
     }
+  }
+
+  // Refresh the "freeglers inside the boundary" view: dot styling, the
+  // notification-count panel, and the fairness-imbalance tracker.
+  function updateFreeglersInside(data) {
+    const insideCount = styleFreeglersByBoundary(data)
+    const estimatedInsideLocated = estimateNotifiedCount(data, insideCount)
+    renderFreeglerBar(estimatedInsideLocated)
+    trackFairnessImbalance(data)
   }
 
   function groupCentroid(f) {
@@ -1854,22 +1855,20 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
       jumpToFrame(frameIdx)
     })
 
-  async function startRipple() {
-    if (currentLat === null) {
-      showStatus('Click a location first', false)
-      return
-    }
+  // Ripple always uses drive mode — switch silently if the user is in walk
+  // mode when they hit play, so the schedule fetch below sees the right mode.
+  function ensureDriveMode() {
+    if (currentMode === 'drive') return
+    currentMode = 'drive'
+    document.querySelectorAll('.rpl-mode-btn').forEach((b) => {
+      b.classList.toggle('rpl-active', b.dataset.mode === 'drive')
+    })
+    if (currentLat !== null) updateIsochrone()
+  }
 
-    // Ripple always uses drive mode.
-    if (currentMode !== 'drive') {
-      currentMode = 'drive'
-      document.querySelectorAll('.rpl-mode-btn').forEach((b) => {
-        b.classList.toggle('rpl-active', b.dataset.mode === 'drive')
-      })
-      if (currentLat !== null) updateIsochrone()
-    }
-
-    const btn = document.getElementById('rippling-btn')
+  // Reset the panel + timeline UI and re-centre the map ahead of a new
+  // ripple animation.
+  function prepareRippleUI(btn) {
     btn.disabled = true
     btn.textContent = '⏳ Loading…'
     document.getElementById(
@@ -1884,59 +1883,33 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
       .getElementById('rippling-tl-slider')
       .style.setProperty('--tl-pct', '0%')
     map.setView([currentLat, currentLng], 13, { animate: false })
+  }
 
-    // Density-driven schedule.  One HTTP call returns the full ticks-tuple of
-    // (drive-time, cumulative_users, polygon) — the server picks each tick's
-    // drive-time so an equal-population batch is encapsulated at each step.
-    // The "curve" parameter shapes the cumulative-fraction-vs-tick mapping.
-    // Default to the data-driven recommended curve — see
-    // plans/reference/ripple-curve-evaluation.md.  step-70 (70 % notified
-    // at tick 1 then linear) hits 92 % urban / 86 % rural first-replier
-    // reach-in-time on the 4,264-post historical sample with ~7 % waste.
+  // Pull the density-driven schedule from the server.  One HTTP call returns
+  // the full ticks-tuple of (drive-time, cumulative_users, polygon) — the
+  // server picks each tick's drive-time so an equal-population batch is
+  // encapsulated at each step.  The "curve" parameter shapes the
+  // cumulative-fraction-vs-tick mapping.  Default to the data-driven
+  // recommended curve — see plans/reference/ripple-curve-evaluation.md.
+  // step-70 (70 % notified at tick 1 then linear) hits 92 % urban / 86 %
+  // rural first-replier reach-in-time on the 4,264-post historical sample
+  // with ~7 % waste.
+  async function fetchRippleSchedule() {
     const curveShape = 'step-70'
     const scheduleURL = apiUrl(
       `/v1/ripple-schedule?lat=${currentLat.toFixed(6)}&lng=${currentLng.toFixed(
         6
       )}&mode=${currentMode}&ticks=${RIPPLE_FRAMES}&max_minutes=${RIPPLE_FRAMES * RIPPLE_STEP_MINS}&curve=${curveShape}`
     )
-    let scheduleResp
     try {
-      scheduleResp = await fetch(scheduleURL).then((r) => r.json())
+      return await fetch(scheduleURL).then((r) => r.json())
     } catch (e) {
-      scheduleResp = null
+      return null
     }
-    if (!scheduleResp || !scheduleResp.schedule || scheduleResp.schedule.length === 0) {
-      document.getElementById('rippling-info').textContent =
-        'No ripple data — try a different location'
-      btn.disabled = false
-      btn.textContent = '▶ Animate ripple'
-      ripplePlaying = false
-      return
-    }
-    // Wrap each schedule entry to look like the previous "frame" shape, so the
-    // rest of the animation code is unchanged.  `standard` carries the polygon;
-    // `drive_min` and `cumulative_users` are exposed for display/stats.
-    rippleFrames = scheduleResp.schedule.map((entry) => ({
-      standard: entry.polygon,
-      drive_min: entry.drive_min,
-      cumulative_users: entry.cumulative_users,
-      tick: entry.tick,
-    }))
-    // Make the total reachable count available for the freegler bar display.
-    totalLocatedFromServer = scheduleResp.total_freeglers || totalLocatedFromServer
+  }
 
-    // Reparameterise every keyframe's standard ring as a radii array, once,
-    // so the rAF hot path is pure arithmetic.
-    precomputeRadii(rippleFrames, currentLng, currentLat)
-
-    // Fetch all freeglers reachable at the maximum drive time so the dots
-    // are loaded before the animation needs them.
-    await fetchFreeglers(RIPPLE_FRAMES * RIPPLE_STEP_MINS)
-    drawFreeglersLayer()
-
-    // Create the single morphing polygon layer used by the rAF loop.
-    ensureMorphLayer()
-
+  // Initialise the per-animation state and start the rAF loop.
+  function beginRippleAnimation(btn) {
     rippleStep = 0
     rippleAnchorFrame = 0
     rippleAnchorTime = 0
@@ -1952,6 +1925,51 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     document.getElementById('rippling-timeline').style.display = ''
 
     rippleRafId = requestAnimationFrame(animateRipple)
+  }
+
+  async function startRipple() {
+    if (currentLat === null) {
+      showStatus('Click a location first', false)
+      return
+    }
+
+    ensureDriveMode()
+
+    const btn = document.getElementById('rippling-btn')
+    prepareRippleUI(btn)
+
+    const scheduleResp = await fetchRippleSchedule()
+    if (!scheduleResp || !scheduleResp.schedule || scheduleResp.schedule.length === 0) {
+      document.getElementById('rippling-info').textContent =
+        'No ripple data — try a different location'
+      btn.disabled = false
+      btn.textContent = '▶ Animate ripple'
+      ripplePlaying = false
+      return
+    }
+
+    // Wrap each schedule entry to look like the previous "frame" shape, so the
+    // rest of the animation code is unchanged.  `standard` carries the polygon;
+    // `drive_min` and `cumulative_users` are exposed for display/stats.
+    rippleFrames = scheduleResp.schedule.map((entry) => ({
+      standard: entry.polygon,
+      drive_min: entry.drive_min,
+      cumulative_users: entry.cumulative_users,
+      tick: entry.tick,
+    }))
+    totalLocatedFromServer = scheduleResp.total_freeglers || totalLocatedFromServer
+
+    // Reparameterise every keyframe's standard ring as a radii array, once,
+    // so the rAF hot path is pure arithmetic.
+    precomputeRadii(rippleFrames, currentLng, currentLat)
+
+    // Fetch all freeglers reachable at the maximum drive time so the dots
+    // are loaded before the animation needs them.
+    await fetchFreeglers(RIPPLE_FRAMES * RIPPLE_STEP_MINS)
+    drawFreeglersLayer()
+    ensureMorphLayer()
+
+    beginRippleAnimation(btn)
   }
 
   function stopRipple() {
