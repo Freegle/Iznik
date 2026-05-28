@@ -92,15 +92,31 @@ func TestExpandQuery_SynonymMap_Pram(t *testing.T) {
 }
 
 func TestExpandQuery_SynonymMap_Fridge(t *testing.T) {
+	// "fridge" has an empty synonym entry — no expansion (fridge≠freezer,
+	// "refrigerator" is not used in UK listings). Falls back to ["fridge"].
 	result := ExpandQuery("fridge")
-	assert.Equal(t, "fridge", result[0])
-	assert.Contains(t, result, "refrigerator")
+	assert.Equal(t, []string{"fridge"}, result)
+	assert.NotContains(t, result, "refrigerator")
+	assert.NotContains(t, result, "freezer")
 }
 
 func TestExpandQuery_SynonymMap_Freezer(t *testing.T) {
+	// freezer has no entry — it is a distinct appliance, not a synonym of fridge.
 	result := ExpandQuery("freezer")
-	assert.Equal(t, "freezer", result[0])
-	assert.Contains(t, result, "fridge")
+	assert.Equal(t, []string{"freezer"}, result)
+	assert.NotContains(t, result, "fridge")
+}
+
+func TestExpandQuery_SynonymMap_Hoover(t *testing.T) {
+	result := ExpandQuery("hoover")
+	assert.Equal(t, "hoover", result[0])
+	assert.Contains(t, result, "vacuum")
+}
+
+func TestExpandQuery_SynonymMap_Vacuum(t *testing.T) {
+	result := ExpandQuery("vacuum")
+	assert.Equal(t, "vacuum", result[0])
+	assert.Contains(t, result, "hoover")
 }
 
 func TestExpandQuery_SynonymMap_Carpet(t *testing.T) {
@@ -114,7 +130,18 @@ func TestExpandQuery_SynonymMap_Motorbike(t *testing.T) {
 	assert.Equal(t, "motorbike", result[0])
 	assert.Contains(t, result, "motorcycle")
 	assert.Contains(t, result, "moped")
-	assert.Contains(t, result, "scooter")
+	// "scooter" is intentionally NOT a synonym — UK scooter searches are
+	// predominantly mobility/electric scooters, not mopeds.
+	assert.NotContains(t, result, "scooter")
+}
+
+func TestExpandQuery_SynonymMap_Scooter_StandsAlone(t *testing.T) {
+	// "scooter" has no synonym entry to avoid conflating mobility/electric
+	// scooters with petrol motorbikes.
+	result := ExpandQuery("scooter")
+	assert.Equal(t, []string{"scooter"}, result)
+	assert.NotContains(t, result, "motorbike")
+	assert.NotContains(t, result, "moped")
 }
 
 // ── ExpandQuery — no synonym ──────────────────────────────────────────────────
@@ -189,7 +216,7 @@ func TestExpandQuery_OnlyStopWords(t *testing.T) {
 
 func TestExpandQuery_OriginalWordFirst(t *testing.T) {
 	// For every single-word query that has synonyms, the original must lead.
-	cases := []string{"sofa", "couch", "tv", "bike", "pram", "fridge"}
+	cases := []string{"sofa", "couch", "tv", "bike", "pram", "hoover"}
 	for _, word := range cases {
 		result := ExpandQuery(word)
 		assert.NotEmpty(t, result, "word=%q produced empty result", word)

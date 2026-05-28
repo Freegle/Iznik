@@ -43,22 +43,26 @@ var synonymMap = map[string][]string{
 	"buggy":     {"pram", "pushchair", "stroller"},
 	"stroller":  {"pram", "pushchair", "buggy"},
 
-	// Fridge / freezer
-	"fridge":       {"refrigerator"},
-	"refrigerator": {"fridge"},
-	"freezer":      {"fridge"},
+	// Fridge — "refrigerator" is American English; UK messages use "fridge". Freezer
+	// is a distinct appliance so fridge↔freezer is intentionally absent.
+	"fridge": {},
+
+	// Vacuums — "hoover" is the dominant UK search term (the brand became generic);
+	// 190 indexed messages use "hoover", 276 use "vacuum", users search "hoover" 10×
+	// more than "vacuum". Without this pair they never overlap.
+	"hoover": {"vacuum"},
+	"vacuum": {"hoover"},
 
 	// Wardrobes / storage
-	"wardrobe": {"armoire"},
-	"armoire":  {"wardrobe"},
 	"cupboard": {"cabinet"},
 	"cabinet":  {"cupboard"},
 
-	// Two-wheeled motorised
-	"motorbike":  {"motorcycle", "moped", "scooter"},
-	"motorcycle": {"motorbike", "moped", "scooter"},
+	// Two-wheeled motorised. "scooter" is deliberately excluded: in UK searches
+	// "scooter" overwhelmingly means mobility scooters and electric kick scooters,
+	// not mopeds — conflating them returns wrong results for the majority of users.
+	"motorbike":  {"motorcycle", "moped"},
+	"motorcycle": {"motorbike", "moped"},
 	"moped":      {"motorcycle", "motorbike"},
-	"scooter":    {"motorbike", "moped"},
 
 	// Carpets / rugs
 	"carpet": {"rug"},
@@ -67,10 +71,6 @@ var synonymMap = map[string][]string{
 	// Tumble dryer
 	"tumble": {"dryer"},
 	"dryer":  {"tumble"},
-
-	// Printer / scanner
-	"printer": {"scanner"},
-	"scanner": {"printer"},
 }
 
 // ExpandQuery returns the full set of words to pass to the keyword search,
