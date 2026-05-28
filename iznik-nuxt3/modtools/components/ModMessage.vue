@@ -1416,7 +1416,7 @@ function cancelEdit() {
 }
 
 async function backToPending(callback) {
-  await messageStore.backToPending(message.value.id)
+  await messageStore.backToPending(message.value.id, groupid.value)
   callback()
 }
 

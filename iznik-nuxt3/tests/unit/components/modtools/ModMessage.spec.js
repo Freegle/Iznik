@@ -572,7 +572,8 @@ describe('ModMessage', () => {
       const wrapper = mountComponent()
       const callback = vi.fn()
       await wrapper.vm.backToPending(callback)
-      expect(mockMessageStore.backToPending).toHaveBeenCalledWith(123)
+      // Passes the contextual groupid (789) so back-to-pending is per-group.
+      expect(mockMessageStore.backToPending).toHaveBeenCalledWith(123, 789)
       expect(callback).toHaveBeenCalled()
     })
   })
