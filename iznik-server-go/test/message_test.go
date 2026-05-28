@@ -5344,6 +5344,127 @@ func TestRejectToDraftOwner(t *testing.T) {
 	assert.Equal(t, int64(1), logCount, "Repost log entry should exist")
 }
 
+func TestRejectToDraftPerGroup(t *testing.T) {
+	prefix := uniquePrefix("msg_r2d_pg")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupA, "Member")
+	CreateTestMembership(t, userID, groupB, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	// Message on both groups (groupA via CreateTestMessage, groupB added).
+	msgID := CreateTestMessage(t, userID, groupA, prefix+" item", 52.5, -1.8)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+
+	// Give it global state we can check is preserved while still live elsewhere.
+	db.Exec("UPDATE messages SET availableinitially = 3, availablenow = 1 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, timestamp) VALUES (?, 'Taken', NOW())", msgID)
+
+	// RejectToDraft on groupA only.
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":      msgID,
+		"action":  "RejectToDraft",
+		"groupid": groupA,
+	})
+	req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// groupA row gone, groupB still live.
+	var countA, countB int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&countA)
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&countB)
+	assert.Equal(t, int64(0), countA, "groupA row should be removed")
+	assert.Equal(t, int64(1), countB, "groupB row should remain live")
+
+	// Draft created for groupA.
+	var draftCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_drafts WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&draftCount)
+	assert.Equal(t, int64(1), draftCount, "Draft should be created for groupA")
+
+	// Global state must be UNTOUCHED while the message is still live on groupB.
+	var outcomeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&outcomeCount)
+	assert.Equal(t, int64(1), outcomeCount, "Outcomes must not be cleared while still live on another group")
+	var availablenow int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availablenow)
+	assert.Equal(t, 1, availablenow, "availablenow must not be reset while still live on another group")
+
+	// Now RejectToDraft on groupB — the last group. The message becomes a
+	// fresh draft and its global state is reset.
+	body2, _ := json.Marshal(map[string]interface{}{
+		"id":      msgID,
+		"action":  "RejectToDraft",
+		"groupid": groupB,
+	})
+	req2 := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	resp2, err := getApp().Test(req2)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp2.StatusCode)
+
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ?", msgID).Scan(&countB)
+	assert.Equal(t, int64(0), countB, "No groups should remain")
+
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&outcomeCount)
+	assert.Equal(t, int64(0), outcomeCount, "Outcomes should be cleared once fully redrafted")
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availablenow)
+	assert.Equal(t, 3, availablenow, "availablenow should reset to availableinitially once fully redrafted")
+}
+
+func TestRejectToDraftOwnerWithdrawsAllGroups(t *testing.T) {
+	// When the owner withdraws their own message and no groupid is given, the
+	// message is taken back to draft for ALL groups it's on.
+	prefix := uniquePrefix("msg_r2d_all")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	userID := CreateTestUser(t, prefix+"_user", "User")
+	CreateTestMembership(t, userID, groupA, "Member")
+	CreateTestMembership(t, userID, groupB, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	msgID := CreateTestMessage(t, userID, groupA, prefix+" item", 52.5, -1.8)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, NOW(), 'Approved', 0)", msgID, groupB)
+	db.Exec("UPDATE messages SET availableinitially = 2, availablenow = 1 WHERE id = ?", msgID)
+	db.Exec("INSERT INTO messages_outcomes (msgid, outcome, timestamp) VALUES (?, 'Taken', NOW())", msgID)
+
+	// RejectToDraft with NO groupid — owner withdrawing the whole message.
+	body, _ := json.Marshal(map[string]interface{}{
+		"id":     msgID,
+		"action": "RejectToDraft",
+	})
+	req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// All groups removed.
+	var mgCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ?", msgID).Scan(&mgCount)
+	assert.Equal(t, int64(0), mgCount, "All groups should be removed when withdrawing without a groupid")
+
+	// messages_drafts is unique per msgid, so exactly one draft row results.
+	var draftCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_drafts WHERE msgid = ?", msgID).Scan(&draftCount)
+	assert.Equal(t, int64(1), draftCount, "Exactly one draft row should exist (unique per msgid)")
+
+	// Global state reset, since the message is no longer live anywhere.
+	var outcomeCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_outcomes WHERE msgid = ?", msgID).Scan(&outcomeCount)
+	assert.Equal(t, int64(0), outcomeCount, "Outcomes cleared on full withdrawal")
+	var availablenow int
+	db.Raw("SELECT availablenow FROM messages WHERE id = ?", msgID).Scan(&availablenow)
+	assert.Equal(t, 2, availablenow, "availablenow reset to availableinitially on full withdrawal")
+}
+
 func TestRejectToDraftClearsExpiredDeadline(t *testing.T) {
 	prefix := uniquePrefix("msg_r2d_dl")
 	db := database.DBConn

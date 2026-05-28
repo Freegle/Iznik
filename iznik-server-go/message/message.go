@@ -2247,42 +2247,77 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		return fiber.NewError(fiber.StatusForbidden, "Not allowed to convert this message to draft")
 	}
 
-	// Use a transaction: insert draft then delete from groups.
+	// Determine which groups to take back to draft.
+	//   - groupid in the request (a moderator acting on their own group):
+	//     that group only.
+	//   - no groupid (the owner withdrawing their own message): ALL groups
+	//     the message is on — a withdrawal is global to the poster.
+	var groupids []uint64
+	if req.Groupid != nil && *req.Groupid > 0 {
+		groupids = []uint64{*req.Groupid}
+	} else {
+		db.Raw("SELECT groupid FROM messages_groups WHERE msgid = ?", req.ID).Scan(&groupids)
+	}
+	// Fallback for a message with no live group rows (e.g. already partially
+	// drafted): keep V1's behaviour of always producing a draft.
+	if len(groupids) == 0 {
+		if pg := getPrimaryGroupForMessage(db, req.ID); pg > 0 {
+			groupids = []uint64{pg}
+		}
+	}
+
+	// Use a transaction: insert draft(s) then remove the targeted group rows.
 	tx := db.Begin()
 	if tx.Error != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Transaction failed")
 	}
 
-	// Determine the group for the draft (use first group the message is in).
-	groupid := getPrimaryGroupForMessage(db, req.ID)
-
-	// Insert into messages_drafts (ignore if already a draft).
-	if err := tx.Exec("INSERT IGNORE INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)",
-		req.ID, groupid, myid).Error; err != nil {
-		tx.Rollback()
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create draft")
+	// messages_drafts is unique per msgid, so a message has at most one draft
+	// row. Record it against the first targeted group; on re-post via
+	// JoinAndPost the owner picks the destination group(s) again. INSERT IGNORE
+	// keeps an existing draft row intact.
+	if len(groupids) > 0 {
+		if err := tx.Exec("INSERT IGNORE INTO messages_drafts (msgid, groupid, userid) VALUES (?, ?, ?)",
+			req.ID, groupids[0], myid).Error; err != nil {
+			tx.Rollback()
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create draft")
+		}
 	}
 
-	// Remove from messages_groups.
-	if err := tx.Exec("DELETE FROM messages_groups WHERE msgid = ?", req.ID).Error; err != nil {
+	// Remove the targeted group rows. With a groupid this is just that group;
+	// without one it's every group the message was on. Any groups not in the
+	// set keep their live posting.
+	if err := tx.Exec("DELETE FROM messages_groups WHERE msgid = ? AND groupid IN ?", req.ID, groupids).Error; err != nil {
 		tx.Rollback()
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to remove from groups")
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to remove from group")
 	}
 
-	// Clear any previous outcome so the reposted message starts fresh.
-	// Without this, a message that was withdrawn still shows as "withdrawn"
-	// in posting history after reposting — the same wrong behaviour as V1.
-	if err := tx.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", req.ID).Error; err != nil {
+	// If the message is still live on other groups, leave its global state
+	// (outcomes, availability, deadline) alone — those are shared across all
+	// groups and the message is still active elsewhere. Only when this was the
+	// last group does the message become a fresh draft and need a full reset.
+	var remainingGroups int64
+	if err := tx.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ?", req.ID).Scan(&remainingGroups).Error; err != nil {
 		tx.Rollback()
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to clear outcome")
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to count remaining groups")
 	}
-	tx.Exec("DELETE FROM messages_outcomes_intended WHERE msgid = ?", req.ID)
 
-	// Reset availablenow to availableinitially — if the item was promised to
-	// someone who never collected, the repost should offer the full quantity again.
-	// Also clear messages_by so there are no stale promise records.
-	tx.Exec("UPDATE messages SET availablenow = availableinitially WHERE id = ?", req.ID)
-	tx.Exec("DELETE FROM messages_by WHERE msgid = ?", req.ID)
+	if remainingGroups == 0 {
+		// Clear any previous outcome so the reposted message starts fresh.
+		// Without this, a message that was withdrawn still shows as "withdrawn"
+		// in posting history after reposting — the same wrong behaviour as V1.
+		if err := tx.Exec("DELETE FROM messages_outcomes WHERE msgid = ?", req.ID).Error; err != nil {
+			tx.Rollback()
+			return fiber.NewError(fiber.StatusInternalServerError, "Failed to clear outcome")
+		}
+		tx.Exec("DELETE FROM messages_outcomes_intended WHERE msgid = ?", req.ID)
+
+		// Reset availablenow to availableinitially — if the item was promised to
+		// someone who never collected, the repost should offer the full quantity again.
+		// Also clear messages_by so there are no stale promise records.
+		tx.Exec("UPDATE messages SET availablenow = availableinitially WHERE id = ?", req.ID)
+		tx.Exec("DELETE FROM messages_by WHERE msgid = ?", req.ID)
+	}
 
 	if err := tx.Commit().Error; err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Transaction commit failed")
@@ -2290,12 +2325,16 @@ func handleRejectToDraft(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 
 	// Clear deadline if it's in the past or today — an old deadline is no longer
 	// relevant when reposting and would cause the message to appear expired.
-	var deadline *string
-	db.Raw("SELECT deadline FROM messages WHERE id = ?", req.ID).Scan(&deadline)
-	if deadline != nil && *deadline != "" {
-		today := time.Now().Format("2006-01-02")
-		if *deadline <= today {
-			db.Exec("UPDATE messages SET deadline = NULL WHERE id = ?", req.ID)
+	// Only when fully redrafted: while still live elsewhere the deadline applies
+	// to the active posting.
+	if remainingGroups == 0 {
+		var deadline *string
+		db.Raw("SELECT deadline FROM messages WHERE id = ?", req.ID).Scan(&deadline)
+		if deadline != nil && *deadline != "" {
+			today := time.Now().Format("2006-01-02")
+			if *deadline <= today {
+				db.Exec("UPDATE messages SET deadline = NULL WHERE id = ?", req.ID)
+			}
 		}
 	}
 

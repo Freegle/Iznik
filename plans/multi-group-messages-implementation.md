@@ -14,7 +14,7 @@
 
 ## Status (as of 2026-05-27)
 
-**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14, 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21, 23 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, per-group repost scheduling, store/ModTools client changes.
+**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14, 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21, 23, 24 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, per-group repost scheduling, per-group reject-to-draft, store/ModTools client changes.
 
 **Open work (❌):**
 
@@ -23,7 +23,6 @@
 | 19 | Audit | Write `plans/multi-group-stats-audit.md` |
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
 | 22 | Audit | Write `plans/multi-group-v1-audit-results.md` |
-| 24 | Go | `convertToDraft` uses primary group and deletes all `messages_groups` rows (real bug) |
 | 25 | Go | Edit subject + mod-delete audit log use primary group |
 | 26 | Nuxt | 4 remaining `groups[0]` sites: `useKeywords.js`, `MessageHistory.vue`, `ModLogGroup.vue`, `pages/message/[id].vue` (`MyMessage.vue:942` done in Task 17) |
 | 27 | Laravel | `UnifiedDigest.php` header group selection |
@@ -1746,33 +1745,23 @@ The repost goroutine in [message.go:702-748](iznik-server-go/message/message.go#
 
 ---
 
-## Task 24: Go API — Per-Group convertToDraft ❌ NOT DONE
+## Task 24: Go API — Per-Group convertToDraft (RejectToDraft) ✅ DONE
 
-[message.go:2233](iznik-server-go/message/message.go#L2233) still uses `getPrimaryGroupForMessage`; line 2243 still `DELETE FROM messages_groups WHERE msgid = ?` without `groupid` filter.
+`handleRejectToDraft` ([message.go:2234](iznik-server-go/message/message.go#L2234), dispatched on the `RejectToDraft`/`BackToDraft` actions) was made per-group.
 
-**Files:**
-- Modify: `iznik-server-go/message/message.go:2225-2250` (convertToDraft handler)
+**Behaviour by caller (per follow-up refinement):**
+- **No `groupid` (owner withdrawing their own message):** the message is taken back to draft for **ALL** groups it's on — withdrawal is global to the poster. This matches V1's whole-message redraft.
+- **`groupid` supplied (a moderator acting on their own group):** only that group's row is removed; other groups keep their live posting.
 
-Two bugs in the current code:
-1. Line 2233 picks the first group via `getPrimaryGroupForMessage` — should use `req.Groupid` (the group the user is withdrawing from) when provided.
-2. Line 2243 does `DELETE FROM messages_groups WHERE msgid = ?` without a `groupid` filter, removing the message from ALL groups. For multi-group withdrawal this is wrong — should only delete the targeted group's row, and only soft-delete the message itself if it was the last group.
+**What changed:**
+- Target groups: `[req.Groupid]` when supplied (`> 0`); otherwise every `messages_groups.groupid` for the message (with a `getPrimaryGroupForMessage` fallback for a message that has no live group rows).
+- Delete is now `DELETE FROM messages_groups WHERE msgid = ? AND groupid IN ?` over the targeted set — was an unconditional `WHERE msgid = ?` (all groups).
+- A single `messages_drafts` row is recorded against the first targeted group. `messages_drafts.msgid` is **UNIQUE**, so a message has at most one draft row regardless of group count (the earlier plan note suggesting one-row-per-group was wrong); on re-post via JoinAndPost the owner re-picks the destination group(s).
+- The global state resets — `messages_outcomes`, `messages_outcomes_intended`, `availablenow`/`availableinitially`, `messages_by`, and the expired-deadline clear — run **only when no groups remain** (`COUNT(*) FROM messages_groups == 0`). While the message is still live on another group those shared fields are left untouched.
 
-- [ ] **Step 1: Write failing test**
+**Tests:** [TestRejectToDraftPerGroup](iznik-server-go/test/message_test.go) (mod, `groupid` set: per-group removal, state preserved until last group) and [TestRejectToDraftOwnerWithdrawsAllGroups](iznik-server-go/test/message_test.go) (owner, no `groupid`: all groups removed, one draft row, global state reset). Full Go suite 2919/2919 ✓.
 
-Create a message on Groups A and B. Withdraw from Group A. Assert: Group A row gone, Group B row still present, `messages_drafts` has a row for Group A only, `messages.deleted` is null.
-
-- [ ] **Step 2: Implement**
-
-- Use `req.Groupid` if provided; fall back to primary only when caller hasn't supplied one (e.g. owner with single-group message).
-- Change DELETE to include `AND groupid = ?`.
-- After delete, count remaining `messages_groups` rows for this msgid. If zero, soft-delete the message; otherwise leave it alone.
-- Decide whether `messages_drafts` should contain one row per withdrawn group (probably yes) — the unique key on the table will tell us.
-
-- [ ] **Step 3: Update the Nuxt side**
-
-The client must send `groupid` on the withdraw request. Audit `MyMessage.vue:942` (`composeStore.group = msg.groups[0].groupid`) and surrounding flow to ensure the withdrawn group is communicated. If a poster has the message on multiple groups, the UI should let them pick (or default to current context group).
-
-- [ ] **Step 4: Run tests, commit**
+**Nuxt side:** the existing repost flow ([MyMessage.vue](iznik-nuxt3/components/MyMessage.vue)) drives reposting through `composeStore` rather than calling the `RejectToDraft` action directly, so no client change was needed. Owner-withdrawal callers omit `groupid` (all groups); moderator callers pass their `groupid`.
 
 ---
 
