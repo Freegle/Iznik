@@ -1035,4 +1035,66 @@ class UnifiedDigestServiceTest extends TestCase
         $stats2 = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
         $this->assertEquals(0, $stats2['emails_sent'], 'No duplicate send after cursor advance');
     }
+
+    /**
+     * AssertFlip Step 2 (inverted) — assert the CORRECT behaviour,
+     * which FAILS on the current buggy code.
+     *
+     * processGroupImmediate does not filter by users.lastaccess ("V1 does
+     * NOT filter by users.lastaccess so we match that"), so a member who
+     * has emailfrequency=-1 but last logged in two years ago currently
+     * receives every new post as an individual email. This reproduces the
+     * flood reported in Discourse topic 9728 posts 11-12 (member 39318461
+     * "no recent activity"; support flooded with complaints from inactive
+     * members). Temporal correlation: PR #572 (EmailSpoolerService migration
+     * that activated the immediate-digest path for all users).
+     *
+     * Three-user group:
+     *   poster        emailfrequency=-1, active (own post excluded from send)
+     *   immediateUser emailfrequency=-1, active  → SHOULD receive email
+     *   dailyUser     emailfrequency=24, active  → MUST NOT (correctly excluded by freq filter)
+     *   inactiveUser  emailfrequency=-1, lastaccess 2 years ago → MUST NOT (fix adds lastaccess gate)
+     *
+     * This assertion FAILS on the current code (emails_sent is 2, not 1)
+     * and will PASS once processGroupImmediate adds a lastaccess filter
+     * to exclude members with no recent activity.
+     */
+    public function test_inactive_and_daily_users_must_not_receive_immediate_individual_emails(): void
+    {
+        config(['freegle.digest.immediate_allowlist' => '*']);
+
+        $poster = $this->createTestUser();
+
+        // Active immediate-frequency member — the only user who should receive the email.
+        $immediateUser = $this->createTestUser();
+
+        // Active daily-digest member — correctly excluded by the emailfrequency filter.
+        $dailyUser = $this->createTestUser();
+
+        // Long-inactive immediate-frequency member (lastaccess 2 years ago).
+        // Should be excluded once processGroupImmediate adds a lastaccess gate.
+        $inactiveUser = $this->createTestUser();
+        $inactiveUser->lastaccess = now()->subYears(2);
+        $inactiveUser->save();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $this->createMembership($immediateUser, $group);
+        $this->createMembership($dailyUser, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($inactiveUser, $group);
+        $this->seedImmediateCursor($group);
+
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        // Only the active immediate-frequency user should receive the email.
+        // FAILS on buggy code: emails_sent is actually 2 (immediateUser + inactiveUser).
+        // Will PASS once the fix adds a lastaccess exclusion in processGroupImmediate.
+        $this->assertEquals(1, $stats['emails_sent']);
+        $this->assertEquals(1, $stats['users_processed']);
+    }
 }
