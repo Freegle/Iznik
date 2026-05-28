@@ -14,7 +14,7 @@
 
 ## Status (as of 2026-05-27)
 
-**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14, 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, store/ModTools client changes.
+**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14, 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21, 23 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, per-group repost scheduling, store/ModTools client changes.
 
 **Open work (❌):**
 
@@ -23,7 +23,6 @@
 | 19 | Audit | Write `plans/multi-group-stats-audit.md` |
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
 | 22 | Audit | Write `plans/multi-group-v1-audit-results.md` |
-| 23 | Go | Repost scheduling uses `MessageGroups[0].Arrival` |
 | 24 | Go | `convertToDraft` uses primary group and deletes all `messages_groups` rows (real bug) |
 | 25 | Go | Edit subject + mod-delete audit log use primary group |
 | 26 | Nuxt | 4 remaining `groups[0]` sites: `useKeywords.js`, `MessageHistory.vue`, `ModLogGroup.vue`, `pages/message/[id].vue` (`MyMessage.vue:942` done in Task 17) |
@@ -1731,33 +1730,19 @@ git commit -m "docs: V1 audit confirmation for multi-group messages"
 
 ---
 
-## Task 23: Go API — Per-Group Repost Scheduling ❌ NOT DONE
+## Task 23: Go API — Per-Group Repost Scheduling ✅ DONE
 
-[message.go:727](iznik-server-go/message/message.go#L727) still computes `repostAt` from `MessageGroups[0].Arrival`.
+The repost goroutine in [message.go:702-748](iznik-server-go/message/message.go#L702-L748) was rewritten to evaluate eligibility per group.
 
-**Files:**
-- Modify: `iznik-server-go/message/message.go:727`
+**What changed:**
+- The repost-settings query now selects `messages_groups.groupid` alongside the `reposts` JSON, and the results are keyed into a `map[groupid]RepostSettings`. Previously the settings were a flat list with no group association, and `repostAt` was always computed from `MessageGroups[0].Arrival`.
+- The loop now iterates `message.MessageGroups`, pairing each group's own `Arrival` with that group's own interval (`Offer`/`Wanted`). **A message is repostable only when it is valid for reposting in EVERY group** — `canRepost` starts true and is cleared if any group is still within its interval, has no settings, or has reposting disabled (interval ≥ 365). `repostAt` is the **latest** per-group repost time (when the last group becomes eligible).
 
-The repost scheduling computes `repostAt` from `MessageGroups[0].Arrival`. For a multi-group message each group has its own arrival and own `autoreposts` counter, so the repost decision must be evaluated per-group.
+**Test:** [TestMessageRepostPerGroupArrival](iznik-server-go/test/message_test.go) — message on groupA (arrival now) + groupB (arrival 30 days ago) with a real `reposts` config (offer interval 3 days). Asserts `canrepost == false` while groupA is still inside its interval, then ages groupA's arrival back 30 days and asserts `canrepost == true` once all groups are eligible. Full Go suite 2917/2917 ✓.
 
-- [ ] **Step 1: Replace the loop body**
+**Note:** the query's fallback default for groups with no `reposts` setting is a PHP-hash literal (`{'offer' => 3, ...}`) that doesn't parse as JSON, so it yields interval 0 (always eligible). This is pre-existing behaviour carried over verbatim from the original code — real groups store proper JSON settings. Not changed here; flag for a separate cleanup if the default ever matters in production.
 
-Iterate `message.MessageGroups` and compute `repostAt`/`canRepost` per group. Either:
-- Return the earliest `repostAt` across groups (so the caller still has a single value), OR
-- Return a per-group struct so the caller can decide which group to repost on
-
-The repost action itself is already per-group (`messages_groups.autoreposts`, `lastautopostwarning`), so the natural answer is per-group output. Check the caller of this block (search `repostAt` upwards in message.go) to confirm what shape it expects.
-
-- [ ] **Step 2: Add a test**
-
-Create a message on Group A (arrival 30 days ago) and Group B (arrival yesterday). Verify the repost calculation flags A as eligible but not B.
-
-- [ ] **Step 3: Run tests, commit**
-
-```bash
-cd iznik-server-go && git add message/message.go test/message_test.go
-git commit -m "feat: evaluate repost schedule per-group instead of using first group's arrival"
-```
+**Follow-on fix (from Task 10):** `TestMicroVolunteeringRejectQuorumSendsForReview` was updated to send `groupid` in the reject votes and to assert `spamreason` on `messages_groups` (not `messages`) — the per-group `sendForReview` contract from Task 10. It had been missed because Task 10 was only validated with a filtered vitest run; the full Go suite caught it here.
 
 ---
 

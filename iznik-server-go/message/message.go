@@ -702,35 +702,59 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				wgExtra.Add(1)
 				go func() {
 					defer wgExtra.Done()
-					var repostStr []string
-					db.Raw("SELECT CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts FROM `groups` INNER JOIN messages_groups ON messages_groups.groupid = groups.id WHERE msgid = ?", message.ID).Pluck("reposts", &repostStr)
 
-					var reposts []group.RepostSettings
+					// Reposting is per-group: each group has its own arrival and
+					// its own repost settings. Fetch the settings keyed by group
+					// so we can pair each group's interval with that group's
+					// arrival rather than collapsing onto the first group.
+					type repostRow struct {
+						Groupid uint64
+						Reposts string
+					}
+					var rows []repostRow
+					db.Raw("SELECT messages_groups.groupid AS groupid, CASE WHEN JSON_EXTRACT(settings, '$.reposts') IS NULL THEN '{''offer'' => 3, ''wanted'' => 7, ''max'' => 5, ''chaseups'' => 5}' ELSE JSON_EXTRACT(settings, '$.reposts') END AS reposts FROM `groups` INNER JOIN messages_groups ON messages_groups.groupid = groups.id WHERE msgid = ?", message.ID).Scan(&rows)
 
-					for _, r := range repostStr {
+					settingsByGroup := make(map[uint64]group.RepostSettings, len(rows))
+					for _, r := range rows {
 						var rs group.RepostSettings
-						json.Unmarshal([]byte(r), &rs)
-						reposts = append(reposts, rs)
+						json.Unmarshal([]byte(r.Reposts), &rs)
+						settingsByGroup[r.Groupid] = rs
 					}
 
-					for _, r := range reposts {
-						var interval int
-
-						if message.Type == utils.OFFER {
-							interval = r.Offer
-						} else {
-							interval = r.Wanted
+					// The message is only repostable when it is valid for
+					// reposting in EVERY group it's on — each group must have
+					// passed its own repost interval (measured from that group's
+					// own arrival). repostAt is therefore the LATEST per-group
+					// repost time: the point at which the last group becomes
+					// eligible. A group with interval >= 365 has reposting
+					// disabled, which blocks reposting across all groups.
+					canRepost = len(message.MessageGroups) > 0
+					for _, mg := range message.MessageGroups {
+						rs, ok := settingsByGroup[mg.Groupid]
+						if !ok {
+							canRepost = false
+							continue
 						}
 
-						if interval < 365 {
-							if len(message.MessageGroups) > 0 {
-								ra := message.MessageGroups[0].Arrival.AddDate(0, 0, interval)
-								repostAt = &ra
+						interval := rs.Wanted
+						if message.Type == utils.OFFER {
+							interval = rs.Offer
+						}
 
-								if repostAt.Before(time.Now()) {
-									canRepost = true
-								}
-							}
+						if interval >= 365 {
+							canRepost = false
+							continue
+						}
+
+						ra := mg.Arrival.AddDate(0, 0, interval)
+						if repostAt == nil || ra.After(*repostAt) {
+							raCopy := ra
+							repostAt = &raCopy
+						}
+						if ra.After(time.Now()) {
+							// This group hasn't reached its repost time yet, so
+							// the message isn't repostable everywhere.
+							canRepost = false
 						}
 					}
 				}()

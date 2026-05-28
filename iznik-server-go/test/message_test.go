@@ -7354,6 +7354,66 @@ func TestListMessagesMultiGroupNoDuplicates(t *testing.T) {
 	assert.Equal(t, 1, count, "Multi-group message should appear exactly once in list")
 }
 
+func TestMessageRepostPerGroupArrival(t *testing.T) {
+	// A multi-group message is only repostable when EVERY group it's on has
+	// passed its own repost interval (measured from that group's own arrival).
+	// repostAt is the latest per-group repost time (when the last group
+	// becomes eligible).
+	prefix := uniquePrefix("repost_pg")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_a")
+	groupB := CreateTestGroup(t, prefix+"_b")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	_, token := CreateTestSession(t, posterID)
+
+	// Give both groups a real reposts config (offer interval 3 days). Without
+	// this the query falls back to a default that doesn't parse as JSON,
+	// yielding interval 0 (always eligible).
+	db.Exec("UPDATE `groups` SET settings = JSON_OBJECT('reposts', JSON_OBJECT('offer', 3, 'wanted', 7, 'max', 5, 'chaseups', 5)) WHERE id IN (?, ?)", groupA, groupB)
+
+	// CreateTestMessage adds the message to groupA with arrival NOW.
+	msgID := CreateTestMessage(t, posterID, groupA, "OFFER: Repost per-group test", 55.9533, -3.1883)
+
+	// Add groupB with an arrival 30 days in the past — eligible for repost.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) VALUES (?, ?, DATE_SUB(NOW(), INTERVAL 30 DAY), 'Approved', 0)", msgID, groupB)
+
+	// groupA arrived now (not yet eligible), groupB 30 days ago (eligible).
+	// Under the all-groups rule the message is NOT yet repostable, because
+	// groupA hasn't reached its interval.
+	url := fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.False(t, msg.Canrepost, "Message should NOT be repostable while groupA is still within its repost interval")
+	assert.NotNil(t, msg.Repostat, "Repostat should be set")
+	if msg.Repostat != nil {
+		assert.True(t, msg.Repostat.After(time.Now()), "Latest repost time should be in the future (groupA not yet eligible)")
+	}
+
+	// Now age groupA's arrival past the interval too. With BOTH groups past
+	// their repost interval, the message becomes repostable.
+	db.Exec("UPDATE messages_groups SET arrival = DATE_SUB(NOW(), INTERVAL 30 DAY) WHERE msgid = ? AND groupid = ?", msgID, groupA)
+
+	resp, err = getApp().Test(httptest.NewRequest("GET", url, nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	json2.Unmarshal(rsp(resp), &msg)
+
+	assert.True(t, msg.Canrepost, "Message should be repostable once every group is past its repost interval")
+	assert.NotNil(t, msg.Repostat, "Repostat should be set")
+	if msg.Repostat != nil {
+		assert.True(t, msg.Repostat.Before(time.Now()), "Latest repost time should be in the past once all groups are eligible")
+	}
+}
+
 func TestPostMessageSpamLastGroupSoftDeletesMessage(t *testing.T) {
 	prefix := uniquePrefix("spam_pg_last")
 	db := database.DBConn
