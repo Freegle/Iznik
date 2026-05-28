@@ -14,7 +14,7 @@
 
 ## Status (as of 2026-05-27)
 
-**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14, 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`; `MessageReportModal.vue` left to Task 21), 18 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, store/ModTools client changes.
+**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14, 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`), 18, 21 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, message-report best-shared-group, store/ModTools client changes.
 
 **Open work (❌):**
 
@@ -22,7 +22,6 @@
 |------|------|---------|
 | 19 | Audit | Write `plans/multi-group-stats-audit.md` |
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
-| 21 | Nuxt | Message report → best shared group |
 | 22 | Audit | Write `plans/multi-group-v1-audit-results.md` |
 | 23 | Go | Repost scheduling uses `MessageGroups[0].Arrival` |
 | 24 | Go | `convertToDraft` uses primary group and deletes all `messages_groups` rows (real bug) |
@@ -1675,43 +1674,14 @@ git commit -m "cleanup: drop heldby/spamtype/spamreason from messages table (now
 
 ---
 
-## Task 21: Nuxt — Message Report Uses Best Shared Group ❌ NOT DONE
+## Task 21: Nuxt — Message Report Uses Best Shared Group ✅ DONE
 
-[MessageReportModal.vue:140](iznik-nuxt3/components/MessageReportModal.vue#L140) still uses `message.value.groups[0].groupid`. No `reportGroupId` computed exists.
+Already implemented and tested in commit `d68107b59` (verified on this branch).
 
-**Files:**
-- Modify: `iznik-nuxt3/components/MessageReportModal.vue:147`
+- [MessageReportModal.vue:131-141](iznik-nuxt3/components/MessageReportModal.vue#L131-L141) — `reportGroupId` computed picks the group shared by the user (`authStore.groups`) and the message, sorted by most-recent arrival, falling back to `message.groups[0]` when there's no overlap. [report() at line 160](iznik-nuxt3/components/MessageReportModal.vue#L160) passes `reportGroupId.value` to `chatStore.openChatToMods`.
+- [MessageReportModal.spec.js:238-277](iznik-nuxt3/tests/unit/components/MessageReportModal.spec.js#L238-L277) — three tests cover: shared-group selection, fallback when no shared group, and most-recent-arrival preference. Full file 24/24 ✓.
 
-When a user reports a message, the report should go to a single group — the group that both the user and the message share, choosing the most recently posted one. Currently it uses `groups[0].groupid` which may not be a group the reporter is on.
-
-- [ ] **Step 1: Update MessageReportModal.vue**
-
-Replace line 147's `message.value.groups[0].groupid` with logic to find the best shared group:
-
-```javascript
-const reportGroupId = computed(() => {
-  if (!message.value?.groups?.length) return null
-  const myGroups = meStore.me?.groups?.map(g => g.id) || []
-  // Find groups that both the user and the message are on, sorted by most recent arrival.
-  const shared = message.value.groups
-    .filter(g => myGroups.includes(parseInt(g.groupid)))
-    .sort((a, b) => new Date(b.arrival) - new Date(a.arrival))
-  return shared.length > 0 ? shared[0].groupid : message.value.groups[0].groupid
-})
-```
-
-Use `reportGroupId.value` in the `openChatToMods` call.
-
-- [ ] **Step 2: Write vitest**
-
-Test that when a message is on groups A and B, and the user is only on group B, the report goes to group B's mods.
-
-- [ ] **Step 3: Run vitest, commit**
-
-```bash
-cd iznik-nuxt3 && git add components/MessageReportModal.vue tests/
-git commit -m "feat: message report targets the shared group with most recent posting"
-```
+(The original audit listed this as outstanding; on inspection the implementation already landed with the multi-group moderation PR.)
 
 ---
 
