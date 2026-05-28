@@ -89,7 +89,8 @@ func GetChanges(c *fiber.Ctx) error {
 		}
 		since = parsed
 	} else {
-		since = time.Now().Add(-1 * time.Hour)
+		// Use UTC so the formatted string aligns with MySQL's UTC timestamps.
+		since = time.Now().UTC().Add(-1 * time.Hour)
 	}
 
 	mysqlTime := since.Format("2006-01-02 15:04:05")

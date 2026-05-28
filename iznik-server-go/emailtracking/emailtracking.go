@@ -1299,6 +1299,8 @@ func isValidRedirectURL(url string) bool {
 
 	if userSite := os.Getenv("USER_SITE"); userSite != "" {
 		allowedDomains = append(allowedDomains, userSite)
+	} else {
+		allowedDomains = append(allowedDomains, "www.ilovefreegle.org")
 	}
 	if modSite := os.Getenv("MOD_SITE"); modSite != "" {
 		allowedDomains = append(allowedDomains, modSite)

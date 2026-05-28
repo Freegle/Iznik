@@ -1216,11 +1216,19 @@ func TestForgetPartnerFlow(t *testing.T) {
 	prefix := uniquePrefix("forget_partner")
 	db := database.DBConn
 
+	// Create a unique partner key for this test run to avoid stale-row conflicts.
+	partnerKey := prefix + "_partnerkey"
+	db.Exec("INSERT INTO partners_keys (partner, `key`) VALUES ('lovejunk', ?)", partnerKey)
+	defer db.Exec("DELETE FROM partners_keys WHERE `key` = ?", partnerKey)
+
 	// Create a user linked to the test partner (ljuserid is the partner-side id).
+	// Use userID as ljuserid after creation to guarantee uniqueness.
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
-	db.Exec("UPDATE users SET ljuserid = ? WHERE id = ?", uint64(99999), userID)
+	// ljuserid must be unique; use the auto-assigned userID to avoid conflicts with
+	// stale rows left by previous test runs that used a hardcoded value.
+	db.Exec("UPDATE users SET ljuserid = ? WHERE id = ?", userID, userID)
 
 	// Seed a message + messages_groups row so we can confirm partner erasure still
 	// blanks content (unlike the self-service grace path).
@@ -1237,7 +1245,7 @@ func TestForgetPartnerFlow(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"action":  "Forget",
-		"partner": "testkey123",
+		"partner": partnerKey,
 		"id":      userID,
 	})
 	req := httptest.NewRequest("POST", "/api/session", bytes.NewReader(body))

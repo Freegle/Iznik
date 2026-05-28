@@ -235,9 +235,12 @@ func TestSessionLastactiveUpdatedWhenOld(t *testing.T) {
 	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/user?jwt="+token, nil), 60000)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	var lastactive time.Time
-	db.Raw("SELECT lastactive FROM sessions WHERE id = ?", sessionID).Scan(&lastactive)
-	assert.WithinDuration(t, time.Now(), lastactive, time.Minute,
+	// Compare inside MySQL to avoid timezone mismatches between Go (may be BST)
+	// and the MySQL server (UTC). loc=Local in the DSN would misinterpret UTC values
+	// as local time on non-UTC hosts, causing a spurious 1-hour difference.
+	var secondsAgo float64
+	db.Raw("SELECT TIMESTAMPDIFF(SECOND, lastactive, NOW()) FROM sessions WHERE id = ?", sessionID).Scan(&secondsAgo)
+	assert.LessOrEqual(t, secondsAgo, float64(60),
 		"sessions.lastactive must be refreshed after authenticated request when idle >10 min")
 }
 

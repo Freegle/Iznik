@@ -380,6 +380,13 @@ func PutChatRoom(c *fiber.Ctx) error {
 	now := time.Now()
 
 	if chattype == utils.CHAT_TYPE_USER2MOD {
+		// A moderator must supply userid — without it, user1 would default to the mod's
+		// own ID, producing a chat whose display name falls back to the group name instead
+		// of the member's name. Non-mods legitimately omit userid (their own chat).
+		if req.Userid == 0 && auth.IsModOfGroup(myid, req.Groupid) {
+			return fiber.NewError(fiber.StatusBadRequest, "userid is required for moderators creating User2Mod chats")
+		}
+
 		// Determine the target user for this User2Mod chat.
 		// If a moderator provides userid, they want to open the MEMBER's existing
 		// chat (e.g. from ModTools Feedback page). Non-mods always get their own chat.

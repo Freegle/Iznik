@@ -2264,7 +2264,9 @@ func TestUserFetchMT_HidesModFieldsFromNonMod(t *testing.T) {
 	CreateTestMembership(t, targetID, groupID, "Member")
 	_, token := CreateTestSession(t, callerID)
 
-	db.Exec("UPDATE users SET chatmodstatus = 'Fully', newsfeedmodstatus = 'Suppressed', ljuserid = 555555 WHERE id = ?", targetID)
+	// Use targetID as ljuserid to avoid unique-key conflicts when a previous
+	// test run left behind a stale row with a hardcoded value.
+	db.Exec("UPDATE users SET chatmodstatus = 'Fully', newsfeedmodstatus = 'Suppressed', ljuserid = ? WHERE id = ?", targetID, targetID)
 
 	// Non-mod fetching another user — mod-only fields should be hidden.
 	url := fmt.Sprintf("/api/user/%d?jwt=%s", targetID, token)
