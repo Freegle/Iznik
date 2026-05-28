@@ -4391,3 +4391,54 @@ func TestModeratorUnreadCountClearedByMarkAllRead(t *testing.T) {
 	assert.Equal(t, int64(0), countAfter,
 		"after markAllRead, unread count must be 0 (got %d: handleAllSeen skips chats with no roster entry)", countAfter)
 }
+
+// TestPutChatRoomUser2ModModCallerWithoutUserid is an AssertFlip Step 2 (inverted) test
+// that FAILS on the current buggy code and will PASS after the fix.
+//
+// Bug: when a mod calls PUT /chat/rooms with chattype=User2Mod + groupid but WITHOUT a
+// userid, the server creates a chat with user1 = modID (the caller). This causes the chat
+// name in ModTools to show the group name (e.g. "Newham Freegle Volunteers") instead of
+// the member's name, because listChats treats user1==myid as "I am the member" and
+// falls back to the group-name display path.
+//
+// STEP 2 (INVERTED — FAILS on buggy code, must PASS after fix):
+// A mod calling PUT /chat/rooms with chattype=User2Mod + groupid but no userid must
+// receive a 400 Bad Request (userid required), not a 200 OK.
+func TestPutChatRoomUser2ModModCallerWithoutUserid(t *testing.T) {
+	prefix := uniquePrefix("U2MNoUID")
+	db := database.DBConn
+
+	modID := CreateTestUser(t, prefix+"_mod", "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+	groupID := CreateTestGroup(t, prefix+"_group")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+
+	// As a mod, call PUT /chat/rooms with chattype=User2Mod + groupid but NO userid.
+	payload := map[string]interface{}{
+		"chattype": utils.CHAT_TYPE_USER2MOD,
+		"groupid":  groupID,
+	}
+	s, _ := json2.Marshal(payload)
+	request := httptest.NewRequest("PUT", "/api/chat/rooms?jwt="+modToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(request)
+
+	// INVERTED ASSERTION: when a mod omits userid, the request must be rejected (400),
+	// not silently create a chat with user1 = modID that displays as the group name.
+	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode,
+		"mod calling PUT User2Mod without userid must be rejected with 400 (userid required for mods)")
+
+	// Safety check: verify no chat was created with the mod as user1 (which would cause
+	// the group-name display bug).
+	var buggyCount int64
+	db.Raw("SELECT COUNT(*) FROM chat_rooms WHERE user1 = ? AND chattype = ? AND groupid = ?",
+		modID, utils.CHAT_TYPE_USER2MOD, groupID).Scan(&buggyCount)
+	assert.Equal(t, int64(0), buggyCount,
+		"no User2Mod chat should exist with user1 = modID (%d) — that would show group name instead of member name", modID)
+
+	// Cleanup: in case the buggy code created a chat despite the assertion above.
+	db.Exec("DELETE FROM chat_roster WHERE chatid IN (SELECT id FROM chat_rooms WHERE user1 = ? AND chattype = ? AND groupid = ?)",
+		modID, utils.CHAT_TYPE_USER2MOD, groupID)
+	db.Exec("DELETE FROM chat_rooms WHERE user1 = ? AND chattype = ? AND groupid = ?",
+		modID, utils.CHAT_TYPE_USER2MOD, groupID)
+}
