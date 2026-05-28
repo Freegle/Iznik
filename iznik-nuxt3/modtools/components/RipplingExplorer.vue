@@ -384,35 +384,22 @@
       </div>
     </div>
 
-    <div id="rippling-digest-modal" style="display:none">
-      <div class="rpl-modal-backdrop"></div>
-      <div class="rpl-modal-card">
-        <div class="rpl-modal-header">
-          <span>📄 Digest mock-up</span>
-          <button id="rippling-digest-close" class="rpl-modal-close">×</button>
-        </div>
-        <div id="rippling-digest-list" class="rpl-modal-body"></div>
-      </div>
-    </div>
+    <RipplingDigestModal ref="digestModal" />
   </div>
 </template>
 
 <script setup>
-import { onMounted, onUnmounted } from '#imports'
+import { onMounted, onUnmounted, ref } from '#imports'
 import {
   chaikinSmooth,
-  crowFliesKm,
   geoToLeaflet,
   pointInRing,
   segmentsIntersect,
 } from '~/composables/rippling/geometry.js'
-import {
-  classifyPost,
-  escapeHTML,
-  formatTimeAgo,
-  thumbUrlFor,
-} from '~/composables/rippling/scoring.js'
 import { renderPie as renderPieSvg } from '~/composables/rippling/pie.js'
+import RipplingDigestModal from './RipplingDigestModal.vue'
+
+const digestModal = ref(null)
 
 const props = defineProps({
   spatialUrl: { type: String, default: 'http://localhost:8196' },
@@ -626,197 +613,16 @@ onMounted(async () => {
   })
 
   // Digest mock-up modal — opens a side panel listing the selection
-  // in digest order (title · group · distance · home flag).
-  showDigestBtn.addEventListener('click', openDigestModal)
-  const digestModalEl = document.getElementById('rippling-digest-modal')
-  document.getElementById('rippling-digest-close').addEventListener('click', () => {
-    digestModalEl.style.display = 'none'
-  })
-  digestModalEl.querySelector('.rpl-modal-backdrop').addEventListener('click', () => {
-    digestModalEl.style.display = 'none'
-  })
-  function setModalHeader(text) {
-    digestModalEl.querySelector('.rpl-modal-header span').textContent = text
-  }
-
-  function buildDigestRow(p, rank) {
-    const cls = classifyPost(p)
-    const homeChip = p.home_group
-      ? `<span style="color:#27ae60;font-weight:600">home</span>`
-      : `<span style="color:#1f77b4">rippled in</span>`
-    const subject = escapeHTML(p.subject || '(no title)')
-    const msgtype = escapeHTML(p.msgtype)
-    const groupName = escapeHTML(p.groupname || (p.groupid ? `group ${p.groupid}` : 'no group'))
-    const kmStraight =
-      currentLat !== null ? crowFliesKm(currentLat, currentLng, p.lat, p.lng) : null
-    const distStr =
-      kmStraight !== null
-        ? `${kmStraight.toFixed(1)} km`
-        : `${p.drive_min.toFixed(0)} min in reach`
-    const when = formatTimeAgo(p.arrival)
-    const thumb = thumbUrlFor(p)
-    const thumbHTML = thumb
-      ? `<img src="${thumb}" loading="lazy" referrerpolicy="no-referrer" style="width:48px;height:48px;border-radius:4px;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'"/>`
-      : `<div style="width:48px;height:48px;border-radius:4px;background:#eee;flex-shrink:0"></div>`
-    // Score breakdown column — shows that the rank came from the
-    // weighted sum of the three signals.  Each component is rendered as
-    // a tiny labelled bar (filled to its 0..1 value).
-    const fmt = (n) => (n || 0).toFixed(2)
-    const bar = (label, val, color) => {
-      const pct = Math.max(0, Math.min(1, val || 0)) * 100
-      return (
-        `<div style="font-size:9px;color:#666;line-height:1.2;display:flex;align-items:center;gap:3px">` +
-        `<span style="width:38px;flex-shrink:0">${label}</span>` +
-        `<span style="flex:1;background:#eee;height:5px;border-radius:2px;position:relative;overflow:hidden">` +
-        `<span style="position:absolute;left:0;top:0;bottom:0;width:${pct.toFixed(0)}%;background:${color}"></span>` +
-        `</span></div>`
-      )
-    }
-    const scoreCol =
-      `<div style="width:100px;flex-shrink:0;padding:0 4px;display:flex;flex-direction:column;justify-content:center;gap:2px">` +
-      `<div style="font-size:11px;font-weight:700;color:#333;text-align:center;line-height:1">` +
-      `${fmt(p.score)}<div style="font-size:8px;font-weight:400;color:#888;margin-top:1px">score</div></div>` +
-      bar('close',  p.score_close,  '#3498db') +
-      bar('budget', p.score_budget, '#e67e22') +
-      bar('home',   p.score_anchor, '#27ae60') +
-      `</div>`
-    return (
-      `<div class="rpl-digest-row">` +
-      `<div class="rpl-digest-rank" style="background:${cls.color}">${rank}</div>` +
-      `<div class="rpl-digest-body">` +
-      `<div class="rpl-digest-title">${msgtype}: ${subject}</div>` +
-      `<div class="rpl-digest-meta">` +
-      `${homeChip} · ${groupName} · ${distStr} · ${when}` +
-      `</div></div>` +
-      scoreCol +
-      thumbHTML +
-      `</div>`
-    )
-  }
-
-  function openDigestModal() {
-    const listEl = document.getElementById('rippling-digest-list')
-    if (!lastRanked.length) {
-      const msg =
-        currentLat === null
-          ? 'Drop a location first.'
-          : 'No posts in the digest yet — either the data is still loading, or the server returned no results for this location.'
-      listEl.innerHTML = `<div style="padding:16px;color:#888">${msg}</div>`
-      setModalHeader('📄 Digest mock-up')
-      digestModalEl.style.display = ''
-      return
-    }
-
-    const intro =
-      `<div style="padding:10px 12px;font-size:11px;color:#555;background:#fff7e0;border-bottom:1px solid #f1d97d;line-height:1.4">` +
-      `<strong>This isn't how the digest will look</strong> — it's a list of what the digest would <em>contain</em> under the current sliders, in order.  The real email will be laid out by the unified-digest team.` +
-      `</div>`
-
-    const sections = { active: [], promised: [], completed: [] }
-    lastRanked.forEach((p) => {
-      const cls = classifyPost(p)
-      sections[cls.section].push(buildDigestRow(p, p._rank))
-    })
-
-    // Soft truncate any section longer than 100 — central London easily
-    // exceeds that and a 200-row digest scroll is its own problem.
-    const SOFT_CAP = 100
-    const truncate = (rows) => {
-      if (rows.length <= SOFT_CAP) return { html: rows.join(''), extra: 0 }
-      return {
-        html: rows.slice(0, SOFT_CAP).join(''),
-        extra: rows.length - SOFT_CAP,
-      }
-    }
-    const moreFooter = (n) =>
-      `<div style="padding:10px 12px;font-size:11px;color:#888;text-align:center;background:#fafafa;border-top:1px solid #eee">` +
-      `<em>… and ${n} more on the website.  Amazed you've scrolled this far.</em></div>`
-
-    const sectionHeader = (title, sub) =>
-      `<div style="padding:8px 12px;background:#f6f9f1;border-top:1px solid #ececec;border-bottom:1px solid #ececec;font-weight:600;color:#555;font-size:11px">${title}` +
-      (sub ? `<div style="font-weight:400;color:#888;font-size:10.5px;margin-top:2px">${sub}</div>` : '') +
-      `</div>`
-
-    let html = intro
-    if (sections.active.length) {
-      html += sectionHeader(`Top picks (${sections.active.length})`)
-      const r = truncate(sections.active)
-      html += r.html
-      if (r.extra) html += moreFooter(r.extra)
-    }
-    if (sections.promised.length) {
-      html += sectionHeader(
-        `Promised (${sections.promised.length})`,
-        'Someone has expressed interest but the post is still in flight.'
-      )
-      const r = truncate(sections.promised)
-      html += r.html
-      if (r.extra) html += moreFooter(r.extra)
-    }
-    if (sections.completed.length) {
-      html += sectionHeader(
-        `Since last digest, these came and went (${sections.completed.length})`,
-        '<em>Switch to immediate notifications to see these in time.</em>'
-      )
-      const r = truncate(sections.completed)
-      html += r.html
-      if (r.extra) html += moreFooter(r.extra)
-    }
-    listEl.innerHTML = html
-    setModalHeader('📄 Digest mock-up')
-    digestModalEl.style.display = ''
-  }
-
-  function openClusterDetail(posts) {
-    const listEl = document.getElementById('rippling-digest-list')
-    let html =
-      `<div style="padding:10px 12px;font-size:11px;color:#555;background:#fff7e0;border-bottom:1px solid #f1d97d">` +
-      `<strong>${posts.length} posts at this exact location.</strong> ` +
-      `Common with TrashNothing cross-posts that use a group centroid.` +
-      `</div>`
-    posts.forEach((p) => (html += buildDigestRow(p, p._rank)))
-    listEl.innerHTML = html
-    setModalHeader(`📍 ${posts.length} posts here`)
-    digestModalEl.style.display = ''
-  }
-
+  // in digest order.  All rendering lives in <RipplingDigestModal>; this
+  // file just calls it with the data and the member's current location.
+  showDigestBtn.addEventListener('click', () =>
+    digestModal.value?.openDigest(lastRanked, currentLat, currentLng)
+  )
   function openPostDetail(p, rank) {
-    const cls = classifyPost(p)
-    const groupName = p.groupname || (p.groupid ? `group ${p.groupid}` : 'no group')
-    const fmt = (n) => (n || 0).toFixed(2)
-    const subject = escapeHTML(p.subject || '(no title)')
-    const msgtype = escapeHTML(p.msgtype)
-    const thumb = thumbUrlFor(p)
-    const thumbHTML = thumb
-      ? `<img src="${thumb}" referrerpolicy="no-referrer" style="width:120px;height:120px;border-radius:6px;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'"/>`
-      : ''
-    const kmStraight =
-      currentLat !== null ? crowFliesKm(currentLat, currentLng, p.lat, p.lng) : null
-    const distStr =
-      kmStraight !== null
-        ? `${kmStraight.toFixed(1)} km as the crow flies · ${p.drive_min.toFixed(0)} min in reach`
-        : `${p.drive_min.toFixed(0)} min in reach`
-    const html = `
-      <div style="padding:16px;font-size:13px;line-height:1.5">
-        <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:10px">
-          <div class="rpl-digest-rank" style="background:${cls.color};width:32px;height:32px;font-size:13px;flex-shrink:0">${rank + 1}</div>
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:600;font-size:14px;color:#333;word-break:break-word">${msgtype}: ${subject}</div>
-            <div style="font-size:11px;color:#888;margin-top:2px">${formatTimeAgo(p.arrival)}</div>
-          </div>
-          ${thumbHTML}
-        </div>
-        <table style="width:100%;border-collapse:collapse;font-size:12px">
-          <tr><td style="color:#888;padding:4px 6px;width:130px">Status</td><td style="padding:4px 6px"><span style="color:${cls.color};font-weight:600">${cls.label}</span></td></tr>
-          <tr><td style="color:#888;padding:4px 6px">Group</td><td style="padding:4px 6px">${escapeHTML(groupName)}</td></tr>
-          <tr><td style="color:#888;padding:4px 6px">Distance</td><td style="padding:4px 6px">${distStr}</td></tr>
-          <tr><td style="color:#888;padding:4px 6px">Eyeballs so far</td><td style="padding:4px 6px">${p.views} view${p.views===1?'':'s'} · ${p.replies} ${p.replies===1?'reply':'replies'}</td></tr>
-          <tr><td style="color:#888;padding:4px 6px">Score</td><td style="padding:4px 6px"><strong>${fmt(p.score)}</strong> = close ${fmt(p.score_close)} + budget ${fmt(p.score_budget)} + anchor ${fmt(p.score_anchor)}</td></tr>
-        </table>
-      </div>`
-    document.getElementById('rippling-digest-list').innerHTML = html
-    setModalHeader(`Post #${rank + 1}`)
-    digestModalEl.style.display = ''
+    digestModal.value?.openPost(p, rank, currentLat, currentLng)
+  }
+  function openClusterDetail(posts) {
+    digestModal.value?.openCluster(posts, currentLat, currentLng)
   }
 
   async function fetchInbox() {
@@ -2804,90 +2610,7 @@ onUnmounted(() => {
   background: #4d8b1d;
 }
 
-/* Modal */
-#rippling-digest-modal {
-  position: absolute;
-  inset: 0;
-  z-index: 2000;
-}
-.rpl-modal-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-}
-.rpl-modal-card {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: min(680px, 92%);
-  max-height: 80%;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
-  display: flex;
-  flex-direction: column;
-}
-.rpl-modal-header {
-  background: #61ae24;
-  color: #fff;
-  padding: 8px 12px;
-  border-radius: 8px 8px 0 0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 600;
-}
-.rpl-modal-close {
-  background: none;
-  border: none;
-  color: #fff;
-  font-size: 22px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 4px;
-}
-.rpl-modal-body {
-  padding: 0;
-  overflow-y: auto;
-}
-.rpl-digest-row {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  padding: 8px 12px;
-  border-bottom: 1px solid #f0f0f0;
-  font-size: 12px;
-}
-.rpl-digest-row:hover {
-  background: #fafafa;
-}
-.rpl-digest-rank {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.rpl-digest-body {
-  flex: 1;
-  min-width: 0;
-}
-.rpl-digest-title {
-  font-weight: 600;
-  color: #333;
-  word-break: break-word;
-}
-.rpl-digest-meta {
-  font-size: 10.5px;
-  color: #777;
-  margin-top: 2px;
-}
+/* Modal CSS now lives inside RipplingDigestModal.vue (component-scoped). */
 
 /* Digest-simulator knobs */
 .rpl-sim-knob {
