@@ -738,26 +738,103 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
 
   let lastIsoData = null
 
+  function applyPolyTransition(el, durationMs) {
+    if (!el) return
+    el.style.transformBox = 'fill-box'
+    el.style.transformOrigin = 'center'
+    el.style.transform = 'scale(0.88)'
+    el.style.transition =
+      `transform ${durationMs}ms ease-out,` +
+      ` fill-opacity ${durationMs}ms ease-out,` +
+      ` opacity ${durationMs}ms ease-out`
+  }
+
+  // Fade outgoing polygons out then remove them.  When dur=0 the removal
+  // is immediate; otherwise we let the CSS transition finish first so
+  // the disappear doesn't jump.
+  function tearDownOutgoingLayers(outgoing, dur) {
+    if (dur > 0) {
+      Object.values(outgoing).forEach((lyr) => {
+        const el = lyr.getElement()
+        if (el)
+          el.style.transition = `fill-opacity ${dur}ms ease-out, opacity ${dur}ms ease-out`
+        lyr.setStyle({ fillOpacity: 0, opacity: 0 })
+        setTimeout(() => {
+          if (map.hasLayer(lyr)) map.removeLayer(lyr)
+        }, dur + 50)
+      })
+    } else {
+      Object.values(outgoing).forEach((lyr) => {
+        if (map.hasLayer(lyr)) map.removeLayer(lyr)
+      })
+    }
+  }
+
+  // Draws all five deprivation-quintile polygons (and their fairness-
+  // bonus islands) using the supplied addPoly closure from drawPolygons.
+  // Quintile 5 first, 1 last so deprived areas paint on top.
+  function drawQuintilePolygons(data, addPoly) {
+    ;[5, 4, 3, 2, 1].forEach((q) => {
+      const qr = data.quintiles && data.quintiles[q]
+      if (!qr) return
+      if (hasRing(qr.polygon)) {
+        addPoly(
+          `q${q}`,
+          geoToLeaflet(qr.polygon.geometry.coordinates[0]),
+          { color: '#005bb5', weight: 1, fillColor: QCOLORS[q] },
+          0.3,
+          1,
+          `${QNAMES[q]} (standard reach) · ${qr.time_budget_min.toFixed(1)} min`
+        )
+      }
+      ;(qr.islands || []).forEach((island, i) => {
+        if (!hasRing(island)) return
+        addPoly(
+          `q${q}_island_${i}`,
+          geoToLeaflet(island.geometry.coordinates[0]),
+          {
+            color: '#005bb5',
+            weight: 2,
+            dashArray: '5 4',
+            fillColor: QCOLORS[q],
+          },
+          0.4,
+          1,
+          `${QNAMES[q]} — fairness bonus area`
+        )
+      })
+    })
+  }
+
+  // Draws the red "standard reach" boundary (no fairness adjustment).
+  function drawStandardPolygon(data, addPoly) {
+    if (!hasRing(data.standard)) return
+    addPoly(
+      'standard',
+      geoToLeaflet(data.standard.geometry.coordinates[0]),
+      { color: '#cc0000', weight: 2.5, fillColor: 'none' },
+      0,
+      1,
+      'Standard reach boundary (no fairness adjustment)'
+    )
+  }
+
   function drawPolygons(data, transitionMs, skipStandard = false) {
     lastIsoData = data
     const dur = transitionMs || 0
     const outgoing = Object.assign({}, layers)
     const newLayers = {}
 
-    function applyTransition(el, durationMs) {
-      if (!el) return
-      el.style.transformBox = 'fill-box'
-      el.style.transformOrigin = 'center'
-      el.style.transform = 'scale(0.88)'
-      el.style.transition = `transform ${durationMs}ms ease-out, fill-opacity ${durationMs}ms ease-out, opacity ${durationMs}ms ease-out`
-    }
-
+    // Closure that reconciles a polygon against existing layers — either
+    // mutates the existing layer in place (so CSS d-transitions can morph
+    // it) or creates a new one with a scale/opacity fade-in.
     function addPoly(key, coords, opts, targetFill, targetOpacity, tooltip) {
       const existing = layers[key]
       if (existing && map.hasLayer(existing)) {
-        // Set the SVG `d` transition to 70% of the step delay so the shape
-        // morph always finishes before the next frame fires.  Without this the
-        // CSS fixed 450ms would overflow shorter delays, causing stuttering.
+        // Set the SVG `d` transition to 70% of the step delay so the
+        // shape morph always finishes before the next frame fires.
+        // Without this the CSS fixed 450ms would overflow shorter
+        // delays, causing stuttering.
         const el = existing.getElement()
         if (el) {
           const dDur = dur > 0 ? Math.round(dur * 0.7) : 0
@@ -776,7 +853,7 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
       newLayers[key] = lyr
       if (dur > 0) {
         const el = lyr.getElement()
-        applyTransition(el, dur)
+        applyPolyTransition(el, dur)
         requestAnimationFrame(() => {
           if (el) el.style.transform = 'scale(1)'
           lyr.setStyle({ fillOpacity: targetFill, opacity: targetOpacity })
@@ -787,67 +864,10 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
       return lyr
     }
 
-    if (showQuintiles)
-      [5, 4, 3, 2, 1].forEach((q) => {
-        const qr = data.quintiles && data.quintiles[q]
-        if (!qr) return
-        if (hasRing(qr.polygon)) {
-          addPoly(
-            `q${q}`,
-            geoToLeaflet(qr.polygon.geometry.coordinates[0]),
-            { color: '#005bb5', weight: 1, fillColor: QCOLORS[q] },
-            0.3,
-            1,
-            `${QNAMES[q]} (standard reach) · ${qr.time_budget_min.toFixed(
-              1
-            )} min`
-          )
-        }
-        ;(qr.islands || []).forEach((island, i) => {
-          if (!hasRing(island)) return
-          addPoly(
-            `q${q}_island_${i}`,
-            geoToLeaflet(island.geometry.coordinates[0]),
-            {
-              color: '#005bb5',
-              weight: 2,
-              dashArray: '5 4',
-              fillColor: QCOLORS[q],
-            },
-            0.4,
-            1,
-            `${QNAMES[q]} — fairness bonus area`
-          )
-        })
-      })
+    if (showQuintiles) drawQuintilePolygons(data, addPoly)
+    if (!skipStandard) drawStandardPolygon(data, addPoly)
 
-    if (!skipStandard && hasRing(data.standard)) {
-      addPoly(
-        'standard',
-        geoToLeaflet(data.standard.geometry.coordinates[0]),
-        { color: '#cc0000', weight: 2.5, fillColor: 'none' },
-        0,
-        1,
-        'Standard reach boundary (no fairness adjustment)'
-      )
-    }
-
-    if (dur > 0) {
-      Object.values(outgoing).forEach((lyr) => {
-        const el = lyr.getElement()
-        if (el)
-          el.style.transition = `fill-opacity ${dur}ms ease-out, opacity ${dur}ms ease-out`
-        lyr.setStyle({ fillOpacity: 0, opacity: 0 })
-        setTimeout(() => {
-          if (map.hasLayer(lyr)) map.removeLayer(lyr)
-        }, dur + 50)
-      })
-    } else {
-      Object.values(outgoing).forEach((lyr) => {
-        if (map.hasLayer(lyr)) map.removeLayer(lyr)
-      })
-    }
-
+    tearDownOutgoingLayers(outgoing, dur)
     layers = newLayers
     requestAnimationFrame(() => requestAnimationFrame(updateFairnessClip))
     map.once('moveend', updateFairnessClip)
@@ -2001,6 +2021,117 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     return rippleAnchorFrame + elapsed / getMsPerFrame()
   }
 
+  // Final-frame cleanup: pin to last keyframe, remove the morph layer,
+  // redraw the static end state, restore the button label, and surface
+  // the peak-imbalance summary so the moderator can see how the wave
+  // skewed.
+  function finishRipple(maxIdx) {
+    rippleStep = maxIdx
+    const last = rippleFrames[maxIdx]
+    removeMorphLayer()
+    if (last) {
+      drawPolygons(last, 0)
+      updateStats(last)
+      updateFreeglersInside(last)
+    }
+    ripplePlaying = false
+    const btn = document.getElementById('rippling-btn')
+    btn.textContent = '▶ Replay'
+    btn.classList.remove('rpl-stop')
+    let doneText = `${currentMode} · done`
+    if (rippleMaxImbalance !== null) {
+      const bias =
+        rippleMaxImbalance.pct < localBaseline ? 'affluent' : 'deprived'
+      const diff = Math.abs(rippleMaxImbalance.pct - localBaseline)
+      doneText += ` · peak ${bias} bias: ${diff}% at ${rippleMaxImbalance.minute} min`
+    }
+    document.getElementById('rippling-info').textContent = doneText
+    drawGroupsOverlay()
+  }
+
+  // Updates the info-text + timeline scrubber for a particular keyframe.
+  // Called only when we cross into a new frame, not every rAF tick.
+  function updateRippleInfoForFrame(frameA, data) {
+    // The density-driven schedule provides drive_min and
+    // cumulative_users per tick.  Drive-time is non-monotonic (small in
+    // dense regions, jumps across voids) — the info text shows the
+    // actual values so the moderator can see the algorithm working.
+    const mDrive =
+      data && data.drive_min !== undefined
+        ? data.drive_min
+        : (frameA + 1) * RIPPLE_STEP_MINS
+    const minuteLabel = Number.isInteger(mDrive)
+      ? String(mDrive)
+      : mDrive.toFixed(2)
+    const tickLabel = `tick ${frameA + 1}/${rippleFrames.length}`
+    const usersLabel =
+      data && data.cumulative_users !== undefined
+        ? ` · ${data.cumulative_users.toLocaleString()} reached`
+        : ''
+    document.getElementById(
+      'rippling-info'
+    ).textContent = `${tickLabel} · ${minuteLabel} drive-min${usersLabel}`
+    updateTimeline(frameA, rippleFrames.length)
+    timeSlider.value = Math.min(30, Math.round(mDrive))
+  }
+
+  // Once-per-animation cross-posting trigger.  Fires the first time a
+  // tick's reach polygon overlaps a non-home group polygon, after the
+  // initial 24-hour "self" period.
+  function maybeMarkCrossPosting(frameA, data) {
+    if (crossPostingDetected) return
+    if (!groupFeatures.length || !data.standard || !hasRing(data.standard)) return
+    const hours = frameToHours(frameA, rippleFrames.length)
+    if (hours < 24) return
+    const hit = checkCrossPosting(data.standard.geometry.coordinates[0])
+    if (hit) {
+      crossPostingDetected = true
+      markCrossPosting(hours, hit.properties.nameshort, hit)
+    }
+  }
+
+  // Every third keyframe, re-fit the map to keep the (growing) boundary
+  // comfortably in view.  Look ahead three frames so we don't lag the
+  // wave.
+  function refitMapForFrame(frameA, maxIdx, data) {
+    if (frameA % 3 !== 0) return
+    const ahead = rippleFrames[Math.min(frameA + 3, maxIdx)]
+    const zoomData = ahead && hasRing(ahead.standard) ? ahead : data
+    if (!hasRing(zoomData.standard)) return
+    try {
+      const ring = zoomData.standard.geometry.coordinates[0]
+      const bounds = L.latLngBounds(ring.map(([lng, lat]) => [lat, lng]))
+      if (bounds.isValid())
+        map.fitBounds(bounds, {
+          padding: [60, 60],
+          maxZoom: 13,
+          animate: true,
+          duration: 0.4,
+        })
+    } catch (e) {
+      /* fitBounds rejects pathological rings — safe to ignore */
+    }
+  }
+
+  // Heavy per-keyframe updates: stats, freegler dots, group overlays,
+  // cross-posting detection, map re-fit.  Called only when the rAF tick
+  // crosses into a new frame, never every animation frame.
+  function onRippleFrameChange(frameA, maxIdx) {
+    rippleLastStatsFrame = frameA
+    rippleStep = frameA
+    const data = rippleFrames[frameA]
+    updateRippleInfoForFrame(frameA, data)
+    if (!data) return
+    // Schedule polygons are pure drive-time (no fairness/quintile info).
+    // Suppress the quintile redraw and let the morph layer own the
+    // standard ring.
+    updateFreeglersInside(data)
+    drawGroupsOverlay()
+    drawFreeglersLayer()
+    maybeMarkCrossPosting(frameA, data)
+    refitMapForFrame(frameA, maxIdx, data)
+  }
+
   function animateRipple(now) {
     rippleRafId = null
     if (!ripplePlaying || !rippleFrames.length) return
@@ -2008,114 +2139,24 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     const position = currentFramePosition(now)
     const maxIdx = rippleFrames.length - 1
 
-    // ------------------------------------------------------------------
-    // Done?
-    // ------------------------------------------------------------------
     if (position >= maxIdx) {
-      // Pin to the last keyframe.  Remove the morph layer and let drawPolygons
-      // own the standard ring in the static end state, matching pre-ripple UI.
-      rippleStep = maxIdx
-      const last = rippleFrames[maxIdx]
-      removeMorphLayer()
-      if (last) {
-        drawPolygons(last, 0)
-        updateStats(last)
-        updateFreeglersInside(last)
-      }
-      ripplePlaying = false
-      const btn = document.getElementById('rippling-btn')
-      btn.textContent = '▶ Replay'
-      btn.classList.remove('rpl-stop')
-      let doneText = `${currentMode} · done`
-      if (rippleMaxImbalance !== null) {
-        const bias = rippleMaxImbalance.pct < localBaseline ? 'affluent' : 'deprived'
-        const diff = Math.abs(rippleMaxImbalance.pct - localBaseline)
-        doneText += ` · peak ${bias} bias: ${diff}% at ${rippleMaxImbalance.minute} min`
-      }
-      document.getElementById('rippling-info').textContent = doneText
-      drawGroupsOverlay()
+      finishRipple(maxIdx)
       return
     }
 
-    // ------------------------------------------------------------------
-    // Interpolate the standard ring between two keyframes (every rAF tick).
-    // ------------------------------------------------------------------
+    // Interpolate the standard ring between two keyframes every tick.
     const frameA = Math.floor(position)
     const frameB = Math.min(frameA + 1, maxIdx)
     const t = position - frameA
-    const radii = lerpRadii(rippleFrames[frameA]._radii, rippleFrames[frameB]._radii, t)
+    const radii = lerpRadii(
+      rippleFrames[frameA]._radii,
+      rippleFrames[frameB]._radii,
+      t
+    )
     drawMorphedRing(radii)
 
-    // ------------------------------------------------------------------
-    // Update per-keyframe state (stats, quintiles, timeline) only when we
-    // cross into a new keyframe.  This keeps the rAF loop cheap.
-    // ------------------------------------------------------------------
-    if (frameA !== rippleLastStatsFrame) {
-      rippleLastStatsFrame = frameA
-      rippleStep = frameA
-      const data = rippleFrames[frameA]
-      // The density-driven schedule provides drive_min and cumulative_users
-      // per tick, set by the server.  Drive-time is non-monotonic in spacing
-      // (small in dense regions, jumps across voids) — the info text shows
-      // the actual values so the moderator can see the algorithm working.
-      const mDrive = data && data.drive_min !== undefined
-        ? data.drive_min
-        : (frameA + 1) * RIPPLE_STEP_MINS
-      const minuteLabel = Number.isInteger(mDrive) ? String(mDrive) : mDrive.toFixed(2)
-      const tickLabel = `tick ${frameA + 1}/${rippleFrames.length}`
-      const usersLabel = data && data.cumulative_users !== undefined
-        ? ` · ${data.cumulative_users.toLocaleString()} reached`
-        : ''
-      document.getElementById(
-        'rippling-info'
-      ).textContent = `${tickLabel} · ${minuteLabel} drive-min${usersLabel}`
-      updateTimeline(frameA, rippleFrames.length)
-      timeSlider.value = Math.min(30, Math.round(mDrive))
-
-      if (data) {
-        // The schedule polygons are pure drive-time (no fairness/quintile
-        // info).  Suppress the quintile redraw — there's nothing to draw —
-        // and let the morph layer own the standard ring.
-        updateFreeglersInside(data)
-        drawGroupsOverlay()
-        drawFreeglersLayer()
-
-        const hours = frameToHours(frameA, rippleFrames.length)
-        if (
-          !crossPostingDetected &&
-          hours >= 24 &&
-          groupFeatures.length > 0 &&
-          data.standard &&
-          hasRing(data.standard)
-        ) {
-          const isoRing = data.standard.geometry.coordinates[0]
-          const hit = checkCrossPosting(isoRing)
-          if (hit) {
-            crossPostingDetected = true
-            markCrossPosting(hours, hit.properties.nameshort, hit)
-          }
-        }
-
-        // Re-fit the map periodically to keep the boundary in view.
-        if (frameA % 3 === 0) {
-          const ahead = rippleFrames[Math.min(frameA + 3, maxIdx)]
-          const zoomData = ahead && hasRing(ahead.standard) ? ahead : data
-          if (hasRing(zoomData.standard)) {
-            try {
-              const ring = zoomData.standard.geometry.coordinates[0]
-              const bounds = L.latLngBounds(ring.map(([lng, lat]) => [lat, lng]))
-              if (bounds.isValid())
-                map.fitBounds(bounds, {
-                  padding: [60, 60],
-                  maxZoom: 13,
-                  animate: true,
-                  duration: 0.4,
-                })
-            } catch (e) {}
-          }
-        }
-      }
-    }
+    // Heavy per-keyframe updates only when we cross into a new frame.
+    if (frameA !== rippleLastStatsFrame) onRippleFrameChange(frameA, maxIdx)
 
     rippleRafId = requestAnimationFrame(animateRipple)
   }
