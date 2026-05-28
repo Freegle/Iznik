@@ -938,8 +938,13 @@ const repost = async (e) => {
 
   // Set the group from the original message so the dropdown shows the correct
   // group rather than falling back to groupsnear[0] or a stale localStorage value.
+  // For multi-group originals, default to the most-recent arrival — the user
+  // can still change it in the compose dropdown.
   if (msg.groups?.length > 0) {
-    composeStore.group = msg.groups[0].groupid
+    const mostRecent = [...msg.groups].sort(
+      (a, b) => new Date(b.arrival || 0) - new Date(a.arrival || 0)
+    )[0]
+    composeStore.group = mostRecent.groupid
   }
 
   await composeStore.setAttachmentsForMessage(0, msg.attachments)

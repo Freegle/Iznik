@@ -14,14 +14,12 @@
 
 ## Status (as of 2026-05-27)
 
-**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10, 11, 12, 13, 14, 15, 16 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview`, list dedup, TN dedup job, store/ModTools client changes.
+**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14, 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`; `MessageReportModal.vue` left to Task 21) — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, store/ModTools client changes.
 
 **Open work (❌):**
 
 | Task | Area | Summary |
 |------|------|---------|
-| 10-followup | Nuxt | `POST /microvolunteering` callers must include `groupid` in the body, otherwise the server's new `groupid == 0` guard means quorum no longer triggers a Pending move |
-| 17 | Nuxt | `MyMessage.vue`, `OutcomeModal.vue` still use `groups[0]` |
 | 18 | Laravel | Add explicit dedup test for same-msgid-on-multiple-groups |
 | 19 | Audit | Write `plans/multi-group-stats-audit.md` |
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
@@ -30,7 +28,7 @@
 | 23 | Go | Repost scheduling uses `MessageGroups[0].Arrival` |
 | 24 | Go | `convertToDraft` uses primary group and deletes all `messages_groups` rows (real bug) |
 | 25 | Go | Edit subject + mod-delete audit log use primary group |
-| 26 | Nuxt | 5 remaining `groups[0]` sites: `useKeywords.js`, `MessageHistory.vue`, `ModLogGroup.vue`, `pages/message/[id].vue`, `MyMessage.vue:942` |
+| 26 | Nuxt | 4 remaining `groups[0]` sites: `useKeywords.js`, `MessageHistory.vue`, `ModLogGroup.vue`, `pages/message/[id].vue` (`MyMessage.vue:942` done in Task 17) |
 | 27 | Laravel | `UnifiedDigest.php` header group selection |
 | 28 | Go | Re-label `getPrimaryGroupForMessage` as legacy fallback |
 | 29 | Laravel | `DeadlineReached` and other mailables track/render arbitrary group via `groups->first()` |
@@ -1501,13 +1499,15 @@ git commit -m "feat: sort mod messages by contextual group arrival time"
 
 ---
 
-## Task 17: Nuxt — Non-Mod Components ❌ NOT DONE
+## Task 17: Nuxt — Non-Mod Components ✅ DONE (mostly)
 
-Three of the four sites still use `groups[0]`:
-- [MyMessage.vue:942](iznik-nuxt3/components/MyMessage.vue#L942) — `composeStore.group = msg.groups[0].groupid`
-- [OutcomeModal.vue:304](iznik-nuxt3/components/OutcomeModal.vue#L304) — `ret = message.value.groups[0].groupid`
-- [MessageReportModal.vue:140](iznik-nuxt3/components/MessageReportModal.vue#L140) — also tracked by Task 21
-- `ExportPost.vue:9-10` and `ModLog.vue:78-86` — re-verify before crossing off.
+- [OutcomeModal.vue:300-315](iznik-nuxt3/components/OutcomeModal.vue#L300-L315) — `groupid` computed now picks the message group the user is also a member of (sorted by most-recent arrival), falling back to `groups[0]`. The `outcome` bus event still carries one group ID — required for the donation-ask modal which renders fundraising context per-group; "outcomes themselves are global" still holds.
+- [MyMessage.vue:938-950](iznik-nuxt3/components/MyMessage.vue#L938-L950) — repost flow now picks the most-recently-arrived group from `msg.groups` instead of `groups[0]`. The poster is by definition a member of all of `msg.groups`, so no separate `authStore.groups` intersection is needed here.
+- `ExportPost.vue` and `ModLog.vue` re-verified — neither contains `groups[0]`.
+
+**Left for Task 21:** [MessageReportModal.vue:140](iznik-nuxt3/components/MessageReportModal.vue#L140) — reports use a different rule ("best shared group with most recent posting"), tracked there.
+
+**Test fix as part of this task:** [MyMessage.spec.js:297-307](iznik-nuxt3/tests/unit/components/MyMessage.spec.js#L297-L307) — two tests failed on master because the template uses `<LazyPromiseModal>` (Nuxt auto-import lazy form) but the spec only stubbed `PromiseModal`. Added a `LazyPromiseModal` stub; 171/171 pass.
 
 **Files:**
 - Modify: `iznik-nuxt3/components/MyMessage.vue:796,827,907`

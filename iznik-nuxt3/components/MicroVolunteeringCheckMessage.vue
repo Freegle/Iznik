@@ -200,6 +200,7 @@ import OurUploadedImage from './OurUploadedImage'
 import ProxyImage from './ProxyImage'
 import { useMicroVolunteeringStore } from '~/stores/microvolunteering'
 import { useMessageStore } from '~/stores/message'
+import { useAuthStore } from '~/stores/auth'
 
 const props = defineProps({
   id: {
@@ -212,6 +213,7 @@ const emit = defineEmits(['next'])
 
 const microVolunteeringStore = useMicroVolunteeringStore()
 const messageStore = useMessageStore()
+const authStore = useAuthStore()
 
 // State
 const showComments = ref(false)
@@ -226,6 +228,23 @@ found.value = !!messageStore.byId(props.id)
 
 const message = computed(() => {
   return messageStore?.byId(props.id)
+})
+
+// Group context the volunteer is voting in. Pick the group on the message that
+// the user is also a member of, preferring the most-recent arrival when several
+// match. Falls back to the message's first group if there's no overlap (which
+// shouldn't happen — the server only serves a challenge for a message on one
+// of the user's groups — but is safe rather than sending 0).
+const groupid = computed(() => {
+  const groups = message.value?.groups || []
+  if (groups.length === 0) return 0
+  const myGroupIds = new Set(
+    (authStore.groups || []).map((g) => Number.parseInt(g.groupid))
+  )
+  const shared = groups
+    .filter((g) => myGroupIds.has(Number.parseInt(g.groupid)))
+    .sort((a, b) => new Date(b.arrival || 0) - new Date(a.arrival || 0))
+  return Number.parseInt((shared[0] || groups[0]).groupid)
 })
 
 // Computed properties for display
@@ -279,6 +298,7 @@ async function sendComments(callback) {
   // Record the result with comments.
   await microVolunteeringStore.respond({
     msgid: props.id,
+    groupid: groupid.value,
     response: 'Reject',
     comments: comments.value,
     msgcategory: msgcategory.value,
@@ -292,6 +312,7 @@ async function approve(callback) {
   // Approved - that's it.
   await microVolunteeringStore.respond({
     msgid: props.id,
+    groupid: groupid.value,
     response: 'Approve',
   })
   callback()
