@@ -140,6 +140,23 @@ func TestExpandQuery_SynonymMap_Carpet(t *testing.T) {
 	assert.Contains(t, result, "rug")
 }
 
+func TestExpandQuery_SynonymMap_Tumble_ExpandsToDryer(t *testing.T) {
+	// "tumble" is a common abbreviation for "tumble dryer" in UK listings;
+	// it must expand to include "dryer" to find offers like "Tumble Dryer".
+	result := ExpandQuery("tumble")
+	assert.Equal(t, "tumble", result[0])
+	assert.Contains(t, result, "dryer")
+}
+
+func TestExpandQuery_SynonymMap_Dryer_NoTumbleExpansion(t *testing.T) {
+	// "dryer" must NOT expand to "tumble". The starts-with match on "tumble"
+	// pulls in drinking-glass "tumbler" offers (confirmed: 8 false positives
+	// per 200 results in production). One-directional: tumble→dryer only.
+	result := ExpandQuery("dryer")
+	assert.Equal(t, []string{"dryer"}, result)
+	assert.NotContains(t, result, "tumble")
+}
+
 func TestExpandQuery_SynonymMap_Motorbike(t *testing.T) {
 	result := ExpandQuery("motorbike")
 	assert.Equal(t, "motorbike", result[0])
