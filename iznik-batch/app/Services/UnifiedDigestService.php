@@ -203,15 +203,21 @@ class UnifiedDigestService
             return ['emails' => 0, 'users' => []];
         }
 
-        // Recipients: members at emailfrequency=-1, plus allowlist gate.
-        // V1 does NOT filter by users.lastaccess so we match that — strict
-        // V1 parity. Allowlist gate is our addition and stays.
+        // Recipients: members at emailfrequency=-1, active in the last 90 days,
+        // plus allowlist gate. NULL lastaccess (new users who have never logged
+        // in) are included; users whose lastaccess is older than 90 days are
+        // excluded to prevent long-inactive accounts from receiving per-post
+        // emails (matches the daily-digest eligibility threshold).
         $memberQuery = DB::table('memberships')
             ->join('users', 'users.id', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupid)
             ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
             ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-            ->whereNull('users.deleted');
+            ->whereNull('users.deleted')
+            ->where(function ($q) {
+                $q->whereNull('users.lastaccess')
+                  ->orWhere('users.lastaccess', '>', now()->subDays(90));
+            });
 
         if ($userFilter) {
             $memberQuery->where('memberships.userid', $userFilter);
