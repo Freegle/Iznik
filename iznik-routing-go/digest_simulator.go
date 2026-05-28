@@ -228,33 +228,14 @@ func handleDigestSimulator(g *Graph, spatialURL string) fiber.Handler {
 			p.AgeH = now.Sub(p.Arrival).Hours()
 			p.HomeGroup = isHome
 
-			// Component scores normalised to ~[0,1].
-			p.ScoreClose = 1.0 - p.DriveMin/maxMinutes
-			if p.ScoreClose < 0 {
-				p.ScoreClose = 0
-			}
-			p.ScoreFresh = 1.0 - p.AgeH/windowH
-			if p.ScoreFresh < 0 {
-				p.ScoreFresh = 0
-			}
-			// Time-aware budget signal: rate of engagement per hour, not raw
-			// total.  Without this, an 18-hour-old post with 1 view ranks
-			// below a 2-hour-old post with 1 view, even though the older
-			// post has had 9× longer to accrue eyeballs — it's the rarer
-			// of the two and we want it lifted, not penalised.  Clamp the
-			// effective age at 1 h so brand-new posts don't all collapse
-			// to the same enormous rate.
-			ageHForRate := p.AgeH
-			if ageHForRate < 1 {
-				ageHForRate = 1
-			}
-			engagement := float64(p.Views+3*p.Replies) / ageHForRate
-			p.ScoreBudg = math.Exp(-engagement / (budgetDecay / 12))
-			if p.HomeGroup {
-				p.ScoreAnch = 1.0
-			}
-			p.Score = wClose*p.ScoreClose + wFresh*p.ScoreFresh +
-				wBudget*p.ScoreBudg + wAnchor*p.ScoreAnch
+			s := scoreDigestPost(p.DriveMin, p.AgeH, p.Views, p.Replies, p.HomeGroup,
+				digestSimWeights{Closeness: wClose, Freshness: wFresh, Budget: wBudget, Anchor: wAnchor},
+				digestSimEnv{MaxMinutes: maxMinutes, WindowH: windowH, BudgetDecay: budgetDecay})
+			p.ScoreClose = s.Close
+			p.ScoreFresh = s.Fresh
+			p.ScoreBudg = s.Budget
+			p.ScoreAnch = s.Anchor
+			p.Score = s.Total
 			pool = append(pool, p)
 		}
 
@@ -380,4 +361,76 @@ func parseFloatQuery(c *fiber.Ctx, key string, def, min, max float64) float64 {
 		return max
 	}
 	return v
+}
+
+// digestSimWeights bundles the four selection-knob weights so callers
+// don't have to thread four floats through the math.
+type digestSimWeights struct {
+	Closeness float64
+	Freshness float64
+	Budget    float64
+	Anchor    float64
+}
+
+// digestSimEnv carries the bound-defining context (max drive, window
+// length, eyeballs decay constant) used to normalise the per-post
+// signals into [0, 1].
+type digestSimEnv struct {
+	MaxMinutes  float64
+	WindowH     float64
+	BudgetDecay float64
+}
+
+// digestSimScores is what scoreDigestPost returns: each component's
+// contribution in [0, 1] plus their weighted sum.
+type digestSimScores struct {
+	Close, Fresh, Budget, Anchor, Total float64
+}
+
+// scoreDigestPost computes the per-post score components used by the
+// digest simulator.  Pulled out as a free function so it can be unit-
+// tested in isolation from the database + isochrone integration.
+//
+//   close:  1 - drive_min / max_drive_min  (closer = higher; clamped ≥ 0)
+//   fresh:  1 - age_h / window_h           (newer  = higher; clamped ≥ 0)
+//   budget: exp(-engagement_rate / k)      (fewer eyeballs per hour = higher)
+//   anchor: 1 if homeGroup else 0
+//
+// engagement_rate is (views + 3*replies) / max(ageH, 1) — a per-hour
+// rate so an 18-h-old post with 1 view isn't unfairly penalised vs a
+// 2-h-old post with 1 view (the older post has had 9× longer to accrue
+// eyeballs; budget should LIFT the rarer signal).
+//
+// budgetDecay is divided by 12 to match the existing tuning (the knob
+// is exposed in minutes-equivalent units; / 12 converts to the rate-
+// scale the exp() expects).
+func scoreDigestPost(driveMin, ageH float64, views, replies int, homeGroup bool,
+	w digestSimWeights, env digestSimEnv) digestSimScores {
+
+	var s digestSimScores
+
+	s.Close = 1.0 - driveMin/env.MaxMinutes
+	if s.Close < 0 {
+		s.Close = 0
+	}
+
+	s.Fresh = 1.0 - ageH/env.WindowH
+	if s.Fresh < 0 {
+		s.Fresh = 0
+	}
+
+	rateAgeH := ageH
+	if rateAgeH < 1 {
+		rateAgeH = 1
+	}
+	engagement := float64(views+3*replies) / rateAgeH
+	s.Budget = math.Exp(-engagement / (env.BudgetDecay / 12))
+
+	if homeGroup {
+		s.Anchor = 1.0
+	}
+
+	s.Total = w.Closeness*s.Close + w.Freshness*s.Fresh +
+		w.Budget*s.Budget + w.Anchor*s.Anchor
+	return s
 }
