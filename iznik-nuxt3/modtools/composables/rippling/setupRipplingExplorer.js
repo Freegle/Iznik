@@ -11,12 +11,14 @@
 //   props        — { spatialUrl, jwt } from the host component
 //   digestModal  — ref to <RipplingDigestModal>; modal opening is delegated
 //   legendMode   — ref ('outbound' | 'inbound') flipped by view-toggle
+import { chaikinSmooth, geoToLeaflet, pointInRing } from './geometry.js'
 import {
-  chaikinSmooth,
-  geoToLeaflet,
-  pointInRing,
-  segmentsIntersect,
-} from './geometry.js'
+  hasRing,
+  quintileOfFreegler,
+  groupCentroid,
+  distSq,
+  ringsOverlap,
+} from './polygon.js'
 import { partitionInboxData } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
 
@@ -873,15 +875,6 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     map.once('moveend', updateFairnessClip)
   }
 
-  function hasRing(poly) {
-    return (
-      poly &&
-      poly.geometry &&
-      poly.geometry.coordinates &&
-      poly.geometry.coordinates[0] &&
-      poly.geometry.coordinates[0].length >= 4
-    )
-  }
 
   function updateFairnessClip() {
     const svgEl = map.getPane('overlayPane').querySelector('svg')
@@ -1155,35 +1148,6 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     })
   }
 
-  function quintileOfFreegler(fLng, fLat, data) {
-    for (let q = 1; q <= 5; q++) {
-      const qr = (data.quintiles || {})[q]
-      if (!qr) continue
-      if (
-        hasRing(qr.polygon) &&
-        pointInRing(fLng, fLat, qr.polygon.geometry.coordinates[0])
-      )
-        return q
-      for (const isl of qr.islands || []) {
-        if (
-          hasRing(isl) &&
-          pointInRing(fLng, fLat, isl.geometry.coordinates[0])
-        )
-          return q
-      }
-    }
-    // Inside the standard isochrone but not in any quintile polygon: this node
-    // has no LSOA deprivation data (motorway, industrial area, untagged road,
-    // etc.).  Returning 3 here was wrong — it inflated deprived counts and
-    // pinned the swingometer hard right.  Return -1 so callers can still count
-    // this freegler as "inside" for notification numbers without skewing the
-    // deprivation percentage.
-    const std = data.standard
-    if (hasRing(std) && pointInRing(fLng, fLat, std.geometry.coordinates[0]))
-      return -1
-    return 0
-  }
-
   const UNLOCATED_FRACTION = 0.35
 
   // Walk the freegler sample grid and style each dot inside/outside the
@@ -1267,25 +1231,6 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     trackFairnessImbalance(data)
   }
 
-  function groupCentroid(f) {
-    const coords =
-      f.geometry && f.geometry.coordinates && f.geometry.coordinates[0]
-    if (!coords || !coords.length) return [0, 0]
-    let sumLng = 0
-    let sumLat = 0
-    coords.forEach(([lng, lat]) => {
-      sumLng += lng
-      sumLat += lat
-    })
-    return [sumLng / coords.length, sumLat / coords.length]
-  }
-
-  function distSq(lat1, lng1, lat2, lng2) {
-    const dlat = lat1 - lat2
-    const dlng = (lng1 - lng2) * Math.cos((lat1 * Math.PI) / 180)
-    return dlat * dlat + dlng * dlng
-  }
-
   let groupLayerMap = {}
   let groupFeatures = []
   let homeGroupIds = new Set()
@@ -1310,52 +1255,6 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     } catch (e) {
       /* no group data — silently skip */
     }
-  }
-
-  function ringsOverlap(ring1, ring2) {
-    let r1minX = Infinity
-    let r1maxX = -Infinity
-    let r1minY = Infinity
-    let r1maxY = -Infinity
-    let r2minX = Infinity
-    let r2maxX = -Infinity
-    let r2minY = Infinity
-    let r2maxY = -Infinity
-    for (const [x, y] of ring1) {
-      if (x < r1minX) r1minX = x
-      if (x > r1maxX) r1maxX = x
-      if (y < r1minY) r1minY = y
-      if (y > r1maxY) r1maxY = y
-    }
-    for (const [x, y] of ring2) {
-      if (x < r2minX) r2minX = x
-      if (x > r2maxX) r2maxX = x
-      if (y < r2minY) r2minY = y
-      if (y > r2maxY) r2maxY = y
-    }
-    if (
-      r1maxX < r2minX ||
-      r2maxX < r1minX ||
-      r1maxY < r2minY ||
-      r2maxY < r1minY
-    )
-      return false
-    for (const [lng, lat] of ring1) {
-      if (pointInRing(lng, lat, ring2)) return true
-    }
-    for (const [lng, lat] of ring2) {
-      if (pointInRing(lng, lat, ring1)) return true
-    }
-    for (let i = 0; i < ring1.length - 1; i++) {
-      const [ax, ay] = ring1[i]
-      const [bx, by] = ring1[i + 1]
-      for (let j = 0; j < ring2.length - 1; j++) {
-        const [cx, cy] = ring2[j]
-        const [dx, dy] = ring2[j + 1]
-        if (segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy)) return true
-      }
-    }
-    return false
   }
 
   function allIsoRings(isoData) {
