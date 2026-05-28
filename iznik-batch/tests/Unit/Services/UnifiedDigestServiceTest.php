@@ -5,6 +5,7 @@ namespace Tests\Unit\Services;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\Message;
+use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
 use App\Services\UnifiedDigestService;
@@ -47,6 +48,49 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertCount(1, $deduplicated);
         $this->assertCount(2, $deduplicated->first()['postedToGroups']);
+    }
+
+    public function test_deduplication_single_message_on_multiple_groups(): void
+    {
+        // The multi-group model: ONE messages row with two messages_groups
+        // rows. The digest query joins messages to messages_groups, so the
+        // same messages.id comes back once per group with a different groupid.
+        // deduplicatePosts must collapse those into a single digest entry that
+        // lists both groups.
+        $user = $this->createTestUser();
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+
+        $message = $this->createTestMessage($user, $group1, [
+            'subject' => 'OFFER: Single multi-group item (London)',
+            'textbody' => 'One physical item, posted to two groups.',
+        ]);
+
+        // Second messages_groups row — same msgid, different group.
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group2->id,
+            'collection' => MessageGroup::COLLECTION_APPROVED,
+            'arrival' => now(),
+        ]);
+
+        // Reproduce the join output: the same message as two rows differing
+        // only by groupid.
+        $row1 = $message->fresh();
+        $row1->groupid = $group1->id;
+        $row2 = $message->fresh();
+        $row2->groupid = $group2->id;
+
+        $posts = collect([$row1, $row2]);
+        $deduplicated = $this->service->deduplicatePosts($posts);
+
+        $this->assertCount(1, $deduplicated);
+        $this->assertEquals($message->id, $deduplicated->first()['message']->id);
+        $this->assertCount(2, $deduplicated->first()['postedToGroups']);
+        $this->assertEqualsCanonicalizing(
+            [$group1->id, $group2->id],
+            $deduplicated->first()['postedToGroups']
+        );
     }
 
     public function test_deduplication_without_tnpostid(): void
@@ -1170,7 +1214,7 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertEquals(1, $stats['emails_sent']);
         Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($mail) use ($dailyMsg, $immediateMsg) {
-            $subjects = $mail->posts->map(fn ($p) => $p['message']->subject)->all();
+            $subjects = $mail->getPosts()->map(fn ($p) => $p['message']->subject)->all();
             return in_array($dailyMsg->subject, $subjects, true)
                 && !in_array($immediateMsg->subject, $subjects, true);
         });

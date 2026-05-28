@@ -81,6 +81,16 @@ class UnifiedDigest extends MjmlMailable
     }
 
     /**
+     * Read-only accessor for the deduplicated posts this digest carries.
+     * Exposed for assertions in tests (the backing property stays protected
+     * so callers can't mutate the post set after construction).
+     */
+    public function getPosts(): Collection
+    {
+        return $this->posts;
+    }
+
+    /**
      * Split UnifiedDigest into immediate vs daily for sysadmin dropdowns
      * and tracking stats. Legacy rows written before this split keep the
      * plain 'UnifiedDigest' value; getDigestNumber() includes both.

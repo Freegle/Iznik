@@ -14,13 +14,12 @@
 
 ## Status (as of 2026-05-27)
 
-**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14, 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`; `MessageReportModal.vue` left to Task 21) — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, store/ModTools client changes.
+**Done (✅):** Tasks 1, 2, 3, 4, 5, 6, 7 (with deviation), 8, 9, 10 (Go + Nuxt client), 11, 12, 13, 14, 15, 16, 17 (`MyMessage.vue:942` + `OutcomeModal.vue:300-308`; `MessageReportModal.vue` left to Task 21), 18 — schema migrations, MessageGroup struct, all five mod actions per-group (hold/release/spam/delete/backToPending), per-group logging, per-group `sendForReview` (server + client wired), list dedup, TN dedup job, digest dedup test, store/ModTools client changes.
 
 **Open work (❌):**
 
 | Task | Area | Summary |
 |------|------|---------|
-| 18 | Laravel | Add explicit dedup test for same-msgid-on-multiple-groups |
 | 19 | Audit | Write `plans/multi-group-stats-audit.md` |
 | 20 | Schema | Drop `heldby`/`spamtype`/`spamreason` from `messages` (after V1 retired) |
 | 21 | Nuxt | Message report → best shared group |
@@ -1550,9 +1549,15 @@ git commit -m "feat: non-mod components handle multi-group messages"
 
 ---
 
-## Task 18: Digest Dedup ⚠ NEEDS VERIFICATION
+## Task 18: Digest Dedup ✅ DONE
 
-`UnifiedDigestService::deduplicatePosts()` exists and uses `tnpostid`/`postedToGroups`. Multi-group tests exist for other services (`MessageExpiryServiceTest::test_multi_group_message_processed_once`, `AutoApproveServiceTest::test_multi_group_message_approved_independently`) but no explicit `UnifiedDigestService` test for the same-`msgid`-on-multiple-groups case was found — add that test, then mark done.
+`UnifiedDigestService::deduplicatePosts()` already handles the multi-group model correctly: `getPostsForUser()` joins `messages` to `messages_groups`, so a single message on N groups returns N rows (same `messages.id`, different `groupid`); the dedup key + body match collapse them into one entry with both groups in `postedToGroups`. Verified by a new test.
+
+**What was added:**
+- [UnifiedDigestServiceTest::test_deduplication_single_message_on_multiple_groups](iznik-batch/tests/Unit/Services/UnifiedDigestServiceTest.php) — creates one message with two `messages_groups` rows, reproduces the join output (same message instance twice with different `groupid`), asserts `deduplicatePosts` returns it once with both groups in `postedToGroups`.
+- Imported `App\Models\MessageGroup` into the test file.
+
+**Incidental fix (was erroring in the suite):** `test_daily_digest_excludes_posts_from_immediate_only_groups` accessed the protected `UnifiedDigest::$posts` property directly and errored. Added a public `getPosts()` accessor on [UnifiedDigest.php](iznik-batch/app/Mail/Digest/UnifiedDigest.php) (mirrors the existing `getEmailType()` accessor; backing property stays protected) and switched the test to use it. Full `UnifiedDigestServiceTest` class now 41/41 clean.
 
 **Files:**
 - Modify: `iznik-batch/app/Services/UnifiedDigestService.php`
