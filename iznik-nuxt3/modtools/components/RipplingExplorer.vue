@@ -399,6 +399,20 @@
 
 <script setup>
 import { onMounted, onUnmounted } from '#imports'
+import {
+  chaikinSmooth,
+  crowFliesKm,
+  geoToLeaflet,
+  pointInRing,
+  segmentsIntersect,
+} from '~/composables/rippling/geometry.js'
+import {
+  classifyPost,
+  escapeHTML,
+  formatTimeAgo,
+  thumbUrlFor,
+} from '~/composables/rippling/scoring.js'
+import { renderPie as renderPieSvg } from '~/composables/rippling/pie.js'
 
 const props = defineProps({
   spatialUrl: { type: String, default: 'http://localhost:8196' },
@@ -585,36 +599,7 @@ onMounted(async () => {
   }
 
   function renderPie(slices) {
-    // slices: [{count, color}, ...]
-    const svg = document.getElementById('rippling-pie')
-    if (!svg) return
-    const total = slices.reduce((s, x) => s + (x.count || 0), 0)
-    if (total === 0) {
-      svg.innerHTML = '<circle r="1" fill="#eee" />'
-      return
-    }
-    let acc = 0
-    const parts = []
-    for (const s of slices) {
-      if (!s.count) continue
-      const frac = s.count / total
-      if (frac >= 0.999) {
-        parts.push(`<circle r="1" fill="${s.color}" />`)
-        break
-      }
-      const a0 = acc * 2 * Math.PI
-      const a1 = (acc + frac) * 2 * Math.PI
-      const x0 = Math.cos(a0).toFixed(4)
-      const y0 = Math.sin(a0).toFixed(4)
-      const x1 = Math.cos(a1).toFixed(4)
-      const y1 = Math.sin(a1).toFixed(4)
-      const largeArc = frac > 0.5 ? 1 : 0
-      parts.push(
-        `<path d="M ${x0} ${y0} A 1 1 0 ${largeArc} 1 ${x1} ${y1} L 0 0 Z" fill="${s.color}" />`
-      )
-      acc += frac
-    }
-    svg.innerHTML = parts.join('')
+    renderPieSvg(document.getElementById('rippling-pie'), slices)
   }
 
   // ── Digest-simulator sliders ──────────────────────────────────────
@@ -650,48 +635,8 @@ onMounted(async () => {
   digestModalEl.querySelector('.rpl-modal-backdrop').addEventListener('click', () => {
     digestModalEl.style.display = 'none'
   })
-  const escapeHTML = (s) =>
-    (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-
   function setModalHeader(text) {
     digestModalEl.querySelector('.rpl-modal-header span').textContent = text
-  }
-
-  function classifyPost(p) {
-    if (p.successful) return { color: '#888', label: 'completed', section: 'completed' }
-    if (p.promised) return { color: '#f39c12', label: 'promised', section: 'promised' }
-    return p.home_group
-      ? { color: '#27ae60', label: 'home group', section: 'active' }
-      : { color: '#1f77b4', label: 'rippled in', section: 'active' }
-  }
-
-  // Haversine distance in km between two lat/lng points.
-  function crowFliesKm(lat1, lng1, lat2, lng2) {
-    const R = 6371
-    const toRad = (d) => (d * Math.PI) / 180
-    const dLat = toRad(lat2 - lat1)
-    const dLng = toRad(lng2 - lng1)
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
-    return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)))
-  }
-
-  function thumbUrlFor(p) {
-    if (p.thumb_externaluid)
-      return `https://ucarecdn.com/${p.thumb_externaluid}/-/scale_crop/120x120/center/-/format/auto/-/quality/smart/`
-    if (p.thumb_attachment_id)
-      return `https://images.ilovefreegle.org/tmimg_${p.thumb_attachment_id}.jpg`
-    return null
-  }
-
-  function formatTimeAgo(arrival) {
-    const t = new Date(arrival).getTime()
-    const ms = Date.now() - t
-    const h = ms / 3600000
-    if (h < 1) return `${Math.max(1, Math.round(ms / 60000))} min ago`
-    if (h < 24) return `${Math.round(h)} h ago`
-    return new Date(arrival).toLocaleString()
   }
 
   function buildDigestRow(p, rank) {
@@ -1380,28 +1325,6 @@ onMounted(async () => {
       })
   }
 
-  function chaikinSmooth(ring, iterations) {
-    iterations = iterations || 3
-    let pts = ring.slice(0, -1)
-    for (let iter = 0; iter < iterations; iter++) {
-      const smoothed = []
-      const n = pts.length
-      for (let j = 0; j < n; j++) {
-        const a = pts[j]
-        const b = pts[(j + 1) % n]
-        smoothed.push([0.75 * a[0] + 0.25 * b[0], 0.75 * a[1] + 0.25 * b[1]])
-        smoothed.push([0.25 * a[0] + 0.75 * b[0], 0.25 * a[1] + 0.75 * b[1]])
-      }
-      pts = smoothed
-    }
-    pts.push(pts[0])
-    return pts
-  }
-
-  function geoToLeaflet(coords) {
-    return chaikinSmooth(coords).map(([lng, lat]) => [lat, lng])
-  }
-
   let lastIsoData = null
 
   function drawPolygons(data, transitionMs, skipStandard = false) {
@@ -1801,20 +1724,6 @@ onMounted(async () => {
     })
   }
 
-  function pointInRing(fLng, fLat, ring) {
-    let inside = false
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      const [xi, yi] = ring[i]
-      const [xj, yj] = ring[j]
-      if (
-        yi > fLat !== yj > fLat &&
-        fLng < ((xj - xi) * (fLat - yi)) / (yj - yi) + xi
-      )
-        inside = !inside
-    }
-    return inside
-  }
-
   function quintileOfFreegler(fLng, fLat, data) {
     for (let q = 1; q <= 5; q++) {
       const qr = (data.quintiles || {})[q]
@@ -1969,18 +1878,6 @@ onMounted(async () => {
     } catch (e) {
       /* no group data — silently skip */
     }
-  }
-
-  function segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
-    const d1x = bx - ax
-    const d1y = by - ay
-    const d2x = dx - cx
-    const d2y = dy - cy
-    const cross = d1x * d2y - d1y * d2x
-    if (Math.abs(cross) < 1e-12) return false
-    const t = ((cx - ax) * d2y - (cy - ay) * d2x) / cross
-    const u = ((cx - ax) * d1y - (cy - ay) * d1x) / cross
-    return t > 0 && t < 1 && u > 0 && u < 1
   }
 
   function ringsOverlap(ring1, ring2) {
