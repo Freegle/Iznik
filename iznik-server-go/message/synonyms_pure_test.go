@@ -148,13 +148,21 @@ func TestExpandQuery_SynonymMap_Tumble_ExpandsToDryer(t *testing.T) {
 	assert.Contains(t, result, "dryer")
 }
 
-func TestExpandQuery_SynonymMap_Dryer_NoTumbleExpansion(t *testing.T) {
-	// "dryer" must NOT expand to "tumble". The starts-with match on "tumble"
-	// pulls in drinking-glass "tumbler" offers (confirmed: 8 false positives
-	// per 200 results in production). One-directional: tumble→dryer only.
+func TestExpandQuery_SynonymMap_Dryer_ExpandsToDrier(t *testing.T) {
+	// "dryer" must expand to "drier" (UK alternate spelling: "tumble drier").
+	// Confirmed in production: offers titled "Tumble Drier" use "drier" not
+	// "dryer" and are missed without this pair. Safe: GetWordsStarts("drier")
+	// does not prefix-match unrelated words unlike "tumble"→"tumbler".
 	result := ExpandQuery("dryer")
-	assert.Equal(t, []string{"dryer"}, result)
+	assert.Equal(t, "dryer", result[0])
+	assert.Contains(t, result, "drier")
 	assert.NotContains(t, result, "tumble")
+}
+
+func TestExpandQuery_SynonymMap_Drier_ExpandsToDryer(t *testing.T) {
+	result := ExpandQuery("drier")
+	assert.Equal(t, "drier", result[0])
+	assert.Contains(t, result, "dryer")
 }
 
 func TestExpandQuery_SynonymMap_Motorbike(t *testing.T) {

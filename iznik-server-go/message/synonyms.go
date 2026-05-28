@@ -69,10 +69,13 @@ var synonymMap = map[string][]string{
 	"rug":    {"carpet"},
 
 	// Tumble dryer — one-directional: "tumble" (abbreviation for tumble dryer)
-	// expands to "dryer", but "dryer" does NOT expand to "tumble". The reverse
-	// direction causes GetWordsStarts("tumble") to match "tumbler" (drinking
-	// glasses) — confirmed 8 false positives per 200 results in production.
+	// expands to "dryer", but NOT the reverse (GetWordsStarts("tumble") would
+	// match "tumbler"/drinking glasses — 8 false positives per 200 in prod).
+	// "dryer" ↔ "drier": UK alternate spelling ("Tumble Drier" is common in
+	// listings); safe because GetWordsStarts("drier") has no unrelated prefixes.
 	"tumble": {"dryer"},
+	"dryer":  {"drier"},
+	"drier":  {"dryer"},
 
 	// Lawnmower — "lawnmower" (one word) and "mower" (from "lawn mower" two words)
 	// are separate tokens with zero overlap in the index (confirmed against live data).
