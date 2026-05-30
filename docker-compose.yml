@@ -187,7 +187,7 @@ services:
       start_period: 10s
 
   spamassassin-app:
-    image: tiredofit/spamassassin
+    image: instantlinux/spamassassin
     container_name: ${COMPOSE_PROJECT_NAME:-freegle}-spamassassin
     profiles:
       - backend
@@ -197,9 +197,10 @@ services:
     ports:
       - ${PORT_SPAMASSASSIN:-783}:783
     volumes:
-      - ./logs/spamassassin:/logs
-      - ./conf:/config
+      - ./logs/spamassassin:/var/log
+      - ./conf:/etc/mail/spamassassin
       - ./data:/data
+      - spamassassin_home:/var/lib/spamassassin
     environment:
       - CONTAINER_NAME=spamassassin-app
     restart: "no"
@@ -1688,6 +1689,8 @@ volumes:
   geoip_data:
     driver: local
   rspamd_data:
+    driver: local
+  spamassassin_home:
     driver: local
   postfix_spool:
     driver: local
