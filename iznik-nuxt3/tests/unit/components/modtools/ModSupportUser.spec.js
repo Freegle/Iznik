@@ -42,6 +42,15 @@ vi.mock('~/stores/user', () => ({
   }),
 }))
 
+const mockMemberRemove = vi.fn()
+vi.mock('~/stores/member', () => ({
+  useMemberStore: () => ({
+    remove: mockMemberRemove,
+    update: vi.fn().mockResolvedValue({}),
+    config: {},
+  }),
+}))
+
 // Mock timeago and date formatters
 vi.stubGlobal(
   'timeago',
@@ -490,10 +499,14 @@ describe('ModSupportUser', () => {
       expect(wrapper.vm.unsubscribeConfirm).toBe(true)
     })
 
-    it('unsubscribeConfirmed calls store unsubscribe', async () => {
-      const wrapper = await mountComponent()
+    it('unsubscribeConfirmed calls memberStore.remove for each membership', async () => {
+      const wrapper = await mountComponent(
+        {},
+        { memberships: [{ id: 456, groupid: 456 }] }
+      )
       wrapper.vm.unsubscribeConfirmed()
-      expect(mockUnsubscribe).toHaveBeenCalledWith(123)
+      expect(mockMemberRemove).toHaveBeenCalledWith(123, 456)
+      expect(mockUnsubscribe).not.toHaveBeenCalled()
     })
 
     it('spamReport sets showSpamModal to true', async () => {

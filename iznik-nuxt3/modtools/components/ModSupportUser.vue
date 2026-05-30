@@ -606,6 +606,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '~/stores/user'
+import { useMemberStore } from '~/stores/member'
 import ExternalLink from '~/components/ExternalLink'
 import api from '~/api'
 import { usePreferredEmail } from '~/modtools/composables/usePreferredEmail'
@@ -625,6 +626,7 @@ const props = defineProps({
 })
 
 const userStore = useUserStore()
+const memberStore = useMemberStore()
 
 const user = computed(() => userStore.byId(props.id))
 const expanded = ref(true)
@@ -885,7 +887,9 @@ function purge() {
 }
 
 function unsubscribeConfirmed() {
-  userStore.unsubscribe(props.id)
+  for (const membership of user.value?.memberships ?? []) {
+    memberStore.remove(props.id, membership.groupid)
+  }
 }
 
 function unsubscribe() {

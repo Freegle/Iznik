@@ -273,31 +273,6 @@ describe('ModSupportUser — Unsubscribe button bug #9738 (AssertFlip)', () => {
     mockMembershipsRemoveApi.mockResolvedValue({})
   })
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // STEP 1 — Documents the current buggy behaviour.
-  //   This test MUST pass on the unmodified codebase.
-  //   BUGGY_TEST_PASSES=yes
-  // ──────────────────────────────────────────────────────────────────────────
-  it('[BUGGY] unsubscribeConfirmed calls userStore.unsubscribe but does NOT call memberStore.remove with the groupid', async () => {
-    const wrapper = await mountComponent()
-
-    wrapper.vm.unsubscribeConfirmed()
-    await flushPromises()
-
-    // Current (buggy) behaviour: only userStore.unsubscribe(userid) is called.
-    // This POSTs to /user with action:'Unsubscribe' — it does not touch /memberships.
-    expect(mockUnsubscribe).toHaveBeenCalledWith(USER_ID)
-
-    // Bug: memberStore.remove is NEVER called, so the member is not removed from
-    // the group and no membership DELETE request is issued.
-    expect(mockMemberRemove).not.toHaveBeenCalled()
-  })
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // STEP 2 — Inverted assertions; defines the correct post-fix behaviour.
-  //   This test MUST fail on the unmodified codebase.
-  //   TEST_FAILED=<see output>
-  // ──────────────────────────────────────────────────────────────────────────
   it('[FIX] unsubscribeConfirmed should call memberStore.remove with userid and groupid', async () => {
     const wrapper = await mountComponent()
 
