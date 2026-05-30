@@ -82,6 +82,18 @@ var synonymMap = map[string][]string{
 	// 445 searches/90 days; 90 lawnmower + 102 mower indexed offers, no shared messages.
 	"lawnmower": {"mower"},
 	"mower":     {"lawnmower"},
+
+	// BBQ / Barbecue — abbreviation vs full spelling, two alternate spellings.
+	// 25 "bbq" + 9 "barbecue"/"barbeque" indexed offers, zero overlap confirmed live.
+	// User searched all three variants in rapid succession (live monitoring, 2026-05-30).
+	"bbq":       {"barbecue", "barbeque"},
+	"barbecue":  {"bbq", "barbeque"},
+	"barbeque":  {"bbq", "barbecue"},
+
+	// Luggage / Suitcase — 6 "luggage" + 45 "suitcase" offers, zero overlap confirmed live.
+	// User searched "luggage" 34 times in a session, unable to find the 45 suitcase offers.
+	"luggage":  {"suitcase"},
+	"suitcase": {"luggage"},
 }
 
 // ExpandQuery returns the full set of words to pass to the keyword search,

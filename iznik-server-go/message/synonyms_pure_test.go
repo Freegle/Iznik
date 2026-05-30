@@ -148,6 +148,35 @@ func TestExpandQuery_SynonymMap_Tumble_ExpandsToDryer(t *testing.T) {
 	assert.Contains(t, result, "dryer")
 }
 
+func TestExpandQuery_SynonymMap_BBQ(t *testing.T) {
+	// "bbq" and "barbecue"/"barbeque" are separate tokens with zero overlap.
+	// 25 bbq + 9 barbecue/barbeque offers confirmed in production, no shared messages.
+	result := ExpandQuery("bbq")
+	assert.Equal(t, "bbq", result[0])
+	assert.Contains(t, result, "barbecue")
+	assert.Contains(t, result, "barbeque")
+}
+
+func TestExpandQuery_SynonymMap_Barbecue(t *testing.T) {
+	result := ExpandQuery("barbecue")
+	assert.Equal(t, "barbecue", result[0])
+	assert.Contains(t, result, "bbq")
+	assert.Contains(t, result, "barbeque")
+}
+
+func TestExpandQuery_SynonymMap_Luggage(t *testing.T) {
+	// 34 frustrated "luggage" searches while 45 "suitcase" offers exist with zero overlap.
+	result := ExpandQuery("luggage")
+	assert.Equal(t, "luggage", result[0])
+	assert.Contains(t, result, "suitcase")
+}
+
+func TestExpandQuery_SynonymMap_Suitcase(t *testing.T) {
+	result := ExpandQuery("suitcase")
+	assert.Equal(t, "suitcase", result[0])
+	assert.Contains(t, result, "luggage")
+}
+
 func TestExpandQuery_SynonymMap_Dryer_ExpandsToDrier(t *testing.T) {
 	// "dryer" must expand to "drier" (UK alternate spelling: "tumble drier").
 	// Confirmed in production: offers titled "Tumble Drier" use "drier" not
