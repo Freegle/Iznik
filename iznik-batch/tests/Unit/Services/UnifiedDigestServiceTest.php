@@ -1170,7 +1170,12 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->assertEquals(1, $stats['emails_sent']);
         Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($mail) use ($dailyMsg, $immediateMsg) {
-            $subjects = $mail->posts->map(fn ($p) => $p['message']->subject)->all();
+            // $posts is protected on purpose: making it public would auto-inject
+            // the raw collection into the mail views and shadow the prepared
+            // posts (breaking the templates), so read it via reflection.
+            $prop = new \ReflectionProperty($mail, 'posts');
+            $prop->setAccessible(true);
+            $subjects = $prop->getValue($mail)->map(fn ($p) => $p['message']->subject)->all();
             return in_array($dailyMsg->subject, $subjects, true)
                 && !in_array($immediateMsg->subject, $subjects, true);
         });
