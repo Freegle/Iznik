@@ -12,6 +12,7 @@ export const useLogsStore = defineStore({
     list: [],
     context: null,
     params: null,
+    _fetchGeneration: 0,
   }),
   actions: {
     init(config) {
@@ -20,8 +21,10 @@ export const useLogsStore = defineStore({
     clear() {
       this.list = []
       this.context = null
+      this._fetchGeneration++
     },
     async fetch(params) {
+      const generation = this._fetchGeneration
       let ret = null
       delete params.context
       if (this.context?.id) {
@@ -29,6 +32,12 @@ export const useLogsStore = defineStore({
         params.context = this.context.id
       }
       const data = await api(this.config).logs.fetch(params)
+
+      // Discard result if clear() was called while this fetch was in-flight
+      // (e.g. user changed the community/groupid filter).
+      if (this._fetchGeneration !== generation) {
+        return null
+      }
 
       let logs = []
 
