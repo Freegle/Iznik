@@ -104,14 +104,18 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient = $this->createTestUser();
         $group = $this->createTestGroup();
 
-        // Set recipient to want daily digests and be active.
+        // Set recipient to want daily digests and be active. V1 parity:
+        // membership emailfrequency=24 is the authoritative daily selector;
+        // simplemail acts only as the join-time default that populated it.
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
         $recipient->save();
         $recipient->refresh();
 
         $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
 
         // Create a message from another user (so recipient has something to receive).
         $this->createTestMessage($poster, $group);
@@ -154,14 +158,17 @@ class UnifiedDigestServiceTest extends TestCase
         $recipient = $this->createTestUser();
         $group = $this->createTestGroup();
 
-        // Recipient wants daily digests.
+        // Recipient wants daily digests — per-group emailfrequency=24 is the
+        // V1-parity selector.
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
         $recipient->save();
         $recipient->refresh();
 
         $this->createMembership($poster, $group);
-        $this->createMembership($recipient, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
 
         // Create a message from the recipient (should be filtered out).
         $this->createTestMessage($recipient, $group);
@@ -261,7 +268,8 @@ class UnifiedDigestServiceTest extends TestCase
         $group1 = $this->createTestGroup();
         $group2 = $this->createTestGroup();
 
-        // Recipient wants daily digests.
+        // Recipient wants daily digests for both groups — V1 parity requires
+        // per-group emailfrequency=24 on each membership.
         $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
         $recipient->lastaccess = now();
         $recipient->save();
@@ -269,8 +277,12 @@ class UnifiedDigestServiceTest extends TestCase
 
         $this->createMembership($poster, $group1);
         $this->createMembership($poster, $group2);
-        $this->createMembership($recipient, $group1);
-        $this->createMembership($recipient, $group2);
+        $this->createMembership($recipient, $group1, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($recipient, $group2, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
 
         // Create messages so the digest has content.
         $this->createTestMessage($poster, $group1);
@@ -396,7 +408,9 @@ class UnifiedDigestServiceTest extends TestCase
 
         $poster = $this->createTestUser();
         $group = $this->createTestGroup();
-        $this->createMembership($recipient, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
         $this->createMembership($poster, $group);
 
         $this->createTestMessage($poster, $group, ['subject' => 'OFFER: A (TestLocation)']);
@@ -548,7 +562,9 @@ class UnifiedDigestServiceTest extends TestCase
         $user->save();
         $user->refresh();
         $group = $this->createTestGroup();
-        $this->createMembership($user, $group);
+        $this->createMembership($user, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $user->id);
 
@@ -1034,5 +1050,162 @@ class UnifiedDigestServiceTest extends TestCase
         // Re-running finds nothing to do (proving the cursor stuck).
         $stats2 = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
         $this->assertEquals(0, $stats2['emails_sent'], 'No duplicate send after cursor advance');
+    }
+
+    // ─── V1-PARITY: per-group emailfrequency is authoritative ────────────
+    // Bug case (user 801, Richmond Upon Thames, 2026-05-27): a user with
+    // legacy simplemail='Full' who had switched some groups to Daily was
+    // being treated as a "Full" user for every group and flooded with
+    // immediate emails. V1 (iznik-server/include/mail/Digest.php:418)
+    // ignores simplemail at send time and filters strictly on
+    // memberships.emailfrequency. These tests pin that behaviour so the
+    // regression cannot recur.
+
+    public function test_daily_includes_user_with_simplemail_full_when_membership_is_daily(): void
+    {
+        // Emma's case: simplemail='Full' but a specific group is at Daily.
+        // The Daily setting must win — she should get a daily digest for
+        // that group (and, separately, no immediate spam for it).
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['emails_sent'], 'simplemail=Full must not block per-group Daily delivery');
+    }
+
+    public function test_daily_excludes_user_whose_only_memberships_are_immediate(): void
+    {
+        // simplemail=Basic alone is NOT enough — V1 parity requires at
+        // least one approved membership at emailfrequency=24. The old
+        // code would have selected this user and then tried to mail
+        // their immediate-frequency groups in the daily roll-up.
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_IMMEDIATE,
+        ]);
+        $this->createTestMessage($poster, $group);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(0, $stats['emails_sent']);
+    }
+
+    public function test_daily_excludes_user_with_simplemail_none(): void
+    {
+        // V1 sendOurMails() opt-out: simplemail='None' silences every
+        // mail regardless of per-group settings.
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_NONE];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($poster, $group);
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createTestMessage($poster, $group);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(0, $stats['emails_sent']);
+    }
+
+    public function test_daily_digest_excludes_posts_from_immediate_only_groups(): void
+    {
+        // Mixed-frequency case: same user, two groups, one Daily and one
+        // Immediate. The daily roll-up must contain ONLY the daily
+        // group's post — the immediate group's post must not be bundled
+        // (that group is the immediate cron's responsibility). The old
+        // code skipped the per-group emailfrequency filter whenever
+        // simplemail was set and would have included both.
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $dailyGroup = $this->createTestGroup();
+        $immediateGroup = $this->createTestGroup();
+        $this->createMembership($poster, $dailyGroup);
+        $this->createMembership($poster, $immediateGroup);
+        $this->createMembership($recipient, $dailyGroup, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+        $this->createMembership($recipient, $immediateGroup, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_IMMEDIATE,
+        ]);
+
+        $dailyMsg = $this->createTestMessage($poster, $dailyGroup, [
+            'subject' => 'OFFER: Daily item (TestLocation)',
+        ]);
+        $immediateMsg = $this->createTestMessage($poster, $immediateGroup, [
+            'subject' => 'OFFER: Immediate item (TestLocation)',
+        ]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['emails_sent']);
+        Mail::assertSent(\App\Mail\Digest\UnifiedDigest::class, function ($mail) use ($dailyMsg, $immediateMsg) {
+            // $posts is protected on purpose: making it public would auto-inject
+            // the raw collection into the mail views and shadow the prepared
+            // posts (breaking the templates), so read it via reflection.
+            $prop = new \ReflectionProperty($mail, 'posts');
+            $prop->setAccessible(true);
+            $subjects = $prop->getValue($mail)->map(fn ($p) => $p['message']->subject)->all();
+            return in_array($dailyMsg->subject, $subjects, true)
+                && !in_array($immediateMsg->subject, $subjects, true);
+        });
+    }
+
+    public function test_immediate_excludes_simplemail_full_user_with_daily_only_memberships(): void
+    {
+        // Re-run of Emma's scenario through getUsersForDigest('immediate').
+        // This path is dead in production (sendDigests('immediate') short-
+        // circuits to the per-group sendImmediateDigests), but the
+        // function is reachable in tests / future callers and must
+        // match V1: simplemail='Full' alone never wins; the user needs
+        // at least one membership at emailfrequency=-1.
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_FULL];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, [
+            'emailfrequency' => Membership::EMAIL_FREQUENCY_DAILY,
+        ]);
+
+        $reflection = new \ReflectionClass($this->service);
+        $method = $reflection->getMethod('getUsersForDigest');
+        $method->setAccessible(true);
+        /** @var \Illuminate\Support\LazyCollection $eligible */
+        $eligible = $method->invoke($this->service, UnifiedDigestService::MODE_IMMEDIATE, $recipient->id);
+
+        $this->assertCount(0, $eligible->all(), 'simplemail=Full alone must not select a user who has no immediate-frequency memberships');
     }
 }

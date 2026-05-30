@@ -464,28 +464,36 @@ class UnifiedDigestService
             $query->where('id', $userId);
         }
 
-        // Filter by simple mail setting.
-        if ($mode === self::MODE_IMMEDIATE) {
-            // V1 parity: a user is eligible for immediate notifications if EITHER
-            // the global simplemail setting is Full OR they have no global
-            // simplemail set but at least one approved membership configured for
-            // immediate per-group frequency (emailfrequency=-1). The two arms
-            // mirror the daily/Basic case below — global setting OR per-group
-            // setting when the global is unset.
-            $query->where(function ($q) {
-                $q->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.simplemail')) = ?", [User::SIMPLE_MAIL_FULL])
-                    ->orWhere(function ($q2) {
-                        $q2->whereRaw("JSON_EXTRACT(settings, '$.simplemail') IS NULL")
-                            ->whereExists(function ($subquery) {
-                                $subquery->select(DB::raw(1))
-                                    ->from('memberships')
-                                    ->whereColumn('memberships.userid', 'users.id')
-                                    ->where('memberships.emailfrequency', Membership::EMAIL_FREQUENCY_IMMEDIATE)
-                                    ->where('memberships.collection', Membership::COLLECTION_APPROVED);
-                            });
-                    });
-            });
+        // V1 parity (iznik-server/include/mail/Digest.php:418): per-group
+        // memberships.emailfrequency is authoritative at send time. The
+        // global users.settings.simplemail only acts as the join-time
+        // DEFAULT that populates a new membership's emailfrequency (see
+        // User.php SIMPLE_MAIL_* mapping) — once a per-group value
+        // exists, that value alone controls delivery. Without this
+        // alignment, a user with legacy simplemail='Full' who later
+        // switched some groups to Daily was being treated as a Full
+        // user for every group and getting immediate spam for groups
+        // they had explicitly downgraded.
+        //
+        // simplemail='None' remains an account-level opt-out per V1's
+        // User::sendOurMails(), so we exclude those users here.
+        $freq = $mode === self::MODE_IMMEDIATE
+            ? Membership::EMAIL_FREQUENCY_IMMEDIATE
+            : Membership::EMAIL_FREQUENCY_DAILY;
+        $query->whereExists(function ($subquery) use ($freq) {
+            $subquery->select(DB::raw(1))
+                ->from('memberships')
+                ->whereColumn('memberships.userid', 'users.id')
+                ->where('memberships.emailfrequency', $freq)
+                ->where('memberships.collection', Membership::COLLECTION_APPROVED);
+        })->where(function ($q) {
+            $q->whereRaw("JSON_EXTRACT(users.settings, '$.simplemail') IS NULL")
+                ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(users.settings, '$.simplemail')) != ?", [
+                    User::SIMPLE_MAIL_NONE,
+                ]);
+        });
 
+        if ($mode === self::MODE_IMMEDIATE) {
             // Safety gate — FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST. Default (or
             // '*') allows every eligible user; a comma-separated list
             // restricts to those addresses. The checked-in config default
@@ -505,23 +513,6 @@ class UnifiedDigestService
                     'allowlist_count' => count($allowlist),
                 ]);
             }
-        } else {
-            // Basic mode = daily digest.
-            // Include users with Basic setting OR users without simplemail set but with daily frequency memberships.
-            $query->where(function ($q) {
-                $q->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(settings, '$.simplemail')) = ?", [User::SIMPLE_MAIL_BASIC])
-                    ->orWhere(function ($q2) {
-                        // Users without simplemail set who have daily frequency in at least one group.
-                        $q2->whereRaw("JSON_EXTRACT(settings, '$.simplemail') IS NULL")
-                            ->whereExists(function ($subquery) {
-                                $subquery->select(DB::raw(1))
-                                    ->from('memberships')
-                                    ->whereColumn('memberships.userid', 'users.id')
-                                    ->where('memberships.emailfrequency', 24)
-                                    ->where('memberships.collection', Membership::COLLECTION_APPROVED);
-                            });
-                    });
-            });
         }
 
         // Stream in keyset-paginated chunks with eager loads applied per chunk — these
@@ -662,15 +653,16 @@ class UnifiedDigestService
     /**
      * Get all posts for a user from their member groups since last digest.
      *
-     * V1 parity: which groups contribute depends on whether the user has a
-     * global simplemail setting.
-     *   - simplemail set (Full/Basic): the global setting governs every group
-     *     — include posts from ALL approved memberships.
-     *   - simplemail NULL: per-group emailfrequency decides; for immediate
-     *     mode include only groups with emailfrequency=-1, for daily mode
-     *     only groups with emailfrequency=24. Otherwise a user who set just
-     *     one group to immediate would receive an immediate digest covering
-     *     posts from all their daily-frequency groups too.
+     * V1 parity (iznik-server/include/mail/Digest.php): per-group
+     * memberships.emailfrequency is authoritative at send time. The
+     * global users.settings.simplemail is NEVER consulted here — it
+     * only sets the join-time default for emailfrequency on new
+     * memberships. So a user with simplemail='Full' who later switched
+     * one group to Daily must receive ONLY a daily roll-up for that
+     * group from this method, not posts from every group they belong
+     * to. This is the bug that caused user 801 (Emma, Richmond Upon
+     * Thames) to be flooded with immediate emails for groups she had
+     * explicitly downgraded.
      *
      * @param User $user
      * @param UserDigest $tracker
@@ -679,21 +671,14 @@ class UnifiedDigestService
      */
     protected function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
-        $globalSimplemail = is_array($user->settings)
-            ? ($user->settings['simplemail'] ?? null)
-            : null;
+        $freq = $mode === self::MODE_IMMEDIATE
+            ? Membership::EMAIL_FREQUENCY_IMMEDIATE
+            : Membership::EMAIL_FREQUENCY_DAILY;
 
-        $membershipQuery = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED);
-
-        if ($globalSimplemail === null) {
-            $freq = $mode === self::MODE_IMMEDIATE
-                ? Membership::EMAIL_FREQUENCY_IMMEDIATE
-                : Membership::EMAIL_FREQUENCY_DAILY;
-            $membershipQuery->where('emailfrequency', $freq);
-        }
-
-        $groupIds = $membershipQuery->pluck('groupid');
+        $groupIds = $user->memberships()
+            ->where('collection', Membership::COLLECTION_APPROVED)
+            ->where('emailfrequency', $freq)
+            ->pluck('groupid');
 
         if ($groupIds->isEmpty()) {
             return collect();
