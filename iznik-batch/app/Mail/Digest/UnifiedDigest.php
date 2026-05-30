@@ -39,7 +39,7 @@ class UnifiedDigest extends MjmlMailable
 
     public function __construct(
         public User $user,
-        protected Collection $posts,
+        public Collection $posts,
         public string $mode,
         protected Collection $sponsors = new Collection()
     ) {
