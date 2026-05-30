@@ -879,17 +879,19 @@ func GetLatLng(id uint64) utils.LatLng {
 		Lastlng float32
 	}
 
-	var ul, ulmsg, ulgroups userLoc
+	var ul, ulmsg userLoc
 
 	// We look for the location in the following descending order:
 	// - mylocation in settings, which we need to decode
 	// - lastlocation in user
 	// - last messages posted on a group with a location
-	// - most recently joined group
+	//
+	// We intentionally do NOT fall back to the group's lat/lng — users without a personal
+	// location should return zero coords, not be plotted at the group's physical address.
 	//
 	// Tests show that the first query is fast to fetch, whereas the others are less so.  The first will handle
 	// a user with a known location, so it's a good mainline case to keep fast.
-	// If it doesn't give us what we need them , then fetch the others in parallel.
+	// If it doesn't give us what we need then fetch the message location.
 	db.Raw("SELECT users.id, locations.lat AS lastlat, locations.lng as lastlng, "+
 		"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lat') AS DECIMAL(10,6)) AS mylat,"+
 		"CAST(JSON_EXTRACT(JSON_EXTRACT(settings, '$.mylocation'), '$.lng') AS DECIMAL(10,6)) as mylng "+
@@ -901,43 +903,18 @@ func GetLatLng(id uint64) utils.LatLng {
 	if ul.Mylng != 0 || ul.Mylat != 0 {
 		ret.Lat = ul.Mylat
 		ret.Lng = ul.Mylng
+	} else if ul.Lastlat != 0 || ul.Lastlng != 0 {
+		ret.Lat = ul.Lastlat
+		ret.Lng = ul.Lastlng
 	} else {
-		var wg sync.WaitGroup
+		db.Raw("SELECT messages.fromuser AS id, locations.lat AS lastlat, locations.lng AS lastlng FROM "+
+			"locations INNER JOIN messages ON messages.locationid = locations.id "+
+			"WHERE messages.fromuser = ? "+
+			"ORDER BY arrival DESC LIMIT 1", id).Scan(&ulmsg)
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-		}()
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			db.Raw("SELECT messages.fromuser AS id, locations.lat AS lastlat, locations.lng AS lastlng FROM "+
-				"locations INNER JOIN messages ON messages.locationid = locations.id "+
-				"WHERE messages.fromuser = ? "+
-				"ORDER BY arrival DESC LIMIT 1", id).Scan(&ulmsg)
-		}()
-
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			db.Raw("SELECT groups.id, groups.lat AS lastlat, groups.lng AS lastlng FROM  "+
-				"`groups` INNER JOIN memberships ON groups.id = memberships.groupid "+
-				"WHERE memberships.userid = ? "+
-				"ORDER BY added DESC LIMIT 1", id).Scan(&ulgroups)
-		}()
-
-		wg.Wait()
-
-		if ul.Lastlat != 0 || ul.Lastlng != 0 {
-			ret.Lat = ul.Lastlat
-			ret.Lng = ul.Lastlng
-		} else if ulmsg.Lastlat != 0 || ulmsg.Lastlng != 0 {
+		if ulmsg.Lastlat != 0 || ulmsg.Lastlng != 0 {
 			ret.Lat = ulmsg.Lastlat
 			ret.Lng = ulmsg.Lastlng
-		} else if ulgroups.Lastlat != 0 || ulgroups.Lastlng != 0 {
-			ret.Lat = ulgroups.Lastlat
-			ret.Lng = ulgroups.Lastlng
 		}
 	}
 
