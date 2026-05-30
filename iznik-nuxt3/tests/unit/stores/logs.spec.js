@@ -307,4 +307,91 @@ describe('logs store', () => {
     expect(logsForUser10.map((l) => l.id)).toEqual([100, 101])
     expect(logsForUser20.map((l) => l.id)).toEqual([200, 201])
   })
+
+  // ---------------------------------------------------------------------------
+  // AssertFlip: stale in-flight fetch after community filter change
+  //
+  // Symptom (issue #9672): when the community (groupid) filter is changed while
+  // a fetch is still in progress from the previous group, the in-flight fetch
+  // resolves AFTER clear() has been called. Because fetch() has no stale-check,
+  // it pushes the old group's entries into the freshly-emptied list, producing
+  // duplicated/cross-group entries in the log history view.
+  //
+  // Root cause: logs.js fetch() does not check whether clear() was called while
+  // the API request was in-flight. The existingIds dedup only guards against
+  // concurrent same-page fetches, not against cross-group pollution after a clear.
+  // ---------------------------------------------------------------------------
+
+  it('stale in-flight fetch pollutes cleared list — AssertFlip Step 1 (buggy)', async () => {
+    // STEP 1: assert the WRONG / buggy behaviour.
+    // This test PASSES on the current (buggy) code.
+    // If it fails here, the bug is already fixed and the diagnosis is wrong.
+    const store = useLogsStore()
+    store.init({})
+
+    // Create a deferred promise to control when the "old groupid" fetch resolves.
+    let resolveOldFetch
+    const oldFetchPromise = new Promise((resolve) => {
+      resolveOldFetch = resolve
+    })
+    mockLogsFetch.mockReturnValueOnce(oldFetchPromise)
+
+    // Start an inflight fetch for groupid=5 (won't complete until we resolve it).
+    const oldFetchDone = store.fetch({ groupid: 5 })
+
+    // User switches community filter → caller clears the store.
+    store.clear()
+    expect(store.list).toHaveLength(0) // list is empty immediately after clear
+
+    // Resolve the OLD group-5 fetch. On buggy code fetch() has no stale-check
+    // so it pushes group-5 entries straight into the now-empty list.
+    resolveOldFetch({
+      logs: [
+        { id: 10, groupid: 5 },
+        { id: 11, groupid: 5 },
+        { id: 12, groupid: 5 },
+      ],
+      context: { id: 10 },
+    })
+    await oldFetchDone
+
+    // BUGGY assertion: stale group-5 data leaked into the cleared list.
+    expect(store.list.length).toBeGreaterThan(0)
+  })
+
+  it('community filter change must not allow stale in-flight fetch to persist — AssertFlip Step 2', async () => {
+    // STEP 2 (inverted): these assertions FAIL on buggy code, PASS after fix.
+    // The fix must discard any in-flight fetch result that arrives after clear().
+    const store = useLogsStore()
+    store.init({})
+
+    let resolveOldFetch
+    const oldFetchPromise = new Promise((resolve) => {
+      resolveOldFetch = resolve
+    })
+    mockLogsFetch.mockReturnValueOnce(oldFetchPromise)
+
+    // Inflight fetch for old groupid=5.
+    const oldFetchDone = store.fetch({ groupid: 5 })
+
+    // User switches filter: clear the store.
+    store.clear()
+
+    // Old group-5 fetch returns with 3 seeded entries.
+    resolveOldFetch({
+      logs: [
+        { id: 10, groupid: 5 },
+        { id: 11, groupid: 5 },
+        { id: 12, groupid: 5 },
+      ],
+      context: { id: 10 },
+    })
+    await oldFetchDone
+
+    // CORRECT assertion: after clear(), stale results must NOT appear in the list.
+    expect(store.list).toHaveLength(0)
+
+    // CORRECT assertion: context must remain null (not set by the stale fetch).
+    expect(store.context).toBeNull()
+  })
 })
