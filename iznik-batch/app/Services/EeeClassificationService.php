@@ -334,7 +334,7 @@ class EeeClassificationService
         //  3. EEE text signals present despite non-EEE type: escalate to per-image.
         //  4. Non-EEE + zero EEE minority + high confidence/agreement + no EEE text: safe to skip.
         if ($message->item_name) {
-            $type = $this->sqlite->getItemType($message->item_name);
+            $type = $this->sqlite->getItemType($message->item_name, $this->vision->getModelName(), $this->vision->getPromptVersion());
             if ($type
                 && !$type['needs_image_analysis']
                 && !$type['is_eee']
