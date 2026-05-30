@@ -981,4 +981,30 @@ class ContentCheckServiceTest extends TestCase
         $result = $this->service->checkVagueItem('and the or');
         $this->assertNull($result);
     }
+
+    // =========================================================================
+    // checkChatMessage — phone numbers must NOT be flagged (Discourse #9737)
+    //
+    // Sharing a phone number is normal when arranging a handover. Chat messages
+    // must not be held for review just because they contain a UK phone number.
+    // V1 Spam::checkReview() never flagged phone numbers either.
+    // =========================================================================
+
+    public function test_check_chat_message_bare_uk_mobile_not_flagged(): void
+    {
+        $result = $this->service->checkChatMessage('07123456789');
+        $this->assertNull($result, 'A bare UK mobile number in a chat message must not be flagged for review');
+    }
+
+    public function test_check_chat_message_phone_with_context_not_flagged(): void
+    {
+        $result = $this->service->checkChatMessage('Call me on 07700 900123 to arrange collection');
+        $this->assertNull($result, 'A chat message mentioning a phone number to arrange collection must not be held');
+    }
+
+    public function test_check_chat_message_landline_not_flagged(): void
+    {
+        $result = $this->service->checkChatMessage('01234 567890 is the best number to reach me on');
+        $this->assertNull($result, 'A chat message with a UK landline number must not be held for review');
+    }
 }
