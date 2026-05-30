@@ -7,7 +7,6 @@ use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\FeatureFlags;
 use App\Models\Notification;
 use App\Models\User;
-use App\Support\SafeMail;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -151,13 +150,23 @@ class NotificationChaseUpService
                 ->whereIn('id', $notifIds)
                 ->update(['mailed' => 1]);
 
-            // SafeMail catches permanent (bad address) and transient (mail-host
-            // hiccup) failures so one bad recipient or one closed connection
-            // doesn't kill the per-user loop above. Without it, the
-            // 2026-05-15 07:31 mail-host timeout aborted the whole chaseup
-            // run — same class of failure we hit in mail:engage and
-            // mail:events-digest.
-            app(\App\Services\EmailSpoolerService::class)->spool(new ChaseUpMail($user, $notifData, $subject), $email);
+            // Catch spool-build failures so one bad recipient or one closed
+            // mail-host connection doesn't kill the per-user loop above.
+            // Without this, the 2026-05-15 07:31 mail-host timeout aborted
+            // the whole chaseup run — same class of failure we hit in
+            // mail:engage and mail:events-digest. spool() already handles
+            // permanent SMTP failures internally; this wraps everything else
+            // (transient SMTP timeouts, MJML render errors) so the loop
+            // continues with the next user.
+            try {
+                app(\App\Services\EmailSpoolerService::class)->spool(new ChaseUpMail($user, $notifData, $subject), $email);
+            } catch (\Throwable $e) {
+                Log::warning('Skipping chaseup for user after spool failure; continuing loop', [
+                    'user_id' => $user->id,
+                    'email' => $email,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         return 1;
