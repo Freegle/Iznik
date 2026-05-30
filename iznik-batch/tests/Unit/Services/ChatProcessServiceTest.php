@@ -321,8 +321,10 @@ class ChatProcessServiceTest extends TestCase
         $this->assertNull($updated->reportreason);
     }
 
-    public function test_moderated_user_message_with_phone_number_is_held(): void
+    public function test_moderated_user_message_with_phone_number_is_not_held(): void
     {
+        // Sharing a phone number to arrange a handover is normal, so chat
+        // messages are deliberately NOT phone-number checked (V1 parity).
         $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
         $recipient = $this->createTestUser();
         $room = $this->createTestChatRoom($sender, $recipient);
@@ -337,7 +339,8 @@ class ChatProcessServiceTest extends TestCase
         $this->service->processIncoming();
 
         $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
-        $this->assertEquals(1, $updated->reviewrequired, 'Message containing a phone number should be held for review');
+        $this->assertEquals(0, $updated->reviewrequired, 'A bare phone number in chat should NOT be held for review');
+        $this->assertNull($updated->reportreason);
     }
 
     public function test_unmoderated_user_message_is_not_content_checked(): void

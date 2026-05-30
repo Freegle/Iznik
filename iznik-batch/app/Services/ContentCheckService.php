@@ -151,8 +151,14 @@ class ContentCheckService
      * chat_messages (not the messages table) and carry no group, item, IP or
      * bulk-mail context, so only the text checks apply. Global concern keywords
      * are used (groupid 0). Mirrors the checks V1 ChatMessage::process() ran via
-     * Spam::checkReview() for Moderated members, plus phone-number and
-     * messaging-app-link detection.
+     * Spam::checkReview() for Moderated members, plus messaging-app-link
+     * detection.
+     *
+     * Phone numbers are deliberately NOT checked in chat: sharing a phone
+     * number is normal and expected when arranging a handover, so flagging it
+     * produced too many false positives. (V1's Spam::checkReview() never
+     * checked phone numbers either.) The checkPhoneNumbers() check still runs
+     * for posts via checkMessage().
      *
      * @return array|null Reason ['check','category','action','detail'] or null.
      */
@@ -167,7 +173,6 @@ class ContentCheckService
             ?? $this->checkUrls('', $message)
             ?? $this->checkMessagingLinks('', $message)
             ?? $this->checkMoneySymbols('', $message)
-            ?? $this->checkPhoneNumbers('', $message)
             ?? $this->checkKnownSpammer($message)
             ?? $this->checkLanguage('', $message);
     }
@@ -703,10 +708,11 @@ class ContentCheckService
     }
 
     // -------------------------------------------------------------------------
-    // Phone numbers — UK format check, applied to all messages.
-    // Requires a proper UK prefix (0, +44, or 0044) followed by 9–10 digits
-    // (with optional spaces/hyphens). This specificity avoids false positives
-    // from short numeric strings like flat numbers or times.
+    // Phone numbers — UK format check, applied to posts only (NOT chat: sharing
+    // a number to arrange a handover is normal). Requires a proper UK prefix
+    // (0, +44, or 0044) followed by 9–10 digits (with optional spaces/hyphens).
+    // This specificity avoids false positives from short numeric strings like
+    // flat numbers or times.
     // -------------------------------------------------------------------------
 
     public function checkPhoneNumbers(string $subject, string $textbody): ?array
@@ -729,7 +735,7 @@ class ContentCheckService
 
     // -------------------------------------------------------------------------
     // PII — external email addresses, only when group rule restrictpersonalinfo
-    // is set. Phone numbers are checked universally via checkPhoneNumbers().
+    // is set. Phone numbers in posts are checked via checkPhoneNumbers().
     // -------------------------------------------------------------------------
 
     public function checkPII(string $subject, string $textbody, int $groupid): ?array
