@@ -8,6 +8,7 @@ import {
 } from '~/api/BaseAPI'
 import { useComposeStore } from '~/stores/compose'
 import { useGroupStore } from '~/stores/group'
+import { useModGroupStore } from '~/modtools/stores/modgroup'
 import api from '~/api'
 import { useMobileStore } from '@/stores/mobile'
 import { useMiscStore } from '~/stores/misc'
@@ -422,6 +423,15 @@ export const useAuthStore = defineStore({
           } else {
             console.log('No local marketing consent to sync')
           }
+        }
+
+        // Eagerly hydrate the ModTools group list so badge counters and the
+        // group menu are in sync with auth state immediately after sign-in,
+        // not after the first route change or 30-second poller tick.
+        const miscStore = useMiscStore()
+        if (miscStore.modtools) {
+          const modGroupStore = useModGroupStore()
+          await modGroupStore.getModGroups()
         }
       } else if (!serverError) {
         // No user returned and no server error — auth is genuinely invalid.

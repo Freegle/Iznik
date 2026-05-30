@@ -162,54 +162,19 @@ describe('ModTools notification bootstrap race (bug 9737-5)', () => {
     return { authStore, modGroupStore }
   }
 
-  // =========================================================================
-  // STEP 1 — BUGGY_ASSERTION
-  // These assertions describe the WRONG behaviour that exists today.
-  // They PASS on the current (broken) code.
-  // =========================================================================
-  describe('BUGGY_ASSERTION — passes on current broken code', () => {
-    it(
-      'after login, modGroupStore.list is empty even though authStore.groups is populated',
-      async () => {
-        const { authStore, modGroupStore } = setupStores()
+  it(
+    'after login, modGroupStore.list should be populated with the user\'s groups',
+    async () => {
+      const { authStore, modGroupStore } = setupStores()
 
-        await authStore.login({ email: 'mod@example.com', password: 'secret' })
+      await authStore.login({ email: 'mod@example.com', password: 'secret' })
 
-        // fetchUser ran and correctly populated auth state
-        expect(authStore.groups).toHaveLength(1)
-        expect(authStore.work?.total).toBe(3)
+      expect(authStore.groups).toHaveLength(1)
+      expect(authStore.work?.total).toBe(3)
 
-        // BUG: modGroupStore.list is still empty because fetchUser never calls
-        // getModGroups() — the menu shows no groups right after sign-in.
-        expect(Object.keys(modGroupStore.list)).toHaveLength(0)
-      }
-    )
-  })
-
-  // =========================================================================
-  // STEP 2 — INVERTED
-  // These are the flipped assertions documenting correct behaviour.
-  // They FAIL on the current (broken) code.
-  // They will PASS once the fix is applied.
-  // =========================================================================
-  describe('INVERTED — fails on current broken code, passes after fix', () => {
-    it(
-      'after login, modGroupStore.list should be populated with the user\'s groups',
-      async () => {
-        const { authStore, modGroupStore } = setupStores()
-
-        await authStore.login({ email: 'mod@example.com', password: 'secret' })
-
-        // Confirm auth state is populated (pre-condition)
-        expect(authStore.groups).toHaveLength(1)
-        expect(authStore.work?.total).toBe(3)
-
-        // INVERTED ASSERTION: group 100 must appear in the modtools group list.
-        // Fails on the current code because fetchUser does not call getModGroups().
-        // Will pass once fetchUser (or a loginStateKnown watcher) triggers
-        // modGroupStore.getModGroups() after the user's groups are loaded.
-        expect(Object.keys(modGroupStore.list)).toHaveLength(1)
-      }
-    )
-  })
+      // fetchUser must call modGroupStore.getModGroups() so the group menu
+      // and badge counters are in sync immediately after sign-in.
+      expect(Object.keys(modGroupStore.list)).toHaveLength(1)
+    }
+  )
 })
