@@ -376,5 +376,7 @@
         @if(isset($trackingPixelMjml))
         {!! $trackingPixelMjml !!}
         @endif
+
+        @endif
     </mj-body>
 </mjml>

@@ -3,11 +3,43 @@
 namespace Tests\Unit\Mail;
 
 use App\Mail\Digest\UnifiedDigest;
+use App\Services\EmailSpoolerService;
 use App\Services\UnifiedDigestService;
+use Illuminate\Mail\Mailable;
+use Tests\Support\IsolatedSpoolDirectory;
 use Tests\TestCase;
 
 class UnifiedDigestTest extends TestCase
 {
+    use IsolatedSpoolDirectory;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->setUpIsolatedSpoolDirectory();
+    }
+
+    protected function tearDown(): void
+    {
+        $this->tearDownIsolatedSpoolDirectory();
+        parent::tearDown();
+    }
+
+    /**
+     * Spool the mailable and return the decoded spool file data.
+     *
+     * @return array{from: array, reply_to: array, headers: array, html: string, ...}
+     */
+    private function spoolAndLoad(Mailable $mailable, string $recipient): array
+    {
+        $id = $this->spooler->spool($mailable, $recipient);
+        $path = $this->testSpoolDir . '/pending/' . $id . '.json';
+        $data = json_decode(file_get_contents($path), true);
+
+        return $data ?? [];
+    }
+
+
     public function test_can_be_constructed(): void
     {
         $user = $this->createTestUser();
