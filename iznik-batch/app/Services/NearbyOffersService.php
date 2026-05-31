@@ -121,7 +121,18 @@ class NearbyOffersService
             ]);
 
             if ($response->successful()) {
-                return array_column($response->json('results', []), 'id');
+                // A 2xx with a missing/non-array "results" is a malformed response,
+                // not a legitimate "no results". Treat it as unavailable (null) so the
+                // caller falls back to the MySQL bounding-box query rather than
+                // silently proceeding with an empty id list.
+                $results = $response->json('results');
+                if (!is_array($results)) {
+                    Log::warning('NearbyOffersService spatial server returned malformed response, falling back to MySQL');
+
+                    return null;
+                }
+
+                return array_column($results, 'id');
             }
         } catch (\Throwable $e) {
             Log::warning('NearbyOffersService spatial server unavailable, falling back to MySQL', [
