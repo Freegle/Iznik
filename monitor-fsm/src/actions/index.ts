@@ -309,6 +309,7 @@ STILL_BROKEN_RE = re.compile(
     r'(?:still (?:broken|not working|happening|there|occurring|stuck|the same|an issue|a problem|doing)'
     r'|spoke too soon|came back|back again|is back|happening again|not fixed|doesn.?t work'
     r'|did(?:n.?t| not) (?:work|fix)|same (?:problem|issue|thing|error)|no (?:change|difference)'
+    r'|(?:never|hasn.?t|has not|not) worked'
     r'|worse|reappear|reoccur|again today|once more)',
     re.IGNORECASE
 )
