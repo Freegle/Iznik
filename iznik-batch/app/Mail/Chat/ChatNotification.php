@@ -716,7 +716,9 @@ class ChatNotification extends MjmlMailable
             'userPageUrl' => $userPageUrl,
             'userName' => $userName,
             'date' => $message->date,
-            'formattedDate' => $message->date?->format('M j, g:i a') ?? '',
+            // Dates are stored in UTC; chat notifications go to UK users, so render
+            // in UK local time (honours BST) rather than UTC. Matches UnifiedDigest.
+            'formattedDate' => $message->date?->setTimezone('Europe/London')->format('M j, g:i a') ?? '',
             'isFromRecipient' => $isFromRecipient,
             'replyExpected' => $message->replyexpected ?? FALSE,
             'refMessage' => $refMessageInfo,
