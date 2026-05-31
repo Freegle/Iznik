@@ -67,7 +67,10 @@ create_lv() {
 # kernel never serves stale cached data for a duplicate UUID (validated: without
 # nouuid, switches read the previous day's data). Staging is a plain LV — normal.
 create_lv "$YLVM_ACTIVE" "$ACTIVE_VSIZE" "$YLVM_ACTIVE_MNT" "defaults,nofail,nouuid"
-create_lv "$YLVM_STAGE"  "$STAGE_VSIZE"  "$YLVM_STAGE_MNT"  "defaults,nofail"
+# Staging is wiped and re-extracted every refresh. Mount with `discard` so freed
+# blocks are returned to the thin pool (online TRIM) — otherwise stage's pool
+# footprint accumulates across days and eventually exhausts the pool.
+create_lv "$YLVM_STAGE"  "$STAGE_VSIZE"  "$YLVM_STAGE_MNT"  "defaults,nofail,discard"
 
 echo
 ylvm_log "✅ LVM thin pool ready."

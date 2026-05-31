@@ -52,6 +52,10 @@ ylvm_prepare_to_stage() {
     mountpoint -q "$YLVM_STAGE_MNT" || ylvm_die "Staging $YLVM_STAGE_MNT not mounted (run setup-lvm-thin.sh)"
     ylvm_log "Clearing staging $YLVM_STAGE_MNT ..."
     rm -rf "${YLVM_STAGE_MNT:?}"/* "${YLVM_STAGE_MNT}"/.[!.]* 2>/dev/null || true
+    # Return the just-freed blocks to the thin pool. Belt-and-braces alongside the
+    # `discard` mount option — without this, staging's pool footprint accumulates
+    # across refreshes (rm on a thin volume doesn't free pool blocks by itself).
+    fstrim "$YLVM_STAGE_MNT" 2>/dev/null || true
 
     ylvm_log "Streaming + extracting to staging ..."
     gsutil cat "$backup_file" | xbstream -x -C "$YLVM_STAGE_MNT"

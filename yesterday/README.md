@@ -55,9 +55,14 @@ days take **~1 minute** instead, while keeping disk use small.
 | `switch-backup.sh <YYYYMMDD>` | any time | Fast switch to a snapshotted day (~1 min). `--list` shows available days. |
 | `lib-yesterday-lvm.sh` | — | Shared helpers (sourced by the above). |
 
-**Sizing:** the dedicated pool disk must hold `active` (~120 GB) + `stage`
-(~120 GB, transient during a refresh) + daily snapshot deltas. A **400 GB** disk
-gives comfortable headroom (~70% peak) and lets the prime run in the background.
+**Sizing:** the dedicated pool disk must hold `active` (~140 GB) + `stage`
+(~140 GB) + daily snapshot deltas. In practice the *prepared* datadir is ~140 GB
+and each day's snapshot delta is ~10–20 GB (xtrabackup rewrites page LSNs, so it
+exceeds pure logical churn). Budget **~600 GB** for 7 days with comfortable
+headroom. **Staging must be mounted with `discard`** (setup does this) so its
+freed blocks return to the pool each refresh — otherwise it accumulates and
+exhausts the pool. The pool disk can be grown live if needed:
+`gcloud compute disks resize … && pvresize /dev/sdb && lvextend -l +100%FREE yesterday_vg/thinpool`.
 
 **Deploy runbook:**
 ```bash
