@@ -15,6 +15,18 @@ class AlertServiceTest extends TestCase
     {
         parent::setUp();
         $this->service = new AlertService;
+
+        // Intercept all outgoing mail so Mail::assertSent*/assertNothingSent work
+        // and no real SMTP connection is attempted. Without this, those assertions
+        // throw "method does not exist" because the Mail facade is the real manager.
+        Mail::fake();
+
+        // processAlerts() acts on ALL incomplete alerts in the DB. The alerts /
+        // alerts_tracking tables are not rolled back by DatabaseTransactions in
+        // this suite, so rows from other tests would inflate the per-test counts.
+        // Start each test from a known-empty state.
+        DB::table('alerts_tracking')->delete();
+        DB::table('alerts')->delete();
     }
 
     // ===================================================================
@@ -235,12 +247,14 @@ class AlertServiceTest extends TestCase
 
         $this->insertAlert();
 
-        // Same mod in two groups — V1 parity: the dedup is per alertid+userid+emailid,
-        // so the mod gets TWO emails (one per group), which is the current behaviour.
+        // Same mod in two groups. V1 parity: the already-sent check is keyed on
+        // alertid + userid + emailid + type + to (no groupid — see iznik-server
+        // include/group/Alert.php:236), so a mod with one email address gets
+        // exactly ONE email per alert regardless of how many groups they
+        // moderate. Matches this test's name.
         $result = $this->service->processAlerts();
 
-        // One email per group × one mod = 2 total
-        $this->assertSame(2, $result);
+        $this->assertSame(1, $result);
     }
 
     public function test_processAlerts_sends_to_multiple_mods_in_same_group(): void
@@ -366,8 +380,10 @@ class AlertServiceTest extends TestCase
 
     public function test_processAlerts_skips_non_freegle_group(): void
     {
-        // createTestGroup() always creates TYPE_FREEGLE, so insert a non-Freegle directly.
-        $nonFreegleGroupId = DB::table('groups')->insertGetId([
+        // createTestGroup() always creates TYPE_FREEGLE, so make a non-Freegle
+        // group via the Group model (not a raw DB insert) so its creating hook
+        // populates the NOT-NULL polyindex geometry from lat/lng.
+        $nonFreegleGroupId = \App\Models\Group::create([
             'nameshort' => 'NotFreegle_' . uniqid('', true),
             'namefull' => 'Not a Freegle group',
             'type' => 'Yahoo',
@@ -375,7 +391,7 @@ class AlertServiceTest extends TestCase
             'lat' => 51.5,
             'lng' => -0.1,
             'onhere' => 1,
-        ]);
+        ])->id;
 
         $mod = $this->createTestUser();
         DB::table('memberships')->insert([
