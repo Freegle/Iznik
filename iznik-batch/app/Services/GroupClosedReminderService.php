@@ -47,9 +47,9 @@ class GroupClosedReminderService
 
             if (!$dryRun) {
                 foreach ($modEmails as $modEmail) {
-                    Mail::send(new ClosedGroupReminderMail($modEmail, $group->nameshort));
+                    app(\App\Services\EmailSpoolerService::class)->spool(new ClosedGroupReminderMail($modEmail, $group->nameshort));
                 }
-                Mail::send(new ClosedGroupReminderMail($mentorsAddr, $group->nameshort));
+                app(\App\Services\EmailSpoolerService::class)->spool(new ClosedGroupReminderMail($mentorsAddr, $group->nameshort));
             }
 
             $sent++;

@@ -72,7 +72,7 @@ class AlertNoMessagesCommand extends Command
 
                 $mentorsAddr = config('freegle.mail.mentors_addr', 'mentors@ilovefreegle.org');
 
-                Mail::send(new AlertNoMessagesMail($mentorsAddr, $count, $body));
+                app(\App\Services\EmailSpoolerService::class)->spool(new AlertNoMessagesMail($mentorsAddr, $count, $body));
             }
 
             return Command::SUCCESS;

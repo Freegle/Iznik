@@ -5,7 +5,6 @@ namespace App\Console\Commands\Mail;
 use App\Console\Concerns\PreventsOverlapping;
 use App\Mail\Admin\ModNotifMail;
 use App\Services\ModNotifService;
-use App\Support\SafeMail;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
@@ -79,11 +78,24 @@ class SendModNotifsCommand extends Command
                     $notif['text_summary']
                 );
 
-                // SafeMail catches permanent address-rejection failures (non-ASCII
-                // local-part, 5xx etc), marks the recipient as bouncing via
-                // BounceService, and returns false so the loop continues with the
-                // next mod instead of crashing the whole job.
-                $delivered = SafeMail::send($mail, $notif['email'], $notif['name']);
+                // spool() returns the spool id on success and '' when the
+                // address is a permanent failure (it records the bounce
+                // internally and skips), so $delivered stays falsy in that
+                // case — matching the old SafeMail::send() contract that
+                // returned false and skipped recordSent. Anything spool()
+                // re-throws (transient SMTP / MJML render error) is caught
+                // here so one bad mod doesn't abort the whole notifications
+                // run — the resilience SafeMail::send() used to provide.
+                try {
+                    $delivered = app(\App\Services\EmailSpoolerService::class)->spool($mail, $notif['email']);
+                } catch (\Throwable $e) {
+                    Log::warning('Skipping mod notification after spool failure; continuing loop', [
+                        'user_id' => $notif['user_id'],
+                        'email' => $notif['email'],
+                        'error' => $e->getMessage(),
+                    ]);
+                    $delivered = '';
+                }
 
                 if ($delivered) {
                     $service->recordSent($notif['user_id'], $notif['text_summary']);

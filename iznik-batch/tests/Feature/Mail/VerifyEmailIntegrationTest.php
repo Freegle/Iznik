@@ -72,6 +72,11 @@ class VerifyEmailIntegrationTest extends TestCase
         $this->assertNotNull($task->processed_at, 'Task should be marked as processed');
         $this->assertNull($task->failed_at, 'Task should not have failed');
 
+        // The handler writes the mailable to the spool; flush it so the SMTP
+        // send actually fires for Mailpit to observe. In production the spool
+        // processor runs as a separate supervisor process.
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
         // Find the email in Mailpit.
         $message = $this->mailpit->assertMessageSentTo($newEmail, 20);
 

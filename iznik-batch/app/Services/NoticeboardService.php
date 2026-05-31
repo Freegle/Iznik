@@ -72,7 +72,7 @@ class NoticeboardService
             }
 
             try {
-                Mail::send(new NoticeboardThankMail(
+                app(\App\Services\EmailSpoolerService::class)->spool(new NoticeboardThankMail(
                     recipientEmail: $email,
                     recipientName: $name,
                 ));
