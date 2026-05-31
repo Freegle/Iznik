@@ -243,9 +243,20 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             ->unique('name')
             ->values();
 
+        // Immediate-mode template uses $post (singular), $isOffer, and $accentColor
+        // directly — pass them here so the template doesn't see undefined variables.
+        $immediatePost = $this->mode === UnifiedDigestService::MODE_IMMEDIATE
+            ? $this->preparedPosts->first()
+            : null;
+        $immediateIsOffer = $immediatePost ? ($immediatePost['type'] === 'Offer') : false;
+        $immediateAccentColor = $immediateIsOffer ? '#3c763d' : '#4895DD';
+
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
             'posts' => $this->preparedPosts,
+            'post' => $immediatePost,
+            'isOffer' => $immediateIsOffer,
+            'accentColor' => $immediateAccentColor,
             'postCount' => $this->posts->count(),
             'mode' => $this->mode,
             'sponsors' => $this->sponsors,
