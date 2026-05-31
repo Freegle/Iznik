@@ -4391,3 +4391,78 @@ func TestModeratorUnreadCountClearedByMarkAllRead(t *testing.T) {
 	assert.Equal(t, int64(0), countAfter,
 		"after markAllRead, unread count must be 0 (got %d: handleAllSeen skips chats with no roster entry)", countAfter)
 }
+
+// TestReviewQueueIncludesMessagesFromDeletedSenders verifies that the V2 review
+// queue returns chat messages whose sender account has been deleted.
+//
+// V1 (getMessagesForReview in ChatRoom.php) does not join the users table in its
+// review query, so it returns review-required messages regardless of whether the
+// sender account is deleted.
+//
+// V2 (getReviewQueue in chatmessage.go) uses
+//   INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL
+// which silently drops every review-required message whose sender has been
+// deleted.  Mods then see the notification badge in Old ModTools but an empty
+// queue in New ModTools — exactly the symptom reported in topic 9656 post 36.
+//
+// AssertFlip Step 2 (inverted — FAILS on current buggy code):
+// message IS expected in the review queue even after the sender is deleted.
+func TestReviewQueueIncludesMessagesFromDeletedSenders(t *testing.T) {
+	prefix := uniquePrefix("ReviewDeletedSender")
+	db := database.DBConn
+
+	// Mod moderates group G.
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Recipient is a member of group G (this is what makes the message visible
+	// to the mod — the mod reviews chats involving their group members).
+	recipientID := CreateTestUser(t, prefix+"_recip", "User")
+	CreateTestMembership(t, recipientID, groupID, "Member")
+
+	// Sender is not in the mod's group and will be deleted after sending.
+	senderID := CreateTestUser(t, prefix+"_sender", "User")
+
+	// User2User chat: sender (user1) → recipient (user2).
+	chatID := CreateTestChatRoom(t, senderID, &recipientID, nil, "User2User")
+
+	// Message from sender with reviewrequired=1 (flagged for moderation review).
+	var msgID uint64
+	db.Exec(
+		"INSERT INTO chat_messages (chatid, userid, message, date, processingsuccessful, reviewrequired, reviewrejected) "+
+			"VALUES (?, ?, 'Buy cheap watches www.spam.example', NOW(), 1, 1, 0)",
+		chatID, senderID)
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgID)
+	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatID)
+
+	// Sender account is deleted (e.g. spam report → account purge) AFTER the
+	// message was flagged but BEFORE the mod reviews it.
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", senderID)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/chatmessages?limit=100&jwt=%s", token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	msgs := result["chatmessages"].([]interface{})
+
+	// AssertFlip Step 2 (inverted — FAILS on current buggy code):
+	// The message MUST appear in the review queue even though its sender is deleted.
+	// V2 currently drops it due to INNER JOIN users AND users.deleted IS NULL.
+	found := false
+	for _, m := range msgs {
+		msg := m.(map[string]interface{})
+		chatroom := msg["chatroom"].(map[string]interface{})
+		if chatroom["id"] == float64(chatID) {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found,
+		"review queue must include message %d (chat %d) even when sender %d is deleted; "+
+			"V2 drops it via INNER JOIN users AND deleted IS NULL but V1 does not",
+		msgID, chatID, senderID)
+}
