@@ -252,4 +252,69 @@ class BirthdayCommandTest extends TestCase
             return str_ends_with($mail->fromEmail, '-volunteers@' . config('freegle.mail.group_domain'));
         });
     }
+
+    public function test_renders_with_no_volunteers(): void
+    {
+        // Regression: the template's @else branch indexed
+        // $volunteers[count($volunteers) - 1] — i.e. $volunteers[-1] — on an
+        // empty list, throwing "Undefined array key -1". Mail::fake() never
+        // built the view so it stayed hidden; render it for real here. The
+        // empty case should render no volunteers sentence at all.
+        $mail = new BirthdayMail(
+            groupName: 'Test Group',
+            groupNameShort: 'testgroup',
+            groupAge: 5,
+            groupId: 1,
+            recipientEmail: 'member@example.com',
+            fromEmail: 'group@example.com',
+            fromName: 'Test Group Volunteers',
+            volunteers: [],
+        );
+
+        $html = $mail->render();
+
+        $this->assertStringNotContainsString('Your local volunteer', $html);
+        $this->assertStringContainsString('Happy Birthday to Test Group', $html);
+    }
+
+    public function test_renders_with_three_volunteers(): void
+    {
+        // The >=3 branch must still produce the Oxford-comma list.
+        $mail = new BirthdayMail(
+            groupName: 'Test Group',
+            groupNameShort: 'testgroup',
+            groupAge: 5,
+            groupId: 1,
+            recipientEmail: 'member@example.com',
+            fromEmail: 'group@example.com',
+            fromName: 'Test Group Volunteers',
+            volunteers: [
+                ['firstname' => 'Ann'],
+                ['firstname' => 'Bob'],
+                ['firstname' => 'Cat'],
+            ],
+        );
+
+        $html = $mail->render();
+
+        $this->assertStringContainsString('Your local volunteers are Ann, Bob, and Cat.', $html);
+    }
+
+    public function test_renders_with_one_volunteer(): void
+    {
+        $mail = new BirthdayMail(
+            groupName: 'Test Group',
+            groupNameShort: 'testgroup',
+            groupAge: 5,
+            groupId: 1,
+            recipientEmail: 'member@example.com',
+            fromEmail: 'group@example.com',
+            fromName: 'Test Group Volunteers',
+            volunteers: [['firstname' => 'Ann']],
+        );
+
+        $html = $mail->render();
+
+        $this->assertStringContainsString('Your local volunteer is Ann.', $html);
+    }
 }

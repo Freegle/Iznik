@@ -3,12 +3,12 @@
 namespace App\Services;
 
 use App\Mail\Volunteering\VolunteeringDigestMail;
-use App\Support\SafeMail;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
 class VolunteeringDigestService
@@ -189,17 +189,30 @@ class VolunteeringDigestService
 
                 if (!$dryRun) {
                     $unsubscribeUrl = "{$userSite}/unsubscribe?email=" . urlencode($email);
-                    SafeMail::sendMailable(
-                        new VolunteeringDigestMail(
+                    // spool() builds the message (incl. MJML render) up front and
+                    // only swallows permanent address failures internally; a
+                    // transient render/build error re-throws. Without this catch
+                    // it would escape the per-member foreach and abort the whole
+                    // digest run — the resilience SafeMail::sendMailable used to
+                    // provide. Skip the one recipient and keep the loop going.
+                    try {
+                        app(\App\Services\EmailSpoolerService::class)->spool(new VolunteeringDigestMail(
                             recipientEmail: $email,
                             groupName: $groupRow->nameshort,
                             volunteerings: $volData,
                             unsubscribeUrl: $unsubscribeUrl,
                             jobAds: $jobAds,
                             userId: $member->userId,
-                        ),
-                        $email,
-                    );
+                        ), $email);
+                    } catch (\Throwable $e) {
+                        Log::warning('Skipping volunteering digest for member after spool failure; continuing loop', [
+                            'email' => $email,
+                            'user_id' => $member->userId,
+                            'group' => $groupRow->nameshort,
+                            'error' => $e->getMessage(),
+                        ]);
+                        continue;
+                    }
                 }
                 $sent++;
             }

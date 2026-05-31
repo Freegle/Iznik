@@ -441,7 +441,7 @@ class SendAdminCommand extends Command
                 if ($useSpool) {
                     $spooler->spool($mailable, $email, self::EMAIL_TYPE);
                 } else {
-                    Mail::send($mailable);
+                    app(\App\Services\EmailSpoolerService::class)->spool($mailable);
                 }
 
                 // Record in admins_users for dedup (covers both suggested and regular admins).

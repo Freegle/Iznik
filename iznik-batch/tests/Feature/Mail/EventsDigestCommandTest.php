@@ -5,6 +5,7 @@ namespace Tests\Feature\Mail;
 use App\Mail\Event\EventsDigestMail;
 use App\Models\Group;
 use App\Models\Membership;
+use App\Services\EmailSpoolerService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Tests\TestCase;
@@ -115,6 +116,47 @@ class EventsDigestCommandTest extends TestCase
             ->assertExitCode(0);
 
         Mail::assertSentCount(2);
+    }
+
+    public function test_spool_failure_for_one_member_does_not_abort_digest(): void
+    {
+        // The spooler throws on the first recipient (e.g. a transient MJML
+        // render error, which spool() re-throws because it isn't a permanent
+        // address failure). The per-member loop must skip that recipient and
+        // keep going — not let the exception escape and abort the whole run.
+        $group = $this->createTestGroup();
+        $this->createEvent($group->id);
+
+        $member1 = $this->createTestUser();
+        $this->createMembership($member1, $group, [
+            'eventsallowed' => 1,
+            'emailfrequency' => 24,
+        ]);
+
+        $member2 = $this->createTestUser();
+        $this->createMembership($member2, $group, [
+            'eventsallowed' => 1,
+            'emailfrequency' => 24,
+        ]);
+
+        $calls = 0;
+        $spooler = \Mockery::mock(EmailSpoolerService::class);
+        $spooler->shouldReceive('spool')->andReturnUsing(function () use (&$calls) {
+            $calls++;
+            if ($calls === 1) {
+                throw new \RuntimeException('simulated transient MJML render failure');
+            }
+            return 'spooled-id';
+        });
+        $this->app->instance(EmailSpoolerService::class, $spooler);
+
+        // Exits cleanly and reports one successful send (the failed member is
+        // skipped, not counted). Without the try/catch this would throw.
+        $this->artisan('mail:events-digest')
+            ->expectsOutputToContain('Sent 1 email(s)')
+            ->assertExitCode(0);
+
+        $this->assertSame(2, $calls, 'Both members should have been attempted');
     }
 
     public function test_skips_members_with_events_disabled(): void

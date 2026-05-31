@@ -11,7 +11,6 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
-use App\Support\SafeMail;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -112,7 +111,7 @@ class UnifiedDigestService
      * strictly safer for the rare collision case at no extra cost.
      *
      * @param int|null $groupLimit Cap groups processed per run (manual sanity)
-     * @param bool $dryRun Skip Mail::send and cursor advance
+     * @param bool $dryRun Skip the spool write and cursor advance
      * @param int|null $groupId Restrict to a single group (manual testing)
      * @param int|null $userId Restrict recipients to one user (manual testing)
      * @param int $shard Shard index (0..shards-1) for parallel workers
@@ -282,19 +281,36 @@ class UnifiedDigestService
                     $deduped = collect([
                         ['message' => $message, 'postedToGroups' => [$groupid]],
                     ]);
-                    // SafeMail catches permanent address-rejection failures
-                    // (non-ASCII local-part, 550 etc) and marks the recipient
-                    // as bouncing instead of throwing. Critical for this loop:
-                    // a single bad address used to escape the foreach, which
-                    // meant the cursor never advanced and the NEXT cron tick
-                    // re-sent the whole batch to every recipient AGAIN —
-                    // observed Penny Langley getting 27 copies of the same
-                    // post in 13 min before catch. Transient SMTP hiccups
-                    // also get logged + skipped rather than killing the loop.
-                    SafeMail::sendMailable(
-                        new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
-                        $user->email_preferred
-                    );
+                    // Spool through EmailSpoolerService so transient SMTP
+                    // failures get retried by the processor rather than
+                    // dropping a recipient. Permanent address-rejection
+                    // failures (non-ASCII local-part, 550 etc) are classified
+                    // + recorded as bounces inside spool() and return ''.
+                    //
+                    // spool() builds the message (incl. MJML render) up front
+                    // and re-throws anything that ISN'T a permanent address
+                    // failure (transient render/build error). That exception
+                    // must not escape this foreach: if it did, $lastProcessed
+                    // would not advance past this message, the group cursor
+                    // would stall, and the NEXT cron tick would re-send the
+                    // whole batch — exactly the bug that gave Penny Langley 27
+                    // copies of the same post in 13 min. Catch it, skip the one
+                    // recipient, and let the message still count as processed.
+                    try {
+                        app(\App\Services\EmailSpoolerService::class)->spool(
+                            new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
+                            $user->email_preferred,
+                            emailType: 'digest_immediate',
+                        );
+                    } catch (\Throwable $e) {
+                        Log::warning('Skipping immediate digest recipient after spool failure; continuing loop', [
+                            'user_id' => $uid,
+                            'email' => $user->email_preferred,
+                            'group' => $groupid,
+                            'msgid' => (int) $message->mg_msgid,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
                 }
                 $emailsSent++;
                 $touched[$uid] = true;
@@ -583,7 +599,10 @@ class UnifiedDigestService
             $sent = 0;
             foreach ($deduplicatedPosts as $deduped) {
                 if (!$dryRun) {
-                    Mail::send(new UnifiedDigest($user, collect([$deduped]), $mode, $sponsors));
+                    app(\App\Services\EmailSpoolerService::class)->spool(
+                        new UnifiedDigest($user, collect([$deduped]), $mode, $sponsors),
+                        emailType: 'digest_immediate',
+                    );
                     $this->advanceImmediateTracker($digestTracker, $deduped['message']);
                 }
                 $sent++;
@@ -603,7 +622,10 @@ class UnifiedDigestService
 
         // Daily mode: one rolled-up digest covers everything.
         if (!$dryRun) {
-            Mail::send(new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors));
+            app(\App\Services\EmailSpoolerService::class)->spool(
+                new UnifiedDigest($user, $deduplicatedPosts, $mode, $sponsors),
+                emailType: 'digest_daily',
+            );
             $this->updateDigestTracker($digestTracker, $posts);
         }
 
@@ -924,7 +946,11 @@ class UnifiedDigestService
             ]);
 
             if (!$dryRun) {
-                Mail::send(new UnifiedDigest($user, $wrappedPosts, self::MODE_GROUP));
+                app(\App\Services\EmailSpoolerService::class)->spool(
+                    new UnifiedDigest($user, $wrappedPosts, self::MODE_GROUP),
+                    $user->email_preferred,
+                    emailType: 'digest_group',
+                );
             }
 
             $stats['emails_sent']++;

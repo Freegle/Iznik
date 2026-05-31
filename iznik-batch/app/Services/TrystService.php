@@ -195,7 +195,7 @@ class TrystService
         $title = 'Handover: ' . $recipient->display_name . ' and ' . $other->display_name;
 
         try {
-            Mail::send(new TrystCalendarInviteMail(
+            app(\App\Services\EmailSpoolerService::class)->spool(new TrystCalendarInviteMail(
                 title: $title,
                 calendarLink: $calendarLink,
                 recipientUserId: $recipient->id,

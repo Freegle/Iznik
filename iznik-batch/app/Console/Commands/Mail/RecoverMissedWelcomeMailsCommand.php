@@ -176,7 +176,7 @@ class RecoverMissedWelcomeMailsCommand extends Command
                     $spooler->spool($mailable, $email->email, 'welcome');
                     $this->info('  -> Spooled welcome mail');
                 } else {
-                    Mail::to($email->email)->send($mailable);
+                    app(\App\Services\EmailSpoolerService::class)->spool($mailable, $email->email);
                     $this->info('  -> Sent welcome mail');
                 }
 
