@@ -38,6 +38,17 @@ class UnifiedDigestService
     public const MODE_GROUP = 'group';
 
     /**
+     * Give up retrying a failed immediate-digest send after this many attempts.
+     */
+    public const RETRY_MAX_ATTEMPTS = 6;
+
+    /**
+     * Cached existence check for the digest_retries table, so enqueueing a
+     * retry during a mass failure doesn't run SHOW TABLES per recipient.
+     */
+    private ?bool $retryTableExists = null;
+
+    /**
      * Send unified digests to users who want them.
      *
      * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
@@ -310,6 +321,14 @@ class UnifiedDigestService
                             'msgid' => (int) $message->mg_msgid,
                             'error' => $e->getMessage(),
                         ]);
+
+                        // Queue this recipient for retry. The cursor still
+                        // advances past this message (above), so we don't
+                        // re-send to recipients who succeeded; the retry queue
+                        // is per-recipient and catches up only the ones that
+                        // failed — closing the silent-drop gap that lost ~1,100
+                        // immediate digests during a deploy-window template error.
+                        $this->enqueueImmediateRetry($uid, (int) $message->mg_msgid, $groupid, $e->getMessage());
                     }
                 }
                 $emailsSent++;
@@ -420,6 +439,114 @@ class UnifiedDigestService
             ->orderBy('messages_groups.msgid', 'asc')
             ->with(['attachments', 'fromUser', 'groups'])
             ->get();
+    }
+
+    /**
+     * Queue a failed immediate-digest send for later retry.
+     *
+     * Guarded so a missing digest_retries table (e.g. before the migration has
+     * been deployed) can never break the live send loop. Repeated failures for
+     * the same recipient+message upsert (bumping attempts) rather than
+     * duplicating, and back off exponentially, capped at 60 minutes.
+     */
+    protected function enqueueImmediateRetry(int $userid, int $msgid, int $groupid, string $error): void
+    {
+        try {
+            if ($this->retryTableExists === null) {
+                $this->retryTableExists = \Illuminate\Support\Facades\Schema::hasTable('digest_retries');
+            }
+            if (! $this->retryTableExists) {
+                return;
+            }
+
+            $existing = DB::table('digest_retries')
+                ->where(['userid' => $userid, 'msgid' => $msgid, 'emailtype' => 'digest_immediate'])
+                ->first();
+
+            $attempts = (int) ($existing->attempts ?? 0) + 1;
+            $delayMinutes = min(60, 2 ** $attempts);
+
+            DB::table('digest_retries')->updateOrInsert(
+                ['userid' => $userid, 'msgid' => $msgid, 'emailtype' => 'digest_immediate'],
+                [
+                    'groupid' => $groupid,
+                    'attempts' => $attempts,
+                    'lasterror' => mb_substr($error, 0, 255),
+                    'nextattempt' => now()->addMinutes($delayMinutes),
+                    'created' => $existing->created ?? now(),
+                ]
+            );
+        } catch (\Throwable $e) {
+            // Never let retry bookkeeping break the send loop.
+            Log::warning('Could not enqueue immediate digest retry', [
+                'userid' => $userid,
+                'msgid' => $msgid,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Re-attempt a single immediate-digest send for one recipient + message.
+     *
+     * Used by the mail:digest:retry command to drain the digest_retries queue.
+     * Reuses the exact send path of processGroupImmediate() (same message query,
+     * same UnifiedDigest build, same spooler), and re-applies the eligibility
+     * filters so we never resend a post that has since been taken/withdrawn.
+     *
+     * @return string One of: 'sent', 'gone' (message/user no longer eligible),
+     *                'own' (recipient is the poster), 'noemail'. Throws on a
+     *                build/render/spool failure so the caller can re-queue.
+     */
+    public function resendImmediateForUser(int $userid, int $msgid, int $groupid, bool $dryRun = false): string
+    {
+        $message = Message::select(
+                'messages.*',
+                'messages_groups.groupid as mg_groupid',
+                'messages_groups.arrival as mg_arrival',
+                'messages_groups.msgid as mg_msgid'
+            )
+            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
+            ->where('messages_groups.groupid', $groupid)
+            ->where('messages_groups.msgid', $msgid)
+            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
+            ->where('messages_groups.deleted', 0)
+            ->whereNull('messages.deleted')
+            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
+            ->with(['attachments', 'fromUser', 'groups'])
+            ->first();
+
+        if (! $message) {
+            return 'gone';
+        }
+
+        $user = User::with(['emails', 'memberships'])->find($userid);
+        if (! $user) {
+            return 'gone';
+        }
+        if (! $user->email_preferred) {
+            return 'noemail';
+        }
+        if ((int) $message->fromuser === $userid) {
+            return 'own';
+        }
+
+        if ($dryRun) {
+            return 'sent';
+        }
+
+        $sponsors = $this->getSponsorsForUser($user);
+        $deduped = collect([
+            ['message' => $message, 'postedToGroups' => [$groupid]],
+        ]);
+
+        app(\App\Services\EmailSpoolerService::class)->spool(
+            new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsors),
+            $user->email_preferred,
+            emailType: 'digest_immediate',
+        );
+
+        return 'sent';
     }
 
     /**
