@@ -1031,15 +1031,22 @@ print(json.dumps(out))
       // PRs for the SAME bug (same topic/post in their branch name). PRs for
       // other bugs — opened earlier in the same iteration — are left alone.
       const bugSuffix = expectedBugBranch.match(/(\d+-\d+)$/)?.[1] ?? ''
-      const extras = prs.filter(pr => {
-        if (pr.number === expectedPrNumber) return false
-        if (new Date(pr.createdAt) < cutoff) return false
-        if (pr.author?.login !== 'edwh') return false
-        // If we have a bug suffix, only close PRs whose branch shares it
-        // (i.e. duplicate PRs for the same bug). Leave other bugs' PRs alone.
-        if (bugSuffix && !pr.headRefName.includes(bugSuffix)) return false
-        return true
-      })
+      // CONSERVATIVE GUARD (PR #577 incident, 2026-05-30): if we cannot extract
+      // a bug suffix (e.g. a coverage iteration where the expected branch is
+      // `chore/coverage-foo`), we have no reliable way to tell which other PRs
+      // are duplicates — so sweep NOTHING. Without this, an empty suffix made
+      // the per-PR filter fall through and close every recent edwh-authored PR,
+      // including unrelated manual ones.
+      const extras = bugSuffix
+        ? prs.filter(pr => {
+            if (pr.number === expectedPrNumber) return false
+            if (new Date(pr.createdAt) < cutoff) return false
+            if (pr.author?.login !== 'edwh') return false
+            // Only close PRs whose branch shares this bug suffix.
+            if (!pr.headRefName.includes(bugSuffix)) return false
+            return true
+          })
+        : []
       const closed: number[] = []
       for (const pr of extras) {
         const closeRes = await sh('gh', ['pr', 'close', String(pr.number), '--repo', 'Freegle/Iznik', '--comment', 'Closed: duplicate PR for same bug — FSM enforces one PR per bug fix'])
