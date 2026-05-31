@@ -184,16 +184,29 @@ func AddDonation(c *fiber.Ctx) error {
 		}
 	}
 
-	// Look up the target user's name and preferred email.
-	var fullname *string
+	// Look up the target user's name and preferred email. A NULL `fullname` is
+	// common for perfectly valid donors (they may have only firstname/lastname),
+	// so it must NOT be treated as a missing user. Check existence via the id and
+	// derive the display name with the standard fullname -> firstname+lastname
+	// fallback. Previously a NULL fullname returned 400 "Invalid userid", which
+	// blocked gift-aid uploads for such donors.
 	var preferredEmail string
 
-	db.Raw("SELECT fullname FROM users WHERE id = ?", req.UserID).Scan(&fullname)
-	if fullname == nil {
+	var donor struct {
+		ID   uint64
+		Name string
+	}
+	db.Raw(`SELECT id,
+		COALESCE(NULLIF(fullname, ''),
+		         NULLIF(TRIM(CONCAT(COALESCE(firstname, ''), ' ', COALESCE(lastname, ''))), ''),
+		         '') AS name
+		FROM users WHERE id = ?`, req.UserID).Scan(&donor)
+
+	if donor.ID == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid userid")
 	}
 
-	name := *fullname
+	name := donor.Name
 
 	// Get preferred email: external email first, then any email.
 	db.Raw(`SELECT email FROM users_emails

@@ -76,3 +76,6 @@ freegle-mobile/
 # Local Claude session log (not committed — updates here don't make PRs go BEHIND)
 .claude-session.md
 monitor.db
+
+# freegle switch: runtime state for the worktree-escape guard
+.claude/active-worktree

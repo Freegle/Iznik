@@ -5,6 +5,7 @@ import {
   attribution,
   calculateMapHeight,
   osmtile,
+  loadLeaflet,
 } from '~/composables/useMap'
 
 // ============================================================
@@ -281,5 +282,30 @@ describe('calculateMapHeight', () => {
       // fraction=1.5: 600/1.5 - 70 = 400 - 70 = 330
       expect(calculateMapHeight(1.5)).toBeCloseTo(330, 5)
     })
+  })
+})
+
+// loadLeaflet — async; only test the server-side (process.client=false) path
+//               to avoid pulling in real dynamic imports in vitest
+// ---------------------------------------------------------------------------
+describe('loadLeaflet', () => {
+  const originalClientFlag = process.client
+
+  afterEach(() => {
+    process.client = originalClientFlag
+  })
+
+  it('does nothing and resolves when process.client is false', async () => {
+    process.client = false
+    // Should resolve without throwing
+    await expect(loadLeaflet()).resolves.toBeUndefined()
+  })
+
+  it('does nothing when process.client is false even if window.L exists', async () => {
+    process.client = false
+    // Ensure window.L presence doesn't cause issues in SSR path
+    global.L = {}
+    await expect(loadLeaflet()).resolves.toBeUndefined()
+    delete global.L
   })
 })

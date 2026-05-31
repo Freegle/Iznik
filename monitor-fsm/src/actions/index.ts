@@ -217,9 +217,6 @@ export function selectExtraPrsToClose(
   expectedBugBranch: string,
 ): Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } | null }> {
   const bugSuffix = expectedBugBranch.match(/(\d+-\d+)$/)?.[1] ?? ''
-  // Conservative: if we can't identify the bug (e.g. coverage iteration
-  // where the expected branch is `chore/coverage-foo`), don't sweep anything.
-  // The expected PR survives by being the expected one; everything else stays.
   if (!bugSuffix) return []
 
   const cutoff = new Date(iterationStartTs)
@@ -227,7 +224,6 @@ export function selectExtraPrsToClose(
     if (pr.number === expectedPrNumber) return false
     if (new Date(pr.createdAt) < cutoff) return false
     if (pr.author?.login !== 'edwh') return false
-    // Only sweep PRs whose branch carries the same bug suffix.
     if (!pr.headRefName.includes(bugSuffix)) return false
     return true
   })
@@ -300,7 +296,21 @@ headers = {'User-Api-Key': api_key, 'Api-Username': 'Edward_Hibbert'}
 CONFIRM_RE = re.compile(
     r'\\b(fixed|works? now|working now|confirmed?|thanks?|thankyou|all good|resolved?'
     r'|seems? (?:to be )?(?:fixed|working|ok|good)|unlimited now|no (?:longer|more)'
-    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?)\\b',
+    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?'
+    r'|fix worked|that worked|worked (?:a treat|fine|now|perfectly)|no problem)\\b',
+    re.IGNORECASE
+)
+
+# Negation guard (sweep 2026-05-31 rule #1): a reporter can say "thanks but it's
+# still broken" / "spoke too soon" / "back again" — CONFIRM_RE matches "thanks"
+# but the bug is NOT fixed. If a post matches STILL_BROKEN_RE, it must NOT be
+# treated as a fix confirmation, even if CONFIRM_RE also matches.
+STILL_BROKEN_RE = re.compile(
+    r'(?:still (?:broken|not working|happening|there|occurring|stuck|the same|an issue|a problem|doing)'
+    r'|spoke too soon|came back|back again|is back|happening again|not fixed|doesn.?t work'
+    r'|did(?:n.?t| not) (?:work|fix)|same (?:problem|issue|thing|error)|no (?:change|difference)'
+    r'|(?:never|hasn.?t|has not|not) worked'
+    r'|worse|reappear|reoccur|again today|once more)',
     re.IGNORECASE
 )
 
@@ -381,22 +391,36 @@ for bug in bugs:
     reporter = bug.get('reporter') or ''
 
     new_posts = get_posts_after(topic_id, orig_post)
+    # Sweep rule #1 (2026-05-31): if ANY non-Edward post in the thread reports the
+    # bug is still broken, do NOT confirm a fix — even if an earlier post said
+    # "thanks, fixed". (9655/4: post 4 "fix worked", post 5 "still omits pending".)
+    any_still_broken = False
     for post in new_posts:
-        username = post.get('username', '')
-        if username == 'Edward_Hibbert':
+        if post.get('username', '') == 'Edward_Hibbert':
             continue
-        text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
-        text = re.sub(r'\\s+', ' ', text).strip()
-        if CONFIRM_RE.search(text):
-            results.append({
-                'topic': topic_id,
-                'post': orig_post,
-                'reporter': reporter,
-                'confirmedBy': username,
-                'confirmPostNumber': post.get('post_number'),
-                'confirmText': text[:200],
-            })
+        t = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
+        t = re.sub(r'\\s+', ' ', t).strip()
+        if STILL_BROKEN_RE.search(t):
+            any_still_broken = True
             break
+
+    if not any_still_broken:
+        for post in new_posts:
+            username = post.get('username', '')
+            if username == 'Edward_Hibbert':
+                continue
+            text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
+            text = re.sub(r'\\s+', ' ', text).strip()
+            if CONFIRM_RE.search(text) and not STILL_BROKEN_RE.search(text):
+                results.append({
+                    'topic': topic_id,
+                    'post': orig_post,
+                    'reporter': reporter,
+                    'confirmedBy': username,
+                    'confirmPostNumber': post.get('post_number'),
+                    'confirmText': text[:200],
+                })
+                break
 
 # Pass B: Edward's posts (open/investigating/deferred)
 for bug in all_bugs:
@@ -1480,7 +1504,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       // (implementation) phase this is Haiku — cheap, fast, sufficient for
       // fixing CI or writing a coverage test. In off-peak (analysis) phase
       // this is Sonnet/session-default for heavy diagnosis.
-      const delegateModel = (params.model as string) ?? process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'sonnet'
+      const delegateModel = (params.model as string) ?? process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'claude-opus-4-8'
       startGroup(`· delegate_to_coder (model=${delegateModel})`)
       let toolCount = 0
       const result = await new Promise<{ stdout: string; stderr: string; textStream: string; code: number; killReason: KillReason; lastTool: string | null }>((resolve) => {
@@ -2327,10 +2351,12 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         WHERE state = 'open' AND pr_number IS NULL
       `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
 
-      // Bugs whose PRs have been rejected once need human review — escalate them.
-      // One rejection is enough: if the reviewer closed a PR, they've signalled the
-      // approach is wrong and the FSM shouldn't guess again without guidance.
-      const ESCALATION_THRESHOLD = 1
+      // Escalate to human only after a re-diagnosed SECOND attempt still failed.
+      // A single rejected PR usually means the first diagnosis was wrong, not that
+      // the bug is unfixable — the FSM should re-diagnose and retry (delegates now
+      // run on Opus 4.8). The 2026-05-31 sweep found ~7 genuinely-actionable bugs
+      // (9672, 9719, 9737, 9738, 9656/36) abandoned after a single rejection.
+      const ESCALATION_THRESHOLD = 2
       const toEscalate = dbOpenBugs.filter(b => (b.prRejections ?? 0) >= ESCALATION_THRESHOLD)
       for (const bug of toEscalate) {
         db.prepare(`

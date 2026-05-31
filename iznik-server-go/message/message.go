@@ -1266,29 +1266,55 @@ func Search(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "No search term")
 		}
 
-		// When searchmode=vector is explicitly requested and vector succeeds,
-		// respect the result (even if empty) instead of falling back to keyword.
-		// Silently switching match models makes repeat queries return different
-		// result sets — the non-determinism Dee reported (Discourse 9594).
+		// Hybrid search: vector + keyword run in parallel, merged so that exact
+		// lexical matches always appear even when the embedding model misses them
+		// (e.g. short titles, UK retail terms like "white goods").
 		if searchmode == "vector" && embedding.Global.Count() > 0 {
-			vectorResults, stats, err := VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
-				float32(nelat), float32(nelng), float32(swlat), float32(swlng))
-			fallbackTaken := err != nil
+			expandedWords := ExpandQuery(term)
 
-			logVectorSearch(term, groupids, msgtype, myid, searchmode, len(vectorResults), fallbackTaken, stats)
+			var vectorResults []SearchResult
+			var vectorStats VectorStats
+			var vectorErr error
+			var keyExact, keyStarts []SearchResult
 
-			if err != nil {
-				fmt.Printf("Vector search failed, falling back to keyword: %v\n", err)
-			} else {
-				filtered := []SearchResult{}
-				for _, r := range vectorResults {
-					if r.Msgid != 0 {
-						filtered = append(filtered, r)
-					}
+			var hybridWg sync.WaitGroup
+			hybridWg.Add(2)
+
+			go func() {
+				defer hybridWg.Done()
+				vectorResults, vectorStats, vectorErr = VectorSearch(term, SEARCH_LIMIT, groupids, msgtype,
+					float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+			}()
+
+			go func() {
+				defer hybridWg.Done()
+				if len(expandedWords) > 0 {
+					keyExact = GetWordsExact(db, expandedWords, SEARCH_LIMIT, groupids, msgtype,
+						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
+					keyStarts = GetWordsStarts(db, expandedWords, SEARCH_LIMIT, groupids, msgtype,
+						float32(nelat), float32(nelng), float32(swlat), float32(swlng))
 				}
-				wg.Wait()
-				return c.JSON(filtered)
+			}()
+
+			hybridWg.Wait()
+
+			fallbackTaken := vectorErr != nil
+			logVectorSearch(term, groupids, msgtype, myid, searchmode, len(vectorResults), fallbackTaken, vectorStats)
+
+			if vectorErr != nil {
+				fmt.Printf("Vector search failed: %v\n", vectorErr)
 			}
+
+			// Merge: vector results first (semantic ranking), then keyword-only
+			// results the embedding missed (exact-match guarantee).
+			merged := mergeHybrid(vectorResults, append(keyExact, keyStarts...))
+
+			if len(merged) > 0 {
+				wg.Wait()
+				return c.JSON(merged)
+			}
+			// Both vector and keyword exact/starts returned nothing; fall through to
+			// typo and soundex cascade.
 		}
 
 		if len(res) == 0 {

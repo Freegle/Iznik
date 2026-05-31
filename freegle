@@ -6,6 +6,7 @@
 #
 # Usage:
 #   freegle status                Show all worktrees + container counts
+#   freegle switch <n>            Point Claude's escape guard at an existing worktree
 #   freegle worktree create <n>   Create a worktree with isolated compose env
 #   freegle worktree list         List worktrees with compose status
 #   freegle worktree remove <n>   Stop compose, remove volumes and worktree
@@ -60,6 +61,44 @@ resolve_worktree() {
         fi
     done
     return 1
+}
+
+# Switch the active worktree for the running Claude session.
+#
+# Claude's worktree-escape guard (.claude/check-worktree-escape.sh) normally
+# blocks any command that touches a sibling worktree. This records a pre-existing
+# worktree as the "active" one in a state file the guard reads, so the session
+# can cd into it and keep working there. The Bash tool persists cwd across calls,
+# so once switched + cd'd, subsequent commands run in the new worktree.
+cmd_switch() {
+    local name="${1:-}"
+    # The guard reads $CLAUDE_PROJECT_DIR/.claude/active-worktree (the launch
+    # project's hook runs regardless of cwd), so write the state file there.
+    local base="${CLAUDE_PROJECT_DIR:-$(get_main_repo)}"
+    local state_file="$base/.claude/active-worktree"
+
+    if [[ -z "$name" || "$name" == "--clear" || "$name" == "off" ]]; then
+        rm -f "$state_file"
+        echo -e "${GREEN}Cleared active worktree.${NC}"
+        echo "The escape guard now allows only: $base"
+        echo "Move back with:  cd $base"
+        return 0
+    fi
+
+    local dir
+    if ! dir=$(resolve_worktree "$name"); then
+        echo -e "${RED}No worktree matches '$name'.${NC}" >&2
+        echo "Existing worktrees:" >&2
+        get_worktrees | sed 's/^/  /' >&2
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$state_file")"
+    printf '%s\n' "$dir" > "$state_file"
+    echo -e "${GREEN}Switched active worktree to:${NC} $dir"
+    echo "The escape guard will now treat that folder as the working root."
+    echo "Move there with (cwd persists across commands):"
+    echo -e "  ${BLUE}cd $dir${NC}"
 }
 
 cmd_status() {
@@ -299,6 +338,10 @@ case "${1:-help}" in
     status)
         cmd_status
         ;;
+    switch)
+        shift
+        cmd_switch "$@"
+        ;;
     worktree)
         case "${2:-help}" in
             create)
@@ -324,6 +367,8 @@ case "${1:-help}" in
         echo ""
         echo "Commands:"
         echo "  status                  Show all worktrees, containers, and URLs"
+        echo "  switch <name>           Make Claude's escape guard treat <name>'s worktree as the working root"
+        echo "  switch --clear          Revert to the launch worktree"
         echo "  worktree create <name>  Create isolated worktree (unique ports, starts containers)"
         echo "  worktree list           List all worktrees"
         echo "  worktree remove <name>  Stop and remove a worktree"

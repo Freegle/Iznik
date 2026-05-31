@@ -2,69 +2,80 @@
 
 namespace App\Console\Commands\Eee;
 
-use App\Services\EeeSqliteService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
 /**
- * One-shot backfill: copy every distinct (messageid, attid) the EEE
- * classifier has ever processed from the iznik-batch SQLite into the new
- * MySQL `eee_classified_attachments` pointer table.
+ * One-shot backfill of `eee_classified_attachments` from a bundled CSV
+ * snapshot of every (messageid, attid) the EEE classifier has previously
+ * processed.
  *
- * Once the new pointer table is populated, the Go micro-volunteering API
- * joins against it so volunteers label items the model has classified —
- * which is what the Condition/Weight/Size accuracy scoring relies on.
+ * The detailed classification data lives in iznik-batch's developer SQLite
+ * (`storage/eee/classifications.sqlite`) — that file is NOT deployed to
+ * production. To seed production with the historical pointer set, the CSV
+ * snapshot (`eee_classified_attachments_backfill.csv`, sibling to this
+ * file) is checked into the repo and read at runtime.
+ *
+ * Once seeded, every NEW classification run upserts its pointer directly
+ * via EeeClassificationService::recordClassifiedAttachment(), so this
+ * command is one-shot — no need to re-snapshot.
  */
 class EeeBackfillClassifiedTableCommand extends Command
 {
     protected $signature = 'eee:backfill-classified-table
                             {--batch-size=1000 : Rows per INSERT batch}
+                            {--csv=            : Override path to the seed CSV (default: bundled snapshot)}
                             {--dry-run         : Show what would be inserted without writing}';
 
-    protected $description = 'Backfill eee_classified_attachments from the SQLite eee_classifications history';
-
-    public function __construct(protected EeeSqliteService $sqlite)
-    {
-        parent::__construct();
-    }
+    protected $description = 'Backfill eee_classified_attachments from a bundled CSV snapshot';
 
     public function handle(): int
     {
-        $pdo = $this->sqlite->getPdo();
+        $csvPath = (string) ($this->option('csv') ?: __DIR__ . '/eee_classified_attachments_backfill.csv');
+        if (!is_file($csvPath)) {
+            $this->error("Seed CSV not found at {$csvPath}");
+            return self::FAILURE;
+        }
 
-        // Distinct image classifications only — text-only rows have attid IS NULL.
-        $rows = $pdo->query("SELECT DISTINCT messageid, attid FROM eee_classifications WHERE attid IS NOT NULL")->fetchAll(\PDO::FETCH_ASSOC);
+        $rows = [];
+        $fh = fopen($csvPath, 'r');
+        while (($line = fgets($fh)) !== false) {
+            $line = trim($line);
+            if ($line === '' || $line[0] === '#') continue;
+            [$mid, $aid] = array_map('trim', explode(',', $line, 2));
+            if (!ctype_digit($mid) || !ctype_digit($aid)) continue;
+            $rows[] = [(int) $mid, (int) $aid];
+        }
+        fclose($fh);
+
         $total = count($rows);
-        $this->info("SQLite has $total distinct (messageid, attid) image classifications.");
+        $this->info("Seed CSV has $total distinct (messageid, attid) pairs.");
 
         if ($this->option('dry-run')) {
             $this->line('First 5:');
             foreach (array_slice($rows, 0, 5) as $r) {
-                $this->line('  ' . json_encode($r));
+                $this->line("  messageid={$r[0]} attid={$r[1]}");
             }
             return self::SUCCESS;
         }
 
-        // Existing rows on the MySQL side (so we can report new vs already-present).
         $existing = DB::table('eee_classified_attachments')->count();
         $this->info("MySQL has $existing rows before backfill.");
 
         $batchSize = max(1, (int) $this->option('batch-size'));
         $batches   = array_chunk($rows, $batchSize);
-        $inserted  = 0;
 
         foreach ($batches as $i => $batch) {
-            $values = [];
-            $params = [];
-            foreach ($batch as $r) {
-                $values[] = '(?, ?)';
-                $params[] = (int) $r['messageid'];
-                $params[] = (int) $r['attid'];
+            $placeholders = [];
+            $params       = [];
+            foreach ($batch as [$mid, $aid]) {
+                $placeholders[] = '(?, ?)';
+                $params[] = $mid;
+                $params[] = $aid;
             }
-            $sql = 'INSERT IGNORE INTO eee_classified_attachments (messageid, attid) VALUES ' . implode(', ', $values);
+            $sql = 'INSERT IGNORE INTO eee_classified_attachments (messageid, attid) VALUES ' . implode(', ', $placeholders);
             DB::statement($sql, $params);
-            $inserted += count($batch);
-            $this->line("  batch " . ($i + 1) . "/" . count($batches) . ": " . count($batch) . " upserted");
+            $this->line('  batch ' . ($i + 1) . '/' . count($batches) . ': ' . count($batch) . ' upserted');
         }
 
         $after = DB::table('eee_classified_attachments')->count();
