@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 var routingTransport = map[string]string{
@@ -18,7 +16,7 @@ var routingTransport = map[string]string{
 }
 
 type routingGeometry struct {
-	Type        string      `json:"type"`
+	Type        string         `json:"type"`
 	Coordinates [][][2]float64 `json:"coordinates"`
 }
 
@@ -48,8 +46,7 @@ func FetchIsochroneWKTFromRoutingServer(transport string, lat, lng float64, minu
 
 	url := fmt.Sprintf("%s/v1/isochrone?lat=%f&lng=%f&minutes=%d", base, lat, lng, minutes)
 
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := isochroneHTTPClient.Get(url)
 	if err != nil {
 		log.Printf("routing server fetch failed: %v", err)
 		return ""
