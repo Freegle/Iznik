@@ -150,7 +150,13 @@ class AlertServiceTest extends TestCase
         $mod = $this->createTestUser();
         $this->createMembership($mod, $group, ['role' => 'Moderator']);
 
-        $this->insertAlert();
+        // Confine processing to this test's own group. processAlerts() scans ALL
+        // published Freegle groups, and other test classes create groups via
+        // Eloquent models that are not rolled back between tests. Setting
+        // groupprogress just below this group's id (the highest, since it was
+        // created last) means `WHERE id > groupprogress` matches only our group,
+        // so leaked groups can't fan out the alert and inflate the counts.
+        $this->insertAlert(['groupprogress' => $group->id - 1]);
 
         $result = $this->service->processAlerts();
 
@@ -164,7 +170,7 @@ class AlertServiceTest extends TestCase
         $owner = $this->createTestUser();
         $this->createMembership($owner, $group, ['role' => 'Owner']);
 
-        $this->insertAlert();
+        $this->insertAlert(['groupprogress' => $group->id - 1]);
 
         $result = $this->service->processAlerts();
 
@@ -177,7 +183,7 @@ class AlertServiceTest extends TestCase
         $member = $this->createTestUser();
         $this->createMembership($member, $group, ['role' => 'Member']);
 
-        $this->insertAlert();
+        $this->insertAlert(['groupprogress' => $group->id - 1]);
 
         $result = $this->service->processAlerts();
 
@@ -191,7 +197,9 @@ class AlertServiceTest extends TestCase
         $mod = $this->createTestUser();
         $this->createMembership($mod, $group, ['role' => 'Moderator']);
 
-        $alertId = $this->insertAlert(['groupprogress' => 0]);
+        // groupprogress starts just below our group so only it is processed,
+        // and should advance to exactly our group's id afterwards.
+        $alertId = $this->insertAlert(['groupprogress' => $group->id - 1]);
 
         $this->service->processAlerts();
 
@@ -205,7 +213,7 @@ class AlertServiceTest extends TestCase
         $mod = $this->createTestUser();
         $this->createMembership($mod, $group, ['role' => 'Moderator']);
 
-        $alertId = $this->insertAlert();
+        $alertId = $this->insertAlert(['groupprogress' => $group->id - 1]);
 
         $this->service->processAlerts();
 
@@ -219,7 +227,7 @@ class AlertServiceTest extends TestCase
         $mod = $this->createTestUser();
         $this->createMembership($mod, $group, ['role' => 'Moderator']);
 
-        $alertId = $this->insertAlert();
+        $alertId = $this->insertAlert(['groupprogress' => $group->id - 1]);
 
         $this->service->processAlerts();
 
@@ -245,7 +253,9 @@ class AlertServiceTest extends TestCase
         $this->createMembership($mod, $group1, ['role' => 'Moderator']);
         $this->createMembership($mod, $group2, ['role' => 'Moderator']);
 
-        $this->insertAlert();
+        // Confine to our two groups (lowest of the pair minus one) so leaked
+        // groups from other suites can't fan out the alert.
+        $this->insertAlert(['groupprogress' => min($group1->id, $group2->id) - 1]);
 
         // Same mod in two groups. V1 parity: the already-sent check is keyed on
         // alertid + userid + emailid + type + to (no groupid — see iznik-server
@@ -265,7 +275,7 @@ class AlertServiceTest extends TestCase
         $this->createMembership($mod1, $group, ['role' => 'Moderator']);
         $this->createMembership($mod2, $group, ['role' => 'Owner']);
 
-        $this->insertAlert();
+        $this->insertAlert(['groupprogress' => $group->id - 1]);
 
         $result = $this->service->processAlerts();
 
@@ -278,8 +288,8 @@ class AlertServiceTest extends TestCase
         $mod = $this->createTestUser();
         $this->createMembership($mod, $group, ['role' => 'Moderator']);
 
-        $this->insertAlert();
-        $this->insertAlert(['subject' => 'Second Alert']);
+        $this->insertAlert(['groupprogress' => $group->id - 1]);
+        $this->insertAlert(['subject' => 'Second Alert', 'groupprogress' => $group->id - 1]);
 
         $result = $this->service->processAlerts();
 
@@ -326,7 +336,7 @@ class AlertServiceTest extends TestCase
         // Mark user as deleted.
         DB::table('users')->where('id', $mod->id)->update(['deleted' => now()]);
 
-        $this->insertAlert();
+        $this->insertAlert(['groupprogress' => $group->id - 1]);
 
         $result = $this->service->processAlerts();
 
@@ -343,7 +353,7 @@ class AlertServiceTest extends TestCase
         // Mark the user's email as bounced.
         DB::table('users_emails')->where('userid', $mod->id)->update(['bounced' => now()]);
 
-        $this->insertAlert();
+        $this->insertAlert(['groupprogress' => $group->id - 1]);
 
         $result = $this->service->processAlerts();
 
@@ -353,8 +363,10 @@ class AlertServiceTest extends TestCase
 
     public function test_processAlerts_skips_alert_when_no_groups_match(): void
     {
-        // No groups in DB — groupprogress=0 so all groups would match, but there are none.
-        $alertId = $this->insertAlert();
+        // Set groupprogress beyond every group id so NO group matches — this also
+        // excludes any groups leaked (and not rolled back) by other test classes,
+        // so the "nothing to send, but still complete" path runs deterministically.
+        $alertId = $this->insertAlert(['groupprogress' => 2000000000]);
 
         $result = $this->service->processAlerts();
 
@@ -371,7 +383,7 @@ class AlertServiceTest extends TestCase
         $mod = $this->createTestUser();
         $this->createMembership($mod, $group, ['role' => 'Moderator']);
 
-        $this->insertAlert();
+        $this->insertAlert(['groupprogress' => $group->id - 1]);
 
         $result = $this->service->processAlerts();
 
@@ -403,7 +415,7 @@ class AlertServiceTest extends TestCase
             'added' => now(),
         ]);
 
-        $this->insertAlert();
+        $this->insertAlert(['groupprogress' => $nonFreegleGroupId - 1]);
 
         $result = $this->service->processAlerts();
 
@@ -423,6 +435,7 @@ class AlertServiceTest extends TestCase
         $this->insertAlert([
             'html' => '<b>HTML body</b>',
             'text' => 'Plain body',
+            'groupprogress' => $group->id - 1,
         ]);
 
         $this->service->processAlerts();
@@ -440,6 +453,7 @@ class AlertServiceTest extends TestCase
         $this->insertAlert([
             'html' => '',
             'text' => "Line one\nLine two",
+            'groupprogress' => $group->id - 1,
         ]);
 
         $this->service->processAlerts();
