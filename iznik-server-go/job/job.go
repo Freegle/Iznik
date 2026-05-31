@@ -6,6 +6,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/misc"
 	"github.com/freegle/iznik-server-go/spatial"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 	"regexp"
 	"strconv"
@@ -52,14 +53,33 @@ func GetJobs(c *fiber.Ctx) error {
 		return c.JSON(make([]Job, 0))
 	}
 
-	// Build a map of id→distance for the enrichment query.
+	// Build id list + id→distance map for the enrichment query.
 	distByID := make(map[int64]float64, len(knnResults))
-	ids := make([]string, 0, len(knnResults))
+	ids := make([]int64, 0, len(knnResults))
 	for _, r := range knnResults {
 		distByID[r.ID] = r.Distance
-		ids = append(ids, strconv.FormatInt(r.ID, 10))
+		ids = append(ids, r.ID)
 	}
-	placeholders := strings.Join(ids, ",")
+
+	return c.JSON(JobsForIDs(ids, distByID, lat, lng, category))
+}
+
+// JobsForIDs enriches the given nearby job IDs from MySQL and returns them as
+// Jobs, applying the category filter and — restored from the pre-spatial query
+// — an area constraint that drops jobs whose service-area polygon dwarfs the
+// local search extent (e.g. nation-wide listings), so they don't surface as
+// "nearby". The search box is derived from the KNN extent (the distance to the
+// farthest nearby job), mirroring the old expanding-box ST_Area ratio test.
+func JobsForIDs(ids []int64, distByID map[int64]float64, lat, lng float64, category string) []Job {
+	if len(ids) == 0 {
+		return make([]Job, 0)
+	}
+
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = strconv.FormatInt(id, 10)
+	}
+	placeholders := strings.Join(idStrs, ",")
 
 	categoryClause := "category IS NOT NULL"
 	var categoryArgs []any
@@ -67,6 +87,27 @@ func GetJobs(c *fiber.Ctx) error {
 		categoryClause = "category REGEXP ?"
 		categoryArgs = []any{"(^|;)" + category + ".*"}
 	}
+
+	// Search-box half-extent in decimal degrees, from the farthest nearby job,
+	// with a floor so the box is never degenerate (avoids divide-by-tiny-area).
+	maxDist := 0.0
+	for _, d := range distByID {
+		if d > maxDist {
+			maxDist = d
+		}
+	}
+	if maxDist < 0.01 {
+		maxDist = 0.01 // ~1.1km
+	}
+	swLng, swLat := lng-maxDist, lat-maxDist
+	neLng, neLat := lng+maxDist, lat+maxDist
+	box := fmt.Sprintf(
+		"ST_SRID(POLYGON(LINESTRING("+
+			"POINT(%[1]f, %[2]f), POINT(%[1]f, %[4]f), POINT(%[3]f, %[4]f), "+
+			"POINT(%[3]f, %[2]f), POINT(%[1]f, %[2]f))), %[5]d)",
+		swLng, swLat, neLng, neLat, utils.SRID,
+	)
+	areaClause := "(ST_Dimension(jobs.geometry) < 2 OR ST_Area(jobs.geometry) / ST_Area(" + box + ") < 2)"
 
 	db := database.DBConn
 	var rows []struct {
@@ -86,9 +127,9 @@ func GetJobs(c *fiber.Ctx) error {
 		"SELECT jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, "+
 			"jobs.category, jobs.cpc, jobs.clickability, ai_images.externaluid "+
 			"FROM `jobs` LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title "+
-			"WHERE jobs.id IN (%s) AND %s "+
+			"WHERE jobs.id IN (%s) AND %s AND %s "+
 			"ORDER BY jobs.cpc * jobs.clickability DESC, jobs.id ASC LIMIT %d",
-		placeholders, categoryClause, JOBS_LIMIT,
+		placeholders, categoryClause, areaClause, JOBS_LIMIT,
 	), categoryArgs...).Scan(&rows)
 
 	ret := make([]Job, 0, len(rows))
@@ -112,7 +153,7 @@ func GetJobs(c *fiber.Ctx) error {
 		ret = append(ret, job)
 	}
 
-	return c.JSON(ret)
+	return ret
 }
 
 func GetJob(c *fiber.Ctx) error {
