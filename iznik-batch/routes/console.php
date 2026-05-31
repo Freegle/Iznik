@@ -370,18 +370,6 @@ foreach (range(0, $immediateShardCount - 1) as $shardIndex) {
         ->runInBackground();
 }
 
-// Retry immediate-digest sends that failed to build/render (e.g. a transient
-// deploy-window template error). Without this, a render failure is skipped and
-// the per-group cursor advances past it, permanently dropping that recipient's
-// post (this lost ~1,100 digests during one such window). The digest_retries
-// queue is per-recipient, so retries never re-send to recipients who already
-// succeeded — no re-send storm.
-Schedule::command('mail:digest:retry')
-    ->everyFiveMinutes()
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('mail:digest:retry'))
-    ->runInBackground();
-
 // Donation-related commands. V1 equivalents on bulk3 disabled 2026-05-12.
 Schedule::command('mail:donations:thank')
     ->dailyAt('09:00')
