@@ -17,36 +17,36 @@
         {{-- IMMEDIATE MODE: single-post card matching browse page style    --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
-        {{-- Card: image left + content right (matches browse page layout) --}}
-        <mj-section background-color="#ffffff" padding="0" border-radius="4px">
-            {{-- Image column --}}
-            {{-- Use displayImageUrl (direct delivery URL) rather than the
-                 trackedImageUrl tracking-proxy wrapper. Gmail's image proxy
-                 (ci3.googleusercontent.com/meips/...) was returning 404 for
-                 the tracking URL — most likely it dislikes the cross-domain
-                 302 from api.ilovefreegle.org to delivery.ilovefreegle.org,
-                 or it cached a transient failure. Direct delivery is what
-                 the AMP template already uses for the same reason. Click
-                 tracking on the message link still fires via the <a href>;
-                 only the image-view scroll-depth ping is lost on the hero. --}}
-            <mj-column width="38%" padding="0" vertical-align="top">
+        {{-- Hero: the item photo IS the hero (V1 single.html parity — V1's
+             immediate single.mjml used a full-width image). heroImageUrl is a
+             600x400 cover-crop from the delivery proxy, so it fills the 600px
+             email width on desktop and is fluid-on-mobile, while the crop
+             bounds the height (a tall portrait photo can't dominate). The
+             whole image is clickable through to the post via href.
+             Uses the direct delivery URL (not the tracking-proxy wrapper):
+             Gmail's image proxy 404'd on the cross-domain 302 from
+             api→delivery. Click tracking still fires via the <a href>. --}}
+        <mj-section background-color="#e8e8e8" padding="0">
+            <mj-column padding="0" vertical-align="top">
                 <mj-image
                     href="{{ $post['messageUrl'] }}"
-                    src="{{ $post['displayImageUrl'] }}"
+                    src="{{ $post['heroImageUrl'] }}"
                     alt="{{ $post['itemName'] }}"
                     padding="0"
                     fluid-on-mobile="true"
                     container-background-color="#e8e8e8"
                 />
             </mj-column>
-            {{-- Content column --}}
-            <mj-column width="62%" padding="16px 20px 12px 16px" vertical-align="top">
+        </mj-section>
+        {{-- Content sits below the hero --}}
+        <mj-section background-color="#ffffff" padding="16px 20px 4px 20px">
+            <mj-column padding="0" vertical-align="top">
                 {{-- OFFER / WANTED pill --}}
                 <mj-text padding="0 0 8px 0" font-size="13px">
                     <span style="display: inline-block; background-color: {{ $accentColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 3px; letter-spacing: 0.3px;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
                 </mj-text>
                 {{-- Title --}}
-                <mj-text padding="0 0 4px 0" font-size="18px" font-weight="700" color="#212529" line-height="1.25">
+                <mj-text padding="0 0 4px 0" font-size="22px" font-weight="700" color="#212529" line-height="1.25">
                     <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none;">{{ $post['itemName'] }}</a>
                 </mj-text>
                 {{-- Location --}}
