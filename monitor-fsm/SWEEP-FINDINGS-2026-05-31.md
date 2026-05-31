@@ -22,7 +22,18 @@
 ## DATA-INTEGRITY BUG in FSM
 - **9631/22 does not exist** — topic has only 21 posts. FSM created a phantom verdict record. Must validate post exists before recording.
 
-## FSM rule fixes needed (the core ask)
+## FSM rule fixes — status (the core ask)
+
+SHIPPED (deterministic code, on master):
+- Rule #1 — **SHIPPED**: `STILL_BROKEN_RE` guard in `check_bug_feedback`; a thread with any still-broken post no longer auto-confirms a fix.
+- Rule #8 (escalation half) — **SHIPPED**: `ESCALATION_THRESHOLD` 1→2 in `work_router_decide`; one rejection now triggers re-diagnosis+retry, not human hand-off. (Diagnosis half — "rootCause MUST differ after rejection" — already existed in DIAGNOSE_BUG.)
+- Plus earlier: working-as-designed check (DIAGNOSE_BUG), PII-redaction rule (IMPLEMENT_FIX), delegate model → Opus 4.8.
+
+PROMPT-LEVEL (guidance for the brain/triage LLM, not deterministic — documented here, apply to workflow.json as needed):
+- Rule #2 evidence-before-fixed/off-topic · #3 verify PR diff touches symptom before linking · #4 symptom-change = new bug context · #5 collapse me-too confirmations · #6 admin-ack blocks defer (partly covered by EDWARD_IN_PROGRESS_RE) · #9 consolidate duplicate-topic bugs (9656+9737).
+- Rule #7 validate-post-exists (9631/22 phantom): best added in TRIAGE which already has the posts loaded; avoided a network call in the persist hot-path.
+
+### Original list
 1. **Don't mark `fixed` while a reporter says still-broken.** A later contradiction (9655/4→5) must flip to regression, not stay fixed.
 2. **Require fix EVIDENCE before `fixed`/`off-topic`.** No-PR-and-no-reporter-confirmation + >5 days silence → `unresolved`, not dismissed (9518/294, /219).
 3. **Don't link a PR to a post by timeline proximity.** Verify the PR diff/desc touches the reported symptom (9518/234,293 mis-linked to PR #450).
