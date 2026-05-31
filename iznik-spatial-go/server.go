@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -19,10 +20,21 @@ type datasetState struct {
 	ds         Dataset
 }
 
-func (s *datasetState) getIndex() *Index {
+// errIndexNotReady is returned by withIndex when a dataset has no index yet.
+var errIndexNotReady = errors.New("dataset not ready")
+
+// withIndex runs fn while holding the read lock, so the index cannot be swapped
+// out and Closed by a concurrent rebuild/delta mid-operation. swapIndex takes
+// the write lock before Close()ing the old index, so it blocks until all
+// in-flight readers here have returned — no use-after-close, and the old index
+// is still Closed (no leak). Returns errIndexNotReady if no index is loaded yet.
+func (s *datasetState) withIndex(fn func(idx *Index) error) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.idx
+	if s.idx == nil {
+		return errIndexNotReady
+	}
+	return fn(s.idx)
 }
 
 func (s *datasetState) swapIndex(newIdx *Index) {
@@ -31,6 +43,8 @@ func (s *datasetState) swapIndex(newIdx *Index) {
 	old := s.idx
 	s.idx = newIdx
 	if old != nil {
+		// Safe: the write lock is only granted once every withIndex reader has
+		// released its RLock, so no request is still using `old`.
 		old.Close()
 	}
 }
@@ -167,17 +181,19 @@ func (srv *server) startScheduler() {
 		go func(n string, s *datasetState, d time.Duration) {
 			for {
 				time.Sleep(d)
-				idx := s.getIndex()
-				if idx == nil {
-					continue
-				}
 				since := s.lastSync
 				if since.IsZero() {
 					since = time.Now().Add(-d)
 				}
-				if err := s.ds.ApplyDelta(srv.mysqlDB, idx, since); err != nil {
+				err := s.withIndex(func(idx *Index) error {
+					return s.ds.ApplyDelta(srv.mysqlDB, idx, since)
+				})
+				switch {
+				case err == errIndexNotReady:
+					continue
+				case err != nil:
 					log.Printf("spatial-server: delta %s failed: %v", n, err)
-				} else {
+				default:
 					s.lastSync = time.Now()
 				}
 			}

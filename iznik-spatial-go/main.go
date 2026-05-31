@@ -66,13 +66,14 @@ func main() {
 		}
 		var infos []datasetInfo
 		for name, state := range srv.datasets {
-			idx := state.getIndex()
-			info := datasetInfo{Name: name, Ready: idx != nil}
-			if idx != nil {
+			info := datasetInfo{Name: name}
+			_ = state.withIndex(func(idx *Index) error {
+				info.Ready = true
 				if n, err := idx.CountRows(); err == nil {
 					info.Count = n
 				}
-			}
+				return nil
+			})
 			infos = append(infos, info)
 		}
 		return c.JSON(fiber.Map{"datasets": infos})
@@ -85,11 +86,15 @@ func main() {
 		if !ok {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "unknown dataset"})
 		}
-		idx := state.getIndex()
-		if idx == nil {
+		var n int64
+		err := state.withIndex(func(idx *Index) error {
+			var e error
+			n, e = idx.CountRows()
+			return e
+		})
+		if err == errIndexNotReady {
 			return c.JSON(fiber.Map{"ready": false, "count": 0})
 		}
-		n, err := idx.CountRows()
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
@@ -134,12 +139,15 @@ func main() {
 			params.Polygon = pg
 		}
 
-		idx := state.getIndex()
-		if idx == nil {
+		var results []QueryResult
+		err = state.withIndex(func(idx *Index) error {
+			var e error
+			results, e = state.ds.Query(idx, params)
+			return e
+		})
+		if err == errIndexNotReady {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
 		}
-
-		results, err := state.ds.Query(idx, params)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
@@ -163,12 +171,15 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		idx := state.getIndex()
-		if idx == nil {
+		var ids []int64
+		err = state.withIndex(func(idx *Index) error {
+			var e error
+			ids, e = state.ds.Within(idx, QueryParams{Polygon: pg})
+			return e
+		})
+		if err == errIndexNotReady {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
 		}
-
-		ids, err := state.ds.Within(idx, QueryParams{Polygon: pg})
 		if err == ErrTooManyResults {
 			return c.Status(fiber.StatusRequestEntityTooLarge).JSON(fiber.Map{
 				"error": ErrTooManyResults.Error(),
@@ -200,12 +211,15 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		idx := state.getIndex()
-		if idx == nil {
+		var items []Item
+		err = state.withIndex(func(idx *Index) error {
+			var e error
+			items, e = idx.QueryWithinFull(*pg)
+			return e
+		})
+		if err == errIndexNotReady {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
 		}
-
-		items, err := idx.QueryWithinFull(*pg)
 		if err == ErrTooManyResults {
 			return c.Status(fiber.StatusRequestEntityTooLarge).JSON(fiber.Map{
 				"error": ErrTooManyResults.Error(),
@@ -262,12 +276,15 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		idx := state.getIndex()
-		if idx == nil {
+		var items []Item
+		err = state.withIndex(func(idx *Index) error {
+			var e error
+			items, e = idx.QueryWithinFull(*pg)
+			return e
+		})
+		if err == errIndexNotReady {
 			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
 		}
-
-		items, err := idx.QueryWithinFull(*pg)
 		if err == ErrTooManyResults {
 			return c.Status(fiber.StatusRequestEntityTooLarge).JSON(fiber.Map{
 				"error": ErrTooManyResults.Error(),
@@ -340,18 +357,19 @@ func main() {
 			return c.JSON(fiber.Map{"removed": 0})
 		}
 
-		idx := state.getIndex()
-		if idx == nil {
-			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
-		}
-
 		var removed int
-		for _, id := range req.IDs {
-			if err := idx.DeleteByExtID(id); err != nil {
-				log.Printf("spatial-server: remove %s id=%d: %v", name, id, err)
-			} else {
-				removed++
+		err := state.withIndex(func(idx *Index) error {
+			for _, id := range req.IDs {
+				if e := idx.DeleteByExtID(id); e != nil {
+					log.Printf("spatial-server: remove %s id=%d: %v", name, id, e)
+				} else {
+					removed++
+				}
 			}
+			return nil
+		})
+		if err == errIndexNotReady {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": "dataset not ready"})
 		}
 		return c.JSON(fiber.Map{"removed": removed})
 	})
