@@ -23,6 +23,59 @@ The Yesterday environment:
 - Reuses all existing containers (Freegle, ModTools, API v1/v2, Mailhog)
 - Backup selection via web UI with progress tracking
 
+## Fast Switching with LVM-Thin Snapshots
+
+A full restore (download → extract → decompress → `xtrabackup --prepare`) takes
+30–90 minutes, so flipping between backup days used to mean a long wait each
+time. The **LVM-thin fast-switch** system makes switching between recently-loaded
+days take **~1 minute** instead, while keeping disk use small.
+
+**How it works (no production-side backup change):**
+- Backups remain nightly **full** Percona XtraBackup hot backups.
+- The MySQL datadir lives on an **XFS filesystem on an LVM-thin logical volume**
+  (`/mnt/iznik-active`), on a dedicated disk separate from the OS disk.
+- Each day's prepared backup is applied onto the live datadir with
+  `rsync --inplace --no-whole-file`, so the thin pool only copies-on-write the
+  blocks that actually changed.
+- A **read-only thin snapshot per day** (`snap_YYYYMMDD`) is the "datestamped
+  database". Because consecutive days share unchanged blocks, total disk use ≈
+  base (~120 GB) + the sum of daily deltas — *not* N × full size. (Measured:
+  a 50 MB real change costs ~50 MB of snapshot, not a 120 GB copy.)
+- **Switching** creates a fresh writable thin clone of the chosen snapshot,
+  remounts it (with `nouuid` — clones share the origin's XFS UUID), and restarts
+  percona. Browsing writes to the clone are discarded on the next switch.
+
+**Scripts** (in `yesterday/scripts/`):
+
+| Script | When | What it does |
+|--------|------|--------------|
+| `setup-lvm-thin.sh /dev/sdX` | once | Creates the VG, thin pool, `active` + `stage` LVs (XFS), mounts them, fstab. |
+| `prime-backups.sh [N]` | once (background) | Primes the last N daily backups into snapshots, oldest→newest. Runs while percona still serves the old volume — zero downtime. |
+| `cutover-to-lvm.sh` | once | Points percona at `/mnt/iznik-active` (rebinds the `freegle_db` volume) and restarts. Brief downtime. |
+| `switch-backup.sh <YYYYMMDD>` | any time | Fast switch to a snapshotted day (~1 min). `--list` shows available days. |
+| `lib-yesterday-lvm.sh` | — | Shared helpers (sourced by the above). |
+
+**Sizing:** the dedicated pool disk must hold `active` (~120 GB) + `stage`
+(~120 GB, transient during a refresh) + daily snapshot deltas. A **400 GB** disk
+gives comfortable headroom (~70% peak) and lets the prime run in the background.
+
+**Deploy runbook:**
+```bash
+# 1. Attach a dedicated empty disk (e.g. 400GB) to the VM, then on the VM:
+sudo /var/www/FreegleDocker/yesterday/scripts/setup-lvm-thin.sh /dev/sdb
+# 2. Prime the last 7 days (background; percona keeps serving the old DB):
+sudo /var/www/FreegleDocker/yesterday/scripts/prime-backups.sh 7
+# 3. Cut percona over to the LVM datadir (brief restart):
+sudo /var/www/FreegleDocker/yesterday/scripts/cutover-to-lvm.sh
+# 4. Switch between days in ~1 minute:
+sudo /var/www/FreegleDocker/yesterday/scripts/switch-backup.sh --list
+sudo /var/www/FreegleDocker/yesterday/scripts/switch-backup.sh 20260529
+```
+
+> After cutover, the nightly auto-restore should refresh `/mnt/iznik-active` via
+> the same `rsync --inplace` + snapshot path (see `lib-yesterday-lvm.sh`) rather
+> than the old wipe-and-extract in `restore-backup.sh`.
+
 ## Domain Structure
 
 - `yesterday.ilovefreegle.org` - Backup browser and index page

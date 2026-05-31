@@ -323,9 +323,16 @@ services:
 
 volumes:
   freegle_db:
-    # Mark as external - this volume is populated by the restore script
-    # with production backup data and should not be recreated by Docker
-    external: true
+    # LVM fast-switch: the datadir lives on the XFS thin LV mounted at
+    # /mnt/iznik-active (see yesterday/scripts/setup-lvm-thin.sh). percona's
+    # freegle_db:/var/lib/mysql mapping is unchanged — it now resolves to the
+    # active thin clone, so switch-backup.sh can flip days in seconds.
+    # REQUIRES setup-lvm-thin.sh + cutover-to-lvm.sh to have run on this host.
+    driver: local
+    driver_opts:
+      type: none
+      device: /mnt/iznik-active
+      o: bind
   loki-data:
     # NOT external - Docker creates this automatically if it doesn't exist
     # The restore script will populate it with historical logs if available,
