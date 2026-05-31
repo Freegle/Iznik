@@ -11,7 +11,6 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserDigest;
-use App\Support\SafeMail;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -276,21 +275,36 @@ class UnifiedDigestService
                     $deduped = collect([
                         ['message' => $message, 'postedToGroups' => [$groupid]],
                     ]);
-                    // SafeMail catches permanent address-rejection failures
                     // Spool through EmailSpoolerService so transient SMTP
                     // failures get retried by the processor rather than
-                    // dropping a recipient or escaping the foreach (which
-                    // used to mean the cursor never advanced and the NEXT
-                    // cron tick re-sent the whole batch — observed Penny
-                    // Langley getting 27 copies of the same post in 13 min).
-                    // Permanent address-rejection failures (non-ASCII local-
-                    // part, 550 etc) are still classified + recorded as
-                    // bounces inside processSpool().
-                    app(\App\Services\EmailSpoolerService::class)->spool(
-                        new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
-                        $user->email_preferred,
-                        emailType: 'digest_immediate',
-                    );
+                    // dropping a recipient. Permanent address-rejection
+                    // failures (non-ASCII local-part, 550 etc) are classified
+                    // + recorded as bounces inside spool() and return ''.
+                    //
+                    // spool() builds the message (incl. MJML render) up front
+                    // and re-throws anything that ISN'T a permanent address
+                    // failure (transient render/build error). That exception
+                    // must not escape this foreach: if it did, $lastProcessed
+                    // would not advance past this message, the group cursor
+                    // would stall, and the NEXT cron tick would re-send the
+                    // whole batch — exactly the bug that gave Penny Langley 27
+                    // copies of the same post in 13 min. Catch it, skip the one
+                    // recipient, and let the message still count as processed.
+                    try {
+                        app(\App\Services\EmailSpoolerService::class)->spool(
+                            new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache),
+                            $user->email_preferred,
+                            emailType: 'digest_immediate',
+                        );
+                    } catch (\Throwable $e) {
+                        Log::warning('Skipping immediate digest recipient after spool failure; continuing loop', [
+                            'user_id' => $uid,
+                            'email' => $user->email_preferred,
+                            'group' => $groupid,
+                            'msgid' => (int) $message->mg_msgid,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
                 }
                 $emailsSent++;
                 $touched[$uid] = true;
