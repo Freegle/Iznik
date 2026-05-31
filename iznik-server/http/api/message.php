@@ -421,7 +421,7 @@ function message() {
                     switch ($action) {
                         case 'Delete':
                             # The delete call will handle any rejection on Yahoo if required.
-                            $m->delete($reason, NULL, $subject, $body, $stdmsgid);
+                            $m->delete($reason, $groupid, $subject, $body, $stdmsgid);
                             break;
                         case 'Reject':
                             # Ignore requests for messages which aren't pending.  Legitimate timing window when there
