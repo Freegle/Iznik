@@ -3986,4 +3986,81 @@ class messageAPITest extends IznikAPITestCase
 
         $this->assertEquals(0, count($ret['message']['outcomes']));
     }
+
+    /**
+     * AssertFlip test: deleting a cross-posted message via ModTools PHP API must write
+     * exactly ONE deletion log entry, not one per group.
+     *
+     * Root cause: message.php line 424 calls $m->delete($reason, NULL, ...) — the groupid
+     * from the request is silently ignored. Message::delete() with NULL groupid iterates
+     * ALL groups the message is on and inserts a log row for each, so a cross-posted
+     * message produces count == 2 instead of count == 1.
+     *
+     * AssertFlip step 1 (PASSES on buggy code): asserted count == 2 to document the bug.
+     * AssertFlip step 2 (this version, FAILS on buggy code): asserts count == 1 so the
+     * test will turn green only after the fix passes the specific groupid to delete().
+     */
+    public function testDeleteCrossPostedMessageDoesNotDoubleLog()
+    {
+        // Approved message on the default test group.
+        $this->user->setMembershipAtt($this->gid, 'ourPostingStatus', Group::POSTING_DEFAULT);
+        $msg = $this->unique(file_get_contents(IZNIK_BASE . '/test/ut/php/msgs/basic'));
+        list($r, $id, $failok, $rc) = $this->createTestMessage(
+            $msg, 'testgroup', 'from@test.com', 'to@test.com', $this->gid, $this->uid, []
+        );
+        $this->assertEquals(MailRouter::APPROVED, $rc);
+
+        // Cross-post the same message to a second group so delete() iterates two rows.
+        list($g2, $gid2) = $this->createTestGroup('testgroup2', Group::GROUP_FREEGLE);
+        $this->dbhm->preExec(
+            "INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, 'Approved', NOW());",
+            [$id, $gid2]
+        );
+
+        // Log in as an owner who can perform the Delete modtools action.
+        list($owner, $ownerId, $ownerEmailId) = $this->createTestUserWithMembershipAndLogin(
+            $this->gid, User::ROLE_OWNER, NULL, NULL, NULL, 'owner@test.com', 'ownerpw'
+        );
+
+        // Delete via the PHP API — message.php calls $m->delete($reason, NULL, $subject, $body, $stdmsgid).
+        // The groupid supplied by the client is present in $_REQUEST but is NOT forwarded to delete().
+        $ret = $this->call('message', 'POST', [
+            'id'      => $id,
+            'groupid' => $this->gid,
+            'action'  => 'Delete',
+            'subject' => 'Your post has been removed',
+            'body'    => 'Thank you for posting.',
+        ]);
+        $this->assertEquals(0, $ret['ret']);
+
+        // Flush all background log writes so the logs table is up to date.
+        $this->waitBackground();
+
+        // Count deletion log entries created for this message.
+        $rows = $this->dbhr->preQuery(
+            "SELECT COUNT(*) AS cnt FROM logs WHERE type = ? AND subtype = ? AND msgid = ?",
+            [Log::TYPE_MESSAGE, Log::SUBTYPE_DELETED, $id]
+        );
+        $count = (int) $rows[0]['cnt'];
+
+        // The mod-mail chat entry must still exist after the fix (regression guard).
+        $modmailRows = $this->dbhr->preQuery(
+            "SELECT COUNT(*) AS cnt FROM chat_messages WHERE refmsgid = ? AND type = 'ModMail'",
+            [$id]
+        );
+        $this->assertGreaterThanOrEqual(
+            1,
+            (int) $modmailRows[0]['cnt'],
+            'A mod-mail chat entry must be created when a deletion includes a subject'
+        );
+
+        // AssertFlip step 2 — inverted assertion: exactly one deletion log entry must exist.
+        // This FAILS on the buggy code (count == 2) and will PASS after the fix passes
+        // the specific groupid to delete() so only the target group is logged.
+        $this->assertEquals(
+            1,
+            $count,
+            'delete() must log the deletion exactly once; cross-posted message currently produces count == 2'
+        );
+    }
 }
