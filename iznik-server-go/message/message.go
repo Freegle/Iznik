@@ -1318,7 +1318,7 @@ func Search(c *fiber.Ctx) error {
 		}
 
 		if len(res) == 0 {
-			words := ExpandQuery(term)
+			words := GetWords(term)
 
 			var wg sync.WaitGroup
 			wg.Add(2)
