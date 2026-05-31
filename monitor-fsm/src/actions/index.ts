@@ -296,7 +296,20 @@ headers = {'User-Api-Key': api_key, 'Api-Username': 'Edward_Hibbert'}
 CONFIRM_RE = re.compile(
     r'\\b(fixed|works? now|working now|confirmed?|thanks?|thankyou|all good|resolved?'
     r'|seems? (?:to be )?(?:fixed|working|ok|good)|unlimited now|no (?:longer|more)'
-    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?)\\b',
+    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?'
+    r'|fix worked|that worked|worked (?:a treat|fine|now|perfectly)|no problem)\\b',
+    re.IGNORECASE
+)
+
+# Negation guard (sweep 2026-05-31 rule #1): a reporter can say "thanks but it's
+# still broken" / "spoke too soon" / "back again" — CONFIRM_RE matches "thanks"
+# but the bug is NOT fixed. If a post matches STILL_BROKEN_RE, it must NOT be
+# treated as a fix confirmation, even if CONFIRM_RE also matches.
+STILL_BROKEN_RE = re.compile(
+    r'(?:still (?:broken|not working|happening|there|occurring|stuck|the same|an issue|a problem|doing)'
+    r'|spoke too soon|came back|back again|is back|happening again|not fixed|doesn.?t work'
+    r'|did(?:n.?t| not) (?:work|fix)|same (?:problem|issue|thing|error)|no (?:change|difference)'
+    r'|worse|reappear|reoccur|again today|once more)',
     re.IGNORECASE
 )
 
@@ -377,22 +390,36 @@ for bug in bugs:
     reporter = bug.get('reporter') or ''
 
     new_posts = get_posts_after(topic_id, orig_post)
+    # Sweep rule #1 (2026-05-31): if ANY non-Edward post in the thread reports the
+    # bug is still broken, do NOT confirm a fix — even if an earlier post said
+    # "thanks, fixed". (9655/4: post 4 "fix worked", post 5 "still omits pending".)
+    any_still_broken = False
     for post in new_posts:
-        username = post.get('username', '')
-        if username == 'Edward_Hibbert':
+        if post.get('username', '') == 'Edward_Hibbert':
             continue
-        text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
-        text = re.sub(r'\\s+', ' ', text).strip()
-        if CONFIRM_RE.search(text):
-            results.append({
-                'topic': topic_id,
-                'post': orig_post,
-                'reporter': reporter,
-                'confirmedBy': username,
-                'confirmPostNumber': post.get('post_number'),
-                'confirmText': text[:200],
-            })
+        t = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
+        t = re.sub(r'\\s+', ' ', t).strip()
+        if STILL_BROKEN_RE.search(t):
+            any_still_broken = True
             break
+
+    if not any_still_broken:
+        for post in new_posts:
+            username = post.get('username', '')
+            if username == 'Edward_Hibbert':
+                continue
+            text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
+            text = re.sub(r'\\s+', ' ', text).strip()
+            if CONFIRM_RE.search(text) and not STILL_BROKEN_RE.search(text):
+                results.append({
+                    'topic': topic_id,
+                    'post': orig_post,
+                    'reporter': reporter,
+                    'confirmedBy': username,
+                    'confirmPostNumber': post.get('post_number'),
+                    'confirmText': text[:200],
+                })
+                break
 
 # Pass B: Edward's posts (open/investigating/deferred)
 for bug in all_bugs:
