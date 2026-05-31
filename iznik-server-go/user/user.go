@@ -1022,6 +1022,37 @@ func DeleteUserSearch(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// hasRealLocation returns true when the user has any of:
+//   - settings.mylocation (postcode chosen on signup or in settings)
+//   - lastlocation (postcode geocoded from a posted address)
+//   - at least one message with a location attached
+//
+// When all three are absent, GetLatLng falls back to the user's most-recent
+// group centroid — fine for distance calculations but NOT a real address, so
+// callers that render location TEXT should suppress display for those users.
+func hasRealLocation(id uint64) bool {
+	db := database.DBConn
+
+	var hasMyLocation int
+	db.Raw("SELECT COUNT(*) FROM users "+
+		"WHERE id = ? "+
+		"AND JSON_EXTRACT(settings, '$.mylocation.lat') IS NOT NULL "+
+		"AND JSON_EXTRACT(settings, '$.mylocation.lat') != CAST('null' AS JSON)", id).Scan(&hasMyLocation)
+	if hasMyLocation > 0 {
+		return true
+	}
+
+	var hasLastLocation int
+	db.Raw("SELECT COUNT(*) FROM users WHERE id = ? AND lastlocation IS NOT NULL", id).Scan(&hasLastLocation)
+	if hasLastLocation > 0 {
+		return true
+	}
+
+	var hasMessageLocation int
+	db.Raw("SELECT COUNT(*) FROM messages WHERE fromuser = ? AND locationid IS NOT NULL LIMIT 1", id).Scan(&hasMessageLocation)
+	return hasMessageLocation > 0
+}
+
 func GetPublicLocation(c *fiber.Ctx) error {
 	var ret Publiclocation
 	var groupname string
@@ -1032,6 +1063,18 @@ func GetPublicLocation(c *fiber.Ctx) error {
 		id, err := strconv.ParseUint(c.Params("id"), 10, 64)
 
 		if err == nil {
+			// Only emit a public-location display when the user has a real
+			// location source (mylocation / lastlocation / message-posted
+			// location). Otherwise GetLatLng falls back to group centroid
+			// coords, and ClosestPostcode + ClosestSingleGroup on those coords
+			// produce a misleading "[area], [groupname]" string that looks
+			// like the user's address (Discourse 9730). The fallback coords
+			// are still fine for map-pin placement and distance calculations
+			// — we just suppress the display text here.
+			if !hasRealLocation(id) {
+				return c.JSON(ret)
+			}
+
 			var wg sync.WaitGroup
 
 			latlng := GetLatLng(id)

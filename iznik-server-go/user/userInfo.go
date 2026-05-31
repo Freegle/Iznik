@@ -292,26 +292,13 @@ func GetPublicLocationForUser(userid uint64) *Publiclocation {
 		}
 	}
 
-	// Fall back to most recent group membership.
-	var groupLoc struct {
-		Groupid   uint64
-		Groupname string
-	}
-	db.Raw("SELECT m.groupid, COALESCE(g.namefull, g.nameshort) AS groupname "+
-		"FROM memberships m "+
-		"INNER JOIN `groups` g ON g.id = m.groupid "+
-		"WHERE m.userid = ? AND m.collection = ? "+
-		"ORDER BY m.added DESC LIMIT 1",
-		userid, utils.COLLECTION_APPROVED).Scan(&groupLoc)
-
-	if groupLoc.Groupid > 0 {
-		return &Publiclocation{
-			Display:   groupLoc.Groupname,
-			Location:  groupLoc.Groupname,
-			Groupid:   groupLoc.Groupid,
-			Groupname: groupLoc.Groupname,
-		}
-	}
-
+	// No real location source — return nil so the UI shows "no location"
+	// rather than misleading the moderator into thinking the user is at the
+	// group centroid. Mods were reporting (Discourse 9730) that members with
+	// no postcode were appearing on maps and in lists showing the group's
+	// own name (e.g. "Freegle Hertford") as if it were the member's address.
+	// The group-coord fallback in GetLatLng is still correct for map-pin
+	// placement and distance calculations — this only suppresses the
+	// public-location TEXT for those users.
 	return nil
 }

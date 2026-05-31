@@ -3215,44 +3215,87 @@ func TestPublicLocation_ResponseStructure(t *testing.T) {
 	assert.True(t, hasGroupname, "Response should have 'groupname' field")
 }
 
-func TestPublicLocation_MostRecentMembership(t *testing.T) {
-	// V1 parity: public location uses the most recently added membership,
-	// regardless of role. Moderators commonly moderate their own local group.
-	prefix := uniquePrefix("publocrecent")
+// TestPublicLocation_UserWithNoRealLocation reproduces Discourse 9730:
+// a member who has joined a group but never set a postcode was being
+// displayed (in modtools and the public location endpoint) with their
+// group's centroid coords resolved to "[area], [groupname]" — looking like
+// the member's home address. The fix returns empty Display when the user has
+// no real location source (settings.mylocation / lastlocation / message
+// location), regardless of group membership. Group-coord fallback in
+// GetLatLng is still correct for map-pin placement.
+func TestPublicLocation_UserWithNoRealLocation(t *testing.T) {
+	prefix := uniquePrefix("publocnolocation")
 	db := database.DBConn
 
-	// Create a moderator user who will view the target user's profile.
+	// Create a user with NO mylocation in settings and NO lastlocation —
+	// the CreateTestUser helper always sets mylocation, so build directly.
+	fullname := "Locationless " + prefix
+	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
+		"VALUES ('Locationless', ?, ?, 'User', NULL, NULL)",
+		prefix, fullname)
+	var userID uint64
+	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", fullname).Scan(&userID)
+	if userID == 0 {
+		t.Fatalf("failed to create locationless user")
+	}
+	defer db.Exec("DELETE FROM users WHERE id = ?", userID)
+
+	// Join them to a group so GetLatLng has a group fallback to return.
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, userID, groupID, "Member")
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/user/%d/publiclocation", userID), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result user.Publiclocation
+	json2.Unmarshal(rsp(resp), &result)
+
+	// Empty display + empty location because the user has no real source.
+	// Before the fix, Display would be "[area], [groupname]" derived from the
+	// group's centroid — misleading the moderator into thinking the user has
+	// an address in the group's area.
+	assert.Equal(t, "", result.Display,
+		"user with no real location must not have a public-location Display "+
+			"(was misleadingly showing group centroid area + group name)")
+	assert.Equal(t, "", result.Location,
+		"user with no real location must not have a public-location Location")
+	assert.Equal(t, uint64(0), result.Groupid,
+		"user with no real location must not surface a fallback groupid")
+}
+
+func TestPublicLocation_NoGroupNameFallback(t *testing.T) {
+	// Discourse 9730: previously the public-location (modtools view) fell
+	// back to the user's most-recently-added group's display name when the
+	// user had no real location. Moderators reported this as a bug — it
+	// looked like the member's address but was actually just the group name,
+	// causing confusion ("Freegle Hertford" appeared in members' location
+	// fields).
+	//
+	// Correct behaviour: when the user has no real location source
+	// (settings.mylocation / lastlocation / message location), the
+	// publiclocation should be absent/empty rather than borrowing the group
+	// name. The group-coord fallback in GetLatLng is still correct for
+	// map-pin placement and distance calculations.
+	prefix := uniquePrefix("publocnogrp")
+	db := database.DBConn
+
 	modUserID := CreateTestUser(t, prefix+"_mod", "User")
 
-	// Create the target user with no mylocation setting and no lastlocation.
+	// Target user with NO mylocation, NO lastlocation, NO message location.
 	db.Exec("INSERT INTO users (firstname, lastname, fullname, systemrole, lastlocation, settings) "+
 		"VALUES ('Test', ?, ?, 'User', NULL, NULL)", prefix, "Test User "+prefix)
 	var targetUserID uint64
 	db.Raw("SELECT id FROM users WHERE fullname = ? ORDER BY id DESC LIMIT 1", "Test User "+prefix).Scan(&targetUserID)
 	require.Greater(t, targetUserID, uint64(0))
+	defer db.Exec("DELETE FROM users WHERE id = ?", targetUserID)
 
-	// Create two groups.
-	olderGroupID := CreateTestGroup(t, prefix+"_older")
-	newerGroupID := CreateTestGroup(t, prefix+"_newer")
+	groupID := CreateTestGroup(t, prefix+"_grp")
+	db.Exec("UPDATE `groups` SET namefull = ? WHERE id = ?", "Freegle Bugville", groupID)
 
-	// Set distinct full names so we can tell which is returned.
-	db.Exec("UPDATE `groups` SET namefull = ? WHERE id = ?", "Older Town Freegle", olderGroupID)
-	db.Exec("UPDATE `groups` SET namefull = ? WHERE id = ?", "Newer Town Freegle", newerGroupID)
+	CreateTestMembership(t, modUserID, groupID, "Moderator")
+	CreateTestMembership(t, targetUserID, groupID, "Member")
 
-	// Make the viewing user a moderator of both groups so they have permission.
-	CreateTestMembership(t, modUserID, olderGroupID, "Moderator")
-	CreateTestMembership(t, modUserID, newerGroupID, "Moderator")
-
-	// Add target user to the older group first, then the newer group.
-	// Explicitly set `added` timestamps 1 second apart because MySQL TIMESTAMP
-	// has only second precision — both inserts in the same second would make
-	// ORDER BY m.added DESC non-deterministic.
-	CreateTestMembership(t, targetUserID, olderGroupID, "Member")
-	CreateTestMembership(t, targetUserID, newerGroupID, "Moderator")
-	db.Exec("UPDATE memberships SET added = DATE_SUB(added, INTERVAL 1 SECOND) WHERE userid = ? AND groupid = ?",
-		targetUserID, olderGroupID)
-
-	// Fetch the target user via modtools endpoint.
 	_, token := CreateTestSession(t, modUserID)
 	resp, _ := getApp().Test(httptest.NewRequest("GET",
 		fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", targetUserID, token), nil))
@@ -3261,13 +3304,20 @@ func TestPublicLocation_MostRecentMembership(t *testing.T) {
 	var result map[string]interface{}
 	json2.Unmarshal(rsp(resp), &result)
 
-	// The publiclocation is nested under info.publiclocation.
 	info, ok := result["info"].(map[string]interface{})
 	require.True(t, ok, "Expected info in modtools user response")
-	pubLoc, ok := info["publiclocation"].(map[string]interface{})
-	require.True(t, ok, "Expected publiclocation in info")
-	assert.Equal(t, "Newer Town Freegle", pubLoc["groupname"],
-		"Public location should use the most recently added membership")
+
+	// publiclocation should be absent / nil for a user with no real location.
+	// Before the fix, info.publiclocation.groupname was "Freegle Bugville".
+	pubLocRaw, hasPubLoc := info["publiclocation"]
+	if hasPubLoc && pubLocRaw != nil {
+		pubLoc, _ := pubLocRaw.(map[string]interface{})
+		assert.Equal(t, "", pubLoc["groupname"],
+			"publiclocation.groupname must be empty for users with no real location "+
+				"— the group name was previously leaking out as a faux address (Discourse 9730)")
+		assert.Equal(t, "", pubLoc["display"],
+			"publiclocation.display must be empty for users with no real location")
+	}
 }
 
 // =============================================================================
