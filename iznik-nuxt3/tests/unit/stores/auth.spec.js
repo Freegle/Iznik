@@ -243,7 +243,7 @@ describe('auth store', () => {
       // had been torn down. A bare `window` reference in the guard threw
       // ReferenceError; the fix uses `typeof window === 'undefined'`.
       const originalWindow = globalThis.window
-      // eslint-disable-next-line no-undef
+
       delete globalThis.window
       try {
         expect(() => store.disableGoogleAutoselect()).not.toThrow()
@@ -295,17 +295,27 @@ describe('auth store', () => {
 
   describe('lostPassword', () => {
     it('returns worked=true on success', async () => {
-      mockLostPassword.mockResolvedValue({})
+      // Backend returns ret:0 when a reset email has been queued.
+      mockLostPassword.mockResolvedValue({ ret: 0 })
       const result = await store.lostPassword('test@test.com')
       expect(result.worked).toBe(true)
       expect(result.unknown).toBe(false)
     })
 
-    it('returns unknown=true on 404', async () => {
+    it('returns unknown=true and worked=false on 404 (unknown email)', async () => {
       mockLostPassword.mockRejectedValue({ response: { status: 404 } })
       const result = await store.lostPassword('nobody@test.com')
-      expect(result.worked).toBe(true)
+      expect(result.worked).toBe(false)
       expect(result.unknown).toBe(true)
+    })
+
+    it('returns worked=false for a social-login-only account (ret:1)', async () => {
+      // Backend returns HTTP 200 with ret:1/socialSignin:true and queues no
+      // email, so the store must not report success.
+      mockLostPassword.mockResolvedValue({ ret: 1, socialSignin: true })
+      const result = await store.lostPassword('social@test.com')
+      expect(result.worked).toBe(false)
+      expect(result.unknown).toBe(false)
     })
 
     it('returns worked=false on other errors', async () => {

@@ -252,12 +252,16 @@ export const useAuthStore = defineStore({
       let worked = false
 
       try {
-        await this.$api.session.lostPassword(email)
-        worked = true
+        const ret = await this.$api.session.lostPassword(email)
+        // Only report success when the backend actually queued a reset email.
+        // ret:0 = email queued. ret:1 = social-login-only account (returned as
+        // HTTP 200 with socialSignin:true) — no reset email is sent, so we must
+        // not claim one was.
+        worked = ret?.ret === 0
       } catch (e) {
         if (e.response?.status === 404) {
+          // Unknown email (ret:2): no email sent, so worked stays false.
           unknown = true
-          worked = true
         } else {
           console.log('Lost password error', e)
         }
