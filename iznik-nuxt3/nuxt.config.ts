@@ -264,6 +264,17 @@ export default defineNuxtConfig({
     // During prerendering with cdnURL configured, the crawler tries to access these from the CDN
     // path before they exist, causing 404 errors. See: https://github.com/nuxt/nuxt/discussions/27624
     appManifest: false,
+
+    // For the Capacitor app build only, disable the entry import map.
+    // Nuxt 3.21's entryImportMap (default true) rewrites the entry chunk to the
+    // bare specifier `#entry` and injects a <script type="importmap"> to resolve
+    // it at runtime. Import maps are only supported in WKWebView from iOS 16.4+,
+    // so on older iPhones (the app's floor is iOS 14.0 — see ios/App/Podfile)
+    // the app throws "Module specifier '#entry' does not start with..." and
+    // white-screens on launch. Disabling it makes the entry resolve to a normal
+    // relative ./_nuxt/*.js import at build time. The web build keeps the
+    // feature (its browsers are modern and it's served via Netlify).
+    entryImportMap: !config.ISAPP,
   },
 
   webpack: {
