@@ -1313,6 +1313,9 @@ func isValidRedirectURL(url string) bool {
 		allowedDomains = append(allowedDomains, groupDomain)
 	}
 
+	// Always allow Freegle's own domain regardless of env var configuration.
+	allowedDomains = append(allowedDomains, "ilovefreegle.org")
+
 	// Allow localhost for development
 	allowedDomains = append(allowedDomains, "localhost")
 

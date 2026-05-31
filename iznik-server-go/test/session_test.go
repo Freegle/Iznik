@@ -1220,7 +1220,9 @@ func TestForgetPartnerFlow(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
-	db.Exec("UPDATE users SET ljuserid = ? WHERE id = ?", uint64(99999), userID)
+	// Use userID as ljuserid: avoids UNIQUE constraint collisions with leftover rows
+	// from prior test runs that used the hardcoded value 99999.
+	db.Exec("UPDATE users SET ljuserid = ? WHERE id = ?", userID, userID)
 
 	// Seed a message + messages_groups row so we can confirm partner erasure still
 	// blanks content (unlike the self-service grace path).
@@ -2422,10 +2424,14 @@ func TestWorkCountWiderChatReviewNoDoubleCounting(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Work Counts: Chat review excludes deleted users
+// Work Counts: Chat review includes messages from deleted senders (V1 parity)
 // ---------------------------------------------------------------------------
 
-func TestWorkCountChatReviewExcludesDeletedUser(t *testing.T) {
+// TestWorkCountChatReviewIncludesDeletedSender verifies that the badge count
+// still includes review-required messages after the sender's account is deleted.
+// V1 (PHP) does not filter the sender out of the review queue, so V2 must not
+// either — this matches TestReviewQueueIncludesMessagesFromDeletedSenders.
+func TestWorkCountChatReviewIncludesDeletedSender(t *testing.T) {
 	prefix := uniquePrefix("wc_chatdel")
 	db := database.DBConn
 	groupID := CreateTestGroup(t, prefix)
@@ -2457,18 +2463,22 @@ func TestWorkCountChatReviewExcludesDeletedUser(t *testing.T) {
 	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", user1ID)
 	defer db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", user1ID)
 
-	// After deletion: should NOT be counted.
+	// After deletion: message MUST still be counted (V1 parity — mods need to review
+	// flagged messages regardless of whether the sender was subsequently deleted).
 	work2 := getSessionWork(t, token)
 	chatreview2 := work2["chatreview"].(float64)
-	assert.Less(t, chatreview2, chatreview1,
-		"Chat message from deleted user should NOT be counted")
+	assert.GreaterOrEqual(t, chatreview2, float64(1),
+		"Chat message from deleted sender should still be counted (V1 parity)")
 }
 
 // ---------------------------------------------------------------------------
-// Work Counts: Wider chat review excludes deleted users
+// Work Counts: Wider chat review includes messages from deleted senders (V1 parity)
 // ---------------------------------------------------------------------------
 
-func TestWorkCountWiderChatReviewExcludesDeletedUser(t *testing.T) {
+// TestWorkCountWiderChatReviewIncludesDeletedSender verifies that the wider-review
+// badge count still includes review-required messages after the sender is deleted.
+// Matches V1 parity — see TestWorkCountChatReviewIncludesDeletedSender.
+func TestWorkCountWiderChatReviewIncludesDeletedSender(t *testing.T) {
 	prefix := uniquePrefix("wc_widerdel")
 	db := database.DBConn
 
@@ -2509,11 +2519,11 @@ func TestWorkCountWiderChatReviewExcludesDeletedUser(t *testing.T) {
 	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", user2ID)
 	defer db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", user2ID)
 
-	// After deletion: should NOT be counted.
+	// After deletion: message MUST still be counted (V1 parity).
 	work2 := getSessionWork(t, token)
 	chatreviewother2 := work2["chatreviewother"].(float64)
-	assert.Less(t, chatreviewother2, chatreviewother1,
-		"Wider review message from deleted user should NOT be counted")
+	assert.GreaterOrEqual(t, chatreviewother2, float64(1),
+		"Wider review message from deleted sender should still be counted (V1 parity)")
 }
 
 func TestWorkCountEditReviewCountsDistinctMessages(t *testing.T) {

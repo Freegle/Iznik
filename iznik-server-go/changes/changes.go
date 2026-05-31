@@ -92,7 +92,7 @@ func GetChanges(c *fiber.Ctx) error {
 		since = time.Now().Add(-1 * time.Hour)
 	}
 
-	mysqlTime := since.Format("2006-01-02 15:04:05")
+	mysqlTime := since.UTC().Format("2006-01-02 15:04:05")
 
 	// Fetch message changes, user changes, and ratings in parallel.
 	var messages []MessageChange

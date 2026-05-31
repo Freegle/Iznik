@@ -136,14 +136,11 @@ func TestAMPGetChatMessagesInvalidToken(t *testing.T) {
 }
 
 func TestAMPGetChatMessagesValidToken(t *testing.T) {
-	// Set up test environment secret
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
+	// Use a deterministic test secret so the test runs without a production AMP_SECRET.
+	const testAMPSecret = "test-amp-secret-for-testing"
+	os.Setenv("AMP_SECRET", testAMPSecret)
+	defer os.Unsetenv("AMP_SECRET")
+	ampSecret := testAMPSecret
 
 	// Create test data
 	prefix := uniquePrefix("ampget")
@@ -184,14 +181,11 @@ func TestAMPGetChatMessagesValidToken(t *testing.T) {
 }
 
 func TestAMPGetChatMessagesNotInChat(t *testing.T) {
-	// Set up test environment secret
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
+	// Use a deterministic test secret so the test runs without a production AMP_SECRET.
+	const testAMPSecret = "test-amp-secret-for-testing"
+	os.Setenv("AMP_SECRET", testAMPSecret)
+	defer os.Unsetenv("AMP_SECRET")
+	ampSecret := testAMPSecret
 
 	// Create test data
 	prefix := uniquePrefix("ampnotinchat")
@@ -249,14 +243,11 @@ func TestAMPPostChatReplyInvalidToken(t *testing.T) {
 }
 
 func TestAMPPostChatReplyExpiredToken(t *testing.T) {
-	// Set up test environment secret
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
+	// Use a deterministic test secret so the test runs without a production AMP_SECRET.
+	const testAMPSecret = "test-amp-secret-for-testing"
+	os.Setenv("AMP_SECRET", testAMPSecret)
+	defer os.Unsetenv("AMP_SECRET")
+	ampSecret := testAMPSecret
 
 	// Create test data
 	prefix := uniquePrefix("ampexpired")
@@ -290,14 +281,11 @@ func TestAMPPostChatReplyExpiredToken(t *testing.T) {
 }
 
 func TestAMPPostChatReplyValidToken(t *testing.T) {
-	// Set up test environment secret
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
+	// Use a deterministic test secret so the test runs without a production AMP_SECRET.
+	const testAMPSecret = "test-amp-secret-for-testing"
+	os.Setenv("AMP_SECRET", testAMPSecret)
+	defer os.Unsetenv("AMP_SECRET")
+	ampSecret := testAMPSecret
 
 	// Create test data
 	prefix := uniquePrefix("ampreplyvalid")
@@ -338,14 +326,11 @@ func TestAMPPostChatReplyValidToken(t *testing.T) {
 }
 
 func TestAMPPostChatReplyTokenCanBeReused(t *testing.T) {
-	// Set up test environment secret
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
+	// Use a deterministic test secret so the test runs without a production AMP_SECRET.
+	const testAMPSecret = "test-amp-secret-for-testing"
+	os.Setenv("AMP_SECRET", testAMPSecret)
+	defer os.Unsetenv("AMP_SECRET")
+	ampSecret := testAMPSecret
 
 	// Create test data
 	prefix := uniquePrefix("ampreplyreuse")
@@ -388,14 +373,11 @@ func TestAMPPostChatReplyTokenCanBeReused(t *testing.T) {
 }
 
 func TestAMPPostChatReplyEmptyMessage(t *testing.T) {
-	// Set up test environment secret
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
+	// Use a deterministic test secret so the test runs without a production AMP_SECRET.
+	const testAMPSecret = "test-amp-secret-for-testing"
+	os.Setenv("AMP_SECRET", testAMPSecret)
+	defer os.Unsetenv("AMP_SECRET")
+	ampSecret := testAMPSecret
 
 	// Create test data
 	prefix := uniquePrefix("ampreplyempty")
@@ -429,14 +411,11 @@ func TestAMPPostChatReplyEmptyMessage(t *testing.T) {
 }
 
 func TestAMPPostChatReplyTokenMismatchChatID(t *testing.T) {
-	// Set up test environment secret
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
+	// Use a deterministic test secret so the test runs without a production AMP_SECRET.
+	const testAMPSecret = "test-amp-secret-for-testing"
+	os.Setenv("AMP_SECRET", testAMPSecret)
+	defer os.Unsetenv("AMP_SECRET")
+	ampSecret := testAMPSecret
 
 	// Create test data
 	prefix := uniquePrefix("ampmismatch")
@@ -476,14 +455,11 @@ func TestAMPPostChatReplyTokenMismatchChatID(t *testing.T) {
 }
 
 func TestAMPPostChatReplyWithTracking(t *testing.T) {
-	// Set up test environment secret
-	ampSecret := os.Getenv("AMP_SECRET")
-	if ampSecret == "" {
-		ampSecret = os.Getenv("FREEGLE_AMP_SECRET")
-	}
-	if ampSecret == "" {
-		t.Fatal("AMP_SECRET not set")
-	}
+	// Use a deterministic test secret so the test runs without a production AMP_SECRET.
+	const testAMPSecret = "test-amp-secret-for-testing"
+	os.Setenv("AMP_SECRET", testAMPSecret)
+	defer os.Unsetenv("AMP_SECRET")
+	ampSecret := testAMPSecret
 
 	// Create test data
 	prefix := uniquePrefix("ampreplytrack")

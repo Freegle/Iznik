@@ -3945,7 +3945,7 @@ func TestNotesFilterAllCommunitiesExcludesNonModGroups(t *testing.T) {
 	)
 
 	// Member in a group the mod does NOT moderate — must not appear.
-	otherMod := CreateTestUser(t, prefix+"_othermod", "OtherMod")
+	otherMod := CreateTestUser(t, prefix+"_othermod", "User")
 	memberInOtherGroup := CreateTestUser(t, prefix+"_other", "User")
 	otherGroupID := CreateTestGroup(t, prefix+"_other_group")
 	CreateTestMembership(t, otherMod, otherGroupID, "Moderator")

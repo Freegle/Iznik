@@ -23,7 +23,7 @@ func InitDatabase() {
 	fmt.Println("Connecting to database", os.Getenv("MYSQL_HOST"), os.Getenv("MYSQL_PORT"), os.Getenv("MYSQL_DBNAME"), os.Getenv("MYSQL_USER"), os.Getenv("MYSQL_PROTOCOL"))
 
 	mysqlCredentials := fmt.Sprintf(
-		"%s:%s@%s(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local&interpolateParams=true",
+		"%s:%s@%s(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=UTC&interpolateParams=true",
 		os.Getenv("MYSQL_USER"),
 		os.Getenv("MYSQL_PASSWORD"),
 		os.Getenv("MYSQL_PROTOCOL"),

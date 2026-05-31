@@ -67,7 +67,9 @@ func TestChangesWithSince(t *testing.T) {
 	defer db.Exec("DELETE FROM partners_keys WHERE partner = ?", prefix+"_partner")
 
 	// Request with a since parameter far in the future — should return empty results.
-	futureTime := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+	// Use UTC so the RFC3339 format produces a "Z" suffix rather than "+HH:MM",
+	// which would be misinterpreted as a space when embedded unencoded in a URL.
+	futureTime := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
 	req := httptest.NewRequest("GET", fmt.Sprintf("/api/changes?partner=%s&since=%s", partnerKey, futureTime), nil)
 	resp, err := getApp().Test(req, -1)
 	require.NoError(t, err)
