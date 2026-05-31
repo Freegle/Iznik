@@ -1715,4 +1715,45 @@ class ChatNotificationServiceTest extends TestCase
         Mail::assertNothingSent();
     }
 
+    /**
+     * Duplicate chat rows are occasionally created for a single send (V1's chatdups
+     * cron later deletes them). A notification can race ahead of that cleanup; the
+     * "Earlier in this conversation" context must not repeat a copy of the current
+     * message. See the gomaaspromo/NewhamFreegle report (2026-05-28).
+     */
+    public function test_previous_messages_excludes_duplicate_of_current_message(): void
+    {
+        $sender = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient, ['latestmessage' => now()]);
+
+        // An older, genuinely different message that SHOULD appear as context.
+        $earlier = $this->createTestChatMessage($room, $recipient, [
+            'message' => 'A genuinely earlier message',
+            'date' => now()->subMinutes(10),
+        ]);
+
+        // A duplicate copy of the current message (same author, body and refmsgid),
+        // created just before it - this is the row that must NOT be shown again.
+        $duplicate = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Welcome to the group!',
+            'refmsgid' => null,
+            'date' => now()->subMinutes(2),
+        ]);
+
+        $current = $this->createTestChatMessage($room, $sender, [
+            'message' => 'Welcome to the group!',
+            'refmsgid' => null,
+            'date' => now()->subMinutes(1),
+        ]);
+
+        $method = new \ReflectionMethod(ChatNotificationService::class, 'getPreviousMessages');
+        $method->setAccessible(true);
+        $previous = $method->invoke($this->service, $room, $current);
+
+        $ids = $previous->pluck('id')->all();
+        $this->assertContains($earlier->id, $ids, 'Genuinely earlier message should remain as context');
+        $this->assertNotContains($duplicate->id, $ids, 'Duplicate copy of the current message should be excluded');
+    }
+
 }

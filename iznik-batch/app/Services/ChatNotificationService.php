@@ -431,6 +431,16 @@ class ChatNotificationService
             ->limit($limit)
             ->with(['user', 'refMessage'])
             ->get()
+            // Drop duplicate copies of the current message. Duplicate chat rows
+            // are occasionally created for a single send; V1's chatdups cron
+            // (keyed on chatid+message+refmsgid) deletes them, but a notification
+            // can race ahead of that cleanup and would otherwise repeat the
+            // current message under "Earlier in this conversation".
+            ->reject(function (ChatMessage $message) use ($currentMessage) {
+                return $message->userid === $currentMessage->userid
+                    && $message->message === $currentMessage->message
+                    && $message->refmsgid === $currentMessage->refmsgid;
+            })
             ->reverse()
             ->values();
     }
