@@ -2323,10 +2323,12 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         WHERE state = 'open' AND pr_number IS NULL
       `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
 
-      // Bugs whose PRs have been rejected once need human review — escalate them.
-      // One rejection is enough: if the reviewer closed a PR, they've signalled the
-      // approach is wrong and the FSM shouldn't guess again without guidance.
-      const ESCALATION_THRESHOLD = 1
+      // Escalate to human only after a re-diagnosed SECOND attempt still failed.
+      // A single rejected PR usually means the first diagnosis was wrong, not that
+      // the bug is unfixable — the FSM should re-diagnose and retry (delegates now
+      // run on Opus 4.8). The 2026-05-31 sweep found ~7 genuinely-actionable bugs
+      // (9672, 9719, 9737, 9738, 9656/36) abandoned after a single rejection.
+      const ESCALATION_THRESHOLD = 2
       const toEscalate = dbOpenBugs.filter(b => (b.prRejections ?? 0) >= ESCALATION_THRESHOLD)
       for (const bug of toEscalate) {
         db.prepare(`
