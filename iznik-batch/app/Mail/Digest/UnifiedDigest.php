@@ -373,6 +373,13 @@ class UnifiedDigest extends MjmlMailable
                 ? $this->trackedImageUrl($displayImageUrl, "image_{$index}", $scrollPercent)
                 : null;
 
+            // Hero image for immediate (single-post) mode: a larger, height-
+            // capped crop (600x400) so the photo is the hero — V1's immediate
+            // single.mjml used a full-width image. Cropping to a 3:2 box bounds
+            // the height so portrait photos don't dominate. Falls back to the
+            // type placeholder when the post has no usable photo.
+            $heroImageUrl = $this->getMessageImageUrl($message, 600, 400) ?? $placeholderUrl;
+
             // Decode emoji sequences in message text.
             $messageText = $message->textbody
                 ? EmojiUtils::decodeEmojis($message->textbody)
@@ -425,6 +432,7 @@ class UnifiedDigest extends MjmlMailable
                 'messageUrl' => $messageUrl,
                 'imageUrl' => $imageUrl,
                 'displayImageUrl' => $displayImageUrl,
+                'heroImageUrl' => $heroImageUrl,
                 'trackedImageUrl' => $trackedImage,
                 'isPlaceholder' => $imageUrl === null,
                 'postedToText' => $postedToText,
@@ -532,7 +540,7 @@ class UnifiedDigest extends MjmlMailable
      * with no data/externaluid/externalurl/archived flag set. Without this
      * filter, we'd pick a half-written attachment and 404.
      */
-    protected function getMessageImageUrl($message): ?string
+    protected function getMessageImageUrl($message, int $width = 300, ?int $height = null): ?string
     {
         if (!$message->attachments || $message->attachments->isEmpty()) {
             return null;
@@ -549,25 +557,33 @@ class UnifiedDigest extends MjmlMailable
 
         // If there's an external URL, use it directly.
         if (!empty($attachment->externalurl)) {
-            return $this->getDeliveryUrl($attachment->externalurl, 300);
+            return $this->getDeliveryUrl($attachment->externalurl, $width, $height);
         }
 
         // Build URL from image domain - message images use timg_ prefix for thumbnails.
         $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
         $sourceUrl = "{$imagesDomain}/timg_{$attachment->id}.jpg";
 
-        return $this->getDeliveryUrl($sourceUrl, 300);
+        return $this->getDeliveryUrl($sourceUrl, $width, $height);
     }
 
     /**
      * Get a URL via the delivery service for image resizing/optimization.
      */
-    protected function getDeliveryUrl(string $sourceUrl, int $width): string
+    protected function getDeliveryUrl(string $sourceUrl, int $width, ?int $height = null): string
     {
         if (!$this->deliveryUrl) {
             return $sourceUrl;
         }
 
-        return $this->deliveryUrl . '/?url=' . urlencode($sourceUrl) . '&w=' . $width;
+        $url = $this->deliveryUrl . '/?url=' . urlencode($sourceUrl) . '&w=' . $width;
+
+        if ($height !== null) {
+            // Crop to a fixed box (cover) so a tall portrait photo can't
+            // dominate the email — this is what bounds the hero's max height.
+            $url .= '&h=' . $height . '&fit=cover';
+        }
+
+        return $url;
     }
 }
