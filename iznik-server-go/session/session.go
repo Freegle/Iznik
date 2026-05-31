@@ -1105,7 +1105,6 @@ func GetSession(c *fiber.Ctx) error {
 				var count int64
 				db.Raw("SELECT COUNT(DISTINCT cm.id) FROM chat_messages cm "+
 					"INNER JOIN chat_rooms cr ON cr.id = cm.chatid "+
-					"INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL "+
 					"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id "+
 					"WHERE cm.reviewrequired = 1 AND cm.reviewrejected = 0 "+
 					"AND cm.date >= ? "+heldFilter+" "+
@@ -1149,7 +1148,6 @@ func GetSession(c *fiber.Ctx) error {
 				var widerCount int64
 				widerQuery := "SELECT COUNT(DISTINCT cm.id) FROM chat_messages cm " +
 					"INNER JOIN chat_rooms cr ON cr.id = cm.chatid " +
-					"INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL " +
 					"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id " +
 					"INNER JOIN memberships m ON m.userid = (CASE WHEN cm.userid = cr.user1 THEN cr.user2 ELSE cr.user1 END) " +
 					"INNER JOIN `groups` g ON m.groupid = g.id AND g.type = '" + utils.GROUP_TYPE_FREEGLE + "' " +

@@ -875,7 +875,6 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 		"COALESCE((SELECT m2.groupid FROM memberships m2 WHERE m2.userid = cm.userid AND m2.groupid IN (" + groupIDList + ") LIMIT 1), 0) AS groupidfrom " +
 		"FROM chat_messages cm " +
 		"INNER JOIN chat_rooms cr ON cr.id = cm.chatid " +
-		"INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL " +
 		"LEFT JOIN chat_images ci ON ci.chatmsgid = cm.id " +
 		"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id " +
 		"LEFT JOIN chat_messages_byemail cme ON cme.chatmsgid = cm.id " +
@@ -914,7 +913,6 @@ func getReviewQueue(c *fiber.Ctx, myid uint64) error {
 			"INNER JOIN chat_rooms cr ON cr.id = cm.chatid AND cm.reviewrequired = 1 AND cm.reviewrejected = 0 " +
 			"INNER JOIN memberships m1 ON m1.userid = " + recipientExpr + " " +
 			"INNER JOIN `groups` g ON m1.groupid = g.id AND g.type = 'Freegle' " +
-			"INNER JOIN users ON users.id = cm.userid AND users.deleted IS NULL " +
 			"LEFT JOIN memberships m2 ON m2.userid = cm.userid " +
 			"LEFT JOIN chat_images ci ON ci.chatmsgid = cm.id " +
 			"LEFT JOIN chat_messages_held cmh ON cmh.msgid = cm.id " +
