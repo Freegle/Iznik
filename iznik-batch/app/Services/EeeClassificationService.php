@@ -305,6 +305,7 @@ class EeeClassificationService
         ];
 
         $this->sqlite->insertClassification($data);
+        $this->recordClassifiedAttachment((int) $message->id, (int) $att->attid);
         return $data;
     }
 
@@ -493,6 +494,7 @@ class EeeClassificationService
         ];
 
         $this->sqlite->insertClassification($data);
+        $this->recordClassifiedAttachment((int) $message->id, $attid);
         return $data;
     }
 
@@ -522,6 +524,30 @@ class EeeClassificationService
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Add (messageid, attid) to the MySQL `eee_classified_attachments` pointer
+     * table so the Go micro-volunteering API can serve volunteers the same
+     * items the model classified.
+     *
+     * INSERT IGNORE: re-classifying the same attachment with a newer model or
+     * prompt is fine — the pointer already exists. The detailed classification
+     * data lives in the iznik-batch SQLite.
+     */
+    protected function recordClassifiedAttachment(int $messageid, int $attid): void
+    {
+        if ($attid <= 0) return;
+        try {
+            DB::statement('INSERT IGNORE INTO eee_classified_attachments (messageid, attid) VALUES (?, ?)', [$messageid, $attid]);
+        } catch (\Throwable $e) {
+            // Table may not exist yet on first deploy — log and continue.
+            // The classifier's own write to SQLite is what matters; this is
+            // only an index for downstream MV serving.
+            \Illuminate\Support\Facades\Log::warning('eee_classified_attachments upsert failed', [
+                'messageid' => $messageid, 'attid' => $attid, 'error' => $e->getMessage(),
+            ]);
+        }
+    }
 
     protected function computeConsensus(array $results): array
     {

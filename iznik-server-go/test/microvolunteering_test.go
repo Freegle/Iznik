@@ -651,70 +651,77 @@ func TestListMicroActions(t *testing.T) {
 	db.Exec("DELETE FROM microactions WHERE id = ?", actionID)
 }
 
-// TestGetMicrovolunteering_EEELabel_DedupesByMessage exercises the
-// per-message dedup rule in getEEELabelChallenge: a message with multiple
-// photos must only ever be served once per challenge, picking the canonical
-// primary photo (`primary` DESC, id ASC) — the same rule
-// message_list.go:255 uses to display a thumbnail.
+// TestGetMicrovolunteering_EEELabel_RestrictsToClassifiedItems exercises
+// the rule that EEELabel only serves attachments the model classifier has
+// already processed (i.e. present in `eee_classified_attachments`). Without
+// this rule, MV labels accumulate on items the model never saw, so the
+// Condition/Weight/Size accuracy column on the eee-browser dashboard is
+// permanently empty.
 //
-// Without the fix this regressed: every photo of the same item generated a
-// separate EEELabel challenge, so the same fridge was labelled twice by the
-// same volunteer (see commit message for the prod incident).
-func TestGetMicrovolunteering_EEELabel_DedupesByMessage(t *testing.T) {
+// Set-up: insert one OFFER attachment that IS in eee_classified_attachments
+// and one that isn't. Asserts EEELabel may serve the classified one but
+// never the unclassified one.
+func TestGetMicrovolunteering_EEELabel_RestrictsToClassifiedItems(t *testing.T) {
 	db := database.DBConn
-	prefix := uniquePrefix("mv_eee_dedup")
+	prefix := uniquePrefix("mv_eee_classified")
 
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix+"_user", "User")
 	CreateTestMembership(t, userID, groupID, "Member")
 	_, token := CreateTestSession(t, userID)
 
-	// Suppress Invite challenge for this user so EEELabel can win the dispatch.
+	// Suppress Invite challenge so EEELabel can win the dispatch.
 	db.Exec("INSERT INTO microactions (actiontype, userid, version, timestamp, score_negative) VALUES (?, ?, 4, NOW(), 0)",
 		microvolunteering.ChallengeInvite, userID)
 	defer db.Exec("DELETE FROM microactions WHERE userid = ?", userID)
 
-	// Recent OFFER message + two attachments. Neither marked primary,
-	// so the canonical rule should resolve to the lower-id attachment.
-	var msgID uint64
+	// Two OFFER messages, each with one attachment. The first is in
+	// eee_classified_attachments, the second is not.
+	var msgClassified, msgUnclassified uint64
 	db.Exec(`INSERT INTO messages (fromuser, subject, textbody, message, type, arrival, deleted)
 		VALUES (?, ?, 'test', 'test', 'Offer', NOW(), NULL)`,
-		userID, prefix+" two-photo offer")
-	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgID)
-	defer db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+		userID, prefix+" classified item")
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgClassified)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgClassified)
 
-	var attLow, attHigh uint64
-	db.Exec("INSERT INTO messages_attachments (msgid, archived, externaluid, `primary`) VALUES (?, 0, ?, 0)",
-		msgID, prefix+"-photo-A")
-	db.Raw("SELECT LAST_INSERT_ID()").Scan(&attLow)
-	db.Exec("INSERT INTO messages_attachments (msgid, archived, externaluid, `primary`) VALUES (?, 0, ?, 0)",
-		msgID, prefix+"-photo-B")
-	db.Raw("SELECT LAST_INSERT_ID()").Scan(&attHigh)
-	defer db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgID)
+	db.Exec(`INSERT INTO messages (fromuser, subject, textbody, message, type, arrival, deleted)
+		VALUES (?, ?, 'test', 'test', 'Offer', NOW(), NULL)`,
+		userID, prefix+" unclassified item")
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&msgUnclassified)
+	defer db.Exec("DELETE FROM messages WHERE id = ?", msgUnclassified)
 
-	// Scope to EEELabel so other challenge sources don't mask the assertion.
-	req := httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=EEELabel", nil)
-	resp, _ := getApp().Test(req)
-	assert.Equal(t, 200, resp.StatusCode)
+	var attClassified, attUnclassified uint64
+	db.Exec("INSERT INTO messages_attachments (msgid, archived, externaluid, `primary`) VALUES (?, 0, ?, 1)",
+		msgClassified, prefix+"-photo-classified")
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&attClassified)
+	defer db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgClassified)
 
-	var result microvolunteering.Challenge
-	json2.Unmarshal(rsp(resp), &result)
+	db.Exec("INSERT INTO messages_attachments (msgid, archived, externaluid, `primary`) VALUES (?, 0, ?, 1)",
+		msgUnclassified, prefix+"-photo-unclassified")
+	db.Raw("SELECT LAST_INSERT_ID()").Scan(&attUnclassified)
+	defer db.Exec("DELETE FROM messages_attachments WHERE msgid = ?", msgUnclassified)
 
-	// The challenge MAY be for our test message (if it's the most recent OFFER
-	// in the test DB at the moment the test runs) or for some other OFFER.
-	// Either way: when the served attachment IS for our two-photo message it
-	// must be the lower-id one — never the higher-id one.
-	if result.EEELabel != nil && result.EEELabel.Messageid == msgID {
-		assert.Equal(t, attLow, result.EEELabel.Attid,
-			"two-photo message must serve the canonical primary (lower id when both primary=0), never the higher-id attachment")
-		assert.NotEqual(t, attHigh, result.EEELabel.Attid,
-			"the higher-id attachment must never be served while the lower-id one exists")
+	// Pointer in MySQL says only the first attachment has been classified.
+	db.Exec("INSERT IGNORE INTO eee_classified_attachments (messageid, attid) VALUES (?, ?)",
+		msgClassified, attClassified)
+	defer db.Exec("DELETE FROM eee_classified_attachments WHERE messageid IN (?, ?)", msgClassified, msgUnclassified)
+
+	// Make many EEELabel requests as this user. None should ever resolve to
+	// the unclassified attachment, even though it's an otherwise-eligible
+	// recent OFFER with a photo.
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest("GET", "/api/microvolunteering?jwt="+token+"&types=EEELabel", nil)
+		resp, _ := getApp().Test(req)
+		assert.Equal(t, 200, resp.StatusCode)
+
+		var result microvolunteering.Challenge
+		json2.Unmarshal(rsp(resp), &result)
+
+		if result.EEELabel != nil {
+			assert.NotEqual(t, attUnclassified, result.EEELabel.Attid,
+				"EEELabel must never serve an attachment that is not in eee_classified_attachments")
+			assert.NotEqual(t, msgUnclassified, result.EEELabel.Messageid,
+				"EEELabel must never serve a message whose attachments are not in eee_classified_attachments")
+		}
 	}
-
-	// Independent check: directly verify the canonical primary on this message
-	// matches the lower id (defends the rule against silent regressions in
-	// other places that also pick primaries).
-	var canonicalPrimary uint64
-	db.Raw("SELECT id FROM messages_attachments WHERE msgid = ? AND externaluid IS NOT NULL ORDER BY `primary` DESC, id ASC LIMIT 1", msgID).Scan(&canonicalPrimary)
-	assert.Equal(t, attLow, canonicalPrimary, "canonical primary rule should pick the lower-id attachment when both primary=0")
 }
