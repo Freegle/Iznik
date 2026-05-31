@@ -104,24 +104,84 @@ type Newsfeed struct {
 
 func GetNearbyDistance(uid uint64) (float64, utils.LatLng, float64, float64, float64, float64) {
 	const nearbyLimit = 10
+	// Over-fetch from the spatial index so that, after dropping alerts and posts
+	// older than the feed window, we still have at least nearbyLimit candidates.
+	const overFetch = 10
 
 	latlng := user.GetLatLng(uid)
 	if latlng.Lat == 0 && latlng.Lng == 0 {
 		return 0, latlng, 0, 0, 0, 0
 	}
 
-	results, err := spatial.KNN("newsfeed", float64(latlng.Lng), float64(latlng.Lat), nearbyLimit+1, "")
+	results, err := spatial.KNN("newsfeed", float64(latlng.Lng), float64(latlng.Lat), nearbyLimit*overFetch, "")
 	if err != nil || len(results) < nearbyLimit {
 		return 0, latlng, 0, 0, 0, 0
 	}
 
-	// Use the 10th result's distance (decimal degrees → km, 1 degree ≈ 111 km).
-	distKm := results[nearbyLimit-1].Distance * 111.0
+	// The spatial "newsfeed" index has no type/timestamp columns, so it can't
+	// exclude alerts or stale posts — applying that here restores the
+	// pre-spatial query's behaviour (otherwise alerts/old posts shrink the
+	// computed radius).
+	ids := make([]int64, len(results))
+	for i, r := range results {
+		ids[i] = r.ID
+	}
+	allowed := RecentNonAlertNewsfeedIDs(ids)
+
+	// Walk the KNN results in distance order; the nearbyLimit-th allowed entry
+	// sets the radius (decimal degrees → km, 1 degree ≈ 111 km).
+	count := 0
+	distDeg := 0.0
+	for _, r := range results {
+		if _, ok := allowed[r.ID]; !ok {
+			continue
+		}
+		count++
+		if count == nearbyLimit {
+			distDeg = r.Distance
+			break
+		}
+	}
+	if count < nearbyLimit {
+		return 0, latlng, 0, 0, 0, 0
+	}
+
+	distKm := distDeg * 111.0
 	p := geo.NewPoint(float64(latlng.Lat), float64(latlng.Lng))
 	ne := p.PointAtDistanceAndBearing(distKm, 45)
 	sw := p.PointAtDistanceAndBearing(distKm, 225)
 
 	return distKm, latlng, ne.Lat(), ne.Lng(), sw.Lat(), sw.Lng()
+}
+
+// RecentNonAlertNewsfeedIDs returns the subset of the given newsfeed ids that
+// are not ALERT-type and were posted within the feed window (31 days). The
+// spatial "newsfeed" index omits the type and timestamp columns, so the
+// nearby-distance calculation applies these filters here (matching the old
+// MySQL query) rather than in the shared index.
+func RecentNonAlertNewsfeedIDs(ids []int64) map[int64]struct{} {
+	allowed := make(map[int64]struct{}, len(ids))
+	if len(ids) == 0 {
+		return allowed
+	}
+
+	// ids come from the spatial server (not user input) — safe to inline.
+	idStrs := make([]string, len(ids))
+	for i, id := range ids {
+		idStrs[i] = strconv.FormatInt(id, 10)
+	}
+	since := time.Now().AddDate(0, 0, -31).Format("2006-01-02")
+
+	var found []int64
+	database.DBConn.Raw(fmt.Sprintf(
+		"SELECT id FROM newsfeed WHERE id IN (%s) AND type != ? AND `timestamp` >= ?",
+		strings.Join(idStrs, ","),
+	), utils.NEWSFEED_TYPE_ALERT, since).Scan(&found)
+
+	for _, id := range found {
+		allowed[id] = struct{}{}
+	}
+	return allowed
 }
 
 func Feed(c *fiber.Ctx) error {
