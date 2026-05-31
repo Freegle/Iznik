@@ -19,7 +19,7 @@ import {
   distSq,
   ringsOverlap,
 } from './polygon.js'
-import { partitionInboxData } from './scoring.js'
+import { partitionInboxData, swingometerDisplay } from './scoring.js'
 import { renderPie as renderPieSvg } from './pie.js'
 
 export async function setupRipplingExplorer({ props, digestModal, legendMode }) {
@@ -66,6 +66,10 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
   // drive standard isochrone (fairness=0) for the current location.
   // Starts at 60 (national approximate); updated by fetchLocalBaseline().
   let localBaseline = 60
+  // True once localBaseline reflects a real measured value for the current
+  // location. While false (fetch pending or failed) the swingometer must not
+  // present the national-average fallback as this area's measured baseline.
+  let localBaselineReady = false
 
   const timeSlider = document.getElementById('rippling-time-slider')
   const fairnessSlider = document.getElementById('rippling-fairness-slider')
@@ -651,6 +655,8 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
   // should sit dead-centre when the slider is cranked to the top.
   async function fetchLocalBaseline(lat, lng) {
     const maxReach = Number(timeSlider.max) || 60
+    // New location: the previous area's baseline no longer applies.
+    localBaselineReady = false
     try {
       const url = apiUrl(
         `/v1/fairness?lat=${lat.toFixed(6)}&lng=${lng.toFixed(6)}&minutes=${maxReach}&mode=drive&fairness=0`
@@ -660,9 +666,11 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
       const data = await r.json()
       if (data.fairness_score !== undefined && data.fairness_score >= 0) {
         localBaseline = Math.round(data.fairness_score * 100)
+        localBaselineReady = true
       }
     } catch (e) {
-      // Keep previous baseline on error
+      // Keep previous baseline on error; localBaselineReady stays false so the
+      // swingometer shows "unavailable" rather than presenting 60% as real.
     }
   }
 
@@ -960,21 +968,21 @@ export async function setupRipplingExplorer({ props, digestModal, legendMode }) 
     const { x, y } = swingometerAngleXY(pct)
     needle.setAttribute('x2', x)
     needle.setAttribute('y2', y)
-    // ±8% band around local baseline is "Balanced"
-    const lo = localBaseline - 8
-    const hi = localBaseline + 8
-    const swingLabel =
-      pct < lo ? 'Affluent bias' : pct > hi ? 'Deprived bias' : 'Balanced'
-    const swingColor = pct < lo ? '#4477aa' : pct > hi ? '#d73027' : '#1a9850'
-    const aboveBaseline = pct >= localBaseline
-    const diff = Math.abs(pct - localBaseline)
-    labelEl.textContent = swingLabel
-    labelEl.style.color = swingColor
+    const s = swingometerDisplay(pct, localBaseline, localBaselineReady)
+    labelEl.textContent = s.label
+    labelEl.style.color = s.color
+    if (!s.ready) {
+      // No measured area baseline yet — don't claim a bias against the
+      // national-average fallback.
+      pctEl.innerHTML = `${pct}% of Freeglers within reach are in deprived areas<br>
+      <span style="color:#999">area baseline unavailable — can't compute bias for this area</span>`
+      return
+    }
     pctEl.innerHTML = `${pct}% of Freeglers within reach are in deprived areas<br>
       <span style="color:${
-        aboveBaseline ? '#1a9850' : '#d73027'
-      };font-weight:600">${aboveBaseline ? '▲' : '▼'} ${diff}% ${
-      aboveBaseline ? 'above' : 'below'
+        s.aboveBaseline ? '#1a9850' : '#d73027'
+      };font-weight:600">${s.aboveBaseline ? '▲' : '▼'} ${s.diff}% ${
+      s.aboveBaseline ? 'above' : 'below'
     } proportionate for this area (${localBaseline}%)</span>`
   }
 
