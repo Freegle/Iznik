@@ -17,8 +17,11 @@ export interface PolicyConfig {
 }
 
 const DEFAULT_HAIKU = 'claude-haiku-4-5-20251001'
-const DEFAULT_SONNET = 'sonnet' // subscription default resolves to current Sonnet
-const DEFAULT_OPUS = 'claude-opus-4-7'
+// "heavy"/delegate model: upgraded from Sonnet to Opus 4.8. Cheaper delegates
+// were mis-triaging real bugs as off-topic and shipping wrong-diagnosis PRs
+// (#581/#582/#585); the sub-agents now match the brain's reasoning quality.
+const DEFAULT_SONNET = 'claude-opus-4-8'
+const DEFAULT_OPUS = 'claude-opus-4-8'
 
 export const DEFAULT_POLICY: PolicyConfig = {
   haikuModel: process.env.MONITOR_HAIKU_MODEL || DEFAULT_HAIKU,

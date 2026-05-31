@@ -194,45 +194,6 @@ async function checkGitAlreadyFixed(
   return null
 }
 
-/**
- * Decide which open PRs `close_extra_prs` should sweep.
- *
- * Goal: close OTHER PRs the fix delegate opened for the SAME bug as the
- * expected PR, while preserving every PR for a DIFFERENT bug.
- *
- * Identification of "same bug" uses the topic-post suffix (e.g.
- * `9481-531`) at the end of an FSM-managed branch name. If we can't
- * extract a suffix from the expected branch, we have no reliable way
- * to tell which other PRs are duplicates — be conservative and don't
- * sweep ANY of them. (Previously, an empty suffix caused the filter to
- * fall through and close every recent edwh-authored PR, including
- * unrelated manual PRs. See PR #577 incident on 2026-05-30.)
- *
- * Pure function so it can be unit-tested without spawning gh.
- */
-export function selectExtraPrsToClose(
-  prs: Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } | null }>,
-  expectedPrNumber: number,
-  iterationStartTs: string,
-  expectedBugBranch: string,
-): Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } | null }> {
-  const bugSuffix = expectedBugBranch.match(/(\d+-\d+)$/)?.[1] ?? ''
-  // Conservative: if we can't identify the bug (e.g. coverage iteration
-  // where the expected branch is `chore/coverage-foo`), don't sweep anything.
-  // The expected PR survives by being the expected one; everything else stays.
-  if (!bugSuffix) return []
-
-  const cutoff = new Date(iterationStartTs)
-  return prs.filter(pr => {
-    if (pr.number === expectedPrNumber) return false
-    if (new Date(pr.createdAt) < cutoff) return false
-    if (pr.author?.login !== 'edwh') return false
-    // Only sweep PRs whose branch carries the same bug suffix.
-    if (!pr.headRefName.includes(bugSuffix)) return false
-    return true
-  })
-}
-
 export const actions: ActionDefinition[] = [
   {
     name: 'load_state',
@@ -1065,7 +1026,20 @@ print(json.dumps(out))
       const listRes = await sh('gh', ['pr', 'list', '--repo', 'Freegle/Iznik', '--state', 'open', '--json', 'number,createdAt,headRefName,author'])
       if (listRes.code !== 0) return { error: `gh pr list failed: ${listRes.stderr}`, closed: [], kept: expectedPrNumber }
       const prs = JSON.parse(listRes.stdout) as Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } }>
-      const extras = selectExtraPrsToClose(prs, expectedPrNumber, iterationStartTs, expectedBugBranch)
+      const cutoff = new Date(iterationStartTs)
+      // Extract the topic+post suffix from the expected branch so we only sweep
+      // PRs for the SAME bug (same topic/post in their branch name). PRs for
+      // other bugs — opened earlier in the same iteration — are left alone.
+      const bugSuffix = expectedBugBranch.match(/(\d+-\d+)$/)?.[1] ?? ''
+      const extras = prs.filter(pr => {
+        if (pr.number === expectedPrNumber) return false
+        if (new Date(pr.createdAt) < cutoff) return false
+        if (pr.author?.login !== 'edwh') return false
+        // If we have a bug suffix, only close PRs whose branch shares it
+        // (i.e. duplicate PRs for the same bug). Leave other bugs' PRs alone.
+        if (bugSuffix && !pr.headRefName.includes(bugSuffix)) return false
+        return true
+      })
       const closed: number[] = []
       for (const pr of extras) {
         const closeRes = await sh('gh', ['pr', 'close', String(pr.number), '--repo', 'Freegle/Iznik', '--comment', 'Closed: duplicate PR for same bug — FSM enforces one PR per bug fix'])
@@ -1480,7 +1454,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       // (implementation) phase this is Haiku — cheap, fast, sufficient for
       // fixing CI or writing a coverage test. In off-peak (analysis) phase
       // this is Sonnet/session-default for heavy diagnosis.
-      const delegateModel = (params.model as string) ?? process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'sonnet'
+      const delegateModel = (params.model as string) ?? process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'claude-opus-4-8'
       startGroup(`· delegate_to_coder (model=${delegateModel})`)
       let toolCount = 0
       const result = await new Promise<{ stdout: string; stderr: string; textStream: string; code: number; killReason: KillReason; lastTool: string | null }>((resolve) => {
