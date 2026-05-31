@@ -562,6 +562,7 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 }
 
 // getEEELabelChallenge returns a Freegle attachment for the user to label
+<<<<<<< Updated upstream
 // for EEE (Electrical / Electronic Equipment) classification. Restricts to
 // attachments the model classifier has already processed (joined via the
 // `eee_classified_attachments` pointer table), so volunteer labels can be
@@ -579,6 +580,17 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 // is bounded (currently ~5k rows) so the join is cheap, no full scan of
 // messages_attachments. Ordering by classified_at DESC surfaces the most
 // recently classified items first.
+=======
+// for EEE (Electrical / Electronic Equipment) classification. Picks the most
+// recent OFFER attachments that the user has not yet labelled and that have
+// not yet reached EEELabelQuorum.
+//
+// Performance: the query is driven off `messages.arrival` (index `arrival_2`)
+// with a 30-day window, so the planner does a backward range scan over ~100k
+// recent messages instead of a full scan of `messages_attachments` (8.6M
+// rows). The original join-from-attachments form took 20s+ on prod and tripped
+// the 5s API timeout — see commit message for full EXPLAIN comparison.
+>>>>>>> Stashed changes
 func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 	type AttachmentResult struct {
 		Attid       uint64 `json:"attid"`
@@ -591,10 +603,18 @@ func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	err := db.Raw(`
 		SELECT ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject
+<<<<<<< Updated upstream
 		FROM eee_classified_attachments ec
 		INNER JOIN messages_attachments ma_att ON ma_att.id = ec.attid
 		INNER JOIN messages m ON m.id = ec.messageid
 		WHERE m.deleted IS NULL
+=======
+		FROM messages m
+		INNER JOIN messages_attachments ma_att ON ma_att.msgid = m.id
+		WHERE m.arrival > DATE_SUB(NOW(), INTERVAL 30 DAY)
+			AND m.type = 'Offer'
+			AND m.deleted IS NULL
+>>>>>>> Stashed changes
 			AND ma_att.externaluid IS NOT NULL
 			AND ma_att.externaluid != ''
 			AND NOT EXISTS (

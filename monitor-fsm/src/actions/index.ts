@@ -194,6 +194,41 @@ async function checkGitAlreadyFixed(
   return null
 }
 
+/**
+ * Decide which open PRs `close_extra_prs` should sweep.
+ *
+ * Goal: close OTHER PRs the fix delegate opened for the SAME bug as the
+ * expected PR, while preserving every PR for a DIFFERENT bug.
+ *
+ * Identification of "same bug" uses the topic-post suffix (e.g.
+ * `9481-531`) at the end of an FSM-managed branch name. If we can't
+ * extract a suffix from the expected branch, we have no reliable way
+ * to tell which other PRs are duplicates — be conservative and don't
+ * sweep ANY of them. (Previously, an empty suffix caused the filter to
+ * fall through and close every recent edwh-authored PR, including
+ * unrelated manual PRs. See PR #577 incident on 2026-05-30.)
+ *
+ * Pure function so it can be unit-tested without spawning gh.
+ */
+export function selectExtraPrsToClose(
+  prs: Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } | null }>,
+  expectedPrNumber: number,
+  iterationStartTs: string,
+  expectedBugBranch: string,
+): Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } | null }> {
+  const bugSuffix = expectedBugBranch.match(/(\d+-\d+)$/)?.[1] ?? ''
+  if (!bugSuffix) return []
+
+  const cutoff = new Date(iterationStartTs)
+  return prs.filter(pr => {
+    if (pr.number === expectedPrNumber) return false
+    if (new Date(pr.createdAt) < cutoff) return false
+    if (pr.author?.login !== 'edwh') return false
+    if (!pr.headRefName.includes(bugSuffix)) return false
+    return true
+  })
+}
+
 export const actions: ActionDefinition[] = [
   {
     name: 'load_state',
@@ -1026,27 +1061,7 @@ print(json.dumps(out))
       const listRes = await sh('gh', ['pr', 'list', '--repo', 'Freegle/Iznik', '--state', 'open', '--json', 'number,createdAt,headRefName,author'])
       if (listRes.code !== 0) return { error: `gh pr list failed: ${listRes.stderr}`, closed: [], kept: expectedPrNumber }
       const prs = JSON.parse(listRes.stdout) as Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } }>
-      const cutoff = new Date(iterationStartTs)
-      // Extract the topic+post suffix from the expected branch so we only sweep
-      // PRs for the SAME bug (same topic/post in their branch name). PRs for
-      // other bugs — opened earlier in the same iteration — are left alone.
-      const bugSuffix = expectedBugBranch.match(/(\d+-\d+)$/)?.[1] ?? ''
-      // CONSERVATIVE GUARD (PR #577 incident, 2026-05-30): if we cannot extract
-      // a bug suffix (e.g. a coverage iteration where the expected branch is
-      // `chore/coverage-foo`), we have no reliable way to tell which other PRs
-      // are duplicates — so sweep NOTHING. Without this, an empty suffix made
-      // the per-PR filter fall through and close every recent edwh-authored PR,
-      // including unrelated manual ones.
-      const extras = bugSuffix
-        ? prs.filter(pr => {
-            if (pr.number === expectedPrNumber) return false
-            if (new Date(pr.createdAt) < cutoff) return false
-            if (pr.author?.login !== 'edwh') return false
-            // Only close PRs whose branch shares this bug suffix.
-            if (!pr.headRefName.includes(bugSuffix)) return false
-            return true
-          })
-        : []
+      const extras = selectExtraPrsToClose(prs, expectedPrNumber, iterationStartTs, expectedBugBranch)
       const closed: number[] = []
       for (const pr of extras) {
         const closeRes = await sh('gh', ['pr', 'close', String(pr.number), '--repo', 'Freegle/Iznik', '--comment', 'Closed: duplicate PR for same bug — FSM enforces one PR per bug fix'])
