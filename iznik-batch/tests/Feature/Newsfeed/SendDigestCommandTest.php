@@ -47,15 +47,26 @@ class SendDigestCommandTest extends TestCase
 
     private function createPost(int $userId, int $groupId, array $attributes = []): int
     {
+        // Default 1 day old: older than the 12h minhourage floor, within 14 days.
         return DB::table('newsfeed')->insertGetId(array_merge([
             'userid' => $userId,
             'groupid' => $groupId,
             'type' => 'Message',
             'message' => self::LONG_MESSAGE,
-            'added' => now()->subHours(2),
-            'timestamp' => now()->subHours(2),
+            'added' => now()->subDay(),
+            'timestamp' => now()->subDay(),
             'position' => DB::raw("ST_GeomFromText('POINT(-0.1278 51.5074)', 3857)"),
         ], $attributes));
+    }
+
+    private function makeLocationNamed(string $name): int
+    {
+        return DB::table('locations')->insertGetId([
+            'name' => $name,
+            'type' => 'Point',
+            'lat' => 51.5074,
+            'lng' => -0.1278,
+        ]);
     }
 
     public function test_no_posts_sends_nothing(): void
@@ -203,6 +214,58 @@ class SendDigestCommandTest extends TestCase
 
         $marker = DB::table('newsfeed_users')->where('userid', $user->id)->value('newsfeedid');
         $this->assertSame($postId, (int) $marker);
+    }
+
+    public function test_skips_posts_younger_than_min_hour_age(): void
+    {
+        Mail::fake();
+
+        [$user, $group] = $this->makeEligibleUser();
+        $other = $this->createTestUser();
+        // Only 2 hours old — below the 12h minhourage floor.
+        $this->createPost($other->id, $group->id, [
+            'added' => now()->subHours(2),
+            'timestamp' => now()->subHours(2),
+        ]);
+
+        $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])->assertExitCode(0);
+
+        Mail::assertNothingSent();
+    }
+
+    public function test_subject_includes_poster_location(): void
+    {
+        Mail::fake();
+
+        [$user, $group] = $this->makeEligibleUser();
+        $other = $this->createTestUser();
+        $locId = $this->makeLocationNamed('Tuvalu Central, Testshire');
+        DB::table('users')->where('id', $other->id)->update(['lastlocation' => $locId]);
+        $this->createPost($other->id, $group->id);
+
+        $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])->assertExitCode(0);
+
+        Mail::assertSent(NewsfeedDigestMail::class, function (NewsfeedDigestMail $mail) {
+            // Group suffix (after the comma) is stripped → "Tuvalu Central".
+            return str_contains($mail->envelope()->subject, 'in Tuvalu Central');
+        });
+    }
+
+    public function test_uses_auto_login_links(): void
+    {
+        Mail::fake();
+
+        [$user, $group] = $this->makeEligibleUser();
+        $other = $this->createTestUser();
+        $this->createPost($other->id, $group->id);
+
+        $this->artisan('mail:newsfeed:digest', ['--user' => $user->id])->assertExitCode(0);
+
+        Mail::assertSent(NewsfeedDigestMail::class, function (NewsfeedDigestMail $mail) use ($user) {
+            return str_contains($mail->readUrl ?? '', 'u=' . $user->id)
+                && str_contains($mail->readUrl ?? '', 'k=')
+                && str_contains($mail->readUrl ?? '', '/chitchat');
+        });
     }
 
     public function test_dry_run_sends_nothing_and_does_not_update_marker(): void

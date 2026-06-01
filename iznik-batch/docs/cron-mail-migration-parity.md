@@ -29,9 +29,9 @@ V1: `Alert::process()` + `Alert::mailMods()` (`include/group/Alert.php`).
 | 6 | Dedup via `alerts_tracking`, always INSERT tracking, send only if not previously sent | Match | |
 | 7 | Group contact email + `alerts_tracking` type `OwnerEmail` | **Fixed** | Was missing — `mailGroupContact()` now sends to `groups.contactmail` (when a valid address) and records the `OwnerEmail` row, matching `Alert.php:315-353`. |
 | 8 | Update `groupprogress`; mark `complete` | Match | |
-| 9 | Open-tracking beacon pixel | **Deferred** | The `alerts_tracking` row is created, but the open/click beacon is recorded by a web endpoint (`Alert::beacon()/clicked()`), not the cron. Out of scope for the batch sender; `MjmlMailable` open tracking is not wired into the plain `AlertMail`. |
-| 10 | `askclick` confirmation button + `global` "sent to all groups" note | **Deferred** | Cosmetic template features; not migrated. Documented here so they aren't mistaken for complete. |
-| 11 | `cc` self-copy to the alert sender (single-group only) | **Deferred** | Minor; not migrated. |
+| 9 | Standard styling + open-tracking beacon pixel | Match | `AlertMail` is now an `MjmlMailable` using the standard Freegle header/footer, and includes the V1 1×1 beacon (`{site}/beacon/{trackId}`) keyed on the `alerts_tracking` row id (captured via `insertGetId`). Mods use the ModTools site, the group contact uses the user site. The beacon/click endpoints themselves live in the Go/PHP web API (`Alert::beacon()`/`clicked()`), unchanged. |
+| 10 | `askclick` confirmation button + `global` "sent to all groups" note | Match | `askclick` renders the "I got this" button (`{site}/alert/viewed/{trackId}`); multi-group (global) alerts show the "sent to all Freegle groups" note. |
+| 11 | `cc` self-copy to the alert sender (single-group only) | **Deferred** | Minor diagnostic self-copy; not migrated. |
 
 Tests: `tests/Unit/Services/AlertServiceTest.php` (incl. new single-group and
 contact-email cases).
@@ -49,7 +49,7 @@ V1: `User::getActiveSince()` + `Notifications::haveSent()` + `Notifications::add
 | 3 | INSERT `users_notifications` (fromuser NULL, type Exhort, url/title/text) | Match | |
 | 4 | `from == to` guard | N/A | `fromuser` is always NULL here; guard can't trigger. |
 | 5 | Exclude deleted users (`whereNull('deleted')`) | Changed (+) | V1 has no deleted filter. Notifying soft-deleted users is pointless; the filter is a safe improvement. |
-| 6 | `PushNotifications::notify($to, FALSE)` after insert | **Deferred** | The onsite notification (the script's stated purpose) is created. The device push is not sent: the batch `PushNotificationService::notify()` only builds ModTools and chat-message payloads, not the Freegle-app notification-count payload, so calling it would deliver misleading "messages pending" content. Tracked as follow-up. |
+| 6 | `PushNotifications::notify($to, FALSE)` after insert | Match | After each insert the service fires a Freegle-app push via the new `PushNotificationService::notifyUser()` (mirrors V1 `notify($uid, FALSE)` + `getNotificationPayload(FALSE)`): badge = unseen chats + notifications, and for the Exhort the title/body/route come from the notification with the `EXHORT` category and `tips` channel. No-op when the user has no registered Freegle-app devices / Firebase is unset. |
 | 7 | `-i uid` single-user override (skips cooldown) | **Deferred** | CLI debug option, not used by the production crontab (fixed args only). |
 
 Tests: `tests/Feature/Notification/ExhortUsersCommandTest.php`.
@@ -92,10 +92,10 @@ V1: `Newsfeed::digest()` (`include/newsfeed/Newsfeed.php:806`).
 | 6 | 14-day window; LIMIT 5 items; text length > 40; per-type formatting | Match | AboutMe quoted; Noticeboard "I put up a poster…"; Story "Here's my Freegle story:…". |
 | 7 | Up to 5 replies per item | Match | |
 | 8 | `REPLACE INTO newsfeed_users` marker (highest id) | Match | `updateOrInsert`. |
-| 9 | Subject `"<snippet>" (N conversations from your neighbours[ in locations])` | Changed | The optional `in <locations>` clause is omitted (V1 derives it from each post author's public location via `getPublicLocations`). |
-| 10 | "Nearby" = per-user lat/lng bounding box (`getNearbyDistance` + `MBRContains`) | Changed | Approximated by the user's approved Freegle group areas (direct `groupid` or group `polyindex` containment), mirroring the already-shipped `NewsfeedModNotifService`. A pragmatic, proven approach that avoids fragile per-user box maths; documented as a deviation. |
-| 11 | Magic login links into `/chitchat` and `/settings` | Changed | Plain `?src=newsfeeddigest` URLs (no auto-login); batch has no `User::loginLink` equivalent. |
-| 12 | Story headline/body from `users_stories` | Changed | Uses `newsfeed.message`; story-row enrichment simplified. |
+| 9 | Subject `"<snippet>" (N conversations from your neighbours[ in locations])` | Match | The `in <locations>` clause is built from each poster's public location (group suffix stripped), as V1 does. |
+| 10 | "Nearby" = per-user lat/lng bounding box (`getNearbyDistance` + `MBRContains`) | Match | Ported `GreatCircle::getPositionByDistance` and `getNearbyDistance` (start 800m, double until ~10 posters in range, cap ~20mi) and select via `MBRContains(box, newsfeed.position)` — the same box V1 builds (NE 45°, SW 225°). `minhourage=12` and the user's `mylocation`→`lastlocation` lat/lng are honoured. |
+| 11 | Magic login links into `/chitchat` and `/settings` | Match | New `User::loginLink()` produces `?u=&k=` auto-login links using the same `users_logins` (type='Link') key the Go API validates. |
+| 12 | Story headline/body from `users_stories` | Changed | Uses `newsfeed.message`; story-row enrichment simplified (the digest text for a Story is the post's own message). |
 
 Tests: `tests/Feature/Newsfeed/SendDigestCommandTest.php`.
 

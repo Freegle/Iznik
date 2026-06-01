@@ -267,7 +267,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`tryst.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Meeting coordination~~ — **Migrated: `chats:send-tryst-reminders`** |
 | ~~`memberships_processing.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Membership processing~~ — **Migrated: `memberships:process`** |
 | ~~`donations_ads_target.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~Donation ad targeting~~ — **Migrated: `donations:update-ads-target`** |
-| ~~`user_exhort.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~User encouragement~~ — **Migrated: `notifications:exhort`** (onsite Exhort notifications to recently-active established users; device push deferred — see `docs/cron-mail-migration-parity.md`) |
+| ~~`user_exhort.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~User encouragement~~ — **Migrated: `notifications:exhort`** (onsite Exhort notifications + Freegle-app push to recently-active established users) |
 | ~~`lovejunk.php`~~ | ~~Every 1 min~~ | ~~Medium~~ | ~~LoveJunk integration~~ — **Migrated: `integrations:sync-lovejunk`** |
 | ~~`exports.php`~~ | ~~Every 1 min~~ | ~~Low~~ | ~~Data exports~~ — **Migrated: `users:process-exports`** |
 | ~~`notification_chaseup.php`~~ | ~~Every 5 min~~ | ~~Medium~~ | ~~Notification reminders~~ — **Migrated: `mail:notifications:chaseup`** |
@@ -319,7 +319,7 @@ These original scripts need to be migrated to Laravel artisan commands:
 | ~~`birthday.php`~~ | ~~12:00~~ | ~~Low~~ | ~~Birthday notifications~~ — **Migrated: `birthday:send-emails`** |
 | `relevant.php` | 14:30 | Medium | Relevant message matching |
 | `chat_chaseupmods.php` | 15:30 | Medium | Moderator chat chase-up |
-| ~~`newsfeed_digest.php`~~ | ~~15:30~~ | ~~Low~~ | ~~Newsfeed digest~~ — **Migrated: `mail:newsfeed:digest`** (nearby chitchat digest; scheduler disabled pending go-live; spatial scope approximated by group areas — see `docs/cron-mail-migration-parity.md`) |
+| ~~`newsfeed_digest.php`~~ | ~~15:30~~ | ~~Low~~ | ~~Newsfeed digest~~ — **Migrated: `mail:newsfeed:digest`** (nearby chitchat digest with per-user spatial bounding box; scheduler disabled pending go-live) |
 | `newsfeed_modnotif.php` | 13:30 | Low | Newsfeed mod notifications |
 | ~~`noticeboards.php`~~ | ~~15:30~~ | ~~Low~~ | ~~Noticeboards~~ — **Migrated: `noticeboards:thank-users`** |
 | `group_welcomereview.php` | 01:00, 15:00 | Low | Group welcome review |

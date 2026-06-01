@@ -6,6 +6,7 @@ use App\Mail\Newsfeed\NewsfeedDigestMail;
 use App\Models\Group;
 use App\Models\Membership;
 use App\Models\User;
+use App\Support\GreatCircle;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -18,14 +19,11 @@ use Illuminate\Support\Facades\Log;
  * - Iterates published, on-here, non-playground Freegle groups whose 'newsfeed'
  *   setting is on (default on), and for each approved member builds a digest of
  *   recent nearby chitchat they have not yet seen.
+ * - "Nearby" uses the user's lat/lng and a spatial bounding box (V1
+ *   getNearbyDistance + MBRContains on newsfeed.position), expanding the radius
+ *   until ~10 recent posters are in range (capped at ~20 miles).
  * - A newsfeed_users marker (highest newsfeed id sent) prevents re-sending, so a
  *   user who belongs to several groups is only mailed once per run.
- *
- * Deviations from V1 (documented in docs/mail-newsfeed-digest.md):
- * - "Nearby" is approximated by the user's approved Freegle group areas (direct
- *   groupid or group polyindex containment), as already done by
- *   NewsfeedModNotifService, rather than a per-user lat/lng bounding box.
- * - The optional " in {locations}" subject clause is omitted.
  */
 class NewsfeedDigestService
 {
@@ -46,6 +44,14 @@ class NewsfeedDigestService
 
     /** Snippet length for item text (V1 snip default 117). */
     private const SNIPPET_LENGTH = 117;
+
+    /** Posts must be at least this many hours old (V1 digest $minhourage=12). */
+    private const MIN_HOUR_AGE = 12;
+
+    /** getNearbyDistance: start radius (m), target poster count, cap (m). V1 800 / 10 / 32187. */
+    private const NEARBY_START_METRES = 800;
+    private const NEARBY_TARGET_POSTERS = 10;
+    private const NEARBY_MAX_METRES = 32187;
 
     /**
      * Process all eligible groups/members.
@@ -120,54 +126,39 @@ class NewsfeedDigestService
             return 0;
         }
 
-        [$lat, $lng] = $user->getLatLng();
-        if (! $lat && ! $lng) {
-            return 0;
-        }
-
         $settings = $user->settings ?? [];
         if (! ($settings['notificationmails'] ?? true)) {
             return 0;
         }
 
-        $lastSeen = (int) (DB::table('newsfeed_users')->where('userid', $userId)->value('newsfeedid') ?? 0);
-
-        $groupIds = DB::table('memberships')
-            ->join('groups', 'groups.id', '=', 'memberships.groupid')
-            ->where('memberships.userid', $userId)
-            ->where('memberships.collection', Membership::COLLECTION_APPROVED)
-            ->where('groups.type', Group::TYPE_FREEGLE)
-            ->pluck('memberships.groupid')
-            ->toArray();
-
-        if (empty($groupIds)) {
+        [$lat, $lng] = $this->resolveLatLng($user);
+        if (! $lat && ! $lng) {
             return 0;
         }
 
-        $placeholders = implode(',', array_fill(0, count($groupIds), '?'));
-        $oldest = now()->subDays(self::WINDOW_DAYS)->toDateTimeString();
+        $lastSeen = (int) (DB::table('newsfeed_users')->where('userid', $userId)->value('newsfeedid') ?? 0);
 
+        // V1 getNearbyDistance: grow the radius until ~10 recent posters are in
+        // range (or we hit the cap), then select the latest posts within that box.
+        $dist = $this->getNearbyDistance($lat, $lng);
+        $box = $this->boxSql($lat, $lng, $dist);
+        $oldest = now()->subDays(self::WINDOW_DAYS)->toDateTimeString();
         $typePlaceholders = implode(',', array_fill(0, count(self::FEED_TYPES), '?'));
 
         $posts = DB::select(
-            "SELECT DISTINCT newsfeed.id, newsfeed.type, newsfeed.userid, newsfeed.message, newsfeed.timestamp
+            "SELECT newsfeed.id, newsfeed.type, newsfeed.userid, newsfeed.message, newsfeed.timestamp
              FROM newsfeed
-             INNER JOIN `groups` ON (
-                 newsfeed.groupid = groups.id
-                 OR (newsfeed.position IS NOT NULL AND groups.polyindex IS NOT NULL
-                     AND MBRContains(groups.polyindex, newsfeed.position))
-             )
-             WHERE groups.id IN ({$placeholders})
-               AND newsfeed.timestamp >= ?
-               AND newsfeed.id > ?
+             WHERE MBRContains({$box}, newsfeed.position)
+               AND newsfeed.replyto IS NULL
                AND newsfeed.deleted IS NULL
                AND newsfeed.hidden IS NULL
-               AND newsfeed.replyto IS NULL
+               AND newsfeed.userid <> ?
                AND newsfeed.type IN ({$typePlaceholders})
-               AND newsfeed.userid != ?
-             ORDER BY newsfeed.timestamp DESC
+               AND newsfeed.timestamp >= ?
+               AND TIMESTAMPDIFF(HOUR, newsfeed.timestamp, NOW()) >= ?
+             ORDER BY newsfeed.pinned DESC, newsfeed.timestamp DESC
              LIMIT " . self::MAX_ITEMS,
-            array_merge($groupIds, [$oldest, $lastSeen], self::FEED_TYPES, [$userId])
+            array_merge([$userId], self::FEED_TYPES, [$oldest, self::MIN_HOUR_AGE])
         );
 
         if (empty($posts)) {
@@ -175,9 +166,15 @@ class NewsfeedDigestService
         }
 
         $items = [];
+        $locations = [];
         $maxId = $lastSeen;
 
         foreach ($posts as $post) {
+            // V1 filters unseen posts in PHP (LIMIT 5 then id > lastseen).
+            if ((int) $post->id <= $lastSeen) {
+                continue;
+            }
+
             $maxId = max($maxId, (int) $post->id);
 
             $text = $this->formatItemText($post);
@@ -191,6 +188,13 @@ class NewsfeedDigestService
                 'author' => $this->userName((int) $post->userid),
                 'replies' => $this->repliesFor((int) $post->id),
             ];
+
+            // V1 adds each poster's public location (minus the group suffix) to
+            // the subject's "in <locations>" clause.
+            $loc = $this->locationFor((int) $post->userid);
+            if ($loc !== null) {
+                $locations[] = $loc;
+            }
         }
 
         if (empty($items)) {
@@ -204,9 +208,15 @@ class NewsfeedDigestService
 
         if (! $dryRun) {
             $snippet = $this->snip(strip_tags($items[0]['text']), self::MIN_TEXT_LENGTH);
+            $locations = array_values(array_unique(array_filter($locations)));
+
+            // V1 uses auto-login (passwordless) links into the chitchat feed and
+            // settings page.
+            $readUrl = $user->loginLink('/chitchat', 'newsfeeddigest');
+            $settingsUrl = $user->loginLink('/settings', 'newsfeeddigest');
 
             app(EmailSpoolerService::class)->spool(
-                new NewsfeedDigestMail($user, $email, $items, $snippet),
+                new NewsfeedDigestMail($user, $email, $items, $snippet, $locations, $readUrl, $settingsUrl),
                 $email,
                 'newsfeed'
             );
@@ -215,6 +225,92 @@ class NewsfeedDigestService
         }
 
         return 1;
+    }
+
+    /**
+     * V1 getLatLng(FALSE): prefer the user's saved 'mylocation' setting, then
+     * their lastlocation.
+     *
+     * @return array{0: float|null, 1: float|null}
+     */
+    private function resolveLatLng(User $user): array
+    {
+        $settings = $user->settings ?? [];
+        if (isset($settings['mylocation']['lat'], $settings['mylocation']['lng'])) {
+            return [(float) $settings['mylocation']['lat'], (float) $settings['mylocation']['lng']];
+        }
+
+        [$lat, $lng] = $user->getLatLng();
+        return [$lat, $lng];
+    }
+
+    /**
+     * V1 Newsfeed::getNearbyDistance: start at 800m and double until at least 10
+     * distinct people have posted (non-reply, non-Alert, last 30 days) within the
+     * box, or we reach the cap (~20 miles).
+     */
+    private function getNearbyDistance(float $lat, float $lng): int
+    {
+        $dist = self::NEARBY_START_METRES;
+        $since = now()->subDays(30)->toDateTimeString();
+
+        do {
+            $dist *= 2;
+            $box = $this->boxSql($lat, $lng, $dist);
+
+            $others = DB::select(
+                "SELECT DISTINCT userid FROM newsfeed
+                 WHERE MBRContains({$box}, position)
+                   AND replyto IS NULL
+                   AND type <> 'Alert'
+                   AND timestamp >= ?
+                 LIMIT " . self::NEARBY_TARGET_POSTERS,
+                [$since]
+            );
+        } while ($dist < self::NEARBY_MAX_METRES && count($others) < self::NEARBY_TARGET_POSTERS);
+
+        return $dist;
+    }
+
+    /**
+     * Build the ST_GeomFromText POLYGON box SQL for a given centre + distance,
+     * matching V1 (NE corner at bearing 45°, SW at 225°).
+     */
+    private function boxSql(float $lat, float $lng, int $dist): string
+    {
+        $ne = GreatCircle::getPositionByDistance($dist, 45, $lat, $lng);
+        $sw = GreatCircle::getPositionByDistance($dist, 225, $lat, $lng);
+        $srid = (int) config('freegle.srid', 3857);
+
+        $poly = sprintf(
+            'POLYGON((%F %F, %F %F, %F %F, %F %F, %F %F))',
+            $sw['lng'], $sw['lat'],
+            $sw['lng'], $ne['lat'],
+            $ne['lng'], $ne['lat'],
+            $ne['lng'], $sw['lat'],
+            $sw['lng'], $sw['lat']
+        );
+
+        return "ST_GeomFromText('{$poly}', {$srid})";
+    }
+
+    /**
+     * The poster's public location name with the group suffix stripped (V1
+     * getPublicLocation()['display'] minus everything after the last comma).
+     */
+    private function locationFor(int $userId): ?string
+    {
+        $name = DB::table('users')
+            ->join('locations', 'locations.id', '=', 'users.lastlocation')
+            ->where('users.id', $userId)
+            ->value('locations.name');
+
+        if (! $name) {
+            return null;
+        }
+
+        $pos = strrpos($name, ',');
+        return $pos !== false ? trim(substr($name, 0, $pos)) : $name;
     }
 
     /**

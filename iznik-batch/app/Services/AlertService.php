@@ -64,8 +64,9 @@ class AlertService
                 ->where('id', $alert->groupid)
                 ->first(['id', 'nameshort', 'contactmail']);
 
+            // Single-group alert is not "global" (it is not sent to all groups).
             $sent = $group
-                ? $this->mailGroupMods($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun)
+                ? $this->mailGroupMods($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun, false)
                 : 0;
 
             if (!$dryRun) {
@@ -92,7 +93,8 @@ class AlertService
         $sent = 0;
 
         foreach ($groups as $group) {
-            $sent += $this->mailGroupMods($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun);
+            // Multi-group (no groupid) alerts are sent to all groups → global note.
+            $sent += $this->mailGroupMods($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun, true);
 
             if (!$dryRun) {
                 DB::table('alerts')->where('id', $alert->id)->update(['groupprogress' => $group->id]);
@@ -107,8 +109,11 @@ class AlertService
         return $sent;
     }
 
-    private function mailGroupMods(object $alert, object $group, string $fromAddr, string $fromName, string $htmlBody, bool $dryRun): int
+    private function mailGroupMods(object $alert, object $group, string $fromAddr, string $fromName, string $htmlBody, bool $dryRun, bool $global): int
     {
+        $modSite = config('freegle.sites.mod', 'https://modtools.org');
+        $askClick = (bool) ($alert->askclick ?? false);
+
         $mods = DB::table('memberships')
             ->where('groupid', $group->id)
             ->whereIn('role', ['Owner', 'Moderator'])
@@ -155,8 +160,9 @@ class AlertService
                     ->where('emailid', $emailRow->id)
                     ->exists();
 
+                $trackId = null;
                 if (!$dryRun) {
-                    DB::table('alerts_tracking')->insert([
+                    $trackId = DB::table('alerts_tracking')->insertGetId([
                         'alertid' => $alert->id,
                         'groupid' => $group->id,
                         'userid' => $userId,
@@ -180,9 +186,15 @@ class AlertService
                             recipientName: $name,
                             fromAddress: $fromAddr,
                             fromName: $fromName,
-                            subject: $alert->subject,
+                            subjectLine: $alert->subject,
                             htmlBody: $htmlBody,
                             textBody: $alert->text ?? '',
+                            trackId: $trackId,
+                            askClick: $askClick,
+                            global: $global,
+                            groupName: $group->nameshort,
+                            beaconBase: $modSite,
+                            recipientUserId: (int) $userId,
                         ));
                         $sent++;
                     } catch (\Throwable $e) {
@@ -197,7 +209,7 @@ class AlertService
             }
         }
 
-        $sent += $this->mailGroupContact($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun);
+        $sent += $this->mailGroupContact($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun, $global);
 
         return $sent;
     }
@@ -208,7 +220,7 @@ class AlertService
      * tracking row. The contact address is the group's shared volunteer inbox,
      * so it gets a copy independent of individual moderators' personal emails.
      */
-    private function mailGroupContact(object $alert, object $group, string $fromAddr, string $fromName, string $htmlBody, bool $dryRun): int
+    private function mailGroupContact(object $alert, object $group, string $fromAddr, string $fromName, string $htmlBody, bool $dryRun, bool $global): int
     {
         $contact = $group->contactmail ?? null;
 
@@ -220,7 +232,7 @@ class AlertService
             return 0;
         }
 
-        DB::table('alerts_tracking')->insert([
+        $trackId = DB::table('alerts_tracking')->insertGetId([
             'alertid' => $alert->id,
             'groupid' => $group->id,
             'type' => 'OwnerEmail',
@@ -232,9 +244,14 @@ class AlertService
                 recipientName: $group->nameshort . ' volunteers',
                 fromAddress: $fromAddr,
                 fromName: $fromName,
-                subject: $alert->subject,
+                subjectLine: $alert->subject,
                 htmlBody: $htmlBody,
                 textBody: $alert->text ?? '',
+                trackId: $trackId,
+                askClick: (bool) ($alert->askclick ?? false),
+                global: $global,
+                groupName: $group->nameshort,
+                beaconBase: config('freegle.sites.user', 'https://www.ilovefreegle.org'),
             ));
 
             return 1;
