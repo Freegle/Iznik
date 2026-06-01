@@ -474,9 +474,25 @@ async function main() {
         const key = cb && typeof cb.topic !== 'undefined' ? `${cb.topic}.${cb.post}` : 'unknown'
         outWarn(`loop-breaker: DIAGNOSE_BUG ran ${consecutiveDiagnose} consecutive turns on ${key} without converging — force-deferring`)
         const existingFixed = Array.isArray(ctx.bugsFixed) ? ctx.bugsFixed : []
+        const deferReason = `loop-breaker: diagnosis did not converge after ${MAX_CONSECUTIVE_DIAGNOSE} turns (likely V1-only or unreproducible)`
         const deferred = cb
-          ? { ...cb, outcome: 'deferred', reason: `loop-breaker: diagnosis did not converge after ${MAX_CONSECUTIVE_DIAGNOSE} turns (likely V1-only or unreproducible)` }
+          ? { ...cb, outcome: 'deferred', reason: deferReason }
           : null
+        // Mark the bug 'deferred' in the DB too. work_router_decide re-queries
+        // discourse_bug (WHERE state='open') every time it routes, so a
+        // context-only bugsFixed entry is not enough — without this the router
+        // re-serves the same open bug and the loop-breaker fires on it again
+        // (seen: 9685.7 deferred twice in one iteration). The DB write is the
+        // authoritative skip.
+        if (cb && typeof cb.topic !== 'undefined' && typeof cb.post !== 'undefined') {
+          try {
+            db.prepare(
+              "UPDATE discourse_bug SET state='deferred', reason=? WHERE topic=? AND post=? AND state='open'"
+            ).run(deferReason, Number(cb.topic), Number(cb.post))
+          } catch (e: any) {
+            outWarn(`loop-breaker: failed to mark ${key} deferred in DB: ${e?.message ?? e}`)
+          }
+        }
         await engine.updateContext(instance.id, {
           ...(deferred ? { bugsFixed: [...existingFixed, deferred] } : {}),
           currentBug: null,
