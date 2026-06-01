@@ -2,6 +2,7 @@
 
 namespace App\Mail\Chat;
 
+use App\Mail\Contracts\RetryableMailable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
 use App\Mail\Traits\AvatarResolver;
@@ -19,7 +20,7 @@ use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
 use Symfony\Component\Mime\Email;
 
-class ChatNotification extends MjmlMailable
+class ChatNotification extends MjmlMailable implements RetryableMailable
 {
     use AvatarResolver;
     use TrackableEmail;
@@ -210,6 +211,64 @@ class ChatNotification extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->recipient->id;
+    }
+
+    /**
+     * IDs needed to rebuild this notification for a durable retry — recipient,
+     * sender, chat, message, type, and the ids of the context ("earlier in
+     * this conversation") messages. Never the built models.
+     *
+     * {@see RetryableMailable}
+     */
+    public function mailDescriptor(): array
+    {
+        return [
+            'recipient' => $this->recipient->id,
+            'sender' => $this->sender?->id,
+            'chatid' => $this->chatRoom->id,
+            'messageid' => $this->message->id,
+            'chattype' => $this->chatType,
+            'previous' => $this->previousMessages->pluck('id')->all(),
+        ];
+    }
+
+    /**
+     * Rebuild a fresh notification from a descriptor, re-fetching from the DB.
+     *
+     * Returns null (cancel the retry) when the recipient, chat, or triggering
+     * message has since been deleted, or the recipient no longer has a usable
+     * address. A missing sender is allowed (the constructor accepts a null
+     * sender), as are missing context messages.
+     *
+     * {@see RetryableMailable}
+     */
+    public static function rebuildFromDescriptor(array $descriptor): ?self
+    {
+        $recipient = User::find($descriptor['recipient'] ?? null);
+        if (!$recipient || !$recipient->email_preferred) {
+            return null;
+        }
+
+        $message = ChatMessage::find($descriptor['messageid'] ?? null);
+        $chatRoom = ChatRoom::find($descriptor['chatid'] ?? null);
+        if (!$message || !$chatRoom) {
+            return null;
+        }
+
+        $sender = isset($descriptor['sender']) ? User::find($descriptor['sender']) : null;
+
+        $previous = !empty($descriptor['previous'])
+            ? ChatMessage::whereIn('id', $descriptor['previous'])->orderBy('id')->get()
+            : collect();
+
+        return new self(
+            $recipient,
+            $sender,
+            $chatRoom,
+            $message,
+            $descriptor['chattype'] ?? ChatRoom::TYPE_USER2USER,
+            $previous
+        );
     }
 
     /**
