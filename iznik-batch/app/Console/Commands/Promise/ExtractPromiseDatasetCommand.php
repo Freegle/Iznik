@@ -63,8 +63,10 @@ class ExtractPromiseDatasetCommand extends Command
             return 1;
         }
 
-        // Write BOM-free UTF-8 header
-        fputcsv($fp, ['room_id', 'post_type', 'end_turn', 'promise_turn', 'label', 'span']);
+        // Write BOM-free UTF-8 header. escape: '' = RFC-4180 quoting (double the quotes,
+        // no backslash escaping) so spans full of backslashes (\u.. artefacts) and quotes
+        // round-trip correctly with fgetcsv — otherwise rows merge silently on read.
+        fputcsv($fp, ['room_id', 'post_type', 'end_turn', 'promise_turn', 'label', 'span'], escape: '');
 
         $totalRows = 0;
         $totalPositives = 0;
@@ -141,7 +143,7 @@ class ExtractPromiseDatasetCommand extends Command
             );
 
             foreach ($rows as $row) {
-                fputcsv($fp, $row);
+                fputcsv($fp, $row, escape: '');
                 $totalRows++;
                 if ($row['label'] === 1) {
                     $totalPositives++;
