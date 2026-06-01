@@ -307,4 +307,45 @@ describe('logs store', () => {
     expect(logsForUser10.map((l) => l.id)).toEqual([100, 101])
     expect(logsForUser20.map((l) => l.id)).toEqual([200, 201])
   })
+
+  it('community filter change must not allow stale in-flight fetch to persist — AssertFlip Step 2: stale result is discarded after clear()', async () => {
+    // Reproduces Discourse #9672: when the user changes the community filter,
+    // clear() is called but an in-flight fetch (started for the OLD groupid)
+    // still resolves and pushes its results into the freshly-cleared store.
+    // This produces duplicates, missing entries, and wrong ordering.
+    //
+    // AssertFlip Step 2 (correct behaviour, FAILS before fix, PASSES after):
+    // After clear(), any in-flight fetch that resolves must be silently discarded —
+    // list must remain empty and context must remain null.
+    const store = useLogsStore()
+    store.init({})
+
+    // Arrange: a fetch for groupid=5 is in-flight (hasn't resolved yet).
+    let resolveOldFetch
+    mockLogsFetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOldFetch = resolve
+        })
+    )
+    const staleFetch = store.fetch({ groupid: 5, logtype: 'messages' })
+
+    // User switches to a different community → clear() is called.
+    store.clear()
+
+    // Old fetch resolves with group-5 logs AFTER the clear.
+    resolveOldFetch({
+      logs: [
+        { id: 10, groupid: 5 },
+        { id: 11, groupid: 5 },
+        { id: 12, groupid: 5 },
+      ],
+      context: { id: 10 },
+    })
+    await staleFetch
+
+    // Correct: stale results must be discarded.
+    expect(store.list).toHaveLength(0)
+    expect(store.context).toBeNull()
+  })
 })
