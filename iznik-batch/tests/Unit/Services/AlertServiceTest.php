@@ -462,6 +462,117 @@ class AlertServiceTest extends TestCase
     }
 
     // ===================================================================
+    // processAlerts — single-group targeting (alerts.groupid)
+    // ===================================================================
+
+    public function test_processAlerts_single_group_targets_only_that_group(): void
+    {
+        $group1 = $this->createTestGroup();
+        $group2 = $this->createTestGroup();
+        $mod1 = $this->createTestUser();
+        $mod2 = $this->createTestUser();
+        $this->createMembership($mod1, $group1, ['role' => 'Moderator']);
+        $this->createMembership($mod2, $group2, ['role' => 'Moderator']);
+
+        // groupid set → only group1's mod should be mailed, group2 ignored,
+        // regardless of groupprogress.
+        $this->insertAlert(['groupid' => $group1->id, 'groupprogress' => 0]);
+
+        $result = $this->service->processAlerts();
+
+        $this->assertSame(1, $result);
+        Mail::assertSentCount(1);
+    }
+
+    public function test_processAlerts_single_group_marks_complete(): void
+    {
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser();
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        $alertId = $this->insertAlert(['groupid' => $group->id]);
+
+        $this->service->processAlerts();
+
+        $alert = DB::table('alerts')->where('id', $alertId)->first();
+        $this->assertNotNull($alert->complete, 'single-group alert should complete in one pass');
+    }
+
+    public function test_processAlerts_single_group_dryRun_sends_nothing(): void
+    {
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser();
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        $alertId = $this->insertAlert(['groupid' => $group->id]);
+
+        $result = $this->service->processAlerts(dryRun: true);
+
+        $this->assertSame(0, $result);
+        Mail::assertNothingSent();
+        $alert = DB::table('alerts')->where('id', $alertId)->first();
+        $this->assertNull($alert->complete);
+    }
+
+    // ===================================================================
+    // processAlerts — group contact email (OwnerEmail)
+    // ===================================================================
+
+    public function test_processAlerts_sends_to_group_contactmail(): void
+    {
+        $group = $this->createTestGroup(['contactmail' => 'volunteers@example.org']);
+        $mod = $this->createTestUser();
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        $alertId = $this->insertAlert(['groupprogress' => $group->id - 1]);
+
+        // One mod email + one contact email.
+        $result = $this->service->processAlerts();
+
+        $this->assertSame(2, $result);
+        Mail::assertSentCount(2);
+
+        $ownerTracking = DB::table('alerts_tracking')
+            ->where('alertid', $alertId)
+            ->where('groupid', $group->id)
+            ->where('type', 'OwnerEmail')
+            ->first();
+        $this->assertNotNull($ownerTracking, 'an OwnerEmail tracking row should be recorded');
+    }
+
+    public function test_processAlerts_no_contactmail_no_owner_email(): void
+    {
+        $group = $this->createTestGroup(); // no contactmail
+        $mod = $this->createTestUser();
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        $alertId = $this->insertAlert(['groupprogress' => $group->id - 1]);
+
+        $result = $this->service->processAlerts();
+
+        $this->assertSame(1, $result);
+        $owner = DB::table('alerts_tracking')
+            ->where('alertid', $alertId)
+            ->where('type', 'OwnerEmail')
+            ->count();
+        $this->assertSame(0, $owner);
+    }
+
+    public function test_processAlerts_invalid_contactmail_skipped(): void
+    {
+        $group = $this->createTestGroup(['contactmail' => 'not-an-email']);
+        $mod = $this->createTestUser();
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        $this->insertAlert(['groupprogress' => $group->id - 1]);
+
+        $result = $this->service->processAlerts();
+
+        // Only the mod email; invalid contact address is skipped.
+        $this->assertSame(1, $result);
+    }
+
+    // ===================================================================
     // resolveFrom — known roles with config lookup
     // ===================================================================
 

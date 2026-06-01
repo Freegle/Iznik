@@ -56,6 +56,29 @@ class AlertService
         [$fromAddr, $fromName] = $this->resolveFrom($alert->from);
         $htmlBody = $alert->html ?: nl2br(e($alert->text));
 
+        // V1 parity: an alert with a specific groupid targets just that group
+        // (Alert::process() WHERE id = $groupid) and completes in one pass,
+        // rather than fanning out across all published Freegle groups.
+        if ($alert->groupid) {
+            $group = DB::table('groups')
+                ->where('id', $alert->groupid)
+                ->first(['id', 'nameshort', 'contactmail']);
+
+            $sent = $group
+                ? $this->mailGroupMods($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun)
+                : 0;
+
+            if (!$dryRun) {
+                DB::table('alerts')->where('id', $alert->id)->update(['complete' => now()]);
+                Log::info('AlertService: completed single-group alert', [
+                    'alert_id' => $alert->id,
+                    'group_id' => $alert->groupid,
+                ]);
+            }
+
+            return $sent;
+        }
+
         $groups = DB::table('groups')
             ->where('type', 'Freegle')
             ->where('id', '>', $alert->groupprogress)
@@ -174,7 +197,57 @@ class AlertService
             }
         }
 
+        $sent += $this->mailGroupContact($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun);
+
         return $sent;
+    }
+
+    /**
+     * V1 parity (Alert::mailMods() owner block, Alert.php:315-353): if the group
+     * has a contact email, send the alert there too and record an 'OwnerEmail'
+     * tracking row. The contact address is the group's shared volunteer inbox,
+     * so it gets a copy independent of individual moderators' personal emails.
+     */
+    private function mailGroupContact(object $alert, object $group, string $fromAddr, string $fromName, string $htmlBody, bool $dryRun): int
+    {
+        $contact = $group->contactmail ?? null;
+
+        if (!$contact || !filter_var($contact, FILTER_VALIDATE_EMAIL)) {
+            return 0;
+        }
+
+        if ($dryRun) {
+            return 0;
+        }
+
+        DB::table('alerts_tracking')->insert([
+            'alertid' => $alert->id,
+            'groupid' => $group->id,
+            'type' => 'OwnerEmail',
+        ]);
+
+        try {
+            app(\App\Services\EmailSpoolerService::class)->spool(new AlertMail(
+                recipientEmail: $contact,
+                recipientName: $group->nameshort . ' volunteers',
+                fromAddress: $fromAddr,
+                fromName: $fromName,
+                subject: $alert->subject,
+                htmlBody: $htmlBody,
+                textBody: $alert->text ?? '',
+            ));
+
+            return 1;
+        } catch (\Throwable $e) {
+            Log::error('AlertService: failed to send alert contact email', [
+                'alert_id' => $alert->id,
+                'group_id' => $group->id,
+                'email' => $contact,
+                'error' => $e->getMessage(),
+            ]);
+
+            return 0;
+        }
     }
 
     private function resolveFrom(string $role): array

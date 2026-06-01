@@ -270,6 +270,14 @@ Schedule::command('chats:chaseup-mods')
     ->sendOutputTo(cronLog('chats:chaseup-mods'))
     ->runInBackground();
 
+// Email users who are expected to reply in a User2User chat but have not.
+// V1: cron/chat_chaseup_expected.php (daily 06:00)
+Schedule::command('chats:chaseup-expected')
+    ->dailyAt('06:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('chats:chaseup-expected'))
+    ->runInBackground();
+
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
 // V1: cron/chat_spam.php (every 5 minutes)
 Schedule::command('chats:process-spam')
@@ -904,6 +912,14 @@ Schedule::command('newsfeed:generate-link-previews')
     ->everyMinute()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('newsfeed:generate-link-previews'))
+    ->runInBackground();
+
+// Send the newsfeed (chitchat) digest of recent nearby posts to active users.
+// V1: cron/newsfeed_digest.php (daily 15:30)
+Schedule::command('mail:newsfeed:digest')
+    ->dailyAt('15:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:newsfeed:digest'))
     ->runInBackground();
 
 // =============================================================================

@@ -49,6 +49,13 @@ class ChatNotification extends MjmlMailable
     public ?Message $refMessage;
 
     /**
+     * Whether this is a "waiting for reply" chase-up of an expected reply.
+     * When TRUE the subject is prefixed with "WAITING FOR REPLY: " to match
+     * iznik-server ChatRoom::chaseupExpected() (ChatRoom.php:2466).
+     */
+    public bool $waitingForReply = false;
+
+    /**
      * Whether this notification is for the sender's own message (copy to self).
      */
     public bool $isOwnMessage;
@@ -90,13 +97,15 @@ class ChatNotification extends MjmlMailable
         ChatRoom $chatRoom,
         ChatMessage $message,
         string $chatType,
-        ?Collection $previousMessages = NULL
+        ?Collection $previousMessages = NULL,
+        bool $waitingForReply = false
     ) {
         $this->recipient = $recipient;
         $this->sender = $sender;
         $this->chatRoom = $chatRoom;
         $this->message = $message;
         $this->chatType = $chatType;
+        $this->waitingForReply = $waitingForReply;
         $this->previousMessages = $previousMessages ?? collect();
         $this->userSite = config('freegle.sites.user');
         $this->modSite = config('freegle.sites.mod');
@@ -490,6 +499,22 @@ class ChatNotification extends MjmlMailable
      * - All mods get: "{GroupShortName} Volunteer Chat: {SenderName}"
      */
     protected function generateSubject(): string
+    {
+        $subject = $this->generateBaseSubject();
+
+        // Chase-up of an expected reply: prefix to match iznik-server
+        // ChatRoom::chaseupExpected() (ChatRoom.php:2466).
+        if ($this->waitingForReply) {
+            return 'WAITING FOR REPLY: ' . $subject;
+        }
+
+        return $subject;
+    }
+
+    /**
+     * Generate the base (un-prefixed) subject line based on context.
+     */
+    protected function generateBaseSubject(): string
     {
         if ($this->chatType === ChatRoom::TYPE_USER2MOD) {
             $group = $this->chatRoom->group;

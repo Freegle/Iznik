@@ -71,6 +71,10 @@ class ChatRoom extends Model implements Auditable
     public const TYPE_USER2USER = 'User2User';
     public const TYPE_GROUP = 'Group';
 
+    // chat_roster.status values. A blocked roster entry excludes the user from
+    // reply chase-ups (see ChatChaseupExpectedService).
+    public const STATUS_BLOCKED = 'Blocked';
+
     protected $casts = [
         'created' => 'datetime',
         'latestmessage' => 'datetime',
