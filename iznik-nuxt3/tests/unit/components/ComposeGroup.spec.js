@@ -199,6 +199,40 @@ describe('ComposeGroup', () => {
       expect(options[0].element.value).toBe('55')
       expect(options[0].text()).toBe('Repost Group')
     })
+
+    it('resolves member group names from the group store when the membership stub has no name (V2 session)', () => {
+      // The V2 /session endpoint returns membership stubs that carry only groupid
+      // (+ role etc.) — the group names live in the group store, populated by
+      // fetchUser -> groupStore.fetchBatch. Reading namedisplay/nameshort straight
+      // off the membership object therefore yields undefined, rendering the member
+      // group as a blank, unselectable option. This is the regression behind the
+      // "can't select my group when posting" report: members saw only the
+      // postcode-derived groups, none of their own.
+      mockComposeStore.postcode = null
+      mockAuthStore.groups = [{ groupid: 42 }]
+      mockGroupStore.get.mockImplementation((id) =>
+        parseInt(id) === 42
+          ? { namedisplay: 'Freshers', nameshort: 'freshers' }
+          : null
+      )
+      const wrapper = createWrapper()
+      const options = wrapper.findAll('option')
+      expect(options).toHaveLength(1)
+      expect(options[0].element.value).toBe('42')
+      expect(options[0].text()).toBe('Freshers')
+    })
+
+    it('falls back to the group id as label only when the store has no entry either', () => {
+      mockComposeStore.postcode = null
+      mockAuthStore.groups = [{ groupid: 77 }]
+      mockGroupStore.get.mockReturnValue(null)
+      const wrapper = createWrapper()
+      const options = wrapper.findAll('option')
+      expect(options).toHaveLength(1)
+      expect(options[0].element.value).toBe('77')
+      // A bare id is ugly but at least keeps the option selectable rather than blank.
+      expect(options[0].text()).toBe('77')
+    })
   })
 
   describe('group computed (v-model)', () => {
