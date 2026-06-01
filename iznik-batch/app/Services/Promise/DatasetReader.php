@@ -50,7 +50,7 @@ class DatasetReader
 
         try {
             // Skip header row
-            $header = fgetcsv($handle, escape: "\\");
+            $header = fgetcsv($handle, escape: "");
             if ($header === false) {
                 throw new \RuntimeException("Empty file: $filePath");
             }
@@ -65,7 +65,7 @@ class DatasetReader
             }
 
             // Read data rows
-            while (($row = fgetcsv($handle, escape: "\\")) !== false) {
+            while (($row = fgetcsv($handle, escape: "")) !== false) {
                 if (count($row) < 6) {
                     continue; // Skip incomplete rows
                 }
