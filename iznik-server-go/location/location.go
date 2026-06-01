@@ -134,6 +134,35 @@ func ClosestGroups(lat float64, lng float64, radius float64, limit int) []Closes
 	// This reduces latency significantly, even though it's a bit mean to the database server.
 	db := database.DBConn
 
+	// If this point lies inside one or more group polygons, those are the correct groups —
+	// polygon containment is authoritative and beats any centre-distance heuristic.  This
+	// matches the V1 PHP groupsNear() behaviour and fixes bug #9518, where a group with a
+	// close centre but non-containing polygon was returned instead of the large group whose
+	// polygon actually contains the point.  The radius-stepping search below filters on the
+	// group centre distance (HAVING hav < currradius), so a containing group whose centre is
+	// far away would otherwise be dropped entirely.
+	containing := []ClosestGroup{}
+	db.Raw("SELECT id, nameshort, namefull, ontn, settings, 0 AS dist, "+
+		"haversine(lat, lng, ?, ?) AS hav, "+
+		"CASE WHEN altlat IS NOT NULL THEN haversine(altlat, altlng, ?, ?) ELSE NULL END AS hav2 "+
+		"FROM `groups` WHERE ST_Contains(polyindex, ST_SRID(POINT(?, ?), ?)) "+
+		"AND publish = 1 AND listable = 1 ORDER BY hav ASC, external ASC LIMIT ?;",
+		lat, lng,
+		lat, lng,
+		lng, lat, utils.SRID,
+		limit).Scan(&containing)
+
+	if len(containing) > 0 {
+		for i, r := range containing {
+			if len(r.Namefull) > 0 {
+				containing[i].Namedisplay = r.Namefull
+			} else {
+				containing[i].Namedisplay = r.Nameshort
+			}
+		}
+		return containing
+	}
+
 	var currradius = math.Round(float64(radius)/16.0 + 0.5)
 	results := []ClosestGroup{}
 	var wg sync.WaitGroup
