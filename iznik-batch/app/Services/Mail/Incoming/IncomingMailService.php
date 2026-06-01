@@ -12,6 +12,7 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserEmail;
+use App\Services\ItemService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -45,6 +46,8 @@ class IncomingMailService
 
     private BounceService $bounceService;
 
+    private ItemService $itemService;
+
     /**
      * Context from the last routing decision (group name, user id, etc.).
      * Set during route() and read by controllers for logging.
@@ -54,11 +57,13 @@ class IncomingMailService
     public function __construct(
         ?SpamCheckService $spamCheck = null,
         ?StripQuotedService $stripQuoted = null,
-        ?BounceService $bounceService = null
+        ?BounceService $bounceService = null,
+        ?ItemService $itemService = null
     ) {
         $this->spamCheck = $spamCheck ?? app(SpamCheckService::class);
         $this->stripQuoted = $stripQuoted ?? new StripQuotedService;
         $this->bounceService = $bounceService ?? new BounceService;
+        $this->itemService = $itemService ?? new ItemService;
     }
 
     /**
@@ -2719,6 +2724,12 @@ class IncomingMailService
                 'collection' => $collection,
                 'arrival' => now(),
             ]);
+
+            // Record the item from a well-formed "TYPE: item (location)" subject,
+            // exactly as V1 Message::save() did. The messages_items link is what
+            // the Weight stat's INNER JOIN relies on — without it, items given
+            // away via email (e.g. TrashNothing posts) contribute zero weight.
+            $this->itemService->recordFromSubject($message->id, $email->subject ?? '');
 
             // Add to message history for spam checking
             DB::table('messages_history')->insert([
