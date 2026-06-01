@@ -70,12 +70,13 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
-      # 9 workers (9 Chromium instances) OOM-killed the Katapult VM during the
-      # parallel test phase (iznik-batch + Playwright + Go + Vitest + the full
-      # container stack all at once), surfacing as build-test-katapult
-      # infrastructure_fail. 4 matches the standard executor's proven value and
-      # gives the VM memory headroom. See master CI outage 2026-06-01.
-      PW_WORKERS: 4
+      # 11 = the historical max worker count. Restored after the 2026-06-01 OOM
+      # outage (9 workers OOM-killed the VM with only a 2G swapfile). The job now
+      # ensures a 20G swapfile at runtime (see "Install system dependencies"),
+      # so peak spikes (11 Chromium + Laravel + Go + the container stack) swap
+      # instead of OOM-killing the runner. If build-test-katapult goes back to
+      # infrastructure_fail in the parallel test phase, lower this first.
+      PW_WORKERS: 11
       VITEST_MAX_WORKERS: 4
       PORT_TRAEFIK_HTTP: 9080
       PORT_TRAEFIK_API: 17192
@@ -152,6 +153,27 @@ commands:
               docker-compose --version || docker compose version
               jq --version
               curl --version | head -1
+              # Ensure a large swapfile at RUNTIME so it applies to already-provisioned
+              # Katapult VMs too (not just freshly built ones). A big swap lets peak
+              # memory spikes (many Playwright workers + Laravel + Go + the container
+              # stack all at once) swap instead of OOM-killing the runner agent, which
+              # surfaces as build-test-katapult infrastructure_fail. See PW_WORKERS.
+              SWAP_TARGET_GB=20
+              CUR_SWAP_GB=$(( $(awk '/SwapTotal/{print $2}' /proc/meminfo) / 1024 / 1024 ))
+              if [ "$CUR_SWAP_GB" -lt "$SWAP_TARGET_GB" ]; then
+                echo "Swap ${CUR_SWAP_GB}G < ${SWAP_TARGET_GB}G target — resizing /swapfile"
+                sudo swapoff /swapfile 2>/dev/null || true
+                sudo rm -f /swapfile 2>/dev/null || true
+                if sudo fallocate -l ${SWAP_TARGET_GB}G /swapfile 2>/dev/null; then
+                  sudo chmod 600 /swapfile && sudo mkswap /swapfile >/dev/null && sudo swapon /swapfile \
+                    && echo "Swap resized to ${SWAP_TARGET_GB}G" || echo "⚠️ swap enable failed — continuing"
+                else
+                  echo "⚠️ fallocate ${SWAP_TARGET_GB}G failed (insufficient disk?) — keeping existing swap"
+                fi
+                sudo sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
+              else
+                echo "Swap already ${CUR_SWAP_GB}G (>= ${SWAP_TARGET_GB}G target)"
+              fi
               echo "Current memory:"
               free -h
               exit 0
