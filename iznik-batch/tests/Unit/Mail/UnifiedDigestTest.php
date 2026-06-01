@@ -244,9 +244,11 @@ class UnifiedDigestTest extends TestCase
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
+        // displayname is a computed accessor (User::getDisplayNameAttribute),
+        // not a stored column — it derives from fullname, so set fullname here.
+        // Passing a 'displayname' key would be silently ignored by the accessor.
         $poster = $this->createTestUser([
-            'fullname' => 'Ewalina Test',
-            'displayname' => 'Ewalina',
+            'fullname' => 'Ewalina',
         ]);
         $this->createMembership($poster, $group);
         $message = $this->createTestMessage($poster, $group, [
