@@ -102,8 +102,11 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     }
 
     /**
-     * IDs needed to rebuild this digest for a durable retry.
-     * Stores only scalars (user id, mode, message ids + group ids).
+     * IDs needed to rebuild this digest for a durable retry. We store the
+     * recipient, the mode, and the (message id, group ids) of each post —
+     * never the built Message/User objects — so the retry re-fetches current
+     * data. Sponsors are recomputed from the user on rebuild, so they're not
+     * stored.
      *
      * {@see RetryableMailable}
      */
@@ -112,38 +115,39 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         return [
             'userid' => $this->user->id,
             'mode' => $this->mode,
-            'posts' => $this->posts->map(fn ($p) => [
-                'msgid' => $p['message']->id,
-                'groups' => $p['postedToGroups'],
-            ])->values()->all(),
+            'posts' => $this->posts->map(fn ($post) => [
+                'msgid' => $post['message']->id,
+                'groups' => array_values($post['postedToGroups'] ?? []),
+            ])->all(),
         ];
     }
 
     /**
      * Rebuild a fresh digest from a descriptor, re-fetching from the DB.
      *
-     * Returns null (cancel the retry) when the user no longer exists or has
-     * no usable address, or when none of the posts still exist in the DB.
+     * Returns null (cancel the retry — nothing to send) when the recipient or
+     * every referenced message has since been deleted, or the recipient no
+     * longer has a usable address.
      *
      * {@see RetryableMailable}
      */
     public static function rebuildFromDescriptor(array $descriptor): ?self
     {
-        $user = User::find($descriptor['userid'] ?? null);
-        if (!$user) {
+        $user = User::with(['emails', 'memberships'])->find($descriptor['userid'] ?? null);
+        if (!$user || !$user->email_preferred) {
             return null;
         }
 
-        $posts = collect();
-        foreach ($descriptor['posts'] ?? [] as $postData) {
-            $message = Message::find($postData['msgid'] ?? null);
-            if ($message) {
-                $posts->push([
-                    'message' => $message,
-                    'postedToGroups' => $postData['groups'] ?? [],
-                ]);
-            }
-        }
+        $posts = collect($descriptor['posts'] ?? [])
+            ->map(function ($post) {
+                $message = Message::with(['attachments', 'fromUser', 'groups'])->find($post['msgid'] ?? null);
+
+                return $message
+                    ? ['message' => $message, 'postedToGroups' => $post['groups'] ?? []]
+                    : null;
+            })
+            ->filter()
+            ->values();
 
         if ($posts->isEmpty()) {
             return null;

@@ -116,17 +116,22 @@ class EmailSpoolerService
                 return '';
             }
 
-            // Non-permanent build/render failure for a RetryableMailable: convert
-            // the drop into a durable queue job rather than rethrowing (which would
-            // silently skip this recipient on the hot path).
+            // Transient / render / build failure (an MJML-server blip, a DB
+            // hiccup, or a code bug like an undefined template key). The
+            // message never reached the spool, so the send-time retry can't
+            // help — and historically this silently DROPPED the recipient
+            // (the failure mode that lost ~1,100 immediate digests during a
+            // deploy window). If the mailable has opted into durable retry,
+            // hand it to the queue instead: SpoolMail re-renders from fresh
+            // DB state on a backoff schedule and only dead-letters to
+            // failed_jobs after 24h, so a deployed fix drains it
+            // automatically.
+            //
+            // autoRetry is false when SpoolMail itself calls spool(), so a
+            // still-broken render rethrows into the queue's own retry
+            // machinery rather than dispatching another job.
             if ($autoRetry && $mailable instanceof RetryableMailable) {
-                $firstRecipient = is_string($to) ? $to : ($normalizedTo[0]['address'] ?? null);
-                SpoolMail::dispatch(
-                    get_class($mailable),
-                    $mailable->mailDescriptor(),
-                    $firstRecipient,
-                    $emailType
-                );
+                $this->dispatchRetry($mailable, $normalizedTo, $emailType, $e);
 
                 return '';
             }
@@ -190,6 +195,34 @@ class EmailSpoolerService
         ]);
 
         return $id;
+    }
+
+    /**
+     * Hand a failed render/build off to the queue for durable retry.
+     *
+     * Captures the mailable's scalar descriptor (IDs only) and dispatches a
+     * SpoolMail job; the job rebuilds a fresh mailable from current DB state
+     * and re-renders it. Storing IDs rather than the built message is what lets
+     * a fix deployed after a render bug drain the backlog automatically.
+     */
+    protected function dispatchRetry(Mailable $mailable, array $normalizedTo, ?string $emailType, \Throwable $e): void
+    {
+        /** @var RetryableMailable $mailable */
+        $recipient = $normalizedTo[0]['address'] ?? null;
+
+        SpoolMail::dispatch(
+            get_class($mailable),
+            $mailable->mailDescriptor(),
+            $recipient,
+            $emailType,
+        );
+
+        Log::warning('Spool render/build failed; dispatched durable retry job', [
+            'mailable' => get_class($mailable),
+            'recipient' => $recipient,
+            'type' => $emailType,
+            'error' => $e->getMessage(),
+        ]);
     }
 
     /**

@@ -349,6 +349,11 @@ return [
         // hour, so it catches night-time outages the daytime-only volume floor
         // would miss.
         'outgoing_stall_window_hours' => env('FREEGLE_EMAIL_HEALTH_OUTGOING_STALL_WINDOW_HOURS', 1),
+        // Alert (24/7) when at least this many SpoolMail durable-retry jobs have
+        // exhausted their 24h window and parked in failed_jobs. A non-zero
+        // count almost always means a render bug is dropping a whole class of
+        // email; deploy the fix then run `php artisan mail:retry-failed`.
+        'failed_mail_retry_threshold' => env('FREEGLE_EMAIL_HEALTH_FAILED_MAIL_RETRY_THRESHOLD', 1),
     ],
 
     'dedup' => [
