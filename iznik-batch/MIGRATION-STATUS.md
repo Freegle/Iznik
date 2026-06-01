@@ -315,11 +315,11 @@ These original scripts need to be migrated to Laravel artisan commands:
 
 | Script | Time | Priority | Description |
 |--------|------|----------|-------------|
-| ~~`chat_chaseup_expected.php`~~ | ~~06:00~~ | ~~Medium~~ | ~~Chat expected response chase-up~~ — **Migrated: `chats:chaseup-expected`** (WAITING FOR REPLY user2user notification) |
+| ~~`chat_chaseup_expected.php`~~ | ~~06:00~~ | ~~Medium~~ | ~~Chat expected response chase-up~~ — **Migrated: `chats:chaseup-expected`** (WAITING FOR REPLY user2user notification; scheduler disabled pending go-live) |
 | ~~`birthday.php`~~ | ~~12:00~~ | ~~Low~~ | ~~Birthday notifications~~ — **Migrated: `birthday:send-emails`** |
 | `relevant.php` | 14:30 | Medium | Relevant message matching |
 | `chat_chaseupmods.php` | 15:30 | Medium | Moderator chat chase-up |
-| ~~`newsfeed_digest.php`~~ | ~~15:30~~ | ~~Low~~ | ~~Newsfeed digest~~ — **Migrated: `mail:newsfeed:digest`** (nearby chitchat digest; spatial scope approximated by group areas — see `docs/cron-mail-migration-parity.md`) |
+| ~~`newsfeed_digest.php`~~ | ~~15:30~~ | ~~Low~~ | ~~Newsfeed digest~~ — **Migrated: `mail:newsfeed:digest`** (nearby chitchat digest; scheduler disabled pending go-live; spatial scope approximated by group areas — see `docs/cron-mail-migration-parity.md`) |
 | `newsfeed_modnotif.php` | 13:30 | Low | Newsfeed mod notifications |
 | ~~`noticeboards.php`~~ | ~~15:30~~ | ~~Low~~ | ~~Noticeboards~~ — **Migrated: `noticeboards:thank-users`** |
 | `group_welcomereview.php` | 01:00, 15:00 | Low | Group welcome review |
