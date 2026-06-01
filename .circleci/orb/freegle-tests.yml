@@ -2114,9 +2114,12 @@ jobs:
             checkout_code() {
               if [ -d .git ]; then
                 git fetch --prune origin
-                git reset --hard HEAD
-                git clean -fd
-                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+                # HEAD may be an orphan if a previous run failed mid-init; ignore the error.
+                git reset --hard HEAD 2>/dev/null || true
+                # -x also removes gitignored files (e.g. .claude/skills/ralph/) that
+                # would otherwise block checkout with "untracked files would be overwritten".
+                git clean -fdx
+                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
                 # Second clean: removes files from previous branch that git checkout couldn't
                 # delete (e.g., root-owned files created by Docker containers via bind mounts,
                 # or files left by concurrent builds sharing the workspace directory).
@@ -2128,8 +2131,9 @@ jobs:
                 git init
                 git remote add origin "$CIRCLE_REPOSITORY_URL" 2>/dev/null || git remote set-url origin "$CIRCLE_REPOSITORY_URL"
                 git fetch --prune origin
-                git clean -fd
-                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+                # -x also removes gitignored files that would block checkout.
+                git clean -fdx
+                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
                 git clean -fd
               fi
             }
