@@ -143,6 +143,25 @@ ylvm_prune_snapshots() {
     ylvm_write_snapshot_manifest
 }
 
+# Update the restore-status.json the backup-browser API reads, so the UI shows
+# the right state during/after an LVM operation (and never goes stale). Use a
+# non-terminal status (e.g. "switching") to show in-progress, "completed" when
+# done. Without this, a quick switch would leave the previous status frozen.
+ylvm_set_restore_status() {
+    local status="$1" message="$2" date8="$3"
+    local f="$YLVM_COMPOSE_DIR/yesterday/data/restore-status.json"
+    mkdir -p "$(dirname "$f")"
+    cat > "$f" <<EOF
+{
+  "status": "${status}",
+  "message": "${message}",
+  "backupDate": "${date8}",
+  "filesRemaining": 0,
+  "timestamp": "$(date -Iseconds)"
+}
+EOF
+}
+
 # Write the set of instantly-switchable days to a file the backup-browser API
 # reads (mounted as /data in the yesterday-api container). The UI uses this to
 # show which dates are a ~1-min switch vs a full ~1-2h restore.

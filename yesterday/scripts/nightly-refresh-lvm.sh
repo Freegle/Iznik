@@ -42,6 +42,7 @@ mountpoint -q "$YLVM_ACTIVE_MNT" || ylvm_die "$YLVM_ACTIVE_MNT not mounted — r
 mountpoint -q "$YLVM_STAGE_MNT"  || ylvm_die "$YLVM_STAGE_MNT not mounted — run setup-lvm-thin.sh"
 
 ylvm_log "===== Nightly LVM refresh -> $DATE8 (was: ${CURRENT:-none}) ====="
+ylvm_set_restore_status "preparing" "Refreshing to latest backup $DATE8…" "$DATE8"
 
 # 1. Prepare the full backup in staging (percona still serving the current day).
 ylvm_prepare_to_stage "$DATE8"
@@ -62,6 +63,7 @@ ylvm_reset_root_password "${YLVM_DB_PASSWORD:-iznik}"
 # 5. Clear stale cache + record state.
 docker compose exec -T redis redis-cli FLUSHALL >/dev/null 2>&1 || true
 "$SCRIPT_DIR/set-current-backup.sh" "$DATE8" 2>/dev/null || true
+ylvm_set_restore_status "completed" "Refreshed to backup $DATE8" "$DATE8"
 
 # 6. Ensure the rest of the stack is up.
 docker compose up -d

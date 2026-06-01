@@ -191,6 +191,13 @@
       color: #856404;
       border: 1px solid #ffe69c;
     }
+    .badge.restoring {
+      background: #1565c0;
+      color: white;
+    }
+    .backup-row.restoring td {
+      background: #e3f2fd;
+    }
     button.load.instant {
       background: #2e7d32;
     }
@@ -557,17 +564,31 @@
               <tbody>
           `;
 
+          const ri = (typeof restoreInfo !== 'undefined') ? restoreInfo : { inProgress: false, backupDate: null };
           data.backups.forEach(backup => {
             const isCurrent = backup.date === currentBackupDate;
-            const rowClass = isCurrent ? 'backup-row current' : 'backup-row';
-            let badge;
-            if (isCurrent) badge = '<span class="badge current">LOADED</span>';
-            else if (backup.instant) badge = '<span class="badge instant">⚡ Instant · ~1 min</span>';
-            else badge = '<span class="badge fullrestore">Full restore · ~1–2 h</span>';
-            let button;
-            if (isCurrent) button = '<button class="load" disabled>Currently Loaded</button>';
-            else if (backup.instant) button = `<button class="load instant" onclick="loadBackup('${backup.date}', true)">⚡ Switch (~1 min)</button>`;
-            else button = `<button class="load" onclick="loadBackup('${backup.date}', false)">Load (full restore)</button>`;
+            const isRestoringThis = ri.inProgress && backup.date === ri.backupDate;
+            const otherRestore = ri.inProgress && !isRestoringThis;
+            const rowClass = (isCurrent ? 'backup-row current' : 'backup-row') + (isRestoringThis ? ' restoring' : '');
+            let badge, button;
+            if (isRestoringThis) {
+              // This is the one actually being restored — make it unmistakable.
+              badge = '<span class="badge restoring">⏳ Restoring now…</span>';
+              button = '<button class="load" disabled>⏳ Restoring this backup…</button>';
+            } else if (isCurrent) {
+              badge = '<span class="badge current">LOADED</span>';
+              button = '<button class="load" disabled>Currently Loaded</button>';
+            } else if (backup.instant) {
+              badge = '<span class="badge instant">⚡ Instant · ~1 min</span>';
+              button = otherRestore
+                ? '<button class="load" disabled>Locked — restore in progress</button>'
+                : `<button class="load instant" onclick="loadBackup('${backup.date}', true)">⚡ Switch (~1 min)</button>`;
+            } else {
+              badge = '<span class="badge fullrestore">Full restore · ~1–2 h</span>';
+              button = otherRestore
+                ? '<button class="load" disabled>Locked — restore in progress</button>'
+                : `<button class="load" onclick="loadBackup('${backup.date}', false)">Load (full restore)</button>`;
+            }
 
             html += `
               <tr class="${rowClass}">
@@ -885,7 +906,9 @@
       updateStatusCountdown();
     }
 
-    // Check restore status and disable buttons during restore
+    // Track which backup (if any) is currently restoring, so the list can show
+    // it specifically rather than greying out every row with a generic label.
+    let restoreInfo = { inProgress: false, backupDate: null, message: '', status: '' };
     let isRestoreInProgress = false;
     async function checkRestoreStatus() {
       try {
@@ -893,34 +916,22 @@
         const data = await response.json();
 
         const currentBackupSection = document.querySelector('.current-backup');
-
-        if (data.inProgress) {
-          isRestoreInProgress = true;
-
-          // Hide "Currently Loaded Backup" section during restore
-          if (currentBackupSection) {
-            currentBackupSection.style.display = 'none';
-          }
-
-          // Disable all load buttons
-          document.querySelectorAll('button.load').forEach(btn => {
-            btn.disabled = true;
-            btn.textContent = 'Restore In Progress';
-          });
-        } else {
-          isRestoreInProgress = false;
-
-          // Show "Currently Loaded Backup" section
-          if (currentBackupSection) {
-            currentBackupSection.style.display = 'block';
-          }
-
-          // Re-enable load buttons
-          document.querySelectorAll('button.load').forEach(btn => {
-            btn.disabled = false;
-            btn.textContent = 'Load This Backup';
-          });
+        if (currentBackupSection) {
+          currentBackupSection.style.display = data.inProgress ? 'none' : 'block';
         }
+
+        // Re-render the backup list only when the state actually changes, so we
+        // don't clobber the instant/full-restore button labels on every poll.
+        const changed = (!!data.inProgress !== restoreInfo.inProgress) ||
+                        ((data.backupDate || null) !== restoreInfo.backupDate);
+        restoreInfo = {
+          inProgress: !!data.inProgress,
+          backupDate: data.backupDate || null,
+          message: data.message || '',
+          status: data.status || ''
+        };
+        isRestoreInProgress = restoreInfo.inProgress;
+        if (changed) loadBackupList();
       } catch (error) {
         console.error('Failed to check restore status:', error);
       }

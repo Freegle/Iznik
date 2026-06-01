@@ -32,6 +32,7 @@ PROJECT="$(ylvm_project_name)"
 cd "$YLVM_COMPOSE_DIR"
 
 ylvm_log "Switching to backup $DATE8 ..."
+ylvm_set_restore_status "switching" "Switching to backup $DATE8 (instant)…" "$DATE8"
 ylvm_log "Stopping percona ..."
 docker compose stop percona || true
 
@@ -61,6 +62,7 @@ docker compose exec -T redis redis-cli FLUSHALL >/dev/null 2>&1 || true
 
 # Record what's loaded (reuses existing tracker).
 "$SCRIPT_DIR/set-current-backup.sh" "$DATE8" 2>/dev/null || true
+ylvm_set_restore_status "completed" "Loaded backup $DATE8 (instant switch)" "$DATE8"
 
 echo
 ylvm_log "✅ Switched to backup $DATE8 (project: $PROJECT)"
