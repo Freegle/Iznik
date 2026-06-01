@@ -230,7 +230,13 @@ class UnifiedDigest extends MjmlMailable
             // "Ewalina via Freegle" from the User model.
             $posterUser = $message->relationLoaded('fromUser') ? $message->fromUser : null;
             $posterName = $posterUser?->displayname ?: ($message->fromname ?: 'Freegler');
-            $posterDisplayName = $posterName . ' via ' . config('freegle.branding.name');
+            // Partner (Trash Nothing) posters carry a name that already ends in
+            // " via Trash Nothing" (the raw From-header display name). Strip it
+            // so we don't surface the partner branding in the digest From line.
+            $posterName = preg_replace('/\s+via\s+Trash\s*Nothing\s*$/i', '', $posterName);
+            // V1 parity (iznik-server/include/mail/Digest.php): the immediate
+            // digest From name is "<poster> on <SITE_NAME>".
+            $posterDisplayName = $posterName . ' on ' . config('freegle.branding.name');
 
             // From MUST stay as the Gmail-registered noreply sender for AMP
             // for Email to render — Gmail's Dynamic Mail allowlist keys on
