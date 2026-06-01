@@ -241,6 +241,22 @@ describe('MessageShareModal', () => {
     })
   })
 
+  describe('direct URL link', () => {
+    it('shows a direct link to the item URL for iOS/mobile fallback', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+      const link = wrapper.find('a[href="https://freegle.org/message/1"]')
+      expect(link.exists()).toBe(true)
+      expect(link.attributes('target')).toBe('_blank')
+    })
+
+    it('displays the item URL as link text', async () => {
+      const wrapper = createWrapper()
+      await flushPromises()
+      expect(wrapper.text()).toContain('https://freegle.org/message/1')
+    })
+  })
+
   describe('message fetch', () => {
     it('fetches message on mount', async () => {
       createWrapper()

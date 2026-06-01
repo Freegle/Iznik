@@ -5,6 +5,9 @@
         <h3>
           {{ message.subject }}
         </h3>
+        <p>
+          <a target="_blank" :href="message.url">{{ message.url }}</a>
+        </p>
         <NoticeMessage variant="info">
           <p>
             Please share - you might get a response from people you know, or a
