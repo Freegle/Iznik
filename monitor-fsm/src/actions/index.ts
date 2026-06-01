@@ -1150,7 +1150,7 @@ print(json.dumps(out))
 
   {
     name: 'search_code',
-    description: 'Search Go/Nuxt/Laravel code for a pattern. Params: {pattern, path}',
+    description: 'Search Go/Nuxt/Laravel code for a pattern and return the matching lines WITH surrounding context (so you can diagnose without a second read). Params: {pattern, path}. Returns {files: [...paths], matches: [{file, line, text}], context}. Use the returned code excerpts to form a diagnosis — do NOT keep re-searching for the same thing.',
     paramsSchema: {
       type: 'object',
       properties: { pattern: { type: 'string' }, path: { type: 'string' } },
@@ -1159,9 +1159,37 @@ print(json.dumps(out))
     handler: async (params) => {
       const pattern = params.pattern as string
       const path = (params.path as string) ?? '/home/edward/FreegleDockerWSL'
-      const { stdout } = await sh('rg', ['-l', '-n', pattern, path], undefined)
-      const files = stdout.trim().split('\n').slice(0, 50)
-      return { matches: files }
+      // -l alone only returned filenames, so the diagnosing model got "1 file
+      // matched" with no code to read and re-searched forever (the diagnose
+      // loop). Return the matching lines with 3 lines of context on each side
+      // so a diagnosisBrief can be written from one search.
+      const { stdout } = await sh(
+        'rg',
+        ['-n', '-C', '3', '--max-columns', '300', '--max-count', '20', pattern, path],
+        undefined,
+      )
+      const raw = stdout.trim()
+      // Also collect the distinct file list for a quick overview.
+      const fileSet = new Set<string>()
+      const matches: Array<{ file: string; line: number; text: string }> = []
+      for (const ln of raw.split('\n')) {
+        // rg context format: path:line:text (match) or path-line-text (context)
+        const m = ln.match(/^(.+?)[:-](\d+)[:-](.*)$/)
+        if (m) {
+          const file = m[1].replace('/home/edward/FreegleDockerWSL/', '')
+          fileSet.add(file)
+          if (ln.includes(`:${m[2]}:`)) {
+            matches.push({ file, line: Number(m[2]), text: m[3].slice(0, 300) })
+          }
+        }
+      }
+      return {
+        files: [...fileSet].slice(0, 50),
+        matchCount: matches.length,
+        matches: matches.slice(0, 40),
+        // Cap the raw excerpt so the context fits a reasonable token budget.
+        context: raw.slice(0, 6000),
+      }
     },
   },
 
