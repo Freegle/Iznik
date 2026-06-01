@@ -1220,7 +1220,8 @@ func TestForgetPartnerFlow(t *testing.T) {
 	groupID := CreateTestGroup(t, prefix)
 	userID := CreateTestUser(t, prefix, "User")
 	CreateTestMembership(t, userID, groupID, "Member")
-	db.Exec("UPDATE users SET ljuserid = ? WHERE id = ?", uint64(99999), userID)
+	partnerUID := uint64(time.Now().UnixNano())
+	db.Exec("UPDATE users SET ljuserid = ? WHERE id = ?", partnerUID, userID)
 
 	// Seed a message + messages_groups row so we can confirm partner erasure still
 	// blanks content (unlike the self-service grace path).
