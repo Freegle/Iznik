@@ -75,9 +75,38 @@ built TDD with pure PHPUnit unit tests in `tests/Unit/Promise/`:
   `Evaluator` (P/R/F1, ROC-AUC, PR-AUC, threshold sweep, **promise-timing offsets**, top ±n-grams,
   error samples), `promise:train` command (group-split, report.json + persisted model.rbx).
 
-**Status:** code complete + lint-clean; unit tests written. **Not yet run green via the status API**
-(`POST /api/tests/laravel {"filter":"Promise","testsuite":"Unit"}`) and the real CSVs not yet
-extracted/trained — that's the immediate next step for the baseline track.
+**Status:** integrated and **running end-to-end on real data.** First result on a 768-room dev
+sample (1,399 train / 373 test, split by conversation):
+
+| Metric | Linear baseline | Keyword baseline |
+|---|---:|---:|
+| Precision | 0.577 | 0.177 |
+| Recall | 0.259 | 0.897 |
+| F1 | **0.357** | 0.296 |
+| ROC-AUC | **0.751** | — |
+| PR-AUC | **0.458** | — |
+
+Beats the keyword baseline on F1 + precision; PR-AUC 0.458 vs ~0.15 chance = real signal. Conservative
+at 0.5 (F1 peaks ~0.44 at threshold 0.1). No leakage tell in the top n-grams.
+
+Fixes applied during integration (the two defects in the original push are resolved):
+- **Real probabilities** — replaced the Rubix `Pipeline` (whose `proba()` double-transforms →
+  `IncorrectDatasetDimensionality`) with explicitly fit-once / transform-only transformers, so AUC,
+  the threshold sweep and timing are now meaningful.
+- **Top n-grams implemented** — `featureImportances()` ranked, annotated with empirical
+  P(label=1 | token) for direction (doubles as a leakage smoke-test).
+- Samples wrapped as `[span]` rows; predictions cast to int for error sampling; model persisted via
+  serialize.
+
+**Known scaling limit:** Rubix vectorises **densely** (one int per vocab term per sample), so char
+3–5-grams blow memory at scale (OOM at 1.4k samples × 20k vocab). Mitigated for dev via
+`maxVocabularySize=8000`, `minDocumentCount=3`, and `php -d memory_limit=3G`. The full 6-month run
+will need harder vocab capping (or word-grams only, or a sparse representation) — Rubix has no sparse
+matrices.
+
+**Immediate next steps:** run the `Promise` unit suite green via the status API
+(`POST /api/tests/laravel {"filter":"Promise","testsuite":"Unit"}`); tune the operating threshold;
+solve the dense-matrix limit for the full-scale run.
 
 ## How to run (once green)
 
