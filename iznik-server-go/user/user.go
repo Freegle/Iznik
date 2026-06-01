@@ -1547,6 +1547,8 @@ func PostUser(c *fiber.Ctx) error {
 		return handleRemoveEmail(c, db, myid, req)
 	case "Unbounce":
 		return handleUnbounce(c, myid, req)
+	case "Unsubscribe":
+		return handleUserUnsubscribe(c, myid, req)
 	case "Merge":
 		return handleMerge(c, myid, req)
 	default:
@@ -2327,6 +2329,35 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	}
 
 	db.Exec("UPDATE users SET bouncing = 0 WHERE id = ?", req.ID)
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// handleUserUnsubscribe puts a target user into limbo (14-day soft-delete) and removes their
+// approved memberships. V1 parity: POST /user action=Unsubscribe calls User::limbo() which
+// sets users.deleted (Discourse #9738). Caller must be admin/support or the user themselves.
+func handleUserUnsubscribe(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	targetID := req.ID
+
+	if targetID != myid && !auth.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only admin/support can unsubscribe other users")
+	}
+
+	db := database.DBConn
+
+	// Remove approved memberships so the user no longer appears in group member lists.
+	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
+
+	// Mark the account as limbo (soft-deleted, 14-day grace period before permanent erasure).
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
+
+	// Write a log entry so moderator audit views record the removal.
+	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
+		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID, myid)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
