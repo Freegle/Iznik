@@ -3,11 +3,11 @@
 
   <mj-body background-color="#f4f4f4">
 
-    @include('emails.mjml.components.header')
+    @include('emails.mjml.components.modtools-header')
 
     <mj-section background-color="#ffffff" padding="20px 20px 10px">
       <mj-column>
-        <mj-text font-size="22px" font-weight="bold" color="#333333">
+        <mj-text font-size="22px" font-weight="bold" mj-class="text-modtools">
           {{ $subject }}
         </mj-text>
 
@@ -38,7 +38,7 @@
         <mj-text font-size="14px" color="#c0392b" padding="0 0 8px">
           If you're active{{ $groupName ? ' on '.$groupName : '' }}, please let us know you got this:
         </mj-text>
-        <mj-button href="{{ $clickUrl }}" background-color="#338808" border-radius="3px" font-size="16px">
+        <mj-button href="{{ $clickUrl }}" mj-class="btn-modtools" border-radius="3px" font-size="16px">
           I got this
         </mj-button>
       </mj-column>
@@ -56,7 +56,7 @@
       </mj-column>
     </mj-section>
 
-    @include('emails.mjml.partials.footer', ['email' => $email])
+    @include('emails.mjml.partials.modtools-footer', ['email' => $email])
 
   </mj-body>
 </mjml>
