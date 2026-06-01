@@ -94,20 +94,23 @@ docker info >/dev/null 2>&1 || { echo "ERROR: Docker daemon did not start after 
 ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || \
 ln -sf /usr/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose 2>/dev/null || true
 
-# Allocate a 2GB swap file so a transient memory spike (Playwright workers +
-# Laravel + Go all hitting peak together) doesn't OOM-kill the runner agent
-# and produce an infrastructure_fail / heartbeat-timeout. fallocate is
-# instant on ext4; if it fails (XFS without preallocation), fall back to dd.
-if ! swapon --show | grep -q '/swapfile'; then
-  if fallocate -l 2G /swapfile 2>/dev/null; then
-    :
-  else
-    dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+# Allocate a 20GB swap file so a transient memory spike (many Playwright workers
+# + Laravel + Go all hitting peak together) doesn't OOM-kill the runner agent and
+# produce an infrastructure_fail / heartbeat-timeout. fallocate is instant on
+# ext4; if it fails (XFS without preallocation), fall back to dd. Resizes an
+# existing smaller swapfile (e.g. an older 2G one) rather than skipping it.
+SWAP_TARGET_GB=20
+CUR_SWAP_GB=$(( $(awk '/SwapTotal/{print $2}' /proc/meminfo) / 1024 / 1024 ))
+if [ "$CUR_SWAP_GB" -lt "$SWAP_TARGET_GB" ]; then
+  swapoff /swapfile 2>/dev/null || true
+  rm -f /swapfile 2>/dev/null || true
+  if ! fallocate -l ${SWAP_TARGET_GB}G /swapfile 2>/dev/null; then
+    dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_TARGET_GB * 1024)) status=none
   fi
   chmod 600 /swapfile
   mkswap /swapfile >/dev/null
   swapon /swapfile
-  echo "/swapfile none swap sw 0 0" >> /etc/fstab
+  grep -q '/swapfile' /etc/fstab || echo "/swapfile none swap sw 0 0" >> /etc/fstab
   # Discourage swap unless under real pressure. Default vm.swappiness=60 is
   # too eager and would push hot test caches out to disk under normal load.
   echo 'vm.swappiness=10' > /etc/sysctl.d/99-swap.conf
