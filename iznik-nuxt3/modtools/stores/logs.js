@@ -12,6 +12,11 @@ export const useLogsStore = defineStore({
     list: [],
     context: null,
     params: null,
+    // Stale-fetch guard: incremented by clear() so any in-flight fetch that
+    // resolves after a clear() can detect it was overtaken and discard its
+    // result. Prevents duplicate/missing/out-of-order entries when the user
+    // changes the community filter mid-flight (Discourse #9672).
+    instance: 1,
   }),
   actions: {
     init(config) {
@@ -20,8 +25,10 @@ export const useLogsStore = defineStore({
     clear() {
       this.list = []
       this.context = null
+      this.instance++
     },
     async fetch(params) {
+      const instance = this.instance
       let ret = null
       delete params.context
       if (this.context?.id) {
@@ -29,6 +36,12 @@ export const useLogsStore = defineStore({
         params.context = this.context.id
       }
       const data = await api(this.config).logs.fetch(params)
+
+      if (this.instance !== instance) {
+        // clear() was called while this fetch was in-flight (user changed
+        // community filter); discard the stale result entirely.
+        return null
+      }
 
       let logs = []
 
