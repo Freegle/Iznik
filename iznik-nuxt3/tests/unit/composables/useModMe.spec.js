@@ -189,17 +189,19 @@ describe('useModMe re-login behavior', () => {
     await checkWork(true)
     expect(mockAudioPlay).not.toHaveBeenCalled() // baseline, no beep
 
-    // Simulate logout: authStore.work cleared (as $reset() does)
-    globalThis.__mockAuthStore.work = null
+    // Simulate re-login where all prior work was handled (login returns 0 items).
+    // This mirrors the scenario where a user logs out after clearing their queue,
+    // then new items arrive before the first post-login checkWork fires fetchMe.
+    globalThis.__mockAuthStore.work = { total: 0 }
 
-    // Simulate re-login: same pending work returns
+    // fetchMe returns 3 new arrivals — these appeared since the login moment
     mockFetchMe.mockImplementationOnce(async () => {
       globalThis.__mockAuthStore.work = { total: 3 }
     })
     await checkWork(true)
 
-    // BUG: spurious beep fires because isFirstCheckWork was not reset after logout.
-    // currentTotal=0 (cleared), totalCount=3, isFirstCheckWork=false → beep.
+    // BUG: spurious beep fires because isFirstCheckWork was stale-false.
+    // currentTotal=0 (work at login time), totalCount=3 (new arrivals), 3 > 0 → beep.
     expect(mockAudioPlay).toHaveBeenCalledOnce()
   })
 
@@ -213,17 +215,18 @@ describe('useModMe re-login behavior', () => {
     await checkWork(true)
     expect(mockAudioPlay).not.toHaveBeenCalled()
 
-    // Simulate logout
-    globalThis.__mockAuthStore.work = null
+    // Re-login with 0 items at login time (all prior work handled)
+    globalThis.__mockAuthStore.work = { total: 0 }
 
-    // Re-login: call resetCheckWork() so next check treats it as the first
+    // FIX: resetCheckWork() so the next checkWork treats this as the first call
+    // (establishes a new baseline, like a fresh page load) — prevents spurious beep
     resetCheckWork()
     mockFetchMe.mockImplementationOnce(async () => {
       globalThis.__mockAuthStore.work = { total: 3 }
     })
     await checkWork(true)
 
-    // FIXED: no spurious beep on re-login — baseline is re-established
+    // FIXED: no spurious beep — isFirstCheckWork reset means skipBeep=true for this call
     expect(mockAudioPlay).not.toHaveBeenCalled()
   })
 })
