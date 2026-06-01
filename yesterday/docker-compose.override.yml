@@ -143,6 +143,10 @@ services:
       - ./conf/percona-my.cnf:/etc/my.cnf:ro
 
   phpmyadmin:
+    networks:
+      default:
+        aliases:
+          - freegle-phpmyadmin
     # Accessed via 2FA gateway at /phpmyadmin (Admin only)
     # No direct external access - only through yesterday-2fa gateway
     # Basic auth disabled - authentication handled by 2FA gateway
@@ -165,6 +169,10 @@ services:
       - "traefik.enable=false"
 
   mailpit:
+    networks:
+      default:
+        aliases:
+          - freegle-mailhog
     # Accessed via 2FA gateway at /mailpit (Admin only)
     # No direct external access - only through yesterday-2fa gateway
     # Basic auth disabled - authentication handled by 2FA gateway
@@ -175,6 +183,10 @@ services:
       - "traefik.enable=false"
 
   apiv1:
+    networks:
+      default:
+        aliases:
+          - freegle-apiv1
     # Accessible only through Yesterday 2FA gateway on port 8181
     # Mount MySQL client config with production database password
     # File: ./iznik-server-my.cnf (created by scripts/generate-mysql-configs.sh)
@@ -203,6 +215,10 @@ services:
       - IMAGE_DELIVERY=https://delivery.ilovefreegle.org
 
   apiv2:
+    networks:
+      default:
+        aliases:
+          - freegle-apiv2
     # Accessible only through Yesterday 2FA gateway on port 8193
     ports: !reset []
     labels:
@@ -230,6 +246,10 @@ services:
       - DB_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
 
   freegle-dev-local:
+    networks:
+      default:
+        aliases:
+          - freegle-freegle-dev
     # Routed through Traefik for SSL termination on port 3002
     # No direct port binding - Traefik handles HTTPS and proxies to container
     ports: !reset []
@@ -269,6 +289,10 @@ services:
       replicas: 0
 
   modtools-dev-local:
+    networks:
+      default:
+        aliases:
+          - freegle-modtools-dev
     # Routed through Traefik for SSL termination on port 3003
     # No direct port binding - Traefik handles HTTPS and proxies to container
     ports: !reset []
@@ -323,9 +347,16 @@ services:
 
 volumes:
   freegle_db:
-    # Mark as external - this volume is populated by the restore script
-    # with production backup data and should not be recreated by Docker
-    external: true
+    # LVM fast-switch: the datadir lives on the XFS thin LV mounted at
+    # /mnt/iznik-active (see yesterday/scripts/setup-lvm-thin.sh). percona's
+    # freegle_db:/var/lib/mysql mapping is unchanged — it now resolves to the
+    # active thin clone, so switch-backup.sh can flip days in seconds.
+    # REQUIRES setup-lvm-thin.sh + cutover-to-lvm.sh to have run on this host.
+    driver: local
+    driver_opts:
+      type: none
+      device: /mnt/iznik-active
+      o: bind
   loki-data:
     # NOT external - Docker creates this automatically if it doesn't exist
     # The restore script will populate it with historical logs if available,
