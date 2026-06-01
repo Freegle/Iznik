@@ -799,12 +799,13 @@ export function useReplyStateMachine(messageId) {
         return
       }
 
-      // Check if already a member
+      // Default to first group; overwritten if user is already in a later group.
+      // Without this, the loop left groupToJoin pointing at the last group for
+      // non-members of a crossposted message (Discourse #9733).
       let isMember = false
-      let groupToJoin = null
+      const groupToJoin = msg.groups[0].groupid
 
       for (const messageGroup of msg.groups) {
-        groupToJoin = messageGroup.groupid
         for (const key of Object.keys(myGroups.value || {})) {
           const group = myGroups.value[key]
           if (messageGroup.groupid === group.id) {

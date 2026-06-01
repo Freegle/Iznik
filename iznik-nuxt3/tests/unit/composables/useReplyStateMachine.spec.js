@@ -980,6 +980,27 @@ describe('handleJoinGroup (via submit with logged-in user)', () => {
     expect(mockForceLogin.value).toBe(true)
     expect(result.state.value).toBe(ReplyState.AUTHENTICATING)
   })
+
+  it('crosspost: joins first group when not a member of any (Discourse #9733)', async () => {
+    // Bug: the loop set groupToJoin on every iteration, so a non-member of any group
+    // ended up being joined to the LAST group, not the first (Southwark/Lewisham mix-up).
+    mockMeValue = { id: 10 }
+    mockMyidValue = 10
+    mockMyGroupsValue = {} // not a member of any group
+    mockMessageFetch.mockResolvedValue({
+      id: MSG_ID,
+      groups: [{ groupid: 300 }, { groupid: 400 }], // crossposted to two groups
+    })
+    mockReplyToPostFn.mockResolvedValue(MSG_ID)
+
+    const { result } = mountComposable()
+    result.setRefs({ form: makeFormRef(true), chatButton: makeChatButtonRef() })
+    await doLoggedInSubmit(result)
+
+    // Must join the FIRST group (300), not the last (400)
+    expect(mockAuthStore.joinGroup).toHaveBeenCalledWith(10, 300, false)
+    expect(result.state.value).toBe(ReplyState.COMPLETED)
+  })
 })
 
 describe('handleCreateChat (via submit with logged-in user)', () => {
