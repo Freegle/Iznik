@@ -1,5 +1,10 @@
 <mjml>
-    @if($mode === 'immediate')
+    {{-- A single-post digest — whether it arrived via immediate (-1) or a
+         per-group frequency with exactly one new post — uses the full-width
+         hero single-post layout (V1 single.html parity). Multi-post group and
+         daily digests use the compact multi-post layout below. --}}
+    @php $isSingle = $mode === 'immediate' || ($mode === 'group' && $postCount === 1); @endphp
+    @if($isSingle)
     @php $post = $posts->first(); $isOffer = $post['type'] === 'Offer'; $accentColor = $isOffer ? '#3c763d' : '#2196A6'; @endphp
     @include('emails.mjml.partials.head', ['preview' => $post['subject']])
     @else
@@ -12,9 +17,9 @@
             $wantedColor = '#2196A6';
         @endphp
 
-        @if($mode === 'immediate')
+        @if($isSingle)
         {{-- ═══════════════════════════════════════════════════════════════ --}}
-        {{-- IMMEDIATE MODE: single-post card matching browse page style    --}}
+        {{-- SINGLE-POST: full-width hero card (immediate, or group w/ 1 post) --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
         {{-- Hero: the item photo IS the hero (V1 single.html parity — V1's
@@ -214,7 +219,7 @@
 
         @else
         {{-- ═══════════════════════════════════════════════════════════════ --}}
-        {{-- DAILY MODE: multi-post digest with thumbnail nav               --}}
+        {{-- MULTI-POST: group digest (>1 post) or daily digest             --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
         <mj-section mj-class="bg-success" padding="12px 20px">
@@ -235,7 +240,10 @@
                             @foreach(collect($posts)->take($maxThumbItems) as $thumbPost)
                             @php $thumbIsOffer = $thumbPost['type'] === 'Offer'; @endphp
                             <td style="padding: 0 3px 0 0; vertical-align: middle;">
-                                <a href="#msg-{{ $thumbPost['message']->id }}" style="display: block; line-height: 0;">
+                                {{-- Link to the post itself: in-email #fragment
+                                     anchors don't work (Gmail strips element ids),
+                                     so the thumbnail opens the post like its card. --}}
+                                <a href="{{ $thumbPost['messageUrl'] }}" style="display: block; line-height: 0;">
                                     {{-- Direct delivery URL (not tracked) so Gmail's image proxy
                                          doesn't 404 on the cross-domain 302 from the tracking endpoint. --}}
                                     <img src="{{ $thumbPost['displayImageUrl'] }}" alt="{{ $thumbPost['itemName'] }}" width="44" height="44" style="display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 4px; border: 2px solid {{ $thumbIsOffer ? '#6ab04c' : '#74b9ff' }};" />
@@ -252,6 +260,22 @@
                 </mj-text>
             </mj-column>
         </mj-section>
+
+        {{-- Group digests cover a single community, so name it (V1
+             MultipleDigest parity). Daily digests span all the user's groups
+             and have no single heading. --}}
+        @if($mode === 'group' && ($primaryGroupName ?? null))
+        <mj-section background-color="#ffffff" padding="16px 20px 0 20px">
+            <mj-column>
+                <mj-text font-size="18px" font-weight="700" color="#212529" padding="0" line-height="1.25">
+                    Latest from {{ $primaryGroupName }}
+                </mj-text>
+                <mj-text font-size="13px" color="#888888" padding="3px 0 0 0">
+                    {{ $postCount }} new {{ $postCount === 1 ? 'post' : 'posts' }}
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        @endif
 
         @foreach($posts as $index => $post)
         @php $isOffer = $post['type'] === 'Offer'; @endphp
@@ -292,6 +316,10 @@
                 <mj-text padding="0" font-size="12px" color="#888888">
                     @if($post['distanceText'])<span style="margin-right: 10px;">&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
                     <span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
+                </mj-text>
+                {{-- Poster attribution (V1 MultipleDigest parity). --}}
+                <mj-text padding="6px 0 0 0" font-size="12px" color="#888888">
+                    Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
                 </mj-text>
             </mj-column>
         </mj-section>

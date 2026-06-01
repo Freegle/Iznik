@@ -146,6 +146,20 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     }
 
     /**
+     * Whether this digest is about a single post — either an immediate (-1)
+     * notification or a per-group digest that happens to carry exactly one
+     * new post. Single-post digests use the full-width hero layout and a
+     * personalised "<poster> on Freegle" From line with a per-message
+     * Reply-To, matching V1's SingleDigest. Multi-post group/daily digests
+     * use the generic Freegle sender and the compact multi-post layout.
+     */
+    protected function isSinglePost(): bool
+    {
+        return $this->mode === UnifiedDigestService::MODE_IMMEDIATE
+            || ($this->mode === UnifiedDigestService::MODE_GROUP && $this->posts->count() === 1);
+    }
+
+    /**
      * Build the message.
      */
     public function build(): static
@@ -167,11 +181,18 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         $jobsUrl = $this->trackedUrl($this->userSite . '/jobs', 'jobs_view_more', 'jobs_view_more');
         $donateUrl = $this->trackedUrl(config('freegle.donate.url', 'https://freegle.in/paypal1510'), 'donate', 'donate');
 
-        // Per-group footer: "you're a member of {group}, set to receive
-        // {frequency}". For immediate mode use the post's group; for daily
-        // mode it doesn't single one out so we leave it null.
+        // Per-group footer + heading: "you're a member of {group}, set to
+        // receive {frequency}". Immediate and per-group digests are both about
+        // a single community, so name it. Daily digests span all the user's
+        // groups and don't single one out, so we leave it null.
         $primaryGroupName = null;
-        if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
+        if (
+            in_array($this->mode, [
+                UnifiedDigestService::MODE_IMMEDIATE,
+                UnifiedDigestService::MODE_GROUP,
+            ], true)
+            && $this->posts->isNotEmpty()
+        ) {
             $firstPost = $this->posts->first();
             $groupId = $firstPost['postedToGroups'][0] ?? null;
             if ($groupId) {
@@ -179,7 +200,14 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 $primaryGroupName = $row ? ($row->namefull ?: $row->nameshort) : null;
             }
         }
-        $frequencyText = $this->mode === UnifiedDigestService::MODE_IMMEDIATE ? 'immediately' : 'daily';
+        // We don't carry the exact per-group frequency (1/2/4/8/24h) into the
+        // mailable, so group digests say "regularly" rather than a specific
+        // cadence; immediate is "immediately"; daily is "daily".
+        $frequencyText = match ($this->mode) {
+            UnifiedDigestService::MODE_IMMEDIATE => 'immediately',
+            UnifiedDigestService::MODE_GROUP => 'regularly',
+            default => 'daily',
+        };
 
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
@@ -208,15 +236,16 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // - X-Freegle-Mail-Type: legacy V1 header name TN consumes (sits next
         //   to the V2-style X-Freegle-Email-Type that MjmlMailable already adds).
         // - Feedback-ID: Google FBL spec — {qualifier}:{userid}:{type}:{sender}.
-        //   In immediate mode qualifier is the message id; in daily we
+        //   For a single-post digest (immediate, or a group digest with one
+        //   post) the qualifier is the message id; for multi-post digests we
         //   use 0 since the email isn't tied to one specific message.
-        // - Reply-To (immediate only): even though From is the replyto-
+        // - Reply-To (single-post only): even though From is the replyto-
         //   address and most clients reply to From, some (and some webmails)
         //   prefer Reply-To when set, so we set both.
         $messageQualifier = 0;
         $replyToAddr = null;
         $replyToName = null;
-        if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
+        if ($this->isSinglePost() && $this->posts->isNotEmpty()) {
             $firstPost = $this->posts->first();
             $message = $firstPost['message'];
             $messageQualifier = $message->id;
@@ -272,7 +301,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
      */
     public function envelope(): Envelope
     {
-        if ($this->mode === UnifiedDigestService::MODE_IMMEDIATE && $this->posts->isNotEmpty()) {
+        if ($this->isSinglePost() && $this->posts->isNotEmpty()) {
             $post = $this->posts->first();
             $message = $post['message'];
             // Resolve poster name from the user relation first (displayname is

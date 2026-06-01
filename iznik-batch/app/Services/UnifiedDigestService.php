@@ -1013,7 +1013,11 @@ class UnifiedDigestService
             $query->where('messages_groups.arrival', '>=', now()->subDay());
         }
 
-        return $query->get();
+        // Eager-load the poster (for the "Posted by"/From display name) and
+        // attachments (for the hero/thumbnail images). Without fromUser the
+        // template falls back to "Freegler"; without attachments each post
+        // would lazy-load its photo one query at a time.
+        return $query->with(['fromUser', 'attachments'])->get();
     }
 
     /**
