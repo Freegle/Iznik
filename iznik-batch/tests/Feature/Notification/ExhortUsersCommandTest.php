@@ -3,11 +3,57 @@
 namespace Tests\Feature\Notification;
 
 use App\Services\NotificationExhortService;
+use App\Services\PushNotificationService;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class ExhortUsersCommandTest extends TestCase
 {
+    public function test_fires_device_push_after_inserting_notification(): void
+    {
+        $user = $this->createTestUser([
+            'lastaccess' => now()->subMinute(),
+            'added' => now()->subDays(8),
+        ]);
+
+        // V1 parity: a push must follow the insert (PushNotifications::notify).
+        $push = \Mockery::mock(PushNotificationService::class);
+        $push->shouldReceive('notifyUser')->once()->with($user->id)->andReturn(1);
+
+        (new NotificationExhortService($push))->sendExhort(
+            url: 'https://example.com',
+            title: 'Test Title',
+            text: 'Test text',
+            activeSince: '5 minutes ago',
+            joinedBefore: '1 week ago',
+        );
+
+        $this->assertDatabaseHas('users_notifications', [
+            'touser' => $user->id,
+            'type' => 'Exhort',
+        ]);
+    }
+
+    public function test_dry_run_does_not_fire_push(): void
+    {
+        $this->createTestUser([
+            'lastaccess' => now()->subMinute(),
+            'added' => now()->subDays(8),
+        ]);
+
+        $push = \Mockery::mock(PushNotificationService::class);
+        $push->shouldNotReceive('notifyUser');
+
+        (new NotificationExhortService($push))->sendExhort(
+            url: 'https://example.com',
+            title: 'Test Title',
+            text: 'Test text',
+            activeSince: '5 minutes ago',
+            joinedBefore: '1 week ago',
+            dryRun: true,
+        );
+    }
+
     public function test_command_runs_cleanly_with_no_eligible_users(): void
     {
         $this->artisan('notifications:exhort')

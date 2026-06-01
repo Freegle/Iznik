@@ -20,6 +20,10 @@ class PushNotificationService
     private const PUSH_FCM_IOS = 'FCMIOS';
 
     private const APPTYPE_MODTOOLS = 'ModTools';
+    private const APPTYPE_USER = 'User';
+
+    // V1 PushNotifications::CATEGORY_EXHORT — Android "tips" channel, passive iOS.
+    private const CATEGORY_EXHORT = 'EXHORT';
 
     private $messaging = null;
 
@@ -140,6 +144,160 @@ class PushNotificationService
         }
 
         return $count;
+    }
+
+    /**
+     * Send a Freegle-app (FD) push to a user about their on-site notifications,
+     * mirroring iznik-server PushNotifications::notify($userid, FALSE) +
+     * User::getNotificationPayload(FALSE). Used after creating an onsite
+     * notification (e.g. the Exhort nudge) so the device badge/banner updates.
+     *
+     * Returns the number of FD devices notified.
+     */
+    public function notifyUser(int $userId): int
+    {
+        if (! $this->messaging) {
+            Log::debug('Firebase not configured, skipping user push notification', ['user_id' => $userId]);
+
+            return 0;
+        }
+
+        $notifs = DB::select(
+            'SELECT * FROM users_push_notifications WHERE userid = ? AND apptype = ?',
+            [$userId, self::APPTYPE_USER]
+        );
+
+        if (empty($notifs)) {
+            return 0;
+        }
+
+        $payload = $this->buildUserNotificationPayload($userId);
+        if (empty($payload)) {
+            return 0;
+        }
+
+        $count = 0;
+        foreach ($notifs as $notif) {
+            if (! in_array($notif->type, [self::PUSH_FCM_ANDROID, self::PUSH_FCM_IOS])) {
+                continue;
+            }
+
+            try {
+                $this->sendFcm($userId, $notif->type, $notif->subscription, $payload, true);
+
+                DB::table('users_push_notifications')
+                    ->where('userid', $userId)
+                    ->where('subscription', $notif->subscription)
+                    ->update(['lastsent' => now()]);
+
+                $count++;
+            } catch (\Throwable $e) {
+                $errorMsg = $e->getMessage();
+                Log::warning('User push notification failed', [
+                    'user_id' => $userId,
+                    'type' => $notif->type,
+                    'error' => $errorMsg,
+                ]);
+
+                if (str_contains($errorMsg, 'UNREGISTERED') ||
+                    str_contains($errorMsg, 'NOT_FOUND') ||
+                    str_contains($errorMsg, 'SENDER_ID_MISMATCH') ||
+                    str_contains($errorMsg, 'Requested entity was not found') ||
+                    str_contains($errorMsg, 'Invalid registration token') ||
+                    str_contains($errorMsg, 'not a valid FCM registration token')) {
+                    DB::table('users_push_notifications')
+                        ->where('userid', $userId)
+                        ->where('subscription', $notif->subscription)
+                        ->delete();
+                }
+            }
+        }
+
+        return $count;
+    }
+
+    /**
+     * Build the FD-app payload from a user's unseen chats + on-site notifications,
+     * mirroring V1 User::getNotificationPayload(FALSE). When there are no unseen
+     * chats the payload reflects the most recent unseen notification (e.g. an
+     * Exhort: title/body/route taken from the notification, EXHORT category/tips
+     * channel).
+     */
+    public function buildUserNotificationPayload(int $userId): array
+    {
+        $notifcount = (int) DB::table('users_notifications')
+            ->where('touser', $userId)
+            ->where('seen', 0)
+            ->count();
+
+        // Unseen chats: User2User/User2Mod rooms where a message from someone
+        // else is newer than what this user has seen.
+        $chatcount = (int) DB::table('chat_roster as cr')
+            ->join('chat_rooms as crm', 'crm.id', '=', 'cr.chatid')
+            ->whereIn('crm.chattype', [ChatRoom::TYPE_USER2USER, ChatRoom::TYPE_USER2MOD])
+            ->where('cr.userid', $userId)
+            ->whereRaw('(cr.lastmsgseen IS NULL OR cr.lastmsgseen < (
+                SELECT MAX(cm.id) FROM chat_messages cm
+                WHERE cm.chatid = cr.chatid AND cm.userid <> ?
+            ))', [$userId])
+            ->count();
+
+        $total = $chatcount + $notifcount;
+
+        $title = '';
+        $message = '';
+        $route = '/';
+        $category = null;
+        $threadId = 'notifications';
+        $channelId = 'chat_messages';
+
+        if ($chatcount > 0) {
+            $title = "You have {$chatcount} new message" . ($chatcount === 1 ? '' : 's');
+            if ($notifcount > 0) {
+                $title .= " and {$notifcount} notification" . ($notifcount === 1 ? '' : 's');
+            }
+            $route = '/chats';
+            $threadId = 'chats';
+            $category = 'CHAT_MESSAGE';
+        } elseif ($notifcount > 0) {
+            $latest = DB::table('users_notifications')
+                ->where('touser', $userId)
+                ->where('seen', 0)
+                ->orderByDesc('id')
+                ->first();
+
+            $title = ($latest->title ?? '') ?: 'You have a new notification';
+            $message = $latest->text ?? '';
+            $route = ($latest->url ?? '') ?: '/';
+
+            if (($latest->type ?? '') === 'Exhort') {
+                $category = self::CATEGORY_EXHORT;
+                $threadId = 'tips';
+                $channelId = 'tips';
+            }
+        } else {
+            // Nothing to say.
+            return [];
+        }
+
+        return [
+            'badge' => (string) $total,
+            'count' => (string) $total,
+            'chatcount' => (string) $chatcount,
+            'notifcount' => (string) $notifcount,
+            'title' => $title,
+            'message' => $message,
+            'chatids' => '',
+            'content-available' => $total > 0 ? '1' : '0',
+            'image' => 'www/images/user_logo.png',
+            'modtools' => '0',
+            'sound' => 'default',
+            'route' => $route,
+            'category' => $category ?? '',
+            'channel_id' => $channelId,
+            'threadId' => $threadId,
+            'notId' => (string) $userId,
+        ];
     }
 
     /**

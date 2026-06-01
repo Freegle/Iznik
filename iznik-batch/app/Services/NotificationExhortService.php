@@ -9,6 +9,11 @@ class NotificationExhortService
 {
     private const COOLDOWN_DAYS = 90;
 
+    public function __construct(
+        private ?PushNotificationService $pushService = null
+    ) {
+    }
+
     /**
      * Send onsite Exhort notifications to recently-active established users.
      *
@@ -67,6 +72,11 @@ class NotificationExhortService
                     'seen' => 0,
                     'mailed' => 0,
                 ]);
+
+                // V1 parity: Notifications::add() fires a device push after the
+                // insert (PushNotifications::notify($uid, FALSE)). No-op when the
+                // user has no registered Freegle-app devices / Firebase is unset.
+                ($this->pushService ?? app(PushNotificationService::class))->notifyUser($userId);
             }
 
             $sent++;
