@@ -1158,27 +1158,33 @@ print(json.dumps(out))
     },
     handler: async (params) => {
       const pattern = params.pattern as string
-      const path = (params.path as string) ?? '/home/edward/FreegleDockerWSL'
-      // -l alone only returned filenames, so the diagnosing model got "1 file
-      // matched" with no code to read and re-searched forever (the diagnose
-      // loop). Return the matching lines with 3 lines of context on each side
-      // so a diagnosisBrief can be written from one search.
-      const { stdout } = await sh(
-        'rg',
-        ['-n', '-C', '3', '--max-columns', '300', '--max-count', '20', pattern, path],
-        undefined,
-      )
-      const raw = stdout.trim()
-      // Also collect the distinct file list for a quick overview.
+      const repo = '/home/edward/FreegleDockerWSL'
+      // ROOT CAUSE of the diagnose loop: this used execFile('rg', ...), but `rg`
+      // is NOT an execFile-resolvable binary here — ripgrep only exists as a
+      // Claude Code *shell function*, so execFile got ENOENT and search_code
+      // ALWAYS returned empty. The diagnosing model saw "0 files matched", had
+      // no code to read, and re-searched forever. Use `git grep` instead: git
+      // is a real binary (/usr/bin/git) and grep returns lines + context. The
+      // optional `path` param is treated as a pathspec scope under the repo.
+      const path = (params.path as string) ?? ''
+      const rel = path ? path.replace(/^\/home\/edward\/FreegleDockerWSL\/?/, '') : ''
+      const pathspec = rel ? [rel.endsWith('/') || !rel.includes('.') ? `${rel.replace(/\/$/, '')}/**` : rel] : []
+      // -I skip binary, -n line numbers, -C 3 context, fixed-string off (regex).
+      const args = ['grep', '-n', '-I', '-C', '3', '-e', pattern]
+      if (pathspec.length) args.push('--', ...pathspec)
+      const { stdout, code } = await sh('git', args, repo)
+      // git grep exits 1 when there are no matches — that's not an error.
+      const raw = (stdout ?? '').trim()
       const fileSet = new Set<string>()
       const matches: Array<{ file: string; line: number; text: string }> = []
       for (const ln of raw.split('\n')) {
-        // rg context format: path:line:text (match) or path-line-text (context)
+        if (!ln || ln === '--') continue
+        // git grep -C format: path:line:text (match) or path-line-text (context)
         const m = ln.match(/^(.+?)[:-](\d+)[:-](.*)$/)
         if (m) {
-          const file = m[1].replace('/home/edward/FreegleDockerWSL/', '')
+          const file = m[1]
           fileSet.add(file)
-          if (ln.includes(`:${m[2]}:`)) {
+          if (ln.startsWith(`${m[1]}:${m[2]}:`)) {
             matches.push({ file, line: Number(m[2]), text: m[3].slice(0, 300) })
           }
         }
@@ -1189,6 +1195,7 @@ print(json.dumps(out))
         matches: matches.slice(0, 40),
         // Cap the raw excerpt so the context fits a reasonable token budget.
         context: raw.slice(0, 6000),
+        noMatch: code !== 0 && matches.length === 0,
       }
     },
   },
