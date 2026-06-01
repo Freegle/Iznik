@@ -1150,7 +1150,7 @@ print(json.dumps(out))
 
   {
     name: 'search_code',
-    description: 'Search Go/Nuxt/Laravel code for a pattern. Params: {pattern, path}',
+    description: 'Search Go/Nuxt/Laravel code for a pattern and return the matching lines WITH surrounding context (so you can diagnose without a second read). Params: {pattern, path}. Returns {files: [...paths], matches: [{file, line, text}], context}. Use the returned code excerpts to form a diagnosis — do NOT keep re-searching for the same thing.',
     paramsSchema: {
       type: 'object',
       properties: { pattern: { type: 'string' }, path: { type: 'string' } },
@@ -1158,10 +1158,45 @@ print(json.dumps(out))
     },
     handler: async (params) => {
       const pattern = params.pattern as string
-      const path = (params.path as string) ?? '/home/edward/FreegleDockerWSL'
-      const { stdout } = await sh('rg', ['-l', '-n', pattern, path], undefined)
-      const files = stdout.trim().split('\n').slice(0, 50)
-      return { matches: files }
+      const repo = '/home/edward/FreegleDockerWSL'
+      // ROOT CAUSE of the diagnose loop: this used execFile('rg', ...), but `rg`
+      // is NOT an execFile-resolvable binary here — ripgrep only exists as a
+      // Claude Code *shell function*, so execFile got ENOENT and search_code
+      // ALWAYS returned empty. The diagnosing model saw "0 files matched", had
+      // no code to read, and re-searched forever. Use `git grep` instead: git
+      // is a real binary (/usr/bin/git) and grep returns lines + context. The
+      // optional `path` param is treated as a pathspec scope under the repo.
+      const path = (params.path as string) ?? ''
+      const rel = path ? path.replace(/^\/home\/edward\/FreegleDockerWSL\/?/, '') : ''
+      const pathspec = rel ? [rel.endsWith('/') || !rel.includes('.') ? `${rel.replace(/\/$/, '')}/**` : rel] : []
+      // -I skip binary, -n line numbers, -C 3 context, fixed-string off (regex).
+      const args = ['grep', '-n', '-I', '-C', '3', '-e', pattern]
+      if (pathspec.length) args.push('--', ...pathspec)
+      const { stdout, code } = await sh('git', args, repo)
+      // git grep exits 1 when there are no matches — that's not an error.
+      const raw = (stdout ?? '').trim()
+      const fileSet = new Set<string>()
+      const matches: Array<{ file: string; line: number; text: string }> = []
+      for (const ln of raw.split('\n')) {
+        if (!ln || ln === '--') continue
+        // git grep -C format: path:line:text (match) or path-line-text (context)
+        const m = ln.match(/^(.+?)[:-](\d+)[:-](.*)$/)
+        if (m) {
+          const file = m[1]
+          fileSet.add(file)
+          if (ln.startsWith(`${m[1]}:${m[2]}:`)) {
+            matches.push({ file, line: Number(m[2]), text: m[3].slice(0, 300) })
+          }
+        }
+      }
+      return {
+        files: [...fileSet].slice(0, 50),
+        matchCount: matches.length,
+        matches: matches.slice(0, 40),
+        // Cap the raw excerpt so the context fits a reasonable token budget.
+        context: raw.slice(0, 6000),
+        noMatch: code !== 0 && matches.length === 0,
+      }
     },
   },
 
@@ -2058,17 +2093,20 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         out(`ci_router_decide: production CI failing (sha=${production.sha?.slice(0, 9) ?? '?'})`)
         return { _transition: 'FIX_PRODUCTION_CI', reason: `production CI failing on sha ${production.sha?.slice(0, 9) ?? '?'}` }
       }
-      // Priority 2: drain mode — if ANY PR has pending CI, don't push new commits.
-      // With a single self-hosted runner, pushing to multiple PRs simultaneously
-      // just grows the CI queue. The last PR waits hours. Keep the queue depth ≤ 1:
-      // only push a fix when the CI queue is empty (all PRs are either green or red,
-      // none pending). Once the pending run finishes (pass → merge, fail → fix), we
-      // push the next fix for the focus PR.
+      // Priority 2: drain mode — only when pending CI SATURATES the cloud runners.
+      // We run on ~5 Katapult cloud runners now, NOT a single self-hosted runner,
+      // so a handful of pending PRs run concurrently and do not need serialising.
+      // The old rule (drain on ANY pending PR) was catastrophic: a single in-flight
+      // PR (e.g. one with a flaky/infra-failing build that re-runs forever) would
+      // WRAP_UP every iteration and block ALL Discourse bug work indefinitely.
+      // Only drain when pending count reaches runner capacity, to avoid piling
+      // unbounded load onto the queue; below that, proceed to fix/bug work.
+      const MAX_CONCURRENT_CI = 5
       const pendingPRs: Array<any> = Array.isArray(prCheck.pendingPRs) ? prCheck.pendingPRs : []
-      if (pendingPRs.length > 0) {
+      if (pendingPRs.length >= MAX_CONCURRENT_CI) {
         return {
           _transition: 'WRAP_UP',
-          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI; holding at ≤1 queue depth until CI settles`,
+          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI (>= ${MAX_CONCURRENT_CI} cloud-runner capacity); holding until CI settles`,
           drainMode: true,
           pendingCount: pendingPRs.length,
         }
@@ -2422,21 +2460,28 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         .filter(b => !isLikelyCoveredByMergedPR(b))
 
       if (allPending.length > 0) {
-        // Dispatch ONE bug at a time (oldest first_seen_at). With a single self-hosted
-        // CI runner, parallel bug dispatch creates a queue of N simultaneous CI jobs
-        // that all wait behind each other — zero benefit, high cost. One bug → one PR
-        // → drive it to green → then pick the next. This is the same principle as the
-        // focus PR logic in ci_router_decide.
-        const oneBug = allPending.sort((a, b) => {
+        // Dispatch a BATCH of up to MAX_PARALLEL_BUGS bugs (oldest first_seen_at
+        // first) to PARALLEL_FIX_BUGS, which runs one fully self-contained
+        // diagnose→test→fix→PR task per bug via delegate_parallel_tasks. Each
+        // task gets its own isolated git worktree + branch + PR, and CI is now
+        // Katapult cloud runners (~5 concurrent), so N PRs each get a runner
+        // rather than queueing behind one. The old one-bug-at-a-time throttle
+        // was premised on a single self-hosted runner that no longer exists.
+        const MAX_PARALLEL_BUGS = 5
+        const sorted = allPending.slice().sort((a, b) => {
           const at = typeof a.first_seen_at === 'string' ? a.first_seen_at : '9999'
           const bt = typeof b.first_seen_at === 'string' ? b.first_seen_at : '9999'
           return at < bt ? -1 : at > bt ? 1 : 0
-        })[0]
+        })
+        const bugBatch = sorted.slice(0, MAX_PARALLEL_BUGS)
+        const batchKeys = bugBatch.map(b => `${b.topic}.${b.post}`).join(', ')
         return {
-          _transition: 'DIAGNOSE_BUG',
-          reason: `${allPending.length} unfixed bug(s) queued — beginning TDD pipeline for 1 (oldest: topic ${oneBug.topic}/${oneBug.post}); ${allPending.length - 1} deferred to next iteration`,
-          dbOpenBugs: [oneBug].filter(b => !pendingBugs.some((p: any) => `${p.topic}.${p.post}` === `${b.topic}.${b.post}`)),
-          singleBug: oneBug,
+          _transition: 'PARALLEL_FIX_BUGS',
+          reason: `${allPending.length} unfixed bug(s) queued — dispatching ${bugBatch.length} in parallel (${batchKeys})${allPending.length > bugBatch.length ? `; ${allPending.length - bugBatch.length} to next iteration` : ''}`,
+          dbOpenBugs: bugBatch.filter(b => !pendingBugs.some((p: any) => `${p.topic}.${p.post}` === `${b.topic}.${b.post}`)),
+          bugBatch,
+          // Keep singleBug for backward-compat with any path still reading it.
+          singleBug: bugBatch[0],
         }
       }
       const sentry = ctx?._action_check_sentry ?? {}

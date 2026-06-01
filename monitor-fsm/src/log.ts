@@ -166,8 +166,9 @@ export function summarizeActionResult(action: string, result: unknown): string {
       return `${entries} feedback entr${entries === 1 ? 'y' : 'ies'}`
     }
     case 'search_code': {
-      const matches = Array.isArray(r.matches) ? r.matches.length : 0
-      return `${matches} file${matches === 1 ? '' : 's'} matched`
+      const files = Array.isArray(r.files) ? r.files.length : (Array.isArray(r.matches) ? r.matches.length : 0)
+      const lines = typeof r.matchCount === 'number' ? r.matchCount : (Array.isArray(r.matches) ? r.matches.length : 0)
+      return `${files} file${files === 1 ? '' : 's'}, ${lines} line${lines === 1 ? '' : 's'} matched`
     }
     case 'fetch_ci_failure_logs': {
       const bytes = typeof r.bytes === 'number'
