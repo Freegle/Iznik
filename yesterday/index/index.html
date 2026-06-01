@@ -182,6 +182,18 @@
       background: #e0e0e0;
       color: #666;
     }
+    .badge.instant {
+      background: #2e7d32;
+      color: white;
+    }
+    .badge.fullrestore {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffe69c;
+    }
+    button.load.instant {
+      background: #2e7d32;
+    }
     button {
       padding: 8px 16px;
       border: none;
@@ -369,7 +381,7 @@
     <div class="warning-content" id="warning-content">
       <ul>
         <li><strong>Backup Timing:</strong> Backups are created at 4 AM UTC each day, so they include all data from the previous day. The most recent backup is loaded automatically each night at 6 AM UTC.</li>
-        <li><strong>Single Backup Model:</strong> Only one backup can be loaded at a time. Loading a new backup will restart the isolated test environment and replace the database (takes 1-2 hours).</li>
+        <li><strong>Single Backup Model:</strong> Only one backup is active at a time. Recent days marked <span class="badge instant">⚡ Instant · ~1 min</span> are pre-loaded and switch in about a minute (brief restart). Older days marked <span class="badge fullrestore">Full restore · ~1–2 h</span> aren't pre-loaded, so they download and rebuild the whole database first — allow 1-2 hours.</li>
         <li><strong>Isolated Environment:</strong> Runs latest code but with real data from backups. Uses <a href="https://en.wikipedia.org/wiki/Docker_(software)" target="_blank" style="color: #856404; text-decoration: underline;">Docker technology</a> to create a completely isolated copy of the system - changes here don't affect live Freegle.</li>
         <li><strong>Login:</strong> Use your email/password from the live Freegle system. Social logins (Google, Facebook) don't work here since they're configured for production domains only. If you normally use social login, you can reset your password on the live site first.</li>
         <li><strong>Email Testing:</strong> All outbound email is captured in Mailhog (a local email testing tool) - nothing is sent externally, so it's safe to test email functionality. Access Mailhog via the link in the "Currently Loaded Backup" section below.</li>
@@ -430,7 +442,7 @@
 
       <p id="progress-estimate" style="text-align: center; color: #666;">Estimating time...</p>
 
-      <div class="progress-steps">
+      <div class="progress-steps" id="restore-steps">
         <strong>Restoration Steps:</strong>
         <ol>
           <li>Download backup from cloud storage (~30-45 min for 47GB)</li>
@@ -548,12 +560,14 @@
           data.backups.forEach(backup => {
             const isCurrent = backup.date === currentBackupDate;
             const rowClass = isCurrent ? 'backup-row current' : 'backup-row';
-            const badge = isCurrent ?
-              '<span class="badge current">LOADED</span>' :
-              '<span class="badge available">Available</span>';
-            const button = isCurrent ?
-              '<button class="load" disabled>Currently Loaded</button>' :
-              `<button class="load" onclick="loadBackup('${backup.date}')">Load This Backup</button>`;
+            let badge;
+            if (isCurrent) badge = '<span class="badge current">LOADED</span>';
+            else if (backup.instant) badge = '<span class="badge instant">⚡ Instant · ~1 min</span>';
+            else badge = '<span class="badge fullrestore">Full restore · ~1–2 h</span>';
+            let button;
+            if (isCurrent) button = '<button class="load" disabled>Currently Loaded</button>';
+            else if (backup.instant) button = `<button class="load instant" onclick="loadBackup('${backup.date}', true)">⚡ Switch (~1 min)</button>`;
+            else button = `<button class="load" onclick="loadBackup('${backup.date}', false)">Load (full restore)</button>`;
 
             html += `
               <tr class="${rowClass}">
@@ -621,16 +635,23 @@
       return 'just now';
     }
 
-    // Load a backup
-    async function loadBackup(backupDate) {
-      if (confirm(`Load backup from ${formatDate(backupDate)}?\n\nThis will restart the isolated test environment and replace the database. This may take 1-2 hours.`)) {
+    // Load a backup. `instant` = this day already has an LVM snapshot, so it's
+    // a ~1-minute switch rather than a full ~1-2h restore.
+    async function loadBackup(backupDate, instant) {
+      const confirmMsg = instant
+        ? `Switch to the backup from ${formatDate(backupDate)}?\n\nThis day is already prepared, so switching is quick — about a minute, with a brief database restart.`
+        : `Load the backup from ${formatDate(backupDate)}?\n\nThis day is NOT pre-loaded, so it needs a full restore (download + extract + prepare). This can take 1-2 hours.`;
+      if (confirm(confirmMsg)) {
         // Show progress modal
         document.getElementById('progress-modal').classList.add('show');
         document.getElementById('progress-date').textContent = formatDate(backupDate);
         document.getElementById('progress-bar').style.width = '0%';
         document.getElementById('progress-bar').textContent = '0%';
-        document.getElementById('progress-status').textContent = 'Starting restoration...';
-        document.getElementById('progress-estimate').textContent = 'Initializing...';
+        document.getElementById('progress-status').textContent = instant ? 'Switching backup…' : 'Starting restoration...';
+        document.getElementById('progress-estimate').textContent = instant ? '~1 minute (quick switch)' : 'Initializing...';
+        // The long step-by-step breakdown only applies to full restores.
+        var steps = document.getElementById('restore-steps');
+        if (steps) steps.style.display = instant ? 'none' : '';
 
         // Start restoration
         try {

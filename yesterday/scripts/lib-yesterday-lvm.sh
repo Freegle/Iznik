@@ -140,6 +140,18 @@ ylvm_prune_snapshots() {
             lvremove -fy "$YLVM_VG/$snap" || true
         fi
     done <<< "$snaps"
+    ylvm_write_snapshot_manifest
+}
+
+# Write the set of instantly-switchable days to a file the backup-browser API
+# reads (mounted as /data in the yesterday-api container). The UI uses this to
+# show which dates are a ~1-min switch vs a full ~1-2h restore.
+ylvm_write_snapshot_manifest() {
+    local out="$YLVM_COMPOSE_DIR/yesterday/data/lvm-snapshots.json"
+    local dates; dates="$(ylvm_list_snapshots | sed 's/^/"/; s/$/"/' | paste -sd, -)"
+    mkdir -p "$(dirname "$out")"
+    printf '{"dates":[%s]}\n' "$dates" > "$out"
+    ylvm_log "Snapshot manifest updated: [${dates}]"
 }
 
 # Reset the MySQL root password to the local value the containers expect.
