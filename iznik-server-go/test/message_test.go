@@ -1135,6 +1135,101 @@ func TestPostMessageRejectAfterMemberWithdrawsPending(t *testing.T) {
 	assert.Equal(t, 200, rresp.StatusCode, "Mod should be able to reject message after member withdraws it (no 403)")
 }
 
+// TestRejectCrossPostedClearsAllPendingGroups verifies that rejecting a cross-posted
+// message clears the pending state on ALL groups the mod is authorized for, not only
+// the single groupid passed in the request.
+//
+// Discourse 9729: when a mod specified groupid=A but the message was also pending on
+// group B, the UPDATE had AND collection='Pending' AND groupid IN (A), so group B
+// stayed pending — the rejection was silently a no-op for it.
+func TestRejectCrossPostedClearsAllPendingGroups(t *testing.T) {
+	prefix := uniquePrefix("rej_xpost")
+	db := database.DBConn
+
+	groupA := CreateTestGroup(t, prefix+"_A")
+	groupB := CreateTestGroup(t, prefix+"_B")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupA, "Moderator")
+	CreateTestMembership(t, modID, groupB, "Moderator")
+	CreateTestMembership(t, posterID, groupA, "Member")
+	CreateTestMembership(t, posterID, groupB, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Cross-post: message pending on both groups.
+	msgID := createPendingMessage(t, posterID, groupA, prefix)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts, contentcheck_checked_at) VALUES (?, ?, NOW(), 'Pending', 0, NOW())",
+		msgID, groupB)
+
+	// Reject specifying only group A — the bug left group B in 'Pending'.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"groupid": groupA,
+		"subject": "This is a duplicate post.",
+		"body":    "Please do not cross-post.",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var collectionA, collectionB string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupA).Scan(&collectionA)
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupB).Scan(&collectionB)
+	assert.Equal(t, "Rejected", collectionA, "group A must be Rejected")
+	assert.Equal(t, "Rejected", collectionB, "group B must also be Rejected — cross-post rejection must clear all authorized pending groups")
+}
+
+// TestRejectHeldMessageClearsHeldBy verifies that rejecting a held message clears
+// the heldby field on messages_groups and messages, matching the behaviour of
+// handleApprove which already does this cleanup.
+func TestRejectHeldMessageClearsHeldBy(t *testing.T) {
+	prefix := uniquePrefix("rej_held")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := createPendingMessage(t, posterID, groupID, prefix)
+
+	// Hold the message.
+	db.Exec("UPDATE messages_groups SET heldby = ? WHERE msgid = ? AND groupid = ?", modID, msgID, groupID)
+	db.Exec("UPDATE messages SET heldby = ? WHERE id = ?", modID, msgID)
+
+	// Reject it.
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Reject",
+		"groupid": groupID,
+		"subject": "Not suitable.",
+		"body":    "Please revise your post.",
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// heldby must be cleared on both messages_groups and messages.
+	var mgHeldCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND groupid = ? AND heldby IS NOT NULL", msgID, groupID).Scan(&mgHeldCount)
+	assert.Equal(t, int64(0), mgHeldCount, "messages_groups.heldby must be NULL after rejection")
+
+	var msgHeldCount int64
+	db.Raw("SELECT COUNT(*) FROM messages WHERE id = ? AND heldby IS NOT NULL", msgID).Scan(&msgHeldCount)
+	assert.Equal(t, int64(0), msgHeldCount, "messages.heldby must be NULL after rejection")
+}
+
 // --- Test: Delete (mod action) ---
 
 func TestPostMessageDelete(t *testing.T) {

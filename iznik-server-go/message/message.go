@@ -1832,7 +1832,25 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 	if req.Groupid != nil {
 		reqGid = *req.Groupid
 	}
-	authorizedGroups, err := resolveAuthorizedGroups(myid, reqGid, ctx.Groupids)
+	// Validate the specified groupid (if any), but reject from ALL groups the caller
+	// is authorised to moderate.  A cross-posted message may be pending on several
+	// groups; limiting the UPDATE to one groupid leaves the others stuck in Pending.
+	if reqGid > 0 {
+		if !auth.IsModOfGroup(myid, reqGid) {
+			return fiber.NewError(fiber.StatusForbidden, "Not a moderator for this group")
+		}
+		onGroup := false
+		for _, gid := range ctx.Groupids {
+			if gid == reqGid {
+				onGroup = true
+				break
+			}
+		}
+		if !onGroup {
+			return fiber.NewError(fiber.StatusNotFound, "Message not on that group")
+		}
+	}
+	authorizedGroups, err := resolveAuthorizedGroups(myid, 0, ctx.Groupids)
 	if err != nil {
 		return err
 	}
@@ -1845,10 +1863,25 @@ func handleReject(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
 			utils.COLLECTION_REJECTED, req.ID, authorizedGroups, utils.COLLECTION_PENDING); result.Error != nil {
 			log.Printf("Failed to reject message %d: %v", req.ID, result.Error)
 		}
+		// Clear held-by on rejected groups so they no longer appear in held-pending
+		// dashboard counts (mirrors the cleanup handleApprove already does).
+		db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
+		var stillHeldCount int64
+		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+		if stillHeldCount == 0 {
+			db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
+		}
 	} else {
 		if result := db.Exec("UPDATE messages_groups SET deleted = 1 WHERE msgid = ? AND groupid IN ? AND collection = ?",
 			req.ID, authorizedGroups, utils.COLLECTION_PENDING); result.Error != nil {
 			log.Printf("Failed to delete pending message %d: %v", req.ID, result.Error)
+		}
+		// Clear held-by on deleted groups.
+		db.Exec("UPDATE messages_groups SET heldby = NULL WHERE msgid = ? AND groupid IN ?", req.ID, authorizedGroups)
+		var stillHeldCount int64
+		db.Raw("SELECT COUNT(*) FROM messages_groups WHERE msgid = ? AND heldby IS NOT NULL", req.ID).Scan(&stillHeldCount)
+		if stillHeldCount == 0 {
+			db.Exec("UPDATE messages SET heldby = NULL WHERE id = ?", req.ID)
 		}
 
 		// Cascade soft-delete: if no non-deleted groups remain, mark messages.deleted
