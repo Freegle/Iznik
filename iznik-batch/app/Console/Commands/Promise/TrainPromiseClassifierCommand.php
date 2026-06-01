@@ -76,7 +76,7 @@ class TrainPromiseClassifierCommand extends Command
             );
 
             $rubixDataset = new Labeled(
-                samples: $trainDataset['samples'],
+                samples: array_map(fn ($s) => [$s], $trainDataset['samples']),
                 labels: $categoricalLabels
             );
             $pipeline->train($rubixDataset);
@@ -86,15 +86,13 @@ class TrainPromiseClassifierCommand extends Command
 
             // For prediction, use unlabeled dataset
             $testRubixDataset = new \Rubix\ML\Datasets\Unlabeled(
-                samples: $testDataset['samples']
+                samples: array_map(fn ($s) => [$s], $testDataset['samples'])
             );
 
-            $predictions = $pipeline->predict($testRubixDataset);
+            $predictions = array_map('intval', $pipeline->predict($testRubixDataset));
 
-            // Note: Due to Rubix ML pipeline dimensionality quirks with transformers,
-            // we'll use a deterministic probability based on predictions
-            // In a production system, we'd extract actual LR coefficients
-            $probaClass1 = array_map(fn($pred) => $pred === '1' ? 0.9 : 0.1, $predictions);
+            // Real positive-class probabilities from the logistic regression.
+            $probaClass1 = $pipeline->probaPositive($testRubixDataset);
 
             // Evaluate
             $evaluator = new Evaluator();
@@ -103,7 +101,7 @@ class TrainPromiseClassifierCommand extends Command
             // Baseline evaluation
             $baseline = new KeywordBaseline();
             $baselinePreds = array_map(fn($span) => $baseline->predict($span), $testDataset['samples']);
-            $baslineProba = array_map(fn($pred) => $pred === 1 ? 0.9 : 0.1, $baselinePreds);
+            $baslineProba = array_map(fn($pred) => (float) $pred, $baselinePreds);
             $baselineMetrics = $evaluator->evaluate($testDataset['labels'], $baslineProba, $threshold);
 
             // Threshold sweep
@@ -148,7 +146,7 @@ class TrainPromiseClassifierCommand extends Command
             $missRate = $totalRooms > 0 ? $missCount / $totalRooms : 0;
 
             // Top n-grams by coefficient
-            $topNgrams = $this->extractTopCoefficients($pipeline, 10);
+            $topNgrams = $pipeline->topNgrams(20);
 
             // False positives and false negatives
             $fp = $this->falseExamples($testDataset['samples'], $testDataset['labels'], $predictions, 1, 0, 3);
@@ -192,9 +190,8 @@ class TrainPromiseClassifierCommand extends Command
 
             // Persist the model
             $this->info('Persisting model...');
-            $modelPath = $outDir . '/model.rbx';
-            $persistent = new PersistentModel($pipeline->make(), new Filesystem($modelPath));
-            $persistent->save();
+            $modelPath = $outDir . '/model.phpser';
+            $pipeline->save($modelPath);
 
             $this->info("Model saved to: $modelPath");
 
@@ -373,6 +370,18 @@ class TrainPromiseClassifierCommand extends Command
             $this->line('  Max offset: ' . max($offsets));
             $this->line('  Mean offset: ' . number_format(array_sum($offsets) / count($offsets), 2));
         }
+
+        $this->line('');
+        $this->line('Top influential n-grams (importance | pos-rate | docs):');
+        $this->table(
+            ['n-gram', 'importance', 'pos-rate', 'docs'],
+            array_map(fn ($r) => [
+                $r['token'],
+                number_format($r['importance'], 4),
+                number_format($r['pos_rate'], 2),
+                $r['docs'],
+            ], array_slice($topNgrams, 0, 20))
+        );
 
         $this->line('');
         $this->line('Sample False Positives:');

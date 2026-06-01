@@ -2,156 +2,175 @@
 
 namespace App\Services\Promise;
 
-use Rubix\ML\Pipeline;
 use Rubix\ML\Classifiers\LogisticRegression;
 use Rubix\ML\Transformers\WordCountVectorizer;
 use Rubix\ML\Transformers\TfIdfTransformer;
 use Rubix\ML\Datasets\Dataset;
+use Rubix\ML\Datasets\Labeled;
+use Rubix\ML\Datasets\Unlabeled;
 
 /**
- * Feature engineering and model pipeline for promise detection.
+ * Feature engineering + linear model for promise detection (§5.2 baseline).
  *
- * Combines:
- *   1. Word + character n-gram tokenization (CharNgramTokenizer)
- *   2. Word count vectorization
- *   3. TF-IDF transformation
- *   4. Logistic regression classifier
+ * Chain: CharNgramTokenizer (word 1-2 + char 3-5) -> WordCountVectorizer
+ *        -> TfIdfTransformer -> LogisticRegression.
  *
- * The pipeline is wrapped in a Pipeline estimator so transformations
- * are automatically applied to training and prediction data.
+ * We deliberately do NOT use Rubix\ML\Pipeline: its proba() double-transforms
+ * the test set (IncorrectDatasetDimensionality) for this transformer chain.
+ * Instead the transformers are fitted once on train and applied transform-only
+ * to any later data, so predict()/proba() are consistent and real probabilities
+ * are available (needed for AUC, the threshold sweep, and timing).
+ *
+ * Samples are single-column string rows: [[span], [span], ...].
  */
 class FeaturePipeline
 {
-    private Pipeline $pipeline;
+    private WordCountVectorizer $vectorizer;
+    private TfIdfTransformer $tfidf;
+    private LogisticRegression $classifier;
+    private bool $fitted = false;
+
+    /** token => ['doc' => int, 'pos' => int] over the training set (for n-gram direction) */
+    private array $tokenStats = [];
 
     public function __construct()
     {
-        // Create the tokenizer with word and character n-grams
-        $tokenizer = new CharNgramTokenizer();
-
-        // WordCountVectorizer: builds vocabulary from training data
-        $vectorizer = new WordCountVectorizer(
-            maxVocabularySize: 5000,
-            minDocumentCount: 2,
+        // Rubix vectorises densely (one int per vocab term per sample), so the
+        // char-n-gram vocabulary must be capped or the matrix exhausts memory.
+        $this->vectorizer = new WordCountVectorizer(
+            maxVocabularySize: 8000,
+            minDocumentCount: 3,
             maxDocumentRatio: 0.8,
-            tokenizer: $tokenizer
+            tokenizer: new CharNgramTokenizer(),
         );
-
-        // TF-IDF transformation
-        $tfidf = new TfIdfTransformer();
-
-        // Logistic regression classifier
-        // Note: Rubix ML doesn't have built-in class_weight balance, but we handle
-        // class imbalance via the dataset preparation (group split, stratification if needed).
-        // L2 regularization helps prevent overfitting.
-        $classifier = new LogisticRegression(
-            batchSize: 32,
-            l2Penalty: 0.0001, // Light regularization
-            epochs: 100,
+        $this->tfidf = new TfIdfTransformer();
+        $this->classifier = new LogisticRegression(
+            batchSize: 128,
+            l2Penalty: 1e-4,
+            epochs: 300,
             minChange: 1e-4,
         );
-
-        // Build the pipeline: tokenize -> vectorize -> tfidf -> classify
-        $this->pipeline = new Pipeline(
-            transformers: [$vectorizer, $tfidf],
-            base: $classifier,
-            elastic: false // Don't update transformers during online learning
-        );
     }
 
     /**
-     * Get the underlying Rubix Pipeline (for training/predicting).
+     * Fit the transformers on the training samples, then train the classifier.
+     * Labels must be categorical strings ('0' / '1') for Rubix classification.
      */
-    public function make(): Pipeline
+    public function train(Labeled $dataset): void
     {
-        return $this->pipeline;
+        $samples = $dataset->samples();
+        $labels = array_map('strval', $dataset->labels());
+
+        // Record token -> document/positive-document counts BEFORE vectorising,
+        // so we can annotate the top n-grams with their positive association.
+        $this->recordTokenStats($samples, $labels);
+
+        // Fit + apply the transformers in place.
+        $this->vectorizer->fit(new Unlabeled($samples));
+        $this->vectorizer->transform($samples);
+        $this->tfidf->fit(new Unlabeled($samples));
+        $this->tfidf->transform($samples);
+
+        $this->classifier->train(new Labeled($samples, $labels));
+        $this->fitted = true;
     }
 
-    /**
-     * Train the pipeline on a dataset.
-     *
-     * @param Dataset $dataset
-     */
-    public function train(Dataset $dataset): void
+    /** Transform new raw samples with the already-fitted transformers (no re-fit). */
+    private function transformSamples(array $samples): array
     {
-        $this->pipeline->train($dataset);
+        $this->vectorizer->transform($samples);
+        $this->tfidf->transform($samples);
+        return $samples;
     }
 
-    /**
-     * Predict class labels (0 or 1).
-     *
-     * @param Dataset $dataset
-     * @return int[]
-     */
+    /** Predicted class labels ('0'/'1') for each sample. */
     public function predict(Dataset $dataset): array
     {
-        return $this->pipeline->predict($dataset);
+        return $this->classifier->predict(new Unlabeled($this->transformSamples($dataset->samples())));
     }
 
-    /**
-     * Predict class probabilities.
-     *
-     * Manually transforms data through the pipeline transformers,
-     * then calls proba on the base classifier.
-     *
-     * @param \Rubix\ML\Datasets\Dataset $dataset
-     * @return array<array{0: float, 1: float}>
-     */
-    public function proba(\Rubix\ML\Datasets\Dataset $dataset): array
+    /** Probability of the positive class (label '1') for each sample. */
+    public function probaPositive(Dataset $dataset): array
     {
-        // Access the pipeline's transformers and base classifier
-        $reflection = new \ReflectionClass($this->pipeline);
+        $proba = $this->classifier->proba(new Unlabeled($this->transformSamples($dataset->samples())));
 
-        $transformersProperty = $reflection->getProperty('transformers');
-        $transformersProperty->setAccessible(true);
-        $transformers = $transformersProperty->getValue($this->pipeline);
-
-        $baseProperty = $reflection->getProperty('base');
-        $baseProperty->setAccessible(true);
-        $base = $baseProperty->getValue($this->pipeline);
-
-        // Get the raw samples and labels from the dataset
-        $samples = $dataset->samples();
-        if ($dataset instanceof \Rubix\ML\Datasets\Labeled) {
-            $labels = $dataset->labels();
-        } else {
-            $labels = array_fill(0, count($samples), null);
-        }
-
-        // Apply transformations to the samples array
-        $transformed = $samples;
-        foreach ($transformers as $transformer) {
-            $transformer->transform($transformed);
-        }
-
-        // Reconstruct dataset with transformed samples
-        if ($dataset instanceof \Rubix\ML\Datasets\Labeled) {
-            $transformedDataset = new \Rubix\ML\Datasets\Labeled(
-                samples: $transformed,
-                labels: $labels
-            );
-        } else {
-            $transformedDataset = new \Rubix\ML\Datasets\Unlabeled(
-                samples: $transformed
-            );
-        }
-
-        // Call proba on the transformed data
-        return $base->proba($transformedDataset);
+        return array_map(static function (array $row): float {
+            return (float) ($row['1'] ?? $row[1] ?? 0.0);
+        }, $proba);
     }
 
     /**
-     * Get the underlying LogisticRegression classifier for coefficient inspection.
+     * Top influential n-grams by model feature importance, each annotated with the
+     * empirical P(label=1 | token present) on the training set. Doubles as a
+     * leakage smoke-test: a label-tell shows up here with extreme importance.
      *
-     * @return LogisticRegression
+     * @return array<int, array{token: string, importance: float, pos_rate: float, docs: int}>
      */
+    public function topNgrams(int $k = 20): array
+    {
+        if (!$this->fitted) {
+            return [];
+        }
+
+        // vocabularies()[0] = [offset => token] for our single text column.
+        $vocabularies = $this->vectorizer->vocabularies();
+        $offsetToToken = $vocabularies[0] ?? [];
+
+        $importances = $this->classifier->featureImportances(); // [offset => importance]
+
+        $rows = [];
+        foreach ($importances as $offset => $importance) {
+            $token = $offsetToToken[$offset] ?? null;
+            if ($token === null) {
+                continue;
+            }
+            $stat = $this->tokenStats[$token] ?? ['doc' => 0, 'pos' => 0];
+            $rows[] = [
+                'token' => $token,
+                'importance' => (float) $importance,
+                'pos_rate' => $stat['doc'] > 0 ? round($stat['pos'] / $stat['doc'], 3) : 0.0,
+                'docs' => $stat['doc'],
+            ];
+        }
+
+        usort($rows, static fn ($a, $b) => $b['importance'] <=> $a['importance']);
+
+        return array_slice($rows, 0, $k);
+    }
+
+    private function recordTokenStats(array $samples, array $labels): void
+    {
+        $tokenizer = new CharNgramTokenizer();
+        foreach ($samples as $i => $row) {
+            $text = is_array($row) ? ($row[0] ?? '') : (string) $row;
+            $tokens = array_unique($tokenizer->tokenize((string) $text));
+            $isPos = ($labels[$i] ?? '0') === '1';
+            foreach ($tokens as $t) {
+                if (!isset($this->tokenStats[$t])) {
+                    $this->tokenStats[$t] = ['doc' => 0, 'pos' => 0];
+                }
+                $this->tokenStats[$t]['doc']++;
+                if ($isPos) {
+                    $this->tokenStats[$t]['pos']++;
+                }
+            }
+        }
+    }
+
     public function getClassifier(): LogisticRegression
     {
-        // The base estimator of the pipeline
-        // Access via reflection or direct property (depends on Rubix version)
-        $reflection = new \ReflectionClass($this->pipeline);
-        $baseProperty = $reflection->getProperty('base');
-        $baseProperty->setAccessible(true);
-        return $baseProperty->getValue($this->pipeline);
+        return $this->classifier;
+    }
+
+    /** Persist the fitted pipeline (vectorizer + tf-idf + classifier) to disk. */
+    public function save(string $path): void
+    {
+        file_put_contents($path, serialize($this));
+    }
+
+    /** Load a previously saved pipeline. */
+    public static function load(string $path): self
+    {
+        return unserialize(file_get_contents($path));
     }
 }
