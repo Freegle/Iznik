@@ -948,7 +948,7 @@ class UnifiedDigestService
 
                 if (!$dryRun) {
                     app(\App\Services\EmailSpoolerService::class)->spool(
-                        new UnifiedDigest($user, $wrappedPosts, self::MODE_GROUP),
+                        new UnifiedDigest($user, $wrappedPosts, self::MODE_GROUP, collect(), $frequency),
                         $user->email_preferred,
                         emailType: 'digest_group',
                     );

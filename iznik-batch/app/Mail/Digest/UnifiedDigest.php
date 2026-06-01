@@ -43,7 +43,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         public User $user,
         protected Collection $posts,
         public string $mode,
-        protected Collection $sponsors = new Collection()
+        protected Collection $sponsors = new Collection(),
+        protected ?int $frequency = null
     ) {
         parent::__construct();
 
@@ -93,6 +94,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         return [
             'userid' => $this->user->id,
             'mode' => $this->mode,
+            'frequency' => $this->frequency,
             'posts' => $this->posts->map(fn ($p) => [
                 'msgid' => $p['message']->id,
                 'groups' => $p['postedToGroups'],
@@ -130,7 +132,13 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             return null;
         }
 
-        return new self($user, $posts, $descriptor['mode'] ?? UnifiedDigestService::MODE_IMMEDIATE);
+        return new self(
+            $user,
+            $posts,
+            $descriptor['mode'] ?? UnifiedDigestService::MODE_IMMEDIATE,
+            new Collection(),
+            $descriptor['frequency'] ?? null
+        );
     }
 
     /**
@@ -157,6 +165,23 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
     {
         return $this->mode === UnifiedDigestService::MODE_IMMEDIATE
             || ($this->mode === UnifiedDigestService::MODE_GROUP && $this->posts->count() === 1);
+    }
+
+    /**
+     * Human-readable cadence for the per-group footer, from the V1
+     * emailfrequency value (hours). Falls back to "regularly" when the
+     * frequency wasn't supplied (e.g. a legacy retry descriptor).
+     */
+    protected function groupFrequencyText(): string
+    {
+        return match ($this->frequency) {
+            1 => 'every hour',
+            2 => 'every two hours',
+            4 => 'every four hours',
+            8 => 'every eight hours',
+            24 => 'once a day',
+            default => 'regularly',
+        };
     }
 
     /**
@@ -200,12 +225,11 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 $primaryGroupName = $row ? ($row->namefull ?: $row->nameshort) : null;
             }
         }
-        // We don't carry the exact per-group frequency (1/2/4/8/24h) into the
-        // mailable, so group digests say "regularly" rather than a specific
-        // cadence; immediate is "immediately"; daily is "daily".
+        // Footer cadence wording. Immediate is "immediately"; per-group digests
+        // map their emailfrequency (hours) to a human cadence; daily is "daily".
         $frequencyText = match ($this->mode) {
             UnifiedDigestService::MODE_IMMEDIATE => 'immediately',
-            UnifiedDigestService::MODE_GROUP => 'regularly',
+            UnifiedDigestService::MODE_GROUP => $this->groupFrequencyText(),
             default => 'daily',
         };
 
