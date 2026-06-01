@@ -480,8 +480,28 @@ class AlertServiceTest extends TestCase
 
         $result = $this->service->processAlerts();
 
+        // One mod email counted; group2's mod is not mailed. The total send count
+        // is 2 because a single-group alert also copies the alert sender (cc).
         $this->assertSame(1, $result);
-        Mail::assertSentCount(1);
+        Mail::assertSentCount(2);
+    }
+
+    public function test_processAlerts_single_group_copies_sender(): void
+    {
+        config(['freegle.mail.geeks_addr' => 'geeks@ilovefreegle.org']);
+
+        $group = $this->createTestGroup();
+        $mod = $this->createTestUser();
+        $this->createMembership($mod, $group, ['role' => 'Moderator']);
+
+        // from='geeks' (insertAlert default) → cc copy goes to the geeks address.
+        $this->insertAlert(['groupid' => $group->id]);
+
+        $this->service->processAlerts();
+
+        Mail::assertSent(\App\Mail\Alert\AlertMail::class, function ($mail) {
+            return $mail->hasTo('geeks@ilovefreegle.org');
+        });
     }
 
     public function test_processAlerts_single_group_marks_complete(): void

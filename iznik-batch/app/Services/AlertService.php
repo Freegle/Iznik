@@ -69,6 +69,13 @@ class AlertService
                 ? $this->mailGroupMods($alert, $group, $fromAddr, $fromName, $htmlBody, $dryRun, false)
                 : 0;
 
+            // V1 parity (Alert::mailMods $cc, Alert.php:355-372): a single-group
+            // alert also copies the alert sender (self-CC). Not counted in the
+            // returned total, matching V1 ($done is not incremented for the cc).
+            if ($group && !$dryRun) {
+                $this->mailAlertSenderCopy($alert, $group, $fromAddr, $fromName, $htmlBody);
+            }
+
             if (!$dryRun) {
                 DB::table('alerts')->where('id', $alert->id)->update(['complete' => now()]);
                 Log::info('AlertService: completed single-group alert', [
@@ -264,6 +271,40 @@ class AlertService
             ]);
 
             return 0;
+        }
+    }
+
+    /**
+     * V1 parity (Alert::mailMods() cc block): for a single-group alert, send a
+     * copy back to the alert's own from-address (self-CC). No tracking row, no
+     * confirmation button, and not counted toward the returned total.
+     */
+    private function mailAlertSenderCopy(object $alert, object $group, string $fromAddr, string $fromName, string $htmlBody): void
+    {
+        if (!filter_var($fromAddr, FILTER_VALIDATE_EMAIL)) {
+            return;
+        }
+
+        try {
+            app(\App\Services\EmailSpoolerService::class)->spool(new AlertMail(
+                recipientEmail: $fromAddr,
+                recipientName: $group->nameshort . ' volunteers',
+                fromAddress: $fromAddr,
+                fromName: $fromName,
+                subjectLine: $alert->subject,
+                htmlBody: $htmlBody,
+                textBody: $alert->text ?? '',
+                askClick: false,
+                global: false,
+                groupName: $group->nameshort,
+            ));
+        } catch (\Throwable $e) {
+            Log::error('AlertService: failed to send alert sender copy', [
+                'alert_id' => $alert->id,
+                'group_id' => $group->id,
+                'email' => $fromAddr,
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 
