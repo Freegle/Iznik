@@ -434,6 +434,15 @@ async function main() {
   const openPRFixEntries = new Map<number, number>()
   let consecutiveCoverageFailures = 0
 
+  // Track consecutive visits to DIAGNOSE_BUG within one iteration. The state
+  // can legitimately take 2-3 LLM turns (gather → diagnose), but the LLM
+  // sometimes keeps re-running search_code without ever producing a
+  // diagnosisBrief (seen burning 10+ turns on the same bug, e.g. a V1-only
+  // code path). Prompt-level guards proved unreliable. After this many
+  // consecutive turns, force-defer the current bug and move on.
+  const MAX_CONSECUTIVE_DIAGNOSE = 4
+  let consecutiveDiagnose = 0
+
   let step = 0
   while (step < MAX_STEPS) {
     const current = await engine.getInstance(instance.id)
@@ -444,6 +453,38 @@ async function main() {
     if (current.status !== 'active') {
       out(`instance status=${current.status} — stopping`)
       break
+    }
+
+    // ─── LOOP-BREAKER: DIAGNOSE_BUG that never converges ───
+    // Count consecutive turns in DIAGNOSE_BUG. If it exceeds the cap the LLM
+    // is stuck re-searching without producing a diagnosis — force-defer the
+    // current bug and route on, so one undiagnosable bug can't consume the
+    // whole iteration.
+    if (current.currentState === 'DIAGNOSE_BUG') {
+      consecutiveDiagnose++
+      if (consecutiveDiagnose > MAX_CONSECUTIVE_DIAGNOSE) {
+        const ctx: any = current.context ?? {}
+        const cb = ctx.currentBug ?? ctx.pendingBugBatch?.[0] ?? null
+        const key = cb ? `${cb.topic}.${cb.post}` : 'unknown'
+        outWarn(`loop-breaker: DIAGNOSE_BUG ran ${consecutiveDiagnose} consecutive turns on ${key} without converging — force-deferring`)
+        const existingFixed = Array.isArray(ctx.bugsFixed) ? ctx.bugsFixed : []
+        const deferred = cb
+          ? { ...cb, outcome: 'deferred', reason: `loop-breaker: diagnosis did not converge after ${MAX_CONSECUTIVE_DIAGNOSE} turns (likely V1-only or unreproducible)` }
+          : null
+        await engine.updateContext(instance.id, {
+          ...(deferred ? { bugsFixed: [...existingFixed, deferred] } : {}),
+          currentBug: null,
+        })
+        await engine.forceTransition(
+          instance.id,
+          'WORK_ROUTER',
+          `Loop-breaker: DIAGNOSE_BUG exceeded ${MAX_CONSECUTIVE_DIAGNOSE} consecutive turns on ${key}; deferred and routing on.`,
+        )
+        consecutiveDiagnose = 0
+        continue
+      }
+    } else {
+      consecutiveDiagnose = 0
     }
 
     step++
