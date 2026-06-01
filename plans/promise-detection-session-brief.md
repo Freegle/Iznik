@@ -105,8 +105,41 @@ will need harder vocab capping (or word-grams only, or a sparse representation) 
 matrices.
 
 **Immediate next steps:** run the `Promise` unit suite green via the status API
-(`POST /api/tests/laravel {"filter":"Promise","testsuite":"Unit"}`); tune the operating threshold;
-solve the dense-matrix limit for the full-scale run.
+(`POST /api/tests/laravel {"filter":"Promise","testsuite":"Unit"}`); make **expected cost** the
+headline metric (see below); solve the dense-matrix limit for the full-scale run.
+
+## Success criterion (cost-based) — the real bar, and the verdict
+
+Generic F1 is the wrong target for a detector; success is an **operating point set by the relative
+cost of the two errors**. Stated cost for this use case: a **false positive (wrongly claiming a
+promise) is 20× worse than a false negative (missing one)** — the action (e.g. a user-facing prompt)
+must not misfire. Consequences:
+
+- **Decision rule:** fire only when `P(promise) > 20/21 ≈ 0.95` (not 0.5). Equivalently, minimise
+  **expected cost = 20·FP + 1·FN** (a precision-weighted F-β, β ≈ 0.22). This is Neyman–Pearson /
+  cost-sensitive classification, not "maximise F1".
+- **Bar to beat "never fire":** never-firing costs only the missed promises. A model beats it only
+  if `TP/FP > 20`, i.e. **precision > ~95% at any recall**. Below that, each false alarm costs more
+  than the promises it catches → the model is **net-negative versus doing nothing**.
+- **Verdict on the linear baseline:** its precision tops out ~64% ≪ 95%, so under 20:1 it is
+  **net-negative vs never firing — not deployable as an autonomous trigger.** It remains a valid
+  *proof-of-signal* baseline (PR-AUC 0.458 vs 0.155 chance) and a possible high-recall pre-filter.
+- **Bar for the alternatives:** the embedding / DST models must reach **precision ≥ ~95%** (at
+  usable recall) to be worth shipping autonomously — a high-precision target that favours
+  context-aware models (DST) over bag-of-n-grams.
+
+**Design implication:** a 20:1 cost pushes off "single autonomous classifier" toward (a) firing only
+in the top-confidence sub-regime, (b) a two-stage high-recall → precise-confirm pipeline,
+(c) human-in-the-loop (a wrong flag costs ~0), or (d) a silent background annotation where the FP
+cost collapses.
+
+**Honest method notes:** the only "tuning" tried was the **threshold sweep** — re-labelling one
+trained model's outputs at different cut-offs, which slides along a *fixed* PR curve and cannot lift
+it. Untried levers (the ones that move the curve): more data, **word-n-gram-only / cleaner
+features**, class weighting for the 15% imbalance, regularisation / cross-validation. The
+top-importance features are currently dominated by **noisy char n-grams** — fragments straddling
+word/punctuation/speaker-tag boundaries (`c:s:thi`, `c:upth`), which wreck interpretability and
+likely dilute signal; a word-grams-only pass is the cheap next experiment.
 
 ## How to run (once green)
 
