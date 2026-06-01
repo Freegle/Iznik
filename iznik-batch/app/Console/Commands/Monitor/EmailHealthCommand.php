@@ -100,6 +100,20 @@ class EmailHealthCommand extends Command
             $this->info("Outside daytime window ({$dayStart}:00-{$dayEnd}:00); running stall check only.");
         }
 
+        // --- Mail-retry dead-letter check (runs 24/7) ---
+        // SpoolMail jobs that exhausted their 24h retry window land in failed_jobs.
+        // Any count > 0 means emails were permanently lost after a render bug — alert
+        // immediately at any hour so the on-call can run mail:retry-failed once fixed.
+        $deadLetterCount = DB::table('failed_jobs')
+            ->where('payload', 'like', '%SpoolMail%')
+            ->count();
+
+        $this->info("Mail-retry dead-letter: {$deadLetterCount} failed SpoolMail job(s)");
+
+        if ($deadLetterCount > 0) {
+            $failures[] = "MAIL RETRY DEAD-LETTER: {$deadLetterCount} SpoolMail job(s) in failed_jobs";
+        }
+
         // --- Result ---
         if (! empty($failures)) {
             foreach ($failures as $f) {

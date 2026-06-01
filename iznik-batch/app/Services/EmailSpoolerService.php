@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Jobs\SpoolMail;
+use App\Mail\Contracts\RetryableMailable;
 use App\Models\UserEmail;
 use App\Services\Mail\Incoming\BounceService;
 use App\Services\Mail\SmtpFailureClassifier;
@@ -55,7 +57,7 @@ class EmailSpoolerService
      * mail pipeline, ensuring all withSymfonyMessage callbacks execute and all
      * headers are captured.
      */
-    public function spool(Mailable $mailable, string|array|null $to = null, ?string $emailType = null): string
+    public function spool(Mailable $mailable, string|array|null $to = null, ?string $emailType = null, bool $autoRetry = true): string
     {
         $id = $this->generateId();
         $filename = $id . '.json';
@@ -96,25 +98,40 @@ class EmailSpoolerService
         try {
             $email = $this->captureBuiltMessage($mailable);
         } catch (\Throwable $e) {
-            if (!$this->isPermanentSmtpFailure($e->getMessage())) {
-                throw $e;
+            if ($this->isPermanentSmtpFailure($e->getMessage())) {
+                $recipient = $this->extractOffendingRecipient($e->getMessage(), $normalizedTo);
+                if ($recipient !== null) {
+                    app(SmtpFailureClassifier::class)
+                        ->recordPermanentBounce($recipient, $e->getMessage());
+                }
+
+                Log::warning('Skipped permanent-failure recipient while spooling and marked as bouncing', [
+                    'mailable' => get_class($mailable),
+                    'recipient' => $recipient,
+                    'to' => array_column($normalizedTo, 'address'),
+                    'type' => $emailType,
+                    'error' => $e->getMessage(),
+                ]);
+
+                return '';
             }
 
-            $recipient = $this->extractOffendingRecipient($e->getMessage(), $normalizedTo);
-            if ($recipient !== null) {
-                app(SmtpFailureClassifier::class)
-                    ->recordPermanentBounce($recipient, $e->getMessage());
+            // Non-permanent build/render failure for a RetryableMailable: convert
+            // the drop into a durable queue job rather than rethrowing (which would
+            // silently skip this recipient on the hot path).
+            if ($autoRetry && $mailable instanceof RetryableMailable) {
+                $firstRecipient = is_string($to) ? $to : ($normalizedTo[0]['address'] ?? null);
+                SpoolMail::dispatch(
+                    get_class($mailable),
+                    $mailable->mailDescriptor(),
+                    $firstRecipient,
+                    $emailType
+                );
+
+                return '';
             }
 
-            Log::warning('Skipped permanent-failure recipient while spooling and marked as bouncing', [
-                'mailable' => get_class($mailable),
-                'recipient' => $recipient,
-                'to' => array_column($normalizedTo, 'address'),
-                'type' => $emailType,
-                'error' => $e->getMessage(),
-            ]);
-
-            return '';
+            throw $e;
         }
 
         // Extract all data from the captured message.

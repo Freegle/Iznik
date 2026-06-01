@@ -2,11 +2,13 @@
 
 namespace App\Mail\Digest;
 
+use App\Mail\Contracts\RetryableMailable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\TrackableEmail;
+use App\Models\Message;
 use App\Models\User;
 use App\Services\UnifiedDigestService;
 use App\Support\EmojiUtils;
@@ -22,7 +24,7 @@ use Illuminate\Support\Facades\DB;
  * Contains posts from all communities the user is a member of,
  * with cross-posted items deduplicated.
  */
-class UnifiedDigest extends MjmlMailable
+class UnifiedDigest extends MjmlMailable implements RetryableMailable
 {
     use AmpEmail;
     use AvatarResolver;
@@ -78,6 +80,57 @@ class UnifiedDigest extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id ?? null;
+    }
+
+    /**
+     * IDs needed to rebuild this digest for a durable retry.
+     * Stores only scalars (user id, mode, message ids + group ids).
+     *
+     * {@see RetryableMailable}
+     */
+    public function mailDescriptor(): array
+    {
+        return [
+            'userid' => $this->user->id,
+            'mode' => $this->mode,
+            'posts' => $this->posts->map(fn ($p) => [
+                'msgid' => $p['message']->id,
+                'groups' => $p['postedToGroups'],
+            ])->values()->all(),
+        ];
+    }
+
+    /**
+     * Rebuild a fresh digest from a descriptor, re-fetching from the DB.
+     *
+     * Returns null (cancel the retry) when the user no longer exists or has
+     * no usable address, or when none of the posts still exist in the DB.
+     *
+     * {@see RetryableMailable}
+     */
+    public static function rebuildFromDescriptor(array $descriptor): ?self
+    {
+        $user = User::find($descriptor['userid'] ?? null);
+        if (!$user) {
+            return null;
+        }
+
+        $posts = collect();
+        foreach ($descriptor['posts'] ?? [] as $postData) {
+            $message = Message::find($postData['msgid'] ?? null);
+            if ($message) {
+                $posts->push([
+                    'message' => $message,
+                    'postedToGroups' => $postData['groups'] ?? [],
+                ]);
+            }
+        }
+
+        if ($posts->isEmpty()) {
+            return null;
+        }
+
+        return new self($user, $posts, $descriptor['mode'] ?? UnifiedDigestService::MODE_IMMEDIATE);
     }
 
     /**
