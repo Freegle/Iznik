@@ -142,6 +142,36 @@ ylvm_prune_snapshots() {
     done <<< "$snaps"
 }
 
+# Reset the MySQL root password to the local value the containers expect.
+# Every prepared backup carries the PRODUCTION root password, so after loading
+# any day (switch, nightly refresh, cutover) we must reset it or the apps can't
+# connect. Uses the skip-grant-tables dance (MySQL 8 disables TCP under it, so
+# we talk over the unix socket). Starts percona if it is currently stopped.
+ylvm_reset_root_password() {
+    local pw="${1:-iznik}"
+    local project; project="$(ylvm_project_name)"
+    local cnf="$YLVM_COMPOSE_DIR/conf/percona-my.cnf"
+    cd "$YLVM_COMPOSE_DIR"
+    ylvm_log "Resetting MySQL root password (backup carries the production password)..."
+    docker compose stop percona >/dev/null 2>&1 || true
+    grep -q skip-grant-tables "$cnf" || echo "skip-grant-tables" >> "$cnf"
+    docker compose up -d percona >/dev/null 2>&1 || docker compose start percona >/dev/null 2>&1
+    local ok=
+    for i in $(seq 1 60); do
+        docker exec "${project}-percona" mysqladmin ping --socket=/var/lib/mysql/mysql.sock >/dev/null 2>&1 \
+            && { ok=1; break; }
+        sleep 2
+    done
+    [ -n "$ok" ] || ylvm_die "percona socket not ready for password reset"
+    docker exec "${project}-percona" mysql --socket=/var/lib/mysql/mysql.sock -u root -e \
+        "FLUSH PRIVILEGES; ALTER USER 'root'@'localhost' IDENTIFIED BY '${pw}'; ALTER USER 'root'@'%' IDENTIFIED BY '${pw}'; FLUSH PRIVILEGES;" 2>/dev/null \
+        || ylvm_log "⚠️  password reset query failed"
+    sed -i '/skip-grant-tables/d' "$cnf"
+    docker compose restart percona >/dev/null 2>&1
+    for i in $(seq 1 90); do docker compose ps percona 2>/dev/null | grep -q healthy && break; sleep 2; done
+    ylvm_log "✅ root password reset to local value"
+}
+
 # List available dated snapshots (newest first), as YYYYMMDD.
 ylvm_list_snapshots() {
     lvs --noheadings -o lv_name "$YLVM_VG" 2>/dev/null | tr -d ' ' \

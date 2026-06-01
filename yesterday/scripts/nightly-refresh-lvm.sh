@@ -55,13 +55,9 @@ ylvm_apply_stage_to_active
 ylvm_snapshot_active "$DATE8"
 ylvm_prune_snapshots
 
-# 4. Restart percona on the refreshed datadir.
-ylvm_log "Starting percona ..."
-docker compose up -d percona
-for i in $(seq 1 90); do
-    docker compose ps percona 2>/dev/null | grep -q "healthy" && { ylvm_log "✅ percona healthy"; break; }
-    sleep 2
-done
+# 4. Restart percona on the refreshed datadir, resetting the root password
+#    (the refreshed datadir carries the production password from the backup).
+ylvm_reset_root_password "${YLVM_DB_PASSWORD:-iznik}"
 
 # 5. Clear stale cache + record state.
 docker compose exec -T redis redis-cli FLUSHALL >/dev/null 2>&1 || true

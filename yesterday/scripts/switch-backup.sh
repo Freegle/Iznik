@@ -51,16 +51,9 @@ ylvm_log "Mounting $YLVM_ACTIVE_MNT ..."
 # stale cached data from a previous switch (validated).
 mount -o nouuid "/dev/$YLVM_VG/$YLVM_ACTIVE" "$YLVM_ACTIVE_MNT"
 
-ylvm_log "Starting percona ..."
-docker compose start percona
-
-# Wait for health (clean prepared datadir starts fast).
-for i in $(seq 1 60); do
-    if docker compose ps percona 2>/dev/null | grep -q "healthy"; then
-        ylvm_log "✅ percona healthy"; break
-    fi
-    sleep 2
-done
+# Start percona and reset the root password (the cloned snapshot carries the
+# production password baked into the backup; the containers expect the local one).
+ylvm_reset_root_password "${YLVM_DB_PASSWORD:-iznik}"
 
 # Stale Redis cache belongs to the previous day — clear it.
 ylvm_log "Flushing Redis cache ..."

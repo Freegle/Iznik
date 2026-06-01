@@ -31,37 +31,43 @@ fi
 grep -q "device: $YLVM_ACTIVE_MNT" docker-compose.override.yml \
     || ylvm_die "Override does not bind freegle_db to $YLVM_ACTIVE_MNT — update yesterday/docker-compose.override.yml"
 
-ylvm_log "Stopping percona ..."
-docker compose stop percona || true
+PROJECT="$(ylvm_project_name)"
 
-# Preserve the old volume under a new name (reversible), then drop the freegle_db
-# reference so compose recreates it as the bind mount.
-if docker volume inspect freegle_db >/dev/null 2>&1; then
-    # Is it already the bind? (idempotent re-run)
-    if docker volume inspect freegle_db -f '{{.Options.device}}' 2>/dev/null | grep -q "$YLVM_ACTIVE_MNT"; then
-        ylvm_log "freegle_db already bound to $YLVM_ACTIVE_MNT — skipping rename."
-    else
-        OLD_PATH="$(docker volume inspect freegle_db -f '{{.Mountpoint}}')"
-        ylvm_log "Old freegle_db volume at $OLD_PATH (left on disk; remove later to reclaim ~119GB)."
-        docker volume rm freegle_db >/dev/null \
-            || ylvm_die "Could not remove old freegle_db volume reference (still in use?)."
+# Remove the percona CONTAINER (not just stop) — a stopped container still holds
+# a reference to its volume, which blocks volume removal.
+ylvm_log "Stopping + removing percona container ..."
+docker compose rm -sf percona >/dev/null 2>&1 || true
+
+# Drop any existing freegle_db volume so compose recreates it with the bind opts.
+# The old external volume is literally "freegle_db"; once the override switches it
+# to a managed driver_opts volume it becomes project-prefixed "${PROJECT}_freegle_db".
+# A stale prefixed volume (plain, no bind) would be silently reused otherwise.
+for vol in freegle_db "${PROJECT}_freegle_db"; do
+    if docker volume inspect "$vol" >/dev/null 2>&1; then
+        if docker volume inspect "$vol" -f '{{.Options.device}}' 2>/dev/null | grep -q "$YLVM_ACTIVE_MNT"; then
+            ylvm_log "$vol already bound to $YLVM_ACTIVE_MNT — keeping."
+        else
+            ylvm_log "Removing stale volume $vol (data is redundant — identical to newest snapshot)."
+            docker volume rm "$vol" >/dev/null 2>&1 \
+                || ylvm_die "Could not remove volume $vol (still referenced by a container?)."
+        fi
     fi
-fi
+done
 
-ylvm_log "Recreating containers so freegle_db binds to $YLVM_ACTIVE_MNT ..."
+ylvm_log "Recreating percona so freegle_db binds to $YLVM_ACTIVE_MNT ..."
 docker compose up -d percona
-
-ylvm_log "Waiting for percona health ..."
 for i in $(seq 1 90); do
-    docker compose ps percona 2>/dev/null | grep -q "healthy" && { ylvm_log "✅ percona healthy"; break; }
+    docker compose ps percona 2>/dev/null | grep -q "healthy" && break
     sleep 2
 done
 
 # Verify the bind actually resolved to the LVM datadir.
-BOUND="$(docker volume inspect freegle_db -f '{{.Options.device}}' 2>/dev/null || echo)"
+BOUND="$(docker volume inspect "${PROJECT}_freegle_db" -f '{{.Options.device}}' 2>/dev/null || echo)"
 [ "$BOUND" = "$YLVM_ACTIVE_MNT" ] || ylvm_die "freegle_db bound to '$BOUND', expected $YLVM_ACTIVE_MNT"
 
-PROJECT="$(ylvm_project_name)"
+# The prepared datadir carries the production root password — reset it to the local one.
+ylvm_reset_root_password "${YLVM_DB_PASSWORD:-iznik}"
+
 PW="$(grep '^MYSQL_PRODUCTION_ROOT_PASSWORD=' "$YLVM_COMPOSE_DIR/.env" 2>/dev/null | cut -d= -f2)"; PW="${PW:-iznik}"
 if docker exec "${PROJECT}-percona" mysql -uroot -p"$PW" -e "SHOW DATABASES;" 2>/dev/null | grep -q iznik; then
     ylvm_log "✅ Cutover complete — percona serving the iznik DB from $YLVM_ACTIVE_MNT"
