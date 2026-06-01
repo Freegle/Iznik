@@ -75,19 +75,27 @@ built TDD with pure PHPUnit unit tests in `tests/Unit/Promise/`:
   `Evaluator` (P/R/F1, ROC-AUC, PR-AUC, threshold sweep, **promise-timing offsets**, top ±n-grams,
   error samples), `promise:train` command (group-split, report.json + persisted model.rbx).
 
-**Status:** integrated and **running end-to-end on real data.** First result on a 768-room dev
-sample (1,399 train / 373 test, split by conversation):
+**Status:** integrated and **running end-to-end on real data.** Result on a 768-room dev sample
+(2,516 train / 640 test, split by conversation, 13% positive), **after fixing a CSV data-corruption
+bug** (see below):
 
 | Metric | Linear baseline | Keyword baseline |
 |---|---:|---:|
-| Precision | 0.577 | 0.177 |
-| Recall | 0.259 | 0.897 |
-| F1 | **0.357** | 0.296 |
-| ROC-AUC | **0.751** | — |
-| PR-AUC | **0.458** | — |
+| Precision | 0.311 | 0.200 |
+| Recall | 0.154 | 0.978 |
+| F1 | 0.206 | **0.333** |
+| ROC-AUC | **0.591** | — |
+| PR-AUC | **0.198** | — |
 
-Beats the keyword baseline on F1 + precision; PR-AUC 0.458 vs ~0.15 chance = real signal. Conservative
-at 0.5 (F1 peaks ~0.44 at threshold 0.1). No leakage tell in the top n-grams.
+**Sobering and honest:** ROC-AUC 0.591 is barely above chance (0.5); PR-AUC 0.198 is only marginally
+above the 0.13 base rate; and the **keyword baseline beats the linear model on F1**. On clean data the
+cheap §5.2 baseline **essentially does not work** — near-chance ranking, ~31% precision.
+
+> ⚠️ **Earlier numbers were wrong.** An initial run reported F1 0.357 / ROC-AUC 0.751 / PR-AUC 0.458
+> "beating the baseline". Those were computed on a **corrupted dataset**: `fputcsv`/`fgetcsv` used
+> PHP's default backslash escaping, and spans full of `\u..` artefacts + quotes broke the round-trip,
+> silently **merging ~30% of rows** (3,146 written → 1,772 read, with mismatched labels). Fixed with
+> RFC-4180 quoting (`escape: ''`); always verify `rows-written == records-read`.
 
 Fixes applied during integration (the two defects in the original push are resolved):
 - **Real probabilities** — replaced the Rubix `Pipeline` (whose `proba()` double-transforms →
@@ -121,9 +129,11 @@ must not misfire. Consequences:
 - **Bar to beat "never fire":** never-firing costs only the missed promises. A model beats it only
   if `TP/FP > 20`, i.e. **precision > ~95% at any recall**. Below that, each false alarm costs more
   than the promises it catches → the model is **net-negative versus doing nothing**.
-- **Verdict on the linear baseline:** its precision tops out ~64% ≪ 95%, so under 20:1 it is
-  **net-negative vs never firing — not deployable as an autonomous trigger.** It remains a valid
-  *proof-of-signal* baseline (PR-AUC 0.458 vs 0.155 chance) and a possible high-recall pre-filter.
+- **Verdict on the linear baseline (clean data):** precision tops out ~33% ≪ 95%, ROC-AUC 0.591
+  (near chance), PR-AUC 0.198 (≈ the 0.13 base rate), and it **loses to the keyword baseline on F1**.
+  Under 20:1 it is **net-negative vs never firing — not deployable**, and on clean data it isn't even
+  a convincing *proof of signal*. The bar for the embedding/DST tracks is unchanged: **precision
+  ≥ ~95%** at usable recall.
 - **Bar for the alternatives:** the embedding / DST models must reach **precision ≥ ~95%** (at
   usable recall) to be worth shipping autonomously — a high-precision target that favours
   context-aware models (DST) over bag-of-n-grams.
