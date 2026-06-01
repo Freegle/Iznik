@@ -216,6 +216,7 @@ class ProcessBackgroundTasksCommand extends Command
         bool $shouldSpool
     ): void {
         match ($taskType) {
+            BackgroundTask::TASK_PUSH_NOTIFY_CHAT_MESSAGE => $this->handlePushNotifyChatMessage($data, $pushService),
             BackgroundTask::TASK_PUSH_NOTIFY_GROUP_MODS  => $this->handlePushNotifyGroupMods($data, $pushService),
             BackgroundTask::TASK_EMAIL_CHITCHAT_REPORT   => $this->handleEmailChitchatReport($data, $spooler, $shouldSpool),
             BackgroundTask::TASK_EMAIL_CHARITY_SIGNUP    => $this->handleEmailCharitySignup($data, $spooler, $shouldSpool),
@@ -256,6 +257,24 @@ class ProcessBackgroundTasksCommand extends Command
     }
 
     /**
+     * Send chat-message push notifications to chat participants (and group
+     * mods for User2Mod chats). Enqueued by ChatProcessService after a
+     * message passes spam/review/ban checks — V1 parity for the push side
+     * of ChatMessage::process() lost in commit 5cbb607b7.
+     */
+    protected function handlePushNotifyChatMessage(array $data, PushNotificationService $pushService): void
+    {
+        $messageId = (int) ($data['message_id'] ?? 0);
+
+        if (! $messageId) {
+            throw new \RuntimeException('push_notify_chat_message requires message_id');
+        }
+
+        $count = $pushService->notifyChatMessage($messageId);
+        Log::info('Notified chat message', ['message_id' => $messageId, 'notified' => $count]);
+    }
+
+    /**
      * Send a ChitChat report email to support.
      */
     protected function handleEmailChitchatReport(
@@ -281,12 +300,8 @@ class ProcessBackgroundTasksCommand extends Command
             reason: $data['reason'],
         );
 
-        if ($shouldSpool) {
-            $recipients = array_map('trim', explode(',', config('freegle.mail.chitchat_support_addr')));
-            $spooler->spool($mail, $recipients);
-        } else {
-            Mail::send($mail);
-        }
+        $recipients = array_map('trim', explode(',', config('freegle.mail.chitchat_support_addr')));
+        $spooler->spool($mail, $recipients);
 
         Log::info('Sent ChitChat report email', [
             'reporter_id' => $data['user_id'],
@@ -317,11 +332,7 @@ class ProcessBackgroundTasksCommand extends Command
             source: $data['source'] ?? DonateExternalMail::SOURCE_EXTERNAL,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, config('freegle.mail.info_addr'));
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, config('freegle.mail.info_addr'));
 
         Log::info('Sent external donation email', [
             'user_id' => $data['user_id'],
@@ -352,11 +363,7 @@ class ProcessBackgroundTasksCommand extends Command
             description: $data['description'] ?? null,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, config('freegle.mail.partnerships_addr'));
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, config('freegle.mail.partnerships_addr'));
 
         Log::info('Sent charity signup notification', [
             'charity_id' => $data['charity_id'],
@@ -385,11 +392,7 @@ class ProcessBackgroundTasksCommand extends Command
             resetUrl: $data['reset_url'],
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $data['email']);
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, $data['email']);
 
         Log::info('Sent forgot password email', [
             'user_id' => $data['user_id'],
@@ -417,11 +420,7 @@ class ProcessBackgroundTasksCommand extends Command
             unsubUrl: $data['unsub_url'],
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $data['email']);
-        } else {
-            Mail::send($mail);
-        }
+        $spooler->spool($mail, $data['email']);
 
         Log::info('Sent unsubscribe confirmation email', [
             'user_id' => $data['user_id'],
@@ -546,11 +545,7 @@ class ProcessBackgroundTasksCommand extends Command
             groupContactMail: $groupContactMail,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $posterEmail);
-        } else {
-            Mail::to($posterEmail)->send($mail);
-        }
+        $spooler->spool($mail, $posterEmail);
 
         // V1 parity: send BCC copy if configured in mod's ModConfig.
         $this->sendBccIfConfigured(
@@ -668,11 +663,7 @@ class ProcessBackgroundTasksCommand extends Command
             groupContactMail: $groupContactMail,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $memberEmail);
-        } else {
-            Mail::to($memberEmail)->send($mail);
-        }
+        $spooler->spool($mail, $memberEmail);
 
         // V1 parity: send BCC copy if configured in mod's ModConfig.
         $this->sendBccIfConfigured(
@@ -896,11 +887,7 @@ class ProcessBackgroundTasksCommand extends Command
                 mergeUrl: $mergeUrl,
             );
 
-            if ($shouldSpool) {
-                $spooler->spool($mail, $recipientEmail);
-            } else {
-                Mail::to($recipientEmail)->send($mail);
-            }
+            $spooler->spool($mail, $recipientEmail);
         }
 
         Log::info('Sent merge offer emails', [
@@ -988,11 +975,7 @@ class ProcessBackgroundTasksCommand extends Command
             confirmUrl: $confirmUrl,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $email);
-        } else {
-            Mail::to($email)->send($mail);
-        }
+        $spooler->spool($mail, $email);
 
         Log::info('Sent email verification', [
             'user_id' => $userId,
@@ -1064,11 +1047,7 @@ class ProcessBackgroundTasksCommand extends Command
         $supportAddr = config('freegle.mail.support_addr', 'support@ilovefreegle.org');
         $recipients = array_map('trim', explode(',', $supportAddr));
 
-        if ($shouldSpool) {
-            $spooler->spool($mail, $recipients);
-        } else {
-            Mail::to($recipients)->send($mail);
-        }
+        $spooler->spool($mail, $recipients);
 
         Log::info('Sent refer to support email', [
             'chat_id' => $chatId,
@@ -1224,11 +1203,7 @@ class ProcessBackgroundTasksCommand extends Command
             groupContactMail: $groupContactMail,
         );
 
-        if ($shouldSpool) {
-            $spooler->spool($bccMail, $bccAddress);
-        } else {
-            Mail::to($bccAddress)->send($bccMail);
-        }
+        $spooler->spool($bccMail, $bccAddress);
 
         Log::info('Sent BCC copy of mod stdmsg', [
             'action' => $action,

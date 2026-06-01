@@ -255,10 +255,12 @@
   <div class="container">
     {{-- Header --}}
     <div class="header">
+      {{-- logo_url is the square Freegle icon (icon.png). The old 120x40 box
+           forced a 3:1 ratio and squashed it flat — render it square. --}}
       <amp-img
         src="{{ config('freegle.branding.logo_url') }}"
-        width="120"
-        height="40"
+        width="48"
+        height="48"
         alt="{{ config('freegle.branding.name', 'Freegle') }}"
         layout="fixed"
       ></amp-img>
@@ -272,16 +274,30 @@
 
     {{-- Post cards with reply accordion --}}
     @foreach($posts as $index => $post)
+    @if($postCount === 1)
+    {{-- Single-post (immediate) digest: the item photo is the hero — full
+         width and clickable through to the post. heroImageUrl is a 600x400
+         cover-crop so the height is bounded (a tall portrait can't dominate),
+         and amp-img layout="responsive" scales it full-width on mobile. --}}
+    <a href="{{ $post['fallbackReplyUrl'] }}" style="display: block; line-height: 0;">
+      <amp-img src="{{ $post['heroImageUrl'] }}" width="600" height="400" layout="responsive" alt="{{ $post['itemName'] }}"></amp-img>
+    </a>
+    <div class="post-card" style="display: block; border-bottom: none; padding-bottom: 0;">
+      <div class="post-content" style="padding-left: 0;">
+    @else
     <div class="post-card">
       <amp-img class="post-image" src="{{ $post['displayImageUrl'] }}" width="80" height="80" layout="fixed" alt="{{ $post['itemName'] }}"></amp-img>
       <div class="post-content">
+    @endif
         <p class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</p>
         <p class="post-title"><a href="{{ $post['fallbackReplyUrl'] }}">{{ $post['itemName'] }}</a></p>
         <p class="post-time">
           <amp-timeago datetime="{{ $post['arrivalIso'] }}" locale="en" width="160" height="20" layout="fixed">{{ $post['arrivalFormatted'] }}</amp-timeago>
         </p>
         @if($post['messageText'])
-        <p class="post-preview">{{ \Illuminate\Support\Str::limit($post['messageText'], 100) }}</p>
+        {{-- nl2br after escaping so user paragraph breaks survive the
+             single-<p> truncation. AMP allows <br> inside <p>. --}}
+        <p class="post-preview">{!! nl2br(e(\Illuminate\Support\Str::limit($post['messageText'], 100))) !!}</p>
         @endif
         @if($post['postedToText'])
         <p class="post-groups">{{ $post['postedToText'] }}</p>
@@ -340,7 +356,7 @@
       <div class="footer-divider"></div>
       <p class="footer-charity">
         {{ $siteName ?? config('freegle.branding.name', 'Freegle') }} is registered as a charity with HMRC (ref. XT32865) and is run by volunteers. Which is nice.<br>
-        Registered address: Weaver's Field, Loud Bridge, Chipping PR3 2NX
+        Registered address: {{ config('freegle.branding.registered_address') }}
       </p>
     </div>
   </div>

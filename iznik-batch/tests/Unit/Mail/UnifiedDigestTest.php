@@ -146,10 +146,11 @@ class UnifiedDigestTest extends TestCase
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
         $mail->build();
 
-        // Verify tracking was initialised with correct metadata.
+        // Verify tracking was initialised with the mode-specific email_type
+        // so sysadmin filters can split immediate vs daily.
         $tracking = $mail->getTracking();
         $this->assertNotNull($tracking);
-        $this->assertEquals('UnifiedDigest', $tracking->email_type);
+        $this->assertEquals('UnifiedDigestDaily', $tracking->email_type);
     }
 
     public function test_cross_post_text_shown_for_multiple_groups(): void
@@ -234,18 +235,20 @@ class UnifiedDigestTest extends TestCase
 
     public function test_immediate_mode_from_displayname_uses_poster_displayname(): void
     {
-        // The inbox preview shows the From display-name ("Ewalina via Freegle"),
-        // and the body shows the same name resolved from User->displayname.
-        // Both must agree; the previous code only consulted messages.fromname,
-        // which was often empty and produced "Freegler via Freegle" in the
-        // inbox while the body said "Ewalina".
+        // The inbox preview shows the From display-name ("Ewalina on Freegle",
+        // V1 parity), and the body shows the same name resolved from
+        // User->displayname. Both must agree; the previous code only consulted
+        // messages.fromname, which was often empty and produced "Freegler on
+        // Freegle" in the inbox while the body said "Ewalina".
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
+        // displayname is a computed accessor (User::getDisplayNameAttribute),
+        // not a stored column — it derives from fullname, so set fullname here.
+        // Passing a 'displayname' key would be silently ignored by the accessor.
         $poster = $this->createTestUser([
-            'fullname' => 'Ewalina Test',
-            'displayname' => 'Ewalina',
+            'fullname' => 'Ewalina',
         ]);
         $this->createMembership($poster, $group);
         $message = $this->createTestMessage($poster, $group, [
@@ -262,8 +265,44 @@ class UnifiedDigestTest extends TestCase
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
         $envelope = $mail->envelope();
 
-        $this->assertStringContainsString('Ewalina', $envelope->from->name);
+        $this->assertEquals('Ewalina on ' . config('freegle.branding.name'), $envelope->from->name);
         $this->assertStringNotContainsString('Freegler', $envelope->from->name);
+    }
+
+    public function test_immediate_mode_from_name_does_not_double_partner_attribution(): void
+    {
+        // Partner (Trash Nothing) posters carry a name that already ends in
+        // " via Trash Nothing". We strip the partner attribution and join the
+        // site name with " on ", so this reads "Ewalina on Freegle" rather than
+        // surfacing partner branding or the jarring double "via ... via".
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser([
+            'fullname' => 'Ewalina via Trash Nothing',
+            'displayname' => 'Ewalina via Trash Nothing',
+        ]);
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sofa (London)',
+            'fromname' => 'Ewalina via Trash Nothing',
+        ]);
+        $message->setRelation('fromUser', $poster);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $envelope = $mail->envelope();
+
+        $this->assertEquals(
+            'Ewalina on ' . config('freegle.branding.name'),
+            $envelope->from->name
+        );
+        $this->assertStringNotContainsString('Trash Nothing', $envelope->from->name);
+        $this->assertStringNotContainsString('via Freegle', $envelope->from->name);
     }
 
     public function test_immediate_mode_sets_reply_to_header_with_replyto_address(): void
@@ -332,6 +371,130 @@ class UnifiedDigestTest extends TestCase
 
         $this->assertArrayHasKey('X-Freegle-Mail-Type', $headers);
         $this->assertSame('Digest', $headers['X-Freegle-Mail-Type']);
+    }
+
+    public function test_image_url_prefers_primary_attachment_over_ai(): void
+    {
+        // V1 parity: Attachment::getByIds orders by `primary` DESC, id.
+        // Our getMessageImageUrl must do the same so a user-uploaded
+        // photo (primary=1) wins over an AI-generated fallback (primary=0)
+        // even when the AI one has a lower attachment id.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        // AI attachment first (lower id), user photo second (higher id).
+        $aiId = \Illuminate\Support\Facades\DB::table('messages_attachments')->insertGetId([
+            'msgid' => $message->id,
+            'externaluid' => 'freegletusd-' . str_repeat('a', 32),
+            'externalmods' => json_encode(['ai' => true]),
+            'primary' => 0,
+            'archived' => 0,
+        ]);
+        $primaryId = \Illuminate\Support\Facades\DB::table('messages_attachments')->insertGetId([
+            'msgid' => $message->id,
+            'externaluid' => 'freegletusd-' . str_repeat('p', 32),
+            'primary' => 1,
+            'archived' => 0,
+        ]);
+
+        $message->load('attachments');
+
+        $mail = new UnifiedDigest($user, collect([['message' => $message, 'postedToGroups' => [$group->id]]]), UnifiedDigestService::MODE_IMMEDIATE);
+        $rc = new \ReflectionClass($mail);
+        $m = $rc->getMethod('getMessageImageUrl');
+        $m->setAccessible(true);
+        $url = $m->invoke($mail, $message);
+
+        // The primary attachment's id should be in the URL, NOT the AI one's.
+        $this->assertStringContainsString("timg_{$primaryId}.jpg", $url);
+        $this->assertStringNotContainsString("timg_{$aiId}.jpg", $url);
+    }
+
+    public function test_image_url_skips_attachments_with_no_data(): void
+    {
+        // V1's getByIds excludes rows that haven't been fully populated:
+        // (data IS NOT NULL AND LENGTH(data) > 0) OR archived = 1 OR
+        // externaluid IS NOT NULL OR externalurl IS NOT NULL. Without that
+        // filter we'd pick an in-flight attachment row and 404.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        // Half-written attachment: primary=1 but no externaluid/url/archived.
+        \Illuminate\Support\Facades\DB::table('messages_attachments')->insert([
+            'msgid' => $message->id,
+            'externaluid' => null,
+            'externalurl' => null,
+            'primary' => 1,
+            'archived' => 0,
+        ]);
+
+        $message->load('attachments');
+
+        $mail = new UnifiedDigest($user, collect([['message' => $message, 'postedToGroups' => [$group->id]]]), UnifiedDigestService::MODE_IMMEDIATE);
+        $rc = new \ReflectionClass($mail);
+        $m = $rc->getMethod('getMessageImageUrl');
+        $m->setAccessible(true);
+        $url = $m->invoke($mail, $message);
+
+        // Half-written row was filtered out; nothing usable left → null.
+        $this->assertNull($url);
+    }
+
+    public function test_html_body_preserves_user_line_breaks(): void
+    {
+        // Regression: HTML renderer used {{ $messageText }} which escapes
+        // chars but doesn't convert \n to <br>, so multi-paragraph user
+        // descriptions collapsed into a single wall of text in Gmail / web
+        // mail clients (which treat raw \n as whitespace). The template
+        // now uses {!! nl2br(e(…)) !!} — same pattern as the chat
+        // notification template — so per-line breaks survive.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $body = "First line of description\nSecond line\n\nNew paragraph after blank";
+        $message = $this->createTestMessage($poster, $group, [
+            'subject'  => 'OFFER: Sofa (London)',
+            'textbody' => $body,
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'recipient@example.com');
+
+        $html = $spooled['html'] ?? '';
+        $this->assertNotEmpty($html, 'Spooled HTML body should not be empty');
+
+        // Every \n in the source should map to a <br> in the captured HTML.
+        // Match `<br>` or `<br />` (different MJML/HTML serializers emit
+        // both) and assert at least three breaks for the three \n above.
+        $brCount = preg_match_all('/<br\s*\/?>/i', $html);
+        $this->assertGreaterThanOrEqual(
+            3,
+            $brCount,
+            'Multi-line user description should render with <br> per newline; got ' . $brCount . ' <br> tags in HTML body'
+        );
+
+        // And the user content must still be present (i.e. nl2br didn't
+        // mangle it). Look for the distinct first-line tail.
+        $this->assertStringContainsString('First line of description', $html);
+        $this->assertStringContainsString('New paragraph after blank', $html);
     }
 
     public function test_amp_content_excluded_when_disabled(): void

@@ -70,6 +70,12 @@ freegle-mobile/
 # Stale lock files
 .claude/scheduled_tasks.lock
 
+# Agent worktrees — spawned by Claude Code subagents, ephemeral
+.claude/worktrees/
+
 # Local Claude session log (not committed — updates here don't make PRs go BEHIND)
 .claude-session.md
 monitor.db
+
+# freegle switch: runtime state for the worktree-escape guard
+.claude/active-worktree

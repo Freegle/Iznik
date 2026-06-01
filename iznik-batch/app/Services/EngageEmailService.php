@@ -5,9 +5,7 @@ namespace App\Services;
 use App\Mail\Engage\EngageMail;
 use App\Models\Group;
 use App\Models\User;
-use App\Support\SafeMail;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
 
 class EngageEmailService
 {
@@ -114,11 +112,14 @@ class EngageEmailService
 
                 $unsubscribeUrl = config('freegle.sites.user') . '/unsubscribe';
 
-                // SafeMail::sendMailable catches permanent address-rejection
-                // failures (non-ASCII local-part etc) and records a bounce
-                // against the recipient instead of crashing the whole engage
-                // run. The EngageMail's own envelope() sets the to: address.
-                SafeMail::sendMailable(
+                // Spool the mail rather than sending direct so a transient
+                // SMTP blip (e.g. mail-host hangs up between EHLO and MAIL
+                // FROM, producing "got empty code") is retried by the
+                // background processor instead of escaping to Sentry. The
+                // spooler also handles permanent address-rejection failures
+                // (non-ASCII local-part etc) by marking the recipient as
+                // bouncing — same protection SafeMail provided.
+                app(\App\Services\EmailSpoolerService::class)->spool(
                     new EngageMail(
                         recipientName: $user->display_name,
                         recipientEmail: $user->email_preferred,
@@ -128,6 +129,7 @@ class EngageEmailService
                         unsubscribeUrl: $unsubscribeUrl,
                     ),
                     $user->email_preferred,
+                    'engage',
                 );
             }
 

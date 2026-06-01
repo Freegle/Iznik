@@ -129,7 +129,7 @@ class ChatChaseupModsService
                 $notified++;
 
                 if (!$dryRun) {
-                    Mail::send(new ChaseupModsMail(
+                    app(\App\Services\EmailSpoolerService::class)->spool(new ChaseupModsMail(
                         recipientEmail: $modEmail,
                         groupName: $group->nameshort,
                         memberName: $memberName,

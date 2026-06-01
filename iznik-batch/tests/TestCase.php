@@ -10,8 +10,11 @@ use App\Models\Message;
 use App\Models\MessageGroup;
 use App\Models\User;
 use App\Models\UserEmail;
+use App\Services\EmailSpoolerService;
+use App\Services\LokiService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Mail\Mailable;
 
 abstract class TestCase extends BaseTestCase
 {
@@ -52,6 +55,30 @@ abstract class TestCase extends BaseTestCase
         // Docker's MAIL_MAILER=smtp would otherwise override phpunit.xml's setting.
         config(['mail.default' => 'array']);
         \Illuminate\Support\Facades\Mail::forgetMailers();
+
+        // Route EmailSpoolerService::spool() through Mail::send() in Unit/Feature tests
+        // so Mail::fake() + Mail::assertSent(MailableClass::class) works correctly.
+        // Integration tests that set mail.default = 'smtp' (Mailpit) fall back to real
+        // file-based spooling via the parent implementation.
+        $this->app->bind(EmailSpoolerService::class, function ($app) {
+            return new class ($app->make(LokiService::class)) extends EmailSpoolerService {
+                public function spool(Mailable $mailable, string|array|null $to = null, ?string $emailType = null, bool $autoRetry = true): string
+                {
+                    if (config('mail.default') === 'smtp') {
+                        // Integration tests (Mailpit): use real file spooling.
+                        return parent::spool($mailable, $to, $emailType, $autoRetry);
+                    }
+                    // Unit/Feature tests: route through Mail facade so Mail::assertSent() works.
+                    $toArr = is_string($to) ? [$to] : (is_array($to) ? array_filter($to) : []);
+                    if (!empty($toArr)) {
+                        \Illuminate\Support\Facades\Mail::to($toArr)->send($mailable);
+                    } else {
+                        \Illuminate\Support\Facades\Mail::send($mailable);
+                    }
+                    return 'test-spooled-id';
+                }
+            };
+        });
 
         // Force cache driver to 'array' and flush it, so rate-limit / throttle
         // entries (e.g. bounce_autoreply:<hash>) don't leak between tests.

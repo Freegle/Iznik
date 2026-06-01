@@ -113,19 +113,17 @@ class DonationSummaryService
             // most email clients (Gmail, Outlook) sanitised it away, which is
             // why the rendered email arrived without the donations list.
             //
-            // SafeMail::sendMailable catches transient mail-host timeouts so
-            // the daily cron logs at warning level instead of escalating to
-            // Sentry (production hit this on 2026-05-15 08:01). The mailable
-            // already sets recipientEmail via its envelope, so sendMailable
-            // (not send) avoids duplicating the To: header.
-            SafeMail::sendMailable(
-                new DonationSummaryMail(
+            // Spool through EmailSpoolerService so transient mail-host
+            // timeouts are retried by the background processor (production
+            // hit this on 2026-05-15 08:01). The mailable already sets
+            // recipientEmail via its envelope; passing it again is harmless
+            // and makes the call self-documenting.
+            app(\App\Services\EmailSpoolerService::class)->spool(new DonationSummaryMail(
                     recipientEmail: $fundraisingAddr,
                     htmlContent: $rowsHtml,
                     total: $total,
                 ),
-                $fundraisingAddr,
-            );
+                $fundraisingAddr,);
         }
 
         return [

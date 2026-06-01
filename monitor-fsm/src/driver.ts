@@ -434,6 +434,15 @@ async function main() {
   const openPRFixEntries = new Map<number, number>()
   let consecutiveCoverageFailures = 0
 
+  // Track consecutive visits to DIAGNOSE_BUG within one iteration. The state
+  // can legitimately take 2-3 LLM turns (gather → diagnose), but the LLM
+  // sometimes keeps re-running search_code without ever producing a
+  // diagnosisBrief (seen burning 10+ turns on the same bug, e.g. a V1-only
+  // code path). Prompt-level guards proved unreliable. After this many
+  // consecutive turns, force-defer the current bug and move on.
+  const MAX_CONSECUTIVE_DIAGNOSE = 4
+  let consecutiveDiagnose = 0
+
   let step = 0
   while (step < MAX_STEPS) {
     const current = await engine.getInstance(instance.id)
@@ -444,6 +453,60 @@ async function main() {
     if (current.status !== 'active') {
       out(`instance status=${current.status} — stopping`)
       break
+    }
+
+    // ─── LOOP-BREAKER: DIAGNOSE_BUG that never converges ───
+    // Count consecutive turns in DIAGNOSE_BUG. If it exceeds the cap the LLM
+    // is stuck re-searching without producing a diagnosis — force-defer the
+    // current bug and route on, so one undiagnosable bug can't consume the
+    // whole iteration.
+    if (current.currentState === 'DIAGNOSE_BUG') {
+      consecutiveDiagnose++
+      if (consecutiveDiagnose > MAX_CONSECUTIVE_DIAGNOSE) {
+        const ctx: any = current.context ?? {}
+        // The bug under diagnosis is the work-router's singleBug; DIAGNOSE_BUG
+        // only copies it into pendingBugBatch in its PHASE 2, which a looping
+        // run never reaches — so fall back through all three sources.
+        const cb = ctx.currentBug
+          ?? ctx.pendingBugBatch?.[0]
+          ?? ctx._action_work_router_decide?.singleBug
+          ?? null
+        const key = cb && typeof cb.topic !== 'undefined' ? `${cb.topic}.${cb.post}` : 'unknown'
+        outWarn(`loop-breaker: DIAGNOSE_BUG ran ${consecutiveDiagnose} consecutive turns on ${key} without converging — force-deferring`)
+        const existingFixed = Array.isArray(ctx.bugsFixed) ? ctx.bugsFixed : []
+        const deferReason = `loop-breaker: diagnosis did not converge after ${MAX_CONSECUTIVE_DIAGNOSE} turns (likely V1-only or unreproducible)`
+        const deferred = cb
+          ? { ...cb, outcome: 'deferred', reason: deferReason }
+          : null
+        // Mark the bug 'deferred' in the DB too. work_router_decide re-queries
+        // discourse_bug (WHERE state='open') every time it routes, so a
+        // context-only bugsFixed entry is not enough — without this the router
+        // re-serves the same open bug and the loop-breaker fires on it again
+        // (seen: 9685.7 deferred twice in one iteration). The DB write is the
+        // authoritative skip.
+        if (cb && typeof cb.topic !== 'undefined' && typeof cb.post !== 'undefined') {
+          try {
+            db.prepare(
+              "UPDATE discourse_bug SET state='deferred', reason=? WHERE topic=? AND post=? AND state='open'"
+            ).run(deferReason, Number(cb.topic), Number(cb.post))
+          } catch (e: any) {
+            outWarn(`loop-breaker: failed to mark ${key} deferred in DB: ${e?.message ?? e}`)
+          }
+        }
+        await engine.updateContext(instance.id, {
+          ...(deferred ? { bugsFixed: [...existingFixed, deferred] } : {}),
+          currentBug: null,
+        })
+        await engine.forceTransition(
+          instance.id,
+          'WORK_ROUTER',
+          `Loop-breaker: DIAGNOSE_BUG exceeded ${MAX_CONSECUTIVE_DIAGNOSE} consecutive turns on ${key}; deferred and routing on.`,
+        )
+        consecutiveDiagnose = 0
+        continue
+      }
+    } else {
+      consecutiveDiagnose = 0
     }
 
     step++

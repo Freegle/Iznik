@@ -152,7 +152,7 @@ class AlertService
                         ?: 'Freegle Volunteer';
 
                     try {
-                        Mail::send(new AlertMail(
+                        app(\App\Services\EmailSpoolerService::class)->spool(new AlertMail(
                             recipientEmail: $email,
                             recipientName: $name,
                             fromAddress: $fromAddr,
@@ -179,17 +179,20 @@ class AlertService
 
     private function resolveFrom(string $role): array
     {
+        $geeks = config('freegle.mail.geeks_addr') ?: 'geeks@ilovefreegle.org';
+
         if (isset(self::$fromMap[$role])) {
             $entry = self::$fromMap[$role];
+            // Use ?: not config()'s default arg: config()'s default applies only
+            // when the key is ABSENT, but a role address may be present-but-null
+            // (its env var unset → config returns null). Fall back to geeks for
+            // both the absent and null cases.
             $addr = isset($entry['config'])
-                ? config($entry['config'], config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org'))
+                ? (config($entry['config']) ?: $geeks)
                 : $entry['addr'];
             return [$addr, $entry['name']];
         }
 
-        return [
-            config('freegle.mail.geeks_addr', 'geeks@ilovefreegle.org'),
-            'Freegle',
-        ];
+        return [$geeks, 'Freegle'];
     }
 }

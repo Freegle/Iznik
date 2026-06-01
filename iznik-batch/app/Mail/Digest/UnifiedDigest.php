@@ -2,11 +2,13 @@
 
 namespace App\Mail\Digest;
 
+use App\Mail\Contracts\RetryableMailable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
 use App\Mail\Traits\LoggableEmail;
 use App\Mail\Traits\AvatarResolver;
 use App\Mail\Traits\TrackableEmail;
+use App\Models\Message;
 use App\Models\User;
 use App\Services\UnifiedDigestService;
 use App\Support\EmojiUtils;
@@ -22,7 +24,7 @@ use Illuminate\Support\Facades\DB;
  * Contains posts from all communities the user is a member of,
  * with cross-posted items deduplicated.
  */
-class UnifiedDigest extends MjmlMailable
+class UnifiedDigest extends MjmlMailable implements RetryableMailable
 {
     use AmpEmail;
     use AvatarResolver;
@@ -55,7 +57,7 @@ class UnifiedDigest extends MjmlMailable
         $userId = $this->user->exists ? $this->user->id : null;
 
         $this->initTracking(
-            'UnifiedDigest',
+            $this->getEmailType(),
             $this->user->email_preferred,
             $userId,
             null,
@@ -78,6 +80,69 @@ class UnifiedDigest extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->user->id ?? null;
+    }
+
+    /**
+     * IDs needed to rebuild this digest for a durable retry.
+     * Stores only scalars (user id, mode, message ids + group ids).
+     *
+     * {@see RetryableMailable}
+     */
+    public function mailDescriptor(): array
+    {
+        return [
+            'userid' => $this->user->id,
+            'mode' => $this->mode,
+            'posts' => $this->posts->map(fn ($p) => [
+                'msgid' => $p['message']->id,
+                'groups' => $p['postedToGroups'],
+            ])->values()->all(),
+        ];
+    }
+
+    /**
+     * Rebuild a fresh digest from a descriptor, re-fetching from the DB.
+     *
+     * Returns null (cancel the retry) when the user no longer exists or has
+     * no usable address, or when none of the posts still exist in the DB.
+     *
+     * {@see RetryableMailable}
+     */
+    public static function rebuildFromDescriptor(array $descriptor): ?self
+    {
+        $user = User::find($descriptor['userid'] ?? null);
+        if (!$user) {
+            return null;
+        }
+
+        $posts = collect();
+        foreach ($descriptor['posts'] ?? [] as $postData) {
+            $message = Message::find($postData['msgid'] ?? null);
+            if ($message) {
+                $posts->push([
+                    'message' => $message,
+                    'postedToGroups' => $postData['groups'] ?? [],
+                ]);
+            }
+        }
+
+        if ($posts->isEmpty()) {
+            return null;
+        }
+
+        return new self($user, $posts, $descriptor['mode'] ?? UnifiedDigestService::MODE_IMMEDIATE);
+    }
+
+    /**
+     * Split UnifiedDigest into immediate vs daily for sysadmin dropdowns
+     * and tracking stats. Legacy rows written before this split keep the
+     * plain 'UnifiedDigest' value; getDigestNumber() includes both.
+     */
+    public function getEmailType(): string
+    {
+        return $this->mode === UnifiedDigestService::MODE_IMMEDIATE
+            ? 'UnifiedDigestImmediate'
+            : 'UnifiedDigestDaily';
     }
 
     /**
@@ -218,7 +283,13 @@ class UnifiedDigest extends MjmlMailable
             // "Ewalina via Freegle" from the User model.
             $posterUser = $message->relationLoaded('fromUser') ? $message->fromUser : null;
             $posterName = $posterUser?->displayname ?: ($message->fromname ?: 'Freegler');
-            $posterDisplayName = $posterName . ' via ' . config('freegle.branding.name');
+            // Partner (Trash Nothing) posters carry a name that already ends in
+            // " via Trash Nothing" (the raw From-header display name). Strip it
+            // so we don't surface the partner branding in the digest From line.
+            $posterName = preg_replace('/\s+via\s+Trash\s*Nothing\s*$/i', '', $posterName);
+            // V1 parity (iznik-server/include/mail/Digest.php): the immediate
+            // digest From name is "<poster> on <SITE_NAME>".
+            $posterDisplayName = $posterName . ' on ' . config('freegle.branding.name');
 
             // From MUST stay as the Gmail-registered noreply sender for AMP
             // for Email to render — Gmail's Dynamic Mail allowlist keys on
@@ -378,6 +449,13 @@ class UnifiedDigest extends MjmlMailable
                 ? $this->trackedImageUrl($displayImageUrl, "image_{$index}", $scrollPercent)
                 : null;
 
+            // Hero image for immediate (single-post) mode: a larger, height-
+            // capped crop (600x400) so the photo is the hero — V1's immediate
+            // single.mjml used a full-width image. Cropping to a 3:2 box bounds
+            // the height so portrait photos don't dominate. Falls back to the
+            // type placeholder when the post has no usable photo.
+            $heroImageUrl = $this->getMessageImageUrl($message, 600, 400) ?? $placeholderUrl;
+
             // Decode emoji sequences in message text.
             $messageText = $message->textbody
                 ? EmojiUtils::decodeEmojis($message->textbody)
@@ -430,6 +508,7 @@ class UnifiedDigest extends MjmlMailable
                 'messageUrl' => $messageUrl,
                 'imageUrl' => $imageUrl,
                 'displayImageUrl' => $displayImageUrl,
+                'heroImageUrl' => $heroImageUrl,
                 'trackedImageUrl' => $trackedImage,
                 'isPlaceholder' => $imageUrl === null,
                 'postedToText' => $postedToText,
@@ -511,7 +590,7 @@ class UnifiedDigest extends MjmlMailable
     {
         return (int) DB::table('email_tracking')
             ->where('userid', $this->user->id)
-            ->where('email_type', 'UnifiedDigest')
+            ->whereIn('email_type', ['UnifiedDigest', 'UnifiedDigestImmediate', 'UnifiedDigestDaily'])
             ->count();
     }
 
@@ -529,36 +608,58 @@ class UnifiedDigest extends MjmlMailable
 
     /**
      * Get the message image URL via delivery service.
+     *
+     * V1 parity (iznik-server Attachment::getByIds ORDER BY `primary` DESC,
+     * id): prefer the user-uploaded photo (primary=1) over AI-generated
+     * fallbacks (primary=0). Also skip attachment rows that haven't been
+     * fully populated — same condition V1 uses to exclude in-flight rows
+     * with no data/externaluid/externalurl/archived flag set. Without this
+     * filter, we'd pick a half-written attachment and 404.
      */
-    protected function getMessageImageUrl($message): ?string
+    protected function getMessageImageUrl($message, int $width = 300, ?int $height = null): ?string
     {
         if (!$message->attachments || $message->attachments->isEmpty()) {
             return null;
         }
 
-        $attachment = $message->attachments->first();
+        $attachment = $message->attachments
+            ->filter(fn($a) => !empty($a->externaluid) || !empty($a->externalurl) || (int) ($a->archived ?? 0) === 1)
+            ->sortByDesc('primary')
+            ->first();
+
+        if (!$attachment) {
+            return null;
+        }
 
         // If there's an external URL, use it directly.
         if (!empty($attachment->externalurl)) {
-            return $this->getDeliveryUrl($attachment->externalurl, 300);
+            return $this->getDeliveryUrl($attachment->externalurl, $width, $height);
         }
 
         // Build URL from image domain - message images use timg_ prefix for thumbnails.
         $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
         $sourceUrl = "{$imagesDomain}/timg_{$attachment->id}.jpg";
 
-        return $this->getDeliveryUrl($sourceUrl, 300);
+        return $this->getDeliveryUrl($sourceUrl, $width, $height);
     }
 
     /**
      * Get a URL via the delivery service for image resizing/optimization.
      */
-    protected function getDeliveryUrl(string $sourceUrl, int $width): string
+    protected function getDeliveryUrl(string $sourceUrl, int $width, ?int $height = null): string
     {
         if (!$this->deliveryUrl) {
             return $sourceUrl;
         }
 
-        return $this->deliveryUrl . '/?url=' . urlencode($sourceUrl) . '&w=' . $width;
+        $url = $this->deliveryUrl . '/?url=' . urlencode($sourceUrl) . '&w=' . $width;
+
+        if ($height !== null) {
+            // Crop to a fixed box (cover) so a tall portrait photo can't
+            // dominate the email — this is what bounds the hero's max height.
+            $url .= '&h=' . $height . '&fit=cover';
+        }
+
+        return $url;
     }
 }

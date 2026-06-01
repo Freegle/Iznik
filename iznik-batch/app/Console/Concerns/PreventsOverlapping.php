@@ -44,6 +44,16 @@ trait PreventsOverlapping
         }
 
         $lockName = str_replace([':', '\\'], '-', static::class);
+
+        // Commands that run in parallel partitions (e.g. immediate digest
+        // sharded by group) can override lockKeySuffix() to get a
+        // shard-specific lockfile so different shards don't block each
+        // other. Default returns null → single lock per class.
+        $suffix = method_exists($this, 'lockKeySuffix') ? $this->lockKeySuffix() : null;
+        if ($suffix !== null && $suffix !== '') {
+            $lockName .= '-' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $suffix);
+        }
+
         $this->lockFile = "{$lockPath}/{$lockName}.lock";
 
         $this->lockHandle = fopen($this->lockFile, 'c');

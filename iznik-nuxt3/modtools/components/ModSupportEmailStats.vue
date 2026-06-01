@@ -248,9 +248,9 @@
         <!-- Show note when filtering by a type that doesn't use AMP -->
         <div v-if="!isAmpCapableType" class="alert alert-info">
           AMP comparison is not available for "{{ emailTypeLabel }}" emails
-          because they are not sent using AMP. Only Chat Notification emails
-          currently use AMP. Select "All Types" or "Chat Notification" to see
-          AMP statistics.
+          because they are not sent using AMP. Only Chat Notification and
+          Digest (Immediate) emails currently use AMP. Select "All Types",
+          "Chat Notification", or "Digest (Immediate)" to see AMP statistics.
         </div>
 
         <!-- Show note when AMP type selected but no data in period -->
@@ -711,7 +711,11 @@ const emailTypeOptions = [
     value: 'ChatNotificationMod2Mod',
   },
   { text: 'Welcome', value: 'WelcomeMail' },
-  { text: 'Digest', value: 'UnifiedDigest' },
+  // UnifiedDigest emails are tagged per mode: immediate vs daily. The
+  // 'UnifiedDigest' (legacy) value covers rows written before the split.
+  { text: 'Digest (Immediate)', value: 'UnifiedDigestImmediate' },
+  { text: 'Digest (Daily)', value: 'UnifiedDigestDaily' },
+  { text: 'Digest (legacy)', value: 'UnifiedDigest' },
   { text: 'Donation Thank You', value: 'DonationThank' },
   { text: 'Donation Ask', value: 'DonationAsk' },
 ]
@@ -748,8 +752,16 @@ const formattedStats = computed(() => {
   }
 })
 
-// Email types that are sent using AMP.
-const ampCapableTypes = ['', 'ChatNotification']
+// Email types that are sent using AMP. UnifiedDigestImmediate uses the same
+// AMP code path as ChatNotification (both go through the AmpEmail trait).
+// 'UnifiedDigest' (legacy) is included so historical rows still surface AMP
+// stats. Daily-mode digests are not currently Laravel-sent.
+const ampCapableTypes = [
+  '',
+  'ChatNotification',
+  'UnifiedDigest',
+  'UnifiedDigestImmediate',
+]
 
 const isAmpCapableType = computed(() => {
   return ampCapableTypes.includes(emailType.value)

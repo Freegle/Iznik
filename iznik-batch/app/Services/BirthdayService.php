@@ -70,7 +70,7 @@ class BirthdayService
                 }
 
                 if (!$dryRun) {
-                    Mail::send(new BirthdayMail(
+                    app(\App\Services\EmailSpoolerService::class)->spool(new BirthdayMail(
                         groupName: $fromName,
                         groupNameShort: $group->nameshort,
                         groupAge: (int) $group->age,

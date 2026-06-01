@@ -119,9 +119,14 @@ class SpamCheckService
      *
      * Returns null if message is clean, or [isSpam, reason, detail] if spam found.
      *
+     * When $forChatReply is true, skip subject-based heuristics
+     * (subject reuse, bulk-volunteer, greeting, subject-keyword) because the
+     * subject of an email reply just echoes the original post's subject and
+     * those checks produce guaranteed false positives.
+     *
      * @return array{bool, string, string}|null
      */
-    public function checkMessage(ParsedEmail $email): ?array
+    public function checkMessage(ParsedEmail $email, bool $forChatReply = false): ?array
     {
         $ip = $email->senderIp;
         $fromName = $email->fromName ?? '';
@@ -171,25 +176,30 @@ class SpamCheckService
             }
         }
 
-        // Subject reuse detection (only for subjects >= 10 chars)
+        // Subject-based heuristics. Skipped for chat replies because the reply's
+        // subject is just the original post's subject (e.g. "Washing Machine (BD4)"),
+        // so subject-reuse/bulk/greeting checks are guaranteed false positives.
         $prunedSubject = $this->pruneSubject($subject);
-        if (strlen($prunedSubject) >= 10) {
-            $subjectResult = $this->checkSubjectReuse($prunedSubject);
-            if ($subjectResult !== null) {
-                return $subjectResult;
+        if (! $forChatReply) {
+            // Subject reuse detection (only for subjects >= 10 chars)
+            if (strlen($prunedSubject) >= 10) {
+                $subjectResult = $this->checkSubjectReuse($prunedSubject);
+                if ($subjectResult !== null) {
+                    return $subjectResult;
+                }
             }
-        }
 
-        // Bulk volunteer mail detection
-        $bulkResult = $this->checkBulkVolunteerMail($email);
-        if ($bulkResult !== null) {
-            return $bulkResult;
-        }
+            // Bulk volunteer mail detection
+            $bulkResult = $this->checkBulkVolunteerMail($email);
+            if ($bulkResult !== null) {
+                return $bulkResult;
+            }
 
-        // Greeting spam detection
-        $greetingResult = $this->checkGreetingSpam($prunedSubject, $body);
-        if ($greetingResult !== null) {
-            return $greetingResult;
+            // Greeting spam detection
+            $greetingResult = $this->checkGreetingSpam($prunedSubject, $body);
+            if ($greetingResult !== null) {
+                return $greetingResult;
+            }
         }
 
         // Reference to known spammers
@@ -209,9 +219,12 @@ class SpamCheckService
                 return $keywordResult;
             }
 
-            $keywordResult = $this->checkSpamKeywords($subject, [self::ACTION_REVIEW, self::ACTION_SPAM]);
-            if ($keywordResult !== null) {
-                return $keywordResult;
+            // Subject-keyword check skipped for chat replies (subject echoes original post).
+            if (! $forChatReply) {
+                $keywordResult = $this->checkSpamKeywords($subject, [self::ACTION_REVIEW, self::ACTION_SPAM]);
+                if ($keywordResult !== null) {
+                    return $keywordResult;
+                }
             }
         }
 

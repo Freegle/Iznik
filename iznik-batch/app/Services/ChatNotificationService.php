@@ -431,6 +431,16 @@ class ChatNotificationService
             ->limit($limit)
             ->with(['user', 'refMessage'])
             ->get()
+            // Drop duplicate copies of the current message. Duplicate chat rows
+            // are occasionally created for a single send; V1's chatdups cron
+            // (keyed on chatid+message+refmsgid) deletes them, but a notification
+            // can race ahead of that cleanup and would otherwise repeat the
+            // current message under "Earlier in this conversation".
+            ->reject(function (ChatMessage $message) use ($currentMessage) {
+                return $message->userid === $currentMessage->userid
+                    && $message->message === $currentMessage->message
+                    && $message->refmsgid === $currentMessage->refmsgid;
+            })
             ->reverse()
             ->values();
     }
@@ -457,11 +467,11 @@ class ChatNotificationService
             $previousMessages
         );
 
-        if ($this->spooler) {
-            $this->spooler->spool($mailable, $sendingTo->email_preferred, 'chat');
-        } else {
-            Mail::send($mailable);
-        }
+        // Spooler is always available via container; the constructor only
+        // accepts a nullable instance for legacy direct instantiation in
+        // tests. Resolve from the app to keep that path safe too.
+        $spooler = $this->spooler ?? app(EmailSpoolerService::class);
+        $spooler->spool($mailable, $sendingTo->email_preferred, 'chat');
     }
 
     /**

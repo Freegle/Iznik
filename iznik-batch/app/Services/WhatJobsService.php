@@ -11,7 +11,6 @@ class WhatJobsService
     const MINIMUM_CPC = 0.10;
     const MAX_AGE_DAYS = 7;
     const DISTRIBUTE = 0.0005;
-    const SPAM_THRESHOLD = 50;
     const BATCH_SIZE = 500;
     // Refuse to swap the live `jobs` table when parsed count is < this fraction
     // of the existing row count, provided the existing table has at least
@@ -400,6 +399,31 @@ class WhatJobsService
         [['lead'], 'General Manager'],
     ];
 
+    /**
+     * Content-based spam signals derived from sampling the 225k-job WhatJobs
+     * feed (2026-05-27). Each pattern is precision-tuned against verified
+     * spam advertisers (ApexFocusGroup, Cashback.co.uk, Reps.co.uk/Utility
+     * Warehouse MLM) and verified legitimate ones (EE, Brakes, Evri, Durham
+     * Univ, My Four Wheels). Any one pattern in isolation has too many
+     * false-positives — e.g. `earn_per_unit` hits legitimate "earn £46,500"
+     * driver listings from Brakes — but two or more matches together had
+     * zero false positives across the top 9 legitimate companies in the
+     * 225k-job sample. Drops 43k of 225k feed jobs (19%).
+     */
+    private const SPAM_PATTERNS = [
+        'focus_group'    => '/\bfocus\s+group\b|\bpanell?ists?\b/i',
+        'now_accepting'  => '/\bnow\s+accepting\b/i',
+        'earn_per_unit'  => '/\bearn\b[^.]{0,30}\bper\s+(week|day|hour|month)\b/i',
+        'research_study' => '/\bresearch\s+study\s+opportunity\b/i',
+        'flex_earnings'  => '/\bflexible\s+earnings?\s+opportunity\b/i',
+        'be_own_boss'    => '/\bbe\s+your\s+own\s+boss\b|\bwork\s+your\s+own\s+hours\b/i',
+        'money_range_pm' => '/[£$]\s*\d{2,5}\s*[-–]\s*[£$]?\s*\d{3,6}\+?\s*(per\s+month|\/\s*month)/i',
+        'mlm_brand'      => '/\b(utility\s+warehouse|amway|forever\s+living|tupperware|herbalife)\b/i',
+        'paid_survey'    => '/\bpaid\s+(surveys?|focus\s+groups?)\b/i',
+    ];
+
+    private const SPAM_SCORE_THRESHOLD = 2;
+
     /** @var array<string, int|array> per-run drop counts; reset at start of sync() */
     private array $dropStats = [];
 
@@ -489,7 +513,6 @@ class WhatJobsService
             return ['total' => $inserted, 'inserted' => 0, 'skipped_swap' => true, 'existing' => $existing];
         }
 
-        $this->deleteSpammyJobs();
         $this->swapTables();
         $this->analyseClickability();
         $this->updateClickability();
@@ -520,6 +543,7 @@ class WhatJobsService
             'kept'                => $kept,
             'low_cpc'             => $this->dropStats['low_cpc']      ?? 0,
             'too_old'             => $this->dropStats['too_old']      ?? 0,
+            'spam_content'        => $this->dropStats['spam_content'] ?? 0,
             'geocode_fail'        => $this->dropStats['geocode_fail'] ?? 0,
             'no_jobid'            => $this->dropStats['no_jobid']     ?? 0,
             'too_old_by_cpc'      => $this->dropStats['too_old_by_cpc']      ?? [],
@@ -528,6 +552,27 @@ class WhatJobsService
             'geocode_by_reason'   => $this->dropStats['geocode_by_reason']   ?? [],
             'geocode_tuples'      => $tupleSummary,
         ]);
+    }
+
+    /**
+     * Score a job's title+body against SPAM_PATTERNS. Returns true when at
+     * least SPAM_SCORE_THRESHOLD patterns match. Single-pattern hits are
+     * allowed because legitimate listings often hit one in isolation
+     * (e.g. a Brakes driver "earn £46,500" listing hits earn_per_unit alone).
+     */
+    public function isSpamJob(string $title, string $body): bool
+    {
+        $text = $title . ' ' . $body;
+        $matches = 0;
+        foreach (self::SPAM_PATTERNS as $pattern) {
+            if (preg_match($pattern, $text)) {
+                $matches++;
+                if ($matches >= self::SPAM_SCORE_THRESHOLD) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     protected function downloadFeed(string $url): ?string
@@ -659,6 +704,10 @@ class WhatJobsService
                 $this->dropStats['too_old_by_cpc'][$cpcBucket] = ($this->dropStats['too_old_by_cpc'][$cpcBucket] ?? 0) + 1;
                 continue;
             }
+            if ($this->isSpamJob($title, $description)) {
+                $this->dropStats['spam_content'] = ($this->dropStats['spam_content'] ?? 0) + 1;
+                continue;
+            }
 
             $geom = $this->geocodeCityState($city, $state, $country, $geocodeCache, $zip);
             if (!$geom) {
@@ -731,7 +780,13 @@ class WhatJobsService
 
         $cacheKey = "$city,$state,$country";
 
-        if (isset($cache[$cacheKey])) {
+        // array_key_exists (not isset) so cached negative results (null)
+        // are reused — Photon currently rate-limits us with HTTP 429, so
+        // a tuple that fails the first lookup will keep failing every
+        // time it appears in the feed. With 60k+ distinct (city,state,
+        // country) tuples averaging 3-4 occurrences each, caching null
+        // turns ~225k Photon calls into ~60k.
+        if (array_key_exists($cacheKey, $cache)) {
             return $cache[$cacheKey];
         }
 
@@ -826,9 +881,9 @@ class WhatJobsService
             $this->recordGeocodeFail($reason, $city, $state, $country);
         }
 
-        if ($result) {
-            $cache[$cacheKey] = $result;
-        }
+        // Always cache, even on miss. The negative-cache key here is what
+        // makes the array_key_exists check above pay off.
+        $cache[$cacheKey] = $result;
 
         return $result;
     }
@@ -967,14 +1022,34 @@ class WhatJobsService
         $url = rtrim($geocoderBase, '/') . '/api?q=' . urlencode($addr)
             . "&bbox=$bbswlng%2C$bbswlat%2C$bbnelng%2C$bbnelat";
 
-        try {
-            $response = Http::timeout(10)->get($url);
+        // Photon rate-limits us with HTTP 429. Without the backoff retry,
+        // a single burst poisons hundreds of (city,state,country) tuples
+        // with cached nulls. Honour Retry-After if present; otherwise back
+        // off with the suggested defaults (200ms, 800ms).
+        $retryDelaysMs = [200, 800];
+        $attempt       = 0;
+        $results       = null;
+        while (true) {
+            try {
+                $response = Http::timeout(10)->get($url);
+            } catch (\Throwable) {
+                return null;
+            }
+            $status = $response->status();
+            if ($status === 429 && $attempt < count($retryDelaysMs)) {
+                $retryAfter = $response->header('Retry-After');
+                $delayMs    = is_numeric($retryAfter)
+                    ? max(50, (int) $retryAfter * 1000)
+                    : $retryDelaysMs[$attempt];
+                usleep($delayMs * 1000);
+                $attempt++;
+                continue;
+            }
             if (!$response->successful()) {
                 return null;
             }
             $results = $response->json();
-        } catch (\Throwable) {
-            return null;
+            break;
         }
 
         $features = $results['features'] ?? [];
@@ -1148,25 +1223,6 @@ class WhatJobsService
         $flush();
 
         return $inserted;
-    }
-
-    public function deleteSpammyJobs(string $table = 'jobs_new'): int
-    {
-        $spams = DB::select(
-            "SELECT bodyhash FROM $table
-             GROUP BY bodyhash HAVING COUNT(*) > ? AND bodyhash IS NOT NULL",
-            [self::SPAM_THRESHOLD]
-        );
-
-        $deleted = 0;
-        foreach ($spams as $spam) {
-            do {
-                $rows = DB::delete("DELETE FROM $table WHERE bodyhash = ? LIMIT 100", [$spam->bodyhash]);
-            } while ($rows > 0);
-            $deleted++;
-        }
-
-        return $deleted;
     }
 
     public function swapTables(): void

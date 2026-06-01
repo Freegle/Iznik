@@ -562,9 +562,23 @@ func getAIImageReviewChallenge(db *gorm.DB, userID uint64) *Challenge {
 }
 
 // getEEELabelChallenge returns a Freegle attachment for the user to label
-// for EEE (Electrical / Electronic Equipment) classification. Picks the most
-// recent OFFER attachments that the user has not yet labelled and that have
-// not yet reached EEELabelQuorum.
+// for EEE (Electrical / Electronic Equipment) classification. Restricts to
+// attachments the model classifier has already processed (joined via the
+// `eee_classified_attachments` pointer table), so volunteer labels can be
+// scored directly against model output.
+//
+// Previously this picked any recent OFFER with a photo, which produced lots
+// of "wasted" labels on items the classifier never saw (confirmed
+// 2026-05-30: 161 MV-labelled msgids ∩ eee_classifications = 0). Now the
+// candidate set is the intersection of recent OFFER attachments and the
+// classifier's pointer set, so every label can be paired with a model
+// prediction.
+//
+// Performance: drives off `eee_classified_attachments` PRIMARY KEY by
+// joining each pointer to its messages_attachments row. The pointer set
+// is bounded (currently ~5k rows) so the join is cheap, no full scan of
+// messages_attachments. Ordering by classified_at DESC surfaces the most
+// recently classified items first.
 func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 	type AttachmentResult struct {
 		Attid       uint64 `json:"attid"`
@@ -577,19 +591,20 @@ func getEEELabelChallenge(db *gorm.DB, userID uint64) *Challenge {
 
 	err := db.Raw(`
 		SELECT ma_att.id AS attid, m.id AS msgid, ma_att.externaluid, m.subject
-		FROM messages_attachments ma_att
-		INNER JOIN messages m ON m.id = ma_att.msgid
-		LEFT JOIN microactions ma
-			ON ma.eee_attachment_id = ma_att.id
-			AND ma.userid = ?
-			AND ma.actiontype = ?
-		WHERE ma_att.externaluid IS NOT NULL
+		FROM eee_classified_attachments ec
+		INNER JOIN messages_attachments ma_att ON ma_att.id = ec.attid
+		INNER JOIN messages m ON m.id = ec.messageid
+		WHERE m.deleted IS NULL
+			AND ma_att.externaluid IS NOT NULL
 			AND ma_att.externaluid != ''
-			AND m.type = 'Offer'
-			AND m.deleted IS NULL
-			AND ma.id IS NULL
+			AND NOT EXISTS (
+				SELECT 1 FROM microactions ma
+				WHERE ma.eee_attachment_id = ma_att.id
+				  AND ma.userid = ?
+				  AND ma.actiontype = ?
+			)
 			AND (SELECT COUNT(*) FROM microactions WHERE eee_attachment_id = ma_att.id AND actiontype = ?) < ?
-		ORDER BY m.arrival DESC
+		ORDER BY ec.classified_at DESC
 		LIMIT 1
 	`, userID, ChallengeEEELabel, ChallengeEEELabel, EEELabelQuorum).Scan(&att).Error
 

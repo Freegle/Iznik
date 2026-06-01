@@ -7,7 +7,7 @@ const mockChatStore = {
   clear: vi.fn().mockResolvedValue({}),
   fetchReviewChatsMT: vi.fn().mockResolvedValue({}),
   messagesById: vi.fn().mockReturnValue([]),
-  reject: vi.fn().mockResolvedValue({}),
+  rejectChat: vi.fn().mockResolvedValue({}),
 }
 
 const mockAuthStore = {
@@ -197,8 +197,8 @@ describe('chats/review.vue page', () => {
     })
 
     it('deleteConfirmed rejects each visible message via the chat store', async () => {
-      // Regression: clicking "Delete All" → confirming the modal was a no-op
-      // because deleteConfirmed had its chatStore.reject() call commented out.
+      // Regression: chatStore has no reject({id, chatid}) method — only
+      // rejectChat(id). Calling reject() threw TypeError in production.
       mockChatStore.messagesById.mockReturnValue([
         { id: 1, chatid: 100, widerchatreview: false },
         { id: 2, chatid: 200, widerchatreview: false },
@@ -212,9 +212,9 @@ describe('chats/review.vue page', () => {
       wrapper.vm.deleteConfirmed()
       await flushPromises()
 
-      expect(mockChatStore.reject).toHaveBeenCalledTimes(2)
-      expect(mockChatStore.reject).toHaveBeenCalledWith({ id: 1, chatid: null })
-      expect(mockChatStore.reject).toHaveBeenCalledWith({ id: 2, chatid: null })
+      expect(mockChatStore.rejectChat).toHaveBeenCalledTimes(2)
+      expect(mockChatStore.rejectChat).toHaveBeenCalledWith(1)
+      expect(mockChatStore.rejectChat).toHaveBeenCalledWith(2)
     })
 
     it('deleteConfirmed skips wider-chat-review messages (mod-only entries)', async () => {
@@ -231,8 +231,8 @@ describe('chats/review.vue page', () => {
       wrapper.vm.deleteConfirmed()
       await flushPromises()
 
-      expect(mockChatStore.reject).toHaveBeenCalledTimes(1)
-      expect(mockChatStore.reject).toHaveBeenCalledWith({ id: 2, chatid: null })
+      expect(mockChatStore.rejectChat).toHaveBeenCalledTimes(1)
+      expect(mockChatStore.rejectChat).toHaveBeenCalledWith(2)
     })
   })
 

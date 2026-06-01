@@ -178,49 +178,55 @@ const STOP_WORDS = new Set([
   'freegle', 'modtools', 'group', 'message', 'chat', 'email', 'post',
 ])
 
-// Check whether master already has a fix commit for this bug.
-// Searches recent git log (90 days) for fix()/feat() commits whose scope or
-// message matches the bug's code_area, featureArea, or summary keywords.
-// Returns the matching commit short-SHA + subject, or null if no match.
+// DISABLED — this heuristic produced a ~75% false-positive rate (3 of 4 newly
+// tracked bug topics auto-marked "fixed" by commits that didn't actually fix
+// them, e.g. #9715/#9716/#9719). Generic tokens like "chat"/"group"/"name"/
+// "android"/"modtools" routinely match unrelated recent fix commits. The cost
+// of running the full diagnose→reproduce→fix path on an occasional already-
+// fixed bug is far smaller than silently ignoring real reports. If we want to
+// re-enable an auto-fixed shortcut later it needs (at minimum) exact-string
+// matching of a distinctive symptom phrase, not bag-of-words keyword overlap.
 async function checkGitAlreadyFixed(
-  codeArea: string | null,
-  featureArea: string | null,
-  summary: string,
+  _codeArea: string | null,
+  _featureArea: string | null,
+  _summary: string,
 ): Promise<string | null> {
-  try {
-    const { stdout } = await exec('git', [
-      '-C', '/home/edward/FreegleDockerWSL',
-      'log', 'master',
-      '--since=90 days ago',
-      '--pretty=format:%h %s',
-      '--no-merges',
-    ], { maxBuffer: 2 * 1024 * 1024 })
+  return null
+}
 
-    const lines = stdout.split('\n').filter(Boolean)
+/**
+ * Decide which open PRs `close_extra_prs` should sweep.
+ *
+ * Goal: close OTHER PRs the fix delegate opened for the SAME bug as the
+ * expected PR, while preserving every PR for a DIFFERENT bug.
+ *
+ * Identification of "same bug" uses the topic-post suffix (e.g.
+ * `9481-531`) at the end of an FSM-managed branch name. If we can't
+ * extract a suffix from the expected branch, we have no reliable way
+ * to tell which other PRs are duplicates — be conservative and don't
+ * sweep ANY of them. (Previously, an empty suffix caused the filter to
+ * fall through and close every recent edwh-authored PR, including
+ * unrelated manual PRs. See PR #577 incident on 2026-05-30.)
+ *
+ * Pure function so it can be unit-tested without spawning gh.
+ */
+export function selectExtraPrsToClose(
+  prs: Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } | null }>,
+  expectedPrNumber: number,
+  iterationStartTs: string,
+  expectedBugBranch: string,
+): Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } | null }> {
+  const bugSuffix = expectedBugBranch.match(/(\d+-\d+)$/)?.[1] ?? ''
+  if (!bugSuffix) return []
 
-    // Build keyword set from code_area, featureArea, and first 6 words of summary
-    const rawKeywords = [
-      ...(codeArea ?? '').split(/[\/\-\s]+/),
-      ...(featureArea ?? '').split(/[\/\-\s]+/),
-      ...summary.split(/\s+/).slice(0, 6),
-    ]
-      .map(w => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
-      .filter(w => w.length >= 4 && !STOP_WORDS.has(w))
-
-    if (rawKeywords.length === 0) return null
-
-    for (const line of lines) {
-      const lower = line.toLowerCase()
-      // Only consider fix/feat commits — skip test/chore/docs/perf/ci
-      if (!/^\w+ fix|^\w+ feat/.test(lower)) continue
-      const matchCount = rawKeywords.filter(kw => lower.includes(kw)).length
-      // Require at least 2 keyword hits to avoid false positives
-      if (matchCount >= 2) return line.trim()
-    }
-    return null
-  } catch {
-    return null
-  }
+  const cutoff = new Date(iterationStartTs)
+  return prs.filter(pr => {
+    if (pr.number === expectedPrNumber) return false
+    if (new Date(pr.createdAt) < cutoff) return false
+    if (pr.author?.login !== 'edwh') return false
+    if (!pr.headRefName.includes(bugSuffix)) return false
+    return true
+  })
 }
 
 export const actions: ActionDefinition[] = [
@@ -290,7 +296,21 @@ headers = {'User-Api-Key': api_key, 'Api-Username': 'Edward_Hibbert'}
 CONFIRM_RE = re.compile(
     r'\\b(fixed|works? now|working now|confirmed?|thanks?|thankyou|all good|resolved?'
     r'|seems? (?:to be )?(?:fixed|working|ok|good)|unlimited now|no (?:longer|more)'
-    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?)\\b',
+    r'|great[,!.]?\\s*(?:thanks?)?|perfect|sorted|much better|no issues?'
+    r'|fix worked|that worked|worked (?:a treat|fine|now|perfectly)|no problem)\\b',
+    re.IGNORECASE
+)
+
+# Negation guard (sweep 2026-05-31 rule #1): a reporter can say "thanks but it's
+# still broken" / "spoke too soon" / "back again" — CONFIRM_RE matches "thanks"
+# but the bug is NOT fixed. If a post matches STILL_BROKEN_RE, it must NOT be
+# treated as a fix confirmation, even if CONFIRM_RE also matches.
+STILL_BROKEN_RE = re.compile(
+    r'(?:still (?:broken|not working|happening|there|occurring|stuck|the same|an issue|a problem|doing)'
+    r'|spoke too soon|came back|back again|is back|happening again|not fixed|doesn.?t work'
+    r'|did(?:n.?t| not) (?:work|fix)|same (?:problem|issue|thing|error)|no (?:change|difference)'
+    r'|(?:never|hasn.?t|has not|not) worked'
+    r'|worse|reappear|reoccur|again today|once more)',
     re.IGNORECASE
 )
 
@@ -371,22 +391,36 @@ for bug in bugs:
     reporter = bug.get('reporter') or ''
 
     new_posts = get_posts_after(topic_id, orig_post)
+    # Sweep rule #1 (2026-05-31): if ANY non-Edward post in the thread reports the
+    # bug is still broken, do NOT confirm a fix — even if an earlier post said
+    # "thanks, fixed". (9655/4: post 4 "fix worked", post 5 "still omits pending".)
+    any_still_broken = False
     for post in new_posts:
-        username = post.get('username', '')
-        if username == 'Edward_Hibbert':
+        if post.get('username', '') == 'Edward_Hibbert':
             continue
-        text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
-        text = re.sub(r'\\s+', ' ', text).strip()
-        if CONFIRM_RE.search(text):
-            results.append({
-                'topic': topic_id,
-                'post': orig_post,
-                'reporter': reporter,
-                'confirmedBy': username,
-                'confirmPostNumber': post.get('post_number'),
-                'confirmText': text[:200],
-            })
+        t = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
+        t = re.sub(r'\\s+', ' ', t).strip()
+        if STILL_BROKEN_RE.search(t):
+            any_still_broken = True
             break
+
+    if not any_still_broken:
+        for post in new_posts:
+            username = post.get('username', '')
+            if username == 'Edward_Hibbert':
+                continue
+            text = re.sub(r'<[^>]+>', ' ', post.get('cooked', ''))
+            text = re.sub(r'\\s+', ' ', text).strip()
+            if CONFIRM_RE.search(text) and not STILL_BROKEN_RE.search(text):
+                results.append({
+                    'topic': topic_id,
+                    'post': orig_post,
+                    'reporter': reporter,
+                    'confirmedBy': username,
+                    'confirmPostNumber': post.get('post_number'),
+                    'confirmText': text[:200],
+                })
+                break
 
 # Pass B: Edward's posts (open/investigating/deferred)
 for bug in all_bugs:
@@ -1055,20 +1089,7 @@ print(json.dumps(out))
       const listRes = await sh('gh', ['pr', 'list', '--repo', 'Freegle/Iznik', '--state', 'open', '--json', 'number,createdAt,headRefName,author'])
       if (listRes.code !== 0) return { error: `gh pr list failed: ${listRes.stderr}`, closed: [], kept: expectedPrNumber }
       const prs = JSON.parse(listRes.stdout) as Array<{ number: number; createdAt: string; headRefName: string; author: { login: string } }>
-      const cutoff = new Date(iterationStartTs)
-      // Extract the topic+post suffix from the expected branch so we only sweep
-      // PRs for the SAME bug (same topic/post in their branch name). PRs for
-      // other bugs — opened earlier in the same iteration — are left alone.
-      const bugSuffix = expectedBugBranch.match(/(\d+-\d+)$/)?.[1] ?? ''
-      const extras = prs.filter(pr => {
-        if (pr.number === expectedPrNumber) return false
-        if (new Date(pr.createdAt) < cutoff) return false
-        if (pr.author?.login !== 'edwh') return false
-        // If we have a bug suffix, only close PRs whose branch shares it
-        // (i.e. duplicate PRs for the same bug). Leave other bugs' PRs alone.
-        if (bugSuffix && !pr.headRefName.includes(bugSuffix)) return false
-        return true
-      })
+      const extras = selectExtraPrsToClose(prs, expectedPrNumber, iterationStartTs, expectedBugBranch)
       const closed: number[] = []
       for (const pr of extras) {
         const closeRes = await sh('gh', ['pr', 'close', String(pr.number), '--repo', 'Freegle/Iznik', '--comment', 'Closed: duplicate PR for same bug — FSM enforces one PR per bug fix'])
@@ -1129,7 +1150,7 @@ print(json.dumps(out))
 
   {
     name: 'search_code',
-    description: 'Search Go/Nuxt/Laravel code for a pattern. Params: {pattern, path}',
+    description: 'Search Go/Nuxt/Laravel code for a pattern and return the matching lines WITH surrounding context (so you can diagnose without a second read). Params: {pattern, path}. Returns {files: [...paths], matches: [{file, line, text}], context}. Use the returned code excerpts to form a diagnosis — do NOT keep re-searching for the same thing.',
     paramsSchema: {
       type: 'object',
       properties: { pattern: { type: 'string' }, path: { type: 'string' } },
@@ -1137,10 +1158,45 @@ print(json.dumps(out))
     },
     handler: async (params) => {
       const pattern = params.pattern as string
-      const path = (params.path as string) ?? '/home/edward/FreegleDockerWSL'
-      const { stdout } = await sh('rg', ['-l', '-n', pattern, path], undefined)
-      const files = stdout.trim().split('\n').slice(0, 50)
-      return { matches: files }
+      const repo = '/home/edward/FreegleDockerWSL'
+      // ROOT CAUSE of the diagnose loop: this used execFile('rg', ...), but `rg`
+      // is NOT an execFile-resolvable binary here — ripgrep only exists as a
+      // Claude Code *shell function*, so execFile got ENOENT and search_code
+      // ALWAYS returned empty. The diagnosing model saw "0 files matched", had
+      // no code to read, and re-searched forever. Use `git grep` instead: git
+      // is a real binary (/usr/bin/git) and grep returns lines + context. The
+      // optional `path` param is treated as a pathspec scope under the repo.
+      const path = (params.path as string) ?? ''
+      const rel = path ? path.replace(/^\/home\/edward\/FreegleDockerWSL\/?/, '') : ''
+      const pathspec = rel ? [rel.endsWith('/') || !rel.includes('.') ? `${rel.replace(/\/$/, '')}/**` : rel] : []
+      // -I skip binary, -n line numbers, -C 3 context, fixed-string off (regex).
+      const args = ['grep', '-n', '-I', '-C', '3', '-e', pattern]
+      if (pathspec.length) args.push('--', ...pathspec)
+      const { stdout, code } = await sh('git', args, repo)
+      // git grep exits 1 when there are no matches — that's not an error.
+      const raw = (stdout ?? '').trim()
+      const fileSet = new Set<string>()
+      const matches: Array<{ file: string; line: number; text: string }> = []
+      for (const ln of raw.split('\n')) {
+        if (!ln || ln === '--') continue
+        // git grep -C format: path:line:text (match) or path-line-text (context)
+        const m = ln.match(/^(.+?)[:-](\d+)[:-](.*)$/)
+        if (m) {
+          const file = m[1]
+          fileSet.add(file)
+          if (ln.startsWith(`${m[1]}:${m[2]}:`)) {
+            matches.push({ file, line: Number(m[2]), text: m[3].slice(0, 300) })
+          }
+        }
+      }
+      return {
+        files: [...fileSet].slice(0, 50),
+        matchCount: matches.length,
+        matches: matches.slice(0, 40),
+        // Cap the raw excerpt so the context fits a reasonable token budget.
+        context: raw.slice(0, 6000),
+        noMatch: code !== 0 && matches.length === 0,
+      }
     },
   },
 
@@ -1412,13 +1468,25 @@ TEST API — always use these exact commands to run and poll for tests:
   - Playwright:    POST http://localhost:8081/api/tests/playwright → poll http://localhost:8081/api/tests/playwright/status
   - Laravel/PHP:   POST http://localhost:8081/api/tests/laravel
   ALWAYS use port 8081 — not 38081 or any other port you discover.
-  Terminal states are "completed" (success) or "error" (failure).  "passed" and "failed" are NOT valid states.
-  Correct polling pattern (Go example):
-    curl -s -X POST http://localhost:8081/api/tests/go
-    until curl -s http://localhost:8081/api/tests/go/status | python3 -c "
+
+  CRITICAL: the status field is one of these EXACT strings (case- and
+  spelling-sensitive — DO NOT paraphrase, abbreviate, or guess):
+    • "running"   — test in progress
+    • "completed" — success (note the trailing "d" — NOT "complete")
+    • "failed"    — failure (note: "failed", NOT "error" / "fail" / "FAIL")
+  If you write s == "complete", s == "done", s == "success", s == "ok",
+  s == "error", or any other variant, your poll loop will NEVER exit and the
+  FSM will time you out. The literal two strings that mean "stop polling" are
+  "completed" and "failed". Nothing else.
+
+  COPY THIS POLL VERBATIM (substitute only <type> with go|vitest|playwright|laravel):
+    curl -s -X POST http://localhost:8081/api/tests/<type>
+    until curl -s http://localhost:8081/api/tests/<type>/status | python3 -c "
     import sys,json; d=json.load(sys.stdin); s=d.get('status','')
-    print(s); exit(0 if s in ['completed','error'] else 1)
+    print(s); exit(0 if s in ['completed','failed'] else 1)
     " 2>/dev/null; do sleep 5; done
+  Do NOT rewrite the python check to use s == 'X' or grep -q '"status":"X"'.
+  Use the in-list check above so all terminal states are handled.
 
 FORBIDDEN:
   - "I've scheduled a wakeup" / "I'll check back" / "I'll come back to this later" — none of that is possible; if you exit without pushing, the work is lost.
@@ -1471,7 +1539,7 @@ If you omit the marker, your work is considered failed regardless of what actual
       // (implementation) phase this is Haiku — cheap, fast, sufficient for
       // fixing CI or writing a coverage test. In off-peak (analysis) phase
       // this is Sonnet/session-default for heavy diagnosis.
-      const delegateModel = (params.model as string) ?? process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'sonnet'
+      const delegateModel = (params.model as string) ?? process.env.MONITOR_ACTIVE_DELEGATE_MODEL ?? 'claude-opus-4-8'
       startGroup(`· delegate_to_coder (model=${delegateModel})`)
       let toolCount = 0
       const result = await new Promise<{ stdout: string; stderr: string; textStream: string; code: number; killReason: KillReason; lastTool: string | null }>((resolve) => {
@@ -2318,10 +2386,12 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         WHERE state = 'open' AND pr_number IS NULL
       `).all() as Array<any>).filter(b => !fixedKeys.has(`${b.topic}.${b.post}`))
 
-      // Bugs whose PRs have been rejected once need human review — escalate them.
-      // One rejection is enough: if the reviewer closed a PR, they've signalled the
-      // approach is wrong and the FSM shouldn't guess again without guidance.
-      const ESCALATION_THRESHOLD = 1
+      // Escalate to human only after a re-diagnosed SECOND attempt still failed.
+      // A single rejected PR usually means the first diagnosis was wrong, not that
+      // the bug is unfixable — the FSM should re-diagnose and retry (delegates now
+      // run on Opus 4.8). The 2026-05-31 sweep found ~7 genuinely-actionable bugs
+      // (9672, 9719, 9737, 9738, 9656/36) abandoned after a single rejection.
+      const ESCALATION_THRESHOLD = 2
       const toEscalate = dbOpenBugs.filter(b => (b.prRejections ?? 0) >= ESCALATION_THRESHOLD)
       for (const bug of toEscalate) {
         db.prepare(`

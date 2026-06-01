@@ -46,6 +46,7 @@ class BackgroundTask extends Model
     public const TASK_FREEBIE_ALERTS_REMOVE     = 'freebie_alerts_remove';
     public const TASK_HOUSEKEEPER_NOTIFY        = 'housekeeper_notify';
     public const TASK_MESSAGE_OUTCOME           = 'message_outcome';
+    public const TASK_PUSH_NOTIFY_CHAT_MESSAGE  = 'push_notify_chat_message';
     public const TASK_PUSH_NOTIFY_GROUP_MODS    = 'push_notify_group_mods';
     public const TASK_REFER_TO_SUPPORT          = 'refer_to_support';
     public const TASK_REMAP_POSTCODES           = 'remap_postcodes';

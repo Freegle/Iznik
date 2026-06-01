@@ -1890,9 +1890,12 @@ class IncomingMailService
         $reviewRequired = $forceReview;
         $reportReason = $forceReviewReason;
 
-        // Check for spam-level issues (unless already flagged by caller)
+        // Check for spam-level issues (unless already flagged by caller).
+        // Pass forChatReply=true so subject-based heuristics (subject reuse, bulk-volunteer,
+        // greeting, subject-keyword) are skipped: an email reply's subject is just the
+        // original post's subject and would produce guaranteed false positives.
         if (! $reviewRequired) {
-            $spamResult = $this->spamCheck->checkMessage($email);
+            $spamResult = $this->spamCheck->checkMessage($email, forChatReply: true);
             if ($spamResult !== null) {
                 [, $reason, $detail] = $spamResult;
                 $reviewRequired = true;
@@ -1951,7 +1954,7 @@ class IncomingMailService
             'platform' => 0, // Email source
             'reviewrequired' => $reviewRequired ? 1 : 0,
             'reportreason' => $dbReportReason,
-            'processingrequired' => 1, // Background chat_process.php cron handles visibility, roster, push notifications
+            'processingrequired' => 1, // ChatProcessService (chats:process-incoming) handles visibility, roster, and queues push
             'replyreceived' => 0,
         ];
 
@@ -2109,7 +2112,7 @@ class IncomingMailService
                     'type' => ChatMessage::TYPE_IMAGE,
                     'date' => now(),
                     'platform' => 0,
-                    'processingrequired' => 1, // Background chat_process.php cron handles visibility, roster, push notifications
+                    'processingrequired' => 1, // ChatProcessService (chats:process-incoming) handles visibility, roster, and queues push
                     'replyreceived' => 0,
                 ]);
 
@@ -2187,13 +2190,37 @@ class IncomingMailService
             return null;
         }
 
-        // These are already valid enum values
-        $validEnumValues = ['Spam', 'Other', 'Last', 'Force', 'Fully', 'TooMany', 'User', 'UnknownMessage', 'SameImage', 'DodgyImage'];
+        // Enum values accepted by chat_messages.reportreason. The first 10 are the
+        // legacy values; the rest were appended by the 2026-05-27 migration so the
+        // specific spam/review reason flows through to ModChatReview.vue instead of
+        // being collapsed to generic 'Spam' (which produces "failed spam checks, no
+        // more info" in MT chat review).
+        $validEnumValues = [
+            'Spam', 'Other', 'Last', 'Force', 'Fully', 'TooMany', 'User',
+            'UnknownMessage', 'SameImage', 'DodgyImage',
+            'CountryBlocked',
+            'IPUsedForDifferentUsers',
+            'IPUsedForDifferentGroups',
+            'SubjectUsedForDifferentGroups',
+            'SpamAssassin',
+            'Greetings spam',
+            'Referenced known spammer',
+            'Known spam keyword',
+            'URL on DBL',
+            'BulkVolunteerMail',
+            'UsedOurDomain',
+            'WorryWord',
+            'Script',
+            'Link',
+            'Money',
+            'Email',
+            'Language',
+        ];
         if (in_array($reason, $validEnumValues, true)) {
             return $reason;
         }
 
-        // Map detailed reasons to generic 'Spam' enum value
+        // Unknown reason — fall back to generic 'Spam' so the column still accepts it.
         return 'Spam';
     }
 

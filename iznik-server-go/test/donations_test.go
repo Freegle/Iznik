@@ -201,6 +201,42 @@ func TestAddDonationInvalidUserID(t *testing.T) {
 	assert.Equal(t, fiber.StatusBadRequest, resp.StatusCode)
 }
 
+// Regression: a donor who exists but has a NULL `fullname` (only firstname /
+// lastname) must NOT be rejected. Previously the handler treated a NULL
+// fullname as a missing user and returned 400 "Invalid userid", which blocked
+// gift-aid uploads for such donors (observed in production 2026-05-30).
+func TestAddDonationNullFullname(t *testing.T) {
+	prefix := uniquePrefix("AddDonNullName")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+	db := database.DBConn
+
+	// Give the calling user GiftAid permission.
+	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", userID)
+
+	// Target donor exists with firstname/lastname but a NULL fullname.
+	targetUserID := CreateTestUser(t, prefix+"Target", "User")
+	db.Exec("UPDATE users SET fullname = NULL, firstname = 'Julie', lastname = 'Mac' WHERE id = ?", targetUserID)
+
+	body := fmt.Sprintf(`{"userid":%d,"amount":10.00,"date":"2026-05-18 12:00:00"}`, targetUserID)
+	req := httptest.NewRequest("PUT", "/api/donations?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	respBody := rsp(resp)
+	var result map[string]interface{}
+	json2.Unmarshal(respBody, &result)
+	assert.Equal(t, float64(0), result["ret"])
+	assert.NotZero(t, result["id"])
+
+	// Display name should fall back to firstname + lastname.
+	var displayName string
+	db.Raw("SELECT PayerDisplayName FROM users_donations WHERE id = ?", uint64(result["id"].(float64))).Scan(&displayName)
+	assert.Equal(t, "Julie Mac", displayName)
+}
+
 func TestBulkUploadDonations(t *testing.T) {
 	prefix := uniquePrefix("BulkDon")
 	userID := CreateTestUser(t, prefix, "User")

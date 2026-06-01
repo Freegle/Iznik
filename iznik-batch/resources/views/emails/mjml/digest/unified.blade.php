@@ -17,36 +17,36 @@
         {{-- IMMEDIATE MODE: single-post card matching browse page style    --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
-        {{-- Card: image left + content right (matches browse page layout) --}}
-        <mj-section background-color="#ffffff" padding="0" border-radius="4px">
-            {{-- Image column --}}
-            {{-- Use displayImageUrl (direct delivery URL) rather than the
-                 trackedImageUrl tracking-proxy wrapper. Gmail's image proxy
-                 (ci3.googleusercontent.com/meips/...) was returning 404 for
-                 the tracking URL — most likely it dislikes the cross-domain
-                 302 from api.ilovefreegle.org to delivery.ilovefreegle.org,
-                 or it cached a transient failure. Direct delivery is what
-                 the AMP template already uses for the same reason. Click
-                 tracking on the message link still fires via the <a href>;
-                 only the image-view scroll-depth ping is lost on the hero. --}}
-            <mj-column width="38%" padding="0" vertical-align="top">
+        {{-- Hero: the item photo IS the hero (V1 single.html parity — V1's
+             immediate single.mjml used a full-width image). heroImageUrl is a
+             600x400 cover-crop from the delivery proxy, so it fills the 600px
+             email width on desktop and is fluid-on-mobile, while the crop
+             bounds the height (a tall portrait photo can't dominate). The
+             whole image is clickable through to the post via href.
+             Uses the direct delivery URL (not the tracking-proxy wrapper):
+             Gmail's image proxy 404'd on the cross-domain 302 from
+             api→delivery. Click tracking still fires via the <a href>. --}}
+        <mj-section background-color="#e8e8e8" padding="0">
+            <mj-column padding="0" vertical-align="top">
                 <mj-image
                     href="{{ $post['messageUrl'] }}"
-                    src="{{ $post['displayImageUrl'] }}"
+                    src="{{ $post['heroImageUrl'] }}"
                     alt="{{ $post['itemName'] }}"
                     padding="0"
                     fluid-on-mobile="true"
                     container-background-color="#e8e8e8"
                 />
             </mj-column>
-            {{-- Content column --}}
-            <mj-column width="62%" padding="16px 20px 12px 16px" vertical-align="top">
+        </mj-section>
+        {{-- Content sits below the hero --}}
+        <mj-section background-color="#ffffff" padding="16px 20px 4px 20px">
+            <mj-column padding="0" vertical-align="top">
                 {{-- OFFER / WANTED pill --}}
                 <mj-text padding="0 0 8px 0" font-size="13px">
                     <span style="display: inline-block; background-color: {{ $accentColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 3px; letter-spacing: 0.3px;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
                 </mj-text>
                 {{-- Title --}}
-                <mj-text padding="0 0 4px 0" font-size="18px" font-weight="700" color="#212529" line-height="1.25">
+                <mj-text padding="0 0 4px 0" font-size="22px" font-weight="700" color="#212529" line-height="1.25">
                     <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none;">{{ $post['itemName'] }}</a>
                 </mj-text>
                 {{-- Location --}}
@@ -65,24 +65,19 @@
                     @endif
                     <span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
                 </mj-text>
-                {{-- First posted (V1 single.html parity — only shown when the
-                     message has been reposted, otherwise this duplicates the
-                     arrival time above). --}}
-                @if($post['firstPostedFormatted'] ?? null)
-                <mj-text padding="4px 0 0 0" font-size="11px" color="#999999">
-                    First posted&nbsp;{{ $post['firstPostedFormatted'] }}
-                </mj-text>
-                @endif
             </mj-column>
         </mj-section>
 
-        {{-- Full body text --}}
+        {{-- Full body text. nl2br(e(…)) so user-typed paragraph breaks
+             render as <br> in HTML clients (which otherwise collapse \n to
+             a space and run the whole description into one paragraph).
+             e() still escapes user content before nl2br adds the <br>. --}}
         @if($post['messageText'])
         <mj-section background-color="#ffffff" padding="0 20px">
             <mj-column>
                 <mj-divider border-color="#eeeeee" border-width="1px" padding="0" />
                 <mj-text font-size="15px" color="#333333" line-height="1.65" padding="16px 0">
-                    {{ $post['messageText'] }}
+                    {!! nl2br(e($post['messageText'])) !!}
                 </mj-text>
             </mj-column>
         </mj-section>
@@ -96,16 +91,30 @@
                     <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 6px;" />
                     Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 40) }}</strong>
                 </mj-text>
-                {{-- Primary CTA --}}
+                {{-- First posted (V1 single.html parity — only shown when the
+                     message has actually been reposted to this group). Subtle
+                     line under "Posted by …", no styling change to the
+                     attribution row itself. --}}
+                @if($post['firstPostedFormatted'] ?? null)
+                <mj-text padding="0 0 16px 0" font-size="11px" color="#999999">
+                    First posted&nbsp;{{ $post['firstPostedFormatted'] }}
+                </mj-text>
+                @endif
+                {{-- Primary CTA. width="100%" + inner-padding="13px 0"
+                     made Gmail render the button as a full-width green
+                     bar with the "Reply" text left-aligned. Drop the
+                     width override and give the button horizontal
+                     inner-padding so it auto-sizes to text+padding and
+                     align="center" centers it in the column. Same shape
+                     in every client; text always sits in the middle. --}}
                 <mj-button
                     href="{{ $post['messageUrl'] }}"
                     background-color="{{ $accentColor }}"
                     color="#ffffff"
                     font-size="16px"
                     font-weight="600"
-                    inner-padding="13px 0"
+                    inner-padding="13px 48px"
                     border-radius="5px"
-                    width="100%"
                     align="center"
                     padding="0 0 10px 0"
                 >
@@ -133,28 +142,30 @@
                 </mj-text>
             </mj-column>
         </mj-section>
-        <mj-section background-color="#F7F6EC" padding="5px 20px">
+        {{-- Mobile-tight: 12px side padding, 4px vertical row padding, 1.25 line-height
+             on the title, and a 44px icon column (40px image + 4px gap to text). --}}
+        <mj-section background-color="#F7F6EC" padding="5px 12px">
             <mj-column>
                 <mj-table cellpadding="0" cellspacing="0" width="100%">
                     @foreach($jobAds as $job)
                     <tr>
                         @if($job->image_url ?? null)
-                        <td style="width: 50px; padding: 6px 8px 6px 0; vertical-align: middle;">
+                        <td style="width: 44px; padding: 4px 4px 4px 0; vertical-align: middle;">
                             <a href="{{ $job->tracked_url }}">
                                 <img src="{{ $job->image_url }}" width="40" height="40" alt="" style="border-radius: 4px; display: block;" />
                             </a>
                         </td>
-                        <td style="padding: 6px 0; vertical-align: middle;">
+                        <td style="padding: 4px 0; vertical-align: middle;">
                         @else
                         {{-- No image: span both columns so the title fills the row instead of
                              being squeezed into the right column reserved by sibling rows. --}}
-                        <td colspan="2" style="padding: 6px 0; vertical-align: middle;">
+                        <td colspan="2" style="padding: 4px 0; vertical-align: middle;">
                         @endif
-                            <a href="{{ $job->tracked_url }}" style="color: #338808; font-weight: bold; text-decoration: none; font-size: 14px;">
+                            <a href="{{ $job->tracked_url }}" style="color: #338808; font-weight: bold; text-decoration: none; font-size: 14px; line-height: 1.25;">
                                 {{ $job->title }}
                             </a>
                             @if($job->location ?? null)
-                            <br/><span style="color: #666666; font-size: 12px;">{{ $job->location }}</span>
+                            <br/><span style="color: #666666; font-size: 12px; line-height: 1.3;">{{ $job->location }}</span>
                             @endif
                         </td>
                     </tr>

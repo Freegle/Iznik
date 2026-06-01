@@ -84,7 +84,7 @@ class ChatSpamService
             try {
                 if (!$dryRun) {
                     $mail = new SpamWarningMail($innocent, $spammerName, $subject, $replyTo, $replyName);
-                    Mail::to($innocent->email_preferred)->send($mail);
+                    app(\App\Services\EmailSpoolerService::class)->spool($mail, $innocent->email_preferred);
 
                     DB::update('UPDATE chat_rooms SET flaggedspam = 1 WHERE id = ?', [$room->id]);
 
