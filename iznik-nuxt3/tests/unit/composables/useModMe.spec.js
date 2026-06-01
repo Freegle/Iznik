@@ -178,6 +178,56 @@ describe('useModMe checkWork beep behavior', () => {
   })
 })
 
+describe('useModMe re-login behavior', () => {
+  it('spurious beep on re-login when isFirstCheckWork not reset (bug confirmation)', async () => {
+    // First checkWork establishes baseline; isFirstCheckWork → false after this
+    mockFetchMe.mockImplementationOnce(async () => {
+      globalThis.__mockAuthStore.work = { total: 3 }
+    })
+    const { useModMe } = await import('~/modtools/composables/useModMe')
+    const { checkWork } = useModMe()
+    await checkWork(true)
+    expect(mockAudioPlay).not.toHaveBeenCalled() // baseline, no beep
+
+    // Simulate logout: authStore.work cleared (as $reset() does)
+    globalThis.__mockAuthStore.work = null
+
+    // Simulate re-login: same pending work returns
+    mockFetchMe.mockImplementationOnce(async () => {
+      globalThis.__mockAuthStore.work = { total: 3 }
+    })
+    await checkWork(true)
+
+    // BUG: spurious beep fires because isFirstCheckWork was not reset after logout.
+    // currentTotal=0 (cleared), totalCount=3, isFirstCheckWork=false → beep.
+    expect(mockAudioPlay).toHaveBeenCalledOnce()
+  })
+
+  it('no spurious beep on re-login when resetCheckWork is called first', async () => {
+    // First checkWork establishes baseline
+    mockFetchMe.mockImplementationOnce(async () => {
+      globalThis.__mockAuthStore.work = { total: 3 }
+    })
+    const { useModMe } = await import('~/modtools/composables/useModMe')
+    const { checkWork, resetCheckWork } = useModMe()
+    await checkWork(true)
+    expect(mockAudioPlay).not.toHaveBeenCalled()
+
+    // Simulate logout
+    globalThis.__mockAuthStore.work = null
+
+    // Re-login: call resetCheckWork() so next check treats it as the first
+    resetCheckWork()
+    mockFetchMe.mockImplementationOnce(async () => {
+      globalThis.__mockAuthStore.work = { total: 3 }
+    })
+    await checkWork(true)
+
+    // FIXED: no spurious beep on re-login — baseline is re-established
+    expect(mockAudioPlay).not.toHaveBeenCalled()
+  })
+})
+
 describe('useModMe document.title refresh after mod action', () => {
   it('clears title count when checkWork is called after mod action while modal is open', async () => {
     const { useModMe } = await import('~/modtools/composables/useModMe')

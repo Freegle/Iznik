@@ -86,6 +86,7 @@ vi.mock('~/composables/useModMe', () => ({
     hasPermissionSpamAdmin: computed(() => false),
     hasPermissionGiftAid: computed(() => false),
     checkWork: vi.fn(),
+    resetCheckWork: vi.fn(),
   }),
 }))
 
