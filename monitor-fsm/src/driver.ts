@@ -464,8 +464,14 @@ async function main() {
       consecutiveDiagnose++
       if (consecutiveDiagnose > MAX_CONSECUTIVE_DIAGNOSE) {
         const ctx: any = current.context ?? {}
-        const cb = ctx.currentBug ?? ctx.pendingBugBatch?.[0] ?? null
-        const key = cb ? `${cb.topic}.${cb.post}` : 'unknown'
+        // The bug under diagnosis is the work-router's singleBug; DIAGNOSE_BUG
+        // only copies it into pendingBugBatch in its PHASE 2, which a looping
+        // run never reaches — so fall back through all three sources.
+        const cb = ctx.currentBug
+          ?? ctx.pendingBugBatch?.[0]
+          ?? ctx._action_work_router_decide?.singleBug
+          ?? null
+        const key = cb && typeof cb.topic !== 'undefined' ? `${cb.topic}.${cb.post}` : 'unknown'
         outWarn(`loop-breaker: DIAGNOSE_BUG ran ${consecutiveDiagnose} consecutive turns on ${key} without converging — force-deferring`)
         const existingFixed = Array.isArray(ctx.bugsFixed) ? ctx.bugsFixed : []
         const deferred = cb
