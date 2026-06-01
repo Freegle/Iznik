@@ -84,6 +84,8 @@ def main():
     import numpy as np, torch
     from torch.utils.data import Dataset, DataLoader
     from transformers import AutoTokenizer, AutoModelForSequenceClassification
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"device: {device}", flush=True)
 
     rows = load(args.csv)
     train_rows, test_rows = group_split(rows, args.test_fraction)
@@ -105,9 +107,10 @@ def main():
                     "labels": torch.tensor(label)}
 
     model = AutoModelForSequenceClassification.from_pretrained(args.model, num_labels=2)
+    model.to(device)
     # class weights for the ~15% positive imbalance
     neg = len(train_rows) - pos
-    w = torch.tensor([1.0, neg / max(pos, 1)], dtype=torch.float)
+    w = torch.tensor([1.0, neg / max(pos, 1)], dtype=torch.float).to(device)
     loss_fn = torch.nn.CrossEntropyLoss(weight=w)
     opt = torch.optim.AdamW(model.parameters(), lr=2e-5)
 
@@ -116,6 +119,7 @@ def main():
     for ep in range(args.epochs):
         tot = 0.0
         for step, b in enumerate(train_dl):
+            b = {k: v.to(device) for k, v in b.items()}
             out = model(input_ids=b["input_ids"], attention_mask=b["attention_mask"])
             loss = loss_fn(out.logits, b["labels"])
             loss.backward(); opt.step(); opt.zero_grad()
@@ -129,6 +133,7 @@ def main():
     test_dl = DataLoader(DS(test_rows), batch_size=args.batch)
     with torch.no_grad():
         for b in test_dl:
+            b = {k: v.to(device) for k, v in b.items()}
             out = model(input_ids=b["input_ids"], attention_mask=b["attention_mask"])
             p = torch.softmax(out.logits, dim=1)[:, 1]
             scores.extend(p.tolist()); labels.extend(b["labels"].tolist())
