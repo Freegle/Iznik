@@ -2,6 +2,7 @@
 
 namespace App\Mail\Chat;
 
+use App\Mail\Contracts\RetryableMailable;
 use App\Mail\MjmlMailable;
 use App\Mail\Traits\AmpEmail;
 use App\Mail\Traits\AvatarResolver;
@@ -19,7 +20,7 @@ use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Support\Collection;
 use Symfony\Component\Mime\Email;
 
-class ChatNotification extends MjmlMailable
+class ChatNotification extends MjmlMailable implements RetryableMailable
 {
     use AvatarResolver;
     use TrackableEmail;
@@ -47,6 +48,13 @@ class ChatNotification extends MjmlMailable
     public Collection $previousMessages;
 
     public ?Message $refMessage;
+
+    /**
+     * Whether this is a "waiting for reply" chase-up of an expected reply.
+     * When TRUE the subject is prefixed with "WAITING FOR REPLY: " to match
+     * iznik-server ChatRoom::chaseupExpected() (ChatRoom.php:2466).
+     */
+    public bool $waitingForReply = false;
 
     /**
      * Whether this notification is for the sender's own message (copy to self).
@@ -90,13 +98,15 @@ class ChatNotification extends MjmlMailable
         ChatRoom $chatRoom,
         ChatMessage $message,
         string $chatType,
-        ?Collection $previousMessages = NULL
+        ?Collection $previousMessages = NULL,
+        bool $waitingForReply = false
     ) {
         $this->recipient = $recipient;
         $this->sender = $sender;
         $this->chatRoom = $chatRoom;
         $this->message = $message;
         $this->chatType = $chatType;
+        $this->waitingForReply = $waitingForReply;
         $this->previousMessages = $previousMessages ?? collect();
         $this->userSite = config('freegle.sites.user');
         $this->modSite = config('freegle.sites.mod');
@@ -210,6 +220,64 @@ class ChatNotification extends MjmlMailable
     protected function getRecipientUserId(): ?int
     {
         return $this->recipient->id;
+    }
+
+    /**
+     * IDs needed to rebuild this notification for a durable retry — recipient,
+     * sender, chat, message, type, and the ids of the context ("earlier in
+     * this conversation") messages. Never the built models.
+     *
+     * {@see RetryableMailable}
+     */
+    public function mailDescriptor(): array
+    {
+        return [
+            'recipient' => $this->recipient->id,
+            'sender' => $this->sender?->id,
+            'chatid' => $this->chatRoom->id,
+            'messageid' => $this->message->id,
+            'chattype' => $this->chatType,
+            'previous' => $this->previousMessages->pluck('id')->all(),
+        ];
+    }
+
+    /**
+     * Rebuild a fresh notification from a descriptor, re-fetching from the DB.
+     *
+     * Returns null (cancel the retry) when the recipient, chat, or triggering
+     * message has since been deleted, or the recipient no longer has a usable
+     * address. A missing sender is allowed (the constructor accepts a null
+     * sender), as are missing context messages.
+     *
+     * {@see RetryableMailable}
+     */
+    public static function rebuildFromDescriptor(array $descriptor): ?self
+    {
+        $recipient = User::find($descriptor['recipient'] ?? null);
+        if (!$recipient || !$recipient->email_preferred) {
+            return null;
+        }
+
+        $message = ChatMessage::find($descriptor['messageid'] ?? null);
+        $chatRoom = ChatRoom::find($descriptor['chatid'] ?? null);
+        if (!$message || !$chatRoom) {
+            return null;
+        }
+
+        $sender = isset($descriptor['sender']) ? User::find($descriptor['sender']) : null;
+
+        $previous = !empty($descriptor['previous'])
+            ? ChatMessage::whereIn('id', $descriptor['previous'])->orderBy('id')->get()
+            : collect();
+
+        return new self(
+            $recipient,
+            $sender,
+            $chatRoom,
+            $message,
+            $descriptor['chattype'] ?? ChatRoom::TYPE_USER2USER,
+            $previous
+        );
     }
 
     /**
@@ -490,6 +558,22 @@ class ChatNotification extends MjmlMailable
      * - All mods get: "{GroupShortName} Volunteer Chat: {SenderName}"
      */
     protected function generateSubject(): string
+    {
+        $subject = $this->generateBaseSubject();
+
+        // Chase-up of an expected reply: prefix to match iznik-server
+        // ChatRoom::chaseupExpected() (ChatRoom.php:2466).
+        if ($this->waitingForReply) {
+            return 'WAITING FOR REPLY: ' . $subject;
+        }
+
+        return $subject;
+    }
+
+    /**
+     * Generate the base (un-prefixed) subject line based on context.
+     */
+    protected function generateBaseSubject(): string
     {
         if ($this->chatType === ChatRoom::TYPE_USER2MOD) {
             $group = $this->chatRoom->group;

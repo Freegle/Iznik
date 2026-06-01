@@ -235,18 +235,20 @@ class UnifiedDigestTest extends TestCase
 
     public function test_immediate_mode_from_displayname_uses_poster_displayname(): void
     {
-        // The inbox preview shows the From display-name ("Ewalina via Freegle"),
-        // and the body shows the same name resolved from User->displayname.
-        // Both must agree; the previous code only consulted messages.fromname,
-        // which was often empty and produced "Freegler via Freegle" in the
-        // inbox while the body said "Ewalina".
+        // The inbox preview shows the From display-name ("Ewalina on Freegle",
+        // V1 parity), and the body shows the same name resolved from
+        // User->displayname. Both must agree; the previous code only consulted
+        // messages.fromname, which was often empty and produced "Freegler on
+        // Freegle" in the inbox while the body said "Ewalina".
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
         $this->createMembership($user, $group);
 
+        // displayname is a computed accessor (User::getDisplayNameAttribute),
+        // not a stored column — it derives from fullname, so set fullname here.
+        // Passing a 'displayname' key would be silently ignored by the accessor.
         $poster = $this->createTestUser([
-            'fullname' => 'Ewalina Test',
-            'displayname' => 'Ewalina',
+            'fullname' => 'Ewalina',
         ]);
         $this->createMembership($poster, $group);
         $message = $this->createTestMessage($poster, $group, [
@@ -263,8 +265,44 @@ class UnifiedDigestTest extends TestCase
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
         $envelope = $mail->envelope();
 
-        $this->assertStringContainsString('Ewalina', $envelope->from->name);
+        $this->assertEquals('Ewalina on ' . config('freegle.branding.name'), $envelope->from->name);
         $this->assertStringNotContainsString('Freegler', $envelope->from->name);
+    }
+
+    public function test_immediate_mode_from_name_does_not_double_partner_attribution(): void
+    {
+        // Partner (Trash Nothing) posters carry a name that already ends in
+        // " via Trash Nothing". We strip the partner attribution and join the
+        // site name with " on ", so this reads "Ewalina on Freegle" rather than
+        // surfacing partner branding or the jarring double "via ... via".
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser([
+            'fullname' => 'Ewalina via Trash Nothing',
+            'displayname' => 'Ewalina via Trash Nothing',
+        ]);
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Sofa (London)',
+            'fromname' => 'Ewalina via Trash Nothing',
+        ]);
+        $message->setRelation('fromUser', $poster);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $envelope = $mail->envelope();
+
+        $this->assertEquals(
+            'Ewalina on ' . config('freegle.branding.name'),
+            $envelope->from->name
+        );
+        $this->assertStringNotContainsString('Trash Nothing', $envelope->from->name);
+        $this->assertStringNotContainsString('via Freegle', $envelope->from->name);
     }
 
     public function test_immediate_mode_sets_reply_to_header_with_replyto_address(): void

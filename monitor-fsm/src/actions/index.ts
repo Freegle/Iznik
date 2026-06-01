@@ -1150,7 +1150,7 @@ print(json.dumps(out))
 
   {
     name: 'search_code',
-    description: 'Search Go/Nuxt/Laravel code for a pattern. Params: {pattern, path}',
+    description: 'Search Go/Nuxt/Laravel code for a pattern and return the matching lines WITH surrounding context (so you can diagnose without a second read). Params: {pattern, path}. Returns {files: [...paths], matches: [{file, line, text}], context}. Use the returned code excerpts to form a diagnosis — do NOT keep re-searching for the same thing.',
     paramsSchema: {
       type: 'object',
       properties: { pattern: { type: 'string' }, path: { type: 'string' } },
@@ -1158,10 +1158,45 @@ print(json.dumps(out))
     },
     handler: async (params) => {
       const pattern = params.pattern as string
-      const path = (params.path as string) ?? '/home/edward/FreegleDockerWSL'
-      const { stdout } = await sh('rg', ['-l', '-n', pattern, path], undefined)
-      const files = stdout.trim().split('\n').slice(0, 50)
-      return { matches: files }
+      const repo = '/home/edward/FreegleDockerWSL'
+      // ROOT CAUSE of the diagnose loop: this used execFile('rg', ...), but `rg`
+      // is NOT an execFile-resolvable binary here — ripgrep only exists as a
+      // Claude Code *shell function*, so execFile got ENOENT and search_code
+      // ALWAYS returned empty. The diagnosing model saw "0 files matched", had
+      // no code to read, and re-searched forever. Use `git grep` instead: git
+      // is a real binary (/usr/bin/git) and grep returns lines + context. The
+      // optional `path` param is treated as a pathspec scope under the repo.
+      const path = (params.path as string) ?? ''
+      const rel = path ? path.replace(/^\/home\/edward\/FreegleDockerWSL\/?/, '') : ''
+      const pathspec = rel ? [rel.endsWith('/') || !rel.includes('.') ? `${rel.replace(/\/$/, '')}/**` : rel] : []
+      // -I skip binary, -n line numbers, -C 3 context, fixed-string off (regex).
+      const args = ['grep', '-n', '-I', '-C', '3', '-e', pattern]
+      if (pathspec.length) args.push('--', ...pathspec)
+      const { stdout, code } = await sh('git', args, repo)
+      // git grep exits 1 when there are no matches — that's not an error.
+      const raw = (stdout ?? '').trim()
+      const fileSet = new Set<string>()
+      const matches: Array<{ file: string; line: number; text: string }> = []
+      for (const ln of raw.split('\n')) {
+        if (!ln || ln === '--') continue
+        // git grep -C format: path:line:text (match) or path-line-text (context)
+        const m = ln.match(/^(.+?)[:-](\d+)[:-](.*)$/)
+        if (m) {
+          const file = m[1]
+          fileSet.add(file)
+          if (ln.startsWith(`${m[1]}:${m[2]}:`)) {
+            matches.push({ file, line: Number(m[2]), text: m[3].slice(0, 300) })
+          }
+        }
+      }
+      return {
+        files: [...fileSet].slice(0, 50),
+        matchCount: matches.length,
+        matches: matches.slice(0, 40),
+        // Cap the raw excerpt so the context fits a reasonable token budget.
+        context: raw.slice(0, 6000),
+        noMatch: code !== 0 && matches.length === 0,
+      }
     },
   },
 

@@ -62,11 +62,11 @@ abstract class TestCase extends BaseTestCase
         // file-based spooling via the parent implementation.
         $this->app->bind(EmailSpoolerService::class, function ($app) {
             return new class ($app->make(LokiService::class)) extends EmailSpoolerService {
-                public function spool(Mailable $mailable, $to = null, ?string $emailType = null): string
+                public function spool(Mailable $mailable, string|array|null $to = null, ?string $emailType = null, bool $autoRetry = true): string
                 {
                     if (config('mail.default') === 'smtp') {
                         // Integration tests (Mailpit): use real file spooling.
-                        return parent::spool($mailable, $to, $emailType);
+                        return parent::spool($mailable, $to, $emailType, $autoRetry);
                     }
                     // Unit/Feature tests: route through Mail facade so Mail::assertSent() works.
                     $toArr = is_string($to) ? [$to] : (is_array($to) ? array_filter($to) : []);

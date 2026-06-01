@@ -475,6 +475,38 @@ class ChatNotificationService
     }
 
     /**
+     * Send a "waiting for reply" chase-up email to a user who is expected to
+     * reply in a User2User chat. Reuses the standard chat-notification email
+     * (same template, previous-message context and threading) with the subject
+     * prefixed "WAITING FOR REPLY:".
+     *
+     * Mirrors iznik-server ChatRoom::chaseupExpected() (ChatRoom.php:2456-2520),
+     * which constructs the ordinary user2user notification but prefixes the
+     * subject. Used by ChatChaseupExpectedService / chats:chaseup-expected.
+     */
+    public function sendChaseupExpected(
+        User $sendingTo,
+        ?User $sendingFrom,
+        ChatRoom $chatRoom,
+        ChatMessage $message
+    ): void {
+        $previousMessages = $this->getPreviousMessages($chatRoom, $message);
+
+        $mailable = new ChatNotification(
+            $sendingTo,
+            $sendingFrom,
+            $chatRoom,
+            $message,
+            ChatRoom::TYPE_USER2USER,
+            $previousMessages,
+            waitingForReply: true
+        );
+
+        $spooler = $this->spooler ?? app(EmailSpoolerService::class);
+        $spooler->spool($mailable, $sendingTo->email_preferred, 'chat');
+    }
+
+    /**
      * Update the mailedtoall flag if all roster members have been notified.
      */
     protected function updateMailedToAll(ChatMessage $message): void
