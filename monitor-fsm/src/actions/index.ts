@@ -2457,21 +2457,28 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         .filter(b => !isLikelyCoveredByMergedPR(b))
 
       if (allPending.length > 0) {
-        // Dispatch ONE bug at a time (oldest first_seen_at). With a single self-hosted
-        // CI runner, parallel bug dispatch creates a queue of N simultaneous CI jobs
-        // that all wait behind each other — zero benefit, high cost. One bug → one PR
-        // → drive it to green → then pick the next. This is the same principle as the
-        // focus PR logic in ci_router_decide.
-        const oneBug = allPending.sort((a, b) => {
+        // Dispatch a BATCH of up to MAX_PARALLEL_BUGS bugs (oldest first_seen_at
+        // first) to PARALLEL_FIX_BUGS, which runs one fully self-contained
+        // diagnose→test→fix→PR task per bug via delegate_parallel_tasks. Each
+        // task gets its own isolated git worktree + branch + PR, and CI is now
+        // Katapult cloud runners (~5 concurrent), so N PRs each get a runner
+        // rather than queueing behind one. The old one-bug-at-a-time throttle
+        // was premised on a single self-hosted runner that no longer exists.
+        const MAX_PARALLEL_BUGS = 5
+        const sorted = allPending.slice().sort((a, b) => {
           const at = typeof a.first_seen_at === 'string' ? a.first_seen_at : '9999'
           const bt = typeof b.first_seen_at === 'string' ? b.first_seen_at : '9999'
           return at < bt ? -1 : at > bt ? 1 : 0
-        })[0]
+        })
+        const bugBatch = sorted.slice(0, MAX_PARALLEL_BUGS)
+        const batchKeys = bugBatch.map(b => `${b.topic}.${b.post}`).join(', ')
         return {
-          _transition: 'DIAGNOSE_BUG',
-          reason: `${allPending.length} unfixed bug(s) queued — beginning TDD pipeline for 1 (oldest: topic ${oneBug.topic}/${oneBug.post}); ${allPending.length - 1} deferred to next iteration`,
-          dbOpenBugs: [oneBug].filter(b => !pendingBugs.some((p: any) => `${p.topic}.${p.post}` === `${b.topic}.${b.post}`)),
-          singleBug: oneBug,
+          _transition: 'PARALLEL_FIX_BUGS',
+          reason: `${allPending.length} unfixed bug(s) queued — dispatching ${bugBatch.length} in parallel (${batchKeys})${allPending.length > bugBatch.length ? `; ${allPending.length - bugBatch.length} to next iteration` : ''}`,
+          dbOpenBugs: bugBatch.filter(b => !pendingBugs.some((p: any) => `${p.topic}.${p.post}` === `${b.topic}.${b.post}`)),
+          bugBatch,
+          // Keep singleBug for backward-compat with any path still reading it.
+          singleBug: bugBatch[0],
         }
       }
       const sentry = ctx?._action_check_sentry ?? {}
