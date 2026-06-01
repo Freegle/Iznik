@@ -321,6 +321,47 @@ class ChatProcessServiceTest extends TestCase
         $this->assertNull($updated->reportreason);
     }
 
+    // --- Postcode hold (Discourse #9656 post 38) ---
+    //
+    // Regex concern keywords can match UK postcode patterns (e.g. a scam-detection
+    // regex that inadvertently covers postcode inward/outward codes). Sharing a
+    // collection address is as legitimate as sharing a phone number, so postcodes
+    // must be stripped before concern-keyword scanning in chat — same rationale as
+    // the phone-number exclusion.
+
+    public function test_moderated_user_message_with_postcode_is_not_held(): void
+    {
+        // A message containing only a UK postcode must NOT be held for review even
+        // when a global regex concern keyword matches postcode patterns — sharing a
+        // collection address is normal in chat.
+        DB::table('concern_keywords')->insert([
+            'keyword'    => '\b[A-Z]{1,2}\d\s+\d[A-Z]{2}\b',
+            'category'   => 'review',
+            'action'     => 'flag',
+            'match_mode' => 'regex',
+            'scope'      => 'global',
+            'group_id'   => 0,
+        ]);
+
+        $sender    = $this->createTestUser(['chatmodstatus' => 'Moderated']);
+        $recipient = $this->createTestUser();
+        $room      = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message'              => 'Please collect at AB1 2CD',
+            'processingrequired'   => 1,
+            'processingsuccessful' => 0,
+            'platform'             => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(0, $updated->reviewrequired,
+            'A message containing a UK postcode should NOT be held for review in chat');
+        $this->assertNull($updated->reportreason);
+    }
+
     public function test_moderated_user_message_with_phone_number_is_not_held(): void
     {
         // Sharing a phone number to arrange a handover is normal, so chat

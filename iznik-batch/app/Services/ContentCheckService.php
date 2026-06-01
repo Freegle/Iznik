@@ -160,6 +160,12 @@ class ContentCheckService
      * checked phone numbers either.) The checkPhoneNumbers() check still runs
      * for posts via checkMessage().
      *
+     * UK postcodes are stripped from the message before concern-keyword and
+     * other text checks run: sharing a collection address is as legitimate as
+     * sharing a phone number, and a postcode-shaped string must not trigger a
+     * regex concern keyword added for other purposes. (V1 parity: Spam::checkReview()
+     * never checked postcodes either.)
+     *
      * @return array|null Reason ['check','category','action','detail'] or null.
      */
     public function checkChatMessage(string $message): ?array
@@ -169,12 +175,16 @@ class ContentCheckService
             return null;
         }
 
-        return $this->checkConcernKeywords('', $message, 0)
-            ?? $this->checkUrls('', $message)
-            ?? $this->checkMessagingLinks('', $message)
-            ?? $this->checkMoneySymbols('', $message)
-            ?? $this->checkKnownSpammer($message)
-            ?? $this->checkLanguage('', $message);
+        // Strip UK postcodes so a postcode-shaped token cannot fire a regex
+        // concern keyword.  Sharing a collection postcode is normal in chat.
+        $sanitised = preg_replace(self::POSTCODE_PATTERN, ' ', $message);
+
+        return $this->checkConcernKeywords('', $sanitised, 0)
+            ?? $this->checkUrls('', $sanitised)
+            ?? $this->checkMessagingLinks('', $sanitised)
+            ?? $this->checkMoneySymbols('', $sanitised)
+            ?? $this->checkKnownSpammer($sanitised)
+            ?? $this->checkLanguage('', $sanitised);
     }
 
     /**
@@ -732,6 +742,15 @@ class ContentCheckService
 
         return null;
     }
+
+    // -------------------------------------------------------------------------
+    // UK postcode pattern — used to strip postcodes from chat messages before
+    // concern-keyword checks run.  Sharing a collection postcode is normal in
+    // chat (same rationale as the phone-number exclusion).  Matches the V1
+    // Utils::POSTCODE_PATTERN covering GIR 0AA plus all AN/ANN/AAN/AANN forms.
+    // -------------------------------------------------------------------------
+
+    private const POSTCODE_PATTERN = '/([Gg][Ii][Rr] 0[Aa]{2})|((([A-Za-z][0-9]{1,2})|(([A-Za-z][A-Ha-hJ-Yj-y][0-9]{1,2})|(([A-Za-z][0-9][A-Za-z])|([A-Za-z][A-Ha-hJ-Yj-y][0-9][A-Za-z]?))))\s?[0-9][A-Za-z]{2})/m';
 
     // -------------------------------------------------------------------------
     // PII — external email addresses, only when group rule restrictpersonalinfo
