@@ -53,7 +53,7 @@ sentry-issues.db
 /iznik-batch/coverage/
 
 # Ralph working directories (session-specific)
-ralph/
+/ralph/
 
 # Local Netlify folder
 .netlify

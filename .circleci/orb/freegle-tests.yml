@@ -70,7 +70,12 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
-      PW_WORKERS: 9
+      # 9 workers (9 Chromium instances) OOM-killed the Katapult VM during the
+      # parallel test phase (iznik-batch + Playwright + Go + Vitest + the full
+      # container stack all at once), surfacing as build-test-katapult
+      # infrastructure_fail. 4 matches the standard executor's proven value and
+      # gives the VM memory headroom. See master CI outage 2026-06-01.
+      PW_WORKERS: 4
       VITEST_MAX_WORKERS: 4
       PORT_TRAEFIK_HTTP: 9080
       PORT_TRAEFIK_API: 17192
@@ -2114,9 +2119,12 @@ jobs:
             checkout_code() {
               if [ -d .git ]; then
                 git fetch --prune origin
-                git reset --hard HEAD
-                git clean -fd
-                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+                # HEAD may be an orphan if a previous run failed mid-init; ignore the error.
+                git reset --hard HEAD 2>/dev/null || true
+                # -x also removes gitignored files (e.g. .claude/skills/ralph/) that
+                # would otherwise block checkout with "untracked files would be overwritten".
+                git clean -fdx
+                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
                 # Second clean: removes files from previous branch that git checkout couldn't
                 # delete (e.g., root-owned files created by Docker containers via bind mounts,
                 # or files left by concurrent builds sharing the workspace directory).
@@ -2128,8 +2136,9 @@ jobs:
                 git init
                 git remote add origin "$CIRCLE_REPOSITORY_URL" 2>/dev/null || git remote set-url origin "$CIRCLE_REPOSITORY_URL"
                 git fetch --prune origin
-                git clean -fd
-                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH"
+                # -x also removes gitignored files that would block checkout.
+                git clean -fdx
+                git checkout -B "$CIRCLE_BRANCH" "origin/$CIRCLE_BRANCH" || return 1
                 git clean -fd
               fi
             }
