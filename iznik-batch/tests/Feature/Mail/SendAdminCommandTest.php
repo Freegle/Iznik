@@ -617,10 +617,12 @@ class SendAdminCommandTest extends TestCase
         $user = $this->createTestUser(['lastaccess' => now()]);
         $this->createMembership($user, $group);
 
-        // Create a moderator with publish consent (should appear as volunteer).
+        // Create a moderator who hasn't opted out via "Show me as a volunteer"
+        // (should appear in the volunteer list). users.settings.showmod defaults
+        // to true when the JSON key is missing, so leaving settings unset is
+        // exactly the same path as a real mod who never touched the toggle.
         $mod = $this->createTestUser([
             'lastaccess' => now(),
-            'publishconsent' => 1,
             'fullname' => 'Jane Smith',
         ]);
         $this->createMembership($mod, $group, [
@@ -634,6 +636,47 @@ class SendAdminCommandTest extends TestCase
 
         Mail::assertSent(AdminMail::class, function (AdminMail $mail) {
             return !empty($mail->volunteers) && $mail->volunteers[0]['firstname'] === 'Jane';
+        });
+    }
+
+    /**
+     * Test: a moderator who has toggled "Show me as a volunteer" OFF
+     * (users.settings.showmod = false) is excluded from the volunteer list.
+     * Regression cover for the previous publishconsent=1 filter which used
+     * the wrong consent column (see BirthdayService::getActiveVolunteers
+     * for the full rationale and the V1→V2 parity history).
+     */
+    public function test_moderator_with_showmod_false_not_passed_to_admin_mail(): void
+    {
+        config(['freegle.mail.enabled_types' => 'Admin']);
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+
+        // Recipient.
+        $user = $this->createTestUser(['lastaccess' => now()]);
+        $this->createMembership($user, $group);
+
+        // Mod who opted out via "Show me as a volunteer": settings.showmod = false.
+        $optedOut = $this->createTestUser([
+            'lastaccess' => now(),
+            'fullname'   => 'Hidden Mod',
+        ]);
+        DB::table('users')
+            ->where('id', $optedOut->id)
+            ->update(['settings' => json_encode(['showmod' => false])]);
+        $this->createMembership($optedOut, $group, [
+            'role' => Membership::ROLE_MODERATOR,
+        ]);
+
+        $adminId = $this->createAdmin($group);
+
+        $this->artisan('mail:admin:send', ['--id' => $adminId])
+            ->assertSuccessful();
+
+        Mail::assertSent(AdminMail::class, function (AdminMail $mail) {
+            $firstnames = array_column($mail->volunteers ?? [], 'firstname');
+            return ! in_array('Hidden', $firstnames, true);
         });
     }
 

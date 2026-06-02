@@ -164,8 +164,16 @@ class SendAdminCommand extends Command
     }
 
     /**
-     * Get local volunteers (active moderators with publish consent) for a group.
-     * Matches V1 birthday email logic from Donations.php.
+     * Get local volunteers (active moderators who haven't opted out via
+     * "Show me as a volunteer") for a group.
+     *
+     * Uses users.settings.showmod (default true) — same source of truth the
+     * modtools toggle writes to and the Go API's group volunteer list reads
+     * (iznik-server-go group/groupVolunteer.go:45). V1's Donations.php birthday
+     * code filtered on users.publishconsent (a different consent — "republish
+     * my posts to non-members" — that defaults to 0 and is never set by the
+     * UI toggle), which silently excluded almost every active mod. See
+     * BirthdayService::getActiveVolunteers for the full rationale.
      */
     public static function getLocalVolunteers(int $groupId): array
     {
@@ -178,7 +186,7 @@ class SendAdminCommand extends Command
             ->where('memberships.collection', 'Approved')
             ->whereIn('memberships.role', ['Moderator', 'Owner'])
             ->where('users.lastaccess', '>', $oneYearAgo)
-            ->where('users.publishconsent', 1)
+            ->whereRaw("(JSON_EXTRACT(users.settings, '$.showmod') IS NULL OR JSON_EXTRACT(users.settings, '$.showmod') = TRUE)")
             ->whereNull('users.deleted')
             ->limit(100)
             ->get();
