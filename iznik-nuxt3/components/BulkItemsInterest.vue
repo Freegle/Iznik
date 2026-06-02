@@ -1,7 +1,7 @@
 <template>
   <div v-if="items.length" class="bulkitems mt-3">
     <h4 class="bulkitems__heading">
-      <v-icon icon="box-open" class="me-1 text-success" />
+      <v-icon icon="gift" class="me-1 text-success" />
       {{ items.length }} items in this offer
     </h4>
     <p v-if="!isOwner" class="text-muted small mb-2">
@@ -137,6 +137,7 @@ const picks = reactive({})
 
 function seedPicks() {
   for (const item of items.value) {
+    if (!item.id) continue
     const yi = item.yourinterest
     const existing = picks[item.id]
     if (!existing) {
