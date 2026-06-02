@@ -78,4 +78,5 @@ freegle-mobile/
 monitor.db
 
 # freegle switch: runtime state for the worktree-escape guard
-.claude/active-worktree
+# (legacy single file + per-session active-worktree.<session-id> files)
+.claude/active-worktree*
