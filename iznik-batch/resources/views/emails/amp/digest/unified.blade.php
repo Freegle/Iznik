@@ -42,47 +42,47 @@
       margin: 0;
     }
 
-    /* Post card. flex-wrap means the image+content sit side by side on the
-       first row and the per-post amp-accordion (Reply form) wraps to its
-       own full-width second row underneath — so the Reply trigger never
-       dangles next to the image. align-items:flex-start keeps the image
-       top-aligned with the content (rather than vertically centring an
-       awkward gap when the photo is shorter than the text). */
+    /* Post card uses CSS Grid so the photo and content columns share the
+       same height — the image grid cell auto-stretches to the content
+       cell's height, and the amp-img inside it (layout="fill") fills
+       that height. End result: the photo's bottom edge always lines up
+       with the bottom of the content (Reply accordion included), no
+       dangle and no whitespace gap. */
     .post-card {
       padding: 12px 16px;
       border-bottom: 1px solid #eeeeee;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: flex-start;
+      display: grid;
+      grid-template-columns: 200px 1fr;
+      gap: 14px;
     }
     .post-img-wrap {
-      width: 200px;
-      flex-shrink: 0;
-    }
-    .post-img-wrap amp-img {
+      position: relative; /* required so amp-img layout="fill" fills it */
+      min-height: 200px;
       border-radius: 4px;
+      overflow: hidden;
     }
+    /* AMP4Email disallows the object-fit attribute on <amp-img>; do it
+       via CSS on the inner <img> the amp-img runtime renders. */
+    .post-img-wrap amp-img img { object-fit: cover; }
     .post-content {
-      padding-left: 14px;
-      flex: 1;
       min-width: 0; /* allow content to shrink */
     }
-    .post-type-offer {
-      font-size: 11px;
-      font-weight: bold;
-      color: #338808;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin: 0 0 2px 0;
+    /* OFFER / WANTED pill — matches the MJML chip shape (white text on
+       a green or blue background pill) instead of plain coloured text,
+       so the AMP and HTML versions look the same at a glance. */
+    .post-type-offer, .post-type-wanted {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      color: #ffffff;
+      padding: 2px 9px;
+      border-radius: 3px;
+      margin: 0 0 6px 0;
+      letter-spacing: 0.3px;
     }
-    .post-type-wanted {
-      font-size: 11px;
-      font-weight: bold;
-      color: #00A1CB;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin: 0 0 2px 0;
-    }
+    .post-type-offer { background-color: #338808; }
+    .post-type-wanted { background-color: #00A1CB; }
+    .post-type-row { margin: 0 0 6px 0; }
     .post-title {
       font-size: 16px;
       font-weight: 600;
@@ -92,24 +92,33 @@
       color: #212529;
       text-decoration: none;
     }
-    /* User-supplied description: larger and darker than location/time
-       metadata so it reads as the actual content, but regular weight
-       so it stays clearly secondary to the bold title. */
+    /* User-supplied description: 14px / #333 / regular so it reads as
+       content but stays secondary to the title. Clamped to two lines
+       via max-height + overflow hidden — AMP4Email's CSS-strict mode
+       disallows the -webkit-line-clamp shorthand, so we approximate
+       it with two-line max-height (font-size:14px × line-height:1.5
+       × 2 lines = 42px). The PHP-side Str::limit truncates the input
+       string so a runaway description can't blow past the clamp. */
     .post-preview {
       font-size: 14px;
       color: #333333;
       margin: 0 0 6px 0;
       line-height: 1.5;
+      max-height: 42px;
+      overflow: hidden;
     }
-    .post-loc {
-      font-size: 12px;
-      color: #777777;
-      margin: 0 0 4px 0;
-    }
-    .post-time {
+    /* One-line metadata row: location · distance · time. The three pieces
+       sit on the same line separated by middle-dots so they read as one
+       coherent strip instead of three stacked dimming lines that the
+       eye had to triage. */
+    .post-meta {
       font-size: 12px;
       color: #888888;
-      margin: 0 0 4px 0;
+      margin: 6px 0 0 0;
+    }
+    .post-meta .sep {
+      margin: 0 6px;
+      color: #cccccc;
     }
     /* Avatar byline. Use inline-block + line-height matched to the
        avatar height (22px) so the amp-img (which renders as an
@@ -121,11 +130,6 @@
       margin: 14px 0 8px 0; /* breathing room above the avatar row so it
                                 doesn't sit hard up against the time/pin row */
       line-height: 22px;
-    }
-    /* Spacing above the distance/time row so the pin icon has air above
-       it (was visually crammed against the description). */
-    .post-time {
-      margin-top: 10px;
     }
     .post-byline amp-img {
       border-radius: 50%;
@@ -165,24 +169,66 @@
       background-color: #00A1CB;
     }
 
-    /* Per-post Reply accordion — full-width second row of the card.
-       The accordion's section heading IS the visible Reply button; tapping
-       it expands the form below. */
+    /* Per-post Reply accordion. Lives inside the right grid cell, anchored
+       to the bottom of the content column via margin-top:auto on a flex
+       column — so the Reply trigger sits flush with the photo's bottom
+       edge no matter how short the description is. */
+    .post-content { display: flex; flex-direction: column; }
     .reply-acc {
-      width: 100%;
-      margin-top: 12px;
+      margin-top: auto; /* push to the bottom of the content column */
+      padding-top: 12px;
     }
-    .reply-acc section {
-      border: none;
-    }
-    .reply-toggle {
+    .reply-acc section { border: none; }
+    /* The accordion's <h4> heading IS the visible Reply trigger, but
+       amp-runtime forces display:block !important on every direct child
+       of <section> — which would stretch the h4 across the whole column
+       and we can't beat !important without using !important ourselves
+       (AMP4Email's CSS-strict mode disallows that on user CSS).
+       Workaround: keep the h4 transparent and put the visible button
+       styling on an inner .reply-chip span. The span is a *grandchild*
+       of section so the runtime's display:block !important doesn't reach
+       it — inline-block hugs its text + padding as intended. */
+    /* Need 0,1,3 specificity (one class + three elements) to beat the
+       runtime's `:where(amp-accordion > section) > :first-child` rule
+       (0,1,0 — :where contributes nothing) which paints a 1px #dfdfdf
+       border and #efefef background across the entire heading. Without
+       this the chip sits inside a faint full-width box. */
+    amp-accordion > section > h4.reply-toggle {
       margin: 0;
+      padding: 0;
       list-style: none;
       cursor: pointer;
+      background: transparent;
+      border: 0;
+      font-weight: normal;
     }
-    .reply-form-container {
-      padding: 12px 0 0 0;
+    .reply-chip {
+      display: inline-block;
+      background-color: #338808;
+      color: #ffffff;
+      padding: 9px 26px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 700;
+      text-align: center;
     }
+    .reply-chip.wanted { background-color: #00A1CB; }
+    /* Hide the Reply chip once the user opens the accordion. We can hide
+       the span (display: none works on grandchildren), and collapse the
+       h4 to zero height so the form below sits where the chip was. The
+       h4 itself can't be display:none because the runtime force-applied
+       display:block!important, but height:0 + overflow:hidden + zero
+       margin/padding visually collapses it to nothing. */
+    amp-accordion > section[expanded] > h4.reply-toggle > .reply-chip {
+      display: none;
+    }
+    amp-accordion > section[expanded] > h4.reply-toggle {
+      height: 0;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    .reply-form-container { padding: 12px 0 0 0; }
     .reply-textarea {
       width: 100%;
       min-height: 80px;
@@ -312,7 +358,7 @@
          silly — drop straight to the post. --}}
     <div class="greeting">
       <h2>Hi {{ $user->displayname ?? 'there' }},</h2>
-      <p>Here are <strong>{{ $postCount }}</strong> new posts from your Freegle communities:</p>
+      <p>Here are <strong>{{ $postCount }}</strong> new posts from your Freegle communities.</p>
     </div>
     @endif
 
@@ -349,39 +395,42 @@
       <div class="post-content" style="padding-left: 0;">
     @else
     <div class="post-card">
-      {{-- Multi-post thumbnail: square (240x240 server-side cover-crop,
-           displayed 200x200) — the square aspect lands close to typical
-           content height so the photo bottom aligns more naturally with
-           the Reply button's bottom. amp-img layout="fixed" is the only
-           amp-img layout that reliably works inside a flex item without
-           an explicit parent height; layout="fill" requires the parent
-           to have a non-flex computed height, which we don't have. --}}
+      {{-- Multi-post thumbnail. The grid above gives the image cell a
+           non-relative computed height (matches the content cell), and
+           amp-img layout="fill" + object-fit:cover stretches the photo
+           to fill that cell — so the photo's bottom edge always lines
+           up with the bottom of the content column. --}}
       <div class="post-img-wrap">
-        <amp-img layout="fixed" width="200" height="200" src="{{ $post['thumbImageUrl'] }}" alt="{{ $post['itemName'] }}"></amp-img>
+        <amp-img layout="fill" src="{{ $post['thumbImageUrl'] }}" alt="{{ $post['itemName'] }}"></amp-img>
       </div>
       <div class="post-content">
     @endif
-        <p class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</p>
+        {{-- OFFER / WANTED pill. Wrapped in a <p> so it gets its own
+             line + bottom margin, but the visible chip is a <span> —
+             p with `display: inline-block` stretched full-width in the
+             AMP4Email environment (something in the runtime/spec
+             cascade pinned p to block), span with display: inline-block
+             reliably hugs its text. --}}
+        <p class="post-type-row"><span class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</span></p>
         <p class="post-title"><a href="{{ $post['fallbackReplyUrl'] }}">{{ $post['itemName'] }}</a></p>
-        @if($post['locationName'] ?? null)
-        <p class="post-loc">{{ $post['locationName'] }}</p>
-        @endif
         @if($post['messageText'])
-        {{-- User-supplied description. Immediate (single-post) renders the
-             full body — that's the email's only post, no need to truncate.
-             Multi-post truncates so 200 cards fit Gmail's AMP size limit. --}}
+        {{-- User-supplied description. Immediate renders the full body
+             (it's the only post); multi-post truncates for AMP size. --}}
         <p class="post-preview">{!! nl2br(e($isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 120))) !!}</p>
         @endif
-        {{-- Distance + arrival on one line (matches the MJML card).
-             Static arrivalFormatted instead of <amp-timeago> — saves ~80
-             bytes per post (× 200 posts ≈ 16 KB on a big digest, which is
-             the difference between fitting Gmail's 200 KB AMP cap or not). --}}
-        <p class="post-time">
-          @if($post['distanceText'])<span style="margin-right: 10px;">&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
-          &#x1F552; {{ $post['arrivalFormatted'] }}
+        {{-- Location · distance · time as one clean strip — the previous
+             three stacked lines (post-loc, post-time, post-byline) read
+             as a messy column of dimming text and the location-pin emoji
+             sat directly above the avatar. One line with middle-dot
+             separators reads as a single coherent metadata footer. --}}
+        <p class="post-meta">
+          @if($post['locationName'] ?? null)<span>{{ $post['locationName'] }}</span>@endif
+          @if($post['distanceText'])@if($post['locationName'] ?? null)<span class="sep">·</span>@endif<span>&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
+          <span class="sep">·</span><span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
         </p>
-        {{-- Avatar byline (V1 MultipleDigest parity). 22x22 inline-block
-             avatar paired with the bold poster name. --}}
+        {{-- Avatar byline (V1 MultipleDigest parity). Sits on its own
+             row below the metadata strip so the avatar pairs cleanly
+             with the bold poster name rather than crowding the time/pin. --}}
         <p class="post-byline">
           <amp-img src="{{ $post['posterAvatarUrl'] }}" width="22" height="22" layout="fixed" alt=""></amp-img>
           Posted by <strong>{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
@@ -398,31 +447,27 @@
           <a href="{{ $userSite }}/offer">Post something</a>
         </p>
         @endif
+        {{-- Per-post reply form lives INSIDE .post-content (the right
+             grid cell) so the card's overall height = image + content +
+             accordion stack. The grid then auto-stretches the image cell
+             to that same height, which is what makes the photo bottom
+             edge align with the bottom of the Reply accordion / form. --}}
+        <amp-accordion class="reply-acc">
+          <section>
+            <h4 class="reply-toggle"><span class="reply-chip{{ $post['type'] === 'Offer' ? '' : ' wanted' }}">Reply</span></h4>
+            <div class="reply-form-container">
+              <form method="post" action-xhr="{{ $post['ampReplyUrl'] }}">
+                <textarea class="reply-textarea" name="message" placeholder="Reply..." required></textarea>
+                <button type="submit" class="reply-submit">Send</button>
+                <div submitting><div class="form-status"><div class="submitting-msg">Sending…</div></div></div>
+                <div submit-success template="rsuccess"></div>
+                <div submit-error template="rerror"></div>
+              </form>
+              <p class="reply-fallback"><a href="{{ $post['fallbackReplyUrl'] }}">Or reply on the website</a></p>
+            </div>
+          </section>
+        </amp-accordion>
       </div>
-      {{-- ─── Per-post reply form (collapsed) ─────────────────────────────
-           Lives inside the same .post-card as its image+content (which makes
-           the Reply trigger sit immediately below this post, not floating in
-           a shared panel somewhere). amp-accordion keeps the form collapsed
-           by default; the open header IS the Reply button. amp-mustache
-           templates for success/error are referenced by id from the shared
-           <template> blocks at the top of body so we don't pay the ~300
-           bytes-per-post cost of inlining them in every form.
-           ───────────────────────────────────────────────────────────────── --}}
-      <amp-accordion class="reply-acc">
-        <section>
-          <h4 class="reply-toggle reply-btn{{ $post['type'] === 'Offer' ? '' : ' wanted' }}">Reply</h4>
-          <div class="reply-form-container">
-            <form method="post" action-xhr="{{ $post['ampReplyUrl'] }}">
-              <textarea class="reply-textarea" name="message" placeholder="Reply..." required></textarea>
-              <button type="submit" class="reply-submit">Send</button>
-              <div submitting><div class="form-status"><div class="submitting-msg">Sending…</div></div></div>
-              <div submit-success template="rsuccess"></div>
-              <div submit-error template="rerror"></div>
-            </form>
-            <p class="reply-fallback"><a href="{{ $post['fallbackReplyUrl'] }}">Or reply on the website</a></p>
-          </div>
-        </section>
-      </amp-accordion>
     </div>
     @endforeach
 
