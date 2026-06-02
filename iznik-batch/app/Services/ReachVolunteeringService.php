@@ -210,7 +210,7 @@ class ReachVolunteeringService
                     'contacturl'    => $url,
                     'timecommitment' => $commitment,
                     'externalid'    => $externalId,
-                    'pending'       => false,
+                    'pending'       => true,
                     'online'        => false,
                     'deleted'       => 0,
                     'added'         => now(),

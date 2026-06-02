@@ -382,4 +382,18 @@ class SyncReachVolunteeringCommandTest extends TestCase
 
         $this->assertSame(0, $result['added']);
     }
+
+    public function test_new_reach_opportunity_is_inserted_as_pending_for_moderation(): void
+    {
+        // Reach opportunities must require moderator approval before going live.
+        // V1 inserted with pending=1; V2 must match that behaviour.
+        $this->seedLocationAndGroup('SW1A 1AA', 51.5007, -0.1246);
+
+        $this->makeService([$this->opportunity()])->sync();
+
+        $record = DB::table('volunteering')->where('externalid', 'reach-12345')->first();
+        $this->assertNotNull($record, 'Reach opportunity should be created');
+        $this->assertSame(1, (int) $record->pending,
+            'New Reach opportunity must be pending=1 so it appears in the ModTools approval queue, not live');
+    }
 }
