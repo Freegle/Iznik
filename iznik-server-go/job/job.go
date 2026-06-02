@@ -19,20 +19,21 @@ import (
 var categorySanitizer = regexp.MustCompile(`[^a-zA-Z/ ]+`)
 
 type Job struct {
-	ID           uint64  `json:"id" gorm:"primary_key"`
-	Ambit        float64 `json:"ambit"`
-	Dist         float64 `json:"dist"`
-	Area         float64 `json:"area"`
-	Url          string  `json:"url"`
-	Title        string  `json:"title"`
-	Location     string  `json:"location"`
-	Body         string  `json:"body"`
-	Reference    string  `json:"job_reference"`
-	Category     string  `json:"category"`
-	CPC          float64 `json:"cpc"`
-	Clickability float64 `json:"clickability"`
-	Expectation  float64 `json:"expectation"`
-	Image        string  `json:"image,omitempty"`
+	ID             uint64  `json:"id" gorm:"primary_key"`
+	Ambit          float64 `json:"ambit"`
+	Dist           float64 `json:"dist"`
+	Area           float64 `json:"area"`
+	Url            string  `json:"url"`
+	Title          string  `json:"title"`
+	Location       string  `json:"location"`
+	Body           string  `json:"body"`
+	Reference      string  `json:"job_reference"`
+	Category       string  `json:"category"`
+	CPC            float64 `json:"cpc"`
+	Clickability   float64 `json:"clickability"`
+	Expectation    float64 `json:"expectation"`
+	Image          string  `json:"image,omitempty"`
+	CanonicalTitle string  `json:"-"`
 }
 
 const JOBS_LIMIT = 50
@@ -98,6 +99,7 @@ func GetJobs(c *fiber.Ctx) error {
 			go func(ambit float64) {
 				var nelat, nelng, swlat, swlng float64
 				var these []Job
+				seenJobs := make(map[string]bool)
 
 				// Get an exclusive connection.
 				db, err := database.Pool.Conn(timeoutContext)
@@ -129,7 +131,7 @@ func GetJobs(c *fiber.Ctx) error {
 					"ST_Distance(geometry, ST_SRID(POINT(" + lngs + ", " + lats + "), " + srids + ")) AS dist, " +
 					"CASE WHEN ST_Dimension(geometry) < 2 THEN 0 ELSE ST_Area(geometry) END AS area, " +
 					"jobs.id, jobs.url, jobs.title, jobs.location, jobs.body, jobs.job_reference, jobs.category, jobs.cpc, jobs.clickability, jobs.cpc * jobs.clickability AS expectation, " +
-					"ai_images.externaluid " +
+					"jobs.canonical_title, ai_images.externaluid " +
 					"FROM `jobs` " +
 					"LEFT JOIN ai_images ON ai_images.name = jobs.canonical_title " +
 					"WHERE ST_Within(geometry, ST_SRID(POLYGON(LINESTRING(" +
@@ -163,6 +165,7 @@ func GetJobs(c *fiber.Ctx) error {
 					for rows.Next() {
 						var job Job
 						var externaluid sql.NullString
+						var canonicalTitle sql.NullString
 						err = rows.Scan(
 							&job.Ambit,
 							&job.Dist,
@@ -177,11 +180,29 @@ func GetJobs(c *fiber.Ctx) error {
 							&job.CPC,
 							&job.Clickability,
 							&job.Expectation,
+							&canonicalTitle,
 							&externaluid)
 
 						if externaluid.Valid && len(externaluid.String) > 0 {
 							job.Image = misc.GetImageDeliveryUrl(externaluid.String, "")
 						}
+
+						if canonicalTitle.Valid {
+							job.CanonicalTitle = canonicalTitle.String
+						}
+
+						// De-duplicate genuine duplicates only: the SAME posting (title + body)
+						// indexed for many locations collapses to a single card (Discourse 9739
+						// "every job identical except location"). canonical_title is just the
+						// AI-image category — many unrelated jobs (different employers, different
+						// bodies) share it — so it must NOT be the dedup key, or distinct jobs
+						// would be hidden. Location is intentionally excluded from the key so the
+						// multi-location copies of one posting merge.
+						dedupKey := job.Title + "\x00" + job.Body
+						if seenJobs[dedupKey] {
+							continue
+						}
+						seenJobs[dedupKey] = true
 
 						these = append(these, job)
 					}
