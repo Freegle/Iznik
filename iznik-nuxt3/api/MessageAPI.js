@@ -98,6 +98,29 @@ export default class MessageAPI extends BaseAPI {
     })
   }
 
+  // Register interest in one or more items of a bulk offer. `items` is an array
+  // of { bulkitemid, quantity, cancollect }. A quantity of 0 withdraws interest
+  // in that item.
+  bulkInterest(id, items) {
+    return this.$postv2('/message', {
+      action: 'BulkInterest',
+      id,
+      bulkinterest: items,
+    })
+  }
+
+  // Offerer/mod transition of one interest row (Interested → Reserved →
+  // Collected, or Rejected/Withdrawn).
+  bulkInterestState(id, bulkitemid, userid, state) {
+    return this.$postv2('/message', {
+      action: 'BulkInterestState',
+      id,
+      bulkitemid,
+      userid,
+      state,
+    })
+  }
+
   async getIllustration(item) {
     try {
       const result = await this.$getv2(
