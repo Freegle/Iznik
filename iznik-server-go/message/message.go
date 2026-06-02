@@ -245,8 +245,10 @@ type Message struct {
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
 	ReplyEligible *bool `json:"replyeligible,omitempty" gorm:"-"`
 	// BulkItems is the structured catalogue for a bulk offer ("clearance"). Nil
-	// (and omitted) for ordinary single-item posts.
+	// (and omitted) for ordinary single-item posts. Bulkcount is len(BulkItems),
+	// exposed so list/summary views can flag a bulk offer cheaply.
 	BulkItems []BulkItem `json:"bulkitems,omitempty" gorm:"-"`
+	Bulkcount int        `json:"bulkcount,omitempty" gorm:"-"`
 }
 
 // MessagePosting represents a posting history record from messages_postings.
@@ -798,6 +800,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// is only visible to the offerer or a moderator.
 				canSeeInterest := message.Fromuser == myid || isGroupMod
 				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
+				message.Bulkcount = len(message.BulkItems)
 
 				mu.Lock()
 				messages = append(messages, message)
@@ -3269,11 +3272,17 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 
 	// Bulk offer: rebuild the structured catalogue (attachments are already
 	// relinked above) and keep availableinitially/availablenow in sync with the
-	// total quantity. A nil slice leaves the catalogue untouched.
+	// total quantity. A nil slice leaves the catalogue untouched; an explicit
+	// (possibly empty) slice rebuilds it, including resetting availability to 0
+	// when all items are removed. The textbody summary is rebuilt too unless the
+	// caller supplied their own textbody.
 	if req.Bulkitems != nil {
 		total := upsertBulkItems(db, req.ID, req.Bulkitems)
-		if total > 0 {
-			db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, req.ID)
+		db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, req.ID)
+		if req.Textbody == nil {
+			if summary := buildBulkSummary(req.Bulkitems); summary != "" {
+				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, req.ID)
+			}
 		}
 	}
 
