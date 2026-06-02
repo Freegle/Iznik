@@ -1814,6 +1814,79 @@ func TestPostUserUnbounceNotAdmin(t *testing.T) {
 	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
 }
 
+// TestPostUserUnsubscribeBySupportRemovesMembership verifies that a Support user clicking
+// "Unsubscribe" in the Support tools removes the target user's memberships and marks their
+// account as deleted (limbo). Regression: POST /user action=Unsubscribe was missing from
+// PostUser's switch, returning "Unknown action" so nothing happened (Discourse #9738 post 1).
+func TestPostUserUnsubscribeBySupportRemovesMembership(t *testing.T) {
+	prefix := uniquePrefix("unsub_support")
+	db := database.DBConn
+
+	supportID := CreateTestUser(t, prefix+"_support", "Support")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	groupID := CreateTestGroup(t, prefix)
+	CreateTestMembership(t, targetID, groupID, "Member")
+	_, supportToken := CreateTestSession(t, supportID)
+
+	// Verify member exists before unsubscribe.
+	var memberBefore int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
+		targetID, groupID).Scan(&memberBefore)
+	assert.Equal(t, int64(1), memberBefore, "setup: target must be a member before unsubscribe")
+
+	payload := map[string]interface{}{
+		"action": "Unsubscribe",
+		"id":     targetID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+supportToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Membership must be removed.
+	var memberAfter int64
+	db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND groupid = ? AND collection = 'Approved'",
+		targetID, groupID).Scan(&memberAfter)
+	assert.Equal(t, int64(0), memberAfter, "Unsubscribe must remove the approved membership")
+
+	// User account must be in limbo (deleted set).
+	var deleted *string
+	db.Raw("SELECT deleted FROM users WHERE id = ?", targetID).Scan(&deleted)
+	assert.NotNil(t, deleted, "Unsubscribe must mark the user account as deleted (limbo)")
+
+	// A log entry must exist for the unsubscribe.
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = 'User' AND subtype = 'Deleted' AND user = ? AND byuser = ?",
+		targetID, supportID).Scan(&logCount)
+	assert.Equal(t, int64(1), logCount, "Unsubscribe must create a User/Deleted log entry")
+}
+
+// TestPostUserUnsubscribeNonSupportForbidden verifies that a regular user cannot unsubscribe
+// another user via POST /user action=Unsubscribe.
+func TestPostUserUnsubscribeNonSupportForbidden(t *testing.T) {
+	prefix := uniquePrefix("unsub_noperm")
+	callerID := CreateTestUser(t, prefix+"_caller", "User")
+	targetID := CreateTestUser(t, prefix+"_target", "User")
+	_, callerToken := CreateTestSession(t, callerID)
+
+	payload := map[string]interface{}{
+		"action": "Unsubscribe",
+		"id":     targetID,
+	}
+	s, _ := json.Marshal(payload)
+	request := httptest.NewRequest("POST", "/api/user?jwt="+callerToken, bytes.NewBuffer(s))
+	request.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(request)
+	assert.NoError(t, err)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
 func TestPostUserMerge(t *testing.T) {
 	prefix := uniquePrefix("merge")
 	db := database.DBConn
