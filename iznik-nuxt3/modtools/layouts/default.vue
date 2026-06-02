@@ -318,6 +318,7 @@ const {
   hasPermissionSpamAdmin,
   hasPermissionGiftAid,
   checkWork,
+  resetCheckWork,
 } = useModMe()
 
 const { count: aiImagesCount, fetchCount: fetchAIImagesCount } = useAIImages()
@@ -429,6 +430,21 @@ watch(
   },
   { immediate: true }
 )
+
+// Re-login detection: when the user logs out then logs back in without a page
+// reload, modGroupStore is empty and isFirstCheckWork is stale-false.  Watch for
+// the logged-out → logged-in transition and immediately refresh groups + reset
+// the beep baseline so the first post-login checkWork doesn't beep spuriously.
+const hadLoggedOut = ref(false)
+watch(loggedIn, async (newVal, oldVal) => {
+  if (!newVal && oldVal) {
+    hadLoggedOut.value = true
+  } else if (newVal && !oldVal && hadLoggedOut.value) {
+    hadLoggedOut.value = false
+    resetCheckWork()
+    await checkWork(true)
+  }
+})
 
 // Lifecycle hooks and watches
 onMounted(async () => {

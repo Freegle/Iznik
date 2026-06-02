@@ -924,6 +924,32 @@ class User extends Model implements Auditable
     }
 
     /**
+     * Build an auto-login link, mirroring iznik-server User::loginLink($auto=TRUE).
+     *
+     * Produces `https://{userSite}{url}?u={id}&k={key}&src={src}` using the same
+     * users_logins (type='Link') 32-char key the Go API validates for ?u=&k= links.
+     *
+     * @param  string  $url   Path on the user site (may already contain a query string).
+     * @param  string|null  $src  Optional source tag (V1 src= param).
+     * @param  bool  $auto  When true (default) include the login key for passwordless login.
+     */
+    public function loginLink(string $url = '/', ?string $src = NULL, bool $auto = TRUE): string
+    {
+        $userSite = rtrim(config('freegle.sites.user', 'https://www.ilovefreegle.org'), '/');
+        $sep = str_contains($url, '?') ? '&' : '?';
+
+        $query = 'u=' . $this->id;
+        if ($auto) {
+            $query .= '&k=' . $this->getUserKey();
+        }
+        if ($src) {
+            $query .= '&src=' . $src;
+        }
+
+        return $userSite . $url . $sep . $query;
+    }
+
+    /**
      * Generate List-Unsubscribe header value for RFC 8058 one-click unsubscribe.
      *
      * @return string The unsubscribe URL in angle brackets

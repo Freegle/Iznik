@@ -45,6 +45,16 @@ Schedule::command('mail:welcome:send --limit=100 --spool')
     ->sendOutputTo(cronLog('mail:welcome:send'))
     ->runInBackground();
 
+// Record the deployed Laravel commit so /api/version reports the live build
+// (the monitor-fsm "verified-live" reply gate compares it against merged PRs).
+// Lightweight (just a config upsert) — safe to run frequently; deploy:watch is
+// disabled and deploy:refresh is too heavy to schedule.
+Schedule::command('deploy:record-commit')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('deploy:record-commit'))
+    ->runInBackground();
+
 // Chat notifications - run continuously with internal looping.
 // Uses PreventsOverlapping trait for flock-based locking (released on process death).
 // User2User notifications.
@@ -753,12 +763,15 @@ Schedule::command('groups:remind-closed')
     ->runInBackground();
 
 // V1: cron/group_customisation.php — script existed in scripts/cron/ but no
-// crontab entry, so it never ran in V1. Migrating to Laravel adds the schedule.
-Schedule::command('groups:remind-customisation')
-    ->monthlyOn(1, '08:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('groups:remind-customisation'))
-    ->runInBackground();
+// crontab entry, so it never ran in V1. RETIRED 2026-06-02: the "ways to make
+// {group} more welcoming" customisation reminder is no longer sent (it was never
+// sent in V1 either). The command remains for manual/ad-hoc use only; it is no
+// longer scheduled.
+// Schedule::command('groups:remind-customisation')
+//     ->monthlyOn(1, '08:00')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('groups:remind-customisation'))
+//     ->runInBackground();
 
 // V1: cron/donations_thank.php
 // Schedule::command('mail:donations:thank')

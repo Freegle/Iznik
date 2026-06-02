@@ -2,7 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
+import { MIGRATION_V2_SQL, MIGRATION_V3_SQL, MIGRATION_V4_SQL, MIGRATION_V5_SQL, SCHEMA_SQL, SCHEMA_VERSION } from './schema.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -44,6 +44,22 @@ function applySchema(db: DB): void {
   }
   if (current < 4) {
     try { db.exec(MIGRATION_V4_SQL) } catch (e) { /* table already recreated */ }
+  }
+  if (current < 5) {
+    // Rebuild discourse_bug so 'feature-request' is allowed. DBs stuck at v4 with
+    // the old CHECK constraint never got it (see MIGRATION_V5_SQL). Only skip if
+    // the constraint already allows it (idempotency for DBs rebuilt out-of-band).
+    const allowsFeatureRequest = (() => {
+      try {
+        const row = db.prepare(
+          "SELECT sql FROM sqlite_master WHERE type='table' AND name='discourse_bug'"
+        ).get() as { sql?: string } | undefined
+        return !!row?.sql && row.sql.includes("'feature-request'")
+      } catch { return false }
+    })()
+    if (!allowsFeatureRequest) {
+      try { db.exec(MIGRATION_V5_SQL) } catch (e) { /* already rebuilt */ }
+    }
   }
   if (current < SCHEMA_VERSION) {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(SCHEMA_VERSION)
@@ -400,6 +416,42 @@ export function queueDiscourseDraft(db: DB, draft: {
   const info = db.prepare(`
     INSERT INTO discourse_draft (topic, post, username, quote, body, preview_url, pr_number, pr_url)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    draft.topic,
+    draft.post,
+    draft.username,
+    draft.quote,
+    draft.body,
+    draft.previewUrl ?? null,
+    draft.prNumber ?? null,
+    draft.prUrl ?? null,
+  )
+  return Number(info.lastInsertRowid)
+}
+
+/**
+ * Record a reply that has ALREADY been auto-posted to Discourse.
+ *
+ * Verified-live "fix applied, please retest" replies are posted automatically
+ * (no human review) once a merged PR is confirmed deployed. We still write a
+ * discourse_draft row — with approved_at AND posted_at set to now — so it acts
+ * as the dedup record (one reply per reporting post) and shows in the audit
+ * trail / views as posted rather than pending.
+ */
+export function recordPostedReply(db: DB, draft: {
+  topic: number
+  post: number
+  username: string
+  quote: string
+  body: string
+  previewUrl?: string
+  prNumber?: number
+  prUrl?: string
+}): number {
+  const info = db.prepare(`
+    INSERT INTO discourse_draft
+      (topic, post, username, quote, body, preview_url, pr_number, pr_url, approved_at, posted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
   `).run(
     draft.topic,
     draft.post,

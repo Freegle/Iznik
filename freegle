@@ -72,14 +72,23 @@ resolve_worktree() {
 # so once switched + cd'd, subsequent commands run in the new worktree.
 cmd_switch() {
     local name="${1:-}"
-    # The guard reads $CLAUDE_PROJECT_DIR/.claude/active-worktree (the launch
-    # project's hook runs regardless of cwd), so write the state file there.
+    # The guard reads $CLAUDE_PROJECT_DIR/.claude/active-worktree.<session> (the
+    # launch project's hook runs regardless of cwd), so write the state file there.
     local base="${CLAUDE_PROJECT_DIR:-$(get_main_repo)}"
-    local state_file="$base/.claude/active-worktree"
+    # Key the state by Claude session id. Several concurrent sessions can share a
+    # single launch project dir (CLAUDE_PROJECT_DIR), so a single shared state
+    # file let one session's switch redirect (and break) every other session's
+    # escape guard. A per-session file isolates them. The guard reads the same
+    # id from its hook input (.session_id), which equals $CLAUDE_CODE_SESSION_ID.
+    local sid="${CLAUDE_CODE_SESSION_ID:-nosession}"
+    local state_file="$base/.claude/active-worktree.$sid"
+    # Retire the old shared file if present — it is the source of the cross-session
+    # clobbering and is no longer read by the guard.
+    local legacy_file="$base/.claude/active-worktree"
 
     if [[ -z "$name" || "$name" == "--clear" || "$name" == "off" ]]; then
-        rm -f "$state_file"
-        echo -e "${GREEN}Cleared active worktree.${NC}"
+        rm -f "$state_file" "$legacy_file"
+        echo -e "${GREEN}Cleared active worktree (this session).${NC}"
         echo "The escape guard now allows only: $base"
         echo "Move back with:  cd $base"
         return 0
@@ -95,7 +104,9 @@ cmd_switch() {
 
     mkdir -p "$(dirname "$state_file")"
     printf '%s\n' "$dir" > "$state_file"
+    rm -f "$legacy_file"
     echo -e "${GREEN}Switched active worktree to:${NC} $dir"
+    [[ "$sid" == "nosession" ]] && echo -e "${RED}Warning: no CLAUDE_CODE_SESSION_ID; state is not session-isolated.${NC}"
     echo "The escape guard will now treat that folder as the working root."
     echo "Move there with (cwd persists across commands):"
     echo -e "  ${BLUE}cd $dir${NC}"

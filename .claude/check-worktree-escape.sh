@@ -30,8 +30,15 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null |
 # treat that worktree as an additional allowed root. The state file lives under
 # the launch project's .claude dir, since that is the hook the harness runs
 # regardless of the current working directory.
+#
+# The file is keyed by session id: several Claude sessions can share one launch
+# project dir, so a single shared file let one session's switch redirect every
+# other session's guard. `freegle switch` writes active-worktree.<session> using
+# $CLAUDE_CODE_SESSION_ID, which equals the .session_id the harness passes here.
+SID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)
+[[ -z "$SID" ]] && SID="${CLAUDE_CODE_SESSION_ID:-}"
 ACTIVE_WT=""
-ACTIVE_WT_FILE="$PROJECT_DIR/.claude/active-worktree"
+ACTIVE_WT_FILE="$PROJECT_DIR/.claude/active-worktree.${SID:-nosession}"
 if [[ -f "$ACTIVE_WT_FILE" ]]; then
     ACTIVE_WT=$(head -n1 "$ACTIVE_WT_FILE" | tr -d '\r\n')
 fi

@@ -13,6 +13,7 @@ import {
   kvGet,
   kvSet,
   queueDiscourseDraft,
+  recordPostedReply,
   cancelDraftsForBug,
   insertReviewerFeedback,
   listUnprocessedFeedback,
@@ -89,6 +90,49 @@ const PROD_REPO = 'Freegle/Iznik'
 const NETLIFY_SITE = 'golden-caramel-d2c3a7.netlify.app'
 
 /**
+ * Post a reply to a Discourse topic, threaded under a specific post.
+ *
+ * Used to auto-post the verified-live "fix applied, please retest" reply once a
+ * merged PR's fix is confirmed live in production. reply_to_post_number threads
+ * the reply under the SPECIFIC reporting post (only meaningful for post > 1; a
+ * reply to the OP is a normal topic reply and Discourse normalises it).
+ */
+async function postDiscourseReply(
+  topicId: number,
+  raw: string,
+  replyToPostNumber?: number,
+): Promise<{ ok: boolean; error?: string }> {
+  let apiKey: string | null = null
+  try {
+    const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
+      auth_pairs?: Array<{ user_api_key?: string }>
+    }
+    apiKey = profile.auth_pairs?.[0]?.user_api_key ?? null
+  } catch { /* no profile / unreadable */ }
+  if (!apiKey) return { ok: false, error: 'no Discourse API key available' }
+
+  const payload: Record<string, unknown> = { topic_id: topicId, raw }
+  if (replyToPostNumber && replyToPostNumber > 1) payload.reply_to_post_number = replyToPostNumber
+
+  try {
+    const resp = await fetch(`${DISCOURSE_BASE}/posts.json`, {
+      method: 'POST',
+      headers: {
+        'User-Api-Key': apiKey,
+        'Api-Username': 'Edward_Hibbert',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+    if (resp.status === 200 || resp.status === 201) return { ok: true }
+    const text = await resp.text().catch(() => '')
+    return { ok: false, error: `HTTP ${resp.status}: ${text.slice(0, 300)}` }
+  } catch (err) {
+    return { ok: false, error: String(err) }
+  }
+}
+
+/**
  * Compare a commit SHA against a reference SHA using the GitHub compare API.
  * Returns behind_by: how many commits in baseSha are NOT in headSha.
  * behind_by == 0 means headSha contains all of baseSha's history → headSha is "at or past" baseSha.
@@ -102,71 +146,129 @@ async function githubBehindBy(baseSha: string, headSha: string): Promise<number>
 
 async function checkPrDeployed(prNumber: number): Promise<{
   deployed: boolean
-  frontendDeployed: boolean | null   // null if not a frontend-only PR
+  frontendDeployed: boolean | null   // null if PR doesn't touch the frontend
   backendDeployed: boolean
   mergeCommitSha: string | null
   productionSha: string | null
   netlifyCommitSha: string | null
+  touched: { frontend: boolean; go: boolean; php: boolean }
   reason: string
 }> {
-  // Get PR merge commit SHA and whether it's frontend-only
+  const notDeployed = (reason: string) => ({
+    deployed: false, frontendDeployed: null, backendDeployed: false,
+    mergeCommitSha: null, productionSha: null, netlifyCommitSha: null,
+    touched: { frontend: false, go: false, php: false }, reason,
+  })
+
+  // Get PR merge commit SHA.
   const prRes = await sh('gh', ['api', `repos/${PROD_REPO}/pulls/${prNumber}`, '--jq', '{merge_commit_sha, merged_at}'])
-  if (prRes.code !== 0) {
-    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'Could not fetch PR info' }
-  }
+  if (prRes.code !== 0) return notDeployed('Could not fetch PR info')
   let prInfo: { merge_commit_sha: string | null; merged_at: string | null }
-  try { prInfo = JSON.parse(prRes.stdout) } catch {
-    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'Failed to parse PR info' }
-  }
+  try { prInfo = JSON.parse(prRes.stdout) } catch { return notDeployed('Failed to parse PR info') }
   const mergeCommitSha = prInfo.merge_commit_sha
-  if (!mergeCommitSha || mergeCommitSha === 'null') {
-    return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'PR not merged yet' }
+  if (!mergeCommitSha || mergeCommitSha === 'null') return notDeployed('PR not merged yet')
+
+  // --- Which production areas does this PR touch? ---
+  // Go, Laravel (PHP), and the frontend deploy SEPARATELY and via different
+  // mechanisms, so we gate each touched area on its OWN live signal. We must NOT
+  // use one area's commit as a proxy for another's (Laravel and Go don't deploy
+  // together, so laravel_commit says nothing about the live Go build).
+  let paths: string[] = []
+  const filesRes = await sh('gh', ['pr', 'view', String(prNumber), '--repo', PROD_REPO, '--json', 'files', '--jq', '[.files[].path]'])
+  if (filesRes.code === 0) { try { paths = JSON.parse(filesRes.stdout) as string[] } catch { /* leave empty */ } }
+  const touchesGo = paths.some(p => p.startsWith('iznik-server-go/'))
+  const touchesPhp = paths.some(p => p.startsWith('iznik-batch/') || p.startsWith('iznik-server/'))
+  const touchesFrontend = paths.some(p => p.startsWith('iznik-nuxt3/'))
+
+  // --- Live backend commits from /api/version ---
+  // commit         = the Go build commit (baked in at build via ldflags)
+  // laravel_commit = the deployed Laravel checkout commit (config, refreshed
+  //                  every 15 min by deploy:record-commit)
+  let goSha: string | null = null
+  let laravelSha: string | null = null
+  const verRes = await sh('curl', ['-s', '--max-time', '12', 'https://api.ilovefreegle.org/api/version'])
+  if (verRes.code === 0) {
+    try {
+      const v = JSON.parse(verRes.stdout) as { commit?: string; laravel_commit?: string }
+      goSha = v.commit && v.commit !== 'unknown' ? v.commit : null
+      laravelSha = v.laravel_commit && v.laravel_commit !== 'unknown' ? v.laravel_commit : null
+    } catch { /* /api/version returned non-JSON */ }
   }
-
-  // --- Backend check: GitHub production branch ---
-  // The production branch is updated by auto-promote after CI passes on master.
-  // The Go and Laravel servers are rebuilt from this branch.
-  // NOTE: Go API /api/version returns "commit":"unknown" in production (BUILD_INFO not set),
-  // so we can only check if the production branch has been updated, not if the containers were rebuilt.
-  const prodRes = await sh('gh', ['api', `repos/${PROD_REPO}/branches/production`, '--jq', '.commit.sha'])
-  const productionSha = (prodRes.code === 0) ? prodRes.stdout.trim() : null
-  const backendBehindBy = productionSha ? await githubBehindBy(mergeCommitSha, productionSha) : -1
-  const backendDeployed = backendBehindBy === 0
-
-  // --- Frontend check: Netlify published deploy ---
-  // Netlify deploys from the production branch but has its own build queue.
-  // The published_deploy.commit_ref shows what is actually live in the browser.
-  let netlifyCommitSha: string | null = null
-  let frontendDeployed: boolean | null = null
-  try {
-    const netlifyRes = await sh('curl', ['-s', `https://api.netlify.com/api/v1/sites/${NETLIFY_SITE}`])
-    if (netlifyRes.code === 0) {
-      const netlify = JSON.parse(netlifyRes.stdout)
-      netlifyCommitSha = netlify?.published_deploy?.commit_ref ?? null
-      if (netlifyCommitSha) {
-        const netlifyBehindBy = await githubBehindBy(mergeCommitSha, netlifyCommitSha)
-        frontendDeployed = netlifyBehindBy === 0
-      }
-    }
-  } catch { /* Netlify API unavailable — skip frontend check */ }
-
-  // Overall deployed = backend AND frontend (if checked) are both live
-  const deployed = backendDeployed && (frontendDeployed === null || frontendDeployed === true)
 
   const parts: string[] = []
-  if (backendDeployed) parts.push(`backend: production branch includes merge (${backendBehindBy} behind)`)
-  else parts.push(`backend: production branch missing ${backendBehindBy} commits from PR merge`)
-  if (frontendDeployed === true) parts.push(`Netlify: published deploy includes PR`)
-  else if (frontendDeployed === false) parts.push(`Netlify: published deploy (${netlifyCommitSha?.slice(0,8)}) does not include PR yet`)
-  else parts.push(`Netlify: could not check published deploy`)
+
+  // Each touched backend area must report a live commit that includes the merge.
+  let backendDeployed = true
+  if (touchesGo) {
+    if (goSha) {
+      const behind = await githubBehindBy(mergeCommitSha, goSha)
+      const ok = behind === 0
+      backendDeployed = backendDeployed && ok
+      parts.push(ok
+        ? `Go: live ${goSha.slice(0, 8)} includes merge`
+        : `Go: live ${goSha.slice(0, 8)} missing ${behind} commits from merge`)
+    } else {
+      backendDeployed = false
+      parts.push('Go: /api/version commit unknown — cannot confirm live deploy')
+    }
+  }
+  if (touchesPhp) {
+    if (laravelSha) {
+      const behind = await githubBehindBy(mergeCommitSha, laravelSha)
+      const ok = behind === 0
+      backendDeployed = backendDeployed && ok
+      parts.push(ok
+        ? `Laravel: live ${laravelSha.slice(0, 8)} includes merge`
+        : `Laravel: live ${laravelSha.slice(0, 8)} missing ${behind} commits from merge`)
+    } else {
+      backendDeployed = false
+      parts.push('Laravel: laravel_commit unknown — cannot confirm live deploy')
+    }
+  }
+
+  // --- Frontend check: Netlify published deploy ---
+  // Netlify has its own build queue; published_deploy.commit_ref is what's live.
+  let netlifyCommitSha: string | null = null
+  let frontendDeployed: boolean | null = null
+  if (touchesFrontend) {
+    frontendDeployed = false
+    try {
+      const netlifyRes = await sh('curl', ['-s', `https://api.netlify.com/api/v1/sites/${NETLIFY_SITE}`])
+      if (netlifyRes.code === 0) {
+        const netlify = JSON.parse(netlifyRes.stdout)
+        netlifyCommitSha = netlify?.published_deploy?.commit_ref ?? null
+        if (netlifyCommitSha) {
+          const netlifyBehindBy = await githubBehindBy(mergeCommitSha, netlifyCommitSha)
+          frontendDeployed = netlifyBehindBy === 0
+          parts.push(frontendDeployed
+            ? 'Netlify: published deploy includes PR'
+            : `Netlify: published deploy (${netlifyCommitSha.slice(0, 8)}) does not include PR yet`)
+        } else {
+          parts.push('Netlify: no published deploy commit — cannot confirm')
+        }
+      } else {
+        parts.push('Netlify: API unavailable — cannot confirm')
+      }
+    } catch { parts.push('Netlify: API error — cannot confirm') }
+  }
+
+  // Overall: every touched, deployable area must be live. If the PR touches none
+  // of the three (e.g. monitor-fsm / docs / CI only), there's nothing to verify
+  // in production, so treat the merge itself as "deployed".
+  const checks: boolean[] = []
+  if (touchesGo || touchesPhp) checks.push(backendDeployed)
+  if (touchesFrontend) checks.push(frontendDeployed === true)
+  if (checks.length === 0) parts.push('no deployable (frontend/Go/PHP) files touched — nothing to verify')
+  const deployed = checks.length === 0 ? true : checks.every(Boolean)
 
   return {
     deployed,
     frontendDeployed,
     backendDeployed,
     mergeCommitSha,
-    productionSha,
+    productionSha: null,
     netlifyCommitSha,
+    touched: { frontend: touchesFrontend, go: touchesGo, php: touchesPhp },
     reason: parts.join('; '),
   }
 }
@@ -567,7 +669,7 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 
   {
     name: 'check_pr_deployed',
-    description: 'Check whether a merged PR\'s fix is live in production. Checks three signals: (1) GitHub production branch ancestry (backend gate — auto-promoted after CI), (2) Netlify published deploy commit (frontend gate — actual live build), (3) /api/version endpoint for Go and Laravel deployed commit SHAs. Returns {deployed, frontendDeployed, backendDeployed, mergeCommitSha, productionSha, netlifyCommitSha, reason}.',
+    description: 'Check whether a merged PR\'s fix is LIVE in production. Determines which areas the PR touches (Go / Laravel-PHP / frontend) from its file list and gates each touched area on its OWN live signal — they deploy separately: Go on /api/version.commit (build-time ldflags), Laravel on /api/version.laravel_commit (config, refreshed by deploy:record-commit), frontend on the Netlify published-deploy commit. A PR is deployed only when every touched, deployable area includes the merge commit (or it touches none). Returns {deployed, frontendDeployed, backendDeployed, mergeCommitSha, productionSha, netlifyCommitSha, touched:{frontend,go,php}, reason}.',
     paramsSchema: {
       type: 'object',
       properties: { prNumber: { type: 'number' } },
@@ -580,13 +682,13 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
 
   {
     name: 'queue_deployed_reply_drafts',
-    description: 'Called automatically during LOAD_STATE. For every bug in fix-queued or fixed state whose PR is MERGED and deploy_state is pending_deploy, checks the production branch deployment via check_pr_deployed. If deployed and no pending draft exists: auto-queues a reply draft using the PR title as the description. Updates pr.deploy_state to "deployed" or "pending_deploy". Returns {queued: [prNumbers], pendingDeploy: [prNumbers], alreadyDrafted: [prNumbers]}.',
+    description: 'Called automatically during LOAD_STATE. For every bug in fix-queued or fixed state whose PR is MERGED and deploy_state is pending_deploy, checks via check_pr_deployed whether the fix is LIVE (per-area: Go build commit, Laravel checked-out commit, and Netlify published deploy). Once confirmed live, AUTO-POSTS the verbatim "AI Edward: possible fix applied, please retest and report back" reply to the specific reporting Discourse post (no human review), appending the app-release caveat when the fix touches iznik-nuxt3/. Records each posted reply (dedup: one per reporting post). Updates pr.deploy_state to "deployed" or "pending_deploy". Returns {posted, pendingDeploy, alreadyPosted, postFailed}.',
     handler: async () => {
       const db = getDb()
 
       // Bugs with MERGED PRs still awaiting confirmed deployment.
       // Include fix-queued (PR merged, bug not yet advanced) AND fixed (bug
-      // advanced before production branch was updated — deploy_state stays
+      // advanced before the live build caught up — deploy_state stays
       // pending_deploy until we confirm the commit is live).
       const bugs = db.prepare(`
         SELECT b.topic, b.post, b.reporter, b.excerpt, b.pr_number,
@@ -604,18 +706,20 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
         frontend_only: number | null; preview_url: string | null; deploy_state: string | null
       }>
 
-      const queued: number[] = []
+      const posted: number[] = []
       const pendingDeploy: number[] = []
-      const alreadyDrafted: number[] = []
+      const alreadyPosted: number[] = []
+      const postFailed: number[] = []
 
       for (const bug of bugs) {
-        // Check deployment
+        // Check deployment (per-area: Go / Laravel / frontend each gated on its
+        // own live signal — they deploy separately).
         const deployCheck = await checkPrDeployed(bug.pr_number)
 
         // Always update deploy_state accurately
         if (deployCheck.deployed && bug.deploy_state !== 'deployed') {
           upsertPr(db, { number: bug.pr_number, deployState: 'deployed' })
-          out(`queue_deployed_reply_drafts: PR #${bug.pr_number} is now deployed to production`)
+          out(`queue_deployed_reply_drafts: PR #${bug.pr_number} is now live (${deployCheck.reason})`)
         } else if (!deployCheck.deployed && bug.deploy_state !== 'pending_deploy') {
           upsertPr(db, { number: bug.pr_number, deployState: 'pending_deploy' })
         }
@@ -625,28 +729,40 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
           continue
         }
 
-        // Draft already exists (pending, sent, or rejected) — don't duplicate
+        // A reply for this reporting post already exists (posted or queued) —
+        // never double-post.
         const existingDraft = db.prepare(
           `SELECT id FROM discourse_draft WHERE topic = ? AND post = ?`
         ).get(bug.topic, bug.post)
         if (existingDraft) {
-          alreadyDrafted.push(bug.pr_number)
+          alreadyPosted.push(bug.pr_number)
           continue
         }
 
-        // Build body from PR title (strip conventional commit prefix)
-        const fixDesc = bug.pr_title
-          .replace(/^fix\([^)]+\):\s*/i, '')
-          .replace(/^fix:\s*/i, '')
-          .replace(/^feat\([^)]+\):\s*/i, '')
-          .replace(/^feat:\s*/i, '')
-          .trim()
         const prUrl = `https://github.com/${PROD_REPO}/pull/${bug.pr_number}`
-        const body = `Fix applied for ${fixDesc} (${prUrl}). Please retest.`
+        // Verbatim reply (fixed operator wording). Append the app-release caveat
+        // when the fix touches iznik-nuxt3/ — the Capacitor apps are built from
+        // it, so app users only get the fix via a store release (web users get
+        // it immediately). checkPrDeployed already determined the touched areas
+        // from the PR file list, so reuse that rather than re-querying GitHub.
+        const affectsApp = deployCheck.touched.frontend || (bug.frontend_only ?? 0) === 1
+        const APP_CAVEAT = ' (but app releases may take up to one week)'
+        const body = 'AI Edward: possible fix applied, please retest and report back'
+          + (affectsApp ? APP_CAVEAT : '')
         const quote = bug.excerpt ?? ''
         const username = bug.reporter ?? 'there'
 
-        queueDiscourseDraft(db, {
+        // Auto-post (explicitly approved): post the verbatim reply threaded under
+        // the specific reporting post, then record it so it dedups + audits.
+        const postRes = await postDiscourseReply(bug.topic, body, bug.post)
+        if (!postRes.ok) {
+          postFailed.push(bug.pr_number)
+          outWarn(`queue_deployed_reply_drafts: FAILED to post reply for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number}): ${postRes.error}`)
+          // Leave deploy_state=deployed; we'll retry the post next iteration.
+          continue
+        }
+
+        recordPostedReply(db, {
           topic: bug.topic,
           post: bug.post,
           username,
@@ -656,13 +772,13 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
           prUrl,
         })
 
-        out(`queue_deployed_reply_drafts: queued draft for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number}) — fix confirmed deployed`)
-        queued.push(bug.pr_number)
+        out(`queue_deployed_reply_drafts: auto-posted verified-live reply for bug ${bug.topic}.${bug.post} (PR #${bug.pr_number})`)
+        posted.push(bug.pr_number)
       }
 
-      if (queued.length > 0) await renderAllViews(db)
+      if (posted.length > 0) await renderAllViews(db)
 
-      return { queued, pendingDeploy, alreadyDrafted }
+      return { posted, pendingDeploy, alreadyPosted, postFailed }
     },
   },
 
@@ -2093,17 +2209,20 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         out(`ci_router_decide: production CI failing (sha=${production.sha?.slice(0, 9) ?? '?'})`)
         return { _transition: 'FIX_PRODUCTION_CI', reason: `production CI failing on sha ${production.sha?.slice(0, 9) ?? '?'}` }
       }
-      // Priority 2: drain mode — if ANY PR has pending CI, don't push new commits.
-      // With a single self-hosted runner, pushing to multiple PRs simultaneously
-      // just grows the CI queue. The last PR waits hours. Keep the queue depth ≤ 1:
-      // only push a fix when the CI queue is empty (all PRs are either green or red,
-      // none pending). Once the pending run finishes (pass → merge, fail → fix), we
-      // push the next fix for the focus PR.
+      // Priority 2: drain mode — only when pending CI SATURATES the cloud runners.
+      // We run on ~5 Katapult cloud runners now, NOT a single self-hosted runner,
+      // so a handful of pending PRs run concurrently and do not need serialising.
+      // The old rule (drain on ANY pending PR) was catastrophic: a single in-flight
+      // PR (e.g. one with a flaky/infra-failing build that re-runs forever) would
+      // WRAP_UP every iteration and block ALL Discourse bug work indefinitely.
+      // Only drain when pending count reaches runner capacity, to avoid piling
+      // unbounded load onto the queue; below that, proceed to fix/bug work.
+      const MAX_CONCURRENT_CI = 5
       const pendingPRs: Array<any> = Array.isArray(prCheck.pendingPRs) ? prCheck.pendingPRs : []
-      if (pendingPRs.length > 0) {
+      if (pendingPRs.length >= MAX_CONCURRENT_CI) {
         return {
           _transition: 'WRAP_UP',
-          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI; holding at ≤1 queue depth until CI settles`,
+          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI (>= ${MAX_CONCURRENT_CI} cloud-runner capacity); holding until CI settles`,
           drainMode: true,
           pendingCount: pendingPRs.length,
         }
@@ -2457,21 +2576,28 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         .filter(b => !isLikelyCoveredByMergedPR(b))
 
       if (allPending.length > 0) {
-        // Dispatch ONE bug at a time (oldest first_seen_at). With a single self-hosted
-        // CI runner, parallel bug dispatch creates a queue of N simultaneous CI jobs
-        // that all wait behind each other — zero benefit, high cost. One bug → one PR
-        // → drive it to green → then pick the next. This is the same principle as the
-        // focus PR logic in ci_router_decide.
-        const oneBug = allPending.sort((a, b) => {
+        // Dispatch a BATCH of up to MAX_PARALLEL_BUGS bugs (oldest first_seen_at
+        // first) to PARALLEL_FIX_BUGS, which runs one fully self-contained
+        // diagnose→test→fix→PR task per bug via delegate_parallel_tasks. Each
+        // task gets its own isolated git worktree + branch + PR, and CI is now
+        // Katapult cloud runners (~5 concurrent), so N PRs each get a runner
+        // rather than queueing behind one. The old one-bug-at-a-time throttle
+        // was premised on a single self-hosted runner that no longer exists.
+        const MAX_PARALLEL_BUGS = 5
+        const sorted = allPending.slice().sort((a, b) => {
           const at = typeof a.first_seen_at === 'string' ? a.first_seen_at : '9999'
           const bt = typeof b.first_seen_at === 'string' ? b.first_seen_at : '9999'
           return at < bt ? -1 : at > bt ? 1 : 0
-        })[0]
+        })
+        const bugBatch = sorted.slice(0, MAX_PARALLEL_BUGS)
+        const batchKeys = bugBatch.map(b => `${b.topic}.${b.post}`).join(', ')
         return {
-          _transition: 'DIAGNOSE_BUG',
-          reason: `${allPending.length} unfixed bug(s) queued — beginning TDD pipeline for 1 (oldest: topic ${oneBug.topic}/${oneBug.post}); ${allPending.length - 1} deferred to next iteration`,
-          dbOpenBugs: [oneBug].filter(b => !pendingBugs.some((p: any) => `${p.topic}.${p.post}` === `${b.topic}.${b.post}`)),
-          singleBug: oneBug,
+          _transition: 'PARALLEL_FIX_BUGS',
+          reason: `${allPending.length} unfixed bug(s) queued — dispatching ${bugBatch.length} in parallel (${batchKeys})${allPending.length > bugBatch.length ? `; ${allPending.length - bugBatch.length} to next iteration` : ''}`,
+          dbOpenBugs: bugBatch.filter(b => !pendingBugs.some((p: any) => `${p.topic}.${p.post}` === `${b.topic}.${b.post}`)),
+          bugBatch,
+          // Keep singleBug for backward-compat with any path still reading it.
+          singleBug: bugBatch[0],
         }
       }
       const sentry = ctx?._action_check_sentry ?? {}
