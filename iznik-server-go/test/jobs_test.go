@@ -75,77 +75,100 @@ func TestJobClick(t *testing.T) {
 	assert.Equal(t, 200, resp.StatusCode)
 }
 
-func TestJobsDedupeByCanonicalTitle(t *testing.T) {
-	// Test data: two jobs with same canonical_title but different locations
+func TestJobsDedupeByTitleAndBody(t *testing.T) {
+	// The FD jobs feed indexes the SAME posting for many locations, so a single
+	// role can appear dozens of times (Discourse 9739, "every job identical
+	// except location"). We de-duplicate by title+body so those exact copies
+	// collapse to one card — but NOT by canonical_title (the AI-image category),
+	// because unrelated jobs from different employers share a category while
+	// having different bodies, and each must still appear.
 	lat := 52.5833189
 	lng := -2.0455619
 
 	db := database.DBConn
 
-	// Remove any stale rows from a previous crashed run before inserting.
-	// The jobs table has a unique(location, title) constraint, so stale rows
-	// would cause the insert below to fail with a duplicate-key error.
-	db.Exec("DELETE FROM jobs WHERE canonical_title IN (?, ?)", "test-role-dedup", "test-role-control")
-
+	// Clean up by marker (canonical_title) before and after. The jobs table has a
+	// unique(location, title) constraint, so stale rows from a crashed run would
+	// otherwise cause duplicate-key errors on insert.
+	db.Exec("DELETE FROM jobs WHERE canonical_title IN (?, ?, ?)",
+		"test-dedup-A", "test-dedup-B", "test-dedup-ctrl")
 	defer func() {
-		db.Exec("DELETE FROM jobs WHERE canonical_title IN (?, ?)", "test-role-dedup", "test-role-control")
+		db.Exec("DELETE FROM jobs WHERE canonical_title IN (?, ?, ?)",
+			"test-dedup-A", "test-dedup-B", "test-dedup-ctrl")
 	}()
 
-	// Helper to insert a job with specific canonical_title
-	insertJob := func(title, location, canonicalTitle string) {
+	// High expectation (cpc * clickability) so these rank within JOBS_LIMIT.
+	insertJob := func(title, location, body, canonicalTitle string) {
 		wkt := fmt.Sprintf("POINT(%.7f %.7f)", lng, lat)
-		ref := fmt.Sprintf("test-job-%d-%d", time.Now().UnixNano(), rand.Intn(100000))
+		ref := fmt.Sprintf("test-job-%d-%d", time.Now().UnixNano(), rand.Intn(1000000))
 		result := db.Exec(
 			fmt.Sprintf(
 				"INSERT INTO jobs (title, location, url, body, job_reference, category, geometry, cpc, clickability, visible, canonical_title) "+
-					"VALUES (?, ?, 'http://example.com/job', 'Test body', ?, 'General', ST_GeomFromText(?, %d), 0.15, 1, 1, ?)",
+					"VALUES (?, ?, 'http://example.com/job', ?, ?, 'General', ST_GeomFromText(?, %d), 99.0, 1, 1, ?)",
 				utils.SRID),
-			title, location, ref, wkt, canonicalTitle)
+			title, location, body, ref, wkt, canonicalTitle)
 
 		if result.Error != nil {
 			t.Fatalf("Failed to insert job: %v", result.Error)
 		}
 	}
 
-	// Insert two jobs with SAME canonical_title but different locations
-	insertJob("Software Engineer - London", "London, UK", "test-role-dedup")
-	insertJob("Software Engineer - Manchester", "Manchester, UK", "test-role-dedup")
+	// Group A: the SAME posting (identical title + body) indexed for two
+	// locations — must collapse to a single card.
+	sameBody := "Pick and pack orders in a busy warehouse. Immediate start, full training given."
+	insertJob("Warehouse Operative", "London, UK", sameBody, "test-dedup-A")
+	insertJob("Warehouse Operative", "Manchester, UK", sameBody, "test-dedup-A")
 
-	// Insert one job with DIFFERENT canonical_title as control (should still appear)
-	insertJob("DevOps Engineer - Leeds", "Leeds, UK", "test-role-control")
+	// Group B: SAME title and SAME canonical_title but DIFFERENT bodies (two
+	// different employers) — both must still appear. This is the case a
+	// canonical_title- or title-only dedupe wrongly collapsed.
+	bodySunrise := "Sunrise Homes: support residents with daily living in our care home."
+	bodyBrightCare := "BrightCare Ltd: deliver care to clients in their own homes across the city."
+	insertJob("Care Assistant", "Bristol, UK", bodySunrise, "test-dedup-B")
+	insertJob("Care Assistant", "Leeds, UK", bodyBrightCare, "test-dedup-B")
 
-	// Query for jobs
+	// Control: a distinct posting — must appear.
+	insertJob("Delivery Driver", "York, UK", "Drive a van delivering parcels on a fixed local route.", "test-dedup-ctrl")
+
 	resp, _ := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/job?lat=%f&lng=%f", lat, lng), nil))
 	assert.Equal(t, 200, resp.StatusCode)
 
 	var jobs []job.Job
 	json2.Unmarshal(rsp(resp), &jobs)
 
-	// Count how many jobs with the "test-role-dedup" canonical_title are returned
-	// We can identify them by their titles
-	deducedTitles := map[string]int{
-		"Software Engineer - London":      0,
-		"Software Engineer - Manchester":  0,
-		"DevOps Engineer - Leeds":         0,
-	}
-
-	for _, j := range jobs {
-		for title := range deducedTitles {
+	countTitle := func(title string) int {
+		n := 0
+		for _, j := range jobs {
 			if j.Title == title {
-				deducedTitles[title]++
+				n++
 			}
 		}
+		return n
+	}
+	countTitleBody := func(title, body string) int {
+		n := 0
+		for _, j := range jobs {
+			if j.Title == title && j.Body == body {
+				n++
+			}
+		}
+		return n
 	}
 
-	// ASSERT: Only ONE of the duplicated titles should appear (the first one, due to ordering)
-	londonCount := deducedTitles["Software Engineer - London"]
-	manchesterCount := deducedTitles["Software Engineer - Manchester"]
-	controlCount := deducedTitles["DevOps Engineer - Leeds"]
+	// Group A: identical title+body across locations collapses to exactly one.
+	assert.Equal(t, 1, countTitle("Warehouse Operative"),
+		"an identical posting indexed for multiple locations should collapse to a single card")
 
-	// Before fix: both London and Manchester appear (2 total)
-	// After fix: only one appears (1 total)
-	totalDedupedJobs := londonCount + manchesterCount
+	// Group B: same title, different body -> BOTH appear (not collapsed by
+	// canonical_title or by title alone).
+	assert.Equal(t, 1, countTitleBody("Care Assistant", bodySunrise),
+		"first distinct Care Assistant posting should appear")
+	assert.Equal(t, 1, countTitleBody("Care Assistant", bodyBrightCare),
+		"second distinct Care Assistant posting (different body) must also appear")
+	assert.Equal(t, 2, countTitle("Care Assistant"),
+		"two different employers sharing a job title must both appear; title/canonical_title alone must not collapse them")
 
-	assert.Equal(t, 1, totalDedupedJobs, "Expected exactly 1 job with canonical_title='test-role-dedup', but got %d", totalDedupedJobs)
-	assert.Greater(t, controlCount, 0, "Expected control job (different canonical_title) to still appear")
+	// Control posting still appears.
+	assert.GreaterOrEqual(t, countTitle("Delivery Driver"), 1,
+		"a distinct control posting should still appear")
 }

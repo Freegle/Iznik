@@ -19,21 +19,21 @@ import (
 var categorySanitizer = regexp.MustCompile(`[^a-zA-Z/ ]+`)
 
 type Job struct {
-	ID               uint64  `json:"id" gorm:"primary_key"`
-	Ambit            float64 `json:"ambit"`
-	Dist             float64 `json:"dist"`
-	Area             float64 `json:"area"`
-	Url              string  `json:"url"`
-	Title            string  `json:"title"`
-	Location         string  `json:"location"`
-	Body             string  `json:"body"`
-	Reference        string  `json:"job_reference"`
-	Category         string  `json:"category"`
-	CPC              float64 `json:"cpc"`
-	Clickability     float64 `json:"clickability"`
-	Expectation      float64 `json:"expectation"`
-	Image            string  `json:"image,omitempty"`
-	CanonicalTitle   string  `json:"-"`
+	ID             uint64  `json:"id" gorm:"primary_key"`
+	Ambit          float64 `json:"ambit"`
+	Dist           float64 `json:"dist"`
+	Area           float64 `json:"area"`
+	Url            string  `json:"url"`
+	Title          string  `json:"title"`
+	Location       string  `json:"location"`
+	Body           string  `json:"body"`
+	Reference      string  `json:"job_reference"`
+	Category       string  `json:"category"`
+	CPC            float64 `json:"cpc"`
+	Clickability   float64 `json:"clickability"`
+	Expectation    float64 `json:"expectation"`
+	Image          string  `json:"image,omitempty"`
+	CanonicalTitle string  `json:"-"`
 }
 
 const JOBS_LIMIT = 50
@@ -99,7 +99,7 @@ func GetJobs(c *fiber.Ctx) error {
 			go func(ambit float64) {
 				var nelat, nelng, swlat, swlng float64
 				var these []Job
-				seenCanonicalTitles := make(map[string]bool)
+				seenJobs := make(map[string]bool)
 
 				// Get an exclusive connection.
 				db, err := database.Pool.Conn(timeoutContext)
@@ -191,16 +191,18 @@ func GetJobs(c *fiber.Ctx) error {
 							job.CanonicalTitle = canonicalTitle.String
 						}
 
-						// De-duplicate by canonical_title: skip if we've already seen this canonical_title
-						// (but only if canonical_title is non-empty; rows with empty canonical_title are kept)
-						if job.CanonicalTitle != "" && seenCanonicalTitles[job.CanonicalTitle] {
+						// De-duplicate genuine duplicates only: the SAME posting (title + body)
+						// indexed for many locations collapses to a single card (Discourse 9739
+						// "every job identical except location"). canonical_title is just the
+						// AI-image category — many unrelated jobs (different employers, different
+						// bodies) share it — so it must NOT be the dedup key, or distinct jobs
+						// would be hidden. Location is intentionally excluded from the key so the
+						// multi-location copies of one posting merge.
+						dedupKey := job.Title + "\x00" + job.Body
+						if seenJobs[dedupKey] {
 							continue
 						}
-
-						// Mark this canonical_title as seen (only if non-empty)
-						if job.CanonicalTitle != "" {
-							seenCanonicalTitles[job.CanonicalTitle] = true
-						}
+						seenJobs[dedupKey] = true
 
 						these = append(these, job)
 					}
