@@ -8,12 +8,22 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
-// BuildDate and GitCommit are populated at startup from BUILD_INFO (Docker builds)
-// or from the .git directory (git-checkout deployments).
+// BuildDate and GitCommit are populated at build time via ldflags
+// (-X .../status.GitCommit=...) in build.sh for the Netlify production build,
+// which is the only place that works for the serverless Go API (no /app/BUILD_INFO
+// and no .git directory exist at runtime there). When not injected (e.g. the Docker
+// dev image, which runs `go run` without ldflags), they fall back to BUILD_INFO or
+// the .git directory below.
 var BuildDate = "unknown"
 var GitCommit = "unknown"
 
 func init() {
+	// An ldflags-injected commit always wins; only fall back to file-based
+	// detection when the value wasn't baked in at build time.
+	if GitCommit != "unknown" {
+		return
+	}
+
 	// Prefer BUILD_INFO (set by Dockerfile during Docker builds).
 	data, err := os.ReadFile("/app/BUILD_INFO")
 	if err == nil {
@@ -83,8 +93,9 @@ func GetStatus(c *fiber.Ctx) error {
 //
 // @Summary Get API version info
 // @Description Returns git commit hashes for the Go API and the Laravel batch server.
-// The Go commit is read from BUILD_INFO (Docker) or .git/HEAD (checkout deployment).
-// The Laravel commit is written to the config table by deploy:refresh and read here.
+// The Go commit is baked in at build time via ldflags (Netlify production build),
+// or read from BUILD_INFO (Docker) / .git/HEAD (git checkout) as a fallback.
+// The Laravel commit is written to the config table by deploy:record-commit and read here.
 // @Tags status
 // @Produce json
 // @Success 200 {object} map[string]interface{}
