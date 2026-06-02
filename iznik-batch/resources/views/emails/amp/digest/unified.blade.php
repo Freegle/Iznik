@@ -5,7 +5,6 @@
   <script async src="https://cdn.ampproject.org/v0.js"></script>
   <script async custom-element="amp-form" src="https://cdn.ampproject.org/v0/amp-form-0.1.js"></script>
   <script async custom-element="amp-accordion" src="https://cdn.ampproject.org/v0/amp-accordion-0.1.js"></script>
-  <script async custom-element="amp-timeago" src="https://cdn.ampproject.org/v0/amp-timeago-0.1.js"></script>
   <script async custom-template="amp-mustache" src="https://cdn.ampproject.org/v0/amp-mustache-0.2.js"></script>
   <style amp4email-boilerplate>body{visibility:hidden}</style>
   <style amp-custom>
@@ -373,10 +372,13 @@
              Multi-post truncates so 200 cards fit Gmail's AMP size limit. --}}
         <p class="post-preview">{!! nl2br(e($isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 120))) !!}</p>
         @endif
-        {{-- Distance + arrival on one line (matches the MJML card). --}}
+        {{-- Distance + arrival on one line (matches the MJML card).
+             Static arrivalFormatted instead of <amp-timeago> — saves ~80
+             bytes per post (× 200 posts ≈ 16 KB on a big digest, which is
+             the difference between fitting Gmail's 200 KB AMP cap or not). --}}
         <p class="post-time">
           @if($post['distanceText'])<span style="margin-right: 10px;">&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
-          &#x1F552; <amp-timeago datetime="{{ $post['arrivalIso'] }}" locale="en" width="120" height="16" layout="fixed">{{ $post['arrivalFormatted'] }}</amp-timeago>
+          &#x1F552; {{ $post['arrivalFormatted'] }}
         </p>
         {{-- Avatar byline (V1 MultipleDigest parity). 22x22 inline-block
              avatar paired with the bold poster name. --}}
@@ -406,16 +408,14 @@
            <template> blocks at the top of body so we don't pay the ~300
            bytes-per-post cost of inlining them in every form.
            ───────────────────────────────────────────────────────────────── --}}
-      <amp-accordion class="reply-acc" disable-session-states>
+      <amp-accordion class="reply-acc">
         <section>
           <h4 class="reply-toggle reply-btn{{ $post['type'] === 'Offer' ? '' : ' wanted' }}">Reply</h4>
           <div class="reply-form-container">
             <form method="post" action-xhr="{{ $post['ampReplyUrl'] }}">
-              <textarea class="reply-textarea" name="message" placeholder="Type your reply..." required minlength="1" maxlength="10000"></textarea>
-              <button type="submit" class="reply-submit">Send Reply</button>
-              <div submitting>
-                <div class="form-status"><div class="submitting-msg">Sending your reply...</div></div>
-              </div>
+              <textarea class="reply-textarea" name="message" placeholder="Reply..." required></textarea>
+              <button type="submit" class="reply-submit">Send</button>
+              <div submitting><div class="form-status"><div class="submitting-msg">Sending…</div></div></div>
               <div submit-success template="rsuccess"></div>
               <div submit-error template="rerror"></div>
             </form>
