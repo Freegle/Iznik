@@ -833,6 +833,15 @@
              (it's the only post). --}}
         <p class="post-preview">{!! nl2br(e($post['messageText'])) !!}</p>
         @endif
+        @if(!empty($post['bulkItems']))
+        {{-- Bulk offer catalogue: a concise item list. --}}
+        <p class="post-preview"><strong>{{ count($post['bulkItems']) }} items in this offer:</strong></p>
+        <ul style="margin: 0 0 8px 0; padding-left: 18px; font-size: 14px; color: #333333;">
+          @foreach($post['bulkItems'] as $bi)
+          <li><strong>{{ $bi['quantity'] }}&times;</strong> {{ $bi['name'] }}@if($bi['condition']) &middot; {{ $bi['condition'] }}@endif</li>
+          @endforeach
+        </ul>
+        @endif
         {{-- Meta row: 📍 distance · 🕒 time. Location moved up into the
              title block so this row is just the bits that vary per
              recipient (distance) or per post (time). --}}

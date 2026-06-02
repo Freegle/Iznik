@@ -34,6 +34,14 @@ Location: {!! $post['locationName'] !!}
 
 {!! $isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 200) !!}
 @endif
+@if(!empty($post['bulkItems']))
+
+{{ count($post['bulkItems']) }} items in this offer:
+@foreach($post['bulkItems'] as $bi)
+  - {{ $bi['quantity'] }}x {!! $bi['name'] !!}@if($bi['condition']) ({{ $bi['condition'] }})@endif
+
+@endforeach
+@endif
 
 Posted by {!! $post['posterName'] !!}{!! ($post['groupName'] ?? null) ? ' on ' . $post['groupName'] : '' !!}
 @if(!empty($post['firstPostedFormatted']))
