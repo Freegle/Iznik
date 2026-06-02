@@ -57,15 +57,37 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         // Initialize email tracking BEFORE preparePosts so trackedUrl() works.
         $userId = $this->user->exists ? $this->user->id : null;
 
+        // Group dimension: an immediate or per-group digest is about a single
+        // community, so record which one; a daily digest spans the member's
+        // groups and isn't tied to one, so leave it null.
+        $trackingGroupId = null;
+        if (
+            in_array($this->mode, [
+                UnifiedDigestService::MODE_IMMEDIATE,
+                UnifiedDigestService::MODE_GROUP,
+            ], true)
+            && $this->posts->isNotEmpty()
+        ) {
+            $trackingGroupId = $this->posts->first()['postedToGroups'][0] ?? null;
+        }
+
         $this->initTracking(
             $this->getEmailType(),
             $this->user->email_preferred,
             $userId,
-            null,
+            $trackingGroupId,
             $this->getSubject(),
             [
                 'mode' => $this->mode,
                 'post_count' => $this->posts->count(),
+                // Ordered msgids of every post shown, position = array index.
+                // Matches the per-post link/image position labels ("post_{i}"
+                // / "image_{i}") so an OPEN with no click is still attributable
+                // across the posts shown (position-weighted), image-load
+                // positions map back to a msgid, and a post's "shown at
+                // position P in N digests" denominator is recoverable. Without
+                // this only the rare clicked post can be attributed.
+                'post_msgids' => $this->posts->map(fn ($p) => $p['message']->id)->values()->all(),
                 'digest_number' => $this->digestNumber,
                 'has_amp' => $this->isAmpEnabled(),
             ]

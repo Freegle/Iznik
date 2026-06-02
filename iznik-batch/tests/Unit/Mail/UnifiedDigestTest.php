@@ -205,6 +205,58 @@ class UnifiedDigestTest extends TestCase
         $this->assertArrayHasKey('digest_number', $metadata);
     }
 
+    public function test_tracking_metadata_records_post_composition_in_order(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        $msg1 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (London)']);
+        $msg2 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Table (London)']);
+        $msg3 = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Chair (London)']);
+
+        $posts = collect([
+            ['message' => $msg1, 'postedToGroups' => [$group->id]],
+            ['message' => $msg2, 'postedToGroups' => [$group->id]],
+            ['message' => $msg3, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $metadata = $mail->getTracking()->metadata;
+        // Ordered msgids, position = index — must line up with the
+        // "post_{i}" / "image_{i}" position labels so an open with no click
+        // can still be attributed per-post (the eyeball-accounting model).
+        $this->assertEquals([$msg1->id, $msg2->id, $msg3->id], $metadata['post_msgids']);
+        $this->assertEquals(3, $metadata['post_count']);
+    }
+
+    public function test_group_and_immediate_modes_record_groupid(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        // A per-group digest is about one community → record which group.
+        $groupMail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_GROUP, collect(), 24);
+        $this->assertEquals($group->id, $groupMail->getTracking()->groupid);
+
+        // A daily digest spans the member's groups → not tied to one.
+        $dailyMail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $this->assertNull($dailyMail->getTracking()->groupid);
+    }
+
     public function test_immediate_mode_envelope_from_is_noreply_for_amp(): void
     {
         // Gmail's AMP-for-Email dynamic-mail allowlist keys on the From:
