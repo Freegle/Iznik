@@ -133,17 +133,18 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		return fiber.NewError(fiber.StatusBadRequest, "Cannot register interest in your own post")
 	}
 
-	// Ensure a User2User conversation with the offerer exists.
-	chatid := findOrCreateUser2UserRoom(db, myid, fromuser)
-
+	// Validate each item belongs to this message, then split into active picks
+	// and withdrawals. Withdrawals don't need a chat room.
 	type selected struct {
-		name string
-		qty  uint
+		bulkitemid uint64
+		name       string
+		qty        uint
+		cancollect *string
 	}
 	var picked []selected
+	var withdraw []uint64
 
 	for _, in := range req.BulkInterest {
-		// The item must belong to this message.
 		var itemName string
 		var available uint
 		var itemMsgid uint64
@@ -153,45 +154,60 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 			// Unknown item or item from another post — ignore it.
 			continue
 		}
-
 		if in.Quantity <= 0 {
-			// Withdraw interest in this item (keep the row for history).
-			db.Exec("UPDATE messages_bulk_items_interest SET state = ?, quantity = 0 WHERE bulkitemid = ? AND userid = ?",
-				"Withdrawn", in.Bulkitemid, myid)
+			withdraw = append(withdraw, in.Bulkitemid)
 			continue
 		}
-
-		// Cap the requested quantity at what is offered.
 		qty := uint(in.Quantity)
 		if available > 0 && qty > available {
 			qty = available
 		}
-
-		db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, cancollect, chatid, state) "+
-			"VALUES (?, ?, ?, ?, ?, ?, 'Interested') "+
-			"ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), cancollect = VALUES(cancollect), chatid = VALUES(chatid), state = 'Interested'",
-			in.Bulkitemid, req.ID, myid, qty, in.Cancollect, chatid)
-
-		picked = append(picked, selected{name: itemName, qty: qty})
+		picked = append(picked, selected{bulkitemid: in.Bulkitemid, name: itemName, qty: qty, cancollect: in.Cancollect})
 	}
 
-	// Post one consolidated chat reply describing the selection so it flows
-	// through the existing reply/chat machinery (and is visible to the concierge).
-	if len(picked) > 0 && chatid > 0 {
+	// Withdraw interest (keep the row for history). No chat room needed.
+	for _, id := range withdraw {
+		db.Exec("UPDATE messages_bulk_items_interest SET state = 'Withdrawn', quantity = 0 WHERE bulkitemid = ? AND userid = ?",
+			id, myid)
+	}
+
+	var chatid uint64
+	if len(picked) > 0 {
+		// Only now do we need a conversation with the offerer.
+		chatid = findOrCreateUser2UserRoom(db, myid, fromuser)
+
+		for _, p := range picked {
+			// Preserve an offerer-set state (Reserved/Collected/Rejected) — a
+			// replier re-expressing interest must not reset their allocation.
+			db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, cancollect, chatid, state) "+
+				"VALUES (?, ?, ?, ?, ?, ?, 'Interested') "+
+				"ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), cancollect = VALUES(cancollect), chatid = VALUES(chatid), "+
+				"state = IF(state IN ('Reserved','Collected','Rejected'), state, 'Interested')",
+				p.bulkitemid, req.ID, myid, p.qty, p.cancollect, chatid)
+		}
+
+		// One consolidated Interested chat reply: insert the first time, update
+		// it on re-express (so the thread isn't spammed with duplicates).
 		var parts []string
 		for _, p := range picked {
 			parts = append(parts, fmt.Sprintf("%d× %s", p.qty, p.name))
 		}
 		body := "I'm interested in: " + strings.Join(parts, ", ")
-		// A single cancollect applies to the whole selection if supplied.
-		for _, in := range req.BulkInterest {
-			if in.Cancollect != nil && strings.TrimSpace(*in.Cancollect) != "" {
-				body += " (can collect: " + strings.TrimSpace(*in.Cancollect) + ")"
+		for _, p := range picked {
+			if p.cancollect != nil && strings.TrimSpace(*p.cancollect) != "" {
+				body += " (can collect: " + strings.TrimSpace(*p.cancollect) + ")"
 				break
 			}
 		}
-		db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
-			chatid, myid, utils.CHAT_MESSAGE_INTERESTED, req.ID, time.Now(), body)
+		var existingID uint64
+		db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? AND refmsgid = ? AND type = ? ORDER BY id DESC LIMIT 1",
+			chatid, myid, req.ID, utils.CHAT_MESSAGE_INTERESTED).Scan(&existingID)
+		if existingID > 0 {
+			db.Exec("UPDATE chat_messages SET message = ?, date = ? WHERE id = ?", body, time.Now(), existingID)
+		} else {
+			db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
+				chatid, myid, utils.CHAT_MESSAGE_INTERESTED, req.ID, time.Now(), body)
+		}
 		db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
 	}
 
@@ -227,8 +243,11 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 		return fiber.NewError(fiber.StatusForbidden, "Not your post")
 	}
 
-	db.Exec("UPDATE messages_bulk_items_interest SET state = ? WHERE bulkitemid = ? AND userid = ?",
+	result := db.Exec("UPDATE messages_bulk_items_interest SET state = ? WHERE bulkitemid = ? AND userid = ?",
 		*req.State, *req.Bulkitemid, *req.Userid)
+	if result.RowsAffected == 0 {
+		return fiber.NewError(fiber.StatusNotFound, "Interest row not found")
+	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -305,10 +324,12 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 		if itemID > 0 {
 			keepIDs = append(keepIDs, itemID)
 			// Link this item's photos to both the message and the item. Freshly
-			// uploaded attachments have no msgid yet, so set it here too (matching
-			// PutMessage's attachment-linking pattern).
+			// uploaded attachments have no msgid yet, so set it here too. The
+			// (msgid IS NULL OR msgid = ?) guard prevents stealing an attachment
+			// that already belongs to a different message.
 			for _, attID := range in.Attachments {
-				db.Exec("UPDATE messages_attachments SET bulkitemid = ?, msgid = ? WHERE id = ?", itemID, msgid, attID)
+				db.Exec("UPDATE messages_attachments SET bulkitemid = ?, msgid = ? WHERE id = ? AND (msgid IS NULL OR msgid = ?)",
+					itemID, msgid, attID, msgid)
 			}
 		}
 	}

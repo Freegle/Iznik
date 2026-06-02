@@ -3,7 +3,7 @@
     <!-- Quick add from a spreadsheet. -->
     <div class="bulkeditor__import">
       <b-button variant="outline-secondary" size="sm" @click="showImport = !showImport">
-        <v-icon icon="table" /> Paste or upload a spreadsheet
+        <v-icon icon="list" /> Paste or upload a spreadsheet
       </b-button>
       <div v-if="showImport" class="bulkeditor__import-panel mt-2">
         <p class="small text-muted mb-1">

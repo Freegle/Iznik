@@ -197,6 +197,10 @@ func TestBulkInterest(t *testing.T) {
 	db.Raw("SELECT quantity FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", chairID, wanterID).Scan(&qty)
 	assert.Equal(t, 3, qty)
 
+	// Re-expressing must NOT add a second chat message — the thread stays clean.
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND userid = ? AND type = 'Interested'", msgID, wanterID).Scan(&chatCount)
+	assert.Equal(t, int64(1), chatCount, "re-express updates the existing chat message, not a new one")
+
 	// Quantity 0 → withdrawn.
 	post(0)
 	db.Raw("SELECT state FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", chairID, wanterID).Scan(&state)
@@ -252,6 +256,57 @@ func TestBulkInterestState(t *testing.T) {
 	var state string
 	db.Raw("SELECT state FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", deskID, wanterID).Scan(&state)
 	assert.Equal(t, "Reserved", state)
+}
+
+// TestBulkInterestPreservesReservedState checks that once the offerer has
+// reserved an item for a replier, the replier re-expressing interest does not
+// reset the state back to Interested (which would break allocation).
+func TestBulkInterestPreservesReservedState(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("bulkreserve")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
+	wanterToken := getToken(t, wanterID)
+
+	express := func(qty int) {
+		body := map[string]interface{}{
+			"action": "BulkInterest", "id": msgID,
+			"bulkinterest": []map[string]interface{}{{"bulkitemid": chairID, "quantity": qty}},
+		}
+		bb, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/api/message?jwt="+wanterToken, bytes.NewBuffer(bb))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req, 10000)
+		require.NoError(t, err)
+		require.Equal(t, 200, resp.StatusCode)
+	}
+
+	express(4)
+
+	// Offerer reserves the chairs for the wanter.
+	stateBody := map[string]interface{}{
+		"action": "BulkInterestState", "id": msgID,
+		"bulkitemid": chairID, "userid": wanterID, "state": "Reserved",
+	}
+	bb, _ := json.Marshal(stateBody)
+	req := httptest.NewRequest("POST", "/api/message?jwt="+getToken(t, ownerID), bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	// Wanter tweaks their quantity — state must remain Reserved.
+	express(6)
+	var state string
+	var qty int
+	db.Raw("SELECT state, quantity FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", chairID, wanterID).Row().Scan(&state, &qty)
+	assert.Equal(t, "Reserved", state, "offerer's reservation must survive a re-express")
+	assert.Equal(t, 6, qty, "quantity still updates")
 }
 
 // TestBulkOfferPatchRebuildsCatalogue checks PATCH rebuilds the catalogue and

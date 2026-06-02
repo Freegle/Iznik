@@ -100,6 +100,7 @@
         </div>
         <div class="title-row">
           <span class="title-subject">{{ strippedSubject }}</span>
+          <b-badge v-if="bulkCount" variant="success" class="ms-1 bulk-badge">{{ bulkCount }} items</b-badge>
         </div>
       </div>
     </div>
@@ -110,6 +111,7 @@
         <MessageTag :id="id" :inline="true" class="content-tag" />
         <div class="content-title-location">
           <span class="content-subject">{{ subjectItemName }}</span>
+          <b-badge v-if="bulkCount" variant="success" class="ms-1 bulk-badge">{{ bulkCount }} items</b-badge>
           <span v-if="subjectLocation" class="content-location">
             {{ subjectLocation }}
           </span>
@@ -178,6 +180,9 @@ const {
   placeholderClass,
   categoryIcon,
 } = useMessageDisplay(idRef)
+
+// Bulk offer ("clearance"): number of catalogue items, for a list indicator.
+const bulkCount = computed(() => message.value?.bulkitems?.length || 0)
 
 const miscStore = useMiscStore()
 const { isLandscape } = useOrientation()
