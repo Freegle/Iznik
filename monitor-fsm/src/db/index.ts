@@ -429,6 +429,42 @@ export function queueDiscourseDraft(db: DB, draft: {
   return Number(info.lastInsertRowid)
 }
 
+/**
+ * Record a reply that has ALREADY been auto-posted to Discourse.
+ *
+ * Verified-live "fix applied, please retest" replies are posted automatically
+ * (no human review) once a merged PR is confirmed deployed. We still write a
+ * discourse_draft row — with approved_at AND posted_at set to now — so it acts
+ * as the dedup record (one reply per reporting post) and shows in the audit
+ * trail / views as posted rather than pending.
+ */
+export function recordPostedReply(db: DB, draft: {
+  topic: number
+  post: number
+  username: string
+  quote: string
+  body: string
+  previewUrl?: string
+  prNumber?: number
+  prUrl?: string
+}): number {
+  const info = db.prepare(`
+    INSERT INTO discourse_draft
+      (topic, post, username, quote, body, preview_url, pr_number, pr_url, approved_at, posted_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+  `).run(
+    draft.topic,
+    draft.post,
+    draft.username,
+    draft.quote,
+    draft.body,
+    draft.previewUrl ?? null,
+    draft.prNumber ?? null,
+    draft.prUrl ?? null,
+  )
+  return Number(info.lastInsertRowid)
+}
+
 export function listPendingDrafts(db: DB): DiscourseDraftRow[] {
   return db.prepare(`
     SELECT * FROM discourse_draft
