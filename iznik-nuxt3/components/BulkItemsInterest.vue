@@ -24,9 +24,9 @@
         <div class="bulkitem__detail">
           <div class="bulkitem__name">{{ item.name }}</div>
           <div class="bulkitem__meta">
-            <b-badge variant="light" class="me-1">{{
-              item.quantity
-            }} available</b-badge>
+            <b-badge variant="light" class="me-1"
+              >{{ item.quantity }} available</b-badge
+            >
             <b-badge
               v-if="item.condition && item.condition !== 'Unknown'"
               variant="info"

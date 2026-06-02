@@ -744,9 +744,7 @@ export const useMessageStore = defineStore({
       // ModTools — match any group in the message's groups array (multi-group support).
       const gid = parseInt(groupid)
       const ret = Object.values(state.list).filter((message) => {
-        return message.groups.some(
-          (g) => parseInt(g.groupid) === gid
-        )
+        return message.groups.some((g) => parseInt(g.groupid) === gid)
       })
       return ret
     },
