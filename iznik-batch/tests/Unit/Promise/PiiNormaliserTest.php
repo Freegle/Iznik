@@ -111,11 +111,13 @@ class PiiNormaliserTest extends TestCase
 
     public function test_collapse_carriage_return_newline_tab()
     {
-        $result = $this->normaliser->normalise("Line 1\r\nLine 2\tTabbed");
+        // Use digit-free words so the address regex ("<number> <Word>") doesn't fire —
+        // this test is about \r\n\t collapsing, not PII.
+        $result = $this->normaliser->normalise("Line one\r\nLine two\tTabbed");
         $this->assertStringNotContainsString("\r", $result);
         $this->assertStringNotContainsString("\n", $result);
         $this->assertStringNotContainsString("\t", $result);
-        $this->assertStringContainsString("Line 1 Line 2 Tabbed", $result);
+        $this->assertStringContainsString("Line one Line two Tabbed", $result);
     }
 
     public function test_collapse_multiple_spaces()
