@@ -177,6 +177,8 @@ These commands are active in `routes/console.php` and running in production:
 | `lovejunk_tn_invoice.php` | `lovejunk:send-tn-invoice` | Monthly 1st 15:00 | LoveJunk TN/FD split invoice — PR #417 |
 | `chat_review.php` | `chats:review-pending` | Daily 09:00 | Auto-reject stale + notify mods — PR #418 |
 | `engage.php` | `mail:engage` | Daily 16:00 | At-risk and inactive user engagement — PR #419 |
+| `donations_email.php` | `mail:donations:summary` | Hourly 06:00–22:00 | Donation status table to fundraising — PR #428 |
+| - | `mail:donations:thank-prep` | Daily 20:30 | Card-per-donation digest for composing thank-yous — PR #571 |
 
 ## Code Written (Scheduler Disabled)
 
@@ -185,7 +187,7 @@ These have code implemented but the scheduler entry is commented out in `routes/
 | Original Script | Artisan Command | Email Type in .env | Notes |
 |-----------------|-----------------|-------------------|-------|
 | `digest.php` | `mail:digest:unified` | UnifiedDigest | Unified Freegle "What's New" digests (immediate + daily, user-centric) |
-| `donations_email.php` | `mail:donations:ask` | - | Donation reminders |
+| - | `mail:donations:ask` | - | Ask users who received items for donations (no direct V1 origin) |
 | `donations_thank.php` | `mail:donations:thank` | - | Donation thank-you emails |
 | `bounce.php` + `bounce_users.php` | `mail:bounced` | - | Bounced email handling + user suspension (PR #390) |
 | `messages_expired.php` | `messages:process-expired` | - | Deadline expiry handling |
