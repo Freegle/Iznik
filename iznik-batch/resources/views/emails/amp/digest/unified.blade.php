@@ -324,11 +324,15 @@
          the trick that keeps 200-post digests under Gmail's size cap
          (saves ~300 bytes per post vs inlining the same template in each
          form's submit-success / submit-error wrappers). --}}
+    {{-- @{{message}} is Blade's escape for amp-mustache: Blade preserves the
+         literal {{message}} so the amp runtime can interpolate the success/
+         error response body at form-submit time. Without the @, Blade tries
+         to evaluate "message" as a PHP constant and throws at render. --}}
     <template type="amp-mustache" id="rsuccess">
-      <div class="form-status"><div class="submit-success">{{message}}</div></div>
+      <div class="form-status"><div class="submit-success">@{{message}}</div></div>
     </template>
     <template type="amp-mustache" id="rerror">
-      <div class="form-status"><div class="submit-error">{{message}}</div></div>
+      <div class="form-status"><div class="submit-error">@{{message}}</div></div>
     </template>
 
     {{-- Post cards --}}
