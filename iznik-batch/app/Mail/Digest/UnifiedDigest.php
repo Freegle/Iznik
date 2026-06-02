@@ -285,6 +285,21 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
         if ($this->isAmpEnabled()) {
             $ampPosts = $this->prepareAmpPosts();
 
+            // Build the shared per-post metadata map for the AMP template.
+            // Storing {title, token, expiry} once per message in an
+            // <amp-state> at the top of the body — instead of inlining the
+            // full token + title in each post's tap-state — drops the
+            // per-post button payload from ~400 bytes to ~110 bytes, which
+            // is what brings a 200-post AMP digest in under the 200 KB cap.
+            $ampPostMeta = $ampPosts->mapWithKeys(fn ($p) => [
+                (int) $p['message']->id => [
+                    't' => (string) $p['itemName'],
+                    'k' => (string) ($p['ampReplyToken'] ?? ''),
+                    'e' => (int) ($p['ampReplyExp'] ?? 0),
+                ],
+            ])->toArray();
+            $ampApiUrl = rtrim(config('freegle.amp.api_url', 'https://api.ilovefreegle.org/amp'), '/');
+
             $this->renderAmpTemplate('emails.amp.digest.unified', [
                 'user' => $this->user,
                 'posts' => $ampPosts,
@@ -293,6 +308,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'unsubscribeUrl' => $this->trackedUrl($this->userSite . '/unsubscribe', 'amp_unsubscribe', 'unsubscribe'),
                 'browseUrl' => $this->trackedUrl($this->userSite . '/browse', 'amp_browse', 'browse'),
                 'userSite' => $this->userSite,
+                'ampPostMeta' => $ampPostMeta,
+                'ampApiUrl' => $ampApiUrl,
+                'ampUserId' => (int) $this->user->id,
             ]);
 
             $result->withSymfonyMessage(function ($message) {
@@ -486,7 +504,11 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // regardless of the original photo's aspect ratio. Without this
             // the email rendered with the post's natural aspect — a portrait
             // photo made a card three times taller than a landscape one.
-            $thumbImageUrl = $this->getMessageImageUrl($message, 240, 180) ?? $placeholderUrl;
+            // Square thumbnail (240x240) — used by the daily multi-post cards.
+            // Square crop makes the photo height match a typical content
+            // column height closely, so the Reply button at the bottom of
+            // the card sits flush with the photo rather than dangling below.
+            $thumbImageUrl = $this->getMessageImageUrl($message, 240, 240) ?? $placeholderUrl;
 
             // Decode emoji sequences in message text.
             $messageText = $message->textbody
@@ -590,19 +612,27 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
      */
     protected function prepareAmpPosts(): Collection
     {
-        $ampApiBase = config('freegle.amp.api_base', $this->userSite);
+        // The AmpEmail trait + Go API expose freegle.amp.api_url (default
+        // https://api.ilovefreegle.org/amp), which is the host Gmail has
+        // registered for Freegle AMP forms. Earlier code looked up the
+        // non-existent freegle.amp.api_base key and fell back to the user
+        // site (www.ilovefreegle.org/amp/digest/...) — Gmail rejected the
+        // AMP form because the action-xhr host was not a registered sender
+        // domain, which surfaced as "INVALID_AMP" in the email.
+        $ampApiUrl = rtrim(config('freegle.amp.api_url', 'https://api.ilovefreegle.org/amp'), '/');
         $userId = $this->user->id;
 
-        return $this->preparedPosts->map(function ($post) use ($ampApiBase, $userId) {
+        return $this->preparedPosts->map(function ($post) use ($ampApiUrl, $userId) {
             $messageId = $post['message']->id;
             $token = $this->generateToken($userId, $messageId);
 
-            // Path-style id matches the chat AMP route shape and lets the Go
-            // handler treat the message ID as the HMAC resource without
-            // re-deriving it from a query param.
+            // Path-style id matches the chat AMP route shape (api_url is
+            // ".../amp" already, so the format string just appends
+            // "/digest/{id}/reply?..." — same shape as chat's
+            // "/chat/{id}/reply?...").
             $post['ampReplyUrl'] = sprintf(
-                '%s/amp/digest/%d/reply?rt=%s&uid=%d&exp=%d',
-                rtrim($ampApiBase, '/'),
+                '%s/digest/%d/reply?rt=%s&uid=%d&exp=%d',
+                $ampApiUrl,
                 $messageId,
                 $token['token'],
                 $userId,

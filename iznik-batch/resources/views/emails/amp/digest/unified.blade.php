@@ -55,10 +55,8 @@
       align-items: stretch;
     }
     .post-img-wrap {
-      width: 160px;
+      width: 200px;
       flex-shrink: 0;
-      position: relative; /* required for amp-img layout="fill" */
-      min-height: 160px;
     }
     .post-img-wrap amp-img {
       border-radius: 4px;
@@ -119,8 +117,14 @@
     .post-byline {
       font-size: 12px;
       color: #888888;
-      margin: 6px 0 8px 0;
+      margin: 14px 0 8px 0; /* breathing room above the avatar row so it
+                                doesn't sit hard up against the time/pin row */
       line-height: 22px;
+    }
+    /* Spacing above the distance/time row so the pin icon has air above
+       it (was visually crammed against the description). */
+    .post-time {
+      margin-top: 10px;
     }
     .post-byline amp-img {
       border-radius: 50%;
@@ -311,32 +315,23 @@
     </div>
     @endif
 
-    {{-- Shared reply state: amp-state holds the active post's id/title/token,
-         and the SINGLE reply form at the bottom binds its action-xhr URL and
-         visibility off this state. Each post's Reply button just sets the
-         state via on="tap:AMP.setState(...)". This replaces the per-post
-         amp-accordion+amp-form (~2 KB each) that was blowing the AMP payload
-         past Gmail's 102 KB clipped threshold — 200 posts now fit easily. --}}
-    <amp-state id="reply">
-      <script type="application/json">{"mid":0,"title":"","token":"","uid":0,"exp":0,"isOffer":false,"open":false}</script>
+    {{-- Shared state for the inline reply form.
+         d holds {messageId → {t:title, k:token, e:expiry}} for every post
+         in the digest, in raw JSON inside a <script> (no html-entity
+         bloat). Each post's Reply button only needs to set r.m to the
+         message id, which keeps per-post markup tiny. uid is the same
+         for every post in this digest so it's hardcoded in the action-xhr
+         expression below rather than carried per-post. --}}
+    <amp-state id="d">
+      <script type="application/json">{!! json_encode($ampPostMeta, JSON_UNESCAPED_SLASHES) !!}</script>
+    </amp-state>
+    <amp-state id="r">
+      <script type="application/json">{"m":0,"o":false}</script>
     </amp-state>
 
     {{-- Post cards --}}
     @foreach($posts as $index => $post)
-    @php
-        $isSingle = $postCount === 1;
-        $tapState = json_encode([
-            'reply' => [
-                'mid'    => (int) $post['message']->id,
-                'title'  => $post['itemName'],
-                'token'  => $post['ampReplyToken'] ?? '',
-                'uid'    => (int) $post['ampReplyUid'] ?? 0,
-                'exp'    => (int) ($post['ampReplyExp'] ?? 0),
-                'isOffer'=> $post['type'] === 'Offer',
-                'open'   => true,
-            ],
-        ], JSON_UNESCAPED_SLASHES);
-    @endphp
+    @php $isSingle = $postCount === 1; @endphp
     @if($isSingle)
     {{-- Single-post (immediate): item photo as hero — 600x400 cover-crop
          responsive on mobile. 16px side padding mirrors the MJML hero. --}}
@@ -349,13 +344,15 @@
       <div class="post-content" style="padding-left: 0;">
     @else
     <div class="post-card">
-      {{-- Multi-post thumbnail: amp-img layout="fill" inside a sized,
-           position:relative wrapper. The wrapper is a flex item with
-           align-items:stretch on the card, so the image grows to match
-           the content column's height — no more Reply button hanging
-           below the photo. --}}
+      {{-- Multi-post thumbnail: square (240x240 server-side cover-crop,
+           displayed 200x200) — the square aspect lands close to typical
+           content height so the photo bottom aligns more naturally with
+           the Reply button's bottom. amp-img layout="fixed" is the only
+           amp-img layout that reliably works inside a flex item without
+           an explicit parent height; layout="fill" requires the parent
+           to have a non-flex computed height, which we don't have. --}}
       <div class="post-img-wrap">
-        <amp-img layout="fill" object-fit="cover" src="{{ $post['thumbImageUrl'] }}" alt="{{ $post['itemName'] }}"></amp-img>
+        <amp-img layout="fixed" width="200" height="200" src="{{ $post['thumbImageUrl'] }}" alt="{{ $post['itemName'] }}"></amp-img>
       </div>
       <div class="post-content">
     @endif
@@ -386,13 +383,15 @@
              been reposted to this group. --}}
         <p class="post-first-posted">First posted {{ $post['firstPostedFormatted'] }}</p>
         @endif
-        {{-- Reply: opens the shared in-email form below by setting amp-state.
-             type="button" is required so AMP doesn't treat a bare <button>
-             as a form submit. on="tap:..." chains setState + scrollTo. --}}
+        {{-- Reply opens the shared in-email amp-form panel below. setState
+             only carries the message id + open flag — title/token/expiry
+             are looked up from the shared <amp-state id="d"> map by mid,
+             which keeps every button tiny enough that 200-post digests
+             still fit Gmail's AMP4Email size cap. --}}
         <button
           type="button"
           class="reply-btn{{ $post['type'] === 'Offer' ? '' : ' wanted' }}"
-          on='tap:AMP.setState({{ $tapState }}),AMP.scrollTo(id="reply-panel",position="center")'
+          on='tap:AMP.setState({"r":{"m":{{ $post['message']->id }},"o":true}}),AMP.scrollTo(id="reply-panel",position="center")'
         >Reply</button>
         @if($isSingle)
         {{-- Secondary actions on the immediate hero (V1 single.html parity). --}}
@@ -406,19 +405,21 @@
     @endforeach
 
     {{-- ─── Shared reply panel ──────────────────────────────────────────
-         Single form for ALL posts; appears once a Reply button is tapped.
-         [hidden] is bound to reply.open so the panel stays out of the way
-         until a user opts to reply. [action-xhr] is built from the active
-         post's id + per-message HMAC token (so the backend can verify the
-         reply belongs to this digest+user+message). Hidden inputs are
-         bound to the same state via amp-bind so amp-form posts the right
-         metadata even though the form itself is shared.
+         Single amp-form for ALL posts in the digest. Hidden until a
+         post's Reply button taps r.o=true. The static action-xhr below
+         is the real Freegle AMP endpoint Gmail has registered as the
+         sender domain (was a literal example.com placeholder, which
+         caused INVALID_AMP). The [action-xhr] amp-bind expression
+         rebuilds the URL per active post: id and the post's HMAC token
+         + expiry come from the shared <amp-state id="d"> lookup; uid is
+         the same for every post in this digest so it's a baked-in
+         constant rather than a per-post state field.
          ─────────────────────────────────────────────────────────────────── --}}
-    <div id="reply-panel" class="reply-panel" hidden [hidden]="!reply.open">
-      <p class="reply-panel-title">Reply to <strong [text]="reply.title">…</strong></p>
+    <div id="reply-panel" class="reply-panel" hidden [hidden]="!r.o">
+      <p class="reply-panel-title">Reply to <strong [text]="d[r.m].t">…</strong></p>
       <form method="post"
-            action-xhr="https://example.com/placeholder"
-            [action-xhr]="'{{ rtrim(config('freegle.amp.api_base', $userSite), '/') }}/amp/digest/' + reply.mid + '/reply?rt=' + reply.token + '&uid=' + reply.uid + '&exp=' + reply.exp"
+            action-xhr="{{ $ampApiUrl }}/digest/0/reply"
+            [action-xhr]="'{{ $ampApiUrl }}/digest/' + r.m + '/reply?rt=' + d[r.m].k + '&amp;uid={{ $ampUserId }}&amp;exp=' + d[r.m].e"
             target="_top">
         <textarea class="reply-textarea" name="message" placeholder="Type your reply..." required minlength="1" maxlength="10000"></textarea>
         <button type="submit" class="reply-submit">Send Reply</button>
@@ -436,7 +437,7 @@
           </template>
         </div>
       </form>
-      <p class="reply-fallback">Trouble sending? <a [href]="'{{ $userSite }}/message/' + reply.mid + '?reply=1'" href="{{ $userSite }}">Reply on the website</a> instead.</p>
+      <p class="reply-fallback">Trouble sending? <a [href]="'{{ $userSite }}/message/' + r.m + '?reply=1'" href="{{ $userSite }}">Reply on the website</a> instead.</p>
     </div>
 
     {{-- Browse All Posts --}}
