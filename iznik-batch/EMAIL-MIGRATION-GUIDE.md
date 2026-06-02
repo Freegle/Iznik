@@ -516,7 +516,7 @@ class SendYourEmailCommand extends Command
 | Chat notifications (U2U) | `mail:chat:user2user` |
 | Chat notifications (U2M) | `mail:chat:user2mod` |
 | Welcome email | `mail:welcome:send` |
-| Digest | `mail:digest` |
+| Digest | `mail:digest:unified` |
 | Donations | `mail:donations:ask` |
 
 ---

@@ -1,5 +1,9 @@
 <mjml>
-    @if($mode === 'immediate')
+    {{-- An immediate (-1) digest uses the full-width hero single-post layout
+         (V1 single.html parity). The multi-post daily digest uses the compact
+         multi-post layout below. --}}
+    @php $isSingle = $mode === 'immediate'; @endphp
+    @if($isSingle)
     @php $post = $posts->first(); $isOffer = $post['type'] === 'Offer'; $accentColor = $isOffer ? '#3c763d' : '#2196A6'; @endphp
     @include('emails.mjml.partials.head', ['preview' => $post['subject']])
     @else
@@ -12,9 +16,9 @@
             $wantedColor = '#2196A6';
         @endphp
 
-        @if($mode === 'immediate')
+        @if($isSingle)
         {{-- ═══════════════════════════════════════════════════════════════ --}}
-        {{-- IMMEDIATE MODE: single-post card matching browse page style    --}}
+        {{-- SINGLE-POST: full-width hero card (immediate, or group w/ 1 post) --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
         {{-- Hero: the item photo IS the hero (V1 single.html parity — V1's
@@ -214,7 +218,7 @@
 
         @else
         {{-- ═══════════════════════════════════════════════════════════════ --}}
-        {{-- DAILY MODE: multi-post digest with thumbnail nav               --}}
+        {{-- MULTI-POST: the daily "What's New" roll-up                     --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
         <mj-section mj-class="bg-success" padding="12px 20px">
@@ -235,7 +239,10 @@
                             @foreach(collect($posts)->take($maxThumbItems) as $thumbPost)
                             @php $thumbIsOffer = $thumbPost['type'] === 'Offer'; @endphp
                             <td style="padding: 0 3px 0 0; vertical-align: middle;">
-                                <a href="#msg-{{ $thumbPost['message']->id }}" style="display: block; line-height: 0;">
+                                {{-- Link to the post itself: in-email #fragment
+                                     anchors don't work (Gmail strips element ids),
+                                     so the thumbnail opens the post like its card. --}}
+                                <a href="{{ $thumbPost['messageUrl'] }}" style="display: block; line-height: 0;">
                                     {{-- Direct delivery URL (not tracked) so Gmail's image proxy
                                          doesn't 404 on the cross-domain 302 from the tracking endpoint. --}}
                                     <img src="{{ $thumbPost['displayImageUrl'] }}" alt="{{ $thumbPost['itemName'] }}" width="44" height="44" style="display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 4px; border: 2px solid {{ $thumbIsOffer ? '#6ab04c' : '#74b9ff' }};" />
@@ -253,18 +260,24 @@
             </mj-column>
         </mj-section>
 
+        {{-- The "What's New (N posts)" title is carried by the subject line,
+             so no in-body heading here. --}}
         @foreach($posts as $index => $post)
         @php $isOffer = $post['type'] === 'Offer'; @endphp
 
         @if($index > 0)
         <mj-section padding="0" background-color="#ffffff">
             <mj-column>
-                <mj-divider border-color="#e9ecef" border-width="1px" padding="0 20px" />
+                {{-- Generous vertical padding around the rule so consecutive
+                     posts have clear breathing room rather than butting up. --}}
+                <mj-divider border-color="#e9ecef" border-width="1px" padding="18px 20px" />
             </mj-column>
         </mj-section>
         @endif
 
-        <mj-section background-color="#ffffff" padding="0">
+        {{-- First card gets a top gap from the thumbnail band above; later
+             cards get their gap from the divider's padding. --}}
+        <mj-section background-color="#ffffff" padding="{{ $index === 0 ? '16px' : '0' }} 0 0 0">
             <mj-column width="38%" padding="0" vertical-align="top">
                 {{-- Direct delivery URL (not tracked) — see hero comment above
                      for why; same Gmail meips 404 applies here. --}}
@@ -292,6 +305,10 @@
                 <mj-text padding="0" font-size="12px" color="#888888">
                     @if($post['distanceText'])<span style="margin-right: 10px;">&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
                     <span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
+                </mj-text>
+                {{-- Poster attribution (V1 MultipleDigest parity). --}}
+                <mj-text padding="6px 0 0 0" font-size="12px" color="#888888">
+                    Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
                 </mj-text>
             </mj-column>
         </mj-section>

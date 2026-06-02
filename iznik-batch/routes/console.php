@@ -297,52 +297,37 @@ Schedule::command('tn:sync')
     ->runInBackground();
 
 // =============================================================================
-// DISABLED COMMANDS (to be enabled when ready)
+// UNIFIED DIGEST (daily "What's New" + immediate notifications)
 // =============================================================================
 
-// Digest and immediate mail are still handled by V1 (cron/digest.php on
-// bulk3-internal). Per MIGRATION-STATUS.md, digest emails are "Code written"
-// not "Live". Keep these scheduled commands disabled until the V1 cron is
-// retired and we cut over here, to avoid duplicate sends.
+// Daily digest is still owned by V1 (cron/digest.php -i 24 on
+// bulk3-internal). This unified-digest daily run is SAFE to leave enabled
+// because it is gated by FREEGLE_DIGEST_DAILY_ALLOWLIST, which defaults to
+// empty = send to nobody (see UnifiedDigestService::getDailyAllowlist). To
+// pilot the new "What's New" format, set that env var to one or more
+// addresses: those users receive the new daily digest IN ADDITION to V1's,
+// for a tracked side-by-side comparison. Set it to '*' for the full cutover.
+Schedule::command('mail:digest:unified --mode=daily')
+    ->dailyAt('08:00')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:digest:unified.daily'))
+    ->runInBackground();
+
+// Daily sharding (commented until the full cutover): once the allowlist is
+// '*' the single worker above won't keep up with the whole userbase, so
+// partition users by MOD(users.id, shards) across N parallel workers — the
+// same disjoint-partition model immediate mode uses below, but sharded by
+// user instead of group. Replace the single entry above with this loop:
 //
-// Schedule::command('mail:digest 1')
-//     ->hourly()
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
-// Schedule::command('mail:digest 2')
-//     ->everyTwoHours()
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
-// Schedule::command('mail:digest 4')
-//     ->everyFourHours()
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
-// Schedule::command('mail:digest 8')
-//     ->cron('0 0,8,16 * * *')
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
-// Daily digests — V1 ran two parallel workers sharded by MOD(groupid, 2)
-// (cron/digest.php -i 24 -m 2 -v 0 / -v 1). Preserved as two entries so a
-// re-enable keeps the throughput.
-// Schedule::command('mail:digest 24 --mod=2 --val=0')
-//     ->dailyAt('08:00')
-//     ->withoutOverlapping()
-//     ->runInBackground();
-// Schedule::command('mail:digest 24 --mod=2 --val=1')
-//     ->dailyAt('08:00')
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
-// Unified digest - one email per user covering all their communities.
-// Schedule::command('mail:digest:unified --mode=daily')
-//     ->dailyAt('08:00')
-//     ->withoutOverlapping()
-//     ->runInBackground();
-//
+// $dailyShardCount = 4;
+// foreach (range(0, $dailyShardCount - 1) as $dailyShard) {
+//     Schedule::command("mail:digest:unified --mode=daily --shard={$dailyShard} --shards={$dailyShardCount}")
+//         ->dailyAt('08:00')
+//         ->withoutOverlapping()
+//         ->sendOutputTo(cronLog("mail:digest:unified.daily.shard{$dailyShard}"))
+//         ->runInBackground();
+// }
+
 // Immediate mode - V1-parity per-group iteration, sharded 8-way.
 //
 // A single worker manages ~250 emails/min; arrival rate × avg
@@ -363,9 +348,8 @@ Schedule::command('tn:sync')
 // ATTACHMENT_WAIT_DEADLINE_MINUTES, then falls back to the type-
 // specific placeholder).
 //
-// Daily mode is intentionally NOT enabled here — V1's bulk3
-// `digest.php -i 1/2/4/8/24` crons still own daily. Our daily code
-// references users_digests which doesn't exist on prod.
+// (Daily mode is scheduled above, gated by FREEGLE_DIGEST_DAILY_ALLOWLIST;
+// V1's bulk3 `digest.php -i 24` cron still owns daily for everyone else.)
 $immediateShardCount = 8;
 foreach (range(0, $immediateShardCount - 1) as $shardIndex) {
     // --max-iterations=60 keeps the worker iterating internally for up to
