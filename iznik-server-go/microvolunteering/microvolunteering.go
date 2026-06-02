@@ -772,7 +772,7 @@ func PostResponse(c *fiber.Ctx) error {
 		// Response to an AIImageReview challenge.
 		response := *req.Response
 
-		if response == "Approve" || response == "Reject" {
+		if response == "Approve" || response == "Reject" || response == "Suppress" {
 			var containsPeople interface{}
 			if req.ContainsPeople != nil {
 				if *req.ContainsPeople {
@@ -788,7 +788,10 @@ func PostResponse(c *fiber.Ctx) error {
 				ChallengeAIImageReview, myid, req.AIImageID, response, containsPeople, Version,
 				response, containsPeople, Version)
 
-			// After recording the vote, check if reject quorum is reached.
+			// After recording the vote, check the quorums. 'Suppress' ("this item
+			// should never have an AI image") is terminal, so check it first; 'Reject'
+			// ("this image is bad") leaves the name open to regeneration.
+			checkAIImageSuppressQuorum(db, req.AIImageID)
 			checkAIImageRejectQuorum(db, req.AIImageID)
 		}
 
@@ -1000,5 +1003,22 @@ func checkAIImageRejectQuorum(db *gorm.DB, aiImageID uint64) {
 
 	if totalVotes >= int64(AIImageReviewQuorum) && rejectVotes > totalVotes/2 {
 		db.Exec(`UPDATE ai_images SET status = 'rejected' WHERE id = ? AND status = 'active'`, aiImageID)
+	}
+}
+
+// checkAIImageSuppressQuorum checks whether an AI image has reached the suppress
+// quorum (≥ AIImageReviewQuorum votes with a majority being Suppress). If so, sets
+// status='suppressed' — a TERMINAL state meaning this item name should never have an
+// AI image: the Pollinations generator skips the name, the image is never shown, and
+// Regenerate refuses. Suppress overrides a prior 'rejected' state.
+func checkAIImageSuppressQuorum(db *gorm.DB, aiImageID uint64) {
+	var totalVotes, suppressVotes int64
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ?`,
+		aiImageID, ChallengeAIImageReview).Scan(&totalVotes)
+	db.Raw(`SELECT COUNT(*) FROM microactions WHERE aiimageid = ? AND actiontype = ? AND result = 'Suppress'`,
+		aiImageID, ChallengeAIImageReview).Scan(&suppressVotes)
+
+	if totalVotes >= int64(AIImageReviewQuorum) && suppressVotes > totalVotes/2 {
+		db.Exec(`UPDATE ai_images SET status = 'suppressed' WHERE id = ? AND status IN ('active','rejected')`, aiImageID)
 	}
 }

@@ -338,7 +338,7 @@
                     :options="memberOptions"
                   />
                   <div v-else class="text-center text-muted small p-3">
-                    Member counts are only visible to moderators.
+                    No member count data available for this period.
                   </div>
                 </b-col>
               </b-row>
