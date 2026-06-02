@@ -1335,6 +1335,9 @@ services:
       dockerfile: docker/Dockerfile
     volumes:
       - ./iznik-batch:/var/www/html
+      # Read-only monorepo .git so deploy:record-commit can read HEAD via the
+      # RecordCommitCommand walk-up from base_path() (= /var/www/html).
+      - ./.git:/var/www/.git:ro
       - ./iznik-server:/var/www/iznik:ro
       - apiv2_logs:/var/log/freegle
     depends_on:
@@ -1426,6 +1429,9 @@ services:
         required: false
     volumes:
       - ./iznik-batch:/var/www/html
+      # Read-only monorepo .git so deploy:record-commit can read HEAD via the
+      # RecordCommitCommand walk-up from base_path() (= /var/www/html).
+      - ./.git:/var/www/.git:ro
       - ./iznik-server:/var/www/iznik:ro
       - /var/log/freegle:/var/log/freegle
       - ${FIREBASE_CREDENTIALS_PATH:-/dev/null}:/etc/firebase.json:ro
