@@ -10,7 +10,10 @@
             conversation.
           </p>
 
-          <b-form-group label="What's the overall offer called?" label-for="bulk-title">
+          <b-form-group
+            label="What's the overall offer called?"
+            label-for="bulk-title"
+          >
             <b-form-input
               id="bulk-title"
               v-model="title"
@@ -20,7 +23,10 @@
             />
           </b-form-group>
 
-          <b-form-group label="A few words about the offer (optional)" label-for="bulk-desc">
+          <b-form-group
+            label="A few words about the offer (optional)"
+            label-for="bulk-desc"
+          >
             <b-form-textarea
               id="bulk-desc"
               v-model="description"
@@ -34,7 +40,11 @@
           <BulkItemEditor v-model="items" />
 
           <h3 class="mt-4 h5">Where are you?</h3>
-          <PostCode :value="postcode" @selected="postcodeSelect" @cleared="postcodeClear" />
+          <PostCode
+            :value="postcode"
+            @selected="postcodeSelect"
+            @cleared="postcodeClear"
+          />
           <ComposeGroup v-if="postcodeValid" class="mt-2" />
           <NoticeMessage v-if="noGroups" variant="warning" class="mt-2">
             There's no Freegle community covering that area yet.
@@ -91,8 +101,9 @@ import NoticeMessage from '~/components/NoticeMessage.vue'
 const composeStore = useComposeStore()
 const router = useRouter()
 
-const { email, loggedIn, postcode, postcodeValid, noGroups } =
-  await setup('Offer')
+const { email, loggedIn, postcode, postcodeValid, noGroups } = await setup(
+  'Offer'
+)
 
 const title = ref('')
 const description = ref('')
@@ -100,9 +111,7 @@ const items = ref([])
 const wentWrong = ref(false)
 
 const messageValid = computed(
-  () =>
-    !!title.value.trim() &&
-    items.value.some((i) => i.name && i.name.trim())
+  () => !!title.value.trim() && items.value.some((i) => i.name && i.name.trim())
 )
 
 const emailValid = computed(() => /^\S+@\S+\.\S+$/.test(email.value || ''))

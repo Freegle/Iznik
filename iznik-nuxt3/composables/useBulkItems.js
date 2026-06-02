@@ -15,7 +15,10 @@ const VALID_CONDITIONS = BULK_CONDITIONS.map((c) => c.value)
 // Map a free-text condition (from a spreadsheet) onto our enum, tolerantly.
 export function normaliseCondition(raw) {
   if (!raw) return 'Unknown'
-  const v = String(raw).trim().toLowerCase().replace(/[\s_-]+/g, '')
+  const v = String(raw)
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '')
   const map = {
     new: 'New',
     likenew: 'LikeNew',
@@ -98,8 +101,7 @@ export function parseItemsCsv(text) {
     description: ['description', 'notes', 'detail', 'details'],
   }
 
-  const findCol = (aliases) =>
-    headerCells.findIndex((h) => aliases.includes(h))
+  const findCol = (aliases) => headerCells.findIndex((h) => aliases.includes(h))
 
   const hasHeader = Object.values(known).some(
     (aliases) => findCol(aliases) !== -1
