@@ -143,6 +143,11 @@ class ContentCheckService
         return $reasons;
     }
 
+    // UK postcode pattern — mirrors Utils::POSTCODE_PATTERN from V1.
+    // Covers GIR 0AA plus all standard AN/ANN/AAN/AANN/ANA/AANA inward forms.
+    // Used to sanitise chat messages before concern-keyword checks run.
+    private const POSTCODE_PATTERN = '/([Gg][Ii][Rr] 0[Aa]{2})|((([A-Za-z][0-9]{1,2})|(([A-Za-z][A-Ha-hJ-Yj-y][0-9]{1,2})|(([A-Za-z][0-9][A-Za-z])|([A-Za-z][A-Ha-hJ-Yj-y][0-9][A-Za-z]?))))\s?[0-9][A-Za-z]{2})/m';
+
     /**
      * Run the text-based content checks relevant to a chat message and return
      * the first failure reason (or null when clean).
@@ -160,6 +165,11 @@ class ContentCheckService
      * checked phone numbers either.) The checkPhoneNumbers() check still runs
      * for posts via checkMessage().
      *
+     * UK postcodes are stripped before concern-keyword and other text checks run:
+     * sharing a collection address is as normal as sharing a phone number, and
+     * postcode-shaped strings must not fire regex concern keywords added for other
+     * purposes. V1's Spam::checkReview() never matched postcodes either.
+     *
      * @return array|null Reason ['check','category','action','detail'] or null.
      */
     public function checkChatMessage(string $message): ?array
@@ -169,12 +179,15 @@ class ContentCheckService
             return null;
         }
 
-        return $this->checkConcernKeywords('', $message, 0)
-            ?? $this->checkUrls('', $message)
-            ?? $this->checkMessagingLinks('', $message)
-            ?? $this->checkMoneySymbols('', $message)
-            ?? $this->checkKnownSpammer($message)
-            ?? $this->checkLanguage('', $message);
+        // Strip UK postcodes so postcode-shaped tokens cannot match regex concern keywords.
+        $sanitised = preg_replace(self::POSTCODE_PATTERN, ' ', $message);
+
+        return $this->checkConcernKeywords('', $sanitised, 0)
+            ?? $this->checkUrls('', $sanitised)
+            ?? $this->checkMessagingLinks('', $sanitised)
+            ?? $this->checkMoneySymbols('', $sanitised)
+            ?? $this->checkKnownSpammer($sanitised)
+            ?? $this->checkLanguage('', $sanitised);
     }
 
     /**

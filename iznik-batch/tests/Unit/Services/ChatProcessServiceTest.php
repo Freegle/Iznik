@@ -368,6 +368,41 @@ class ChatProcessServiceTest extends TestCase
         $this->assertNull($updated->reportreason);
     }
 
+    public function test_moderated_user_message_with_postcode_is_not_held(): void
+    {
+        // Discourse #9656 post 38: a global regex concern keyword can match UK
+        // postcode patterns (e.g. a scam-detection regex that inadvertently covers
+        // postcode inward/outward codes). Sharing a collection postcode is normal
+        // in chat — same rationale as the phone-number exclusion. Postcodes must
+        // be stripped before concern-keyword scanning so they never trigger a hold.
+        DB::table('concern_keywords')->insert([
+            'keyword'    => '\b[A-Z]{1,2}\d\s+\d[A-Z]{2}\b',
+            'category'   => 'review',
+            'action'     => 'flag',
+            'match_mode' => 'regex',
+            'scope'      => 'global',
+            'group_id'   => 0,
+        ]);
+
+        $sender    = $this->createTestUser(['chatmodstatus' => 'Moderated']);
+        $recipient = $this->createTestUser();
+        $room      = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message'              => 'Please collect at AB1 2CD',
+            'processingrequired'   => 1,
+            'processingsuccessful' => 0,
+            'platform'             => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(0, $updated->reviewrequired,
+            'A chat message containing a UK postcode must not be held even when a regex concern keyword matches postcode patterns');
+        $this->assertNull($updated->reportreason);
+    }
+
     public function test_unmoderated_user_message_is_not_content_checked(): void
     {
         DB::table('concern_keywords')->insert([
