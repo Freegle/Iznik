@@ -203,124 +203,204 @@ mode, so their reply time isn't distorted by digest delivery) this
 shape **catches the eventual claimant before they reply 80% of the
 time in urban areas and 65% rural**.
 
-## Eyeball-governed reach — how far we expand (design session, 2026-06)
+## Eyeball-governed reach — how far we expand (design, 2026-06, rev. 2)
 
-The reach above is bounded by *drive time* (~30 min). That's correct for
-"could this person collect it," but it makes the reach enclose wildly
-different *populations*: measured on production location data, a 30-minute
-drive encloses ≈**19,300** located members from central Islington, ≈4,200
-from suburban Reading, and ≈**240** from rural mid-Wales — an ~80× spread
-for the identical time budget. So a dense-area post "covers all of London,"
-and a fixed-time reach over-notifies there while being right rurally.
+> Rev. 2 supersedes the first pass. Two Opus multi-agent analyses (each:
+> 7–8 dimensions, adversarially stress-tested, synthesised, completeness-
+> critiqued) reshaped this. The headline change: the response **lag does not
+> dissolve** — it forces a feed-forward/closed-loop **hybrid**, and the
+> governor is *not yet buildable as a closed loop* until specific
+> instrumentation lands. Verdict: **sound in architecture, not yet buildable
+> as a closed-loop extent governor.**
 
-Two **separate levers** fell out of this, and conflating them was the
-earlier mistake:
+The drive-time reach (~30 min) is right for "could this person collect it"
+but encloses wildly different *populations*: ≈**19,300** located members
+from central Islington, ≈4,200 suburban (Reading), ≈**240** rural (mid-
+Wales) — an ~80× spread for the same time budget. A fixed-*time* reach over-
+notifies in cities and is right rurally.
 
-- **Rate** — how fast we expand outward over the day. That's the curve
-  (`step-70`), already tuned. Untouched here.
-- **Extent** — how far we ever expand to. This is the lever that fixes the
-  density problem.
+**Two separate levers.** *Rate* = how fast we expand over the ~1-day life
+(today `step-70`: ~70% of the pool at tick 1/t=0, the rest linear over ~30
+ticks). *Extent* = how far/how many we ever expand to — the open problem.
 
-**Extent should be governed by *eyeballs*, not by time or a fixed
-headcount.** The objective is real human views of a post; notifications are
-only the means, converting to eyeballs at an open/view rate. So:
+**Objective = eyeballs** (real human views of a post), not people-notified.
+Expand outward nearest-by-drive-time, adding members until cumulative
+*delivered* eyeballs reach a per-post target `E*`, OR the post is
+claimed/withdrawn, OR a hard **~45-min ceiling**, OR futility. Drive time is
+**shape-only** (who is added next + the area), never the stop condition.
 
-- A per-post **eyeball target `E*`** sets *both* rate and extent. Total
-  notifications needed ≈ `E* / open_rate`; the rate is how fast we approach
-  it. Stop when `E*` is reached, the post is claimed, or the reachable pool
-  is exhausted; stop early on futility (huge notifications, near-zero
-  conversion → it's a dud, don't keep pushing).
-- **Drive time is demoted to "shape only"** — it decides *which* people we
-  add next (nearest first) and the area we draw, not *when to stop*.
-- **A hard max drive-time ceiling (~45 min) is still required** — beyond it
-  the item isn't realistically local, regardless of eyeballs. We often stop
-  well before it (dense areas hit `E*` early); rural may never reach `E*`
-  and falls back to this ceiling. So extent = `min(eyeball-driven, 45-min
-  isochrone)`.
-- **The response-lag problem dissolves** if we work in *predicted* eyeballs
-  (`notifications × open_rate`) rather than waiting for actual opens to
-  trickle in; recorded views then *correct* the prediction over the post's
-  life rather than gating it.
+### Givens (settled — do not relitigate)
 
-This is density-adaptive for free (dense → tight reach, sparse → wide), and
-it bounds **digest size** at the same time — a post stops being injected
-into new members' digests once it's had enough exposure, so dense-area
-members stop accumulating hundreds of candidates. Digest size matters
-directly: ~20 posts gets read, ~50 probably not, ~500 looks broken, and
-"show 100 + 480 more on the website" is the looks-broken outcome. So extent
-is controlled for *everyone* — not split by delivery mode (an earlier wrong
-turn: digest members are *not* shielded by selection, because pool size is
-what drives digest length).
+- **Assume the 66%-zero-reply problem is an EXPOSURE deficit** (desirability
+  assumed fine) until proven otherwise — you can't tell exposure from
+  desirability until decent exposure has been delivered. **Reply is the
+  success proxy** (collection/`Taken` too sparse to use).
+- **Rural posts riding to the 45-min ceiling is intended**, not a problem.
+- **Focus is the OFFERER experience**; treat posts as Offers. (Calibration
+  queries must still filter `msgtype='Offer'` — the live pool mixes Wanteds,
+  whose reply dynamics differ.)
+- **Member attention (fatigue + contention) is one deferred Problem-2
+  concern** — order sensibly now; **no per-member post cap until the Unified
+  Digest yields scroll-depth + click data**. See below.
+- **Govern on definite signals, never the raw open pixel.** Validation by
+  **live measurement first** (instrument, don't necessarily A/B). It is
+  legitimate to **pause and wait for Unified-Digest data**.
 
-**The honest trade.** A population-cap sweep of the simulator (3,377 real
-posts, immediate repliers, `step-70`) shows capping extent costs urban
-first-reply catch-rate roughly linearly: ≈83% uncapped → ≈69% at a 2,000
-cap → ≈54% at 1,000; rural is barely touched until below ~2,000 (rural posts
-rarely reach that many — the cap self-targets density). So the wide London
-reach is **not pure waste** — far repliers are real. *But* that catch-rate
-assumes "notified = exposed," which is false for a 144-post digest nobody
-reads; measured in **eyeballs actually delivered**, a readable 20-post
-digest that gets opened may beat an unreadable 144-post one. The eyeball
-budget is therefore both the governor *and* the right yardstick.
+### The lag is the central constraint → a feed-forward/closed-loop hybrid
 
-### Eyeball signal landscape (what we can actually measure)
+Grounded in `stepCurve` (ripple.go): at **t=0, when ~70% of sends are
+committed, 0% of this post's eyeball signal exists**. First-reply p50 ≈ 3h;
+website Views lag many hours; for the digest majority the notify→eyeball lag
+runs to ~24–31h (daily digest fires on a fixed clock over a 24h lookback).
+By t≈3h (~50% of the reply signal) **~73% of the `step-70` pool is already
+sent**. The closed loop never governs more than ~30% of sends.
 
-The model needs a `notifications → eyeballs` conversion. What exists today
-(see also the `reference_mail_migration_tracking_state` note):
+**The anti-correlation (the crux):** that governable trailing ~30% is
+exactly the slice the lifetime sweep shows barely moves catch-in-time. So
+the loop has leverage only where it has little value; the high-catch t=0
+burst is **irreducibly feed-forward**. Reshaping `step-70` to widen the
+feedback window buys little controllability and costs catch steeply — don't.
 
-- **Immediate emails are on Laravel** with rich tracking (`email_tracking`
-  opens/clicks, `email_tracking_clicks` per-link position, `email_tracking_images`
-  per-position load + scroll-depth). Gives a *clean* conversion — but for
-  *immediate*, which runs higher than a digest's.
-- **The daily digest is still V1 PHP** and thinly tracked: `logs_emails`
-  (Exim delivery only — denominator), no open beacon (beacons exist only for
-  Alerts), links mostly untagged. The only digest eyeball signal is a noisy
-  reconstruction: correlate a digest delivery with a subsequent
-  `messages_likes 'View'` by that member.
-- **Per-post in-email signal:** an open is a *whole-email* event, not
-  per-post — attribute it as a **position-weighted fraction** across the
-  posts shown (top posts get more credit; ties straight into the Problem-2
-  ordering). There is no scroll signal in email; the only genuine per-post
-  signals are per-post image loads (degraded to ~open by Gmail's image
-  proxy) and an `amp-list`-on-accordion-expand fetch (Gmail-only, and Google
-  proxies + cookie-strips it by design, so it's a clean *binary* "saw this
-  item," not a faithful counter). Definite per-post eyeballs come from
-  website views (`messages_likes 'View'`) and replies (`chat_messages
-  'Interested'`).
+So the architecture is an explicit **two-stage hybrid**:
 
-**Conclusion / next step:** the clean per-post digest eyeball only becomes
-available once the digest moves to Laravel. So put the UnifiedDigest live
-(PR #438, "MODE_GROUP", Sub-PR 3 of 4) to start collecting it — **with one
-required fix and one minor one** for the data to be usable (see the PR-438
-review below).
+- **Stage A — feed-forward burst (the ~70% at t=0, no signal yet).** Size
+  the nearest-first burst to `N_t0 = E* / r_segment`, where `r_segment` is a
+  **frozen, exogenous** conversion prior stratified by RU-class × delivery-
+  mode — **never** a live function of current digest size (that is positive
+  feedback → digest bloat). Cap by `min(E*-driven N_t0, 45-min isochrone)`.
+  In **dense** areas `N_t0` binds far below the pool — *the extent decision
+  IS the burst-sizing decision, made blind*. In **sparse** areas `N_t0`
+  never binds and the 45-min ceiling does the work (intended). Emergent and
+  desirable: under uniform desirability, popular posts hit `E*` and stop
+  early while **quiet posts (the target 66%) get the widest reach**.
+- **Stage B — thin closed-loop trim**, behind a **mandatory cohort-aware
+  `t_min` gate** (`t_min ≥` immediate p50 ~3h AND ≥ the max digest cadence
+  in the reached set — cadence is a 1h/2h/4h/8h/24h *mixture*, not uniformly
+  daily). Before `t_min` only **stop-on-claim** and the 45-min geometry stop
+  may fire. The three real loop actions: (1) **stop-on-claim** — cancels
+  remaining ticks on claim/promise/withdraw; triggers on the *event* so it
+  works under lag, but is **structurally inert for the 66% that never
+  reply** and can only cancel the ~30% tail; (2) **futility-cut** (post-
+  `t_min` only, dense-core only — never euthanise a rural sparse-supply
+  post); (3) **trailing-extension** toward the ceiling if delivered eyeballs
+  track below the `E*` trajectory. None can re-govern the burst. Recorded
+  eyeballs *correct* same-post sizing; they never retroactively un-send and
+  never feed back into `r`.
 
-### PR #438 tracking review (does it collect the right data?)
+### Govern on distinct-human pull signals — and the measurement gotcha
 
-What it already wires correctly (inherited from the template/`TrackableEmail`):
-open pixel; per-post links position-tracked (`trackedUrl(..., position,
-action)` → `email_tracking_clicks.link_position`, so clicked posts are
-attributable); per-post images carry `image_{index}` + scroll-percent; `userId`
-and AMP flag recorded; links tagged `?source=email&campaign=unified_digest&position=N`.
+The eyeball unit is **definite signals only**: website Views
+(`messages_likes 'View'`) + replies (`chat_messages 'Interested'`, weighted
+~3×). Never the raw email open pixel (unfiltered, first-open-only, MPP-
+inflated; if opens are ever used, filter `opened_via != 'pixel'`). The one
+shipped eyeball mechanism — `scoreDigestPost`'s `(views + 3·replies)/ageH`
+— already does this; keep it for Problem-2 ordering.
 
-**Required gap:** `email_tracking.metadata` stores only `post_count`, **not
-the composition** (`msgid`s + positions). Without it, an *open with no
-click* — the common case — can't be attributed per-post, image-load
-positions (`image_{index}`) can't be mapped back to a `msgid`, and a post's
-"shown at position P in N digests" denominator is unrecoverable. This defeats
-the position-weighted fractional-eyeball model for everything except the
-rare clicked post. Fix: persist a compact ordered `msgid` list (position =
-index) into `metadata` — the data already exists (`mailDescriptor()`
-computes `posts => [{msgid, groups}]`; just persist a compact form).
+**But the signal as coded is not genuine eyeballs**, and this is the load-
+bearing prerequisite:
 
-**Minor:** `initTracking(..., groupId: null, ...)` passes `null` even for
-MODE_GROUP and immediate, where the group is known — set it so the group
-dimension is available (recipient location is still recoverable via
-`userId`, so this isn't fatal, just lost-for-free).
+- The governor reads view **events** (`SUM(ml.count)`), incremented by two
+  paths — `handleView` (page open, 30-min dedup) **and** `MarkSeen` (every
+  list-browse, **no refractory**). `SUM(count)` lets a few repeat-viewers
+  trip `E*` early and contract extent — the exact mission error (under-
+  exposing collectable posts). The Problem-1 stop measure must be **distinct
+  humans**, not event counts.
+- **Worse (completeness-critic finding):** even `COUNT(DISTINCT userid)` of
+  `'View'` is **not** a real eyeball — `MarkSeen` (list-scroll *impression*)
+  and `handleView` (real page open) write the **same `(msgid,userid,'View')`
+  row** with no distinguishing column. In dense areas distinct-user "View"
+  is dominated by passive list impressions. Separating them is a **schema
+  change** (add a source/origin to `messages_likes`, or a dwell threshold ~
+  the doc's ~30s standard), **not a few-line query** — and it gates whether
+  the whole `E*`-stop rule means anything. **Resolve this first.**
 
-The simulator gained a `--max-reach=N` flag (commit `31f547c8a`) to sweep
-extent as `E*/open_rate` against the cache without re-fetching — the open-loop
-first-wave version of the eyeball budget. Tune `E*` once the Laravel digest
-yields real per-post conversion.
+### The conversion prior `r`
+
+`N_t0 = E*/r` makes `r` the number we most need and least have. **There is
+no tracked "new Offer nearby" immediate broadcast mailable in V2** (only
+`ChatNotification`, a reply-*received* event) — so there is no clean
+immediate laboratory for `r`. Calibrate `r` in **delivered-eyeball units**
+(distinct Views + replies), which are channel-agnostic and available now, by
+joining V1-digest `logs_emails` delivery + `ChatNotification`
+`email_tracking.sent_at` to each recipient's subsequent `messages_likes
+'View'` for that `msgid`. **Do not borrow immediate `r` for digest** — it is
+biased high on two axes (channel + self-selected ~16% opt-in population). The
+*in-email* digest open-rate constant (to size the burst more finely) waits
+for the cutover. `E*` v1 = a single conservative constant; learn it later.
+
+### Member attention is one deferred Problem-2 concern
+
+Per-member **fatigue** (a dense-core member is nearest-first for many posts →
+notified about most nearby activity) and cross-post **contention** (many
+posts competing for one member's finite digest attention) are two views of
+the same finite-attention budget — a Problem-2 (what/in-what-order shown)
+matter, not extent. Under delivered-eyeball governance contention **self-
+resolves**: eyeball accrual is *pull* (the member chose to view), non-rival;
+a starved post just expands to a fresh further-out audience and stops at the
+ceiling — it cannot steal spent attention. **Caveat:** this self-resolution
+holds only if Views are distinct-human *and* notification-attributable —
+which today's `SUM(count)`, all-channel, source-less signal is **not**. So
+the measurement fix above is a precondition for the self-resolution argument.
+Resolution per owner: order sensibly now; **no per-member cap** until Unified-
+Digest scroll/click data shows how far members actually read.
+
+### Buildable now vs blocked (validation tiers + explicit pauses)
+
+- **Tier A (now, zero new data):** extend `ripplesim` with an *eyeballs-
+  delivered-by-tick* metric and **lag-aware** reach-in-time (credit an
+  eyeball only after a channel-stratified lag); run the **dose-response
+  kill-switch** on a **non-survivorship** extract (drop `rippleextract`'s
+  `EXISTS('Interested')` filter so the 66% zero-reply posts are included).
+  Treat it as *falsification only* — a flat/declining P(reply)-vs-delivered-
+  Views curve would kill the governor's premise; **do not read a "knee" to
+  set `E*`** (the x-axis isn't the dose `E*` controls, and is all-channel).
+- **Tier B (now, live stream, no A/B):** calibrate `r` in delivered-eyeball
+  units (above); switch the governor to `COUNT(DISTINCT userid)` (after the
+  View-type fix); recover clicked-post attribution today by parsing the
+  `msgid` from `email_tracking_clicks.LinkURL`.
+- **Tier C (PAUSE — blocked on the cutover):** ship the
+  `email_tracking.metadata` ordered-msgid composition fix **and** set
+  `groupId` **before** the UnifiedDigest goes live (else weeks of open-no-
+  click + image-load data are unattributable); accumulate per-post in-email
+  conversion; **only then** learn a live `E*` and the in-email open-rate
+  constant.
+
+**Hard prerequisites before any production burst-shrinking:** (1) the View-
+type / distinct-human measurement fix; (2) `r` calibrated reply-agnostically
+in delivered-eyeball units on the digest cohort; (3) the metadata msgid +
+`groupId` fix landed pre-cutover. Until then ship Stage-A with a **generous
+`E*`** and the 45-min ceiling doing the real work, with the **eyeball loop
+instrument-only**.
+
+> **Status note.** The PR-438 metadata composition fix + `groupId` is landed
+> on branch `feature/digest-mode-group` (commit `d7dc8a493`), not on this
+> branch. The `--max-reach=N` simulator flag (commit `31f547c8a`) is a
+> reach-in-time **geometry** proxy / open-loop first-wave cap — *not* a model
+> of the eyeball governor; relabelling its `N` as `E*/r` adds no eyeball
+> information on the survivorship cache.
+
+### Open caveats the analysis surfaced (not yet resolved)
+
+- **`messages_likes 'View'` conflates page-opens and list-scroll
+  impressions** — the single most load-bearing open issue (above).
+- **Recipient de-dup across overlapping groups:** average member is in ~4.5
+  groups with overlapping polygons; the live per-group notifier can multi-
+  send one human for one post, biasing both `r` (denominator) and the
+  `N_t0` arithmetic.
+- **A `fairness.go` deprivation-quintile time-budget multiplier already
+  exists** (Q1 up to 2.0× at W=1) — a *second* shape lever besides drive
+  time. The design must explicitly adopt it as the ordering key or exclude
+  it; "drive time is the sole shape determinant" isn't true in code.
+- **Deliverability→`r` feedback:** high volume → spam-foldering → lower
+  measured `r` → bigger `N_t0` → more volume. A second positive-feedback
+  path; needs a high-side volume / complaint circuit-breaker independent of
+  `E*` (and confirm a per-cohort complaint/FBL denominator exists).
+- **Post-claim view staleness:** a View arriving after the item is claimed
+  is counted toward `E*/r` but produced no value; `r` learned on post-claim
+  views is biased.
+- **`r` stationarity:** it varies by time-of-day, day, season, item
+  desirability and deliverability — a frozen 2-axis (RU × mode) prior may
+  not capture the dominant variance.
 
 # Problem 2 — which posts should a specific member actually see
 
