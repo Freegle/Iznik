@@ -111,7 +111,24 @@ var (
 	groupBy        = flag.String("group-by", "", "stratify results by post attribute: \"\"=all, \"ru\"=RU category, \"ru-coarse\"=Urban/Rural/Other")
 	jsonOutput     = flag.String("json-output", "", "if set, write structured results JSON here (for Layer-3 monitoring)")
 	filterEmail    = flag.String("filter-email-freq", "", "only count repliers with this email-frequency setting: 'immediate' (=-1), 'digest' (>0), or '' for no filter")
+	maxReach       = flag.Int("max-reach", 0, "population cap on the reach: notify at most the closest N located freeglers per post (0 = uncapped, i.e. the full max-minutes isochrone). Models a density-adaptive reach — dense areas stop early, sparse areas fall back to the time cap.")
 )
+
+// effectiveReach returns the number of freeglers actually in the notification
+// pool for a post, given the total reachable within the max-minutes isochrone
+// and an optional population cap.  A cap of 0 means uncapped.
+//
+// This is the whole population-cap model: instead of notifying everyone a car
+// could reach in 30 minutes (≈19k people in central London, ≈240 in rural
+// Wales), we notify only the closest-by-drive-time N.  Because the eval cache
+// already stores each replier's drive-time rank, the cap is pure
+// post-processing — one cache serves every candidate N.
+func effectiveReach(total, cap int) int {
+	if cap > 0 && total > cap {
+		return cap
+	}
+	return total
+}
 
 // ruCoarse maps a fine-grained ONS RU category (A1, B1, ...) to one of three
 // coarse buckets so the simulator output is readable when there are too few
@@ -206,7 +223,11 @@ func main() {
 		{Name: "front-cubic+stop@3", F: func(x float64) float64 { return 1 - math.Pow(1-x, 3) }, StopAtReplies: 3},
 	}
 
-	log.Printf("simulating %d curves over %d posts...", len(curves), len(posts))
+	reachLabel := "uncapped"
+	if *maxReach > 0 {
+		reachLabel = fmt.Sprintf("max-reach=%d", *maxReach)
+	}
+	log.Printf("simulating %d curves over %d posts (%s)...", len(curves), len(posts), reachLabel)
 	results := simulate(posts, cache, curves)
 	printResults(results)
 
@@ -243,6 +264,7 @@ type jsonSummary struct {
 	Ticks                 int            `json:"ticks"`
 	LifetimeDays          float64        `json:"lifetime_days"`
 	MaxMinutes            float64        `json:"max_minutes"`
+	MaxReach              int            `json:"max_reach"`
 	Mode                  string         `json:"mode"`
 	PostsEvaluated        int            `json:"posts_evaluated"`
 	ReplyP50Hours         float64        `json:"reply_p50_hours"`
@@ -257,6 +279,7 @@ func writeJSONResults(path string, posts []extractedPost, groups map[string][]cu
 		Ticks:          *ticks,
 		LifetimeDays:   *lifetimeDays,
 		MaxMinutes:     *maxMinutes,
+		MaxReach:       *maxReach,
 		Mode:           *mode,
 		PostsEvaluated: len(posts),
 		Rows:           make([]jsonGroupRow, 0, 32),
@@ -666,13 +689,19 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[strin
 		}
 		results = getGroup(key)
 
+		// Population-capped reach: the schedule notifies at most the closest
+		// `--max-reach` freeglers (0 = uncapped).  Repliers whose drive-time
+		// rank is beyond the cap are never notified under this run, modelling
+		// a density-adaptive reach that contracts in dense areas.
+		effectiveTotal := effectiveReach(cp.TotalReachable, *maxReach)
+
 		for ci, c := range curves {
 			// Pre-compute the cumulative-rank schedule for this post.
 			// schedule[k] (0-based) = cumulative rank notified by end of tick (k+1).
 			cumRank := make([]int, *ticks)
 			for k := 1; k <= *ticks; k++ {
 				x := float64(k) / float64(*ticks)
-				cumRank[k-1] = int(math.Round(c.F(x) * float64(cp.TotalReachable)))
+				cumRank[k-1] = int(math.Round(c.F(x) * float64(effectiveTotal)))
 			}
 
 			replyOrder := make([]int, len(p.Repliers))
@@ -745,6 +774,19 @@ func simulate(posts []extractedPost, cache *cacheFile, curves []curve) map[strin
 					continue
 				}
 				rank := *ep.Rank
+				// Capped out: this replier is inside the max-minutes isochrone
+				// but beyond the population cap, so the schedule never reaches
+				// them.  Counts against in-time (they'd have replied but we
+				// chose not to notify them) — exactly the trade-off the sweep
+				// measures: smaller cap = lower volume, but some real repliers
+				// fall outside the reach.
+				if rank > effectiveTotal {
+					results[ci].PairsReachableButLate++
+					if isFirstReplier {
+						results[ci].FirstRepliersLate++
+					}
+					continue
+				}
 				replyTime, err := time.Parse("2006-01-02 15:04:05", p.Repliers[idx].ReplyTime)
 				if err != nil {
 					continue
