@@ -81,10 +81,14 @@ func TestJobsDedupeByCanonicalTitle(t *testing.T) {
 	lng := -2.0455619
 
 	db := database.DBConn
+
+	// Remove any stale rows from a previous crashed run before inserting.
+	// The jobs table has a unique(location, title) constraint, so stale rows
+	// would cause the insert below to fail with a duplicate-key error.
+	db.Exec("DELETE FROM jobs WHERE canonical_title IN (?, ?)", "test-role-dedup", "test-role-control")
+
 	defer func() {
-		// Cleanup: delete test jobs
-		db.Exec("DELETE FROM jobs WHERE canonical_title = ? OR canonical_title = ?",
-			"test-role-dedup", "test-role-control")
+		db.Exec("DELETE FROM jobs WHERE canonical_title IN (?, ?)", "test-role-dedup", "test-role-control")
 	}()
 
 	// Helper to insert a job with specific canonical_title
