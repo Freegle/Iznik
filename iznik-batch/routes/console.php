@@ -377,14 +377,31 @@ Schedule::command('mail:donations:ask')
     ->sendOutputTo(cronLog('mail:donations:ask'))
     ->runInBackground();
 
-// Daily donation summary email to fundraising — running total of today's
-// donations. V1 (cron/donations_email.php) ran hourly 06:00-22:00 so the
-// team gets intraday visibility; matching that here.
+// Hourly donation status email to fundraising — running total of today's
+// donations as a simple table. V1 (cron/donations_email.php) ran hourly
+// 06:00-22:00 so the team gets intraday visibility; matching that here.
+// This is the *status* mail — it tells the team what's landed in the bank.
+// The complementary mail:donations:thank-prep below is a separate concern
+// (composing thank-you replies); they intentionally share neither content
+// nor recipient list.
 Schedule::command('mail:donations:summary')
     ->hourly()
     ->between('06:00', '22:00')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('mail:donations:summary'))
+    ->runInBackground();
+
+// Daily thank-prep digest — card-per-donation context for whoever composes
+// thank-you replies. Dedup is a config-table high-water-mark
+// (donation_thank_prep_last_id): each run shows only donations with id above
+// the stored mark, then advances the mark — so every donation appears in
+// exactly one digest and is never re-notified (it does NOT filter on the
+// users_donations.thanked column). Runs once a day in the evening, after the
+// last status mail; recipient is freegle.mail.thanks_addr.
+Schedule::command('mail:donations:thank-prep')
+    ->dailyAt('20:30')
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('mail:donations:thank-prep'))
     ->runInBackground();
 
 // User management commands (users:cleanup still parked — no V1 cutover).

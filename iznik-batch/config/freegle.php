@@ -68,6 +68,11 @@ return [
         'info_addr' => env('FREEGLE_INFO_ADDR', 'info@ilovefreegle.org'),
         // Fundraising address — receives the daily donation summary email.
         'fundraising_addr' => env('FREEGLE_FUNDRAISING_ADDR', 'info@ilovefreegle.org'),
+        // Thanks address — receives the daily thank-prep digest (rich per-donor
+        // cards aimed at composing thank-you replies). Defaults to the
+        // fundraising address; override to route the digest elsewhere
+        // (e.g. directly to Jacky).
+        'thanks_addr' => env('FREEGLE_THANKS_ADDR', env('FREEGLE_FUNDRAISING_ADDR', 'info@ilovefreegle.org')),
         // Mentors address — volunteer support team who handle escalations.
         'mentors_addr' => env('FREEGLE_MENTORS_ADDR', 'mentors@ilovefreegle.org'),
         // CC address for donation notification emails (legacy logging).
