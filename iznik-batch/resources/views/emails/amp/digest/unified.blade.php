@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <script async src="https://cdn.ampproject.org/v0.js"></script>
   <script async custom-element="amp-form" src="https://cdn.ampproject.org/v0/amp-form-0.1.js"></script>
-  <script async custom-element="amp-bind" src="https://cdn.ampproject.org/v0/amp-bind-0.1.js"></script>
+  <script async custom-element="amp-accordion" src="https://cdn.ampproject.org/v0/amp-accordion-0.1.js"></script>
   <script async custom-element="amp-timeago" src="https://cdn.ampproject.org/v0/amp-timeago-0.1.js"></script>
   <script async custom-template="amp-mustache" src="https://cdn.ampproject.org/v0/amp-mustache-0.2.js"></script>
   <style amp4email-boilerplate>body{visibility:hidden}</style>
@@ -43,16 +43,18 @@
       margin: 0;
     }
 
-    /* Post cards. align-items:stretch + an amp-img with layout="fill"
-       in the img wrapper makes the photo grow to match the content
-       column's height — so the Reply button no longer dangles below
-       the bottom of the image. Image keeps a min-height so very short
-       cards still show a sensible thumbnail. */
+    /* Post card. flex-wrap means the image+content sit side by side on the
+       first row and the per-post amp-accordion (Reply form) wraps to its
+       own full-width second row underneath — so the Reply trigger never
+       dangles next to the image. align-items:flex-start keeps the image
+       top-aligned with the content (rather than vertically centring an
+       awkward gap when the photo is shorter than the text). */
     .post-card {
       padding: 12px 16px;
       border-bottom: 1px solid #eeeeee;
       display: flex;
-      align-items: stretch;
+      flex-wrap: wrap;
+      align-items: flex-start;
     }
     .post-img-wrap {
       width: 200px;
@@ -164,23 +166,23 @@
       background-color: #00A1CB;
     }
 
-    /* Shared reply panel (single form for all posts, bound to amp-state).
-       Hidden by default; tapped Reply buttons set reply.open=true and
-       scroll the panel into view. */
-    .reply-panel {
-      padding: 16px 20px;
-      background-color: #f8f8f8;
-      border-top: 1px solid #dddddd;
-      border-bottom: 1px solid #dddddd;
-      margin: 8px 0;
+    /* Per-post Reply accordion — full-width second row of the card.
+       The accordion's section heading IS the visible Reply button; tapping
+       it expands the form below. */
+    .reply-acc {
+      width: 100%;
+      margin-top: 12px;
     }
-    .reply-panel-title {
-      font-size: 14px;
-      color: #333333;
-      margin: 0 0 10px 0;
+    .reply-acc section {
+      border: none;
     }
-    .reply-panel-title strong {
-      color: #338808;
+    .reply-toggle {
+      margin: 0;
+      list-style: none;
+      cursor: pointer;
+    }
+    .reply-form-container {
+      padding: 12px 0 0 0;
     }
     .reply-textarea {
       width: 100%;
@@ -315,19 +317,19 @@
     </div>
     @endif
 
-    {{-- Shared state for the inline reply form.
-         d holds {messageId → {t:title, k:token, e:expiry}} for every post
-         in the digest, in raw JSON inside a <script> (no html-entity
-         bloat). Each post's Reply button only needs to set r.m to the
-         message id, which keeps per-post markup tiny. uid is the same
-         for every post in this digest so it's hardcoded in the action-xhr
-         expression below rather than carried per-post. --}}
-    <amp-state id="d">
-      <script type="application/json">{!! json_encode($ampPostMeta, JSON_UNESCAPED_SLASHES) !!}</script>
-    </amp-state>
-    <amp-state id="r">
-      <script type="application/json">{"m":0,"o":false}</script>
-    </amp-state>
+    {{-- Shared amp-mustache templates referenced by id from every post's
+         amp-form. AMP4Email disallows the shared-form / amp-bind approach
+         (the validator rejects [action-xhr] on form), so every post has
+         its OWN amp-form — sharing the success/error message templates is
+         the trick that keeps 200-post digests under Gmail's size cap
+         (saves ~300 bytes per post vs inlining the same template in each
+         form's submit-success / submit-error wrappers). --}}
+    <template type="amp-mustache" id="rsuccess">
+      <div class="form-status"><div class="submit-success">{{message}}</div></div>
+    </template>
+    <template type="amp-mustache" id="rerror">
+      <div class="form-status"><div class="submit-error">{{message}}</div></div>
+    </template>
 
     {{-- Post cards --}}
     @foreach($posts as $index => $post)
@@ -383,16 +385,6 @@
              been reposted to this group. --}}
         <p class="post-first-posted">First posted {{ $post['firstPostedFormatted'] }}</p>
         @endif
-        {{-- Reply opens the shared in-email amp-form panel below. setState
-             only carries the message id + open flag — title/token/expiry
-             are looked up from the shared <amp-state id="d"> map by mid,
-             which keeps every button tiny enough that 200-post digests
-             still fit Gmail's AMP4Email size cap. --}}
-        <button
-          type="button"
-          class="reply-btn{{ $post['type'] === 'Offer' ? '' : ' wanted' }}"
-          on='tap:AMP.setState({"r":{"m":{{ $post['message']->id }},"o":true}}),AMP.scrollTo(id="reply-panel",position="center")'
-        >Reply</button>
         @if($isSingle)
         {{-- Secondary actions on the immediate hero (V1 single.html parity). --}}
         <p class="post-actions" style="margin-top: 12px;">
@@ -401,44 +393,34 @@
         </p>
         @endif
       </div>
+      {{-- ─── Per-post reply form (collapsed) ─────────────────────────────
+           Lives inside the same .post-card as its image+content (which makes
+           the Reply trigger sit immediately below this post, not floating in
+           a shared panel somewhere). amp-accordion keeps the form collapsed
+           by default; the open header IS the Reply button. amp-mustache
+           templates for success/error are referenced by id from the shared
+           <template> blocks at the top of body so we don't pay the ~300
+           bytes-per-post cost of inlining them in every form.
+           ───────────────────────────────────────────────────────────────── --}}
+      <amp-accordion class="reply-acc" disable-session-states>
+        <section>
+          <h4 class="reply-toggle reply-btn{{ $post['type'] === 'Offer' ? '' : ' wanted' }}">Reply</h4>
+          <div class="reply-form-container">
+            <form method="post" action-xhr="{{ $post['ampReplyUrl'] }}">
+              <textarea class="reply-textarea" name="message" placeholder="Type your reply..." required minlength="1" maxlength="10000"></textarea>
+              <button type="submit" class="reply-submit">Send Reply</button>
+              <div submitting>
+                <div class="form-status"><div class="submitting-msg">Sending your reply...</div></div>
+              </div>
+              <div submit-success template="rsuccess"></div>
+              <div submit-error template="rerror"></div>
+            </form>
+            <p class="reply-fallback"><a href="{{ $post['fallbackReplyUrl'] }}">Or reply on the website</a></p>
+          </div>
+        </section>
+      </amp-accordion>
     </div>
     @endforeach
-
-    {{-- ─── Shared reply panel ──────────────────────────────────────────
-         Single amp-form for ALL posts in the digest. Hidden until a
-         post's Reply button taps r.o=true. The static action-xhr below
-         is the real Freegle AMP endpoint Gmail has registered as the
-         sender domain (was a literal example.com placeholder, which
-         caused INVALID_AMP). The [action-xhr] amp-bind expression
-         rebuilds the URL per active post: id and the post's HMAC token
-         + expiry come from the shared <amp-state id="d"> lookup; uid is
-         the same for every post in this digest so it's a baked-in
-         constant rather than a per-post state field.
-         ─────────────────────────────────────────────────────────────────── --}}
-    <div id="reply-panel" class="reply-panel" hidden [hidden]="!r.o">
-      <p class="reply-panel-title">Reply to <strong [text]="d[r.m].t">…</strong></p>
-      <form method="post"
-            action-xhr="{{ $ampApiUrl }}/digest/0/reply"
-            [action-xhr]="'{{ $ampApiUrl }}/digest/' + r.m + '/reply?rt=' + d[r.m].k + '&amp;uid={{ $ampUserId }}&amp;exp=' + d[r.m].e"
-            target="_top">
-        <textarea class="reply-textarea" name="message" placeholder="Type your reply..." required minlength="1" maxlength="10000"></textarea>
-        <button type="submit" class="reply-submit">Send Reply</button>
-        <div submitting>
-          <div class="form-status"><div class="submitting-msg">Sending your reply...</div></div>
-        </div>
-        <div submit-success>
-          <template type="amp-mustache">
-            <div class="form-status"><div class="submit-success">@{{message}}</div></div>
-          </template>
-        </div>
-        <div submit-error>
-          <template type="amp-mustache">
-            <div class="form-status"><div class="submit-error">@{{message}}</div></div>
-          </template>
-        </div>
-      </form>
-      <p class="reply-fallback">Trouble sending? <a [href]="'{{ $userSite }}/message/' + r.m + '?reply=1'" href="{{ $userSite }}">Reply on the website</a> instead.</p>
-    </div>
 
     {{-- Browse All Posts --}}
     <div class="browse-section">
