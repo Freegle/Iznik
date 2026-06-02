@@ -97,7 +97,7 @@ class UnifiedDigestTest extends TestCase
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
         $envelope = $mail->envelope();
 
-        $this->assertEquals('1 new post near you - Sofa', $envelope->subject);
+        $this->assertEquals("What's New (1 post) - Sofa", $envelope->subject);
     }
 
     public function test_subject_with_multiple_posts(): void
@@ -122,7 +122,7 @@ class UnifiedDigestTest extends TestCase
         $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
         $envelope = $mail->envelope();
 
-        $this->assertStringStartsWith('3 new posts near you', $envelope->subject);
+        $this->assertStringStartsWith("What's New (3 posts)", $envelope->subject);
         $this->assertStringContainsString('Sofa', $envelope->subject);
     }
 
@@ -234,7 +234,7 @@ class UnifiedDigestTest extends TestCase
         $this->assertEquals(3, $metadata['post_count']);
     }
 
-    public function test_group_and_immediate_modes_record_groupid(): void
+    public function test_immediate_records_groupid_daily_does_not(): void
     {
         $user = $this->createTestUser();
         $group = $this->createTestGroup();
@@ -248,9 +248,9 @@ class UnifiedDigestTest extends TestCase
             ['message' => $message, 'postedToGroups' => [$group->id]],
         ]);
 
-        // A per-group digest is about one community → record which group.
-        $groupMail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_GROUP, collect(), 24);
-        $this->assertEquals($group->id, $groupMail->getTracking()->groupid);
+        // An immediate digest is about one community → record which group.
+        $immediateMail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $this->assertEquals($group->id, $immediateMail->getTracking()->groupid);
 
         // A daily digest spans the member's groups → not tied to one.
         $dailyMail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);

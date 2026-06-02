@@ -89,16 +89,16 @@ class SendUnifiedDigestCommand extends Command
             return Command::FAILURE;
         }
 
-        // Daily mode is intentionally NOT live: V1's bulk3
-        // `digest.php -i 1/2/4/8/24` crons still own daily and our
-        // users_digests table doesn't exist on prod. Refuse with a
-        // clear message rather than letting it fail mid-run with
-        // "Base table not found". Local/CI tests run against a test
-        // DB that DOES have the table via the iznik-batch migration
-        // (2026_01_06_120000_create_users_digests_table.php).
+        // Daily mode is gated at the recipient level by
+        // FREEGLE_DIGEST_DAILY_ALLOWLIST (default empty = nobody; V1's bulk3
+        // `digest.php -i 24` cron still owns daily for everyone else). This
+        // is just a defensive guard: if the users_digests table hasn't been
+        // migrated in this environment, refuse with a clear message rather
+        // than failing mid-run with "Base table not found". The table is
+        // created by 2026_01_06_120000_create_users_digests_table.php.
         if ($mode === UnifiedDigestService::MODE_DAILY
             && ! \Illuminate\Support\Facades\Schema::hasTable('users_digests')) {
-            $this->warn('Daily mode is not enabled here — V1 owns daily sends. users_digests table not present.');
+            $this->warn('Daily mode skipped — users_digests table not present (migration not run here).');
             return Command::SUCCESS;
         }
 
@@ -136,13 +136,17 @@ class SendUnifiedDigestCommand extends Command
         // mail:chat:user2user pattern: sleep(1) when nothing to do, keep
         // looping until max-iterations is hit. The next cron tick takes
         // over from there.
-        $stats = ['groups_processed' => 0, 'users_processed' => 0, 'emails_sent' => 0, 'no_new_posts_groups' => 0, 'errors' => 0];
+        // Immediate mode reports per-group counters (groups_processed,
+        // no_new_posts_groups); daily mode reports per-user ones
+        // (no_new_posts). Initialise both so either summary table below can
+        // read its keys regardless of which mode ran.
+        $stats = ['groups_processed' => 0, 'users_processed' => 0, 'emails_sent' => 0, 'no_new_posts_groups' => 0, 'no_new_posts' => 0, 'errors' => 0];
 
         for ($i = 0; $i < $maxIterations; $i++) {
             $r = $service->sendDigests($mode, $userId, $limit, $dryRun, $groupId, $shard, $shards);
 
             // Daily mode returns a different stat shape — match keys best-effort.
-            foreach (['groups_processed', 'users_processed', 'emails_sent', 'no_new_posts_groups', 'errors'] as $k) {
+            foreach (['groups_processed', 'users_processed', 'emails_sent', 'no_new_posts_groups', 'no_new_posts', 'errors'] as $k) {
                 if (isset($r[$k])) {
                     $stats[$k] += $r[$k];
                 }

@@ -423,6 +423,100 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertEquals(1, $stats['emails_sent']);
     }
 
+    /**
+     * Daily defaults to OFF (empty allowlist = nobody) so a deploy can't
+     * double-mail the whole userbase alongside V1's still-running daily cron.
+     * A regression flipping this default to '*' would do exactly that.
+     */
+    public function test_daily_mode_default_allowlist_is_empty(): void
+    {
+        $this->assertSame('', config('freegle.digest.daily_allowlist'));
+    }
+
+    /**
+     * Create an active daily-digest recipient with one incoming post, at the
+     * given per-group cadence. The poster is immediate-only with no lastaccess
+     * so it never shows up in the broad daily selection.
+     */
+    private function makeDailyRecipientWithPost(int $emailfrequency = Membership::EMAIL_FREQUENCY_DAILY): User
+    {
+        $recipient = $this->createTestUser();
+        $recipient->settings = ['simplemail' => User::SIMPLE_MAIL_BASIC];
+        $recipient->lastaccess = now();
+        $recipient->save();
+        $recipient->refresh();
+
+        $poster = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group, ['emailfrequency' => $emailfrequency]);
+        $this->createMembership($poster, $group);
+        $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+
+        return $recipient;
+    }
+
+    public function test_daily_mode_empty_allowlist_sends_to_nobody(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '']);
+        $this->makeDailyRecipientWithPost();
+
+        // Broad run (no explicit --user): the empty allowlist gates everyone out.
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY);
+
+        $this->assertEquals(0, $stats['users_processed']);
+        $this->assertEquals(0, $stats['emails_sent']);
+    }
+
+    public function test_daily_mode_wildcard_allows_everyone(): void
+    {
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $this->makeDailyRecipientWithPost();
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY);
+
+        $this->assertEquals(1, $stats['emails_sent']);
+    }
+
+    public function test_daily_mode_allowlist_filters_to_specified_addresses(): void
+    {
+        $allowed = $this->makeDailyRecipientWithPost();
+        $this->makeDailyRecipientWithPost(); // a second eligible recipient, not opted in
+
+        $allowedEmail = $allowed->emails()->first()->email;
+        config(['freegle.digest.daily_allowlist' => $allowedEmail]);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY);
+
+        // Only the opted-in recipient is selected and mailed.
+        $this->assertEquals(1, $stats['users_processed']);
+        $this->assertEquals(1, $stats['emails_sent']);
+    }
+
+    public function test_daily_mode_explicit_user_bypasses_empty_allowlist(): void
+    {
+        // Even with the allowlist OFF, an explicit --user (manual sampling)
+        // still sends — the gate only applies to the broad scheduled run.
+        config(['freegle.digest.daily_allowlist' => '']);
+        $recipient = $this->makeDailyRecipientWithPost();
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY, $recipient->id);
+
+        $this->assertEquals(1, $stats['emails_sent']);
+    }
+
+    public function test_daily_mode_folds_intermediate_cadences(): void
+    {
+        // With the per-group digest removed, a member on an intermediate
+        // cadence (e.g. 8-hourly) has no dedicated sender. Daily must fold
+        // every positive cadence in so they aren't silently dropped.
+        config(['freegle.digest.daily_allowlist' => '*']);
+        $this->makeDailyRecipientWithPost(8);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_DAILY);
+
+        $this->assertEquals(1, $stats['emails_sent']);
+    }
+
     public function test_immediate_mode_allowlist_empty_allows_everyone(): void
     {
         // Empty config means "no restriction" — both members in the group

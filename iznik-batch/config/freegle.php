@@ -94,9 +94,21 @@ return [
         // Default is '*' (everyone) — V1's bulk3 `digest.php -i -1` cron was
         // disabled on 2026-05-27 so this is the only source of immediate
         // notifications. Set FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST in env to
-        // restrict (e.g. a comma-separated list for a re-pilot). Daily-mode
-        // digests are NOT gated.
+        // restrict (e.g. a comma-separated list for a re-pilot).
         'immediate_allowlist' => env('FREEGLE_DIGEST_IMMEDIATE_ALLOWLIST', '*'),
+
+        // Safety gate for the unified-digest DAILY mode ("What's New").
+        //   ''              → send to NOBODY (the default). V1's bulk3
+        //                     `digest.php -i 24` cron still owns daily, so an
+        //                     unconfigured deploy can't double-mail everyone.
+        //   'a@x.com,b@y'   → send the new-format daily digest to those pilot
+        //                     addresses IN ADDITION to V1's daily mail, so we
+        //                     can compare formats (and exercise tracking) on a
+        //                     single recipient before any cutover.
+        //   '*'             → everyone (the eventual full cutover switch).
+        // The scheduled `mail:digest:unified --mode=daily` is inert until this
+        // is set; an explicit `--user=` bypasses the gate for manual sampling.
+        'daily_allowlist' => env('FREEGLE_DIGEST_DAILY_ALLOWLIST', ''),
     ],
 
     // Firebase Cloud Messaging for push notifications

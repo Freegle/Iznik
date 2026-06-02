@@ -1,9 +1,8 @@
 <mjml>
-    {{-- A single-post digest — whether it arrived via immediate (-1) or a
-         per-group frequency with exactly one new post — uses the full-width
-         hero single-post layout (V1 single.html parity). Multi-post group and
-         daily digests use the compact multi-post layout below. --}}
-    @php $isSingle = $mode === 'immediate' || ($mode === 'group' && $postCount === 1); @endphp
+    {{-- An immediate (-1) digest uses the full-width hero single-post layout
+         (V1 single.html parity). The multi-post daily digest uses the compact
+         multi-post layout below. --}}
+    @php $isSingle = $mode === 'immediate'; @endphp
     @if($isSingle)
     @php $post = $posts->first(); $isOffer = $post['type'] === 'Offer'; $accentColor = $isOffer ? '#3c763d' : '#2196A6'; @endphp
     @include('emails.mjml.partials.head', ['preview' => $post['subject']])
@@ -219,7 +218,7 @@
 
         @else
         {{-- ═══════════════════════════════════════════════════════════════ --}}
-        {{-- MULTI-POST: group digest (>1 post) or daily digest             --}}
+        {{-- MULTI-POST: the daily "What's New" roll-up                     --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
         <mj-section mj-class="bg-success" padding="12px 20px">
@@ -261,34 +260,24 @@
             </mj-column>
         </mj-section>
 
-        {{-- Group digests cover a single community, so name it (V1
-             MultipleDigest parity). Daily digests span all the user's groups
-             and have no single heading. --}}
-        @if($mode === 'group' && ($primaryGroupName ?? null))
-        <mj-section background-color="#ffffff" padding="16px 20px 0 20px">
-            <mj-column>
-                <mj-text font-size="18px" font-weight="700" color="#212529" padding="0" line-height="1.25">
-                    Latest from {{ $primaryGroupName }}
-                </mj-text>
-                <mj-text font-size="13px" color="#888888" padding="3px 0 0 0">
-                    {{ $postCount }} new {{ $postCount === 1 ? 'post' : 'posts' }}
-                </mj-text>
-            </mj-column>
-        </mj-section>
-        @endif
-
+        {{-- The "What's New (N posts)" title is carried by the subject line,
+             so no in-body heading here. --}}
         @foreach($posts as $index => $post)
         @php $isOffer = $post['type'] === 'Offer'; @endphp
 
         @if($index > 0)
         <mj-section padding="0" background-color="#ffffff">
             <mj-column>
-                <mj-divider border-color="#e9ecef" border-width="1px" padding="0 20px" />
+                {{-- Generous vertical padding around the rule so consecutive
+                     posts have clear breathing room rather than butting up. --}}
+                <mj-divider border-color="#e9ecef" border-width="1px" padding="18px 20px" />
             </mj-column>
         </mj-section>
         @endif
 
-        <mj-section background-color="#ffffff" padding="0">
+        {{-- First card gets a top gap from the thumbnail band above; later
+             cards get their gap from the divider's padding. --}}
+        <mj-section background-color="#ffffff" padding="{{ $index === 0 ? '16px' : '0' }} 0 0 0">
             <mj-column width="38%" padding="0" vertical-align="top">
                 {{-- Direct delivery URL (not tracked) — see hero comment above
                      for why; same Gmail meips 404 applies here. --}}

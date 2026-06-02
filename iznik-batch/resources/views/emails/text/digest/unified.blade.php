@@ -1,4 +1,5 @@
-{{ $postCount }} new post{{ $postCount === 1 ? '' : 's' }} near you
+@php($heading = $mode === 'immediate' ? ($postCount.' new post'.($postCount === 1 ? '' : 's').' near you') : "What's New")
+{{ $heading }}
 ====================================
 
 Dear {{ $user->displayname ?? 'there' }},

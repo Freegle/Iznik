@@ -4,8 +4,6 @@ namespace App\Services;
 
 use App\Mail\Digest\UnifiedDigest;
 use App\Mail\Traits\FeatureFlags;
-use App\Models\Group;
-use App\Models\GroupDigest;
 use App\Models\Membership;
 use App\Models\Message;
 use App\Models\MessageGroup;
@@ -35,7 +33,6 @@ class UnifiedDigestService
      */
     public const MODE_IMMEDIATE = 'immediate';
     public const MODE_DAILY = 'daily';
-    public const MODE_GROUP = 'group';
 
     /**
      * Send unified digests to users who want them.
@@ -64,7 +61,7 @@ class UnifiedDigestService
             return $stats;
         }
 
-        $users = $this->getUsersForDigest($mode, $userId);
+        $users = $this->getUsersForDigest($mode, $userId, $shard, $shards);
 
         if ($limit) {
             $users = $users->take($limit);
@@ -469,13 +466,65 @@ class UnifiedDigestService
     }
 
     /**
+     * Allowlist for the unified-digest DAILY mode.
+     *
+     * Unlike immediate (which defaults to '*' = everyone), daily defaults
+     * to EMPTY = nobody. V1's bulk3 digest.php cron still owns daily, so the
+     * new-format daily digest only goes to addresses an operator opts in via
+     * FREEGLE_DIGEST_DAILY_ALLOWLIST — letting us pilot the new format to a
+     * single recipient (in addition to V1's mail) before any cutover.
+     *
+     * @return array [] = send to nobody; ['*'] = everyone; otherwise the
+     *               list of opted-in email addresses (lower/exact as given).
+     */
+    protected function getDailyAllowlist(): array
+    {
+        $raw = trim((string) config('freegle.digest.daily_allowlist', ''));
+        if ($raw === '') {
+            return [];
+        }
+        $parts = array_filter(array_map('trim', explode(',', $raw)), fn ($s) => $s !== '');
+        // Any '*' among the entries → treat as wildcard (everyone).
+        if (in_array('*', $parts, true)) {
+            return ['*'];
+        }
+        return array_values($parts);
+    }
+
+    /**
+     * Constrain a memberships query to the cadences a digest mode serves.
+     *
+     * Immediate matches exactly emailfrequency = -1. Daily collapses EVERY
+     * periodic cadence into one roll-up: any value > 0 (hourly=1, 2h, 4h,
+     * 8h, daily=24). The per-group digest that used to service the
+     * intermediate cadences (1/2/4/8h) has been removed, so without this fold
+     * those members would have no sender and silently stop receiving mail.
+     * emailfrequency = 0 (NEVER) is an opt-out and is excluded from both.
+     *
+     * @param \Illuminate\Contracts\Database\Query\Builder|\Illuminate\Database\Eloquent\Builder $query
+     * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
+     * @param string $column Column to constrain (qualified when joining)
+     */
+    protected function applyDigestFrequency($query, string $mode, string $column = 'emailfrequency'): void
+    {
+        if ($mode === self::MODE_IMMEDIATE) {
+            $query->where($column, Membership::EMAIL_FREQUENCY_IMMEDIATE);
+        } else {
+            // Any positive cadence — fold 1/2/4/8/24h all into daily.
+            $query->where($column, '>', Membership::EMAIL_FREQUENCY_NEVER);
+        }
+    }
+
+    /**
      * Get users who should receive digests based on mode.
      *
      * @param string $mode One of MODE_IMMEDIATE or MODE_DAILY
      * @param int|null $userId Specific user ID to process
+     * @param int $shard Shard index (0..shards-1) for parallel daily workers
+     * @param int $shards Total shard count; users partitioned by MOD(users.id, shards)
      * @return \Illuminate\Support\LazyCollection
      */
-    protected function getUsersForDigest(string $mode, ?int $userId = null): \Illuminate\Support\LazyCollection
+    protected function getUsersForDigest(string $mode, ?int $userId = null, int $shard = 0, int $shards = 1): \Illuminate\Support\LazyCollection
     {
         $query = User::query()
             ->whereNull('deleted')
@@ -484,6 +533,15 @@ class UnifiedDigestService
 
         if ($userId) {
             $query->where('id', $userId);
+        }
+
+        // Daily-mode horizontal sharding: partition the userbase across
+        // parallel workers by MOD(users.id, shards) so each user is owned by
+        // exactly one shard (disjoint partitions, no inter-worker locking).
+        // An explicit --user bypasses this. Immediate mode shards by group
+        // inside sendImmediateDigests instead, so don't double-shard here.
+        if ($mode === self::MODE_DAILY && !$userId && $shards > 1) {
+            $query->whereRaw('users.id % ? = ?', [$shards, $shard]);
         }
 
         // V1 parity (iznik-server/include/mail/Digest.php:418): per-group
@@ -499,15 +557,18 @@ class UnifiedDigestService
         //
         // simplemail='None' remains an account-level opt-out per V1's
         // User::sendOurMails(), so we exclude those users here.
-        $freq = $mode === self::MODE_IMMEDIATE
-            ? Membership::EMAIL_FREQUENCY_IMMEDIATE
-            : Membership::EMAIL_FREQUENCY_DAILY;
-        $query->whereExists(function ($subquery) use ($freq) {
+        //
+        // Daily mode collapses EVERY periodic cadence (hourly/2h/4h/8h/daily)
+        // into the one daily roll-up — see applyDigestFrequency(). With the
+        // per-group digest removed, those intermediate cadences would
+        // otherwise have no sender at all, so a member set to e.g. 4-hourly
+        // must still be picked up here rather than silently dropped.
+        $query->whereExists(function ($subquery) use ($mode) {
             $subquery->select(DB::raw(1))
                 ->from('memberships')
                 ->whereColumn('memberships.userid', 'users.id')
-                ->where('memberships.emailfrequency', $freq)
                 ->where('memberships.collection', Membership::COLLECTION_APPROVED);
+            $this->applyDigestFrequency($subquery, $mode, 'memberships.emailfrequency');
         })->where(function ($q) {
             $q->whereRaw("JSON_EXTRACT(users.settings, '$.simplemail') IS NULL")
                 ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(users.settings, '$.simplemail')) != ?", [
@@ -532,6 +593,32 @@ class UnifiedDigestService
                         ->whereIn(DB::raw('LOWER(users_emails.email)'), $lowercased);
                 });
                 Log::info('UnifiedDigestService: immediate mode restricted to allowlist', [
+                    'allowlist_count' => count($allowlist),
+                ]);
+            }
+        } elseif ($mode === self::MODE_DAILY && !$userId) {
+            // Safety gate — FREEGLE_DIGEST_DAILY_ALLOWLIST. Daily unified
+            // digests are OFF by default (empty list): V1's bulk3
+            // digest.php cron still owns daily, so an unconfigured deploy
+            // sends nothing here and can't double-mail the whole userbase.
+            // A comma-separated address list pins the new-format daily
+            // digest to those pilot users — sent IN ADDITION to V1's daily
+            // digest, for a tracked side-by-side comparison. '*' opens it to
+            // everyone for the eventual full cutover. An explicit --user
+            // bypasses this gate entirely (manual sampling).
+            $allowlist = $this->getDailyAllowlist();
+            if ($allowlist === []) {
+                $query->whereRaw('1 = 0');
+                Log::info('UnifiedDigestService: daily mode disabled (empty FREEGLE_DIGEST_DAILY_ALLOWLIST); V1 cron owns daily');
+            } elseif ($allowlist !== ['*']) {
+                $lowercased = array_map('strtolower', $allowlist);
+                $query->whereExists(function ($q) use ($lowercased) {
+                    $q->select(DB::raw(1))
+                        ->from('users_emails')
+                        ->whereColumn('users_emails.userid', 'users.id')
+                        ->whereIn(DB::raw('LOWER(users_emails.email)'), $lowercased);
+                });
+                Log::info('UnifiedDigestService: daily mode restricted to allowlist', [
                     'allowlist_count' => count($allowlist),
                 ]);
             }
@@ -699,14 +786,14 @@ class UnifiedDigestService
      */
     protected function getPostsForUser(User $user, UserDigest $tracker, string $mode): Collection
     {
-        $freq = $mode === self::MODE_IMMEDIATE
-            ? Membership::EMAIL_FREQUENCY_IMMEDIATE
-            : Membership::EMAIL_FREQUENCY_DAILY;
+        // Immediate pulls only the user's immediate (-1) groups; daily pulls
+        // every group on a periodic cadence (hourly/2h/4h/8h/daily), folding
+        // them all into the single daily roll-up. See applyDigestFrequency().
+        $membershipQuery = $user->memberships()
+            ->where('collection', Membership::COLLECTION_APPROVED);
+        $this->applyDigestFrequency($membershipQuery, $mode);
 
-        $groupIds = $user->memberships()
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->where('emailfrequency', $freq)
-            ->pluck('groupid');
+        $groupIds = $membershipQuery->pluck('groupid');
 
         if ($groupIds->isEmpty()) {
             return collect();
@@ -892,132 +979,6 @@ class UnifiedDigestService
             ->pluck('nameshort');
 
         return 'Posted to: ' . $groupNames->implode(', ');
-    }
-
-    /**
-     * Send per-group digests to members subscribed at a given frequency.
-     *
-     * Unlike the user-centric sendDigests(), this sends one email per member
-     * containing only posts from the given group, using the GroupDigest tracker
-     * to track progress per-group rather than per-user.
-     *
-     * @param Group $group The group to digest.
-     * @param int $frequency emailfrequency value (e.g. 1 = hourly, 24 = daily).
-     * @param bool $dryRun If true, count would-be emails but do not send.
-     * @return array Statistics: emails_sent, members_processed, errors.
-     */
-    public function sendGroupDigests(Group $group, int $frequency, bool $dryRun = false): array
-    {
-        $stats = ['emails_sent' => 0, 'members_processed' => 0, 'errors' => 0];
-
-        // Skip closed groups.
-        $settings = is_array($group->settings) ? $group->settings : json_decode($group->settings ?? '{}', true);
-        if (!empty($settings['closed'])) {
-            return $stats;
-        }
-
-        $tracker = GroupDigest::where('groupid', $group->id)->where('frequency', $frequency)->first();
-        $posts   = $this->getPostsForGroup($group, $tracker);
-
-        if ($posts->isEmpty()) {
-            return $stats;
-        }
-
-        $members = $this->getMembersForGroup($group, $frequency);
-
-        foreach ($members as $member) {
-            $stats['members_processed']++;
-
-            try {
-                $memberPosts = $posts->filter(fn($post) => $post->fromuser !== $member->userid);
-
-                if ($memberPosts->isEmpty()) {
-                    continue;
-                }
-
-                $user = User::find($member->userid);
-
-                if (!$user || !$user->email_preferred) {
-                    continue;
-                }
-
-                $wrappedPosts = $memberPosts->values()->map(fn($post) => [
-                    'message'       => $post,
-                    'postedToGroups' => [$group->id],
-                ]);
-
-                if (!$dryRun) {
-                    app(\App\Services\EmailSpoolerService::class)->spool(
-                        new UnifiedDigest($user, $wrappedPosts, self::MODE_GROUP, collect(), $frequency),
-                        $user->email_preferred,
-                        emailType: 'digest_group',
-                    );
-                }
-
-                $stats['emails_sent']++;
-            } catch (\Throwable $e) {
-                // One member's failure must not abort the whole group's digest.
-                Log::error("UnifiedDigestService: failed to send group digest to user {$member->userid}", [
-                    'group'     => $group->id,
-                    'frequency' => $frequency,
-                    'error'     => $e->getMessage(),
-                ]);
-                $stats['errors']++;
-            }
-        }
-
-        if (!$dryRun) {
-            $lastPost = $posts->last();
-            GroupDigest::updateOrCreate(
-                ['groupid' => $group->id, 'frequency' => $frequency],
-                [
-                    'msgid'   => $lastPost->id,
-                    'msgdate' => $lastPost->arrival,
-                    'started' => now(),
-                    'ended'   => now(),
-                ]
-            );
-        }
-
-        return $stats;
-    }
-
-    /**
-     * Get approved members of a group subscribed at the given emailfrequency.
-     */
-    protected function getMembersForGroup(Group $group, int $frequency): Collection
-    {
-        return Membership::where('groupid', $group->id)
-            ->where('emailfrequency', $frequency)
-            ->where('collection', Membership::COLLECTION_APPROVED)
-            ->get();
-    }
-
-    /**
-     * Get approved messages posted to a group since the last digest.
-     */
-    protected function getPostsForGroup(Group $group, ?GroupDigest $tracker = null): Collection
-    {
-        $query = Message::select('messages.*', 'messages_groups.arrival')
-            ->join('messages_groups', 'messages.id', '=', 'messages_groups.msgid')
-            ->where('messages_groups.groupid', $group->id)
-            ->where('messages_groups.collection', MessageGroup::COLLECTION_APPROVED)
-            ->where('messages_groups.deleted', 0)
-            ->whereNull('messages.deleted')
-            ->whereIn('messages.type', [Message::TYPE_OFFER, Message::TYPE_WANTED])
-            ->orderBy('messages_groups.arrival', 'asc');
-
-        if ($tracker && $tracker->msgdate) {
-            $query->where('messages_groups.arrival', '>', $tracker->msgdate);
-        } else {
-            $query->where('messages_groups.arrival', '>=', now()->subDay());
-        }
-
-        // Eager-load the poster (for the "Posted by"/From display name) and
-        // attachments (for the hero/thumbnail images). Without fromUser the
-        // template falls back to "Freegler"; without attachments each post
-        // would lazy-load its photo one query at a time.
-        return $query->with(['fromUser', 'attachments'])->get();
     }
 
     /**
