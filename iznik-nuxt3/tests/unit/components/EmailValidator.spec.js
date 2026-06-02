@@ -217,6 +217,52 @@ describe('EmailValidator', () => {
     })
   })
 
+  describe('invalid (red border) state', () => {
+    it('has no is-invalid class before any validation runs', () => {
+      const wrapper = createWrapper({ required: true })
+      expect(wrapper.find('.field-input').classes()).not.toContain('is-invalid')
+    })
+
+    it('adds the is-invalid class when a required email is empty', async () => {
+      const wrapper = createWrapper({ required: true })
+
+      await wrapper.vm.validateEmail('')
+      await flushPromises()
+
+      expect(wrapper.find('.field-input').classes()).toContain('is-invalid')
+    })
+
+    it('adds the is-invalid class for a badly formatted email', async () => {
+      const wrapper = createWrapper({ required: true })
+
+      await wrapper.vm.validateEmail('not-an-email')
+      await flushPromises()
+
+      expect(wrapper.find('.field-input').classes()).toContain('is-invalid')
+    })
+
+    it('clears the is-invalid class once a valid email is entered', async () => {
+      const wrapper = createWrapper({ required: true })
+
+      await wrapper.vm.validateEmail('')
+      await flushPromises()
+      expect(wrapper.find('.field-input').classes()).toContain('is-invalid')
+
+      await wrapper.vm.validateEmail('good@example.com')
+      await flushPromises()
+      expect(wrapper.find('.field-input').classes()).not.toContain('is-invalid')
+    })
+
+    it('does not mark an empty optional email as invalid', async () => {
+      const wrapper = createWrapper({ required: false })
+
+      await wrapper.vm.validateEmail('')
+      await flushPromises()
+
+      expect(wrapper.find('.field-input').classes()).not.toContain('is-invalid')
+    })
+  })
+
   describe('email updates', () => {
     it('emits update:email when email changes', async () => {
       const wrapper = createWrapper({ email: '' })

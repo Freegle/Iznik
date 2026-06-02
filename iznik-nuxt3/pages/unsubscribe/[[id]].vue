@@ -65,6 +65,7 @@
             <div class="mobile-section">
               <p class="mobile-section__label">Enter your email to continue:</p>
               <EmailValidator
+                ref="emailValidatorMobile"
                 v-model:email="email"
                 v-model:valid="emailValid"
                 label=""
@@ -179,8 +180,12 @@
             </div>
             <div v-else>
               <h4>Please enter your email address</h4>
-              <p>We'll email you to confirm that you want to delete your Freegle account.</p>
+              <p>
+                We'll email you to confirm that you want to delete your Freegle
+                account.
+              </p>
               <EmailValidator
+                ref="emailValidatorDesktop"
                 v-model:email="email"
                 v-model:valid="emailValid"
                 label=""
@@ -265,6 +270,7 @@ import {
   useRuntimeConfig,
 } from '#imports'
 import { buildHead } from '~/composables/useBuildHead'
+import { allValidatorsValid } from '~/composables/allValidatorsValid'
 import { useAuthStore } from '~/stores/auth'
 import SpinButton from '~/components/SpinButton.vue'
 import EmailValidator from '~/components/EmailValidator.vue'
@@ -321,6 +327,8 @@ const unknown = ref(false)
 const showForgetFailModal = ref(false)
 const showConfirmModal = ref(false)
 const contactSupportModal = ref(null)
+const emailValidatorMobile = ref(null)
+const emailValidatorDesktop = ref(null)
 
 function openContactSupport() {
   contactSupportModal.value?.show()
@@ -371,12 +379,25 @@ async function forget() {
 }
 
 async function emailConfirm(callback) {
-  if (emailValid.value) {
-    const ret = await authStore.unsubscribe(email.value.trim())
-    emailProblem.value = !ret.worked
-    unknown.value = ret.unknown
-    emailSent.value = ret.worked
+  // Trigger validation up front so an empty or invalid email shows the inline
+  // error and red border immediately — even if the user clicked the button
+  // without ever touching the field. Both the mobile and desktop validators are
+  // mounted (only one is visible per breakpoint), so validate whichever exist
+  // and don't proceed unless they all pass.
+  const valid = await allValidatorsValid([
+    emailValidatorMobile.value,
+    emailValidatorDesktop.value,
+  ])
+
+  if (!valid) {
+    callback()
+    return
   }
+
+  const ret = await authStore.unsubscribe(email.value.trim())
+  emailProblem.value = !ret.worked
+  unknown.value = ret.unknown
+  emailSent.value = ret.worked
 
   callback()
 }
