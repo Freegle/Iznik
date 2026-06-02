@@ -481,6 +481,13 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             // type placeholder when the post has no usable photo.
             $heroImageUrl = $this->getMessageImageUrl($message, 600, 400) ?? $placeholderUrl;
 
+            // Thumbnail image for multi-post (daily) cards: a fixed 4:3
+            // cover-crop (240x180) so every card has the same image height
+            // regardless of the original photo's aspect ratio. Without this
+            // the email rendered with the post's natural aspect — a portrait
+            // photo made a card three times taller than a landscape one.
+            $thumbImageUrl = $this->getMessageImageUrl($message, 240, 180) ?? $placeholderUrl;
+
             // Decode emoji sequences in message text.
             $messageText = $message->textbody
                 ? EmojiUtils::decodeEmojis($message->textbody)
@@ -534,6 +541,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'imageUrl' => $imageUrl,
                 'displayImageUrl' => $displayImageUrl,
                 'heroImageUrl' => $heroImageUrl,
+                'thumbImageUrl' => $thumbImageUrl,
                 'trackedImageUrl' => $trackedImage,
                 'isPlaceholder' => $imageUrl === null,
                 'postedToText' => $postedToText,

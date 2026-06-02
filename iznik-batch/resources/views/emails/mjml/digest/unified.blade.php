@@ -23,22 +23,23 @@
 
         {{-- Hero: the item photo IS the hero (V1 single.html parity — V1's
              immediate single.mjml used a full-width image). heroImageUrl is a
-             600x400 cover-crop from the delivery proxy, so it fills the 600px
-             email width on desktop and is fluid-on-mobile, while the crop
-             bounds the height (a tall portrait photo can't dominate). The
-             whole image is clickable through to the post via href.
+             600x400 cover-crop from the delivery proxy, so the crop bounds
+             the height (a tall portrait photo can't dominate). The whole
+             image is clickable through to the post via href.
+             Side padding (16px L/R) keeps the image off the email's left/right
+             edges; flush-edge bleed looked harsh in Gmail.
              Uses the direct delivery URL (not the tracking-proxy wrapper):
              Gmail's image proxy 404'd on the cross-domain 302 from
              api→delivery. Click tracking still fires via the <a href>. --}}
-        <mj-section background-color="#e8e8e8" padding="0">
+        <mj-section background-color="#ffffff" padding="16px 16px 0 16px">
             <mj-column padding="0" vertical-align="top">
                 <mj-image
                     href="{{ $post['messageUrl'] }}"
                     src="{{ $post['heroImageUrl'] }}"
                     alt="{{ $post['itemName'] }}"
                     padding="0"
+                    border-radius="4px"
                     fluid-on-mobile="true"
-                    container-background-color="#e8e8e8"
                 />
             </mj-column>
         </mj-section>
@@ -221,19 +222,24 @@
         {{-- MULTI-POST: the daily "What's New" roll-up                     --}}
         {{-- ═══════════════════════════════════════════════════════════════ --}}
 
+        {{-- Header band: logo + a horizontal thumbnail strip preview.
+             Gmail's desktop view rendered this band wider than the body and
+             wrapped the thumbnail strip to a second line. Trim the strip to
+             6 items at 40px (was 8 at 44px) so the logo column + thumbs +
+             "+N more" reliably fits in Gmail's content width. --}}
         <mj-section mj-class="bg-success" padding="12px 20px">
-            <mj-column width="20%" vertical-align="middle">
+            <mj-column width="16%" vertical-align="middle">
                 <mj-image
-                    width="50px"
+                    width="44px"
                     src="{{ config('freegle.branding.logo_url') }}"
                     alt="Freegle"
                     align="left"
                     padding="0"
                 />
             </mj-column>
-            <mj-column width="80%" vertical-align="middle">
+            <mj-column width="84%" vertical-align="middle">
                 <mj-text padding="0" line-height="1">
-                    @php $maxThumbItems = 8; @endphp
+                    @php $maxThumbItems = 6; @endphp
                     <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse: collapse;">
                         <tr>
                             @foreach(collect($posts)->take($maxThumbItems) as $thumbPost)
@@ -245,7 +251,7 @@
                                 <a href="{{ $thumbPost['messageUrl'] }}" style="display: block; line-height: 0;">
                                     {{-- Direct delivery URL (not tracked) so Gmail's image proxy
                                          doesn't 404 on the cross-domain 302 from the tracking endpoint. --}}
-                                    <img src="{{ $thumbPost['displayImageUrl'] }}" alt="{{ $thumbPost['itemName'] }}" width="44" height="44" style="display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 4px; border: 2px solid {{ $thumbIsOffer ? '#6ab04c' : '#74b9ff' }};" />
+                                    <img src="{{ $thumbPost['displayImageUrl'] }}" alt="{{ $thumbPost['itemName'] }}" width="40" height="40" style="display: block; width: 40px; height: 40px; object-fit: cover; border-radius: 4px; border: 2px solid {{ $thumbIsOffer ? '#6ab04c' : '#74b9ff' }};" />
                                 </a>
                             </td>
                             @endforeach
@@ -276,40 +282,77 @@
         @endif
 
         {{-- First card gets a top gap from the thumbnail band above; later
-             cards get their gap from the divider's padding. --}}
-        <mj-section background-color="#ffffff" padding="{{ $index === 0 ? '16px' : '0' }} 0 0 0">
+             cards get their gap from the divider's padding.
+             Left/right padding (16px) on the section so the card image isn't
+             flush against the email's left edge. --}}
+        <mj-section background-color="#ffffff" padding="{{ $index === 0 ? '16px' : '0' }} 16px 0 16px">
             <mj-column width="38%" padding="0" vertical-align="top">
-                {{-- Direct delivery URL (not tracked) — see hero comment above
-                     for why; same Gmail meips 404 applies here. --}}
+                {{-- Fixed-aspect thumbnail (240x180 cover-crop) so every card
+                     has the same image height regardless of the original
+                     photo's aspect ratio — without this, a portrait photo
+                     made a card taller than a landscape one and post heights
+                     varied across the digest.
+                     Direct delivery URL (not tracked) — see hero comment for
+                     why; same Gmail-proxy 404 applies here. --}}
                 <mj-image
                     href="{{ $post['messageUrl'] }}"
-                    src="{{ $post['displayImageUrl'] }}"
+                    src="{{ $post['thumbImageUrl'] }}"
                     alt="{{ $post['itemName'] }}"
+                    width="240px"
+                    height="180px"
                     padding="0"
+                    border-radius="4px"
                     fluid-on-mobile="true"
                 />
             </mj-column>
-            <mj-column width="62%" padding="12px 16px 12px 12px" vertical-align="top">
+            <mj-column width="62%" padding="0 0 0 14px" vertical-align="top">
                 <mj-text padding="0 0 6px 0" font-size="13px">
                     <span style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 3px;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
                 </mj-text>
+                {{-- Title: bold, largest of the card text. --}}
                 <mj-text padding="0 0 3px 0" font-size="16px" font-weight="700" color="#212529" line-height="1.25">
                     <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none;">{{ $post['itemName'] }}</a>
                 </mj-text>
+                {{-- Location: small, lighter — metadata, deliberately quieter
+                     than the user-supplied description below. --}}
                 @if($post['locationName'])
-                <mj-text padding="0 0 6px 0" font-size="12px" color="#666666">{{ $post['locationName'] }}</mj-text>
+                <mj-text padding="0 0 6px 0" font-size="12px" color="#777777">{{ $post['locationName'] }}</mj-text>
                 @endif
+                {{-- User-supplied description: bigger (14px) and darker
+                     (#333) than the location/posted-by metadata so it reads
+                     as the content of the post, but regular weight so it's
+                     clearly secondary to the bold title. --}}
                 @if($post['messageText'])
-                <mj-text padding="0 0 8px 0" font-size="12px" color="#555555" line-height="1.45">{{ \Illuminate\Support\Str::limit($post['messageText'], 80, '…') }}</mj-text>
+                <mj-text padding="0 0 10px 0" font-size="14px" color="#333333" line-height="1.5">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '…') }}</mj-text>
                 @endif
                 <mj-text padding="0" font-size="12px" color="#888888">
                     @if($post['distanceText'])<span style="margin-right: 10px;">&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
                     <span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
                 </mj-text>
-                {{-- Poster attribution (V1 MultipleDigest parity). --}}
-                <mj-text padding="6px 0 0 0" font-size="12px" color="#888888">
+                {{-- Poster attribution with avatar (V1 MultipleDigest parity).
+                     22x22 circular avatar inline with the byline. --}}
+                <mj-text padding="6px 0 10px 0" font-size="12px" color="#888888">
+                    <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 6px;" />
                     Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
                 </mj-text>
+                {{-- Per-card Reply button. Smaller than the immediate-mode
+                     hero button (multi-post cards have less space) but the
+                     primary action — without it the reader has to scroll
+                     to a single global CTA. messageUrl carries ?reply=1 so
+                     the post page opens with the reply form expanded. --}}
+                <mj-button
+                    href="{{ $post['messageUrl'] }}"
+                    background-color="{{ $isOffer ? $offerColor : $wantedColor }}"
+                    color="#ffffff"
+                    font-size="13px"
+                    font-weight="600"
+                    inner-padding="8px 22px"
+                    border-radius="4px"
+                    align="left"
+                    padding="0"
+                >
+                    Reply
+                </mj-button>
             </mj-column>
         </mj-section>
         @endforeach
