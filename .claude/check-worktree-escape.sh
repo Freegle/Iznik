@@ -1,7 +1,9 @@
 #!/bin/bash
 # PreToolUse hook: prevent Claude from accessing sibling git worktrees.
-# Blocks bash commands that contain absolute paths pointing to directories
-# that share the same parent as the current project but are not inside it.
+# Blocks bash commands that reference paths inside a SIBLING git worktree of
+# this repo (enumerated dynamically via `git worktree list`). Ordinary sibling
+# directories under the same parent (e.g. ~/Downloads) are NOT worktrees and are
+# left alone — the guard only protects against cross-worktree contamination.
 
 if [ -n "${CI:-}" ]; then
     exit 0
@@ -50,30 +52,51 @@ if [[ "$PARENT_DIR" == "/" || "$PARENT_DIR" == "/tmp" || "$PARENT_DIR" == "/var"
     exit 0
 fi
 
+# Enumerate the SIBLING git worktrees of this repo that we must protect. Only
+# real worktrees are off-limits; ordinary sibling directories under the same
+# parent (e.g. ~/Downloads) are fine. Exclude the current project and the
+# worktree the session has switched into via `freegle switch`.
+PROTECTED_WORKTREES=$(
+    git -C "$PROJECT_DIR" worktree list --porcelain 2>/dev/null \
+        | sed -n 's/^worktree //p' \
+        | while IFS= read -r wt; do
+            [[ -z "$wt" ]] && continue
+            [[ "$wt" == "$PROJECT_DIR" ]] && continue
+            [[ -n "$ACTIVE_WT" && "$wt" == "$ACTIVE_WT" ]] && continue
+            # Only siblings under the same parent are reachable by the path
+            # extraction below; /tmp worktrees are an allowed working area.
+            [[ "$wt" == "$PARENT_DIR"/* ]] || continue
+            echo "$wt"
+          done
+)
+
+# Not a git repo, or no sibling worktrees to guard against → nothing to block.
+if [[ -z "$PROTECTED_WORKTREES" ]]; then
+    exit 0
+fi
+
 # Escape regex metacharacters in the parent path (handles dots etc.)
 ESCAPED_PARENT=$(printf '%s' "$PARENT_DIR" | sed 's/[.[\*^$(){}+?|]/\\&/g')
 
-# Extract all absolute paths in the command that start with the parent directory
+# Extract all absolute paths in the command that start with the parent directory,
+# and block only those that fall inside a protected sibling worktree.
 while IFS= read -r match; do
     [[ -z "$match" ]] && continue
-    # Allow paths that are inside (or equal to) the current project directory
-    if [[ "$match" == "$PROJECT_DIR"* ]]; then
-        continue
-    fi
-    # ...or inside the worktree the session has switched into via `freegle switch`.
-    if [[ -n "$ACTIVE_WT" && "$match" == "$ACTIVE_WT"* ]]; then
-        continue
-    fi
-    echo "BLOCKED: command references '$match' which is outside the current worktree." >&2
-    echo "" >&2
-    echo "  Current worktree: $PROJECT_DIR" >&2
-    if [[ -n "$ACTIVE_WT" ]]; then
-        echo "  Switched into:    $ACTIVE_WT" >&2
-    fi
-    echo "" >&2
-    echo "  To work in a pre-existing worktree, run: ./freegle switch <name>" >&2
-    echo "  (then cd into it — the guard will allow that worktree going forwards)." >&2
-    exit 2
+    while IFS= read -r wt; do
+        [[ -z "$wt" ]] && continue
+        if [[ "$match" == "$wt" || "$match" == "$wt/"* ]]; then
+            echo "BLOCKED: command references '$match' which is inside a sibling git worktree." >&2
+            echo "" >&2
+            echo "  Current worktree: $PROJECT_DIR" >&2
+            if [[ -n "$ACTIVE_WT" ]]; then
+                echo "  Switched into:    $ACTIVE_WT" >&2
+            fi
+            echo "" >&2
+            echo "  To work in a pre-existing worktree, run: ./freegle switch <name>" >&2
+            echo "  (then cd into it — the guard will allow that worktree going forwards)." >&2
+            exit 2
+        fi
+    done <<< "$PROTECTED_WORKTREES"
 done < <(echo "$CMD" | grep -oE "${ESCAPED_PARENT}/[^[:space:]'\"\\;|&>]+" 2>/dev/null || true)
 
 exit 0
