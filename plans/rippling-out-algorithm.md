@@ -246,6 +246,33 @@ claimed/withdrawn, OR a hard **~45-min ceiling**, OR futility. Drive time is
   **live measurement first** (instrument, don't necessarily A/B). It is
   legitimate to **pause and wait for Unified-Digest data**.
 
+### Premise check on real data (2026-06): exposure correlates with replies
+
+The whole design assumes the 66%-zero-reply problem is an *exposure* deficit
+(quiet posts under-seen) rather than a *desirability* deficit (quiet posts
+unwanted). First real-data test of that assumption, on ~33k Offers posted
+60–30 days ago (so each had ≥30 days to accrue replies):
+
+- **Reply rate rises with exposure (group size):** <1k members **14%** →
+  8k+ members **28%** with a reply; mean replies/post 0.18 → 0.58.
+- **Confound broken (urban vs rural):** classifying each post by its own
+  postcode (`transport_postcode_classification`), the rise holds **within
+  rural alone** (20% → 24% → 28% across size bands), and at *matched* group
+  size urban ≈ rural (6k+: rural 28.4% vs urban 26.9%). So it is **exposure,
+  not "cities freegle more."**
+- The **kill-switch did NOT fire** — the curve is rising, not flat/declining,
+  so the exposure-deficit premise is supported, not refuted.
+- Cross-posting could *not* serve as an independent exposure axis: Freegle
+  Offers are effectively single-group (every sampled post was in exactly one
+  group), so manual cross-posting gives no variation to learn from.
+- **Caveats:** observational (exposure was *observed*, not controlled — group
+  size may proxy other things like group age/culture); reply is the success
+  proxy (not collection). The decisive version still needs the live
+  experiment that varies exposure directly.
+
+Conclusion: "reach wider to help the quiet 66%" is now **evidence-backed**,
+not a bare assumption.
+
 ### The lag is the central constraint → a feed-forward/closed-loop hybrid
 
 Grounded in `stepCurve` (ripple.go): at **t=0, when ~70% of sends are
