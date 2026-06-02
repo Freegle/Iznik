@@ -97,6 +97,34 @@ func TestGetDashboardTimeSeries(t *testing.T) {
 	assert.True(t, ok, "Activity should be an array")
 }
 
+// TestGetDashboardApprovedMemberCountPublic verifies that member counts are public:
+// a non-moderator gets the ApprovedMemberCount time-series (not nil), while the
+// genuinely mod-only ActiveUsers stays withheld. (Authority stats page #member-counts.)
+func TestGetDashboardApprovedMemberCountPublic(t *testing.T) {
+	prefix := uniquePrefix("DashAMC")
+	_, token := CreateFullTestUser(t, prefix)
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=ApprovedMemberCount&jwt=%s", token), nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	comps := result["components"].(map[string]interface{})
+	_, ok := comps["ApprovedMemberCount"].([]interface{})
+	assert.True(t, ok, "ApprovedMemberCount must be a public array for non-moderators")
+
+	// ActiveUsers must remain moderator-only (a non-mod gets nil).
+	req2 := httptest.NewRequest("GET", fmt.Sprintf("/api/dashboard?components=ActiveUsers&jwt=%s", token), nil)
+	resp2, _ := getApp().Test(req2)
+	var result2 map[string]interface{}
+	json2.Unmarshal(rsp(resp2), &result2)
+	comps2 := result2["components"].(map[string]interface{})
+	assert.Nil(t, comps2["ActiveUsers"], "ActiveUsers must remain moderator-only")
+}
+
 func TestGetDashboardNoAuth(t *testing.T) {
 	// Without auth, should still return success but with limited data.
 	req := httptest.NewRequest("GET", "/api/dashboard?components=RecentCounts", nil)

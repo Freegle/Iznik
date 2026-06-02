@@ -161,7 +161,10 @@ func getComponent(comp string, groupIDs []uint64, startQ, endQ string, systemwid
 		return getMessageBreakdown(groupIDs, startQ, endQ)
 	case "Activity", "Replies", "ApprovedMessageCount",
 		"Weight", "Outcomes", "ActiveUsers", "ApprovedMemberCount":
-		modOnly := comp == "ActiveUsers" || comp == "ApprovedMemberCount"
+		// ApprovedMemberCount (community member counts) is public — group size is
+		// not sensitive and the Authority stats page shows it to everyone. Only
+		// ActiveUsers remains moderator-only.
+		modOnly := comp == "ActiveUsers"
 		if modOnly && !isMod {
 			return nil
 		}
