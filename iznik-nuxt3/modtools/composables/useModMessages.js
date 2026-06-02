@@ -266,38 +266,18 @@ export function setupModMessages(reset) {
   watch(workdetail, (newVal, oldVal) => {
     // console.log('<<<<useModMessages watch workdetail. oldVal:', oldVal, 'newVal:', newVal)
     if (JSON.stringify(oldVal) === JSON.stringify(newVal)) return // Not actually changed
-    // if( collection.value!=='Pending') return
-    let doFetch = false
 
     const miscStore = useMiscStore()
     // console.log('uMM getMessages',miscStore.deferGetMessages)
     if (miscStore.deferGetMessages) return
 
-    const bodyoverflow = document.body.style.overflow
-    if (bodyoverflow !== 'hidden') {
-      if (newVal !== oldVal) {
-        // There's new stuff to fetch.
-        // console.log('Fetch')
-        doFetch = true
-      } else {
-        /* In Nuxt 2 miscStore visible was set if we are visible
-        const visible = miscStore.get('visible')
-        //console.log('Visible', visible)
-
-        if (!visible) {
-          // If we're not visible, then clear what we have in the store.  We don't want to do that under our own
-          // feet, but if we do this then we will pick up changes from other people and avoid confusion.
-          console.log('Clear')
-          await messageStore.clear()
-          doFetch = true
-        } */
-      }
-
-      if (doFetch) {
-        // console.log('uMM watch workdetail getmessages', newVal)
-        getMessages(newVal)
-      }
-    }
+    // Refresh the list whenever the pending count changes.  The
+    // overflow:hidden guard was previously here to avoid audio interruption
+    // on iOS, but that concern belongs only in the beep logic (checkWork).
+    // Blocking the data fetch meant the list stayed stale whenever any
+    // modal was open at the time a new message arrived (Discourse #9737).
+    // console.log('uMM watch workdetail getmessages', newVal)
+    getMessages(newVal)
   })
 
   return {
