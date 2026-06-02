@@ -22,8 +22,7 @@ All email-related commands use the `mail:` prefix. Other batch commands use desc
 | `mail:chat:user2user` | Send user-to-user chat notifications |
 | `mail:chat:user2mod` | Send user-to-moderator chat notifications |
 | `mail:chat:mod2mod` | Send moderator-to-moderator chat notifications |
-| `mail:digest` | Send message digests (per-group, legacy) |
-| `mail:digest:unified` | Send unified Freegle digests (user-centric, replaces mail:digest) |
+| `mail:digest:unified` | Send unified Freegle "What's New" digests (immediate + daily, user-centric) |
 | `mail:newsfeed:digest` | Send the newsfeed (chitchat) digest of recent nearby posts |
 | `mail:alerts:send` | Send system alerts to group mods/owners and group contact addresses |
 | `chats:chaseup-expected` | Email users expected to reply in a User2User chat but who have not |
@@ -185,8 +184,7 @@ These have code implemented but the scheduler entry is commented out in `routes/
 
 | Original Script | Artisan Command | Email Type in .env | Notes |
 |-----------------|-----------------|-------------------|-------|
-| `digest.php` | `mail:digest` | - | Message digests (per-group, legacy) |
-| `digest.php` | `mail:digest:unified` | UnifiedDigest | Unified Freegle digests (user-centric) |
+| `digest.php` | `mail:digest:unified` | UnifiedDigest | Unified Freegle "What's New" digests (immediate + daily, user-centric) |
 | `donations_email.php` | `mail:donations:ask` | - | Donation reminders |
 | `donations_thank.php` | `mail:donations:thank` | - | Donation thank-you emails |
 | `bounce.php` + `bounce_users.php` | `mail:bounced` | - | Bounced email handling + user suspension (PR #390) |
