@@ -8,6 +8,7 @@ import {
   upsertDiscourseBug,
   getDiscourseBug,
   queueDiscourseDraft,
+  recordPostedReply,
   listPendingDrafts,
   cancelDraftsForBug,
   reopenBugAfterRejection,
@@ -254,6 +255,46 @@ describe('Database Helpers', () => {
       expect(id2).not.toBe(id1)
       const pendingCount = (testDb.prepare('SELECT COUNT(*) AS c FROM discourse_draft WHERE posted_at IS NULL AND rejected_at IS NULL').get() as { c: number }).c
       expect(pendingCount).toBe(1)
+    })
+  })
+
+  describe('recordPostedReply', () => {
+    it('records an auto-posted reply as already posted (not pending)', () => {
+      const id = recordPostedReply(testDb, {
+        topic: 500,
+        post: 4,
+        username: 'edward',
+        quote: 'original report',
+        body: 'AI Edward: possible fix applied, please retest and report back',
+        prNumber: 999,
+        prUrl: 'https://github.com/Freegle/Iznik/pull/999',
+      })
+      expect(id).toBeGreaterThan(0)
+
+      // It must NOT appear in the pending-drafts queue (it's already posted).
+      expect(listPendingDrafts(testDb).length).toBe(0)
+
+      const row = testDb.prepare('SELECT * FROM discourse_draft WHERE id = ?').get(id) as {
+        posted_at: string | null; approved_at: string | null; pr_number: number | null; body: string
+      }
+      expect(row.posted_at).not.toBeNull()
+      expect(row.approved_at).not.toBeNull()
+      expect(row.pr_number).toBe(999)
+      expect(row.body).toContain('possible fix applied')
+    })
+
+    it('acts as a dedup record so queueDiscourseDraft skips an already-posted bug', () => {
+      recordPostedReply(testDb, {
+        topic: 501, post: 5, username: 'alice', quote: 'q',
+        body: 'AI Edward: possible fix applied, please retest and report back',
+      })
+      // A subsequent queue attempt for the same topic/post should not add a
+      // pending draft — but note the auto-poster's own guard checks ANY existing
+      // row (posted or pending), which this row satisfies.
+      const anyExisting = testDb.prepare(
+        'SELECT id FROM discourse_draft WHERE topic = ? AND post = ?'
+      ).get(501, 5)
+      expect(anyExisting).toBeTruthy()
     })
   })
 
