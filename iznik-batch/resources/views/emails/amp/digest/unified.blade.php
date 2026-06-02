@@ -3,10 +3,7 @@
 <head>
   <meta charset="utf-8">
   <script async src="https://cdn.ampproject.org/v0.js"></script>
-  <script async custom-element="amp-form" src="https://cdn.ampproject.org/v0/amp-form-0.1.js"></script>
-  <script async custom-element="amp-accordion" src="https://cdn.ampproject.org/v0/amp-accordion-0.1.js"></script>
   <script async custom-element="amp-timeago" src="https://cdn.ampproject.org/v0/amp-timeago-0.1.js"></script>
-  <script async custom-template="amp-mustache" src="https://cdn.ampproject.org/v0/amp-mustache-0.2.js"></script>
   <style amp4email-boilerplate>body{visibility:hidden}</style>
   <style amp-custom>
     body {
@@ -45,7 +42,7 @@
 
     /* Post cards */
     .post-card {
-      padding: 12px 20px;
+      padding: 12px 16px;
       border-bottom: 1px solid #eeeeee;
       display: flex;
       align-items: flex-start;
@@ -56,7 +53,7 @@
       border-radius: 4px;
     }
     .post-content {
-      padding-left: 12px;
+      padding-left: 14px;
       flex: 1;
     }
     .post-type-offer {
@@ -81,126 +78,60 @@
       margin: 0 0 4px 0;
     }
     .post-title a {
-      color: #333333;
+      color: #212529;
       text-decoration: none;
     }
+    /* User-supplied description: larger and darker than location/time
+       metadata so it reads as the actual content, but regular weight
+       so it stays clearly secondary to the bold title. */
     .post-preview {
-      font-size: 13px;
-      color: #666666;
-      margin: 0 0 4px 0;
-      line-height: 1.4;
+      font-size: 14px;
+      color: #333333;
+      margin: 0 0 6px 0;
+      line-height: 1.5;
     }
-    .post-groups {
-      font-size: 11px;
-      color: #888888;
-      font-style: italic;
-      margin: 0 0 8px 0;
+    .post-loc {
+      font-size: 12px;
+      color: #777777;
+      margin: 0 0 4px 0;
     }
     .post-time {
       font-size: 12px;
       color: #888888;
       margin: 0 0 4px 0;
     }
+    .post-byline {
+      font-size: 12px;
+      color: #888888;
+      margin: 6px 0 8px 0;
+    }
+    .post-byline img {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    .post-byline strong {
+      color: #555555;
+    }
 
-    /* Reply accordion */
-    amp-accordion section {
-      border: none;
-    }
-    amp-accordion section[expanded] .reply-toggle {
-      display: none;
-    }
-    .reply-toggle {
+    /* Per-card Reply button — opens the shared reply panel at the bottom.
+       Same visual weight as the accordion's reply-toggle had. */
+    .reply-btn {
       display: inline-block;
       background-color: #338808;
       color: #ffffff;
       font-size: 13px;
       font-weight: bold;
-      padding: 8px 16px;
+      padding: 8px 22px;
       border: none;
       border-radius: 4px;
       cursor: pointer;
-      list-style: none;
-    }
-    .reply-form-container {
-      padding: 8px 0;
-    }
-    .reply-textarea {
-      width: 100%;
-      min-height: 60px;
-      padding: 10px;
-      border: 1px solid #ced4da;
-      border-radius: 4px;
-      font-size: 14px;
-      font-family: inherit;
-      resize: vertical;
-      box-sizing: border-box;
-    }
-    .reply-textarea:focus {
-      outline: none;
-      border-color: #338808;
-    }
-    .reply-submit {
-      background-color: #338808;
-      color: #ffffff;
-      font-size: 14px;
-      font-weight: bold;
-      padding: 10px 20px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      margin-top: 8px;
-    }
-    .reply-fallback {
-      font-size: 12px;
-      color: #666666;
-      margin-top: 6px;
-    }
-    .reply-fallback a {
-      color: #338808;
       text-decoration: none;
     }
-
-    /* Form states */
-    .reply-form-container {
-      position: relative;
-    }
-    .reply-form-container[submitting] .reply-textarea,
-    .reply-form-container[submitting] .reply-submit,
-    .reply-form-container[submit-success] .reply-textarea,
-    .reply-form-container[submit-success] .reply-submit {
-      opacity: 0.3;
-    }
-    .form-status {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 90%;
-      z-index: 10;
-    }
-    .submit-success {
-      background-color: #e8f5e0;
-      border: 1px solid #338808;
-      color: #2a6d07;
-      padding: 12px;
-      text-align: center;
-      border-radius: 4px;
-    }
-    .submit-error {
-      background-color: #f2dede;
-      border: 1px solid #d9534f;
-      color: #a94442;
-      padding: 12px;
-      text-align: center;
-      border-radius: 4px;
-    }
-    .submitting-msg {
-      background-color: #ffffff;
-      border: 1px solid #338808;
-      color: #333333;
-      padding: 12px;
-      text-align: center;
-      border-radius: 4px;
+    .reply-btn.wanted {
+      background-color: #00A1CB;
     }
 
     /* Browse button */
@@ -272,16 +203,26 @@
       <p>Here {{ $postCount === 1 ? 'is' : 'are' }} <strong>{{ $postCount }}</strong> new post{{ $postCount === 1 ? '' : 's' }} from your Freegle communities:</p>
     </div>
 
-    {{-- Post cards with reply accordion --}}
+    {{-- Post cards. The per-post amp-accordion+form was retired because it
+         added ~1.5 KB of duplicated markup per post — at 200 posts that
+         pushed the AMP payload over Gmail's 102 KB clipped threshold.
+         Reply is now a styled link that opens the post page (which auto-
+         expands the reply compose via ?reply=1). The in-email reply form
+         can come back later via a single shared form bound to amp-state
+         if/when we want it. --}}
     @foreach($posts as $index => $post)
     @if($postCount === 1)
     {{-- Single-post (immediate) digest: the item photo is the hero — full
          width and clickable through to the post. heroImageUrl is a 600x400
          cover-crop so the height is bounded (a tall portrait can't dominate),
-         and amp-img layout="responsive" scales it full-width on mobile. --}}
-    <a href="{{ $post['fallbackReplyUrl'] }}" style="display: block; line-height: 0;">
-      <amp-img src="{{ $post['heroImageUrl'] }}" width="600" height="400" layout="responsive" alt="{{ $post['itemName'] }}"></amp-img>
-    </a>
+         and amp-img layout="responsive" scales it full-width on mobile.
+         The 16px side padding mirrors the MJML hero — flush-edge bleed
+         looked harsh in Gmail. --}}
+    <div style="padding: 16px 16px 0 16px;">
+      <a href="{{ $post['fallbackReplyUrl'] }}" style="display: block; line-height: 0;">
+        <amp-img src="{{ $post['heroImageUrl'] }}" width="600" height="400" layout="responsive" alt="{{ $post['itemName'] }}"></amp-img>
+      </a>
+    </div>
     <div class="post-card" style="display: block; border-bottom: none; padding-bottom: 0;">
       <div class="post-content" style="padding-left: 0;">
     @else
@@ -291,52 +232,27 @@
     @endif
         <p class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</p>
         <p class="post-title"><a href="{{ $post['fallbackReplyUrl'] }}">{{ $post['itemName'] }}</a></p>
+        @if($post['locationName'] ?? null)
+        <p class="post-loc">{{ $post['locationName'] }}</p>
+        @endif
+        @if($post['messageText'])
+        {{-- User-supplied description: bigger and darker than location/byline
+             metadata so the content stands out; styled via .post-preview.
+             nl2br after escaping so user paragraph breaks survive the
+             single-<p> truncation. AMP allows <br> inside <p>. --}}
+        <p class="post-preview">{!! nl2br(e(\Illuminate\Support\Str::limit($post['messageText'], 120))) !!}</p>
+        @endif
         <p class="post-time">
           <amp-timeago datetime="{{ $post['arrivalIso'] }}" locale="en" width="160" height="20" layout="fixed">{{ $post['arrivalFormatted'] }}</amp-timeago>
         </p>
-        @if($post['messageText'])
-        {{-- nl2br after escaping so user paragraph breaks survive the
-             single-<p> truncation. AMP allows <br> inside <p>. --}}
-        <p class="post-preview">{!! nl2br(e(\Illuminate\Support\Str::limit($post['messageText'], 100))) !!}</p>
-        @endif
-        @if($post['postedToText'])
-        <p class="post-groups">{{ $post['postedToText'] }}</p>
-        @endif
-
-        {{-- Reply accordion --}}
-        <amp-accordion animate>
-          <section>
-            <h4 class="reply-toggle">Reply</h4>
-            <div class="reply-form-container">
-              <form method="post" action-xhr="{{ $post['ampReplyUrl'] }}">
-                <textarea class="reply-textarea" name="message" placeholder="Type your reply..." required minlength="1" maxlength="10000"></textarea>
-                <button type="submit" class="reply-submit">Send Reply</button>
-                <div submitting>
-                  <div class="form-status">
-                    <div class="submitting-msg">Sending your reply...</div>
-                  </div>
-                </div>
-                <div submit-success>
-                  <template type="amp-mustache">
-                    <div class="form-status">
-                      <div class="submit-success">@{{message}}</div>
-                    </div>
-                  </template>
-                </div>
-                <div submit-error>
-                  <template type="amp-mustache">
-                    <div class="form-status">
-                      <div class="submit-error">@{{message}} <a href="{{ $post['fallbackReplyUrl'] }}">Reply on Freegle instead</a></div>
-                    </div>
-                  </template>
-                </div>
-              </form>
-              <div class="reply-fallback">
-                <a href="{{ $post['fallbackReplyUrl'] }}">Or reply via website</a>
-              </div>
-            </div>
-          </section>
-        </amp-accordion>
+        {{-- Avatar byline (V1 MultipleDigest parity). The 22px circular
+             avatar pairs with the bold poster name; both immediate and daily
+             carry this same byline. --}}
+        <p class="post-byline">
+          <amp-img src="{{ $post['posterAvatarUrl'] }}" width="22" height="22" layout="fixed" alt=""></amp-img>
+          Posted by <strong>{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
+        </p>
+        <a class="reply-btn{{ $post['type'] === 'Offer' ? '' : ' wanted' }}" href="{{ $post['fallbackReplyUrl'] }}">Reply</a>
       </div>
     </div>
     @endforeach
