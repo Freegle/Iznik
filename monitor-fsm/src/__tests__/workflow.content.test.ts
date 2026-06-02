@@ -158,20 +158,23 @@ describe('driver.ts — DIAGNOSE_BUG re-entry stale clearing', () => {
     expect(driverTs).toContain("current.currentState === 'DIAGNOSE_BUG'")
   })
 
+  // Use lastIndexOf on the bare condition — the loop-breaker block references
+  // `currentState === 'DIAGNOSE_BUG'` earlier in the file, so the *last*
+  // occurrence is the re-entry stale-clearing block we want to assert on.
   it('checks diagnosisMismatchReason before clearing', () => {
-    const idx = driverTs.indexOf("current.currentState === 'DIAGNOSE_BUG'")
+    const idx = driverTs.lastIndexOf("current.currentState === 'DIAGNOSE_BUG'")
     const block = driverTs.slice(idx, idx + 600)
     expect(block).toContain('diagnosisMismatchReason')
   })
 
   it('clears _action_search_code on mismatch re-entry', () => {
-    const idx = driverTs.indexOf("current.currentState === 'DIAGNOSE_BUG'")
+    const idx = driverTs.lastIndexOf("current.currentState === 'DIAGNOSE_BUG'")
     const block = driverTs.slice(idx, idx + 600)
     expect(block).toContain('_action_search_code: null')
   })
 
   it('clears _action_check_existing_prs on mismatch re-entry', () => {
-    const idx = driverTs.indexOf("current.currentState === 'DIAGNOSE_BUG'")
+    const idx = driverTs.lastIndexOf("current.currentState === 'DIAGNOSE_BUG'")
     const block = driverTs.slice(idx, idx + 600)
     expect(block).toContain('_action_check_existing_prs: null')
   })
@@ -235,10 +238,15 @@ describe('VERIFY_DISCOURSE_BATCH — close_extra_prs', () => {
     expect(prompt).toContain('iterationStartTs')
   })
 
-  it('calls close_extra_prs before adversarial_review_pr', () => {
+  it('calls close_extra_prs after adversarial_review_pr (batch design)', () => {
+    // In the parallel batch flow, each successful bug's PR is created and
+    // adversarially reviewed per-bug, THEN close_extra_prs runs ONCE at the end
+    // with the full set of kept PR numbers (expectedPrNumbers). It must therefore
+    // come AFTER the per-bug review, not before.
     const closeIdx = prompt.indexOf('close_extra_prs')
     const reviewIdx = prompt.indexOf('adversarial_review_pr')
-    expect(closeIdx).toBeLessThan(reviewIdx)
+    expect(reviewIdx).toBeGreaterThan(0)
+    expect(closeIdx).toBeGreaterThan(reviewIdx)
   })
 })
 

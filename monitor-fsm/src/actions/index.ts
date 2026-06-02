@@ -123,15 +123,34 @@ async function checkPrDeployed(prNumber: number): Promise<{
     return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'PR not merged yet' }
   }
 
-  // --- Backend check: GitHub production branch ---
-  // The production branch is updated by auto-promote after CI passes on master.
-  // The Go and Laravel servers are rebuilt from this branch.
-  // NOTE: Go API /api/version returns "commit":"unknown" in production (BUILD_INFO not set),
-  // so we can only check if the production branch has been updated, not if the containers were rebuilt.
-  const prodRes = await sh('gh', ['api', `repos/${PROD_REPO}/branches/production`, '--jq', '.commit.sha'])
-  const productionSha = (prodRes.code === 0) ? prodRes.stdout.trim() : null
-  const backendBehindBy = productionSha ? await githubBehindBy(mergeCommitSha, productionSha) : -1
-  const backendDeployed = backendBehindBy === 0
+  // --- Backend check: the LIVE deployed commit from /api/version ONLY ---
+  // Go + Laravel deploy from MASTER (not a separate production branch), so the
+  // production branch is NOT a reliable signal. Use only the live commit:
+  // laravel_commit (PHP checked-out commit, refreshed every 15 min by
+  // deploy:record-commit) and commit (Go build / BUILD_INFO). If neither reports
+  // a real commit, we cannot confirm the deploy is live → not deployed.
+  const productionSha: string | null = null // no longer used; retained for return shape
+  let liveBackendSha: string | null = null
+  const verRes = await sh('curl', ['-s', '--max-time', '12', 'https://api.ilovefreegle.org/api/version'])
+  if (verRes.code === 0) {
+    try {
+      const v = JSON.parse(verRes.stdout) as { commit?: string; laravel_commit?: string }
+      liveBackendSha = [v.laravel_commit, v.commit].find(c => !!c && c !== 'unknown') ?? null
+    } catch { /* /api/version returned non-JSON */ }
+  }
+
+  let backendDeployed: boolean
+  let backendReason: string
+  if (liveBackendSha) {
+    const liveBehindBy = await githubBehindBy(mergeCommitSha, liveBackendSha)
+    backendDeployed = liveBehindBy === 0
+    backendReason = backendDeployed
+      ? `backend: live /api/version (${liveBackendSha.slice(0, 8)}) includes merge`
+      : `backend: live /api/version (${liveBackendSha.slice(0, 8)}) missing ${liveBehindBy} commits from merge`
+  } else {
+    backendDeployed = false
+    backendReason = 'backend: /api/version reports no real commit yet — cannot confirm live deploy'
+  }
 
   // --- Frontend check: Netlify published deploy ---
   // Netlify deploys from the production branch but has its own build queue.
@@ -154,8 +173,7 @@ async function checkPrDeployed(prNumber: number): Promise<{
   const deployed = backendDeployed && (frontendDeployed === null || frontendDeployed === true)
 
   const parts: string[] = []
-  if (backendDeployed) parts.push(`backend: production branch includes merge (${backendBehindBy} behind)`)
-  else parts.push(`backend: production branch missing ${backendBehindBy} commits from PR merge`)
+  parts.push(backendReason)
   if (frontendDeployed === true) parts.push(`Netlify: published deploy includes PR`)
   else if (frontendDeployed === false) parts.push(`Netlify: published deploy (${netlifyCommitSha?.slice(0,8)}) does not include PR yet`)
   else parts.push(`Netlify: could not check published deploy`)
@@ -634,15 +652,23 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
           continue
         }
 
-        // Build body from PR title (strip conventional commit prefix)
-        const fixDesc = bug.pr_title
-          .replace(/^fix\([^)]+\):\s*/i, '')
-          .replace(/^fix:\s*/i, '')
-          .replace(/^feat\([^)]+\):\s*/i, '')
-          .replace(/^feat:\s*/i, '')
-          .trim()
         const prUrl = `https://github.com/${PROD_REPO}/pull/${bug.pr_number}`
-        const body = `Fix applied for ${fixDesc} (${prUrl}). Please retest.`
+        // Verbatim reply (fixed operator wording). Append the app-release caveat
+        // when the fix touches iznik-nuxt3/ — the Capacitor apps are built from
+        // it, so app users only get the fix via a store release (web users get
+        // it immediately). frontend_only is a fast pre-check; otherwise confirm
+        // via the PR file list (covers mixed frontend+backend PRs too).
+        let affectsApp = (bug.frontend_only ?? 0) === 1
+        if (!affectsApp) {
+          const filesRes = await sh('gh', [
+            'pr', 'view', String(bug.pr_number), '--repo', PROD_REPO,
+            '--json', 'files', '--jq', 'any(.files[]; .path | startswith("iznik-nuxt3/"))',
+          ])
+          affectsApp = filesRes.code === 0 && filesRes.stdout.trim() === 'true'
+        }
+        const APP_CAVEAT = ' (but app releases may take up to one week)'
+        const body = 'AI Edward: possible fix applied, please retest and report back'
+          + (affectsApp ? APP_CAVEAT : '')
         const quote = bug.excerpt ?? ''
         const username = bug.reporter ?? 'there'
 
@@ -2093,17 +2119,20 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         out(`ci_router_decide: production CI failing (sha=${production.sha?.slice(0, 9) ?? '?'})`)
         return { _transition: 'FIX_PRODUCTION_CI', reason: `production CI failing on sha ${production.sha?.slice(0, 9) ?? '?'}` }
       }
-      // Priority 2: drain mode — if ANY PR has pending CI, don't push new commits.
-      // With a single self-hosted runner, pushing to multiple PRs simultaneously
-      // just grows the CI queue. The last PR waits hours. Keep the queue depth ≤ 1:
-      // only push a fix when the CI queue is empty (all PRs are either green or red,
-      // none pending). Once the pending run finishes (pass → merge, fail → fix), we
-      // push the next fix for the focus PR.
+      // Priority 2: drain mode — only when pending CI SATURATES the cloud runners.
+      // We run on ~5 Katapult cloud runners now, NOT a single self-hosted runner,
+      // so a handful of pending PRs run concurrently and do not need serialising.
+      // The old rule (drain on ANY pending PR) was catastrophic: a single in-flight
+      // PR (e.g. one with a flaky/infra-failing build that re-runs forever) would
+      // WRAP_UP every iteration and block ALL Discourse bug work indefinitely.
+      // Only drain when pending count reaches runner capacity, to avoid piling
+      // unbounded load onto the queue; below that, proceed to fix/bug work.
+      const MAX_CONCURRENT_CI = 5
       const pendingPRs: Array<any> = Array.isArray(prCheck.pendingPRs) ? prCheck.pendingPRs : []
-      if (pendingPRs.length > 0) {
+      if (pendingPRs.length >= MAX_CONCURRENT_CI) {
         return {
           _transition: 'WRAP_UP',
-          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI; holding at ≤1 queue depth until CI settles`,
+          reason: `drain mode — ${pendingPRs.length} PR(s) have pending/running CI (>= ${MAX_CONCURRENT_CI} cloud-runner capacity); holding until CI settles`,
           drainMode: true,
           pendingCount: pendingPRs.length,
         }

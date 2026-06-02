@@ -45,6 +45,16 @@ Schedule::command('mail:welcome:send --limit=100 --spool')
     ->sendOutputTo(cronLog('mail:welcome:send'))
     ->runInBackground();
 
+// Record the deployed Laravel commit so /api/version reports the live build
+// (the monitor-fsm "verified-live" reply gate compares it against merged PRs).
+// Lightweight (just a config upsert) — safe to run frequently; deploy:watch is
+// disabled and deploy:refresh is too heavy to schedule.
+Schedule::command('deploy:record-commit')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('deploy:record-commit'))
+    ->runInBackground();
+
 // Chat notifications - run continuously with internal looping.
 // Uses PreventsOverlapping trait for flock-based locking (released on process death).
 // User2User notifications.
@@ -268,14 +278,6 @@ Schedule::command('chats:chaseup-mods')
     ->dailyAt('15:30')
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('chats:chaseup-mods'))
-    ->runInBackground();
-
-// Email users who are expected to reply in a User2User chat but have not.
-// V1: cron/chat_chaseup_expected.php (daily 06:00) — V1 disabled 2026-06-01.
-Schedule::command('chats:chaseup-expected')
-    ->dailyAt('06:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('chats:chaseup-expected'))
     ->runInBackground();
 
 // Warn innocent users who chatted with spammers; auto-mark spam chat messages.
@@ -912,14 +914,6 @@ Schedule::command('newsfeed:generate-link-previews')
     ->everyMinute()
     ->withoutOverlapping()
     ->sendOutputTo(cronLog('newsfeed:generate-link-previews'))
-    ->runInBackground();
-
-// Send the newsfeed (chitchat) digest of recent nearby posts to active users.
-// V1: cron/newsfeed_digest.php (daily 15:30) — V1 disabled 2026-06-01.
-Schedule::command('mail:newsfeed:digest')
-    ->dailyAt('15:30')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('mail:newsfeed:digest'))
     ->runInBackground();
 
 // =============================================================================
