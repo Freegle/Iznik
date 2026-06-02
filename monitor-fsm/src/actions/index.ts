@@ -634,15 +634,23 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
           continue
         }
 
-        // Build body from PR title (strip conventional commit prefix)
-        const fixDesc = bug.pr_title
-          .replace(/^fix\([^)]+\):\s*/i, '')
-          .replace(/^fix:\s*/i, '')
-          .replace(/^feat\([^)]+\):\s*/i, '')
-          .replace(/^feat:\s*/i, '')
-          .trim()
         const prUrl = `https://github.com/${PROD_REPO}/pull/${bug.pr_number}`
-        const body = `Fix applied for ${fixDesc} (${prUrl}). Please retest.`
+        // Verbatim reply (fixed operator wording). Append the app-release caveat
+        // when the fix touches iznik-nuxt3/ — the Capacitor apps are built from
+        // it, so app users only get the fix via a store release (web users get
+        // it immediately). frontend_only is a fast pre-check; otherwise confirm
+        // via the PR file list (covers mixed frontend+backend PRs too).
+        let affectsApp = (bug.frontend_only ?? 0) === 1
+        if (!affectsApp) {
+          const filesRes = await sh('gh', [
+            'pr', 'view', String(bug.pr_number), '--repo', PROD_REPO,
+            '--json', 'files', '--jq', 'any(.files[]; .path | startswith("iznik-nuxt3/"))',
+          ])
+          affectsApp = filesRes.code === 0 && filesRes.stdout.trim() === 'true'
+        }
+        const APP_CAVEAT = ' (but app releases may take up to one week)'
+        const body = 'AI Edward: possible fix applied, please retest and report back'
+          + (affectsApp ? APP_CAVEAT : '')
         const quote = bug.excerpt ?? ''
         const username = bug.reporter ?? 'there'
 
