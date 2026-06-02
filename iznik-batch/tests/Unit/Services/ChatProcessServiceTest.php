@@ -297,8 +297,33 @@ class ChatProcessServiceTest extends TestCase
 
         $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
         $this->assertEquals(1, $updated->reviewrequired, 'Moderated member message matching a concern keyword should be held for review');
-        $this->assertEquals('Spam', $updated->reportreason);
+        // The specific check is surfaced as the reportreason so the modtools
+        // review UI can tell the moderator WHY (a concern/worry word) instead of
+        // the unhelpful "...no more information about why".
+        $this->assertEquals('WorryWord', $updated->reportreason);
         $this->assertEquals(1, $updated->processingsuccessful);
+    }
+
+    public function test_held_message_reportreason_reflects_the_specific_check(): void
+    {
+        // A money symbol must be surfaced as reportreason 'Money', not the generic
+        // 'Spam', so the review UI shows "It looks like it refers to money."
+        $sender = $this->createTestUser(['chatmodstatus' => 'Moderated']);
+        $recipient = $this->createTestUser();
+        $room = $this->createTestChatRoom($sender, $recipient);
+
+        $msg = $this->createTestChatMessage($room, $sender, [
+            'message' => 'I can do it for £50 if you collect',
+            'processingrequired' => 1,
+            'processingsuccessful' => 0,
+            'platform' => 1,
+        ]);
+
+        $this->service->processIncoming();
+
+        $updated = DB::table('chat_messages')->where('id', $msg->id)->first();
+        $this->assertEquals(1, $updated->reviewrequired, 'A money symbol from a Moderated member should be held');
+        $this->assertEquals('Money', $updated->reportreason, 'reportreason must name the specific check (Money), not generic Spam');
     }
 
     public function test_moderated_user_clean_message_is_not_held(): void
