@@ -17,21 +17,20 @@ import (
 var categorySanitizer = regexp.MustCompile(`[^a-zA-Z/ ]+`)
 
 type Job struct {
-	ID             uint64  `json:"id" gorm:"primary_key"`
-	Ambit          float64 `json:"ambit"`
-	Dist           float64 `json:"dist"`
-	Area           float64 `json:"area"`
-	Url            string  `json:"url"`
-	Title          string  `json:"title"`
-	Location       string  `json:"location"`
-	Body           string  `json:"body"`
-	Reference      string  `json:"job_reference"`
-	Category       string  `json:"category"`
-	CPC            float64 `json:"cpc"`
-	Clickability   float64 `json:"clickability"`
-	Expectation    float64 `json:"expectation"`
-	Image          string  `json:"image,omitempty"`
-	CanonicalTitle string  `json:"-"`
+	ID           uint64  `json:"id" gorm:"primary_key"`
+	Ambit        float64 `json:"ambit"`
+	Dist         float64 `json:"dist"`
+	Area         float64 `json:"area"`
+	Url          string  `json:"url"`
+	Title        string  `json:"title"`
+	Location     string  `json:"location"`
+	Body         string  `json:"body"`
+	Reference    string  `json:"job_reference"`
+	Category     string  `json:"category"`
+	CPC          float64 `json:"cpc"`
+	Clickability float64 `json:"clickability"`
+	Expectation  float64 `json:"expectation"`
+	Image        string  `json:"image,omitempty"`
 }
 
 const JOBS_LIMIT = 50
