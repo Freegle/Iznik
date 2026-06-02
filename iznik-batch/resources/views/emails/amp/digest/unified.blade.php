@@ -139,6 +139,10 @@
     .post-byline strong {
       color: #555555;
     }
+    .post-byline .group-link {
+      color: #555555;
+      text-decoration: underline;
+    }
     .post-first-posted {
       font-size: 11px;
       color: #999999;
@@ -335,6 +339,98 @@
       line-height: 1.5;
       margin: 0;
     }
+
+    /* Job listings block (V1 single.html parity — mirrors the MJML jobs block) */
+    .jobs-section {
+      background-color: #F7F6EC;
+      padding: 16px 20px;
+      border-top: 1px solid #e9ecef;
+    }
+    .jobs-title {
+      font-size: 16px;
+      font-weight: bold;
+      color: #333333;
+      text-align: center;
+      margin: 0 0 10px 0;
+    }
+    .job-row {
+      margin: 0 0 8px 0;
+    }
+    .job-thumb {
+      width: 40px;
+      height: 40px;
+      border-radius: 4px;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    .job-link {
+      color: #338808;
+      font-weight: bold;
+      text-decoration: none;
+      font-size: 14px;
+      line-height: 1.25;
+    }
+    .job-location {
+      color: #666666;
+      font-size: 12px;
+      line-height: 1.3;
+    }
+    .jobs-note {
+      font-size: 12px;
+      color: #666666;
+      line-height: 1.4;
+      margin: 8px 0 0 0;
+    }
+    .jobs-buttons {
+      margin-top: 12px;
+      text-align: center;
+    }
+    .jobs-button {
+      display: inline-block;
+      background-color: #338808;
+      color: #ffffff;
+      text-decoration: none;
+      font-size: 14px;
+      padding: 10px 25px;
+      border-radius: 5px;
+      margin: 4px;
+    }
+
+    /* Sponsors (V1 parity — mirrors the MJML sponsors block) */
+    .sponsors-section {
+      background-color: #ffffff;
+      padding: 10px 20px;
+    }
+    .sponsors-divider {
+      border-top: 1px solid #eeeeee;
+      margin: 0 0 5px 0;
+    }
+    .sponsors-label {
+      font-size: 12px;
+      color: #888888;
+      font-style: italic;
+      margin: 0 0 8px 0;
+    }
+    .sponsor-row {
+      margin: 0 0 10px 0;
+    }
+    .sponsor-thumb {
+      width: 60px;
+      height: 60px;
+      border-radius: 5px;
+      margin-right: 10px;
+      vertical-align: middle;
+    }
+    .sponsor-name {
+      color: #338808;
+      text-decoration: none;
+      font-weight: bold;
+      font-size: 13px;
+    }
+    .sponsor-tagline {
+      font-size: 11px;
+      color: #666666;
+    }
   </style>
 </head>
 <body>
@@ -433,7 +529,7 @@
              with the bold poster name rather than crowding the time/pin. --}}
         <p class="post-byline">
           <amp-img src="{{ $post['posterAvatarUrl'] }}" width="22" height="22" layout="fixed" alt=""></amp-img>
-          Posted by <strong>{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
+          Posted by <strong>{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>@if(!empty($post['groupName'])) on <a href="{{ $post['groupUrl'] }}" class="group-link">{{ $post['groupName'] }}</a>@endif
         </p>
         @if(!empty($post['firstPostedFormatted']))
         {{-- V1 single.html parity: only shown when the message has actually
@@ -470,6 +566,52 @@
       </div>
     </div>
     @endforeach
+
+    {{-- Jobs near you (V1 single.html parity — mirrors the MJML jobs block).
+         AMP4Email needs concrete amp-img dimensions, so the thumb is a fixed
+         40x40. --}}
+    @if(isset($jobAds) && $jobAds->isNotEmpty())
+    <div class="jobs-section">
+      <p class="jobs-title">Jobs near you</p>
+      @foreach($jobAds as $job)
+      <div class="job-row">
+        @if($job->image_url ?? null)
+        <a href="{{ $job->tracked_url }}">
+          <amp-img class="job-thumb" src="{{ $job->image_url }}" width="40" height="40" layout="fixed" alt=""></amp-img>
+        </a>
+        @endif
+        <a href="{{ $job->tracked_url }}" class="job-link">{{ $job->title }}</a>
+        @if($job->location ?? null)
+        <br /><span class="job-location">{{ $job->location }}</span>
+        @endif
+      </div>
+      @endforeach
+      <p class="jobs-note">If you are interested and click, it will raise a little to help keep Freegle running and free to use.</p>
+      <div class="jobs-buttons">
+        <a href="{{ $jobsUrl }}" class="jobs-button">View more jobs</a>
+        <a href="{{ $donateUrl }}" class="jobs-button">Donating helps too!</a>
+      </div>
+    </div>
+    @endif
+
+    {{-- Sponsors (V1 parity — mirrors the MJML sponsors block) --}}
+    @if(isset($sponsors) && $sponsors->isNotEmpty())
+    <div class="sponsors-section">
+      <div class="sponsors-divider"></div>
+      <p class="sponsors-label">Sponsored by:</p>
+      @foreach($sponsors as $sponsor)
+      <div class="sponsor-row">
+        @if($sponsor->imageurl)
+        <a href="{{ $sponsor->linkurl }}">
+          <amp-img class="sponsor-thumb" src="{{ $sponsor->imageurl }}" width="60" height="60" layout="fixed" alt="{{ $sponsor->name }}"></amp-img>
+        </a>
+        @endif
+        @if($sponsor->linkurl)<a href="{{ $sponsor->linkurl }}" class="sponsor-name">{{ $sponsor->name }}</a>@else<strong class="sponsor-name">{{ $sponsor->name }}</strong>@endif
+        @if($sponsor->tagline)<br /><span class="sponsor-tagline">{{ $sponsor->tagline }}</span>@endif
+      </div>
+      @endforeach
+    </div>
+    @endif
 
     {{-- Browse All Posts --}}
     <div class="browse-section">
