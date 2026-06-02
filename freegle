@@ -1,7 +1,7 @@
 #!/bin/bash
 # Freegle worktree management CLI
 # Manages multiple Docker Compose environments for parallel development.
-# Each worktree gets its own unique port range (offset by slot*2000) so
+# Each worktree gets its own unique port range (offset by slot*5000) so
 # all instances can run simultaneously without conflicts.
 #
 # Usage:
@@ -177,10 +177,16 @@ cmd_worktree_create() {
     echo "  Directory: $worktree_dir"
     echo "  Branch:    $branch"
 
-    # Find the next free slot by checking PORT_STATUS in each existing worktree's .env.
-    # This avoids reusing a slot after a worktree is removed (the old count-based approach
-    # would assign the same slot number to a new worktree if one had been deleted).
-    local max_slot=0
+    # Pick the LOWEST free slot by collecting the slots in use across all existing
+    # worktrees (the main repo is slot 0) and choosing the smallest gap >= 1.
+    #
+    # We deliberately reuse freed slots rather than taking max_slot+1. The old
+    # max+1 approach never reused gaps: with repeated create/remove churn the slot
+    # number only ever climbed, and since port_offset = slot*5000, it eventually
+    # pushed PORT_* values past 65535 so containers silently failed to start.
+    # Removed worktrees drop out of `git worktree list` (and `worktree remove`
+    # runs `docker-compose down -v`), so their slots are genuinely free to reuse.
+    declare -A used_slots
     for wt in $(git -C "$main_repo" worktree list --porcelain | grep '^worktree ' | sed 's/^worktree //'); do
         if [[ -f "$wt/.env" ]]; then
             local wt_status_port
@@ -188,13 +194,40 @@ cmd_worktree_create() {
             if [[ -n "$wt_status_port" && "$wt_status_port" =~ ^[0-9]+$ ]]; then
                 # Base STATUS port is 8081. Slot = (port - 8081) / 5000
                 local wt_slot=$(( (wt_status_port - 8081) / 5000 ))
-                if (( wt_slot > max_slot )); then
-                    max_slot=$wt_slot
-                fi
+                used_slots["$wt_slot"]=1
             fi
         fi
     done
-    local slot=$(( max_slot + 1 ))
+
+    # Smallest free slot >= 1 (slot 0 is the main repo). Cap at 10: with the
+    # +5000/slot offset the highest default port (11334) reaches 61334 at slot 10,
+    # still under 65535; slot 11+ would overflow and containers wouldn't bind.
+    # Pick the smallest slot >= 1 that is both unclaimed by a worktree AND whose
+    # representative host ports are actually free. The port check catches a removed
+    # worktree whose containers still linger (its `docker-compose down` never ran, so
+    # they keep binding ports) and any accidental double-assignment — cases the
+    # git-worktree scan above can't see. Bases: PORT_STATUS=8081, PORT_TRAEFIK_HTTP=80,
+    # PORT_LOKI=3100; all offset by slot*5000.
+    local slot=1 off portclash base
+    while (( slot <= 10 )); do
+        if [[ -n "${used_slots[$slot]:-}" ]]; then slot=$(( slot + 1 )); continue; fi
+        off=$(( slot * 5000 ))
+        portclash=0
+        for base in 8081 80 3100; do
+            if ss -tlnH 2>/dev/null | grep -qE ":$(( base + off ))\b"; then portclash=1; break; fi
+        done
+        if (( portclash )); then
+            echo -e "${YELLOW}Slot ${slot} ports busy (lingering stack?) — trying next.${NC}" >&2
+            slot=$(( slot + 1 ))
+            continue
+        fi
+        break
+    done
+    if (( slot > 10 )); then
+        echo -e "${RED}Error: no free port slot available (slots 1-10 all in use).${NC}" >&2
+        echo "Remove an unused worktree first:  freegle worktree remove <name>" >&2
+        return 1
+    fi
 
     # Create the worktree
     git -C "$main_repo" worktree add "$worktree_dir" "$branch"
@@ -220,10 +253,9 @@ cmd_worktree_create() {
     # installs), so changing COMPOSE_FILE alone doesn't prevent conflicts. We offset every
     # PORT_* value by slot*5000 instead.
     #
-    # slot was counted before git worktree add, so:
-    #   first worktree (slot=1) → +5000, second (slot=2) → +10000, …
+    #   slot=1 → +5000, slot=2 → +10000, …
     # 5000 is the smallest round increment with zero port collisions across
-    # all 25 PORT_* defaults (ranging from 25 to 11334) for up to 11 slots.
+    # all 25 PORT_* defaults (ranging from 25 to 11334) for up to 10 slots.
     # Max port at slot 10: 61334 (under 65535).
     local port_offset=$(( slot * 5000 ))
 
