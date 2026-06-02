@@ -294,13 +294,6 @@ class UnifiedDigestService
                     ]);
                     $mailable = new UnifiedDigest($user, $deduped, self::MODE_IMMEDIATE, $sponsorsCache);
 
-                    if ($bulkCompiler !== null && $mailable instanceof BulkRenderable) {
-                        // Shape-cached compile: one MJML sidecar call per
-                        // shape bucket, N cheap substitutions for N users.
-                        $html = $bulkCompiler->htmlFor($mailable);
-                        $mailable->setPrerenderedHtml($html);
-                    }
-
                     // Spool through EmailSpoolerService so transient SMTP
                     // failures get retried by the processor rather than
                     // dropping a recipient. Permanent address-rejection
@@ -317,6 +310,25 @@ class UnifiedDigestService
                     // copies of the same post in 13 min. Catch it, skip the one
                     // recipient, and let the message still count as processed.
                     try {
+                        if ($bulkCompiler !== null && $mailable instanceof BulkRenderable) {
+                            // Shape-cached compile: one MJML sidecar call per
+                            // shape bucket, N cheap substitutions for N users.
+                            // If the bulk compile fails (sidecar down, template
+                            // error, etc.) fall back to the per-user compile
+                            // path inside spool() — an optimisation failure
+                            // must never drop a recipient.
+                            try {
+                                $mailable->setPrerenderedHtml($bulkCompiler->htmlFor($mailable));
+                            } catch (\Throwable $bulkE) {
+                                Log::warning('BulkMjmlCompiler failed; falling back to per-user MJML compile', [
+                                    'user_id' => $uid,
+                                    'group' => $groupid,
+                                    'msgid' => (int) $message->mg_msgid,
+                                    'error' => $bulkE->getMessage(),
+                                ]);
+                            }
+                        }
+
                         app(\App\Services\EmailSpoolerService::class)->spool(
                             $mailable,
                             $user->email_preferred,

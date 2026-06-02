@@ -119,7 +119,14 @@ class StoriesAskService
                     );
 
                     if ($bulkCompiler !== null && $mailable instanceof BulkRenderable) {
-                        $mailable->setPrerenderedHtml($bulkCompiler->htmlFor($mailable));
+                        try {
+                            $mailable->setPrerenderedHtml($bulkCompiler->htmlFor($mailable));
+                        } catch (\Throwable $bulkE) {
+                            Log::warning('BulkMjmlCompiler failed; falling back to per-user MJML compile', [
+                                'email' => $email,
+                                'error' => $bulkE->getMessage(),
+                            ]);
+                        }
                     }
 
                     app(\App\Services\EmailSpoolerService::class)->spool($mailable);

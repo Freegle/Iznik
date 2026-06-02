@@ -7,6 +7,8 @@ use App\Models\Membership;
 use App\Models\Message;
 use App\Models\User;
 use App\Models\UserDigest;
+use App\Services\BulkMail\BulkMjmlCompiler;
+use App\Services\MjmlCompilerService;
 use App\Services\UnifiedDigestService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
@@ -685,6 +687,37 @@ class UnifiedDigestServiceTest extends TestCase
 
         $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
         $this->assertEquals(1, $stats['emails_sent']);
+    }
+
+    /**
+     * When the bulk MJML compile fails (e.g. sidecar unreachable), the
+     * service must still send the email via the per-user compile fallback
+     * path rather than dropping the recipient or crashing the group loop.
+     */
+    public function test_immediate_sends_even_if_bulk_compile_fails(): void
+    {
+        // Bind a BulkMjmlCompiler whose MJML sidecar always throws.
+        $this->app->bind(BulkMjmlCompiler::class, function () {
+            $failingMjml = new class extends MjmlCompilerService {
+                public function __construct() {}
+
+                public function compile(string $mjml): string
+                {
+                    throw new \RuntimeException('Simulated MJML sidecar failure');
+                }
+            };
+            return new BulkMjmlCompiler($failingMjml);
+        });
+
+        [$group, $poster, $recipient] = $this->bootstrapImmediateGroup();
+        $msg = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Item (TestLocation)']);
+        $this->makeImmediateReady($msg);
+
+        $stats = $this->service->sendDigests(UnifiedDigestService::MODE_IMMEDIATE);
+
+        // Bulk compile failing must not crash the group loop or drop the recipient.
+        $this->assertEquals(1, $stats['emails_sent'], 'Recipient must still be counted even when bulk compile fails');
+        $this->assertEquals(0, $stats['errors'], 'A bulk compile failure must not increment the group error counter');
     }
 
     /**

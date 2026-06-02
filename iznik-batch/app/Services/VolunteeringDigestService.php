@@ -213,16 +213,22 @@ class VolunteeringDigestService
                         userId: $member->userId,
                     );
 
-                    if ($bulkCompiler !== null && $mailable instanceof BulkRenderable) {
-                        $mailable->setPrerenderedHtml($bulkCompiler->htmlFor($mailable));
-                    }
-
                     // spool() builds the message (incl. MJML render) up front and
                     // only swallows permanent address failures internally; a
                     // transient render/build error re-throws. Without this catch
                     // it would escape the per-member foreach and abort the whole
                     // digest run. Skip the one recipient and keep the loop going.
                     try {
+                        if ($bulkCompiler !== null && $mailable instanceof BulkRenderable) {
+                            try {
+                                $mailable->setPrerenderedHtml($bulkCompiler->htmlFor($mailable));
+                            } catch (\Throwable $bulkE) {
+                                Log::warning('BulkMjmlCompiler failed; falling back to per-user MJML compile', [
+                                    'email' => $email,
+                                    'error' => $bulkE->getMessage(),
+                                ]);
+                            }
+                        }
                         app(\App\Services\EmailSpoolerService::class)->spool($mailable, $email);
                     } catch (\Throwable $e) {
                         Log::warning('Skipping volunteering digest for member after spool failure; continuing loop', [
