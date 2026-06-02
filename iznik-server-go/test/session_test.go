@@ -1026,6 +1026,45 @@ func TestDeleteSession(t *testing.T) {
 	assert.Equal(t, int64(0), countAfter)
 }
 
+// TestDeleteSessionScopedToCurrentDevice verifies that DELETE /session only
+// invalidates the caller's session, leaving other active sessions (other devices)
+// intact. Regression test for Discourse #9748: logout was deleting all sessions
+// for the user instead of just the current one.
+func TestDeleteSessionScopedToCurrentDevice(t *testing.T) {
+	prefix := uniquePrefix("del_sess_scope")
+	userID := CreateTestUser(t, prefix, "User")
+
+	// Two sessions simulating two independent devices/browsers.
+	session1ID, token1 := CreateTestSession(t, userID)
+	session2ID, _ := CreateTestSession(t, userID)
+
+	db := database.DBConn
+
+	// Verify both sessions exist before logout.
+	var countBefore int64
+	db.Raw("SELECT COUNT(*) FROM sessions WHERE userid = ?", userID).Scan(&countBefore)
+	assert.Equal(t, int64(2), countBefore, "expected 2 sessions before logout")
+
+	// Log out using device 1's JWT.
+	req := httptest.NewRequest("DELETE", "/api/session?jwt="+token1, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Device 1's session must be destroyed.
+	var session1Count int64
+	db.Raw("SELECT COUNT(*) FROM sessions WHERE id = ?", session1ID).Scan(&session1Count)
+	assert.Equal(t, int64(0), session1Count, "logged-out session should be deleted")
+
+	// Device 2's session must remain active (other device should stay logged in).
+	var session2Count int64
+	db.Raw("SELECT COUNT(*) FROM sessions WHERE id = ?", session2ID).Scan(&session2Count)
+	assert.Equal(t, int64(1), session2Count, "other device session should remain active")
+}
+
 // ---------------------------------------------------------------------------
 // POST /session - Forget
 // ---------------------------------------------------------------------------

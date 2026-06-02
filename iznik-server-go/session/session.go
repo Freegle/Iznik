@@ -1780,7 +1780,26 @@ func DeleteSession(c *fiber.Ctx) error {
 
 	if myid > 0 {
 		db := database.DBConn
-		db.Exec("DELETE FROM sessions WHERE userid = ?", myid)
+
+		// Delete only the caller's current session so that other devices/browsers
+		// remain logged in. The JWT carries the session row ID; fall back to the
+		// legacy Authorization2 persistent-token header when no JWT is present.
+		_, sessionId, _ := user.GetJWTFromRequest(c)
+
+		if sessionId == 0 {
+			// Persistent-token path: extract session ID from Authorization2 header.
+			persistent := c.Get("Authorization2")
+			if persistent != "" {
+				var pt auth.PersistentToken
+				if jsonErr := json.Unmarshal([]byte(persistent), &pt); jsonErr == nil {
+					sessionId = pt.ID
+				}
+			}
+		}
+
+		if sessionId > 0 {
+			db.Exec("DELETE FROM sessions WHERE id = ? AND userid = ?", sessionId, myid)
+		}
 	}
 
 	return c.JSON(fiber.Map{
