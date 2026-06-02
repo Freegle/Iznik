@@ -201,6 +201,19 @@ function changedMessageTerm(term) {
 function searchedMessage(term) {
   const router = useRouter()
   term = term.trim()
+  // Start a fresh message search from a clean slate.  The store accumulates
+  // messages from other sources (notably a prior "messages from member"
+  // lookup, whose historical posts are not in any search index), and the
+  // listing is filtered by listingIds.  Without resetting here, those leaked
+  // results stay visible during the search — mirrors searchedMember() and the
+  // vectorSearchEnabled watcher, which already reset this state.
+  show.value = 0
+  context.value = null
+  memberTerm.value = null
+  modMessages.listingIds.value = new Set()
+  modMessages.listingIdOrder.value = []
+  messageStore.clear()
+  bump.value++
   if (term.length > 0) {
     router.push('/messages/approved/' + groupid.value + '/' + term)
   } else if (groupid.value) {
