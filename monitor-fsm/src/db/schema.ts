@@ -2,7 +2,7 @@
 // Inlined (not a .sql file) so TS compilation produces a single self-contained
 // dist/ without needing a post-build copy step.
 
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 // v2 migration: add pr_rejections column to discourse_bug.
 // Applied in applySchema() via ALTER TABLE (idempotent — caught by DUPLICATE COLUMN error).
@@ -46,6 +46,44 @@ INSERT INTO discourse_bug (topic, post, topic_title, reporter, excerpt, state, p
   SELECT topic, post, topic_title, reporter, excerpt, state, pr_number, reason, first_seen_at, last_seen_at, feature_area, fixed_at, deployed_at, pr_rejections, symptom_tags, code_area
   FROM discourse_bug_v3;
 DROP TABLE discourse_bug_v3;
+CREATE INDEX IF NOT EXISTS idx_discourse_bug_state ON discourse_bug(state);
+CREATE INDEX IF NOT EXISTS idx_discourse_bug_pr ON discourse_bug(pr_number);
+COMMIT;
+`
+
+// v5 migration: actually rebuild discourse_bug so 'feature-request' is allowed by
+// the state CHECK constraint. The v4 migration added 'feature-request' to the
+// SCHEMA_SQL definition but DBs already recorded at schema_version 4 never re-ran
+// the table rebuild (current < 4 is false), so their live CHECK constraint still
+// rejects 'feature-request' — persist_classifications then throws on every
+// feature_request triage. SQLite cannot ALTER a CHECK constraint in place, so we
+// rebuild the table. Idempotent for fresh DBs (recreates an identical table).
+export const MIGRATION_V5_SQL = `
+BEGIN;
+ALTER TABLE discourse_bug RENAME TO discourse_bug_v4;
+CREATE TABLE discourse_bug (
+  topic INTEGER NOT NULL,
+  post INTEGER NOT NULL,
+  topic_title TEXT,
+  reporter TEXT,
+  excerpt TEXT,
+  state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','investigating','fix-queued','deferred','fixed','confirmed','off-topic','duplicate','feature-request')),
+  pr_number INTEGER,
+  reason TEXT,
+  first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  feature_area TEXT,
+  fixed_at TEXT,
+  deployed_at TEXT,
+  pr_rejections INTEGER NOT NULL DEFAULT 0,
+  symptom_tags TEXT,
+  code_area TEXT,
+  PRIMARY KEY (topic, post)
+);
+INSERT INTO discourse_bug (topic, post, topic_title, reporter, excerpt, state, pr_number, reason, first_seen_at, last_seen_at, feature_area, fixed_at, deployed_at, pr_rejections, symptom_tags, code_area)
+  SELECT topic, post, topic_title, reporter, excerpt, state, pr_number, reason, first_seen_at, last_seen_at, feature_area, fixed_at, deployed_at, pr_rejections, symptom_tags, code_area
+  FROM discourse_bug_v4;
+DROP TABLE discourse_bug_v4;
 CREATE INDEX IF NOT EXISTS idx_discourse_bug_state ON discourse_bug(state);
 CREATE INDEX IF NOT EXISTS idx_discourse_bug_pr ON discourse_bug(pr_number);
 COMMIT;
