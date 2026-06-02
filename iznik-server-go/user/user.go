@@ -1547,6 +1547,8 @@ func PostUser(c *fiber.Ctx) error {
 		return handleRemoveEmail(c, db, myid, req)
 	case "Unbounce":
 		return handleUnbounce(c, myid, req)
+	case "Unsubscribe":
+		return handleUserUnsubscribe(c, myid, req)
 	case "Merge":
 		return handleMerge(c, myid, req)
 	default:
@@ -2301,14 +2303,8 @@ func LimboUser(c *fiber.Ctx) error {
 		})
 	}
 
-	// Remove memberships so the user no longer appears in group member lists.
-	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
-
-	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
-
-	// Log the deletion (type='User', subtype='Deleted').
-	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
-		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID, myid)
+	// Soft, recoverable limbo (shared with the Unsubscribe action).
+	softLimboUser(db, targetID, myid)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
@@ -2327,6 +2323,43 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	}
 
 	db.Exec("UPDATE users SET bouncing = 0 WHERE id = ?", req.ID)
+
+	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// softLimboUser puts a user into a recoverable "limbo": it removes their approved
+// memberships (so they drop out of group member lists), marks the account deleted
+// (a 14-day grace period before users:cleanup runs forgetUser), and logs a
+// User/Deleted entry. The user can recover by logging back in within the grace
+// period. Shared by self-delete (DELETE /user) and the Support-tools Unsubscribe
+// action (POST /user action=Unsubscribe) so both behave identically. byUser is the
+// actor recorded in the log (the user themselves, or the support volunteer).
+func softLimboUser(db *gorm.DB, targetID uint64, byUser uint64) {
+	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
+	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
+	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",
+		log2.LOG_TYPE_USER, log2.LOG_SUBTYPE_DELETED, targetID, byUser)
+}
+
+// handleUserUnsubscribe puts a target user into a recoverable limbo (soft-delete)
+// via the Support-tools "Unsubscribe" action. V1 parity: POST /user action=Unsubscribe
+// maps to a recoverable removal (User::limbo) — NOT the hard GDPR purge that
+// DELETE /user performs for support-on-another-user — so a user who unsubscribed
+// by mistake (e.g. one-click email unsubscribe) can recover by logging back in.
+// A regular user may unsubscribe only themselves; admin/support may unsubscribe
+// anyone. (Discourse #9738.)
+func handleUserUnsubscribe(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
+	if req.ID == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "id is required")
+	}
+
+	targetID := req.ID
+
+	if targetID != myid && !auth.IsAdminOrSupport(myid) {
+		return fiber.NewError(fiber.StatusForbidden, "Only admin/support can unsubscribe other users")
+	}
+
+	softLimboUser(database.DBConn, targetID, myid)
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
