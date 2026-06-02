@@ -136,6 +136,21 @@ export const useComposeStore = defineStore({
         email,
       }
 
+      // Bulk offer ("clearance"): a single post carrying many structured items.
+      // The server creates the catalogue and derives availablenow from the total.
+      if (message.bulkitems && message.bulkitems.length) {
+        data.bulkitems = message.bulkitems
+          .filter((i) => i.name && i.name.trim())
+          .map((i) => ({
+            name: i.name.trim(),
+            quantity: parseInt(i.quantity, 10) || 1,
+            condition: i.condition || 'Unknown',
+            dimensions: i.dimensions || null,
+            description: i.description || null,
+            attachments: Array.isArray(i.attachments) ? i.attachments : [],
+          }))
+      }
+
       const ret = await this.$api.message.put(data)
 
       // For unauthenticated users, Go creates a user and returns auth tokens.

@@ -300,6 +300,26 @@ export const useMessageStore = defineStore({
     async view(id, source) {
       await api(this.config).message.view(id, source)
     },
+    // Register the current user's interest in bulk-offer items, then refetch so
+    // the per-item interest summary and yourinterest are up to date.
+    async bulkInterest(id, items) {
+      const data = await api(this.config).message.bulkInterest(id, items)
+      const message = await this.fetch(id, true)
+      this.list[id] = message
+      return data
+    },
+    // Offerer/mod: change the state of one interest row, then refetch.
+    async bulkInterestState(id, bulkitemid, userid, state) {
+      const data = await api(this.config).message.bulkInterestState(
+        id,
+        bulkitemid,
+        userid,
+        state
+      )
+      const message = await this.fetch(id, true)
+      this.list[id] = message
+      return data
+    },
     async update(params) {
       const authStore = useAuthStore()
       const userUid = authStore.user?.id
