@@ -243,6 +243,9 @@ type Message struct {
 	// i.e. has no rippling_reach row, or eligibility wasn't computed). false = the post
 	// has rippled out but not yet to the viewer's location, so the UI shows it view-only.
 	ReplyEligible *bool `json:"replyeligible,omitempty" gorm:"-"`
+	// BulkItems is the structured catalogue for a bulk offer ("clearance"). Nil
+	// (and omitted) for ordinary single-item posts.
+	BulkItems []BulkItem `json:"bulkitems,omitempty" gorm:"-"`
 }
 
 // MessagePosting represents a posting history record from messages_postings.
@@ -470,7 +473,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
 			// that is no longer active, return an empty externaluid so the frontend shows
 			// a placeholder instead of the rejected illustration.
-			db.Raw(`SELECT ma.id, ma.msgid, ma.archived,
+			db.Raw(`SELECT ma.id, ma.msgid, ma.bulkitemid, ma.archived,
 				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
 				ma.externalmods
 				FROM messages_attachments ma
@@ -788,6 +791,12 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				if message.Fromuser == myid || isModForMessage(db, myid, message.ID) {
 					message.Location = loc
 				}
+
+				// Bulk-offer catalogue: group the (now path-resolved) attachments by
+				// item and attach per-item interest. The full per-user interest list
+				// is only visible to the offerer or a moderator.
+				canSeeInterest := message.Fromuser == myid || isGroupMod
+				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
 
 				mu.Lock()
 				messages = append(messages, message)
@@ -2796,6 +2805,7 @@ type patchMessageRequest struct {
 	Attachments  AttachmentIDs `json:"attachments"`
 	BadAIImages  []uint64      `json:"badAIImages"`
 	Deadline     *string  `json:"deadline"`
+	Bulkitems    []BulkItemInput `json:"bulkitems"`
 }
 
 // resolvePartnerAuth reads a ?partner= query param and resolves the acting user ID.
@@ -3230,6 +3240,16 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		}
 	}
 
+	// Bulk offer: rebuild the structured catalogue (attachments are already
+	// relinked above) and keep availableinitially/availablenow in sync with the
+	// total quantity. A nil slice leaves the catalogue untouched.
+	if req.Bulkitems != nil {
+		total := upsertBulkItems(db, req.ID, req.Bulkitems)
+		if total > 0 {
+			db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, req.ID)
+		}
+	}
+
 	return nil
 }
 
@@ -3549,8 +3569,9 @@ func PutMessage(c *fiber.Ctx) error {
 		Locationid         *uint64  `json:"locationid"`
 		Availableinitially *int     `json:"availableinitially"`
 		Availablenow       *int     `json:"availablenow"`
-		Attachments        AttachmentIDs `json:"attachments"`
-		Email              string        `json:"email"`
+		Attachments        AttachmentIDs   `json:"attachments"`
+		Email              string          `json:"email"`
+		Bulkitems          []BulkItemInput `json:"bulkitems"`
 	}
 
 	var req PutMessageRequest
@@ -3700,6 +3721,21 @@ func PutMessage(c *fiber.Ctx) error {
 		}
 	}
 
+	// Bulk offer: create the structured catalogue. Total quantity drives
+	// availableinitially/availablenow, and the textbody falls back to a
+	// readable summary so non-bulk-aware consumers still show the items.
+	if len(req.Bulkitems) > 0 {
+		total := upsertBulkItems(db, newMsgID, req.Bulkitems)
+		if total > 0 {
+			db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, newMsgID)
+		}
+		if strings.TrimSpace(req.Textbody) == "" {
+			if summary := buildBulkSummary(req.Bulkitems); summary != "" {
+				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, newMsgID)
+			}
+		}
+	}
+
 	// Add spatial data if locationid is provided, and update the user's last known location
 	// (so that GET /isochrone can auto-create an isochrone for the user).
 	if req.Locationid != nil && *req.Locationid > 0 {
@@ -3766,6 +3802,18 @@ type PostMessageRequest struct {
 	ForcePending     *bool   `json:"forcepending"`
 	Tnpostid         *string `json:"tnpostid"`
 	Source           *string `json:"source"`
+	// Bulk-offer interest (action "BulkInterest").
+	BulkInterest []BulkInterestInput `json:"bulkinterest"`
+	// Bulk-offer interest state change (action "BulkInterestState").
+	Bulkitemid *uint64 `json:"bulkitemid"`
+	State      *string `json:"state"`
+}
+
+// BulkInterestInput is one item the caller is expressing interest in.
+type BulkInterestInput struct {
+	Bulkitemid uint64  `json:"bulkitemid"`
+	Quantity   int     `json:"quantity"`
+	Cancollect *string `json:"cancollect"`
 }
 
 // PostMessage dispatches POST /message actions.
@@ -3918,6 +3966,10 @@ func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest
 		return handleBackToPending(c, myid, req)
 	case "RejectToDraft", "BackToDraft":
 		return handleRejectToDraft(c, myid, req)
+	case "BulkInterest":
+		return handleBulkInterest(c, myid, req)
+	case "BulkInterestState":
+		return handleBulkInterestState(c, myid, req)
 	default:
 		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
 	}

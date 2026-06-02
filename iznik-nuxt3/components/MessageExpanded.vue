@@ -324,6 +324,9 @@
               </div>
             </div>
 
+            <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
+            <BulkItemsInterest :id="id" />
+
             <!-- Posted by divider and section (shown on taller screens, after description) -->
             <client-only>
               <div v-if="poster" class="section-header section-header--poster">
@@ -608,6 +611,7 @@ import { action } from '~/composables/useClientLog'
 import MessageTextBody from '~/components/MessageTextBody'
 import MessageTag from '~/components/MessageTag'
 import ChatReplyPane from '~/components/ChatReplyPane'
+import BulkItemsInterest from '~/components/BulkItemsInterest'
 import ProfileImage from '~/components/ProfileImage'
 import UserRatings from '~/components/UserRatings'
 import { useModalHistory } from '~/composables/useModalHistory'
