@@ -2,14 +2,19 @@
   <div class="bulkeditor">
     <!-- Quick add from a spreadsheet. -->
     <div class="bulkeditor__import">
-      <b-button variant="outline-secondary" size="sm" @click="showImport = !showImport">
+      <b-button
+        variant="outline-secondary"
+        size="sm"
+        @click="showImport = !showImport"
+      >
         <v-icon icon="list" /> Paste or upload a spreadsheet
       </b-button>
       <div v-if="showImport" class="bulkeditor__import-panel mt-2">
         <p class="small text-muted mb-1">
-          One item per line. Columns: <strong>name, quantity, condition,
-          dimensions, description</strong> (a header row is optional). You can
-          paste straight from a spreadsheet, or choose a CSV file.
+          One item per line. Columns:
+          <strong>name, quantity, condition, dimensions, description</strong> (a
+          header row is optional). You can paste straight from a spreadsheet, or
+          choose a CSV file.
         </p>
         <b-form-textarea
           v-model="importText"
@@ -98,7 +103,12 @@
       </li>
     </ul>
 
-    <b-button variant="outline-primary" size="sm" data-testid="add-item" @click="addItem">
+    <b-button
+      variant="outline-primary"
+      size="sm"
+      data-testid="add-item"
+      @click="addItem"
+    >
       <v-icon icon="plus" /> Add another item
     </b-button>
     <div class="small text-muted mt-2">
@@ -163,7 +173,9 @@ function applyImport() {
   // Replace any leading blank row, then append the parsed items.
   const existing = items.value.filter((i) => i.name && i.name.trim())
   items.value = [...existing, ...parsed.map((i) => ({ ...i, photos: [] }))]
-  importMessage.value = `Added ${parsed.length} item${parsed.length === 1 ? '' : 's'}`
+  importMessage.value = `Added ${parsed.length} item${
+    parsed.length === 1 ? '' : 's'
+  }`
   importText.value = ''
 }
 
