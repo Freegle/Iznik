@@ -1,21 +1,32 @@
-@php($heading = $mode === 'immediate' ? ($postCount.' new post'.($postCount === 1 ? '' : 's').' near you') : "What's New")
-{{ $heading }}
+@php($isSingle = $mode === 'immediate')
+@php($heading = $isSingle ? ($postCount.' new post'.($postCount === 1 ? '' : 's').' near you') : "What's New")
+{{-- Plain-text body. Use {!! !!} (no HTML-escape) so apostrophes and
+     emoji-bearing strings render literally — Blade's default {{ }}
+     runs htmlspecialchars, which turns "What's New" into the literal
+     "What&#039;s New" in the text/plain MIME part. --}}
+{!! $heading !!}
 ====================================
 
-Dear {{ $user->displayname ?? 'there' }},
+@unless($isSingle)
+Here are {{ $postCount }} new posts from your Freegle communities:
 
-Here {{ $postCount === 1 ? 'is' : 'are' }} {{ $postCount }} new post{{ $postCount === 1 ? '' : 's' }} from your Freegle communities:
-
+@endunless
 @foreach($posts as $post)
-{{ strtoupper($post['type']) }}: {{ $post['itemName'] }}
-{{ $post['arrivalFormatted'] }}
+{!! strtoupper($post['type']) !!}: {!! $post['itemName'] !!}
+@if($post['locationName'] ?? null)
+Location: {!! $post['locationName'] !!}
+@endif
+{!! $post['distanceText'] ? $post['distanceText'].' away, ' : '' !!}{!! $post['arrivalFormatted'] !!}
 @if($post['messageText'])
-{{ \Illuminate\Support\Str::limit($post['messageText'], 150) }}
+
+{!! $isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 200) !!}
 @endif
-@if($post['postedToText'])
-{{ $post['postedToText'] }}
+
+Posted by {!! $post['posterName'] !!}
+@if(!empty($post['firstPostedFormatted']))
+First posted {!! $post['firstPostedFormatted'] !!}
 @endif
-View: {{ $post['messageUrl'] }}
+Reply: {{ $post['messageUrl'] }}
 
 @endforeach
 ------------------------------------

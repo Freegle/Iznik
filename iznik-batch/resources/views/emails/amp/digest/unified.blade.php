@@ -43,16 +43,24 @@
       margin: 0;
     }
 
-    /* Post cards */
+    /* Post cards. align-items:stretch + an amp-img with layout="fill"
+       in the img wrapper makes the photo grow to match the content
+       column's height — so the Reply button no longer dangles below
+       the bottom of the image. Image keeps a min-height so very short
+       cards still show a sensible thumbnail. */
     .post-card {
       padding: 12px 16px;
       border-bottom: 1px solid #eeeeee;
       display: flex;
-      align-items: flex-start;
+      align-items: stretch;
     }
-    .post-image {
+    .post-img-wrap {
       width: 160px;
       flex-shrink: 0;
+      position: relative; /* required for amp-img layout="fill" */
+      min-height: 160px;
+    }
+    .post-img-wrap amp-img {
       border-radius: 4px;
     }
     .post-content {
@@ -104,28 +112,34 @@
       color: #888888;
       margin: 0 0 4px 0;
     }
-    /* Avatar byline: flex so the amp-img (which renders as a block-level
-       custom element with its own wrapper) lines up vertically centred
-       with the "Posted by …" text. Without flex the amp-img sat above
-       the baseline and got clipped on the left margin in Gmail. */
+    /* Avatar byline. Use inline-block + line-height matched to the
+       avatar height (22px) so the amp-img (which renders as an
+       inline-block custom element at its declared 22x22) sits on the
+       text baseline without flex clipping it on the left edge in Gmail. */
     .post-byline {
       font-size: 12px;
       color: #888888;
       margin: 6px 0 8px 0;
-      display: flex;
-      align-items: center;
+      line-height: 22px;
     }
     .post-byline amp-img {
       border-radius: 50%;
       margin-right: 8px;
-      flex-shrink: 0;
-    }
-    .post-byline-text {
-      flex: 1;
-      min-width: 0;
+      vertical-align: middle;
     }
     .post-byline strong {
       color: #555555;
+    }
+    .post-first-posted {
+      font-size: 11px;
+      color: #999999;
+      margin: 0 0 8px 0;
+    }
+    .post-actions a {
+      color: #555555;
+      text-decoration: none;
+      font-size: 12px;
+      margin-right: 12px;
     }
 
     /* Per-card Reply button — opens the shared reply panel at the bottom.
@@ -287,11 +301,15 @@
       ></amp-img>
     </div>
 
-    {{-- Greeting --}}
+    @if($postCount !== 1)
+    {{-- Greeting only on the multi-post (daily) digest. Immediate is
+         always exactly one post so the "Here is 1 new post" preamble is
+         silly — drop straight to the post. --}}
     <div class="greeting">
       <h2>Hi {{ $user->displayname ?? 'there' }},</h2>
-      <p>Here {{ $postCount === 1 ? 'is' : 'are' }} <strong>{{ $postCount }}</strong> new post{{ $postCount === 1 ? '' : 's' }} from your Freegle communities:</p>
+      <p>Here are <strong>{{ $postCount }}</strong> new posts from your Freegle communities:</p>
     </div>
+    @endif
 
     {{-- Shared reply state: amp-state holds the active post's id/title/token,
          and the SINGLE reply form at the bottom binds its action-xhr URL and
@@ -300,7 +318,7 @@
          amp-accordion+amp-form (~2 KB each) that was blowing the AMP payload
          past Gmail's 102 KB clipped threshold — 200 posts now fit easily. --}}
     <amp-state id="reply">
-      <script type="application/json">{"mid":0,"title":"","token":"","exp":0,"isOffer":false,"open":false}</script>
+      <script type="application/json">{"mid":0,"title":"","token":"","uid":0,"exp":0,"isOffer":false,"open":false}</script>
     </amp-state>
 
     {{-- Post cards --}}
@@ -321,8 +339,7 @@
     @endphp
     @if($isSingle)
     {{-- Single-post (immediate): item photo as hero — 600x400 cover-crop
-         responsive on mobile. 16px side padding mirrors the MJML hero
-         (flush-edge bleed looked harsh in Gmail). --}}
+         responsive on mobile. 16px side padding mirrors the MJML hero. --}}
     <div style="padding: 16px 16px 0 16px;">
       <a href="{{ $post['fallbackReplyUrl'] }}" style="display: block; line-height: 0;">
         <amp-img src="{{ $post['heroImageUrl'] }}" width="600" height="400" layout="responsive" alt="{{ $post['itemName'] }}"></amp-img>
@@ -332,11 +349,14 @@
       <div class="post-content" style="padding-left: 0;">
     @else
     <div class="post-card">
-      {{-- Larger thumbnail (160x120) to match the MJML multi-post crop,
-           but using the smaller-bandwidth displayImageUrl (the 240x180
-           thumb served by the delivery proxy). Fixed width/height keeps
-           card heights uniform across the digest. --}}
-      <amp-img class="post-image" src="{{ $post['thumbImageUrl'] }}" width="160" height="120" layout="fixed" alt="{{ $post['itemName'] }}"></amp-img>
+      {{-- Multi-post thumbnail: amp-img layout="fill" inside a sized,
+           position:relative wrapper. The wrapper is a flex item with
+           align-items:stretch on the card, so the image grows to match
+           the content column's height — no more Reply button hanging
+           below the photo. --}}
+      <div class="post-img-wrap">
+        <amp-img layout="fill" object-fit="cover" src="{{ $post['thumbImageUrl'] }}" alt="{{ $post['itemName'] }}"></amp-img>
+      </div>
       <div class="post-content">
     @endif
         <p class="{{ $post['type'] === 'Offer' ? 'post-type-offer' : 'post-type-wanted' }}">{{ $post['type'] === 'Offer' ? 'OFFER' : 'WANTED' }}</p>
@@ -345,31 +365,42 @@
         <p class="post-loc">{{ $post['locationName'] }}</p>
         @endif
         @if($post['messageText'])
-        {{-- User-supplied description: bigger and darker than location /
-             byline metadata so the content stands out. nl2br after
-             escaping so user paragraph breaks survive the single-<p>
-             truncation. AMP allows <br> inside <p>. --}}
-        <p class="post-preview">{!! nl2br(e(\Illuminate\Support\Str::limit($post['messageText'], 120))) !!}</p>
+        {{-- User-supplied description. Immediate (single-post) renders the
+             full body — that's the email's only post, no need to truncate.
+             Multi-post truncates so 200 cards fit Gmail's AMP size limit. --}}
+        <p class="post-preview">{!! nl2br(e($isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 120))) !!}</p>
         @endif
         {{-- Distance + arrival on one line (matches the MJML card). --}}
         <p class="post-time">
           @if($post['distanceText'])<span style="margin-right: 10px;">&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
           &#x1F552; <amp-timeago datetime="{{ $post['arrivalIso'] }}" locale="en" width="120" height="16" layout="fixed">{{ $post['arrivalFormatted'] }}</amp-timeago>
         </p>
-        {{-- Avatar byline with flex alignment so amp-img sits vertically
-             centred with the "Posted by …" text rather than clipping off
-             the left edge. --}}
+        {{-- Avatar byline (V1 MultipleDigest parity). 22x22 inline-block
+             avatar paired with the bold poster name. --}}
         <p class="post-byline">
           <amp-img src="{{ $post['posterAvatarUrl'] }}" width="22" height="22" layout="fixed" alt=""></amp-img>
-          <span class="post-byline-text">Posted by <strong>{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong></span>
+          Posted by <strong>{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
         </p>
+        @if(!empty($post['firstPostedFormatted']))
+        {{-- V1 single.html parity: only shown when the message has actually
+             been reposted to this group. --}}
+        <p class="post-first-posted">First posted {{ $post['firstPostedFormatted'] }}</p>
+        @endif
         {{-- Reply: opens the shared in-email form below by setting amp-state.
-             on="tap:AMP.setState(...)" populates the active post; the form
-             scrolls into view via the chained AMP.scrollTo action. --}}
+             type="button" is required so AMP doesn't treat a bare <button>
+             as a form submit. on="tap:..." chains setState + scrollTo. --}}
         <button
+          type="button"
           class="reply-btn{{ $post['type'] === 'Offer' ? '' : ' wanted' }}"
           on='tap:AMP.setState({{ $tapState }}),AMP.scrollTo(id="reply-panel",position="center")'
         >Reply</button>
+        @if($isSingle)
+        {{-- Secondary actions on the immediate hero (V1 single.html parity). --}}
+        <p class="post-actions" style="margin-top: 12px;">
+          <a href="{{ $browseUrl }}">Browse other posts</a>
+          <a href="{{ $userSite }}/offer">Post something</a>
+        </p>
+        @endif
       </div>
     </div>
     @endforeach
