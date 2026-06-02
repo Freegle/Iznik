@@ -123,15 +123,42 @@ async function checkPrDeployed(prNumber: number): Promise<{
     return { deployed: false, frontendDeployed: null, backendDeployed: false, mergeCommitSha: null, productionSha: null, netlifyCommitSha: null, reason: 'PR not merged yet' }
   }
 
-  // --- Backend check: GitHub production branch ---
-  // The production branch is updated by auto-promote after CI passes on master.
-  // The Go and Laravel servers are rebuilt from this branch.
-  // NOTE: Go API /api/version returns "commit":"unknown" in production (BUILD_INFO not set),
-  // so we can only check if the production branch has been updated, not if the containers were rebuilt.
+  // --- Backend check: prefer the LIVE deployed commit from /api/version ---
+  // /api/version reports laravel_commit (written every 15 min by the
+  // deploy:record-commit scheduled task) and the Go commit (BUILD_INFO). When
+  // either is populated (!= "unknown") it's a TRUE live-build check: compare the
+  // live commit against the PR merge. Fall back to the production-branch proxy
+  // (auto-promoted after CI) when /api/version isn't reporting a real commit yet.
   const prodRes = await sh('gh', ['api', `repos/${PROD_REPO}/branches/production`, '--jq', '.commit.sha'])
   const productionSha = (prodRes.code === 0) ? prodRes.stdout.trim() : null
-  const backendBehindBy = productionSha ? await githubBehindBy(mergeCommitSha, productionSha) : -1
-  const backendDeployed = backendBehindBy === 0
+
+  let liveBackendSha: string | null = null
+  const verRes = await sh('curl', ['-s', '--max-time', '12', 'https://api.ilovefreegle.org/api/version'])
+  if (verRes.code === 0) {
+    try {
+      const v = JSON.parse(verRes.stdout) as { commit?: string; laravel_commit?: string }
+      // Go + Laravel deploy together from the production branch; laravel_commit
+      // (refreshed by the scheduled task) is the backend-live signal, with the
+      // Go commit as fallback.
+      liveBackendSha = [v.laravel_commit, v.commit].find(c => !!c && c !== 'unknown') ?? null
+    } catch { /* /api/version returned non-JSON */ }
+  }
+
+  let backendDeployed: boolean
+  let backendReason: string
+  if (liveBackendSha) {
+    const liveBehindBy = await githubBehindBy(mergeCommitSha, liveBackendSha)
+    backendDeployed = liveBehindBy === 0
+    backendReason = backendDeployed
+      ? `backend: live /api/version (${liveBackendSha.slice(0, 8)}) includes merge`
+      : `backend: live /api/version (${liveBackendSha.slice(0, 8)}) missing ${liveBehindBy} commits from merge`
+  } else {
+    const backendBehindBy = productionSha ? await githubBehindBy(mergeCommitSha, productionSha) : -1
+    backendDeployed = backendBehindBy === 0
+    backendReason = backendDeployed
+      ? 'backend: production branch includes merge (proxy — /api/version unpopulated)'
+      : `backend: production branch missing ${backendBehindBy} commits from merge (proxy — /api/version unpopulated)`
+  }
 
   // --- Frontend check: Netlify published deploy ---
   // Netlify deploys from the production branch but has its own build queue.
@@ -154,8 +181,7 @@ async function checkPrDeployed(prNumber: number): Promise<{
   const deployed = backendDeployed && (frontendDeployed === null || frontendDeployed === true)
 
   const parts: string[] = []
-  if (backendDeployed) parts.push(`backend: production branch includes merge (${backendBehindBy} behind)`)
-  else parts.push(`backend: production branch missing ${backendBehindBy} commits from PR merge`)
+  parts.push(backendReason)
   if (frontendDeployed === true) parts.push(`Netlify: published deploy includes PR`)
   else if (frontendDeployed === false) parts.push(`Netlify: published deploy (${netlifyCommitSha?.slice(0,8)}) does not include PR yet`)
   else parts.push(`Netlify: could not check published deploy`)
