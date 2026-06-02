@@ -243,6 +243,32 @@ commands:
           background: true
           command: |
             echo "Resource monitor started - logging every 30 seconds"
+
+            # --- CPU priority watchdog (self-hosted/Katapult runner) ---
+            # Root cause of build-test-katapult infrastructure_fail: during the
+            # Playwright phase load runs to ~30 and the CircleCI runner agent can't
+            # get CPU to send its heartbeat, so the control plane declares the VM
+            # dead (memory is fine; swap stays unused — it is NOT an OOM). Fix by
+            # scheduling priority, NOT by dropping workers: raise the runner/agent
+            # (nice -15) and lower every Docker test-container process (nice +15),
+            # re-applied every few seconds because Playwright keeps forking new
+            # headless_shell workers. Batched into two renice calls to stay cheap.
+            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
+              (
+                while true; do
+                  agent_pids=$(pgrep -f 'circleci-runner|circleci-agent' 2>/dev/null | tr '\n' ' ')
+                  [ -n "$agent_pids" ] && sudo renice -n -15 -p $agent_pids >/dev/null 2>&1 || true
+                  docker_pids=""
+                  for pp in /proc/[0-9]*; do
+                    grep -qa 'docker' "$pp/cgroup" 2>/dev/null && docker_pids="$docker_pids ${pp#/proc/}"
+                  done
+                  [ -n "$docker_pids" ] && sudo renice -n 15 -p $docker_pids >/dev/null 2>&1 || true
+                  sleep 5
+                done
+              ) &
+              echo "CPU priority watchdog running: agent nice -15, docker containers nice +15"
+            fi
+
             while true; do
               echo ""
               echo "========================================"
