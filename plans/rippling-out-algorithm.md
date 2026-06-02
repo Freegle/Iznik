@@ -203,6 +203,125 @@ mode, so their reply time isn't distorted by digest delivery) this
 shape **catches the eventual claimant before they reply 80% of the
 time in urban areas and 65% rural**.
 
+## Eyeball-governed reach — how far we expand (design session, 2026-06)
+
+The reach above is bounded by *drive time* (~30 min). That's correct for
+"could this person collect it," but it makes the reach enclose wildly
+different *populations*: measured on production location data, a 30-minute
+drive encloses ≈**19,300** located members from central Islington, ≈4,200
+from suburban Reading, and ≈**240** from rural mid-Wales — an ~80× spread
+for the identical time budget. So a dense-area post "covers all of London,"
+and a fixed-time reach over-notifies there while being right rurally.
+
+Two **separate levers** fell out of this, and conflating them was the
+earlier mistake:
+
+- **Rate** — how fast we expand outward over the day. That's the curve
+  (`step-70`), already tuned. Untouched here.
+- **Extent** — how far we ever expand to. This is the lever that fixes the
+  density problem.
+
+**Extent should be governed by *eyeballs*, not by time or a fixed
+headcount.** The objective is real human views of a post; notifications are
+only the means, converting to eyeballs at an open/view rate. So:
+
+- A per-post **eyeball target `E*`** sets *both* rate and extent. Total
+  notifications needed ≈ `E* / open_rate`; the rate is how fast we approach
+  it. Stop when `E*` is reached, the post is claimed, or the reachable pool
+  is exhausted; stop early on futility (huge notifications, near-zero
+  conversion → it's a dud, don't keep pushing).
+- **Drive time is demoted to "shape only"** — it decides *which* people we
+  add next (nearest first) and the area we draw, not *when to stop*.
+- **A hard max drive-time ceiling (~45 min) is still required** — beyond it
+  the item isn't realistically local, regardless of eyeballs. We often stop
+  well before it (dense areas hit `E*` early); rural may never reach `E*`
+  and falls back to this ceiling. So extent = `min(eyeball-driven, 45-min
+  isochrone)`.
+- **The response-lag problem dissolves** if we work in *predicted* eyeballs
+  (`notifications × open_rate`) rather than waiting for actual opens to
+  trickle in; recorded views then *correct* the prediction over the post's
+  life rather than gating it.
+
+This is density-adaptive for free (dense → tight reach, sparse → wide), and
+it bounds **digest size** at the same time — a post stops being injected
+into new members' digests once it's had enough exposure, so dense-area
+members stop accumulating hundreds of candidates. Digest size matters
+directly: ~20 posts gets read, ~50 probably not, ~500 looks broken, and
+"show 100 + 480 more on the website" is the looks-broken outcome. So extent
+is controlled for *everyone* — not split by delivery mode (an earlier wrong
+turn: digest members are *not* shielded by selection, because pool size is
+what drives digest length).
+
+**The honest trade.** A population-cap sweep of the simulator (3,377 real
+posts, immediate repliers, `step-70`) shows capping extent costs urban
+first-reply catch-rate roughly linearly: ≈83% uncapped → ≈69% at a 2,000
+cap → ≈54% at 1,000; rural is barely touched until below ~2,000 (rural posts
+rarely reach that many — the cap self-targets density). So the wide London
+reach is **not pure waste** — far repliers are real. *But* that catch-rate
+assumes "notified = exposed," which is false for a 144-post digest nobody
+reads; measured in **eyeballs actually delivered**, a readable 20-post
+digest that gets opened may beat an unreadable 144-post one. The eyeball
+budget is therefore both the governor *and* the right yardstick.
+
+### Eyeball signal landscape (what we can actually measure)
+
+The model needs a `notifications → eyeballs` conversion. What exists today
+(see also the `reference_mail_migration_tracking_state` note):
+
+- **Immediate emails are on Laravel** with rich tracking (`email_tracking`
+  opens/clicks, `email_tracking_clicks` per-link position, `email_tracking_images`
+  per-position load + scroll-depth). Gives a *clean* conversion — but for
+  *immediate*, which runs higher than a digest's.
+- **The daily digest is still V1 PHP** and thinly tracked: `logs_emails`
+  (Exim delivery only — denominator), no open beacon (beacons exist only for
+  Alerts), links mostly untagged. The only digest eyeball signal is a noisy
+  reconstruction: correlate a digest delivery with a subsequent
+  `messages_likes 'View'` by that member.
+- **Per-post in-email signal:** an open is a *whole-email* event, not
+  per-post — attribute it as a **position-weighted fraction** across the
+  posts shown (top posts get more credit; ties straight into the Problem-2
+  ordering). There is no scroll signal in email; the only genuine per-post
+  signals are per-post image loads (degraded to ~open by Gmail's image
+  proxy) and an `amp-list`-on-accordion-expand fetch (Gmail-only, and Google
+  proxies + cookie-strips it by design, so it's a clean *binary* "saw this
+  item," not a faithful counter). Definite per-post eyeballs come from
+  website views (`messages_likes 'View'`) and replies (`chat_messages
+  'Interested'`).
+
+**Conclusion / next step:** the clean per-post digest eyeball only becomes
+available once the digest moves to Laravel. So put the UnifiedDigest live
+(PR #438, "MODE_GROUP", Sub-PR 3 of 4) to start collecting it — **with one
+required fix and one minor one** for the data to be usable (see the PR-438
+review below).
+
+### PR #438 tracking review (does it collect the right data?)
+
+What it already wires correctly (inherited from the template/`TrackableEmail`):
+open pixel; per-post links position-tracked (`trackedUrl(..., position,
+action)` → `email_tracking_clicks.link_position`, so clicked posts are
+attributable); per-post images carry `image_{index}` + scroll-percent; `userId`
+and AMP flag recorded; links tagged `?source=email&campaign=unified_digest&position=N`.
+
+**Required gap:** `email_tracking.metadata` stores only `post_count`, **not
+the composition** (`msgid`s + positions). Without it, an *open with no
+click* — the common case — can't be attributed per-post, image-load
+positions (`image_{index}`) can't be mapped back to a `msgid`, and a post's
+"shown at position P in N digests" denominator is unrecoverable. This defeats
+the position-weighted fractional-eyeball model for everything except the
+rare clicked post. Fix: persist a compact ordered `msgid` list (position =
+index) into `metadata` — the data already exists (`mailDescriptor()`
+computes `posts => [{msgid, groups}]`; just persist a compact form).
+
+**Minor:** `initTracking(..., groupId: null, ...)` passes `null` even for
+MODE_GROUP and immediate, where the group is known — set it so the group
+dimension is available (recipient location is still recoverable via
+`userId`, so this isn't fatal, just lost-for-free).
+
+The simulator gained a `--max-reach=N` flag (commit `31f547c8a`) to sweep
+extent as `E*/open_rate` against the cache without re-fetching — the open-loop
+first-wave version of the eyeball budget. Tune `E*` once the Laravel digest
+yields real per-post conversion.
+
 # Problem 2 — which posts should a specific member actually see
 
 ## What's wrong today
