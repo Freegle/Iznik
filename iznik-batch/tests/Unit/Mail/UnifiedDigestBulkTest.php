@@ -127,6 +127,12 @@ class UnifiedDigestBulkTest extends TestCase
         // Shared fields are real values, not placeholders.
         $this->assertSame('Sofa', $firstPost['itemName']);
         $this->assertSame('London', $firstPost['locationName']);
+
+        // Image URL fields required by the template must be present.
+        $this->assertArrayHasKey('heroImageUrl', $firstPost, 'heroImageUrl missing from bulkData posts');
+        $this->assertArrayHasKey('thumbImageUrl', $firstPost, 'thumbImageUrl missing from bulkData posts');
+        $this->assertIsString($firstPost['heroImageUrl']);
+        $this->assertIsString($firstPost['thumbImageUrl']);
     }
 
     public function test_merge_vars_keys_match_bulk_data_placeholders(): void

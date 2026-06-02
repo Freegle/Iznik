@@ -527,6 +527,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, BulkRende
                 ? config('freegle.images.offer_placeholder')
                 : config('freegle.images.wanted_placeholder');
             $displayImageUrl = $imageUrl ?? $placeholderUrl;
+            $heroImageUrl = $this->getMessageImageUrl($message, 600, 400) ?? $placeholderUrl;
+            $thumbImageUrl = $this->getMessageImageUrl($message, 240, 240) ?? $placeholderUrl;
 
             $messageText = $message->textbody
                 ? EmojiUtils::decodeEmojis($message->textbody)
@@ -559,6 +561,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable, BulkRende
                 'messageUrl' => $this->ph('messageUrl'),
                 'imageUrl' => $imageUrl,
                 'displayImageUrl' => $displayImageUrl,
+                'heroImageUrl' => $heroImageUrl,
+                'thumbImageUrl' => $thumbImageUrl,
                 'trackedImageUrl' => null,
                 'isPlaceholder' => $imageUrl === null,
                 'postedToText' => $postedToText,
