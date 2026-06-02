@@ -2,18 +2,21 @@ package status
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/gofiber/fiber/v2"
 )
 
-// BuildDate and GitCommit are populated at build time via ldflags
-// (-X .../status.GitCommit=...) in build.sh for the Netlify production build,
-// which is the only place that works for the serverless Go API (no /app/BUILD_INFO
-// and no .git directory exist at runtime there). When not injected (e.g. the Docker
-// dev image, which runs `go run` without ldflags), they fall back to BUILD_INFO or
-// the .git directory below.
+// BuildDate and GitCommit identify the deployed Go build, reported by /api/version.
+// They are resolved at startup, in priority order:
+//  1. ldflags injection (-X .../status.GitCommit=...) if the build set it.
+//  2. /app/BUILD_INFO (Docker dev image).
+//  3. .git/HEAD of the deployed checkout — the production service is a git checkout
+//     (/var/www/iznik-server-go, built with `go build` and restarted by monit), so
+//     we read the .git directory that sits NEXT TO THE BINARY (os.Executable's dir),
+//     not the process CWD, which monit does not guarantee to be the checkout root.
 var BuildDate = "unknown"
 var GitCommit = "unknown"
 
@@ -36,13 +39,51 @@ func init() {
 		}
 	}
 
-	// Fallback: read git HEAD from the working directory (git-checkout deployments
-	// don't write BUILD_INFO, but the .git directory is present on the server).
+	// Fallback for git-checkout deployments (no BUILD_INFO). Probe for a .git
+	// directory beside the running binary first — `go build` writes the binary
+	// into the checkout root where .git lives — then its parent, then the CWD.
 	if GitCommit == "unknown" {
-		if sha := readGitHead("."); sha != "" {
-			GitCommit = sha
+		for _, dir := range gitSearchDirs() {
+			if sha := readGitHead(dir); sha != "" {
+				GitCommit = sha
+				break
+			}
 		}
 	}
+}
+
+// gitSearchDirs lists directories to probe for a .git folder. The production
+// service is a subdir of the monorepo checkout (binary at <monorepo>/iznik-server-go,
+// .git at <monorepo>/), so we walk UP the tree from both the binary's directory and
+// the CWD, collecting ancestors. readGitHead then returns the monorepo HEAD — the
+// commit that matches the PRs the deploy gate compares against.
+func gitSearchDirs() []string {
+	var starts []string
+	if exe, err := os.Executable(); err == nil {
+		starts = append(starts, filepath.Dir(exe))
+	}
+	if wd, err := os.Getwd(); err == nil {
+		starts = append(starts, wd)
+	}
+	starts = append(starts, ".")
+
+	seen := map[string]bool{}
+	dirs := []string{}
+	for _, s := range starts {
+		d := s
+		for i := 0; i < 10; i++ { // walk up to 10 levels to the monorepo root
+			if !seen[d] {
+				seen[d] = true
+				dirs = append(dirs, d)
+			}
+			parent := filepath.Dir(d)
+			if parent == d {
+				break
+			}
+			d = parent
+		}
+	}
+	return dirs
 }
 
 // readGitHead reads the current HEAD commit SHA from a git working directory.

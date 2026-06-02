@@ -26,10 +26,14 @@ class RecordCommitCommand extends Command
 
     public function handle(): int
     {
-        $commit = $this->readGitHead(base_path());
+        // The Laravel app (iznik-batch) is a SUBDIR of the monorepo, so .git lives
+        // at the monorepo root, not at base_path(). Walk up from base_path() to find
+        // it — the recorded commit is then the monorepo HEAD, which matches the PRs
+        // the monitor-fsm deploy gate compares against.
+        $commit = $this->findGitCommit(base_path());
 
         if (! $commit) {
-            $this->warn('No .git/HEAD found — cannot record deploy commit.');
+            $this->warn('No .git/HEAD found above '.base_path().' — cannot record deploy commit.');
 
             return self::SUCCESS;
         }
@@ -43,6 +47,28 @@ class RecordCommitCommand extends Command
         $this->line("Recorded Laravel deploy commit: {$commit}");
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Walk up from $start looking for a directory that contains a readable
+     * .git/HEAD, and return its commit SHA. Handles the monorepo-subdir layout
+     * (iznik-batch is a subdir; .git is at the monorepo root above it).
+     */
+    private function findGitCommit(string $start): ?string
+    {
+        $dir = $start;
+        for ($i = 0; $i < 10; $i++) {
+            if ($commit = $this->readGitHead($dir)) {
+                return $commit;
+            }
+            $parent = dirname($dir);
+            if ($parent === $dir) {
+                break; // reached filesystem root
+            }
+            $dir = $parent;
+        }
+
+        return null;
     }
 
     /**
