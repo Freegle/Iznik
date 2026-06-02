@@ -513,8 +513,12 @@ function showHideAll() {
 }
 
 async function hideAll() {
-  for (let i = 0; i < visibleChats.value.length; i++) {
-    await chatStore.hide(visibleChats.value[i].id)
+  // Snapshot IDs before iterating: filteredChats covers all loaded chats
+  // (not just the visible page) and a plain array avoids skipping entries
+  // when the reactive computed shrinks as each chat is hidden.
+  const ids = filteredChats.value.map((c) => c.id)
+  for (const id of ids) {
+    await chatStore.hide(id)
   }
 
   const router = useRouter()
