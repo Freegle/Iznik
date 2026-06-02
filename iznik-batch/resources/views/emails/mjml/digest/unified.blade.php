@@ -2,7 +2,10 @@
     {{-- An immediate (-1) digest uses the full-width hero single-post layout
          (V1 single.html parity). The multi-post daily digest uses the compact
          multi-post layout below. --}}
-    @php $isSingle = $mode === 'immediate'; @endphp
+    {{-- $accentColor defaults to the Freegle green so the daily layout (which
+         spans many posts/types) has a defined button colour; the immediate
+         single-post branch overrides it with the post's offer/wanted accent. --}}
+    @php $isSingle = $mode === 'immediate'; $accentColor = '#338808'; @endphp
     @if($isSingle)
     @php $post = $posts->first(); $isOffer = $post['type'] === 'Offer'; $accentColor = $isOffer ? '#3c763d' : '#2196A6'; @endphp
     @include('emails.mjml.partials.head', ['preview' => $post['subject']])
