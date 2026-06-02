@@ -14,10 +14,7 @@
 
     <div
       v-if="
-        initialFetchDone &&
-        selectedSort === 'Unseen' &&
-        showCountsUnseen &&
-        me
+        initialFetchDone && selectedSort === 'Unseen' && showCountsUnseen && me
       "
     >
       <MessageListCounts
@@ -34,10 +31,7 @@
          must not hide once shown, as toggling it on re-fetch causes CLS. -->
     <template
       v-if="
-        initialFetchDone &&
-        selectedSort === 'Unseen' &&
-        showCountsUnseen &&
-        me
+        initialFetchDone && selectedSort === 'Unseen' && showCountsUnseen && me
       "
     >
       <!-- Unseen messages grid -->
@@ -250,7 +244,7 @@ const emit = defineEmits(['update:none', 'update:visible'])
 
 const groupStore = useGroupStore()
 const messageStore = useMessageStore()
-const { me, myid } = useMe()
+const { me, myid, myGroups: myMemberships } = useMe()
 
 // Get the initial messages to show in a single call.
 // Wait for fetch to complete before enabling the split view (unseen/seen),
@@ -363,6 +357,19 @@ const filteredMessagesInStore = computed(() => {
   return ret
 })
 
+// Group ids the logged-in user is a member of, for duplicate-preference below.
+const myGroupIdSet = computed(
+  () => new Set((myMemberships?.value || []).map((g) => parseInt(g.id)))
+)
+
+// True if a message is posted to a group the user already belongs to.
+function isOnMyGroup(message) {
+  if (!message?.groups || !myGroupIdSet.value.size) {
+    return false
+  }
+  return message.groups.some((g) => myGroupIdSet.value.has(parseInt(g.groupid)))
+}
+
 const deDuplicatedMessages = computed(() => {
   let ret = []
   const dups = []
@@ -400,9 +407,29 @@ const deDuplicatedMessages = computed(() => {
             ret = ret.filter((m) => m.id !== dups[key])
           }
           ret.push(m)
+          dups[key] = m.id
         } else if (!already) {
           ret.push(m)
           dups[key] = m.id
+        } else {
+          // Duplicate of one we're already showing (same poster + item, e.g. a
+          // crosspost or a re-post on another group). Prefer the copy on a group
+          // the user is already a member of: otherwise we'd dedup to a non-member
+          // group and replying to it would silently sign them up to that group
+          // (Discourse 9733 / 9729). firstSeenMessage always wins and is never
+          // replaced here.
+          const keptId = dups[key]
+          if (
+            keptId !== props.firstSeenMessage &&
+            isOnMyGroup(message) &&
+            !isOnMyGroup(filteredMessagesInStore.value[keptId])
+          ) {
+            const idx = ret.findIndex((x) => x.id === keptId)
+            if (idx !== -1) {
+              ret[idx] = m
+            }
+            dups[key] = m.id
+          }
         }
       }
     })
