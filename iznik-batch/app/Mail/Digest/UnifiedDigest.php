@@ -609,6 +609,14 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 $token['expiry']
             );
 
+            // Expose the token components separately so the AMP template's
+            // shared reply form can rebuild the action-xhr URL via amp-bind
+            // from the active post's state (each post embeds these in its
+            // setState tap, rather than carrying its own form).
+            $post['ampReplyToken'] = $token['token'];
+            $post['ampReplyUid']   = $userId;
+            $post['ampReplyExp']   = $token['expiry'];
+
             // Fallback URL for non-AMP clients or AMP form errors.
             $post['fallbackReplyUrl'] = $post['messageUrl'];
 
