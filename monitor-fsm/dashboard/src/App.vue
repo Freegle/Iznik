@@ -145,9 +145,10 @@ const ciRunner = useCIRunner()
 const recentlyFixed = computed(() => {
   const sevenDaysAgo = new Date()
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-  return bugsData.state.bugs.filter(bug =>
-    bug.state === 'fixed' && bug.fixed_at && new Date(bug.fixed_at) > sevenDaysAgo
-  )
+  return bugsData.state.bugs
+    .filter(bug => bug.state === 'fixed' && bug.fixed_at && new Date(bug.fixed_at) > sevenDaysAgo)
+    // Most recently fixed first.
+    .sort((a, b) => new Date(b.fixed_at).getTime() - new Date(a.fixed_at).getTime())
 })
 
 function formatFixedAge(date: string | null): string {
@@ -175,10 +176,17 @@ nav {
 
 details > summary {
   outline: none;
+  /* Hide the browser's native disclosure triangle so only our custom ▶/▼
+     (the ::before below) shows — otherwise two chevrons appear side by side. */
+  list-style: none;
 }
 
 details > summary::-webkit-details-marker {
   display: none;
+}
+
+details > summary::marker {
+  content: '';
 }
 
 details > summary::before {
