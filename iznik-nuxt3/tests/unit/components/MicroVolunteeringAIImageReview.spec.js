@@ -194,11 +194,54 @@ describe('MicroVolunteeringAIImageReview', () => {
     })
   })
 
+  describe('suppress flow', () => {
+    it('calls store respond with Suppress when the item is unsuitable for any image', async () => {
+      const wrapper = createWrapper()
+
+      // Answer people question — no
+      const buttons = wrapper.findAll('.b-button')
+      await buttons[1].trigger('click')
+
+      const spinButtons = wrapper.findAll('.spin-button')
+      const suppressBtn = spinButtons.find((b) =>
+        b.text().includes("shouldn't have an AI image")
+      )
+      await suppressBtn.trigger('click')
+      await flushPromises()
+
+      expect(mockMicroVolunteeringStore.respond).toHaveBeenCalledWith({
+        aiimageid: 42,
+        response: 'Suppress',
+        containspeople: false,
+      })
+    })
+
+    it('emits next event after suppress', async () => {
+      const wrapper = createWrapper()
+
+      const spinButtons = wrapper.findAll('.spin-button')
+      const suppressBtn = spinButtons.find((b) =>
+        b.text().includes("shouldn't have an AI image")
+      )
+      await suppressBtn.trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('next')).toHaveLength(1)
+    })
+  })
+
   describe('button state', () => {
     it('disables quality buttons until people question answered', () => {
       const wrapper = createWrapper()
-      const spinButtons = wrapper.findAll('.spin-button')
-      spinButtons.forEach((btn) => {
+      // Only the image-judgement buttons (Approve / Reject) are gated on the
+      // people question. The Suppress action ("this item shouldn't have an AI
+      // image") is about the item itself, not this image, so it is intentionally
+      // always available and excluded here.
+      const gated = wrapper
+        .findAll('.spin-button')
+        .filter((btn) => !btn.text().includes("shouldn't have an AI image"))
+      expect(gated.length).toBeGreaterThan(0)
+      gated.forEach((btn) => {
         expect(btn.attributes('disabled')).toBeDefined()
       })
     })
