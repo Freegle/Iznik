@@ -162,9 +162,9 @@ while true; do
   # The agent's heartbeat goroutine shares the same process as test driving,
   # so under CPU saturation (Playwright + Laravel + Go all peaking) it can
   # miss the heartbeat tick and trigger infrastructure_fail / heartbeat-timeout.
-  # Negative niceness needs root, which start.sh already has — nice -n -5
+  # Negative niceness needs root, which start.sh already has — nice -n -15
   # runs before sudo -u circleci so the renice applies to the process group.
-  nice -n -5 sudo -u circleci /opt/circleci-runner/circleci-runner machine \
+  nice -n -15 sudo -u circleci /opt/circleci-runner/circleci-runner machine \
     --config "\$CONFIG" >> "\$LOG" 2>&1 || true
   echo "\$(date): Runner exited, restarting in 5s" >> "\$LOG"
   sleep 5

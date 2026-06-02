@@ -779,12 +779,15 @@ Schedule::command('groups:remind-closed')
     ->runInBackground();
 
 // V1: cron/group_customisation.php — script existed in scripts/cron/ but no
-// crontab entry, so it never ran in V1. Migrating to Laravel adds the schedule.
-Schedule::command('groups:remind-customisation')
-    ->monthlyOn(1, '08:00')
-    ->withoutOverlapping()
-    ->sendOutputTo(cronLog('groups:remind-customisation'))
-    ->runInBackground();
+// crontab entry, so it never ran in V1. RETIRED 2026-06-02: the "ways to make
+// {group} more welcoming" customisation reminder is no longer sent (it was never
+// sent in V1 either). The command remains for manual/ad-hoc use only; it is no
+// longer scheduled.
+// Schedule::command('groups:remind-customisation')
+//     ->monthlyOn(1, '08:00')
+//     ->withoutOverlapping()
+//     ->sendOutputTo(cronLog('groups:remind-customisation'))
+//     ->runInBackground();
 
 // V1: cron/donations_thank.php
 // Schedule::command('mail:donations:thank')
