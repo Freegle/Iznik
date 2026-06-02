@@ -285,27 +285,29 @@
              cards get their gap from the divider's padding.
              Left/right padding (16px) on the section so the card image isn't
              flush against the email's left edge. --}}
-        <mj-section background-color="#ffffff" padding="{{ $index === 0 ? '16px' : '0' }} 16px 0 16px">
-            <mj-column width="38%" padding="0" vertical-align="top">
-                {{-- Fixed-aspect thumbnail (240x180 cover-crop) so every card
-                     has the same image height regardless of the original
-                     photo's aspect ratio — without this, a portrait photo
-                     made a card taller than a landscape one and post heights
-                     varied across the digest.
-                     Direct delivery URL (not tracked) — see hero comment for
-                     why; same Gmail-proxy 404 applies here. --}}
+        {{-- Image column gets vertical-align="bottom" so the photo hugs the
+             same baseline as the Reply button at the bottom of the content
+             column. The two columns share a table-row height (the taller of
+             the two), so anchoring image-bottom and content-bottom to that
+             row's bottom edge gives a visual baseline match without needing
+             to know the description's wrapped line count up front. --}}
+        <mj-section background-color="#ffffff" padding="{{ $index === 0 ? '16px' : '0' }} 16px 16px 16px">
+            <mj-column width="34%" padding="0" vertical-align="bottom">
+                {{-- Square thumbnail (240x240 server-side cover-crop, displayed
+                     at the column's width). Square matches the typical content
+                     column height closely. --}}
                 <mj-image
                     href="{{ $post['messageUrl'] }}"
                     src="{{ $post['thumbImageUrl'] }}"
                     alt="{{ $post['itemName'] }}"
-                    width="240px"
-                    height="180px"
+                    width="200px"
+                    height="200px"
                     padding="0"
                     border-radius="4px"
                     fluid-on-mobile="true"
                 />
             </mj-column>
-            <mj-column width="62%" padding="0 0 0 14px" vertical-align="top">
+            <mj-column width="66%" padding="0 0 0 14px" vertical-align="top">
                 <mj-text padding="0 0 6px 0" font-size="13px">
                     <span style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 3px;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
                 </mj-text>
@@ -313,40 +315,39 @@
                 <mj-text padding="0 0 3px 0" font-size="16px" font-weight="700" color="#212529" line-height="1.25">
                     <a href="{{ $post['messageUrl'] }}" style="color: #212529; text-decoration: none;">{{ $post['itemName'] }}</a>
                 </mj-text>
-                {{-- Location: small, lighter — metadata, deliberately quieter
-                     than the user-supplied description below. --}}
-                @if($post['locationName'])
-                <mj-text padding="0 0 6px 0" font-size="12px" color="#777777">{{ $post['locationName'] }}</mj-text>
-                @endif
-                {{-- User-supplied description: bigger (14px) and darker
-                     (#333) than the location/posted-by metadata so it reads
-                     as the content of the post, but regular weight so it's
-                     clearly secondary to the bold title. --}}
+                {{-- User-supplied description: 14px / #333 / regular so it
+                     reads as content but stays secondary to the title.
+                     The inline -webkit-line-clamp:2 wrapper clamps the
+                     description to two lines so every card has a uniform
+                     height even when the original text wraps to four or
+                     five — supported in Gmail / Apple Mail / most modern
+                     email clients (others just see the truncated PHP
+                     output, which still caps at ~100 chars). --}}
                 @if($post['messageText'])
-                <mj-text padding="0 0 10px 0" font-size="14px" color="#333333" line-height="1.5">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '…') }}</mj-text>
+                <mj-text padding="0 0 8px 0" font-size="14px" color="#333333" line-height="1.5"><span style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">{{ \Illuminate\Support\Str::limit($post['messageText'], 160, '…') }}</span></mj-text>
                 @endif
+                {{-- One-line metadata strip: location · distance · time. --}}
                 <mj-text padding="0" font-size="12px" color="#888888">
-                    @if($post['distanceText'])<span style="margin-right: 10px;">&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
-                    <span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
+                    @if($post['locationName'])<span>{{ $post['locationName'] }}</span>@endif
+                    @if($post['distanceText'])@if($post['locationName'])<span style="margin: 0 6px; color: #cccccc;">&middot;</span>@endif<span>&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
+                    <span style="margin: 0 6px; color: #cccccc;">&middot;</span><span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
                 </mj-text>
-                {{-- Poster attribution with avatar (V1 MultipleDigest parity).
-                     22x22 circular avatar inline with the byline. --}}
+                {{-- Avatar byline (V1 MultipleDigest parity). --}}
                 <mj-text padding="6px 0 10px 0" font-size="12px" color="#888888">
                     <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 6px;" />
                     Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
                 </mj-text>
-                {{-- Per-card Reply button. Smaller than the immediate-mode
-                     hero button (multi-post cards have less space) but the
-                     primary action — without it the reader has to scroll
-                     to a single global CTA. messageUrl carries ?reply=1 so
-                     the post page opens with the reply form expanded. --}}
+                {{-- Reply button: stays INSIDE the content column at its
+                     bottom edge so it visually pairs with the image's
+                     bottom (which is bottom-aligned in the sibling column).
+                     align="left" + sized inner-padding hugs the text. --}}
                 <mj-button
                     href="{{ $post['messageUrl'] }}"
                     background-color="{{ $isOffer ? $offerColor : $wantedColor }}"
                     color="#ffffff"
                     font-size="13px"
                     font-weight="600"
-                    inner-padding="8px 22px"
+                    inner-padding="10px 28px"
                     border-radius="4px"
                     align="left"
                     padding="0"
