@@ -101,6 +101,18 @@ class BirthdayService
     {
         $oneYearAgo = now()->subYear()->format('Y-m-d H:i:s');
 
+        // Match the source of truth used by the modtools "Show me as a volunteer"
+        // toggle, the Go API's group volunteer list (iznik-server-go
+        // group/groupVolunteer.go:45), and every other on-site volunteer display:
+        // users.settings.showmod, default true when the JSON key is missing.
+        // V1's birthday script (and SendAdminCommand below until recently) read
+        // users.publishconsent which is a *different* consent ("republish my
+        // posts to non-members"), and which defaults to 0 — so anyone who never
+        // explicitly set publishconsent (i.e. nearly everyone, because the UI
+        // toggle is wired to showmod, not publishconsent) was silently excluded
+        // from the volunteer line in the birthday email even though their UI
+        // showed "Show me". V1 papered over this with a periodic
+        // fix_list_birthday_moderators.php back-fill; this avoids the divergence.
         $mods = DB::table('memberships')
             ->join('users', 'users.id', '=', 'memberships.userid')
             ->where('memberships.groupid', $groupId)
@@ -108,7 +120,7 @@ class BirthdayService
             ->whereIn('memberships.role', ['Moderator', 'Owner'])
             ->whereNull('users.deleted')
             ->where('users.lastaccess', '>=', $oneYearAgo)
-            ->where('users.publishconsent', 1)
+            ->whereRaw("(JSON_EXTRACT(users.settings, '$.showmod') IS NULL OR JSON_EXTRACT(users.settings, '$.showmod') = TRUE)")
             ->select(['users.id', 'users.fullname', 'users.firstname'])
             ->get();
 
