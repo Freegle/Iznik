@@ -112,9 +112,9 @@ class PiiNormaliserTest extends TestCase
     public function test_collapse_carriage_return_newline_tab()
     {
         $result = $this->normaliser->normalise("Line 1\r\nLine 2\tTabbed");
-        $this->assertStringNotContainsString("\r");
-        $this->assertStringNotContainsString("\n");
-        $this->assertStringNotContainsString("\t");
+        $this->assertStringNotContainsString("\r", $result);
+        $this->assertStringNotContainsString("\n", $result);
+        $this->assertStringNotContainsString("\t", $result);
         $this->assertStringContainsString("Line 1 Line 2 Tabbed", $result);
     }
 
@@ -146,6 +146,6 @@ class PiiNormaliserTest extends TestCase
     public function test_whitespace_only()
     {
         $result = $this->normaliser->normalise('   ');
-        $this->assertStringNotContainsString('   ');
+        $this->assertStringNotContainsString('   ', $result);
     }
 }
