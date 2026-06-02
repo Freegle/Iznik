@@ -140,7 +140,7 @@ class PiiNormaliserTest extends TestCase
     public function test_empty_string()
     {
         $result = $this->normaliser->normalise('');
-        $this->assertEqual('', $result);
+        $this->assertEquals('', $result);
     }
 
     public function test_whitespace_only()

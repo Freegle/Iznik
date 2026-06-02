@@ -60,6 +60,9 @@ class KeywordBaseline
             "/\bthank\s+you.{0,20}(i'?ll|will|can|going to)\s+(take|collect|come)/",
             "/\bthank\s+you.{0,10}(it'?s|it is)\s+yours/",
 
+            // Heartfelt thanks — strong acceptance signal in Freegle exchanges
+            "/\bthank\s+you\s+so\s+much\b/",
+
             // Collection/pickup commitment
             "/\bi\s+(can|will|going to|'ll)\s+collect\b/",
             "/\b(will|can|'ll)\s+(collect|pick)\s+(it|them|up)/",

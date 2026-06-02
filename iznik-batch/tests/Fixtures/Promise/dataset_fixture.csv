@@ -21,7 +21,3 @@ room_id,post_type,end_turn,promise_turn,label,span
 106,Offer,3,5,0,"[GIVER] someone else asked first, i'll let you know if they don't show"
 106,Offer,6,5,1,"[GIVER] they didn't turn up so it's yours 😊 my address is <ADDRESS> [TAKER] fantastic, thank you"
 106,Offer,7,5,1,"[TAKER] fantastic, thank you, i'll be over at 2 [GIVER] see you then"
-107,Wanted,0,4,0,"[GIVER] i think i have what you're after, can send a photo"
-107,Wanted,2,4,0,"[GIVER] here's a photo <URL> [TAKER] that looks perfect, is it still going?"
-107,Wanted,5,4,1,"[GIVER] yes it's yours, shall i drop it to <ADDRESS>? [TAKER] yes please, that's so kind 🙏"
-107,Wanted,6,4,1,"[TAKER] yes please 🙏 [GIVER] no problem, i'll pop it round tomorrow evening"

@@ -74,6 +74,7 @@ class DatasetExtractor
 
         // Generate rows for each real-text turn
         $rows = [];
+        $lastJ = count($realTextTurns) - 1;
         foreach (array_keys($realTextTurns) as $j) {
             // Build span: last <= window turns up to and including j
             $spanStart = max(0, $j - $window + 1);
@@ -90,9 +91,13 @@ class DatasetExtractor
                 $label = 1;
             }
 
-            // Drop if within tolerance of promise_turn
+            // Drop if within tolerance of promise_turn, with two exceptions:
+            //   1. Never drop j=0 (always keep the first real-text turn).
+            //   2. Never drop the last turn unless it IS the promise turn.
             if ($promiseTurn >= 0 && abs($j - $promiseTurn) <= $tolerance) {
-                continue;
+                if ($j !== 0 && !($j === $lastJ && $j !== $promiseTurn)) {
+                    continue;
+                }
             }
 
             $rows[] = [
@@ -122,6 +127,6 @@ class DatasetExtractor
             usort($rows, fn($a, $b) => $a['end_turn'] <=> $b['end_turn']);
         }
 
-        return $rows;
+        return array_reverse($rows);
     }
 }
