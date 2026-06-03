@@ -268,7 +268,7 @@ watch(
         externaluid: newVal[0].ouruid,
         externalmods: newVal[0].externalmods,
         imgtype: 'User',
-        msgid: me?.value.id,
+        user: me?.value.id,
       }
       await imageStore.post(atts)
     }
