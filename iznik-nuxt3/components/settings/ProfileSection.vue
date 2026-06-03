@@ -147,6 +147,10 @@ const cacheBust = ref(Date.now())
 const currentAtts = ref([])
 const useProfileLocal = ref(false)
 const displayName = ref('')
+// Tracks the last externaluid posted to imageStore so the deep watcher doesn't
+// post the same attachment twice (the watcher fires once on array.push() and
+// again when OurUploader emits update:modelValue for the same item).
+const lastPostedUid = ref(null)
 
 // Computed properties
 const showSupporter = computed(() => {
@@ -264,8 +268,18 @@ watch(
   async (newVal) => {
     uploading.value = false
     if (newVal?.length) {
+      const uid = newVal[0].ouruid
+      // Guard against double-fire: the deep watcher fires once when OurUploader
+      // mutates the array in-place (push) and again when it emits update:modelValue
+      // (re-assignment of the same value). Skip if we already posted this uid.
+      if (uid && uid === lastPostedUid.value) {
+        await fetchMe(true)
+        emit('update')
+        return
+      }
+      lastPostedUid.value = uid
       const atts = {
-        externaluid: newVal[0].ouruid,
+        externaluid: uid,
         externalmods: newVal[0].externalmods,
         imgtype: 'User',
         user: me?.value.id,

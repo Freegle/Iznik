@@ -598,6 +598,36 @@ describe('ProfileSection', () => {
           expect.objectContaining({ msgid: 123 })
         )
       })
+
+      it('calls imageStore.post EXACTLY ONCE per upload even if the deep watcher fires twice', async () => {
+        // The currentAtts watcher has { deep: true }. When OurUploader mutates the array
+        // in-place via push() the watcher fires once, then when it emits update:modelValue
+        // and Vue re-assigns the ref it fires a second time. Both fires see newVal.length > 0
+        // so without a dedupe guard imageStore.post is called twice — producing duplicate rows.
+        mockImagePost.mockResolvedValue({ id: 999, uid: 'freegletusd-dedup' })
+        const wrapper = createWrapper()
+
+        // Simulate a single upload: set currentAtts once
+        wrapper.vm.currentAtts = [
+          { ouruid: 'freegletusd-dedup', externalmods: {} },
+        ]
+        await wrapper.vm.$nextTick()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        // Simulate the watcher firing a second time with the same value (deep re-trigger)
+        // by explicitly setting currentAtts to the same uid again
+        wrapper.vm.currentAtts = [
+          { ouruid: 'freegletusd-dedup', externalmods: {} },
+        ]
+        await wrapper.vm.$nextTick()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        // imageStore.post must have been called EXACTLY ONCE, not twice
+        const userPosts = mockImagePost.mock.calls.filter(
+          (call) => call[0]?.imgtype === 'User'
+        )
+        expect(userPosts).toHaveLength(1)
+      })
     })
   })
 
