@@ -442,6 +442,20 @@ class ContentCheckServiceTest extends TestCase
         $this->assertNull($result);
     }
 
+    public function test_check_language_real_world_terse_english_reply_not_flagged(): void
+    {
+        // Regression: this exact production chat reply (chat_messages 108721900)
+        // was shown in ModTools chat review as "It might not be in English".
+        // On short app-templated replies the detector ranks Interlingua/Latinate
+        // languages top with English at ~0.86 of the top, so the old 0.9 threshold
+        // flagged it; at the V1-parity 0.8 threshold it must pass. Uses the REAL
+        // detector (not an injected mock) to lock in the production behaviour.
+        $text = "Yes please can collect.Paul\n\nPossible collection times: Asap";
+        $this->assertGreaterThan(50, strlen(trim($text)), 'must exceed the 50-char language-check gate');
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNull($result, 'Terse English reply must not be flagged as non-English at the 0.8 threshold');
+    }
+
     public function test_check_language_xxx_stripped_before_check(): void
     {
         // "xxx" in text gets stripped; resulting text may still be checkable
