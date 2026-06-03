@@ -2823,22 +2823,22 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 
 // patchMessageRequest is the body for PATCH /message and PATCH /message/tn/:tnpostid.
 type patchMessageRequest struct {
-	ID           uint64   `json:"id"`
-	Subject      *string  `json:"subject"`
-	Textbody     *string  `json:"textbody"`
-	Type         *string  `json:"type"`
-	Msgtype      *string  `json:"msgtype"`
-	Messagetype  *string  `json:"messagetype"`
-	Item         *string  `json:"item"`
-	Availablenow *int     `json:"availablenow"`
-	Lat          *float64 `json:"lat"`
-	Lng          *float64 `json:"lng"`
-	Location     *string  `json:"location"`
-	Locationid   *uint64  `json:"locationid"`
-	Groupid      *uint64  `json:"groupid"`
-	Attachments  AttachmentIDs `json:"attachments"`
-	BadAIImages  []uint64      `json:"badAIImages"`
-	Deadline     *string  `json:"deadline"`
+	ID           uint64          `json:"id"`
+	Subject      *string         `json:"subject"`
+	Textbody     *string         `json:"textbody"`
+	Type         *string         `json:"type"`
+	Msgtype      *string         `json:"msgtype"`
+	Messagetype  *string         `json:"messagetype"`
+	Item         *string         `json:"item"`
+	Availablenow *int            `json:"availablenow"`
+	Lat          *float64        `json:"lat"`
+	Lng          *float64        `json:"lng"`
+	Location     *string         `json:"location"`
+	Locationid   *uint64         `json:"locationid"`
+	Groupid      *uint64         `json:"groupid"`
+	Attachments  AttachmentIDs   `json:"attachments"`
+	BadAIImages  []uint64        `json:"badAIImages"`
+	Deadline     *string         `json:"deadline"`
 	Bulkitems    []BulkItemInput `json:"bulkitems"`
 	Bulkslots    []string        `json:"bulkslots"`
 }
@@ -3290,6 +3290,7 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, req.ID)
 			}
 		}
+		go ingestBulkItemPhotos(db, req.ID)
 	}
 	if req.Bulkslots != nil {
 		upsertBulkSlots(db, req.ID, req.Bulkslots)
@@ -3608,16 +3609,16 @@ func PutMessage(c *fiber.Ctx) error {
 	myid := user.WhoAmI(c)
 
 	type PutMessageRequest struct {
-		Groupid            uint64   `json:"groupid"`
-		Type               string   `json:"type"`
-		Messagetype        string   `json:"messagetype"` // Client sends this; alias for Type.
-		Subject            string   `json:"subject"`
-		Item               string   `json:"item"`
-		Textbody           string   `json:"textbody"`
-		Collection         string   `json:"collection"` // Draft (default) or Pending.
-		Locationid         *uint64  `json:"locationid"`
-		Availableinitially *int     `json:"availableinitially"`
-		Availablenow       *int     `json:"availablenow"`
+		Groupid            uint64          `json:"groupid"`
+		Type               string          `json:"type"`
+		Messagetype        string          `json:"messagetype"` // Client sends this; alias for Type.
+		Subject            string          `json:"subject"`
+		Item               string          `json:"item"`
+		Textbody           string          `json:"textbody"`
+		Collection         string          `json:"collection"` // Draft (default) or Pending.
+		Locationid         *uint64         `json:"locationid"`
+		Availableinitially *int            `json:"availableinitially"`
+		Availablenow       *int            `json:"availablenow"`
 		Attachments        AttachmentIDs   `json:"attachments"`
 		Email              string          `json:"email"`
 		Bulkitems          []BulkItemInput `json:"bulkitems"`
@@ -3793,6 +3794,8 @@ func PutMessage(c *fiber.Ctx) error {
 				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, newMsgID)
 			}
 		}
+		// Download any spreadsheet-supplied photo URLs into real attachments.
+		go ingestBulkItemPhotos(db, newMsgID)
 	}
 	if req.Bulkslots != nil {
 		upsertBulkSlots(db, newMsgID, req.Bulkslots)
