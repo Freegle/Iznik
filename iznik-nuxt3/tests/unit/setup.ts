@@ -179,6 +179,24 @@ config.global.stubs = {
       '<select class="form-select" :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><slot /></select>',
     props: ['modelValue', 'id', 'options'],
   },
+  'b-form-input': {
+    template:
+      '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+    props: ['modelValue', 'id', 'type', 'placeholder', 'maxlength'],
+  },
+  'b-form-checkbox': {
+    template:
+      '<label class="form-check"><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked); $emit(\'change\', $event.target.checked)" /><slot /></label>',
+    props: ['modelValue'],
+  },
+  'b-form-group': {
+    template: '<div class="form-group"><slot /></div>',
+    props: ['label', 'labelFor'],
+  },
+  'b-badge': {
+    template: '<span class="badge" :class="variant"><slot /></span>',
+    props: ['variant'],
+  },
 
   // Stub FontAwesome
   'v-icon': { template: '<i :class="icon"></i>', props: ['icon'] },
