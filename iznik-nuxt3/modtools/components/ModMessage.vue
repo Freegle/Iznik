@@ -81,7 +81,8 @@
               <span
                 v-if="message.matchedon && message.matchedon.type === 'Vector'"
                 class="highlight"
-              >{{ eSubject }}</span>
+                >{{ eSubject }}</span
+              >
               <Highlighter
                 v-else-if="message.matchedon"
                 :search-words="[String(message.matchedon.word)]"
@@ -139,15 +140,14 @@
               Possibly should be on {{ homegroup }}
               <span v-if="!homegroupontn"> but group not on TN </span>
             </div>
-            <div
-              v-if="otherGroups.length > 0"
-              class="small text-muted"
-            >
+            <div v-if="otherGroups.length > 0" class="small text-muted">
               Also on:
-              <span
-                v-for="(g, idx) in otherGroups"
-                :key="g.groupid"
-              >{{ groupStore.get(g.groupid)?.namedisplay || 'Group ' + g.groupid }}<span v-if="idx < otherGroups.length - 1">, </span></span>
+              <span v-for="(g, idx) in otherGroups" :key="g.groupid"
+                >{{
+                  groupStore.get(g.groupid)?.namedisplay ||
+                  'Group ' + g.groupid
+                }}<span v-if="idx < otherGroups.length - 1">, </span></span
+              >
             </div>
             <ModMessageDuplicate
               v-for="(duplicate, index) in duplicates"
@@ -208,7 +208,9 @@
                   icon-name="reply"
                   confirm
                   @handle="backToPending"
-                  ><span class="d-none d-sm-inline">Back to Pending</span></SpinButton
+                  ><span class="d-none d-sm-inline"
+                    >Back to Pending</span
+                  ></SpinButton
                 >
               </div>
               <div class="ms-2">
@@ -310,7 +312,11 @@
               {{ message.spamreason }}
             </NoticeMessage>
             <NoticeMessage
-              v-if="pending && membership && membership.ourpostingstatus === 'MODERATED'"
+              v-if="
+                pending &&
+                membership &&
+                membership.ourpostingstatus === 'MODERATED'
+              "
               variant="info"
               class="mb-2"
             >
@@ -353,16 +359,19 @@
               v-if="
                 message.worry?.length ||
                 message.groups?.some(
-                  (g) =>
-                    g.contentcheck_reasons &&
-                    g.contentcheck_reasons.length
+                  (g) => g.contentcheck_reasons && g.contentcheck_reasons.length
                 )
               "
               :messageid="message.id"
             />
             <div v-if="expanded">
               <!-- eslint-disable-next-line -->
-              <b-form-textarea v-if="editing" v-model="editmessage.textbody" rows="8" class="mb-3" />
+              <b-form-textarea
+                v-if="editing"
+                v-model="editmessage.textbody"
+                rows="8"
+                class="mb-3"
+              />
               <div v-else-if="editreview">
                 <template v-if="oldBody || newBody">
                   <h4>Differences:</h4>
@@ -393,9 +402,12 @@
                 class="mb-3 rounded border p-2 preline forcebreak fw-bold"
               >
                 <span
-                  v-if="message.matchedon && message.matchedon.type === 'Vector'"
+                  v-if="
+                    message.matchedon && message.matchedon.type === 'Vector'
+                  "
                   class="highlight"
-                >{{ eBody }}</span>
+                  >{{ eBody }}</span
+                >
                 <Highlighter
                   v-else-if="message.matchedon"
                   :search-words="[String(message.matchedon.word)]"
@@ -407,6 +419,30 @@
                   {{ eBody }}
                 </span>
               </div>
+              <b-alert
+                v-if="isBulk"
+                :model-value="true"
+                variant="info"
+                class="mb-3"
+              >
+                <strong>
+                  <v-icon icon="boxes-stacked" /> Bulk clearance —
+                  {{ message.bulkcount }} item{{
+                    message.bulkcount === 1 ? '' : 's'
+                  }}.
+                </strong>
+                This is a single post on the group, but when a member opens it
+                they can see each item and turn on the ones they'd like (and how
+                many).
+                <b-button
+                  variant="link"
+                  class="p-0 ms-1 align-baseline"
+                  data-testid="bulk-preview-btn"
+                  @click="showBulkPreview = true"
+                >
+                  See how members see it
+                </b-button>
+              </b-alert>
               <div v-if="attachments?.length" class="w-100 d-flex flex-wrap">
                 <div
                   v-for="attachment in attachments"
@@ -650,6 +686,11 @@
       :userid="fromUserId"
       :safelist="false"
     />
+    <ModBulkPreviewModal
+      v-if="showBulkPreview"
+      :messageid="message.id"
+      @hidden="showBulkPreview = false"
+    />
     <div ref="bottom" />
   </div>
 </template>
@@ -782,6 +823,14 @@ const saving = ref(false)
 const saved = ref(false)
 const showEmailSourceModal = ref(false)
 const showSpamModal = ref(false)
+const showBulkPreview = ref(false)
+
+// A bulk "clearance" offer carries a structured catalogue of items.
+const isBulk = computed(
+  () =>
+    (message.value?.bulkcount || 0) > 0 ||
+    (message.value?.bulkitems?.length || 0) > 0
+)
 const showMailSettings = ref(false)
 const showActions = ref(false)
 const showEmails = ref(false)
@@ -815,7 +864,10 @@ const messageGroup = computed(() => {
 const contextGroup = computed(() => {
   if (!message.value?.groups?.length) return null
   const gid = parseInt(groupid.value)
-  return message.value.groups.find((g) => parseInt(g.groupid) === gid) || message.value.groups[0]
+  return (
+    message.value.groups.find((g) => parseInt(g.groupid) === gid) ||
+    message.value.groups[0]
+  )
 })
 
 // Other groups this message is on (for multi-group indicator).
