@@ -38,19 +38,25 @@ export function normaliseCondition(raw) {
   return exact || 'Unknown'
 }
 
-// Minimal RFC-4180-ish CSV splitter: handles quoted fields, escaped quotes
-// ("") and commas inside quotes. Returns an array of rows (arrays of strings).
+// Minimal RFC-4180-ish splitter: handles quoted fields, escaped quotes ("")
+// and the delimiter inside quotes. Auto-detects the delimiter so it works for
+// both a downloaded/edited CSV (comma) and cells copied straight out of a
+// spreadsheet (tab) — the latter is how the xlsx template is meant to be used.
 export function splitCsv(text) {
+  const t = text || ''
+  const firstLine = t.split(/\r?\n/, 1)[0] || ''
+  const delim = firstLine.includes('\t') ? '\t' : ','
+
   const rows = []
   let row = []
   let field = ''
   let inQuotes = false
 
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i]
     if (inQuotes) {
       if (ch === '"') {
-        if (text[i + 1] === '"') {
+        if (t[i + 1] === '"') {
           field += '"'
           i++
         } else {
@@ -61,7 +67,7 @@ export function splitCsv(text) {
       }
     } else if (ch === '"') {
       inQuotes = true
-    } else if (ch === ',') {
+    } else if (ch === delim) {
       row.push(field)
       field = ''
     } else if (ch === '\n' || ch === '\r') {
@@ -98,6 +104,17 @@ export function parseItemsCsv(text) {
     quantity: ['quantity', 'qty', 'count', 'number', 'amount'],
     condition: ['condition', 'state'],
     dimensions: ['dimensions', 'size', 'measurements', 'measurement'],
+    photourl: [
+      'photo',
+      'photos',
+      'image',
+      'imageurl',
+      'image url',
+      'photo url',
+      'photourl',
+      'url',
+      'link',
+    ],
     description: ['description', 'notes', 'detail', 'details'],
   }
 
@@ -115,11 +132,19 @@ export function parseItemsCsv(text) {
       quantity: findCol(known.quantity),
       condition: findCol(known.condition),
       dimensions: findCol(known.dimensions),
+      photourl: findCol(known.photourl),
       description: findCol(known.description),
     }
     dataRows = rows.slice(1)
   } else {
-    cols = { name: 0, quantity: 1, condition: 2, dimensions: 3, description: 4 }
+    cols = {
+      name: 0,
+      quantity: 1,
+      condition: 2,
+      dimensions: 3,
+      photourl: 4,
+      description: 5,
+    }
     dataRows = rows
   }
 
@@ -129,14 +154,18 @@ export function parseItemsCsv(text) {
   for (const row of dataRows) {
     const name = at(row, cols.name)
     if (!name) continue
+    // Skip comment lines (e.g. the guidance row in the downloadable template).
+    if (name.startsWith('#')) continue
     const qtyRaw = at(row, cols.quantity)
     let quantity = parseInt(qtyRaw, 10)
     if (!Number.isFinite(quantity) || quantity < 1) quantity = 1
+    const photourl = at(row, cols.photourl)
     items.push({
       name,
       quantity,
       condition: normaliseCondition(at(row, cols.condition)),
       dimensions: at(row, cols.dimensions) || null,
+      photourl: /^https?:\/\//i.test(photourl) ? photourl : null,
       description: at(row, cols.description) || null,
       attachments: [],
     })
@@ -151,6 +180,7 @@ export function blankBulkItem() {
     quantity: 1,
     condition: 'Unknown',
     dimensions: null,
+    photourl: null,
     description: null,
     attachments: [],
   }

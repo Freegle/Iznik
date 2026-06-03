@@ -146,6 +146,7 @@ export const useComposeStore = defineStore({
             quantity: parseInt(i.quantity, 10) || 1,
             condition: i.condition || 'Unknown',
             dimensions: i.dimensions || null,
+            photourl: i.photourl || null,
             description: i.description || null,
             attachments: Array.isArray(i.attachments) ? i.attachments : [],
           }))

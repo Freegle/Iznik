@@ -72,6 +72,82 @@ class UnifiedDigestBulkOfferTest extends TestCase
         $this->assertStringContainsString('Office desk', $text);
         $this->assertStringContainsString('items in this offer', $text);
         $this->assertStringContainsString('Swivel chair', $text);
+        // Reference numbers disambiguate similar items (same name, different
+        // condition) for free-text / Trash Nothing repliers and the AI Helper.
+        $this->assertStringContainsString('1)', $text);
+        $this->assertStringContainsString('2)', $text);
+    }
+
+    public function test_bulk_offer_amp_forces_website_reply(): void
+    {
+        // AMP in-email forms can't capture a per-item, per-quantity selection, so
+        // a bulk offer must send the replier to the website instead.
+        config(['freegle.amp.enabled' => true]);
+        config(['freegle.amp.secret' => 'test-secret-key']);
+
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Office Clearance (Brighton)',
+            'textbody' => 'Charity clearance — collection from Brighton.',
+        ]);
+
+        DB::table('messages_bulk_items')->insert([
+            ['msgid' => $message->id, 'position' => 0, 'name' => 'Office desk', 'quantity' => 4, 'condition' => 'Good'],
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'recipient@example.com');
+
+        $amp = $spooled['amp_html'] ?? '';
+        $this->assertNotEmpty($amp, 'AMP part should be rendered when AMP is enabled');
+        // Bulk offers get a "go to the website" link, not the quick AMP reply form.
+        $this->assertStringContainsString('Choose the items', $amp);
+    }
+
+    public function test_bulk_offer_photourl_used_as_thumbnail_fallback(): void
+    {
+        // A spreadsheet-supplied photo link (photourl) is shown when the item has
+        // no uploaded attachment yet, so the digest is never imageless.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Office Clearance (Brighton)',
+        ]);
+
+        DB::table('messages_bulk_items')->insert([
+            [
+                'msgid' => $message->id,
+                'position' => 0,
+                'name' => 'Office desk',
+                'quantity' => 4,
+                'condition' => 'Good',
+                'photourl' => 'https://example.com/special-desk-photo.jpg',
+            ],
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'recipient@example.com');
+
+        $html = $spooled['html'] ?? '';
+        // The slug survives both the raw URL and the delivery-proxy (urlencoded) form.
+        $this->assertStringContainsString('special-desk-photo', $html);
     }
 
     public function test_ordinary_post_has_no_catalogue(): void

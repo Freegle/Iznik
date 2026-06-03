@@ -48,10 +48,22 @@
       </b-button>
       <div v-if="showImport" class="bulkeditor__import-panel mt-2">
         <p class="small text-muted mb-1">
-          One item per line. Columns:
-          <strong>name, quantity, condition, dimensions, description</strong> (a
-          header row is optional). Paste from a spreadsheet, or choose a CSV file.
+          Download the spreadsheet template (it has a condition drop-down and a
+          <strong>photo</strong> column for optional http(s) links — we download
+          and store those photos for you). Fill it in, then either copy the rows
+          and paste them below, or save it as CSV and choose the file. Columns:
+          <strong
+            >name, quantity, condition, dimensions, photo, description</strong
+          >.
         </p>
+        <a
+          class="btn btn-outline-success btn-sm mb-2"
+          href="/freegle-clearance-template.xlsx"
+          download
+          data-testid="download-template"
+        >
+          <v-icon icon="download" /> Download spreadsheet template
+        </a>
         <b-form-textarea
           v-model="importText"
           rows="4"
@@ -126,7 +138,19 @@
           >
             <img :src="thumbSrc(p)" alt="" />
           </div>
-          <span v-if="!item.photos.length" class="brow__drop" aria-hidden="true">
+          <!-- Fall back to a spreadsheet-supplied photo URL when no photo dropped. -->
+          <div
+            v-if="!item.photos.length && item.photourl"
+            class="pthumb pthumb--sm"
+            :title="'From spreadsheet link'"
+          >
+            <img :src="item.photourl" alt="" />
+          </div>
+          <span
+            v-else-if="!item.photos.length"
+            class="brow__drop"
+            aria-hidden="true"
+          >
             <v-icon icon="image" />
           </span>
         </div>
@@ -306,7 +330,9 @@ function applyImport() {
   const existing = items.value.filter((i) => i.name && i.name.trim())
   // Most-recently-added (the imported batch) at the top, keeping their order.
   items.value = [...parsed.map((i) => ({ ...i, photos: [] })), ...existing]
-  importMessage.value = `Added ${parsed.length} item${parsed.length === 1 ? '' : 's'}`
+  importMessage.value = `Added ${parsed.length} item${
+    parsed.length === 1 ? '' : 's'
+  }`
   importText.value = ''
 }
 

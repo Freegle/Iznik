@@ -37,8 +37,8 @@ Location: {!! $post['locationName'] !!}
 @if(!empty($post['bulkItems']))
 
 {{ count($post['bulkItems']) }} items in this offer:
-@foreach($post['bulkItems'] as $bi)
-  - {{ $bi['quantity'] }}x {!! $bi['name'] !!}@if($bi['condition']) ({{ $bi['condition'] }})@endif
+@foreach($post['bulkItems'] as $i => $bi)
+  {{ $i + 1 }}) {{ $bi['quantity'] }}x {!! $bi['name'] !!}@if($bi['condition']) ({{ $bi['condition'] }})@endif
 
 @endforeach
 @endif

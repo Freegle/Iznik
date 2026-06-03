@@ -936,7 +936,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             ->where('msgid', $message->id)
             ->orderBy('position')
             ->orderBy('id')
-            ->get(['id', 'name', 'quantity', 'condition', 'dimensions']);
+            ->get(['id', 'name', 'quantity', 'condition', 'dimensions', 'photourl']);
 
         if ($rows->isEmpty()) {
             return [];
@@ -960,6 +960,11 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             $thumb = isset($firstByItem[$row->id])
                 ? $this->getAttachmentImageUrl($firstByItem[$row->id], 80, 80)
                 : null;
+            // Fall back to a spreadsheet-supplied photo link (run through the
+            // delivery proxy for sizing, like other email images).
+            if (!$thumb && !empty($row->photourl)) {
+                $thumb = $this->getDeliveryUrl($row->photourl, 80, 80);
+            }
             $condition = $row->condition && $row->condition !== 'Unknown'
                 ? ($row->condition === 'LikeNew' ? 'Like new' : $row->condition)
                 : null;

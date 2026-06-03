@@ -99,7 +99,11 @@ describe('useBulkItems', () => {
     it('assumes name,qty,condition,... when there is no header', () => {
       const items = parseItemsCsv('Sofa,2,Good\nTable,1,Used')
       expect(items).toHaveLength(2)
-      expect(items[0]).toMatchObject({ name: 'Sofa', quantity: 2, condition: 'Good' })
+      expect(items[0]).toMatchObject({
+        name: 'Sofa',
+        quantity: 2,
+        condition: 'Good',
+      })
     })
 
     it('defaults a missing/invalid quantity to 1', () => {
@@ -124,6 +128,54 @@ describe('useBulkItems', () => {
     })
   })
 
+  describe('photo URL column', () => {
+    it('parses an http(s) photo link from a recognised column', () => {
+      const csv =
+        'name,quantity,photo\nDesk,2,https://example.com/desk.jpg\nChair,1,'
+      const items = parseItemsCsv(csv)
+      expect(items[0].photourl).toBe('https://example.com/desk.jpg')
+      expect(items[1].photourl).toBeNull()
+    })
+
+    it('ignores non-URL values in the photo column', () => {
+      const items = parseItemsCsv('name,photo\nDesk,not-a-url')
+      expect(items[0].photourl).toBeNull()
+    })
+
+    it('recognises alternative photo header names', () => {
+      const items = parseItemsCsv('item,image url\nLamp,http://x.test/l.png')
+      expect(items[0].photourl).toBe('http://x.test/l.png')
+    })
+  })
+
+  describe('comment rows', () => {
+    it('skips lines whose name starts with #', () => {
+      const items = parseItemsCsv(
+        'name,quantity\n# a guidance comment,0\nDesk,2'
+      )
+      expect(items).toHaveLength(1)
+      expect(items[0].name).toBe('Desk')
+    })
+  })
+
+  describe('tab-separated (spreadsheet copy-paste)', () => {
+    it('parses tab-delimited rows pasted from a spreadsheet', () => {
+      const tsv =
+        'name\tquantity\tcondition\tdimensions\tphoto\tdescription\n' +
+        'Office desk\t4\tGood\t120x80cm\thttps://example.com/d.jpg\tBeech\n' +
+        'Swivel chair\t14\tUsed\t\t\t'
+      const items = parseItemsCsv(tsv)
+      expect(items).toHaveLength(2)
+      expect(items[0]).toMatchObject({
+        name: 'Office desk',
+        quantity: 4,
+        condition: 'Good',
+        photourl: 'https://example.com/d.jpg',
+      })
+      expect(items[1].name).toBe('Swivel chair')
+    })
+  })
+
   describe('blankBulkItem', () => {
     it('returns a sensible default row', () => {
       expect(blankBulkItem()).toEqual({
@@ -131,6 +183,7 @@ describe('useBulkItems', () => {
         quantity: 1,
         condition: 'Unknown',
         dimensions: null,
+        photourl: null,
         description: null,
         attachments: [],
       })
