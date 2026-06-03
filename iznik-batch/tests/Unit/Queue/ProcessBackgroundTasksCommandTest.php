@@ -935,6 +935,68 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertEquals('Offline', $status);
     }
 
+    public function test_mod_stdmsg_to_member_reopens_mods_previously_closed_chat(): void
+    {
+        // Mirrors test_message_rejected_reopens_mods_previously_closed_chat but for the
+        // email_mod_stdmsg (direct mod-to-member message) code path handled by
+        // handleModStdMessageForMember — which also calls reopenClosedRosters().
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $member = $this->createTestUser();
+        $this->createTestUserEmail($member, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Closed Roster Mod 2']);
+
+        // Pre-existing User2Mod chat that the mod had previously CLOSED.
+        $chatId = DB::table('chat_rooms')->insertGetId([
+            'user1' => $member->id,
+            'chattype' => 'User2Mod',
+            'groupid' => $group->id,
+            'latestmessage' => now()->subDays(30),
+        ]);
+        DB::table('chat_roster')->insert([
+            'chatid' => $chatId,
+            'userid' => $mod->id,
+            'status' => 'Closed',
+            'date' => now()->subDays(30),
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_mod_stdmsg',
+            'data' => json_encode([
+                'userid' => $member->id,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'A note from your moderator',
+                'body' => 'Please read our group rules.',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // The modmail must have gone into the pre-existing chat (not a new one).
+        $chatMsg = DB::table('chat_messages')
+            ->where('chatid', $chatId)
+            ->where('userid', $mod->id)
+            ->where('type', 'ModMail')
+            ->first();
+        $this->assertNotNull($chatMsg, 'ModMail should be added to the existing User2Mod chat');
+
+        // The mod's roster must no longer be 'Closed' so the chat reappears.
+        $status = DB::table('chat_roster')
+            ->where('chatid', $chatId)
+            ->where('userid', $mod->id)
+            ->value('status');
+        $this->assertNotEquals('Closed', $status, "Mod's previously-closed roster should be reopened after sending mod stdmsg");
+        $this->assertEquals('Offline', $status);
+    }
+
     public function test_message_outcome_logs_and_notifies_interested_users(): void
     {
         $group = $this->createTestGroup();
