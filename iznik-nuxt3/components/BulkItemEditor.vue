@@ -1,7 +1,31 @@
 <template>
   <div class="bulkeditor">
-    <div class="bulkeditor__cols">
-      <!-- LEFT: the items table -->
+    <!-- Choose how to add items. -->
+    <div
+      class="bulkeditor__mode mb-3"
+      role="group"
+      aria-label="How to add items"
+    >
+      <b-button
+        :variant="mode === 'manual' ? 'primary' : 'outline-secondary'"
+        size="sm"
+        data-testid="mode-manual"
+        @click="mode = 'manual'"
+      >
+        <v-icon icon="pen" /> Type them in
+      </b-button>
+      <b-button
+        :variant="mode === 'upload' ? 'primary' : 'outline-secondary'"
+        size="sm"
+        data-testid="mode-upload"
+        @click="mode = 'upload'"
+      >
+        <v-icon icon="table" /> Upload a spreadsheet
+      </b-button>
+    </div>
+
+    <!-- MANUAL: items table (left) + photos to drag on (right). -->
+    <div v-if="mode === 'manual'" class="bulkeditor__cols">
       <div class="bulkeditor__items">
         <div class="bgrid bgrid--head">
           <span class="bcell-photo" />
@@ -23,7 +47,6 @@
             @dragleave="onRowLeave(idx)"
             @drop="onDropToItem(idx)"
           >
-            <!-- Photo cell: small thumbnails + drop hint -->
             <div class="bcell-photo brow__photos">
               <div
                 v-for="(p, pi) in item.photos"
@@ -54,14 +77,16 @@
 
             <b-form-input
               v-model="item.name"
-              class="brow__name"
+              class="bfield"
+              size="sm"
               placeholder="Item name"
               maxlength="255"
               :data-testid="'item-name-' + idx"
             />
             <b-form-input
               v-model.number="item.quantity"
-              class="brow__qty"
+              class="bfield bfield--qty"
+              size="sm"
               type="number"
               min="1"
               max="999"
@@ -72,12 +97,13 @@
               v-model="item.condition"
               :options="conditions"
               size="sm"
-              class="brow__cond"
+              class="bfield"
               :data-testid="'item-condition-' + idx"
             />
             <b-form-input
               v-model="item.dimensions"
-              class="brow__dims"
+              class="bfield"
+              size="sm"
               placeholder="optional"
               maxlength="255"
             />
@@ -112,7 +138,6 @@
         </div>
       </div>
 
-      <!-- RIGHT: upload tools -->
       <aside class="bulkeditor__tools">
         <div class="tool">
           <div class="tool__title">Photos</div>
@@ -152,37 +177,39 @@
             </div>
           </div>
         </div>
-
-        <div class="tool">
-          <div class="tool__title">Got a lot? Upload a spreadsheet</div>
-          <p class="small text-muted mb-2">
-            The template has a condition drop-down and an optional
-            <strong>photo</strong> column (http links — we fetch &amp; store
-            them). Fill it in and upload it.
-          </p>
-          <a
-            class="btn btn-outline-success btn-sm mb-2 w-100"
-            href="/freegle-clearance-template.xlsx"
-            download
-            data-testid="download-template"
-          >
-            <v-icon icon="download" /> Download template
-          </a>
-          <label class="btn btn-primary btn-sm mb-0 w-100">
-            <v-icon icon="upload" /> Upload spreadsheet
-            <input
-              type="file"
-              accept=".csv,.tsv,.xlsx,text/csv"
-              class="d-none"
-              data-testid="import-file"
-              @change="onFile"
-            />
-          </label>
-          <span v-if="importMessage" class="small text-success d-block mt-2">{{
-            importMessage
-          }}</span>
-        </div>
       </aside>
+    </div>
+
+    <!-- UPLOAD: download the template, fill it in, upload it. -->
+    <div v-else class="bulkeditor__upload">
+      <p class="small text-muted mb-2">
+        Download the template, fill in a row per item, and upload it. It has a
+        condition drop-down and an optional <strong>photo</strong> column (http
+        links — we fetch &amp; store them). Accepts .xlsx or CSV.
+      </p>
+      <div class="d-flex gap-2 flex-wrap align-items-center">
+        <a
+          class="btn btn-outline-success"
+          href="/freegle-clearance-template.xlsx"
+          download
+          data-testid="download-template"
+        >
+          <v-icon icon="download" /> Download template
+        </a>
+        <label class="btn btn-primary mb-0">
+          <v-icon icon="upload" /> Upload spreadsheet
+          <input
+            type="file"
+            accept=".csv,.tsv,.xlsx,text/csv"
+            class="d-none"
+            data-testid="import-file"
+            @change="onFile"
+          />
+        </label>
+        <span v-if="importMessage" class="small text-success">{{
+          importMessage
+        }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -210,6 +237,9 @@ const items = ref(
     ? props.modelValue.map((i) => ({ photos: [], ...i }))
     : [{ ...blankBulkItem(), photos: [] }]
 )
+
+// 'manual' = type items into the table; 'upload' = import a spreadsheet.
+const mode = ref('manual')
 
 // The uploader's model — we drain finished uploads from it into `tray`,
 // so it always shows just the "Add photos" affordance (never a big gallery).
@@ -308,7 +338,8 @@ function unassign(idx, pi) {
   if (photo) tray.value.push(photo)
 }
 
-// Prepend a parsed batch of items (newest at the top), keeping their order.
+// Prepend a parsed batch of items (newest at the top), keeping their order, and
+// switch to the table so the imported rows are visible/editable.
 function prependItems(parsed) {
   if (!parsed.length) {
     importMessage.value = 'No items found in that file'
@@ -319,6 +350,7 @@ function prependItems(parsed) {
   importMessage.value = `Added ${parsed.length} item${
     parsed.length === 1 ? '' : 's'
   }`
+  mode.value = 'manual'
 }
 
 function applyImportText(text) {
@@ -338,8 +370,7 @@ async function onFile(e) {
       // it never bloats the main bundle — only fetched when someone uploads one.
       const readXlsxFile = (await import('read-excel-file')).default
       const rows = await readXlsxFile(file)
-      const parsed = parseItemsRows(rows)
-      prependItems(parsed)
+      prependItems(parseItemsRows(rows))
     } else {
       applyImportText(await file.text())
     }
@@ -369,7 +400,15 @@ watch(
   { deep: true, immediate: true }
 )
 
-defineExpose({ items, applyImport, applyImportText, addItem, removeItem, tray })
+defineExpose({
+  items,
+  mode,
+  applyImport,
+  applyImportText,
+  addItem,
+  removeItem,
+  tray,
+})
 </script>
 
 <style scoped lang="scss">
@@ -377,6 +416,11 @@ defineExpose({ items, applyImport, applyImportText, addItem, removeItem, tray })
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/_color-vars.scss';
+
+.bulkeditor__mode {
+  display: flex;
+  gap: 0.5rem;
+}
 
 .bulkeditor__cols {
   display: flex;
@@ -389,7 +433,7 @@ defineExpose({ items, applyImport, applyImportText, addItem, removeItem, tray })
   min-width: 0;
 }
 
-/* Fixed-width tools rail on the right of the items. */
+/* Fixed-width photo rail on the right of the items. */
 .bulkeditor__tools {
   flex: 0 0 16rem;
   width: 16rem;
@@ -399,7 +443,6 @@ defineExpose({ items, applyImport, applyImportText, addItem, removeItem, tray })
   border: 1px solid $color-gray--light;
   border-radius: 8px;
   padding: 0.6rem 0.7rem;
-  margin-bottom: 0.75rem;
   background-color: $color-gray--lighter;
 }
 
@@ -409,16 +452,17 @@ defineExpose({ items, applyImport, applyImportText, addItem, removeItem, tray })
   margin-bottom: 0.4rem;
 }
 
-/* Keep the uploader compact — no big empty drop zone. */
-.bulkeditor__uploader,
-:deep(.bulkeditor__tools .uploader) {
-  max-height: 9rem;
+.bulkeditor__upload {
+  border: 1px solid $color-gray--light;
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  background-color: $color-gray--lighter;
 }
 
 /* Shared grid for the heading row and each item row, so columns line up. */
 .bgrid {
   display: grid;
-  grid-template-columns: 38px minmax(7rem, 1fr) 4.5rem 8rem 5.5rem 1.75rem;
+  grid-template-columns: 38px minmax(7rem, 1fr) 4.5rem 8rem 6rem 1.75rem;
   gap: 0.4rem;
   align-items: center;
 }
@@ -449,6 +493,18 @@ defineExpose({ items, applyImport, applyImportText, addItem, removeItem, tray })
   border-radius: 6px;
 }
 
+/* Every input/select fills its grid column, so the row reads as one tidy table. */
+.bfield,
+.bfield :deep(input),
+.bfield :deep(select) {
+  width: 100%;
+}
+
+.bfield--qty :deep(input),
+.bfield--qty {
+  text-align: center;
+}
+
 .bcell-photo {
   display: flex;
   align-items: center;
@@ -464,11 +520,6 @@ defineExpose({ items, applyImport, applyImportText, addItem, removeItem, tray })
   align-items: center;
   justify-content: center;
   color: $color-gray--normal;
-}
-
-.brow__qty :deep(input),
-.brow__qty {
-  text-align: center;
 }
 
 .pthumb {
@@ -529,7 +580,7 @@ defineExpose({ items, applyImport, applyImportText, addItem, removeItem, tray })
   gap: 0.4rem;
 }
 
-/* Stack the tools under the items on narrow screens. */
+/* Stack the photo rail under the items on narrow screens. */
 @include media-breakpoint-down(md) {
   .bulkeditor__cols {
     flex-direction: column;
