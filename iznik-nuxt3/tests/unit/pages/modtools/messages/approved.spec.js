@@ -495,6 +495,28 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
         expect(mockListingIdOrder.value).toEqual([101, 102])
       })
 
+      it('clears the loading state after a vector search so "Please wait..." disappears', async () => {
+        // Regression (#9: semantic search completes but banner stays): the
+        // vector branch of loadMore() returned early, before the
+        // `busy=false; loaded=true` at the end, so `loaded` never became true
+        // and the "Please wait..." NoticeMessage stayed up forever.
+        mockRouteParams.value = { id: '123', term: 'furniture' }
+        mockMessages.value = []
+        mockShow.value = 0
+        mockListingIds.value = new Set()
+        mockMessageStore.searchMT.mockResolvedValue([101, 102])
+        const wrapper = mountComponent()
+        await wrapper.vm.$nextTick()
+        wrapper.vm.vectorSearchEnabled = true
+        await wrapper.vm.$nextTick()
+        mockMessageStore.searchMT.mockResolvedValue([101, 102])
+        expect(wrapper.vm.loaded).toBe(false)
+        const mockState = { loaded: vi.fn(), complete: vi.fn() }
+        await wrapper.vm.loadMore(mockState)
+        expect(wrapper.vm.loaded).toBe(true)
+        expect(mockBusy.value).toBe(false)
+      })
+
       it('uses keyword search by default when searching by message', async () => {
         mockRouteParams.value = { id: '123', term: 'test search' }
         mockMessages.value = []

@@ -284,6 +284,11 @@ async function loadMore($state) {
       }
       show.value = messages.value.length
       $state.complete()
+      // The vector branch returns early, so it must clear the loading state
+      // itself — otherwise `loaded` never becomes true and the "Please wait..."
+      // banner stays up even though the semantic-search results have rendered.
+      busy.value = false
+      loaded.value = true
       return
     } else if (messageTerm.value) {
       params = {
