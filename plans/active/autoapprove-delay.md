@@ -129,5 +129,5 @@ catches it). Deterministic so a message never oscillates.
 | 6 | Go ListMessagesMT filter + tests | ✅ | autoapproved/recentjoin/outsidecga + 3 Go tests; suite running |
 | 7 | Frontend approved-page dropdown + summary | ✅ | b-form-select; summary on autoapproved |
 | 8 | ModSettingsGroup.vue settings controls | ✅ | delay_minutes + quality_check_percent |
-| 9 | Run all suites via worktree status API | 🔄 | Laravel green; Go running; Vitest pending |
-| 10 | PR | ⬜ | never merge |
+| 9 | Run all suites via worktree status API | ✅ | full Laravel 3962/3962 ✓; Go 3004/3004 ✓; Vitest modtools 4475/4475 ✓ |
+| 10 | Push + PR (Freegle/Iznik) | ✅ | PR #639 — https://github.com/Freegle/Iznik/pull/639 (awaiting CI; never merge) |
