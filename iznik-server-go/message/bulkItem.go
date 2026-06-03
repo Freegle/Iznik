@@ -355,10 +355,12 @@ type BulkItemInput struct {
 	Attachments []uint64 `json:"attachments"`
 }
 
-// buildBulkSummary returns a human-readable textbody summary of a catalogue, so
-// non-bulk-aware consumers (search, V1 digest, plain-text email) still show
-// something useful.
-func buildBulkSummary(items []BulkItemInput) string {
+// buildBulkSummary returns a human-readable textbody summary of a catalogue and
+// the collection windows, so consumers with no structured-data channel (Trash
+// Nothing, email replies, search, the V1 digest) still see the items and times
+// in plain text. Repliers on those channels answer in free text; the Freegle
+// Helper later turns that into structured interest.
+func buildBulkSummary(items []BulkItemInput, slots []string) string {
 	var lines []string
 	for _, in := range items {
 		name := strings.TrimSpace(in.Name)
@@ -378,5 +380,43 @@ func buildBulkSummary(items []BulkItemInput) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "Items available in this offer:\n" + strings.Join(lines, "\n")
+	out := "Items available in this offer:\n" + strings.Join(lines, "\n")
+
+	var windows []string
+	for _, s := range slots {
+		if s = strings.TrimSpace(s); s != "" {
+			windows = append(windows, "- "+s)
+		}
+	}
+	if len(windows) > 0 {
+		out += "\n\nCollection times (let us know which suits you):\n" + strings.Join(windows, "\n")
+	}
+
+	return out
+}
+
+// LoadBulkSlots returns the offerer's collection date/time windows for a message,
+// in display order. Returns nil when none are set.
+func LoadBulkSlots(db *gorm.DB, msgid uint64) []string {
+	var slots []string
+	db.Raw("SELECT slot FROM messages_bulk_slots WHERE msgid = ? ORDER BY position ASC, id ASC", msgid).Scan(&slots)
+	if len(slots) == 0 {
+		return nil
+	}
+	return slots
+}
+
+// upsertBulkSlots replaces the collection windows for a message from the supplied
+// list (blank entries ignored). An empty/nil slice clears them.
+func upsertBulkSlots(db *gorm.DB, msgid uint64, slots []string) {
+	db.Exec("DELETE FROM messages_bulk_slots WHERE msgid = ?", msgid)
+	pos := 0
+	for _, s := range slots {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		db.Exec("INSERT INTO messages_bulk_slots (msgid, position, slot) VALUES (?, ?, ?)", msgid, pos, s)
+		pos++
+	}
 }

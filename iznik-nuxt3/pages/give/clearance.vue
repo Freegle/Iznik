@@ -39,6 +39,40 @@
           <h3 class="mt-3 h5">The items</h3>
           <BulkItemEditor v-model="items" />
 
+          <h3 class="mt-4 h5">When can people collect?</h3>
+          <p class="text-muted small mb-2">
+            Add the collection windows you can offer. People pick one of these
+            when they reply, so collections stay in set times.
+          </p>
+          <div
+            v-for="(s, i) in slots"
+            :key="i"
+            class="d-flex gap-2 mb-2 align-items-center"
+          >
+            <b-form-input
+              v-model="slots[i]"
+              placeholder="e.g. Tue 7 Apr, 10am–4pm"
+              maxlength="120"
+              :data-testid="'slot-' + i"
+            />
+            <b-button
+              variant="link"
+              class="text-danger p-0"
+              aria-label="Remove collection time"
+              @click="removeSlot(i)"
+            >
+              <v-icon icon="trash" />
+            </b-button>
+          </div>
+          <b-button
+            variant="outline-primary"
+            size="sm"
+            data-testid="add-slot"
+            @click="slots.push('')"
+          >
+            <v-icon icon="plus" /> Add a collection time
+          </b-button>
+
           <h3 class="mt-4 h5">Where are you?</h3>
           <PostCode
             :value="postcode"
@@ -108,7 +142,13 @@ const { email, loggedIn, postcode, postcodeValid, noGroups } = await setup(
 const title = ref('')
 const description = ref('')
 const items = ref([])
+const slots = ref([''])
 const wentWrong = ref(false)
+
+function removeSlot(i) {
+  slots.value.splice(i, 1)
+  if (!slots.value.length) slots.value.push('')
+}
 
 const messageValid = computed(
   () => !!title.value.trim() && items.value.some((i) => i.name && i.name.trim())
@@ -137,6 +177,7 @@ async function submit(callback) {
       availablenow: 1,
       attachments: [],
       bulkitems: items.value,
+      bulkslots: slots.value.map((s) => s.trim()).filter(Boolean),
     }
     const id = await composeStore.createDraft(message, email.value)
     await composeStore.submitDraft(id, email.value)
