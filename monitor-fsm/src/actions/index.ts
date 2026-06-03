@@ -2,7 +2,7 @@ import type { ActionDefinition } from 'ai-flower'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readFile, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync, readlinkSync } from 'node:fs'
 import { out, outWarn, dbg, startGroup, endGroup, truncate } from '../log.js'
 import { DISCOURSE_BASE } from '../discourse.js'
 import {
@@ -1355,10 +1355,10 @@ print(urllib.request.urlopen(req).read().decode())
         '--author', '@me',
         '--state', 'open',
         '--limit', '30',
-        '--json', 'number,title,url,headRefOid,mergeStateStatus',
+        '--json', 'number,title,url,headRefName,headRefOid,mergeStateStatus',
       ])
       if (listRes.code !== 0) return { redPRs: [], pendingPRs: [], behindPRs: [], allGreen: true, error: listRes.stderr }
-      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefOid: string; mergeStateStatus: string }>
+      const prs = JSON.parse(listRes.stdout) as Array<{ number: number; title: string; url: string; headRefName: string; headRefOid: string; mergeStateStatus: string }>
 
       const redPRs: Array<{ number: number; title: string; url: string; failedChecks: Array<{ context: string; state: string; url: string }> }> = []
       const pendingPRs: Array<{ number: number; title: string; url: string; pendingChecks: Array<{ context: string; state: string; url: string }> }> = []
@@ -1413,6 +1413,29 @@ print(urllib.request.urlopen(req).read().decode())
       // This lets us attempt again if future master changes re-break the PR.
       const db = getDb()
       const redAndPendingNums = new Set([...redPRs.map(p => p.number), ...pendingPRs.map(p => p.number)])
+
+      // Build a branch → worktree-path map once, so that when a PR goes green we
+      // can release any local container stack a fix delegate spun up to test it.
+      // The fix is already validated on the cloud runner; the local worktree
+      // containers (a full ~30-service compose stack) are pure waste afterwards.
+      // We `docker stop` (NOT `down`) so nothing is lost and the user can restart
+      // instantly. The main FSM worktree's own stack is always left running.
+      const MAIN_WORKTREE = '/home/edward/FreegleDockerWSL'
+      const branchToWorktree = new Map<string, string>()
+      try {
+        const wtRes = await sh('git', ['-C', MAIN_WORKTREE, 'worktree', 'list', '--porcelain'])
+        if (wtRes.code === 0) {
+          let curPath: string | null = null
+          for (const raw of wtRes.stdout.split('\n')) {
+            if (raw.startsWith('worktree ')) curPath = raw.slice('worktree '.length).trim()
+            else if (raw.startsWith('branch ') && curPath) {
+              const b = raw.slice('branch '.length).trim().replace(/^refs\/heads\//, '')
+              if (b) branchToWorktree.set(b, curPath)
+            }
+          }
+        }
+      } catch { /* worktree listing is best-effort */ }
+
       for (const pr of prs) {
         if (!redAndPendingNums.has(pr.number)) {
           const key = `pr_fix_attempts_${pr.number}`
@@ -1420,6 +1443,46 @@ print(urllib.request.urlopen(req).read().decode())
           if (existing && existing !== '0') {
             kvSet(db, key, '0')
             out(`check_my_open_pr_ci: PR #${pr.number} is green — reset fix attempt counter (was ${existing})`)
+          }
+
+          // PR is green → release the worktree's container stack if a fix delegate
+          // left one running. Skipped when the worktree is the main FSM checkout, or
+          // when another session is actively working in it. Idempotent, best-effort.
+          const wt = pr.headRefName ? branchToWorktree.get(pr.headRefName) : undefined
+          if (wt && wt !== MAIN_WORKTREE) {
+            try {
+              // Don't disturb a worktree another session is using: a parallel Claude
+              // session (or a human) leaves live processes whose cwd is under the
+              // worktree (editors, dev servers, CI-watch loops, even a `sleep`). The
+              // FSM's own delegates run in throwaway /tmp worktrees, so they never
+              // match this. If anything is cwd'd in there, leave the stack up.
+              let inUse = false
+              try {
+                for (const ent of readdirSync('/proc')) {
+                  if (!/^\d+$/.test(ent)) continue
+                  let cwd: string
+                  try { cwd = readlinkSync(`/proc/${ent}/cwd`) } catch { continue }
+                  if (cwd === wt || cwd.startsWith(wt + '/')) { inUse = true; break }
+                }
+              } catch { /* /proc scan best-effort */ }
+
+              if (inUse) {
+                out(`check_my_open_pr_ci: PR #${pr.number} green — worktree ${wt} in active use (live process cwd'd there), leaving containers up`)
+              } else {
+                const psRes = await sh('docker', ['ps', '-q', '--filter', `label=com.docker.compose.project.working_dir=${wt}`])
+                const ids = psRes.code === 0 ? psRes.stdout.split('\n').map(s => s.trim()).filter(Boolean) : []
+                if (ids.length > 0) {
+                  const stopRes = await sh('docker', ['stop', ...ids])
+                  if (stopRes.code === 0) {
+                    out(`check_my_open_pr_ci: PR #${pr.number} green — stopped ${ids.length} worktree container(s) at ${wt}`)
+                  } else {
+                    out(`check_my_open_pr_ci: PR #${pr.number} green — failed to stop containers at ${wt}: ${stopRes.stderr.slice(-200)}`)
+                  }
+                }
+              }
+            } catch (err: any) {
+              out(`check_my_open_pr_ci: PR #${pr.number} container cleanup error: ${String(err?.message || err).slice(-200)}`)
+            }
           }
         }
       }
