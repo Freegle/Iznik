@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import api from '~/api'
 import { useAuthStore } from '~/stores/auth'
+import { useUserStore } from '~/stores/user'
 
 export const useMemberStore = defineStore({
   id: 'member',
@@ -264,6 +265,20 @@ export const useMemberStore = defineStore({
     },
     async update(params) {
       const data = await api(this.config).memberships.update(params)
+      /*
+       * A role change PATCH triggers V1's setRole -> updateSystemRole, which
+       * UPDATEs users.systemrole on the DB. No event tells the frontend, so
+       * the cached userStore entry for params.userid still carries the
+       * pre-promotion systemrole and ModLogUser.vue's crown gate
+       * (systemrole !== 'User') keeps failing on the next render — the
+       * "Trainee not showing as a Mod in the group logs" report on
+       * Discourse #9481 post 545. Force-refresh the cached entry so the
+       * next render picks up the new systemrole.
+       */
+      if (params.userid && params.role) {
+        const userStore = useUserStore()
+        await userStore.fetch(params.userid, true)
+      }
       return data
     },
     async add(params) {

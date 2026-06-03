@@ -5,12 +5,14 @@ const mockReviewIgnore = vi.fn().mockResolvedValue()
 const mockFetchMembers = vi.fn()
 const mockMergeAsk = vi.fn().mockResolvedValue()
 const mockMergeIgnore = vi.fn().mockResolvedValue()
+const mockMembershipsUpdate = vi.fn().mockResolvedValue({ ret: 0 })
 
 vi.mock('~/api', () => ({
   default: () => ({
     memberships: {
       reviewIgnore: mockReviewIgnore,
       fetchMembers: mockFetchMembers,
+      update: mockMembershipsUpdate,
     },
     merge: {
       ask: mockMergeAsk,
@@ -25,6 +27,14 @@ vi.mock('~/stores/auth', () => ({
   useAuthStore: () => ({
     user: { id: 999 },
     work: mockAuthWork,
+  }),
+}))
+
+const mockUserStoreFetch = vi.fn().mockResolvedValue({})
+
+vi.mock('~/stores/user', () => ({
+  useUserStore: () => ({
+    fetch: mockUserStoreFetch,
   }),
 }))
 
@@ -327,6 +337,76 @@ describe('member store', () => {
       expect(store.list[100].displayname).toBe('Existing')
       // New synthetic entry for user 200 should exist.
       expect(store.list[200]._syntheticRelated).toBe(true)
+    })
+  })
+
+  /*
+   * Regression — Discourse #9481 post 545 ("Trainee not showing as a Mod in
+   * the group logs"). PATCH /memberships with a `role` triggers V1's
+   * setRole -> updateSystemRole UPDATE on users.systemrole, but the
+   * cached userStore entry stays stale and ModLogUser's crown gate keeps
+   * failing on the next render. memberStore.update must force-refresh the
+   * userStore entry whenever the patch carries a role.
+   */
+  describe('update — force-refresh userStore on role change', () => {
+    it('calls userStore.fetch(userid, true) when params include a role', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.update({ userid: 42, groupid: 7, role: 'Moderator' })
+
+      expect(mockMembershipsUpdate).toHaveBeenCalledWith({
+        userid: 42,
+        groupid: 7,
+        role: 'Moderator',
+      })
+      expect(mockUserStoreFetch).toHaveBeenCalledTimes(1)
+      expect(mockUserStoreFetch).toHaveBeenCalledWith(42, true)
+    })
+
+    it('force-refreshes on demote too (role=Member clears users.systemrole when no other Mod groups remain)', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.update({ userid: 42, groupid: 7, role: 'Member' })
+
+      expect(mockUserStoreFetch).toHaveBeenCalledWith(42, true)
+    })
+
+    it('does NOT force-refresh when params lack a role (e.g. emailfrequency-only patch)', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.update({ userid: 42, groupid: 7, emailfrequency: 24 })
+
+      expect(mockMembershipsUpdate).toHaveBeenCalled()
+      expect(mockUserStoreFetch).not.toHaveBeenCalled()
+    })
+
+    it('does NOT force-refresh when role is set but userid is missing (defensive: bad caller, nothing to invalidate)', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      await store.update({ groupid: 7, role: 'Moderator' })
+
+      expect(mockUserStoreFetch).not.toHaveBeenCalled()
+    })
+
+    it('returns the API response untouched (force-refresh is a side-effect, not a transform)', async () => {
+      mockMembershipsUpdate.mockResolvedValueOnce({
+        ret: 0,
+        status: 'Success',
+      })
+      const store = useMemberStore()
+      store.config = {}
+
+      const data = await store.update({
+        userid: 42,
+        groupid: 7,
+        role: 'Moderator',
+      })
+
+      expect(data).toEqual({ ret: 0, status: 'Success' })
     })
   })
 })
