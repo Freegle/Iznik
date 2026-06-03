@@ -63,7 +63,10 @@ func GetIllustration(c *fiber.Ctx) error {
 	db := database.DBConn
 	var externalUID sql.NullString
 
-	err := db.Raw("SELECT externaluid FROM ai_images WHERE name = ?", itemName).Scan(&externalUID).Error
+	// Only serve active illustrations — suppressed/rejected/regenerating images are
+	// hidden by the message API, so returning them here causes a blank photo slot
+	// after the user attaches the image and submits their post (topic 9753).
+	err := db.Raw("SELECT externaluid FROM ai_images WHERE name = ? AND status = 'active'", itemName).Scan(&externalUID).Error
 
 	if err != nil || !externalUID.Valid || externalUID.String == "" {
 		// Not cached - frontend should fall back to image generation.

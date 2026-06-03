@@ -127,3 +127,60 @@ func TestIllustrationLocationSuffixStripping(t *testing.T) {
 	// Clean up.
 	db.Exec("DELETE FROM ai_images WHERE name = ?", testItem)
 }
+
+// TestIllustrationSuppressedNotReturned verifies that a suppressed AI image
+// is NOT returned by the illustration endpoint (AssertFlip: FAILS on buggy code,
+// PASSES once illustration.go filters by status = 'active').
+//
+// Root cause: before the fix, GetIllustration queried ai_images without a
+// status filter, so suppressed images were returned during compose and then
+// silently blanked by the message API — the user saw their attachment disappear.
+func TestIllustrationSuppressedNotReturned(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("illust_suppress")
+	suppUID := "freegletusd-suppressed-" + prefix
+	itemName := "drawing-" + prefix
+
+	// Insert a suppressed AI image (as set by checkAIImageSuppressQuorum).
+	db.Exec("INSERT INTO ai_images (name, externaluid, usage_count, status) VALUES (?, ?, 10, 'suppressed')",
+		itemName, suppUID)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM ai_images WHERE name = ?", itemName)
+	})
+
+	// AssertFlip Step 3b (inverted): should return ret=3 (not cached / don't show),
+	// not ret=0 with the suppressed image. FAILS on buggy code.
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/illustration?item="+url.QueryEscape(itemName), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result misc.IllustrationResult
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, 3, result.Ret,
+		"suppressed AI image must not be returned by /illustration — it would be blanked on view, looking like spam suppression")
+	assert.Nil(t, result.Illustration,
+		"illustration field must be nil for a suppressed image")
+}
+
+// TestIllustrationActiveStillReturned ensures the fix doesn't break the happy
+// path: active illustrations must still be returned.
+func TestIllustrationActiveStillReturned(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("illust_active")
+	activeUID := "freegletusd-active-" + prefix
+	itemName := "sofa-" + prefix
+
+	db.Exec("INSERT INTO ai_images (name, externaluid, usage_count, status) VALUES (?, ?, 50, 'active')",
+		itemName, activeUID)
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM ai_images WHERE name = ?", itemName)
+	})
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/illustration?item="+url.QueryEscape(itemName), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result misc.IllustrationResult
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, 0, result.Ret, "active illustration must still be returned")
+	assert.NotNil(t, result.Illustration)
+	assert.Equal(t, activeUID, result.Illustration.ExternalUID)
+}
