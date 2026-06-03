@@ -851,6 +851,90 @@ class ProcessBackgroundTasksCommandTest extends TestCase
         $this->assertStringContains('Please repost.', $chatMsg->message);
     }
 
+    public function test_message_rejected_reopens_mods_previously_closed_chat(): void
+    {
+        // Regression (Discourse #9481/541, reporter Derek): a mod actions a member
+        // via a User2Mod chat they had previously CLOSED. The modmail is delivered
+        // and latestmessage is bumped, but the mod's roster stays 'Closed', so the
+        // ModTools chats list (which filters status != 'Closed') hides it — while
+        // the member still sees it. Sending the modmail must reopen the mod's
+        // closed roster so the chat reappears for them.
+        Mail::fake();
+
+        $group = $this->createTestGroup();
+        $poster = $this->createTestUser();
+        $this->createTestUserEmail($poster, ['preferred' => 1]);
+        $mod = $this->createTestUser(['fullname' => 'Closed Roster Mod']);
+
+        $msgId = DB::table('messages')->insertGetId([
+            'fromuser' => $poster->id,
+            'subject' => 'WANTED: Something (Test ZZ1)',
+            'date' => now(),
+        ]);
+        DB::table('messages_groups')->insert([
+            'msgid' => $msgId,
+            'groupid' => $group->id,
+            'collection' => 'Rejected',
+        ]);
+
+        // Pre-existing User2Mod chat that the mod had previously CLOSED, with a
+        // stale latestmessage (as in the real report, an old chat).
+        $chatId = DB::table('chat_rooms')->insertGetId([
+            'user1' => $poster->id,
+            'chattype' => 'User2Mod',
+            'groupid' => $group->id,
+            'latestmessage' => now()->subDays(400),
+        ]);
+        DB::table('chat_roster')->insert([
+            'chatid' => $chatId,
+            'userid' => $mod->id,
+            'status' => 'Closed',
+            'date' => now()->subDays(400),
+        ]);
+
+        DB::table('background_tasks')->insert([
+            'task_type' => 'email_message_rejected',
+            'data' => json_encode([
+                'msgid' => $msgId,
+                'byuser' => $mod->id,
+                'groupid' => $group->id,
+                'subject' => 'Message not approved: WANTED: Something (Test ZZ1)',
+                'body' => 'Please repost with more detail.',
+                'stdmsgid' => 0,
+            ]),
+            'created_at' => now(),
+        ]);
+
+        $mockPush = $this->mock(PushNotificationService::class);
+        $mockPush->shouldReceive('notifyGroupMods')
+            ->once()
+            ->with($group->id)
+            ->andReturn(0);
+
+        $this->artisan('queue:background-tasks', [
+            '--max-iterations' => 1,
+            '--sleep' => 0,
+        ])->assertSuccessful();
+        $this->artisan('mail:spool:process')->assertSuccessful();
+
+        // The modmail must have gone into the pre-existing chat (not a new one).
+        $chatMsg = DB::table('chat_messages')
+            ->where('chatid', $chatId)
+            ->where('userid', $mod->id)
+            ->where('type', 'ModMail')
+            ->first();
+        $this->assertNotNull($chatMsg, 'ModMail should be added to the existing chat');
+
+        // The mod's roster must no longer be 'Closed', so the chat reappears in
+        // their ModTools chats list.
+        $status = DB::table('chat_roster')
+            ->where('chatid', $chatId)
+            ->where('userid', $mod->id)
+            ->value('status');
+        $this->assertNotEquals('Closed', $status, "Mod's previously-closed roster should be reopened after sending modmail");
+        $this->assertEquals('Offline', $status);
+    }
+
     public function test_message_outcome_logs_and_notifies_interested_users(): void
     {
         $group = $this->createTestGroup();
