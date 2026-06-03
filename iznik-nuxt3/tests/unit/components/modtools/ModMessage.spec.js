@@ -342,6 +342,10 @@ describe('ModMessage', () => {
             template: '<div class="mod-message-email-modal"><slot /></div>',
             props: ['id'],
           },
+          ModBulkPreviewModal: {
+            template: '<div class="mod-bulk-preview-modal"><slot /></div>',
+            props: ['messageid'],
+          },
           ModSpammerReport: {
             template: '<div class="mod-spammer-report"><slot /></div>',
             props: ['userid', 'safelist'],
