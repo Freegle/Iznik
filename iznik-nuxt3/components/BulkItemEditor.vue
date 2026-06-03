@@ -370,12 +370,14 @@ defineExpose({ items, applyImport, addItem, removeItem, importText, tray })
 
 <style scoped lang="scss">
 @import 'bootstrap/scss/functions';
+@import 'bootstrap/scss/variables';
+@import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/_color-vars.scss';
 
 .bulkeditor__tray {
   margin: 0.5rem 0 0.75rem;
   padding: 0.5rem;
-  background-color: $color-gray--lightest;
+  background-color: $color-gray--lighter;
   border: 1px dashed $color-gray--light;
   border-radius: 6px;
 }
