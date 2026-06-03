@@ -367,6 +367,17 @@ commands:
                 && echo "Done — daemon config updated" \
                 || echo "⚠️  Could not update daemon.json (non-critical)"
             fi
+            # The mirror may be in daemon.json (from VM provisioning) yet NOT loaded
+            # by the running dockerd (started before the config, or never reloaded),
+            # so pulls bypass the mirror and hit Docker Hub directly (toomanyrequests).
+            # Verify the RUNNING daemon has it; reload (then restart) if not.
+            if ! docker info 2>/dev/null | grep -q "185.44.254.6:5000"; then
+              echo "Mirror absent from running daemon — reloading docker to load registry-mirrors..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 3
+            fi
+            echo "Registry mirrors in running daemon:"
+            docker info 2>/dev/null | grep -A2 "Registry Mirrors" || echo "  (none reported)"
             # Only prune on cloud — self-hosted runner needs layer cache for fast builds
             if [ "${SELF_HOSTED_RUNNER:-}" != "true" ]; then
               docker system prune -f || true
