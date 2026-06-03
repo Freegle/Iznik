@@ -178,7 +178,8 @@
                     @click="showHideAll"
                   >
                     <v-icon icon="eye-slash" class="action-icon" />
-                    <span>Hide all chats</span>
+                    <span v-if="showClosed">Delete all chats on this page</span>
+                    <span v-else>Hide all chats</span>
                   </button>
                 </div>
               </div>
