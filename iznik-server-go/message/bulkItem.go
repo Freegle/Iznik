@@ -248,13 +248,44 @@ func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) 
 		return fiber.NewError(fiber.StatusForbidden, "Not your post")
 	}
 
+	var priorState string
+	db.Raw("SELECT COALESCE(state, '') FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
+		*req.Bulkitemid, *req.Userid).Scan(&priorState)
+
 	result := db.Exec("UPDATE messages_bulk_items_interest SET state = ? WHERE bulkitemid = ? AND userid = ?",
 		*req.State, *req.Bulkitemid, *req.Userid)
 	if result.RowsAffected == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Interest row not found")
 	}
 
+	// Promising an item (moving it to Reserved) reveals the offer's private
+	// access instructions to that replier — once, via chat.
+	if *req.State == "Reserved" && priorState != "Reserved" {
+		sendAccessInstructions(db, msgid, fromuser, *req.Userid)
+	}
+
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
+}
+
+// sendAccessInstructions delivers the offer's private access instructions to a
+// replier via chat, once the offerer has promised (Reserved) them an item. It's
+// a no-op when the offer has no instructions set. Exposed (via the var below)
+// for tests.
+func sendAccessInstructions(db *gorm.DB, msgid uint64, fromuser uint64, touser uint64) {
+	var ai string
+	db.Raw("SELECT COALESCE(accessinstructions, '') FROM messages WHERE id = ?", msgid).Scan(&ai)
+	ai = strings.TrimSpace(ai)
+	if ai == "" {
+		return
+	}
+	chatid := findOrCreateUser2UserRoom(db, fromuser, touser)
+	if chatid == 0 {
+		return
+	}
+	body := "Access instructions for collection:\n" + ai
+	db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
+		chatid, fromuser, utils.CHAT_MESSAGE_DEFAULT, msgid, time.Now(), body)
+	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
 }
 
 // findOrCreateUser2UserRoom returns the id of the User2User chat room between

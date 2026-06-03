@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   splitCsv,
   parseItemsCsv,
+  parseItemsRows,
   normaliseCondition,
   blankBulkItem,
   BULK_CONDITIONS,
@@ -173,6 +174,37 @@ describe('useBulkItems', () => {
         photourl: 'https://example.com/d.jpg',
       })
       expect(items[1].name).toBe('Swivel chair')
+    })
+  })
+
+  describe('parseItemsRows (uploaded .xlsx)', () => {
+    it('parses rows with non-string cells (numbers from a spreadsheet)', () => {
+      const rows = [
+        ['name', 'quantity', 'condition', 'dimensions', 'photo', 'description'],
+        [
+          'Office desk',
+          4,
+          'Good',
+          '120x80cm',
+          'https://example.com/d.jpg',
+          'Beech',
+        ],
+        ['Swivel chair', 14, 'Used', null, null, null],
+      ]
+      const items = parseItemsRows(rows)
+      expect(items).toHaveLength(2)
+      expect(items[0]).toMatchObject({
+        name: 'Office desk',
+        quantity: 4,
+        condition: 'Good',
+        photourl: 'https://example.com/d.jpg',
+      })
+      expect(items[1]).toMatchObject({ name: 'Swivel chair', quantity: 14 })
+    })
+
+    it('returns [] for empty rows', () => {
+      expect(parseItemsRows([])).toEqual([])
+      expect(parseItemsRows(null)).toEqual([])
     })
   })
 

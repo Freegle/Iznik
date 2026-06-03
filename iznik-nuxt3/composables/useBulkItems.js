@@ -95,7 +95,16 @@ export function splitCsv(text) {
 // description/notes. If no recognisable header is found, assumes the columns are
 // name, quantity, condition, dimensions, description in order.
 export function parseItemsCsv(text) {
-  const rows = splitCsv(text || '')
+  return parseItemsRows(splitCsv(text || ''))
+}
+
+// Parse already-split rows (an array of arrays of cells) into structured items.
+// Cells may be non-strings (e.g. numbers from an .xlsx reader); they're coerced
+// to strings. Same header/column detection as parseItemsCsv.
+export function parseItemsRows(rawRows) {
+  const rows = (rawRows || []).map((r) =>
+    (r || []).map((c) => (c == null ? '' : String(c)))
+  )
   if (!rows.length) return []
 
   const headerCells = rows[0].map((c) => c.trim().toLowerCase())

@@ -1,200 +1,189 @@
 <template>
   <div class="bulkeditor">
-    <!-- ONE uploader at the top. Finished uploads drop into the tray below. -->
-    <div class="bulkeditor__uploader">
-      <PhotoUploader
-        v-model="uploaderModel"
-        type="Message"
-        :max-photos="50"
-        empty-title="Add photos"
-        empty-subtitle="Add all your photos here, then drag each onto its item"
-      />
-    </div>
+    <div class="bulkeditor__cols">
+      <!-- LEFT: the items table -->
+      <div class="bulkeditor__items">
+        <div class="bgrid bgrid--head">
+          <span class="bcell-photo" />
+          <span>Item</span>
+          <span>Qty</span>
+          <span>Condition</span>
+          <span>Size</span>
+          <span class="bcell-rm" />
+        </div>
 
-    <!-- Tray of uploaded-but-unassigned photos. Drag one onto an item row. -->
-    <div v-if="tray.length" class="bulkeditor__tray" data-testid="photo-tray">
-      <span class="bulkeditor__tray-label">
-        <v-icon icon="arrow-down" /> Drag a photo onto its item
-      </span>
-      <div class="bulkeditor__tray-strip">
-        <div
-          v-for="(p, i) in tray"
-          :key="p.id || i"
-          class="pthumb"
-          draggable="true"
-          @dragstart="onDragStart($event, -1, i)"
-        >
-          <img :src="thumbSrc(p)" alt="" />
-          <button
-            type="button"
-            class="pthumb__x"
-            aria-label="Remove photo"
-            @click="removeTrayPhoto(i)"
+        <ul class="bulkeditor__list">
+          <li
+            v-for="(item, idx) in items"
+            :key="idx"
+            class="bgrid brow"
+            :class="{ 'brow--over': dragOverIdx === idx }"
+            @dragover.prevent
+            @dragenter.prevent="dragOverIdx = idx"
+            @dragleave="onRowLeave(idx)"
+            @drop="onDropToItem(idx)"
           >
-            ×
-          </button>
+            <!-- Photo cell: small thumbnails + drop hint -->
+            <div class="bcell-photo brow__photos">
+              <div
+                v-for="(p, pi) in item.photos"
+                :key="p.id || pi"
+                class="pthumb pthumb--sm"
+                draggable="true"
+                title="Drag to move, click to remove"
+                @dragstart="onDragStart($event, idx, pi)"
+                @click="unassign(idx, pi)"
+              >
+                <img :src="thumbSrc(p)" alt="" />
+              </div>
+              <div
+                v-if="!item.photos.length && item.photourl"
+                class="pthumb pthumb--sm"
+                title="From spreadsheet link"
+              >
+                <img :src="item.photourl" alt="" />
+              </div>
+              <span
+                v-else-if="!item.photos.length"
+                class="brow__drop"
+                aria-hidden="true"
+              >
+                <v-icon icon="image" />
+              </span>
+            </div>
+
+            <b-form-input
+              v-model="item.name"
+              class="brow__name"
+              placeholder="Item name"
+              maxlength="255"
+              :data-testid="'item-name-' + idx"
+            />
+            <b-form-input
+              v-model.number="item.quantity"
+              class="brow__qty"
+              type="number"
+              min="1"
+              max="999"
+              :data-testid="'item-qty-' + idx"
+              aria-label="Quantity"
+            />
+            <b-form-select
+              v-model="item.condition"
+              :options="conditions"
+              size="sm"
+              class="brow__cond"
+              :data-testid="'item-condition-' + idx"
+            />
+            <b-form-input
+              v-model="item.dimensions"
+              class="brow__dims"
+              placeholder="optional"
+              maxlength="255"
+            />
+            <b-button
+              variant="link"
+              class="brow__rm text-danger p-0"
+              :aria-label="'Remove ' + (item.name || 'item')"
+              :data-testid="'item-remove-' + idx"
+              @click="removeItem(idx)"
+            >
+              <v-icon icon="trash" />
+            </b-button>
+          </li>
+        </ul>
+
+        <div
+          class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-2"
+        >
+          <b-button
+            variant="outline-primary"
+            size="sm"
+            data-testid="add-item"
+            @click="addItem"
+          >
+            <v-icon icon="plus" /> Add another item
+          </b-button>
+          <span class="small text-muted">
+            {{ totalItems }} item{{ totalItems === 1 ? '' : 's' }},
+            {{ totalQuantity }} thing{{ totalQuantity === 1 ? '' : 's' }} in
+            total
+          </span>
         </div>
       </div>
-    </div>
 
-    <!-- Spreadsheet import -->
-    <div class="bulkeditor__import">
-      <b-button
-        variant="outline-secondary"
-        size="sm"
-        @click="showImport = !showImport"
-      >
-        <v-icon icon="list" /> Paste or upload a spreadsheet
-      </b-button>
-      <div v-if="showImport" class="bulkeditor__import-panel mt-2">
-        <p class="small text-muted mb-1">
-          Download the spreadsheet template (it has a condition drop-down and a
-          <strong>photo</strong> column for optional http(s) links — we download
-          and store those photos for you). Fill it in, then either copy the rows
-          and paste them below, or save it as CSV and choose the file. Columns:
-          <strong
-            >name, quantity, condition, dimensions, photo, description</strong
-          >.
-        </p>
-        <a
-          class="btn btn-outline-success btn-sm mb-2"
-          href="/freegle-clearance-template.xlsx"
-          download
-          data-testid="download-template"
-        >
-          <v-icon icon="download" /> Download spreadsheet template
-        </a>
-        <b-form-textarea
-          v-model="importText"
-          rows="4"
-          placeholder="Office desk, 4, Good, 120x80cm&#10;Chair, 14, Used"
-          data-testid="import-text"
-        />
-        <div class="d-flex gap-2 mt-2 align-items-center flex-wrap">
-          <b-button
-            variant="primary"
-            size="sm"
-            :disabled="!importText.trim()"
-            data-testid="import-apply"
-            @click="applyImport"
+      <!-- RIGHT: upload tools -->
+      <aside class="bulkeditor__tools">
+        <div class="tool">
+          <div class="tool__title">Photos</div>
+          <PhotoUploader
+            v-model="uploaderModel"
+            type="Message"
+            :max-photos="50"
+            empty-title="Add photos"
+            empty-subtitle="Then drag each onto its item"
+          />
+          <div
+            v-if="tray.length"
+            class="bulkeditor__tray"
+            data-testid="photo-tray"
           >
-            Add these items
-          </b-button>
-          <label class="btn btn-outline-secondary btn-sm mb-0">
-            Choose CSV file…
+            <span class="bulkeditor__tray-label">
+              <v-icon icon="arrow-left" /> Drag a photo onto its item
+            </span>
+            <div class="bulkeditor__tray-strip">
+              <div
+                v-for="(p, i) in tray"
+                :key="p.id || i"
+                class="pthumb"
+                draggable="true"
+                @dragstart="onDragStart($event, -1, i)"
+              >
+                <img :src="thumbSrc(p)" alt="" />
+                <button
+                  type="button"
+                  class="pthumb__x"
+                  aria-label="Remove photo"
+                  @click="removeTrayPhoto(i)"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tool">
+          <div class="tool__title">Got a lot? Upload a spreadsheet</div>
+          <p class="small text-muted mb-2">
+            The template has a condition drop-down and an optional
+            <strong>photo</strong> column (http links — we fetch &amp; store
+            them). Fill it in and upload it.
+          </p>
+          <a
+            class="btn btn-outline-success btn-sm mb-2 w-100"
+            href="/freegle-clearance-template.xlsx"
+            download
+            data-testid="download-template"
+          >
+            <v-icon icon="download" /> Download template
+          </a>
+          <label class="btn btn-primary btn-sm mb-0 w-100">
+            <v-icon icon="upload" /> Upload spreadsheet
             <input
               type="file"
-              accept=".csv,text/csv"
+              accept=".csv,.tsv,.xlsx,text/csv"
               class="d-none"
               data-testid="import-file"
               @change="onFile"
             />
           </label>
-          <span v-if="importMessage" class="small text-success">{{
+          <span v-if="importMessage" class="small text-success d-block mt-2">{{
             importMessage
           }}</span>
         </div>
-      </div>
+      </aside>
     </div>
-
-    <!-- Add control sits above the list so new rows appear at the top. -->
-    <div class="d-flex justify-content-between align-items-center mt-3 mb-1">
-      <b-button
-        variant="outline-primary"
-        size="sm"
-        data-testid="add-item"
-        @click="addItem"
-      >
-        <v-icon icon="plus" /> Add another item
-      </b-button>
-      <span class="small text-muted">
-        {{ totalItems }} item{{ totalItems === 1 ? '' : 's' }},
-        {{ totalQuantity }} thing{{ totalQuantity === 1 ? '' : 's' }} in total
-      </span>
-    </div>
-
-    <!-- Compact item rows (most recently added first) -->
-    <ul class="bulkeditor__list mt-2">
-      <li
-        v-for="(item, idx) in items"
-        :key="idx"
-        class="brow"
-        :class="{ 'brow--over': dragOverIdx === idx }"
-        @dragover.prevent
-        @dragenter.prevent="dragOverIdx = idx"
-        @dragleave="onRowLeave(idx)"
-        @drop="onDropToItem(idx)"
-      >
-        <!-- Photo cell: small thumbnails + drop hint -->
-        <div class="brow__photos">
-          <div
-            v-for="(p, pi) in item.photos"
-            :key="p.id || pi"
-            class="pthumb pthumb--sm"
-            draggable="true"
-            :title="'Drag to move, click to remove'"
-            @dragstart="onDragStart($event, idx, pi)"
-            @click="unassign(idx, pi)"
-          >
-            <img :src="thumbSrc(p)" alt="" />
-          </div>
-          <!-- Fall back to a spreadsheet-supplied photo URL when no photo dropped. -->
-          <div
-            v-if="!item.photos.length && item.photourl"
-            class="pthumb pthumb--sm"
-            :title="'From spreadsheet link'"
-          >
-            <img :src="item.photourl" alt="" />
-          </div>
-          <span
-            v-else-if="!item.photos.length"
-            class="brow__drop"
-            aria-hidden="true"
-          >
-            <v-icon icon="image" />
-          </span>
-        </div>
-
-        <b-form-input
-          v-model="item.name"
-          class="brow__name"
-          placeholder="Item name"
-          maxlength="255"
-          :data-testid="'item-name-' + idx"
-        />
-        <NumberIncrementDecrement
-          v-model="item.quantity"
-          :min="1"
-          :max="999"
-          size="sm"
-          label="Quantity"
-          :label-s-r-only="true"
-          class="brow__qty"
-        />
-        <b-form-select
-          v-model="item.condition"
-          :options="conditions"
-          size="sm"
-          class="brow__cond"
-          :data-testid="'item-condition-' + idx"
-        />
-        <b-form-input
-          v-model="item.dimensions"
-          class="brow__dims"
-          placeholder="Size (optional)"
-          maxlength="255"
-        />
-        <b-button
-          variant="link"
-          class="brow__rm text-danger p-0"
-          :aria-label="'Remove ' + (item.name || 'item')"
-          :data-testid="'item-remove-' + idx"
-          @click="removeItem(idx)"
-        >
-          <v-icon icon="trash" />
-        </b-button>
-      </li>
-    </ul>
   </div>
 </template>
 
@@ -203,9 +192,9 @@ import { ref, computed, watch } from 'vue'
 import {
   BULK_CONDITIONS,
   parseItemsCsv,
+  parseItemsRows,
   blankBulkItem,
 } from '~/composables/useBulkItems'
-import NumberIncrementDecrement from '~/components/NumberIncrementDecrement'
 import PhotoUploader from '~/components/PhotoUploader'
 
 const props = defineProps({
@@ -222,13 +211,11 @@ const items = ref(
     : [{ ...blankBulkItem(), photos: [] }]
 )
 
-// The top uploader's model — we drain finished uploads from it into `tray`,
+// The uploader's model — we drain finished uploads from it into `tray`,
 // so it always shows just the "Add photos" affordance (never a big gallery).
 const uploaderModel = ref([])
 const tray = ref([])
 
-const showImport = ref(false)
-const importText = ref('')
 const importMessage = ref('')
 
 // Drag source: { from: -1 for tray else item index, index: position in that list }
@@ -321,30 +308,47 @@ function unassign(idx, pi) {
   if (photo) tray.value.push(photo)
 }
 
-function applyImport() {
-  const parsed = parseItemsCsv(importText.value)
+// Prepend a parsed batch of items (newest at the top), keeping their order.
+function prependItems(parsed) {
   if (!parsed.length) {
-    importMessage.value = 'No items found'
+    importMessage.value = 'No items found in that file'
     return
   }
   const existing = items.value.filter((i) => i.name && i.name.trim())
-  // Most-recently-added (the imported batch) at the top, keeping their order.
   items.value = [...parsed.map((i) => ({ ...i, photos: [] })), ...existing]
   importMessage.value = `Added ${parsed.length} item${
     parsed.length === 1 ? '' : 's'
   }`
-  importText.value = ''
 }
 
-function onFile(e) {
+function applyImportText(text) {
+  prependItems(parseItemsCsv(text))
+}
+// exposed name kept stable for tests
+function applyImport(text) {
+  applyImportText(text)
+}
+
+async function onFile(e) {
   const file = e.target.files && e.target.files[0]
   if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    importText.value = String(reader.result || '')
-    applyImport()
+  try {
+    if (/\.xlsx$/i.test(file.name)) {
+      // Parse the filled .xlsx in the browser. read-excel-file is lazy-loaded so
+      // it never bloats the main bundle — only fetched when someone uploads one.
+      const readXlsxFile = (await import('read-excel-file')).default
+      const rows = await readXlsxFile(file)
+      const parsed = parseItemsRows(rows)
+      prependItems(parsed)
+    } else {
+      applyImportText(await file.text())
+    }
+  } catch (err) {
+    importMessage.value = "Sorry — couldn't read that file"
+  } finally {
+    // Allow re-uploading the same file.
+    e.target.value = ''
   }
-  reader.readAsText(file)
 }
 
 // Keep attachment IDs in sync with assigned photos and emit upward. Only write
@@ -365,7 +369,7 @@ watch(
   { deep: true, immediate: true }
 )
 
-defineExpose({ items, applyImport, addItem, removeItem, importText, tray })
+defineExpose({ items, applyImport, applyImportText, addItem, removeItem, tray })
 </script>
 
 <style scoped lang="scss">
@@ -374,25 +378,97 @@ defineExpose({ items, applyImport, addItem, removeItem, importText, tray })
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/_color-vars.scss';
 
-.bulkeditor__tray {
-  margin: 0.5rem 0 0.75rem;
-  padding: 0.5rem;
+.bulkeditor__cols {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.bulkeditor__items {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Fixed-width tools rail on the right of the items. */
+.bulkeditor__tools {
+  flex: 0 0 16rem;
+  width: 16rem;
+}
+
+.tool {
+  border: 1px solid $color-gray--light;
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+  margin-bottom: 0.75rem;
   background-color: $color-gray--lighter;
-  border: 1px dashed $color-gray--light;
+}
+
+.tool__title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.4rem;
+}
+
+/* Keep the uploader compact — no big empty drop zone. */
+.bulkeditor__uploader,
+:deep(.bulkeditor__tools .uploader) {
+  max-height: 9rem;
+}
+
+/* Shared grid for the heading row and each item row, so columns line up. */
+.bgrid {
+  display: grid;
+  grid-template-columns: 38px minmax(7rem, 1fr) 4.5rem 8rem 5.5rem 1.75rem;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.bgrid--head {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: $color-gray--dark;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 0 0 0.25rem;
+  border-bottom: 1px solid $color-gray--light;
+}
+
+.bulkeditor__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.brow {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid $color-gray--lighter;
+}
+
+.brow--over {
+  background-color: $color-green-background;
   border-radius: 6px;
 }
 
-.bulkeditor__tray-label {
-  display: block;
-  font-size: 0.8rem;
-  color: $color-gray--dark;
-  margin-bottom: 0.35rem;
+.bcell-photo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.bulkeditor__tray-strip {
+.brow__drop {
+  width: 34px;
+  height: 34px;
+  border: 1px dashed $color-gray--light;
+  border-radius: 4px;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
+  align-items: center;
+  justify-content: center;
+  color: $color-gray--normal;
+}
+
+.brow__qty :deep(input),
+.brow__qty {
+  text-align: center;
 }
 
 .pthumb {
@@ -419,8 +495,8 @@ defineExpose({ items, applyImport, addItem, removeItem, importText, tray })
 }
 
 .pthumb--sm {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
 }
 
 .pthumb__x {
@@ -436,74 +512,34 @@ defineExpose({ items, applyImport, addItem, removeItem, importText, tray })
   cursor: pointer;
 }
 
-.bulkeditor__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.bulkeditor__tray {
+  margin-top: 0.5rem;
 }
 
-.brow {
+.bulkeditor__tray-label {
+  display: block;
+  font-size: 0.78rem;
+  color: $color-gray--dark;
+  margin-bottom: 0.35rem;
+}
+
+.bulkeditor__tray-strip {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 0.4rem;
-  padding: 0.35rem 0;
-  border-bottom: 1px solid $color-gray--lighter;
-  flex-wrap: nowrap;
 }
 
-.brow--over {
-  background-color: $color-green-background;
-  border-radius: 6px;
-}
-
-.brow__photos {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 40px;
-}
-
-.brow__drop {
-  width: 36px;
-  height: 36px;
-  border: 1px dashed $color-gray--light;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: $color-gray--normal;
-}
-
-.brow__name {
-  flex: 2 1 8rem;
-  min-width: 6rem;
-}
-
-.brow__dims {
-  flex: 1 1 5rem;
-  min-width: 4rem;
-}
-
-.brow__cond {
-  flex: 0 0 8rem;
-}
-
-.brow__qty {
-  flex: 0 0 5.5rem;
-  width: 5.5rem;
-}
-
-.brow__rm {
-  flex: 0 0 auto;
-}
-
+/* Stack the tools under the items on narrow screens. */
 @include media-breakpoint-down(md) {
-  .brow {
-    flex-wrap: wrap;
+  .bulkeditor__cols {
+    flex-direction: column;
   }
-  .brow__name {
-    flex: 1 1 100%;
+  .bulkeditor__tools {
+    flex-basis: auto;
+    width: 100%;
+  }
+  .bgrid {
+    grid-template-columns: 34px minmax(5rem, 1fr) 3.5rem 6.5rem 4.5rem 1.5rem;
   }
 }
 </style>
