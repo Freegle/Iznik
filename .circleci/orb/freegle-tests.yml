@@ -70,13 +70,15 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
-      # 11 = the historical max worker count. Restored after the 2026-06-01 OOM
-      # outage (9 workers OOM-killed the VM with only a 2G swapfile). The job now
-      # ensures a 20G swapfile at runtime (see "Install system dependencies"),
-      # so peak spikes (11 Chromium + Laravel + Go + the container stack) swap
-      # instead of OOM-killing the runner. If build-test-katapult goes back to
-      # infrastructure_fail in the parallel test phase, lower this first.
-      PW_WORKERS: 11
+      # PW_WORKERS halved 11 -> 6 to stop build-test-katapult CPU-heartbeat
+      # starvation in the parallel test phase. RAM/swap are fine (20G swapfile),
+      # but 11 Chromium workers + Laravel + Go + Vitest saturated all 16 cores,
+      # so the CircleCI agent couldn't heartbeat and the job was killed
+      # (infrastructure_fail) ~6 min into the test step. nice-demoting the test
+      # runners alone (orb 1.1.338) did NOT hold, so we also cut Playwright
+      # concurrency. If it still starves, lower further or split Playwright onto
+      # its own Katapult job (task #37).
+      PW_WORKERS: 6
       VITEST_MAX_WORKERS: 4
       PORT_TRAEFIK_HTTP: 9080
       PORT_TRAEFIK_API: 17192
