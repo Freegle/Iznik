@@ -255,13 +255,10 @@ class EmailDeliveryIntegrationTest extends TestCase
         // Verify body is non-empty.
         $this->assertNotEmpty($body, 'Email body should not be empty');
 
-        // Verify donate URL is present. The configured URL may vary, but it should be a link.
-        $donateUrl = config('freegle.donation.url', 'http://freegle.in/paypal1510');
-        $donateHost = parse_url($donateUrl, PHP_URL_HOST);
-        // Check for either the direct donate URL or a tracked version of it.
-        $foundDonateLink = $this->extractUrlByPath($body, preg_quote($donateHost, '/'))
-            ?? $this->extractUrlByPath($body, 'donate|paypal');
-        $this->assertNotNull($foundDonateLink, 'Email should contain a donate URL');
+        // Verify the donate CTA links to the user-site /donate page.
+        $userSiteHost = parse_url(config('freegle.sites.user'), PHP_URL_HOST);
+        $foundDonateLink = $this->extractUrlByPath($body, preg_quote($userSiteHost, '/') . '.*donate');
+        $this->assertNotNull($foundDonateLink, 'Email should contain a donate URL pointing to the user site /donate page');
     }
 
     // =========================================================================
