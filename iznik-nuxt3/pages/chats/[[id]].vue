@@ -109,11 +109,11 @@
                       >
                         {{ closedCount }}
                       </b-badge>
-                      <span v-if="showClosed">Hide</span>
-                      <span v-else>Show </span>
-                      {{ closedChats.length }} hidden/blocked chat<span
-                        v-if="closedChats.length > 1"
-                        >s</span
+                      <span v-if="showClosed">Return to chats that are not hidden</span>
+                      <span v-else>Show {{ closedChats.length }} hidden/blocked chat<span
+                          v-if="closedChats.length > 1"
+                          >s</span
+                        ></span
                       >
                     </b-button>
                   </div>
@@ -521,7 +521,10 @@ async function hideAll() {
   // Snapshot IDs before iterating: filteredChats covers all loaded chats
   // (not just the visible page) and a plain array avoids skipping entries
   // when the reactive computed shrinks as each chat is hidden.
-  const ids = filteredChats.value.map((c) => c.id)
+  // Exclude User2Mod (volunteer) chats — members must never lose access to them.
+  const ids = filteredChats.value
+    .filter((c) => c.chattype !== 'User2Mod')
+    .map((c) => c.id)
   for (const id of ids) {
     await chatStore.hide(id)
   }

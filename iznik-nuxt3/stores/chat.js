@@ -493,9 +493,6 @@ export const useChatStore = defineStore({
         this.listByChatId[id].status = 'Online'
       }
 
-      // Switch back to showing visible chats since this chat is now visible.
-      this.showClosed = false
-
       await this.fetchChat(id)
       await this.fetchChats(null, false, id)
     },
