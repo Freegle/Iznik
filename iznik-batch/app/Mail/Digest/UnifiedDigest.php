@@ -415,7 +415,14 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 ? DB::table('groups')->where('id', $groupId)->first(['nameshort', 'namefull'])
                 : null;
             $groupName = $groupRow ? ($groupRow->namefull ?: $groupRow->nameshort) : null;
-            $postSubject = $firstPost['message']->subject;
+            // Decode HTML entities: the DB stores subjects HTML-encoded (e.g.
+            // "Coffee &amp; Cake"); the email subject line is plain text and
+            // must contain a literal "&" rather than the encoded form.
+            $postSubject = html_entity_decode(
+                $firstPost['message']->subject ?? '',
+                ENT_QUOTES | ENT_HTML5,
+                'UTF-8'
+            );
             return $groupName ? "[{$groupName}] {$postSubject}" : $postSubject;
         }
 
@@ -448,7 +455,10 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
         foreach ($this->posts as $post) {
             $message = $post['message'];
-            $itemName = $this->extractItemName($message->subject);
+            // Decode HTML entities before extracting the item name so the email
+            // subject teaser contains a literal "&" rather than "&amp;".
+            $decodedSubject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            $itemName = $this->extractItemName($decodedSubject);
 
             // Truncate individual item names to 25 chars.
             if (strlen($itemName) > 25) {
@@ -615,6 +625,13 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 $firstPostedFormatted = $originalDate->setTimezone('Europe/London')->format('D, jS F g:ia');
             }
 
+            // The DB stores message subjects HTML-encoded (e.g. "OFFER: Coffee &amp; Cake (London)").
+            // Decode before extracting itemName / locationName so that Blade's
+            // {{ }} auto-escaping produces correct HTML source ("&amp;") rather
+            // than the double-encoded "&amp;amp;" that email clients render as
+            // the literal string "&amp;" instead of the intended "&".
+            $subject = html_entity_decode($message->subject ?? '', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
             return [
                 'message' => $message,
                 'messageText' => $messageText,
@@ -628,9 +645,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'groupName' => $groupName,
                 'groupUrl' => $groupUrl,
                 'type' => $message->type,
-                'subject' => $message->subject,
-                'itemName' => $this->extractItemName($message->subject),
-                'locationName' => $this->extractLocationName($message->subject),
+                'subject' => $subject,
+                'itemName' => $this->extractItemName($subject),
+                'locationName' => $this->extractLocationName($subject),
                 'arrivalFormatted' => $arrivalFormatted,
                 'arrivalIso' => $arrivalIso,
                 'distanceText' => $distanceText,

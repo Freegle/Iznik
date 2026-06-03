@@ -122,12 +122,20 @@ class EventsDigestService
                     $imageUrl = $mods['url'] ?? "{$userSite}/communityevent/{$event->id}/image/{$img->id}";
                 }
 
+                // The DB stores HTML-encoded text (e.g. "Soup &amp; Song").
+                // Decode before passing to templates so Blade's {{ }} escaping
+                // produces correct HTML source ("&amp;") rather than the
+                // double-encoded "&amp;amp;" that the email client would render
+                // as the literal string "&amp;" instead of the intended "&".
+                $decode = fn (?string $s): ?string =>
+                    $s !== null ? html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null;
+
                 return [
                     'id'           => $event->id,
-                    'title'        => $event->title,
-                    'location'     => $event->location,
-                    'description'  => $event->description,
-                    'contactname'  => $event->contactname,
+                    'title'        => $decode($event->title),
+                    'location'     => $decode($event->location),
+                    'description'  => $decode($event->description),
+                    'contactname'  => $decode($event->contactname),
                     'contactphone' => $event->contactphone,
                     'contactemail' => $event->contactemail,
                     'contacturl'   => $event->contacturl,

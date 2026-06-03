@@ -134,14 +134,22 @@ class VolunteeringDigestService
                     ? Carbon::parse($v->applyby)->setTimezone('Europe/London')->format('D, jS F Y')
                     : null;
 
+                // The DB stores HTML-encoded text (e.g. "Coffee &amp; Cake").
+                // Decode before passing to templates so Blade's {{ }} escaping
+                // produces correct HTML source ("&amp;") rather than the
+                // double-encoded "&amp;amp;" that the email client would render
+                // as the literal string "&amp;" instead of the intended "&".
+                $decode = fn (?string $s): ?string =>
+                    $s !== null ? html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8') : null;
+
                 return [
                     'id'             => $v->id,
-                    'title'          => $v->title,
-                    'location'       => $v->location,
-                    'description'    => $v->description,
-                    'timecommitment' => $v->timecommitment,
+                    'title'          => $decode($v->title),
+                    'location'       => $decode($v->location),
+                    'description'    => $decode($v->description),
+                    'timecommitment' => $decode($v->timecommitment),
                     'online'         => (bool) $v->online,
-                    'contactname'    => $v->contactname,
+                    'contactname'    => $decode($v->contactname),
                     'contactphone'   => $v->contactphone,
                     'contactemail'   => $v->contactemail,
                     'contacturl'     => $v->contacturl,
