@@ -1527,6 +1527,36 @@ func PatchMemberships(c *fiber.Ctx) error {
 		db.Exec("UPDATE memberships SET role = ? WHERE userid = ? AND groupid = ? AND collection = ?",
 			targetRole, userid, req.Groupid, utils.COLLECTION_APPROVED)
 		logMembershipAction(log.LOG_TYPE_USER, log.LOG_SUBTYPE_ROLE_CHANGE, req.Groupid, userid, myid, targetRole)
+
+		// V1 parity (User::updateSystemRole, iznik-server/include/user/User.php:784-808):
+		// changes to memberships.role must propagate to users.systemrole so the
+		// global Moderator flag stays in sync. The frontend reads users.systemrole
+		// to render the crown next to a user (ModLogUser.vue, byline avatars,
+		// Discourse SSO). Without this, a per-group Moderator shows the crown on
+		// the members page but the plain User icon in the group logs — the
+		// Discourse #9481 post 545 "Trainee not showing as a Mod in the group
+		// logs" report, root cause confirmed against prod (e.g. uid 41231435
+		// DixieKay promoted 2026-05-27, memberships.role='Moderator' but
+		// users.systemrole still 'User').
+		if targetRole == utils.ROLE_MODERATOR || targetRole == utils.ROLE_OWNER {
+			// Promote: only flip 'User' to 'Moderator'. V1 used the same
+			// guard (UPDATE … WHERE systemrole = 'User') so Support / Admin
+			// users are never silently demoted to Moderator.
+			db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
+				utils.SYSTEMROLE_MODERATOR, userid, utils.SYSTEMROLE_USER)
+		} else {
+			// Demote: V1 only reverts systemrole to 'User' if the user no
+			// longer holds Moderator / Owner on ANY other approved group.
+			// Otherwise they're still a mod elsewhere and stay Moderator.
+			var remaining int64
+			db.Raw("SELECT COUNT(*) FROM memberships WHERE userid = ? AND role IN (?, ?) AND collection = ?",
+				userid, utils.ROLE_MODERATOR, utils.ROLE_OWNER, utils.COLLECTION_APPROVED).
+				Scan(&remaining)
+			if remaining == 0 {
+				db.Exec("UPDATE users SET systemrole = ? WHERE id = ? AND systemrole = ?",
+					utils.SYSTEMROLE_USER, userid, utils.SYSTEMROLE_MODERATOR)
+			}
+		}
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
