@@ -213,7 +213,7 @@ func TestGeoLocation_NetworkError(t *testing.T) {
 
 	app := newGeoApp()
 	req := httptest.NewRequest("GET", "/1.2.3.4", nil)
-	resp, err := app.Test(req, 2000) // 2s test timeout
+	resp, err := app.Test(req, 2000)
 	assert.NoError(t, err)
 	assert.Equal(t, 502, resp.StatusCode)
 }
