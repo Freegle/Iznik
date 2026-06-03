@@ -1,8 +1,10 @@
 #!/bin/bash
 # Freegle worktree management CLI
 # Manages multiple Docker Compose environments for parallel development.
-# Each worktree gets its own unique port range (offset by slot*5000) so
-# all instances can run simultaneously without conflicts.
+# Each worktree gets its own set of genuinely-free host ports (one per PORT_*
+# binding, ~25 in total) so all instances can run simultaneously without
+# conflicts. Ports need not be contiguous; freed worktrees release their ports
+# back into the pool, so there is no fixed cap on the number of worktrees.
 #
 # Usage:
 #   freegle status                Show all worktrees + container counts
@@ -21,6 +23,31 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# _next_free_ports COUNT START
+#   Reads reserved ports (one per line; non-numeric lines ignored) from stdin and
+#   prints COUNT free host ports (one per line), searching upward from START and
+#   never exceeding 65500. Returns non-zero if it cannot find that many.
+#   Ports need not be contiguous — a worktree just needs COUNT genuinely free
+#   ports, so a removed worktree's ports are naturally reused by the next one.
+_next_free_ports() {
+    local count="$1" start="$2" max=65500
+    local -A used=()
+    local p
+    while IFS= read -r p; do
+        [[ "$p" =~ ^[0-9]+$ ]] && used["$p"]=1
+    done
+    local port="$start" n=0
+    while (( n < count && port <= max )); do
+        if [[ -z "${used[$port]:-}" ]]; then
+            echo "$port"
+            used["$port"]=1
+            n=$(( n + 1 ))
+        fi
+        port=$(( port + 1 ))
+    done
+    (( n == count ))
+}
 
 # Get the root of the main git repo (not a worktree)
 get_main_repo() {
@@ -177,40 +204,8 @@ cmd_worktree_create() {
     echo "  Directory: $worktree_dir"
     echo "  Branch:    $branch"
 
-    # Pick the LOWEST free slot by collecting the slots in use across all existing
-    # worktrees (the main repo is slot 0) and choosing the smallest gap >= 1.
-    #
-    # We deliberately reuse freed slots rather than taking max_slot+1. The old
-    # max+1 approach never reused gaps: with repeated create/remove churn the slot
-    # number only ever climbed, and since port_offset = slot*5000, it eventually
-    # pushed PORT_* values past 65535 so containers silently failed to start.
-    # Removed worktrees drop out of `git worktree list` (and `worktree remove`
-    # runs `docker-compose down -v`), so their slots are genuinely free to reuse.
-    declare -A used_slots
-    for wt in $(git -C "$main_repo" worktree list --porcelain | grep '^worktree ' | sed 's/^worktree //'); do
-        if [[ -f "$wt/.env" ]]; then
-            local wt_status_port
-            wt_status_port=$(grep -E '^PORT_STATUS=' "$wt/.env" 2>/dev/null | cut -d= -f2 || true)
-            if [[ -n "$wt_status_port" && "$wt_status_port" =~ ^[0-9]+$ ]]; then
-                # Base STATUS port is 8081. Slot = (port - 8081) / 5000
-                local wt_slot=$(( (wt_status_port - 8081) / 5000 ))
-                used_slots["$wt_slot"]=1
-            fi
-        fi
-    done
-
-    # Smallest free slot >= 1 (slot 0 is the main repo). Cap at 10: with the
-    # +5000/slot offset the highest default port (11334) reaches 61334 at slot 10,
-    # still under 65535; slot 11+ would overflow and containers wouldn't bind.
-    local slot=1
-    while [[ -n "${used_slots[$slot]:-}" ]]; do
-        slot=$(( slot + 1 ))
-    done
-    if (( slot > 10 )); then
-        echo -e "${RED}Error: no free port slot available (slots 1-10 all in use).${NC}" >&2
-        echo "Remove an unused worktree first:  freegle worktree remove <name>" >&2
-        return 1
-    fi
+    # Port allocation happens after .env is in place (see below): each worktree is
+    # assigned a set of genuinely-free host ports rather than a fixed slot offset.
 
     # Create the worktree
     git -C "$main_repo" worktree add "$worktree_dir" "$branch"
@@ -231,36 +226,55 @@ cmd_worktree_create() {
     sed -i "s|^COMPOSE_PROJECT_NAME=.*|COMPOSE_PROJECT_NAME=${project_name}|" "$worktree_dir/.env"
     sed -i "s|^COMPOSE_FILE=.*|COMPOSE_FILE=docker-compose.yml|" "$worktree_dir/.env"
 
-    # Assign unique PORT_* values to avoid conflicts with other running instances.
+    # Assign a set of genuinely-free host ports — one per PORT_* binding.
     # All port bindings live in docker-compose.yml (for backwards compat with single-file
-    # installs), so changing COMPOSE_FILE alone doesn't prevent conflicts. We offset every
-    # PORT_* value by slot*5000 instead.
+    # installs), so changing COMPOSE_FILE alone doesn't prevent conflicts; each PORT_* must
+    # be a host port that no other worktree (or other process) is already using.
     #
-    #   slot=1 → +5000, slot=2 → +10000, …
-    # 5000 is the smallest round increment with zero port collisions across
-    # all 25 PORT_* defaults (ranging from 25 to 11334) for up to 10 slots.
-    # Max port at slot 10: 61334 (under 65535).
-    local port_offset=$(( slot * 5000 ))
+    # The old scheme offset every PORT_* by slot*5000. Because the highest default port is
+    # 11334, that overflowed 65535 after only 10 worktrees and wasted an ~11k-wide range per
+    # worktree even though each one needs only ~25 ports. Instead we now collect every port
+    # already reserved (all worktree .envs + compose defaults + ports currently bound on the
+    # host) and hand out the lowest free ports above 12000. Ports need not be contiguous, and
+    # a removed worktree's ports drop out of the reserved set, so they are reused — there is
+    # no fixed worktree cap.
 
-    # Build a map of effective PORT_* defaults: start with docker-compose.yml defaults,
-    # then override with whatever is explicitly set in the main .env
-    declare -A port_defaults
-    while IFS='=' read -r key val; do
-        port_defaults["$key"]="$val"
-    done < <(grep -oE 'PORT_[A-Z0-9_]+:-[0-9]+' "$main_repo/docker-compose.yml" | sed 's/:-/=/' | sort -u)
-    while IFS='=' read -r key val; do
-        if [[ "$key" =~ ^PORT_ && "$val" =~ ^[0-9]+$ ]]; then
-            port_defaults["$key"]="$val"
+    # The full set of PORT_* keys we must assign (compose defaults, sorted for a stable order).
+    local -a port_keys
+    mapfile -t port_keys < <(grep -oE 'PORT_[A-Z0-9_]+:-[0-9]+' "$main_repo/docker-compose.yml" \
+        | sed 's/:-.*//' | sort -u)
+    local num_ports=${#port_keys[@]}
+
+    # Collect reserved ports: every PORT_* in every worktree .env, the compose defaults, and
+    # any port currently bound on the host. Feed them to the free-port allocator.
+    local reserved
+    reserved=$(
+        for wt in $(git -C "$main_repo" worktree list --porcelain | grep '^worktree ' | sed 's/^worktree //'); do
+            [[ -f "$wt/.env" ]] && grep -oE '^PORT_[A-Z0-9_]+=[0-9]+' "$wt/.env" | grep -oE '[0-9]+$'
+        done
+        grep -oE 'PORT_[A-Z0-9_]+:-[0-9]+' "$main_repo/docker-compose.yml" | grep -oE '[0-9]+$'
+        if command -v ss >/dev/null 2>&1; then
+            ss -tlnH 2>/dev/null | awk '{print $4}' | grep -oE '[0-9]+$'
         fi
-    done < <(grep -E '^PORT_[A-Z0-9_]+=[0-9]+$' "$main_repo/.env")
+    )
+
+    local -a free_ports
+    mapfile -t free_ports < <(printf '%s\n' "$reserved" | _next_free_ports "$num_ports" 12000)
+    if (( ${#free_ports[@]} != num_ports )); then
+        echo -e "${RED}Error: could not find ${num_ports} free host ports below 65500.${NC}" >&2
+        echo "Remove an unused worktree to free its ports:  freegle worktree remove <name>" >&2
+        git -C "$main_repo" worktree remove "$worktree_dir" --force 2>/dev/null || true
+        return 1
+    fi
 
     # Ensure .env ends with a newline before appending (prevents concatenation with last line)
     [[ -f "$worktree_dir/.env" && -s "$worktree_dir/.env" ]] && sed -i -e '$a\' "$worktree_dir/.env"
 
-    # Write all PORT_* with offset into worktree .env
-    for key in "${!port_defaults[@]}"; do
-        local base_val="${port_defaults[$key]}"
-        local new_val=$(( base_val + port_offset ))
+    # Write each PORT_* with its assigned free port into the worktree .env
+    local i
+    for (( i = 0; i < num_ports; i++ )); do
+        local key="${port_keys[$i]}"
+        local new_val="${free_ports[$i]}"
         if grep -q "^${key}=" "$worktree_dir/.env"; then
             sed -i "s|^${key}=.*|${key}=${new_val}|" "$worktree_dir/.env"
         else
@@ -287,7 +301,7 @@ cmd_worktree_create() {
     traefik_port=$(grep -E '^PORT_TRAEFIK_HTTP=' "$worktree_dir/.env" | cut -d= -f2)
     local status_port
     status_port=$(grep -E '^PORT_STATUS=' "$worktree_dir/.env" | cut -d= -f2)
-    echo "Services are running on offset ports (+${port_offset} from primary)."
+    echo "Services are running on ${num_ports} dedicated free host ports."
     echo "  Status:  http://localhost:${status_port}"
     echo "  Traefik: http://freegle-dev-live.localhost:${traefik_port}"
     echo ""
@@ -359,7 +373,10 @@ cmd_worktree_remove() {
     echo -e "${GREEN}Worktree '${name}' removed.${NC}"
 }
 
-# Main command dispatch
+# Main command dispatch (skipped when sourced as a library, e.g. by tests)
+if [[ -n "${FREEGLE_LIB_ONLY:-}" ]]; then
+    return 0 2>/dev/null || exit 0
+fi
 case "${1:-help}" in
     status)
         cmd_status
