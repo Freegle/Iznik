@@ -430,7 +430,7 @@ class ContentCheckServiceTest extends TestCase
 
     public function test_check_language_short_text_skipped(): void
     {
-        // Text <= 50 chars is never checked regardless of content
+        // Text <= 80 chars is never checked regardless of content
         $result = $this->service->checkLanguage('', 'Hola'); // 4 chars
         $this->assertNull($result);
     }
