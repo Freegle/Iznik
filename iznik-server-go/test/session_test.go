@@ -1932,16 +1932,19 @@ func TestWorkCountTotalExcludesInformational(t *testing.T) {
 	total := work["total"].(float64)
 
 	// Total should include actionable items but NOT informational ones
-	// (chatreviewother, happiness, giftaid, pendingother).
+	// (chatreviewother, happiness, giftaid, pendingother, pendingmembers).
+	// pendingmembers (pending member applications) is excluded from total:
+	//   - V1 PHP never counted it (always 0 in getWorkCounts)
+	//   - No ModTools UI exists to action pending member applications
+	//   - Discourse bug 9654/10: new mods see hundreds of spurious counts
 	chatreviewother := work["chatreviewother"].(float64)
 	happiness := work["happiness"].(float64)
 	giftaid := work["giftaid"].(float64)
 
 	// Compute expected total from all actionable fields.
-	// giftaid is excluded from total to match PHP API behaviour (commit df11b11).
+	// giftaid and pendingmembers are excluded from total to match PHP API behaviour.
 	actionable := work["pending"].(float64) +
 		work["spam"].(float64) +
-		work["pendingmembers"].(float64) +
 		work["spammembers"].(float64) +
 		work["pendingevents"].(float64) +
 		work["pendingadmins"].(float64) +
@@ -1958,6 +1961,53 @@ func TestWorkCountTotalExcludesInformational(t *testing.T) {
 	_ = chatreviewother
 	_ = happiness
 	_ = giftaid
+}
+
+// ---------------------------------------------------------------------------
+// Work Counts: Pending member applications excluded from total (Discourse #9654)
+// ---------------------------------------------------------------------------
+
+// TestNewModPendingMembersNotInWorkTotal verifies that pending member
+// applications do not inflate work.total for a newly-promoted moderator.
+//
+// Root cause (Discourse topic 9654, post 10): V1 PHP never counted
+// pendingmembers in the work total (it was initialised to 0 and never
+// populated in Group::getWorkCounts). V2 correctly counts the DB rows
+// but there is no ModTools UI to action them, so large historical backlogs
+// (e.g. 466 on Hackney, 793 on Newham) caused a spurious red badge for
+// new mods with "no red tasks in the menu".
+func TestNewModPendingMembersNotInWorkTotal(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("newmod_pendmem")
+
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	// Baseline: a freshly-promoted mod with no pending work.
+	workBefore := getSessionWork(t, token)
+	totalBefore := workBefore["total"].(float64)
+
+	// Create a pending member application in the mod's group.
+	// This simulates the historical backlog that causes the spurious count.
+	pendingUserID := CreateTestUser(t, prefix+"_pending", "User")
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Pending')",
+		pendingUserID, groupID)
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", pendingUserID, groupID)
+
+	workAfter := getSessionWork(t, token)
+	pendingmembers := workAfter["pendingmembers"].(float64)
+	totalAfter := workAfter["total"].(float64)
+
+	// 3a: pendingmembers IS returned in the work object (informational data).
+	assert.Greater(t, pendingmembers, float64(0),
+		"pendingmembers should be returned as informational data (>0 after adding pending member)")
+
+	// 3b (FAILS on buggy code): total must not change when only pendingmembers increases.
+	// A new mod with only pending member applications should see total=0 (no actionable UI for them).
+	assert.Equal(t, totalBefore, totalAfter,
+		"work.total must not include pendingmembers — no ModTools UI exists to action them (Discourse #9654)")
 }
 
 // ---------------------------------------------------------------------------

@@ -1291,8 +1291,16 @@ func GetSession(c *fiber.Ctx) error {
 		wg2.Wait()
 
 		// Total only includes actionable work items (primary/red badge counts),
-		// not informational ones (other/blue badge counts like chatreviewother, happiness, giftaid, pendingother).
-		total := pending + spam + pendingmembers + spammembers + pendingevents +
+		// not informational ones (other/blue badge counts like chatreviewother, happiness, giftaid,
+		// pendingother, pendingmembers).
+		//
+		// pendingmembers (membership applications in the Pending collection) is excluded because:
+		//   1. V1 PHP never counted it — Group::getWorkCounts() initialised it to 0 and never populated it.
+		//   2. No ModTools UI exists to action pending member applications (no Pending filter on the
+		//      Members > Approved page and no dedicated Members > Pending menu item).
+		//   3. Large historical backlogs (e.g. 466 on Hackney, 793 on Newham) caused a spurious red
+		//      badge flood for newly-promoted moderators with "no red tasks in the menu" (Discourse #9654).
+		total := pending + spam + spammembers + pendingevents +
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +
