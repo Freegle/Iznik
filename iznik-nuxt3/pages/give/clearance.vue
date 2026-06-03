@@ -18,7 +18,11 @@
             @cleared="postcodeClear"
           />
           <ComposeGroup v-if="postcodeValid" class="mt-2" />
-          <NoticeMessage v-if="noGroups" variant="warning" class="mt-2">
+          <NoticeMessage
+            v-if="postcode && noGroups"
+            variant="warning"
+            class="mt-2"
+          >
             There's no Freegle community covering that area yet.
           </NoticeMessage>
 
@@ -29,11 +33,17 @@
             maxlength="60"
             data-testid="clearance-title"
           />
+          <p class="bulk-help mt-2 mb-1">
+            A few words about the whole offer — this applies to every item.
+            Don't put anything here that you'd only want to share once you've
+            agreed someone can have an item; use
+            <strong>Access instructions</strong>
+            below for that.
+          </p>
           <b-form-textarea
             v-model="description"
-            class="mt-2"
-            rows="2"
-            placeholder="A few words about the offer (optional) — e.g. Charity office clearance, collection from Brighton."
+            rows="4"
+            placeholder="e.g. Charity office clearance — everything must go by Friday. Collection from central Brighton."
             maxlength="2000"
           />
 
@@ -42,8 +52,8 @@
 
           <h2 class="bulk-section">When can people collect?</h2>
           <p class="bulk-help">
-            People pick one of these when they reply, so collections stay in set
-            times.
+            These are shown publicly. People pick one when they reply and we ask
+            them to confirm it, so collections stay in set times.
           </p>
           <div
             v-for="(s, i) in slots"
