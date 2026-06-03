@@ -65,11 +65,7 @@ const chatStore = useChatStore()
 // Reactive state (was data())
 // eslint-disable-next-line no-unused-vars
 const context = ref(null)
-// We fetch less stuff at once for MT.  This is because for slow devices and networks the time to fetch and
-// render is significant, and each of these consumes a lot of screen space.  So by fetching and rendering less,
-// we increase how fast it feels.
 const distance = ref(1000)
-const limit = ref(5)
 const show = ref(0)
 const bump = ref(0)
 const showDeleteModal = ref(false)
@@ -141,9 +137,7 @@ async function clearAndLoad() {
   // We don't want to pick up any real chat messages.
   await chatStore.clear()
 
-  await chatStore.fetchReviewChatsMT(REVIEWCHAT, {
-    limit: limit.value,
-  })
+  await chatStore.fetchReviewChatsMT(REVIEWCHAT, {})
 
   loading.value = false
   bump.value++
