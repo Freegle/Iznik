@@ -264,20 +264,30 @@ export function setupModMessages(reset) {
   })
 
   watch(workdetail, (newVal, oldVal) => {
-    // console.log('<<<<useModMessages watch workdetail. oldVal:', oldVal, 'newVal:', newVal)
     if (JSON.stringify(oldVal) === JSON.stringify(newVal)) return // Not actually changed
 
     const miscStore = useMiscStore()
-    // console.log('uMM getMessages',miscStore.deferGetMessages)
-    if (miscStore.deferGetMessages) return
 
-    // Refresh the list whenever the pending count changes.  The
-    // overflow:hidden guard was previously here to avoid audio interruption
-    // on iOS, but that concern belongs only in the beep logic (checkWork).
-    // Blocking the data fetch meant the list stayed stale whenever any
-    // modal was open at the time a new message arrived (Discourse #9737).
-    // console.log('uMM watch workdetail getmessages', newVal)
-    getMessages(newVal)
+    // When the work total INCREASES, genuinely new work has arrived (e.g. a new
+    // pending message). The list must refresh to show it - otherwise the count /
+    // red alert updates but the message stays invisible until a manual reload
+    // (Discourse #9737). This is NOT modal-specific: refresh regardless of the
+    // deferGetMessages smoothness flag and the body-overflow (beep) guard, which
+    // exist only to avoid jarring reloads on mod actions that do not add work.
+    const newTotal = Number(newVal?.total ?? 0)
+    const oldTotal = Number(oldVal?.total ?? 0)
+    if (newTotal > oldTotal) {
+      getMessages(newVal)
+      return
+    }
+
+    // No new work (count unchanged or decreased by a mod action the component
+    // already handled): keep the existing suppression so the list does not
+    // reload under the user's feet.
+    if (miscStore.deferGetMessages) return
+    if (document.body.style.overflow !== 'hidden') {
+      getMessages(newVal)
+    }
   })
 
   return {
