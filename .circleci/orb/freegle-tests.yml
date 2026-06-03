@@ -324,27 +324,28 @@ commands:
                 docker stop $old_containers 2>/dev/null || true
                 docker rm $old_containers 2>/dev/null || true
               fi
+            fi
 
-              # Ensure local Docker registry mirrors are in daemon.json.
-              # 5002 = build-layer cache (insecure-registries only).
-              # 5000 = Docker Hub pull-through mirror: must be in registry-mirrors so
-              # Docker routes infrastructure image pulls (percona, redis, traefik, etc.)
-              # through the local cache instead of hitting Docker Hub directly.
-              # Without 5000 in registry-mirrors the Katapult VM IP hits Docker Hub's
-              # anonymous pull rate limit (100/6h per IP) and docker-compose up fails.
-              NEEDS_DAEMON_UPDATE=false
-              grep -q "5002" /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
-              grep -q '"http://185.44.254.6:5000"' /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
-              if [ "$NEEDS_DAEMON_UPDATE" = "true" ]; then
-                echo "Updating Docker daemon.json for local registry mirrors..."
-                DAEMON_JSON=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
-                echo "$DAEMON_JSON" \
-                  | jq '."insecure-registries" = (."insecure-registries" // [] | (. + ["185.44.254.6:5000", "185.44.254.6:5002"]) | unique) | ."registry-mirrors" = (."registry-mirrors" // [] | (. + ["http://185.44.254.6:5000"]) | unique)' \
-                  | sudo tee /etc/docker/daemon.json > /dev/null \
-                  && sudo systemctl reload docker 2>/dev/null \
-                  && echo "Done — daemon config updated" \
-                  || echo "⚠️  Could not update daemon.json (non-critical)"
-              fi
+            # Ensure local Docker registry mirrors are in daemon.json.
+            # Must run for ALL runner types (Katapult cloud + self-hosted).
+            # 5002 = build-layer cache (insecure-registries only).
+            # 5000 = Docker Hub pull-through mirror: must be in registry-mirrors so
+            # Docker routes infrastructure image pulls (percona, redis, traefik, etc.)
+            # through the local cache instead of hitting Docker Hub directly.
+            # Without 5000 in registry-mirrors the Katapult VM IP hits Docker Hub's
+            # anonymous pull rate limit (100/6h per IP) and docker-compose up fails.
+            NEEDS_DAEMON_UPDATE=false
+            grep -q "5002" /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
+            grep -q '"http://185.44.254.6:5000"' /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
+            if [ "$NEEDS_DAEMON_UPDATE" = "true" ]; then
+              echo "Updating Docker daemon.json for local registry mirrors..."
+              DAEMON_JSON=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
+              echo "$DAEMON_JSON" \
+                | jq '."insecure-registries" = (."insecure-registries" // [] | (. + ["185.44.254.6:5000", "185.44.254.6:5002"]) | unique) | ."registry-mirrors" = (."registry-mirrors" // [] | (. + ["http://185.44.254.6:5000"]) | unique)' \
+                | sudo tee /etc/docker/daemon.json > /dev/null \
+                && sudo systemctl reload docker 2>/dev/null \
+                && echo "Done — daemon config updated" \
+                || echo "⚠️  Could not update daemon.json (non-critical)"
             fi
             # Only prune on cloud — self-hosted runner needs layer cache for fast builds
             if [ "${SELF_HOSTED_RUNNER:-}" != "true" ]; then
