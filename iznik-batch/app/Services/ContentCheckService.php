@@ -977,10 +977,12 @@ class ContentCheckService
     // Language detection — flag non-English/Welsh messages over 50 chars
     // (V1 Spam.php parity using patrickschur/language-detection).
     // English is accepted if it is the top language, or if P(en|cy) >= 0.8 *
-    // P(top language) — the same lax threshold V1 uses.
+    // P(top language) — the same lax threshold V1 uses (Spam.php line 413).
+    // The optional $detector callable accepts the lowercased text and returns
+    // an array of language => probability; used in tests for deterministic results.
     // -------------------------------------------------------------------------
 
-    public function checkLanguage(string $subject, string $textbody): ?array
+    public function checkLanguage(string $subject, string $textbody, ?callable $detector = null): ?array
     {
         $text = trim(str_ireplace('xxx', '', strtolower($textbody)));
 
@@ -989,8 +991,8 @@ class ContentCheckService
         }
 
         try {
-            $ld   = new Language();
-            $lang = $ld->detect($text)->close();
+            $detect = $detector ?? static fn(string $t) => (new Language())->detect($t)->close();
+            $lang   = $detect($text);
 
             if (empty($lang)) {
                 return null;
@@ -1003,7 +1005,7 @@ class ContentCheckService
             $cyProb    = $lang['cy'] ?? 0;
             $ourProb   = max($enProb, $cyProb);
 
-            $isAcceptable = ($firstLang === 'en' || $firstLang === 'cy' || $ourProb >= 0.9 * $firstProb);
+            $isAcceptable = ($firstLang === 'en' || $firstLang === 'cy' || $ourProb >= 0.8 * $firstProb);
 
             if (!$isAcceptable) {
                 return [

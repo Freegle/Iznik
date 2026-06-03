@@ -459,6 +459,32 @@ class ContentCheckServiceTest extends TestCase
         $this->assertTrue($result === null || $result['check'] === ContentCheckService::CHECK_LANGUAGE);
     }
 
+    public function test_english_at_v1_borderline_threshold_not_flagged(): void
+    {
+        // Regression test for Discourse #9656: English chat messages incorrectly
+        // flagged as non-English after threshold was tightened from 0.8 to 0.9.
+        //
+        // When another language scores slightly above English (ratio 0.826 — between
+        // the former-too-strict 0.9 and the V1-parity 0.8 threshold), the message
+        // should NOT be flagged. At 0.9: 0.38 >= 0.9*0.46=0.414 → false → wrongly
+        // flagged. At 0.8: 0.38 >= 0.8*0.46=0.368 → true → correctly accepted.
+        $borderlineDetector = static fn(string $text) => ['nl' => 0.46, 'en' => 0.38];
+        $text = 'Hi, is the sofa still available? I can collect on Saturday morning if that works for you. Thanks.';
+        $result = $this->service->checkLanguage('', $text, $borderlineDetector);
+        $this->assertNull($result, 'English at V1 0.8 threshold must not be flagged as non-English');
+    }
+
+    public function test_clearly_non_english_still_flagged_with_v1_threshold(): void
+    {
+        // A message where the top language is far above the English probability
+        // (ratio 0.3, well below both 0.8 and 0.9) must still be flagged.
+        $nonEnglishDetector = static fn(string $text) => ['fr' => 0.70, 'en' => 0.21];
+        $text = 'Hi, is the sofa still available? I can collect on Saturday morning if that works for you. Thanks.';
+        $result = $this->service->checkLanguage('', $text, $nonEnglishDetector);
+        $this->assertNotNull($result);
+        $this->assertEquals(ContentCheckService::CHECK_LANGUAGE, $result['check']);
+    }
+
     // =========================================================================
     // isGroupModerated — needs DB
     // =========================================================================
