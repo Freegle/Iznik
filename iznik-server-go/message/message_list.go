@@ -452,6 +452,11 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	search := c.Query("search", "")
 	fromuserStr := c.Query("fromuser", "0")
 	fromuser, _ := strconv.ParseUint(fromuserStr, 10, 64)
+	// Optional moderation filter for the standard (non-search) listing:
+	//   autoapproved — posts approved without a moderator (mg.approvedby IS NULL)
+	//   recentjoin   — posts from members who joined this group in the last 7 days
+	//   outsidecga   — posts whose location falls outside the group's area polygon
+	filter := c.Query("filter", "")
 
 	var msgIDs []uint64
 
@@ -568,11 +573,32 @@ func ListMessagesMT(c *fiber.Ctx) error {
 			branchArgs = []interface{}{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}
 		}
 
+		// Optional moderation filter. Values are matched against a fixed set, so the
+		// injected SQL is constant (no user-supplied text reaches the query).
+		filterJoin := ""
+		filterWhere := ""
+		switch filter {
+		case "autoapproved":
+			filterWhere = "AND mg.approvedby IS NULL "
+		case "recentjoin":
+			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
+			filterWhere = "AND mem.added >= NOW() - INTERVAL 7 DAY "
+		case "outsidecga":
+			// Use the canonical spatial point (messages_spatial), matching how
+			// location containment is checked elsewhere. Unmappable posts (no
+			// spatial row) can't be "outside" and are excluded by the INNER JOIN.
+			filterJoin = "INNER JOIN `groups` g ON g.id = mg.groupid " +
+				"INNER JOIN messages_spatial ms ON ms.msgid = mg.msgid AND ms.groupid = mg.groupid "
+			filterWhere = "AND g.polyindex IS NOT NULL AND NOT ST_Contains(g.polyindex, ms.point) "
+		}
+
 		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
 			"INNER JOIN messages m ON m.id = mg.msgid " +
 			"INNER JOIN users u ON u.id = m.fromuser " +
+			filterJoin +
 			"WHERE mg.groupid = %GID% AND " + collectionFilter + " AND mg.deleted = 0 " +
 			"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL " +
+			filterWhere +
 			contentcheckFilter + " "
 
 		if fromuser > 0 {

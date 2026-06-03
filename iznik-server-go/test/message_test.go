@@ -5844,6 +5844,138 @@ func TestListMessagesMT_LimboUserMessageNotReturned(t *testing.T) {
 	db.Exec("UPDATE users SET deleted = NULL WHERE id = ?", posterID)
 }
 
+func TestListMessagesMT_FilterAutoApproved(t *testing.T) {
+	// filter=autoapproved returns only posts approved without a moderator
+	// (messages_groups.approvedby IS NULL).
+	prefix := uniquePrefix("lstmt_autoapp")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	autoMsg := CreateTestMessage(t, posterID, groupID, prefix+" auto approved", 52.0, -1.0)
+	manualMsg := CreateTestMessage(t, posterID, groupID, prefix+" mod approved", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=NULL WHERE msgid=?", autoMsg)
+	db.Exec("UPDATE messages_groups SET collection='Approved', approvedby=? WHERE msgid=?", modID, manualMsg)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Approved&filter=autoapproved&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	msgs, _ := body["messages"].([]interface{})
+	foundAuto, foundManual := false, false
+	for _, id := range msgs {
+		if id == float64(autoMsg) {
+			foundAuto = true
+		}
+		if id == float64(manualMsg) {
+			foundManual = true
+		}
+	}
+	assert.True(t, foundAuto, "auto-approved message should appear under autoapproved filter")
+	assert.False(t, foundManual, "mod-approved message should not appear under autoapproved filter")
+
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", autoMsg, manualMsg)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?)", autoMsg, manualMsg)
+}
+
+func TestListMessagesMT_FilterRecentJoin(t *testing.T) {
+	// filter=recentjoin returns only posts from members who joined this group
+	// within the last 7 days.
+	prefix := uniquePrefix("lstmt_recentjoin")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	recentID := CreateTestUser(t, prefix+"_recent", "User")
+	oldID := CreateTestUser(t, prefix+"_old", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, recentID, groupID, "Member")
+	CreateTestMembership(t, oldID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// The old member joined 30 days ago.
+	db.Exec("UPDATE memberships SET added = NOW() - INTERVAL 30 DAY WHERE userid = ? AND groupid = ?", oldID, groupID)
+
+	recentMsg := CreateTestMessage(t, recentID, groupID, prefix+" recent joiner post", 52.0, -1.0)
+	oldMsg := CreateTestMessage(t, oldID, groupID, prefix+" old joiner post", 52.0, -1.0)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Approved&filter=recentjoin&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	msgs, _ := body["messages"].([]interface{})
+	foundRecent, foundOld := false, false
+	for _, id := range msgs {
+		if id == float64(recentMsg) {
+			foundRecent = true
+		}
+		if id == float64(oldMsg) {
+			foundOld = true
+		}
+	}
+	assert.True(t, foundRecent, "recent joiner's post should appear under recentjoin filter")
+	assert.False(t, foundOld, "long-standing member's post should not appear under recentjoin filter")
+
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", recentMsg, oldMsg)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?)", recentMsg, oldMsg)
+}
+
+func TestListMessagesMT_FilterOutsideCGA(t *testing.T) {
+	// filter=outsidecga returns only posts whose location falls outside the
+	// group's area polygon.
+	prefix := uniquePrefix("lstmt_outcga")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Define the group's area: a small box around (lng -1.0, lat 52.0). Freegle
+	// stores degrees labelled SRID 3857, matching messages_spatial.point.
+	db.Exec("UPDATE `groups` SET polyindex = ST_GeomFromText('POLYGON((-1.1 51.9, -0.9 51.9, -0.9 52.1, -1.1 52.1, -1.1 51.9))', 3857) WHERE id = ?", groupID)
+
+	insideMsg := CreateTestMessage(t, posterID, groupID, prefix+" inside area", 52.0, -1.0)
+	outsideMsg := CreateTestMessage(t, posterID, groupID, prefix+" outside area", 52.0, -5.0)
+
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Approved&filter=outsidecga&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	msgs, _ := body["messages"].([]interface{})
+	foundInside, foundOutside := false, false
+	for _, id := range msgs {
+		if id == float64(insideMsg) {
+			foundInside = true
+		}
+		if id == float64(outsideMsg) {
+			foundOutside = true
+		}
+	}
+	assert.True(t, foundOutside, "out-of-area post should appear under outsidecga filter")
+	assert.False(t, foundInside, "in-area post should not appear under outsidecga filter")
+
+	db.Exec("DELETE FROM messages_spatial WHERE msgid IN (?, ?)", insideMsg, outsideMsg)
+	db.Exec("DELETE FROM messages_groups WHERE msgid IN (?, ?)", insideMsg, outsideMsg)
+	db.Exec("DELETE FROM messages WHERE id IN (?, ?)", insideMsg, outsideMsg)
+}
+
 func TestListMessagesPendingUnauthorized(t *testing.T) {
 	prefix := uniquePrefix("lstmsg_pend_unauth")
 
