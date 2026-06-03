@@ -139,7 +139,7 @@
           <span>Profile</span>
         </button>
         <button
-          v-if="chat.chattype === 'User2User' || chat.chattype === 'User2Mod' || !unseen"
+          v-if="chat.chattype !== 'User2Mod' || chat.status === 'Closed'"
           class="action-btn"
           @click="chat.status === 'Closed' ? unhide() : showhide()"
         >
