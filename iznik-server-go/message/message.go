@@ -249,6 +249,8 @@ type Message struct {
 	// exposed so list/summary views can flag a bulk offer cheaply.
 	BulkItems []BulkItem `json:"bulkitems,omitempty" gorm:"-"`
 	Bulkcount int        `json:"bulkcount,omitempty" gorm:"-"`
+	// Bulkslots are the offerer-defined collection windows a replier picks from.
+	Bulkslots []string `json:"bulkslots,omitempty" gorm:"-"`
 }
 
 // MessagePosting represents a posting history record from messages_postings.
@@ -801,6 +803,9 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				canSeeInterest := message.Fromuser == myid || isGroupMod
 				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
 				message.Bulkcount = len(message.BulkItems)
+				if message.Bulkcount > 0 {
+					message.Bulkslots = LoadBulkSlots(db, message.ID)
+				}
 
 				mu.Lock()
 				messages = append(messages, message)
@@ -2835,6 +2840,7 @@ type patchMessageRequest struct {
 	BadAIImages  []uint64      `json:"badAIImages"`
 	Deadline     *string  `json:"deadline"`
 	Bulkitems    []BulkItemInput `json:"bulkitems"`
+	Bulkslots    []string        `json:"bulkslots"`
 }
 
 // resolvePartnerAuth reads a ?partner= query param and resolves the acting user ID.
@@ -3280,10 +3286,13 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 		total := upsertBulkItems(db, req.ID, req.Bulkitems)
 		db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, req.ID)
 		if req.Textbody == nil {
-			if summary := buildBulkSummary(req.Bulkitems); summary != "" {
+			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
 				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, req.ID)
 			}
 		}
+	}
+	if req.Bulkslots != nil {
+		upsertBulkSlots(db, req.ID, req.Bulkslots)
 	}
 
 	return nil
@@ -3612,6 +3621,7 @@ func PutMessage(c *fiber.Ctx) error {
 		Attachments        AttachmentIDs   `json:"attachments"`
 		Email              string          `json:"email"`
 		Bulkitems          []BulkItemInput `json:"bulkitems"`
+		Bulkslots          []string        `json:"bulkslots"`
 	}
 
 	var req PutMessageRequest
@@ -3779,10 +3789,13 @@ func PutMessage(c *fiber.Ctx) error {
 			db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, newMsgID)
 		}
 		if strings.TrimSpace(req.Textbody) == "" {
-			if summary := buildBulkSummary(req.Bulkitems); summary != "" {
+			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
 				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, newMsgID)
 			}
 		}
+	}
+	if req.Bulkslots != nil {
+		upsertBulkSlots(db, newMsgID, req.Bulkslots)
 	}
 
 	// Add spatial data if locationid is provided, and update the user's last known location

@@ -197,6 +197,15 @@ config.global.stubs = {
     template: '<span class="badge" :class="variant"><slot /></span>',
     props: ['variant'],
   },
+  'b-form-radio-group': {
+    template: '<div class="radio-group"><slot /></div>',
+    props: ['modelValue', 'options', 'stacked'],
+  },
+  'b-form-radio': {
+    template:
+      '<label class="form-radio"><input type="radio" :value="value" @change="$emit(\'update:modelValue\', value)" /><slot /></label>',
+    props: ['modelValue', 'value'],
+  },
 
   // Stub FontAwesome
   'v-icon': { template: '<i :class="icon"></i>', props: ['icon'] },

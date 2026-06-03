@@ -5,25 +5,24 @@
       {{ items.length }} items in this offer
     </h4>
     <p v-if="!isOwner" class="text-muted small mb-2">
-      Tick the items you'd like and how many. We'll let the giver know in one
-      message.
+      Turn on the items you'd like and choose how many.
     </p>
 
     <ul class="bulkitems__list">
-      <li v-for="item in items" :key="item.id" class="bulkitem">
-        <div class="bulkitem__photo">
+      <li v-for="item in items" :key="item.id" class="bitem">
+        <div class="bitem__photo">
           <img
             v-if="thumb(item)"
             :src="thumb(item)"
             :alt="item.name"
             loading="lazy"
           />
-          <v-icon v-else icon="image" class="bulkitem__nophoto" />
+          <v-icon v-else icon="image" class="bitem__nophoto" />
         </div>
 
-        <div class="bulkitem__detail">
-          <div class="bulkitem__name">{{ item.name }}</div>
-          <div class="bulkitem__meta">
+        <div class="bitem__detail">
+          <div class="bitem__name">{{ item.name }}</div>
+          <div class="bitem__meta">
             <b-badge variant="light" class="me-1"
               >{{ item.quantity }} available</b-badge
             >
@@ -38,12 +37,9 @@
               item.dimensions
             }}</span>
           </div>
-          <div v-if="item.description" class="bulkitem__desc small text-muted">
-            {{ item.description }}
-          </div>
 
           <!-- Owner sees a live interest summary. -->
-          <div v-if="isOwner" class="bulkitem__interest small">
+          <div v-if="isOwner" class="bitem__interest small">
             <span v-if="item.interestcount">
               <strong>{{ item.interestcount }}</strong>
               interested · <strong>{{ item.interestedquantity }}</strong>
@@ -53,46 +49,54 @@
           </div>
         </div>
 
-        <!-- Recipient picks quantity. -->
-        <div v-if="!isOwner && !message.successful" class="bulkitem__pick">
+        <!-- Recipient: a standard on/off toggle; quantity appears once it's on. -->
+        <div v-if="!isOwner && !message.successful" class="bitem__pick">
           <b-form-checkbox
             v-model="picks[item.id].checked"
+            switch
+            size="lg"
+            class="bitem__toggle"
             :data-testid="'pick-' + item.id"
             @change="onCheck(item)"
-          >
-            Want
-          </b-form-checkbox>
-          <NumberIncrementDecrement
-            v-if="picks[item.id].checked"
-            v-model="picks[item.id].quantity"
-            :min="1"
-            :max="item.quantity"
-            size="sm"
-            label="How many?"
-            :label-s-r-only="true"
-            class="bulkitem__qty"
           />
+          <div class="bitem__qty">
+            <NumberIncrementDecrement
+              v-if="picks[item.id].checked"
+              v-model="picks[item.id].quantity"
+              :min="1"
+              :max="item.quantity"
+              size="sm"
+              label="How many?"
+              :label-s-r-only="true"
+            />
+          </div>
         </div>
       </li>
     </ul>
 
     <div v-if="!isOwner && !message.successful" class="bulkitems__actions">
       <b-form-group
-        label="When could you collect?"
-        label-for="bulk-cancollect"
+        label="Which collection time suits you?"
         class="mb-2"
       >
-        <b-form-input
-          id="bulk-cancollect"
+        <b-form-radio-group
+          v-if="slots.length"
           v-model="cancollect"
-          placeholder="e.g. weekday afternoons, or Sat 10am-2pm"
+          :options="slotOptions"
+          stacked
+          data-testid="slot-picker"
+        />
+        <b-form-input
+          v-else
+          v-model="cancollect"
+          placeholder="When could you collect?"
           maxlength="255"
         />
       </b-form-group>
 
       <SpinButton
         variant="primary"
-        :disabled="!anyPicked"
+        :disabled="!canRegister"
         icon-name="check"
         :label="submitted ? 'Update my interest' : 'Register interest'"
         data-testid="register-interest"
@@ -122,6 +126,8 @@ const authStore = useAuthStore()
 
 const message = computed(() => messageStore.byId(props.id) || {})
 const items = computed(() => message.value?.bulkitems || [])
+const slots = computed(() => message.value?.bulkslots || [])
+const slotOptions = computed(() => slots.value.map((s) => ({ value: s, text: s })))
 const isOwner = computed(
   () =>
     !!authStore.user &&
@@ -161,8 +167,15 @@ const anyPicked = computed(() =>
   Object.values(picks).some((p) => p.checked && p.quantity > 0)
 )
 
+// Can only register once something is picked, and — when the giver has set
+// collection windows — once one of those has been chosen.
+const canRegister = computed(() => {
+  if (!anyPicked.value) return false
+  if (slots.value.length && !cancollect.value) return false
+  return true
+})
+
 function onCheck(item) {
-  // Default a freshly-checked item to 1 if it had no quantity.
   const p = picks[item.id]
   if (p.checked && (!p.quantity || p.quantity < 1)) {
     p.quantity = 1
@@ -179,9 +192,9 @@ function conditionLabel(c) {
   return c === 'LikeNew' ? 'Like new' : c
 }
 
-// Build the API payload: checked items at their quantity, plus any item the
-// user had previously expressed interest in but has now unchecked (quantity 0
-// withdraws it).
+// Build the API payload: checked items at their quantity (with the chosen
+// collection time), plus any item previously wanted but now switched off
+// (quantity 0 withdraws it).
 function buildPayload() {
   const out = []
   for (const item of items.value) {
@@ -202,7 +215,6 @@ function buildPayload() {
 
 async function submit(callback) {
   if (!authStore.user) {
-    // Prompt login; the user can submit again once authenticated.
     authStore.forceLogin = true
     if (callback) callback()
     return
@@ -215,7 +227,7 @@ async function submit(callback) {
   if (callback) callback()
 }
 
-defineExpose({ buildPayload, picks })
+defineExpose({ buildPayload, picks, canRegister })
 </script>
 
 <style scoped lang="scss">
@@ -238,18 +250,20 @@ defineExpose({ buildPayload, picks })
   padding: 0;
 }
 
-.bulkitem {
+/* Consistent row: photo | details (flex) | pick column (fixed width). */
+.bitem {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.75rem;
   padding: 0.6rem 0;
   border-bottom: 1px solid $color-gray--lighter;
+  min-height: 64px;
 }
 
-.bulkitem__photo {
-  flex: 0 0 64px;
-  width: 64px;
-  height: 64px;
+.bitem__photo {
+  flex: 0 0 56px;
+  width: 56px;
+  height: 56px;
   border-radius: 6px;
   overflow: hidden;
   background-color: $color-gray--lighter;
@@ -264,29 +278,31 @@ defineExpose({ buildPayload, picks })
   }
 }
 
-.bulkitem__nophoto {
+.bitem__nophoto {
   color: $color-gray--normal;
-  font-size: 1.5rem;
+  font-size: 1.4rem;
 }
 
-.bulkitem__detail {
+.bitem__detail {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.bulkitem__name {
+.bitem__name {
   font-weight: 600;
 }
 
-.bulkitem__pick {
-  flex: 0 0 auto;
+/* Fixed-width pick column so rows stay the same shape whether on or off. */
+.bitem__pick {
+  flex: 0 0 7.5rem;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 0.25rem;
+  gap: 0.35rem;
 }
 
-.bulkitem__qty {
+.bitem__qty {
+  min-height: 2rem;
   width: 7rem;
 }
 </style>

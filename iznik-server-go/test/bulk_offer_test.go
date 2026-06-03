@@ -350,3 +350,57 @@ func TestBulkOfferPatchRebuildsCatalogue(t *testing.T) {
 	db.Raw("SELECT availableinitially FROM messages WHERE id = ?", msgID).Scan(&availInit)
 	assert.Equal(t, 8, availInit, "availableinitially rebuilt to 5+3")
 }
+
+// TestBulkOfferSlots checks the offerer's collection windows are stored on
+// create, summarised into the textbody (so non-structured channels like Trash
+// Nothing / email see them), and returned by GET in order.
+func TestBulkOfferSlots(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("bulkslots")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	token := getToken(t, ownerID)
+
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+
+	body := map[string]interface{}{
+		"messagetype": "Offer",
+		"item":        "Office Clearance",
+		"collection":  "Draft",
+		"groupid":     groupID,
+		"locationid":  locationID,
+		"bulkitems": []map[string]interface{}{
+			{"name": "Desk", "quantity": 2, "condition": "Good"},
+		},
+		"bulkslots": []string{"Tue 7 Apr, 10am-4pm", "Wed 8 Apr, 10am-4pm"},
+	}
+	bb, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	msgID := uint64(result["id"].(float64))
+
+	var count int64
+	db.Raw("SELECT COUNT(*) FROM messages_bulk_slots WHERE msgid = ?", msgID).Scan(&count)
+	assert.Equal(t, int64(2), count)
+
+	// Collection windows summarised into the textbody for non-structured channels.
+	var tb string
+	db.Raw("SELECT textbody FROM messages WHERE id = ?", msgID).Scan(&tb)
+	assert.Contains(t, tb, "Collection times")
+	assert.Contains(t, tb, "Tue 7 Apr")
+
+	// GET returns the slots (seed a group row so the draft is visible to the owner).
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, 'Approved', NOW())", msgID, groupID)
+	gresp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token), nil), 10000)
+	require.NoError(t, err)
+	var msg message.Message
+	json.Unmarshal(rsp(gresp), &msg)
+	assert.Equal(t, []string{"Tue 7 Apr, 10am-4pm", "Wed 8 Apr, 10am-4pm"}, msg.Bulkslots)
+}
