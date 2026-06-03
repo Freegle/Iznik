@@ -463,3 +463,113 @@ func TestBulkItemPhotoIngestion(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE bulkitemid = ?", deskID).Scan(&count)
 	assert.Equal(t, int64(1), count, "ingestion is idempotent — no duplicate attachment")
 }
+
+// TestBulkOfferAccessInstructions checks that access instructions are stored on
+// PUT, returned only to the offerer/mod (never a plain viewer), and delivered to
+// a replier via chat only once the offerer promises (Reserves) them an item.
+func TestBulkOfferAccessInstructions(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("bulkaccess")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+	ownerToken := getToken(t, ownerID)
+
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+
+	const instructions = "12 High St, side door, buzz flat 3"
+	body := map[string]interface{}{
+		"messagetype":        "Offer",
+		"item":               "Office Clearance",
+		"collection":         "Draft",
+		"groupid":            groupID,
+		"locationid":         locationID,
+		"accessinstructions": instructions,
+		"bulkitems": []map[string]interface{}{
+			{"name": "Desk", "quantity": 2, "condition": "Good"},
+		},
+	}
+	bb, _ := json.Marshal(body)
+	req := httptest.NewRequest("PUT", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	msgID := uint64(result["id"].(float64))
+	require.NotZero(t, msgID)
+
+	// Stored on the message.
+	var stored string
+	db.Raw("SELECT COALESCE(accessinstructions,'') FROM messages WHERE id = ?", msgID).Scan(&stored)
+	assert.Equal(t, instructions, stored)
+
+	// Make the draft visible so GET returns it.
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, 'Approved', NOW())", msgID, groupID)
+	deskID := addBulkItemRef(t, msgID)
+
+	// --- Owner sees the instructions. ---
+	oresp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, ownerToken), nil), 10000)
+	require.NoError(t, err)
+	var ownerMsg message.Message
+	json.Unmarshal(rsp(oresp), &ownerMsg)
+	require.NotNil(t, ownerMsg.Accessinstructions, "owner should see access instructions")
+	assert.Equal(t, instructions, *ownerMsg.Accessinstructions)
+
+	// --- A plain viewer must NOT see the instructions. ---
+	vresp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, getToken(t, viewerID)), nil), 10000)
+	require.NoError(t, err)
+	var viewerMsg message.Message
+	json.Unmarshal(rsp(vresp), &viewerMsg)
+	assert.Nil(t, viewerMsg.Accessinstructions, "a plain viewer must not see access instructions")
+
+	// --- Reveal on promise: owner Reserves the item for the wanter. ---
+	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 1, 'Interested')", deskID, msgID, wanterID)
+
+	stateBody := map[string]interface{}{
+		"action": "BulkInterestState", "id": msgID,
+		"bulkitemid": deskID, "userid": wanterID, "state": "Reserved",
+	}
+	sb, _ := json.Marshal(stateBody)
+	sreq := httptest.NewRequest("POST", "/api/message?jwt="+ownerToken, bytes.NewBuffer(sb))
+	sreq.Header.Set("Content-Type", "application/json")
+	sresp, err := getApp().Test(sreq, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, sresp.StatusCode)
+
+	// The wanter received a chat message containing the instructions.
+	var chatBody string
+	db.Raw("SELECT cm.message FROM chat_messages cm "+
+		"INNER JOIN chat_rooms cr ON cr.id = cm.chatid "+
+		"WHERE cm.userid = ? AND ((cr.user1 = ? AND cr.user2 = ?) OR (cr.user1 = ? AND cr.user2 = ?)) "+
+		"ORDER BY cm.id DESC LIMIT 1",
+		ownerID, ownerID, wanterID, wanterID, ownerID).Scan(&chatBody)
+	assert.Contains(t, chatBody, instructions, "the promised replier should receive the access instructions")
+
+	// Re-reserving must not send the instructions again (state already Reserved).
+	sreq2 := httptest.NewRequest("POST", "/api/message?jwt="+ownerToken, mustJSON(stateBody))
+	sreq2.Header.Set("Content-Type", "application/json")
+	getApp().Test(sreq2, 10000)
+	var sent int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages cm INNER JOIN chat_rooms cr ON cr.id = cm.chatid "+
+		"WHERE cm.userid = ? AND cm.message LIKE ? AND ((cr.user1 = ? AND cr.user2 = ?) OR (cr.user1 = ? AND cr.user2 = ?))",
+		ownerID, "%"+instructions+"%", ownerID, wanterID, wanterID, ownerID).Scan(&sent)
+	assert.Equal(t, int64(1), sent, "access instructions sent once, not on every re-reserve")
+}
+
+// addBulkItemRef returns the id of the (single) bulk item created for a message.
+func addBulkItemRef(t *testing.T, msgid uint64) uint64 {
+	var id uint64
+	database.DBConn.Raw("SELECT id FROM messages_bulk_items WHERE msgid = ? ORDER BY id ASC LIMIT 1", msgid).Scan(&id)
+	require.NotZero(t, id)
+	return id
+}
+
+func mustJSON(v interface{}) *bytes.Buffer {
+	b, _ := json.Marshal(v)
+	return bytes.NewBuffer(b)
+}

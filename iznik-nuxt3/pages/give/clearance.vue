@@ -10,39 +10,40 @@
             conversation.
           </p>
 
-          <b-form-group
-            label="What's the overall offer called?"
-            label-for="bulk-title"
-          >
-            <b-form-input
-              id="bulk-title"
-              v-model="title"
-              placeholder="e.g. Office Clearance"
-              maxlength="60"
-              data-testid="clearance-title"
-            />
-          </b-form-group>
+          <!-- Where (postcode) first: it picks the community. -->
+          <h2 class="bulk-section">Where are you?</h2>
+          <PostCode
+            :value="postcode"
+            @selected="postcodeSelect"
+            @cleared="postcodeClear"
+          />
+          <ComposeGroup v-if="postcodeValid" class="mt-2" />
+          <NoticeMessage v-if="noGroups" variant="warning" class="mt-2">
+            There's no Freegle community covering that area yet.
+          </NoticeMessage>
 
-          <b-form-group
-            label="A few words about the offer (optional)"
-            label-for="bulk-desc"
-          >
-            <b-form-textarea
-              id="bulk-desc"
-              v-model="description"
-              rows="2"
-              placeholder="e.g. Charity office clearance, collection from Brighton on Tue 7th / Wed 8th."
-              maxlength="2000"
-            />
-          </b-form-group>
+          <h2 class="bulk-section">What are you offering?</h2>
+          <b-form-input
+            v-model="title"
+            placeholder="e.g. Office Clearance"
+            maxlength="60"
+            data-testid="clearance-title"
+          />
+          <b-form-textarea
+            v-model="description"
+            class="mt-2"
+            rows="2"
+            placeholder="A few words about the offer (optional) — e.g. Charity office clearance, collection from Brighton."
+            maxlength="2000"
+          />
 
-          <h3 class="mt-3 h5">The items</h3>
+          <h2 class="bulk-section">The items</h2>
           <BulkItemEditor v-model="items" />
 
-          <h3 class="mt-4 h5">When can people collect?</h3>
-          <p class="text-muted small mb-2">
-            Add the collection windows you can offer. People pick one of these
-            when they reply, so collections stay in set times.
+          <h2 class="bulk-section">When can people collect?</h2>
+          <p class="bulk-help">
+            People pick one of these when they reply, so collections stay in set
+            times.
           </p>
           <div
             v-for="(s, i) in slots"
@@ -73,28 +74,18 @@
             <v-icon icon="plus" /> Add a collection time
           </b-button>
 
-          <h3 class="mt-4 h5">Where are you?</h3>
-          <PostCode
-            :value="postcode"
-            @selected="postcodeSelect"
-            @cleared="postcodeClear"
+          <h2 class="bulk-section">Access instructions</h2>
+          <p class="bulk-help">
+            Only shared with someone once you promise them an item — e.g. the
+            exact address, a gate code, or intercom instructions.
+          </p>
+          <b-form-textarea
+            v-model="accessInstructions"
+            rows="2"
+            placeholder="e.g. 12 High St, side door, buzz flat 3. Optional."
+            maxlength="2000"
+            data-testid="clearance-access"
           />
-          <ComposeGroup v-if="postcodeValid" class="mt-2" />
-          <NoticeMessage v-if="noGroups" variant="warning" class="mt-2">
-            There's no Freegle community covering that area yet.
-          </NoticeMessage>
-
-          <div v-if="!loggedIn" class="mt-3">
-            <b-form-group label="Your email address" label-for="bulk-email">
-              <b-form-input
-                id="bulk-email"
-                v-model="email"
-                type="email"
-                placeholder="you@example.com"
-                data-testid="clearance-email"
-              />
-            </b-form-group>
-          </div>
 
           <div class="my-4">
             <SpinButton
@@ -117,7 +108,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from '#imports'
 import {
   setup,
@@ -126,6 +117,7 @@ import {
   makeCanSubmit,
 } from '~/composables/useCompose'
 import { useComposeStore } from '~/stores/compose'
+import { useAuthStore } from '~/stores/auth'
 import PostCode from '~/components/PostCode.vue'
 import ComposeGroup from '~/components/ComposeGroup.vue'
 import BulkItemEditor from '~/components/BulkItemEditor.vue'
@@ -133,6 +125,7 @@ import SpinButton from '~/components/SpinButton.vue'
 import NoticeMessage from '~/components/NoticeMessage.vue'
 
 const composeStore = useComposeStore()
+const authStore = useAuthStore()
 const router = useRouter()
 
 const { email, loggedIn, postcode, postcodeValid, noGroups } = await setup(
@@ -143,7 +136,16 @@ const title = ref('')
 const description = ref('')
 const items = ref([])
 const slots = ref([''])
+const accessInstructions = ref('')
 const wentWrong = ref(false)
+
+// Bulk freegling is login-only — there's no logged-out flow. Show the
+// sign-up/login modal immediately so people start from a signed-in state.
+onMounted(() => {
+  if (!loggedIn.value) {
+    authStore.forceLogin = true
+  }
+})
 
 function removeSlot(i) {
   slots.value.splice(i, 1)
@@ -154,12 +156,10 @@ const messageValid = computed(
   () => !!title.value.trim() && items.value.some((i) => i.name && i.name.trim())
 )
 
-const emailValid = computed(() => /^\S+@\S+\.\S+$/.test(email.value || ''))
-
 const canSubmit = makeCanSubmit({
   messageValid,
   loggedIn,
-  emailValid,
+  emailValid: computed(() => false),
   emailBelongsToSomeoneElse: computed(() => false),
   postcodeValid,
   closed: computed(() => false),
@@ -168,6 +168,11 @@ const canSubmit = makeCanSubmit({
 })
 
 async function submit(callback) {
+  if (!loggedIn.value) {
+    authStore.forceLogin = true
+    if (callback) callback()
+    return
+  }
   wentWrong.value = false
   try {
     const message = {
@@ -178,6 +183,7 @@ async function submit(callback) {
       attachments: [],
       bulkitems: items.value,
       bulkslots: slots.value.map((s) => s.trim()).filter(Boolean),
+      accessinstructions: accessInstructions.value.trim(),
     }
     const id = await composeStore.createDraft(message, email.value)
     await composeStore.submitDraft(id, email.value)
@@ -193,3 +199,22 @@ async function submit(callback) {
 definePageMeta({ layout: 'default' })
 useHead({ title: 'Offer lots of items at once' })
 </script>
+
+<style scoped lang="scss">
+@import 'bootstrap/scss/functions';
+@import 'assets/css/_color-vars.scss';
+
+/* One consistent heading style for every section on the page. */
+.bulk-section {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: $color-green--darker;
+  margin: 1.25rem 0 0.5rem;
+}
+
+.bulk-help {
+  font-size: 0.85rem;
+  color: $color-gray--dark;
+  margin-bottom: 0.5rem;
+}
+</style>
