@@ -273,7 +273,12 @@ class UnifiedDigestService
                 }
                 if (!$dryRun) {
                     if ($sponsorsCache === null) {
-                        $sponsorsCache = $this->getSponsorsForUser($user);
+                        // Immediate digest is about THIS group's post only, so
+                        // scope sponsors to the group (V1 parity), not the
+                        // recipient's whole membership union. The whole batch
+                        // is one $groupid, so a single lookup serves every
+                        // recipient in this loop.
+                        $sponsorsCache = $this->getSponsorsForGroup((int) $groupid);
                     }
                     $deduped = collect([
                         ['message' => $message, 'postedToGroups' => [$groupid]],
@@ -676,8 +681,13 @@ class UnifiedDigestService
             return ['status' => 'no_posts', 'count' => 0];
         }
 
-        // Get deduplicated sponsors for the user's groups.
-        $sponsors = $this->getSponsorsForUser($user);
+        // Sponsors. The combined daily digest spans all the user's groups, so
+        // the cross-group union is right; the immediate path scopes per-post to
+        // that post's group below (V1 parity — one group's email, one group's
+        // sponsors).
+        $sponsors = $mode === self::MODE_IMMEDIATE
+            ? collect()
+            : $this->getSponsorsForUser($user);
 
         if ($mode === self::MODE_IMMEDIATE) {
             // One email per post. Advance the tracker after each send so a
@@ -686,8 +696,12 @@ class UnifiedDigestService
             $sent = 0;
             foreach ($deduplicatedPosts as $deduped) {
                 if (!$dryRun) {
+                    // Each immediate email is about one post on one group; carry
+                    // only that group's sponsors.
+                    $postGroupId = (int) ($deduped['postedToGroups'][0] ?? 0);
+                    $postSponsors = $this->getSponsorsForGroup($postGroupId);
                     app(\App\Services\EmailSpoolerService::class)->spool(
-                        new UnifiedDigest($user, collect([$deduped]), $mode, $sponsors),
+                        new UnifiedDigest($user, collect([$deduped]), $mode, $postSponsors),
                         emailType: 'digest_immediate',
                     );
                     $this->advanceImmediateTracker($digestTracker, $deduped['message']);
@@ -1015,6 +1029,31 @@ class UnifiedDigestService
         // appears once. Keep the entry with the highest amount (first
         // in the result set due to ORDER BY amount DESC).
         return $sponsors->unique('name')->values();
+    }
+
+    /**
+     * Active, visible sponsors for a SINGLE group.
+     *
+     * V1 parity for the immediate digest: an immediate email is about one
+     * group's post, so it must carry only that group's sponsors — not the
+     * union across every group the recipient belongs to (which is what
+     * {@see getSponsorsForUser} returns for the combined daily digest). No
+     * name-dedupe here: a single group can't list the same sponsor twice in a
+     * way that needs collapsing, and dropping the dedupe keeps the query cheap.
+     */
+    public function getSponsorsForGroup(int $groupId): Collection
+    {
+        if ($groupId <= 0) {
+            return collect();
+        }
+
+        return DB::table('groups_sponsorship')
+            ->where('groupid', $groupId)
+            ->where('visible', TRUE)
+            ->where('startdate', '<=', now())
+            ->where('enddate', '>=', now()->startOfDay())
+            ->orderByDesc('amount')
+            ->get();
     }
 
 }

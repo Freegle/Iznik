@@ -153,6 +153,119 @@ class UnifiedDigestTest extends TestCase
         $this->assertEquals('UnifiedDigestDaily', $tracking->email_type);
     }
 
+    /**
+     * Fabricate the minimal data the digest templates need so they can be
+     * rendered standalone (empty posts skips the per-post loop; jobs/sponsors
+     * blocks are gated only on $jobAds / $sponsors).
+     */
+    private function digestTemplateData(array $jobAds, array $sponsors): array
+    {
+        $user = (object) ['email_preferred' => 'r@example.com', 'displayname' => 'Sam'];
+        return [
+            'user' => $user,
+            'posts' => collect(),
+            'postCount' => 0,
+            'mode' => UnifiedDigestService::MODE_DAILY,
+            'isSingle' => false,
+            'sponsors' => collect($sponsors),
+            'jobAds' => collect($jobAds),
+            'jobsUrl' => 'https://example.com/jobs?t=1',
+            'donateUrl' => 'https://example.com/donate?t=1',
+            'browseUrl' => 'https://example.com/browse?t=1',
+            'settingsUrl' => 'https://example.com/settings?t=1',
+            'unsubscribeUrl' => 'https://example.com/unsubscribe?t=1',
+            'userSite' => 'https://example.com',
+            'siteName' => 'Freegle',
+        ];
+    }
+
+    public function test_amp_template_renders_jobs_and_sponsors(): void
+    {
+        $job = (object) [
+            'title' => 'Warehouse Operative',
+            'location' => 'Edinburgh',
+            'tracked_url' => 'https://example.com/job/1?t=1',
+            'image_url' => 'https://example.com/job1.png',
+        ];
+        $sponsor = (object) [
+            'name' => 'Edinburgh Council',
+            'tagline' => 'Backs reuse',
+            'linkurl' => 'https://council.example.com',
+            'imageurl' => 'https://council.example.com/logo.png',
+        ];
+
+        $html = view('emails.amp.digest.unified', $this->digestTemplateData([$job], [$sponsor]))->render();
+
+        // Jobs block (previously absent from AMP entirely).
+        $this->assertStringContainsString('Jobs near you', $html);
+        $this->assertStringContainsString('Warehouse Operative', $html);
+        $this->assertStringContainsString('https://example.com/job/1?t=1', $html);
+        $this->assertStringContainsString('View more jobs', $html);
+        // Sponsors block (previously absent from AMP entirely).
+        $this->assertStringContainsString('Sponsored by', $html);
+        $this->assertStringContainsString('Edinburgh Council', $html);
+    }
+
+    public function test_amp_template_omits_jobs_and_sponsors_when_empty(): void
+    {
+        $html = view('emails.amp.digest.unified', $this->digestTemplateData([], []))->render();
+
+        // Assert on markup-only strings (CSS comments/classes must not contain
+        // these, or the present/omit pair becomes meaningless).
+        $this->assertStringNotContainsString('Jobs near you', $html);
+        $this->assertStringNotContainsString('View more jobs', $html);
+        $this->assertStringNotContainsString('Sponsored by', $html);
+    }
+
+    public function test_text_template_renders_jobs(): void
+    {
+        $job = (object) [
+            'title' => 'Delivery Driver',
+            'location' => 'Leith',
+            'tracked_url' => 'https://example.com/job/2?t=1',
+            'image_url' => null,
+        ];
+
+        $text = view('emails.text.digest.unified', $this->digestTemplateData([$job], []))->render();
+
+        $this->assertStringContainsString('Jobs near you', $text);
+        $this->assertStringContainsString('Delivery Driver', $text);
+        $this->assertStringContainsString('https://example.com/job/2?t=1', $text);
+    }
+
+    public function test_prepared_posts_carry_group_name_and_explore_url(): void
+    {
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+        $message = $this->createTestMessage($poster, $group, ['subject' => 'OFFER: Sofa (Town)']);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'preparedPosts');
+        $ref->setAccessible(true);
+        $prepared = $ref->getValue($mail);
+        $card = $prepared->first();
+
+        // Friendly full name (not the short name) is the displayed group label.
+        $this->assertSame($group->namefull, $card['groupName']);
+        // The link points at the group's /explore page (keyed on nameshort).
+        // groupUrl is wrapped by the click-tracker (…/e/d/r/TOKEN?url=BASE64),
+        // so decode the inner target before asserting.
+        $this->assertNotNull($card['groupUrl']);
+        $target = $card['groupUrl'];
+        if (preg_match('/[?&]url=([^&]+)/', $card['groupUrl'], $mm)) {
+            $target = base64_decode(urldecode($mm[1])) ?: $target;
+        }
+        $this->assertStringContainsString('/explore/', $target);
+        $this->assertStringContainsString($group->nameshort, $target);
+    }
+
     public function test_cross_post_text_shown_for_multiple_groups(): void
     {
         $user = $this->createTestUser();

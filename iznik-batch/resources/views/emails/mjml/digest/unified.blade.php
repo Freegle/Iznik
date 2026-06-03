@@ -2,7 +2,10 @@
     {{-- An immediate (-1) digest uses the full-width hero single-post layout
          (V1 single.html parity). The multi-post daily digest uses the compact
          multi-post layout below. --}}
-    @php $isSingle = $mode === 'immediate'; @endphp
+    {{-- $accentColor defaults to the Freegle green so the daily layout (which
+         spans many posts/types) has a defined button colour; the immediate
+         single-post branch overrides it with the post's offer/wanted accent. --}}
+    @php $isSingle = $mode === 'immediate'; $accentColor = '#338808'; @endphp
     @if($isSingle)
     @php $post = $posts->first(); $isOffer = $post['type'] === 'Offer'; $accentColor = $isOffer ? '#3c763d' : '#2196A6'; @endphp
     @include('emails.mjml.partials.head', ['preview' => $post['subject']])
@@ -94,7 +97,7 @@
                 {{-- Posted by --}}
                 <mj-text font-size="13px" color="#888888" padding="0 0 16px 0">
                     <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 6px;" />
-                    Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 40) }}</strong>
+                    Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 40) }}</strong>@if(!empty($post['groupName'])) on <a href="{{ $post['groupUrl'] }}" style="color: #555555; text-decoration: underline;">{{ $post['groupName'] }}</a>@endif
                 </mj-text>
                 {{-- First posted (V1 single.html parity — only shown when the
                      message has actually been reposted to this group). Subtle
@@ -266,6 +269,23 @@
             </mj-column>
         </mj-section>
 
+        {{-- Greeting + the communities represented in this digest. The daily
+             roll-up spans several groups, so name them (each links to /explore)
+             — V1/Neil parity: "each of the groups featured within the email". --}}
+        <mj-section background-color="#ffffff" padding="16px 20px 0 20px">
+            <mj-column>
+                <mj-text font-size="16px" font-weight="bold" color="#333333" padding="0 0 4px 0">
+                    Hi {{ $user->firstname ?? 'there' }},
+                </mj-text>
+                @if(($digestGroups ?? collect())->isNotEmpty())
+                <mj-text font-size="13px" color="#666666" line-height="1.5" padding="0">
+                    New posts from your communities:
+                    @foreach($digestGroups as $dg)@if($dg['url'])<a href="{{ $dg['url'] }}" style="color: #338808; text-decoration: underline;">{{ $dg['name'] }}</a>@else<span>{{ $dg['name'] }}</span>@endif{!! $loop->last ? '' : ' &middot; ' !!}@endforeach
+                </mj-text>
+                @endif
+            </mj-column>
+        </mj-section>
+
         {{-- The "What's New (N posts)" title is carried by the subject line,
              so no in-body heading here. --}}
         @foreach($posts as $index => $post)
@@ -335,7 +355,7 @@
                 {{-- Avatar byline (V1 MultipleDigest parity). --}}
                 <mj-text padding="6px 0 10px 0" font-size="12px" color="#888888">
                     <img src="{{ $post['posterAvatarUrl'] }}" alt="" width="22" height="22" style="display: inline-block; width: 22px; height: 22px; border-radius: 50%; vertical-align: middle; margin-right: 6px;" />
-                    Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>
+                    Posted by <strong style="color: #555555;">{{ \Illuminate\Support\Str::limit($post['posterName'], 30) }}</strong>@if(!empty($post['groupName'])) on <a href="{{ $post['groupUrl'] }}" style="color: #555555; text-decoration: underline;">{{ $post['groupName'] }}</a>@endif
                 </mj-text>
                 {{-- Reply button: stays INSIDE the content column at its
                      bottom edge so it visually pairs with the image's
@@ -367,6 +387,66 @@
             </mj-column>
         </mj-section>
 
+        @endif
+
+        {{-- Jobs near you (daily mode). V1 parity: every digest recipient gets
+             nearby jobs, not just immediate. The immediate (single-post) layout
+             has its own jobs block above; this covers the daily multi-post
+             digest. --}}
+        @if(!$isSingle && isset($jobAds) && $jobAds->isNotEmpty())
+        <mj-section background-color="#F7F6EC" padding="20px 20px 10px 20px" border-top="1px solid #e9ecef">
+            <mj-column>
+                <mj-text font-size="16px" font-weight="bold" color="#333333" align="center" padding-bottom="10px">
+                    Jobs near you
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        <mj-section background-color="#F7F6EC" padding="5px 12px">
+            <mj-column>
+                <mj-table cellpadding="0" cellspacing="0" width="100%">
+                    @foreach($jobAds as $job)
+                    <tr>
+                        @if($job->image_url ?? null)
+                        <td style="width: 44px; padding: 4px 4px 4px 0; vertical-align: middle;">
+                            <a href="{{ $job->tracked_url }}">
+                                <img src="{{ $job->image_url }}" width="40" height="40" alt="" style="border-radius: 4px; display: block;" />
+                            </a>
+                        </td>
+                        <td style="padding: 4px 0; vertical-align: middle;">
+                        @else
+                        <td colspan="2" style="padding: 4px 0; vertical-align: middle;">
+                        @endif
+                            <a href="{{ $job->tracked_url }}" style="color: #338808; font-weight: bold; text-decoration: none; font-size: 14px; line-height: 1.25;">
+                                {{ $job->title }}
+                            </a>
+                            @if($job->location ?? null)
+                            <br/><span style="color: #666666; font-size: 12px; line-height: 1.3;">{{ $job->location }}</span>
+                            @endif
+                        </td>
+                    </tr>
+                    @endforeach
+                </mj-table>
+            </mj-column>
+        </mj-section>
+        <mj-section background-color="#F7F6EC" padding="0 20px 10px 20px">
+            <mj-column>
+                <mj-text font-size="12px" color="#666666" line-height="1.4">
+                    If you are interested and click, it will raise a little to help keep Freegle running and free to use.
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        <mj-section background-color="#F7F6EC" padding="0 20px 20px 20px">
+            <mj-column width="50%">
+                <mj-button href="{{ $jobsUrl }}" background-color="{{ $accentColor }}" color="#ffffff" font-size="14px" inner-padding="10px 25px" border-radius="5px" width="90%">
+                    View more jobs
+                </mj-button>
+            </mj-column>
+            <mj-column width="50%">
+                <mj-button href="{{ $donateUrl }}" background-color="{{ $accentColor }}" color="#ffffff" font-size="14px" inner-padding="10px 25px" border-radius="5px" width="90%">
+                    Donating helps too!
+                </mj-button>
+            </mj-column>
+        </mj-section>
         @endif
 
         {{-- Sponsors (both modes) --}}
@@ -402,6 +482,16 @@
             <mj-column>
                 <mj-text font-size="11px" color="#666666" align="center" line-height="1.5">
                     You're a member of <strong>{{ $primaryGroupName }}</strong> and asked to receive updates <strong>{{ $frequencyText }}</strong>.
+                </mj-text>
+            </mj-column>
+        </mj-section>
+        @elseif(!$isSingle)
+        {{-- Daily roll-up spans several groups, so name the cadence rather than
+             one group. --}}
+        <mj-section background-color="#f5f5f5" padding="10px 20px 0 20px">
+            <mj-column>
+                <mj-text font-size="11px" color="#666666" align="center" line-height="1.5">
+                    You're receiving this <strong>daily</strong> digest of new posts from your Freegle communities.
                 </mj-text>
             </mj-column>
         </mj-section>

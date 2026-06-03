@@ -37,6 +37,9 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
 
     protected Collection $preparedPosts;
 
+    /** @var array<int,object> primary group rows (id => {nameshort, namefull}) for post bylines + header list */
+    protected array $groupLookup = [];
+
     protected int $digestNumber;
 
     public function __construct(
@@ -146,11 +149,24 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             return null;
         }
 
+        // Re-derive sponsors so a durable retry still ships sponsor credit
+        // (constructing with an empty Collection dropped it on every retry).
+        // Match the live send-path scope: immediate = the post's single group,
+        // daily = the union across the recipient's groups.
+        $mode = $descriptor['mode'] ?? UnifiedDigestService::MODE_IMMEDIATE;
+        $service = app(UnifiedDigestService::class);
+        if ($mode === UnifiedDigestService::MODE_IMMEDIATE) {
+            $groupId = (int) ($descriptor['posts'][0]['groups'][0] ?? 0);
+            $sponsors = $service->getSponsorsForGroup($groupId);
+        } else {
+            $sponsors = $service->getSponsorsForUser($user);
+        }
+
         return new self(
             $user,
             $posts,
-            $descriptor['mode'] ?? UnifiedDigestService::MODE_IMMEDIATE,
-            new Collection()
+            $mode,
+            $sponsors
         );
     }
 
@@ -218,6 +234,15 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             ? 'immediately'
             : 'daily';
 
+        // Header group list: the distinct groups represented by THIS digest's
+        // posts (not the user's whole membership), each linking to /explore.
+        // Used by the daily multi-group header.
+        $digestGroups = $this->preparedPosts
+            ->filter(fn ($p) => !empty($p['groupName']))
+            ->map(fn ($p) => ['name' => $p['groupName'], 'url' => $p['groupUrl']])
+            ->unique('name')
+            ->values();
+
         $result = $this->mjmlView('emails.mjml.digest.unified', array_merge([
             'user' => $this->user,
             'posts' => $this->preparedPosts,
@@ -233,6 +258,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             'donateUrl' => $donateUrl,
             'primaryGroupName' => $primaryGroupName,
             'frequencyText' => $frequencyText,
+            'digestGroups' => $digestGroups,
         ], $this->getTrackingData()), 'emails.text.digest.unified')
             ->to($this->user->email_preferred)
             ->applyLogging('UnifiedDigest');
@@ -311,6 +337,14 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'ampPostMeta' => $ampPostMeta,
                 'ampApiUrl' => $ampApiUrl,
                 'ampUserId' => (int) $this->user->id,
+                // Jobs + sponsors reach the AMP body too (V1 parity — the MJML
+                // and text parts already carry these; AMP previously dropped
+                // them). Same data the MJML view above receives.
+                'sponsors' => $this->sponsors,
+                'jobAds' => $jobAds,
+                'jobsUrl' => $jobsUrl,
+                'donateUrl' => $donateUrl,
+                'digestGroups' => $digestGroups,
             ]);
 
             $result->withSymfonyMessage(function ($message) {
@@ -467,15 +501,40 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             }
         }
 
+        // Batch-load the primary group (first in postedToGroups) for every post
+        // so each card can show "on <group>" without an N+1 per post. namefull
+        // is the friendly name; nameshort drives the /explore link.
+        $primaryGroupIds = $this->posts
+            ->map(fn ($p) => $p['postedToGroups'][0] ?? null)
+            ->filter()
+            ->unique()
+            ->values();
+        $this->groupLookup = $primaryGroupIds->isNotEmpty()
+            ? DB::table('groups')->whereIn('id', $primaryGroupIds)
+                ->get(['id', 'nameshort', 'namefull'])->keyBy('id')->all()
+            : [];
+
         return $this->posts->map(function ($post, $index) use ($totalPosts, $userLat, $userLng) {
             $message = $post['message'];
             $postedToGroups = $post['postedToGroups'];
             $isOffer = $message->type === 'Offer';
 
-            // Get group names for "Posted to:" display.
-            $postedToText = count($postedToGroups) > 1
-                ? $this->formatPostedTo($postedToGroups)
-                : null;
+            // Primary group name (friendly full name) + /explore link for the
+            // "Posted by … on <group>" byline.
+            $groupName = null;
+            $groupUrl = null;
+            $primaryGroupId = $postedToGroups[0] ?? null;
+            if ($primaryGroupId && isset($this->groupLookup[$primaryGroupId])) {
+                $g = $this->groupLookup[$primaryGroupId];
+                $groupName = $g->namefull ?: $g->nameshort;
+                if ($g->nameshort) {
+                    $groupUrl = $this->trackedUrl(
+                        $this->userSite . '/explore/' . urlencode($g->nameshort),
+                        "group_{$index}",
+                        'group'
+                    );
+                }
+            }
 
             // Get image URL via delivery service.
             $imageUrl = $this->getMessageImageUrl($message);
@@ -566,7 +625,8 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
                 'thumbImageUrl' => $thumbImageUrl,
                 'trackedImageUrl' => $trackedImage,
                 'isPlaceholder' => $imageUrl === null,
-                'postedToText' => $postedToText,
+                'groupName' => $groupName,
+                'groupUrl' => $groupUrl,
                 'type' => $message->type,
                 'subject' => $message->subject,
                 'itemName' => $this->extractItemName($message->subject),
