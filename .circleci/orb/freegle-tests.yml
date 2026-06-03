@@ -271,13 +271,21 @@ commands:
                   grep -qa 'docker\|containerd' "$pp/cgroup" 2>/dev/null && docker_pids="$docker_pids ${pp#/proc/}"
                 done
                 [ -n "$docker_pids" ] && sudo renice -n 19 -p $docker_pids >/dev/null 2>&1 || true
+                # Also demote NATIVE (non-container) test-runner processes. Vitest
+                # runs natively on Katapult and, with the test drivers, are top CPU
+                # consumers at the agent's own priority — during the parallel-phase
+                # ramp (load spikes to ~40 on 16 cores) they starve the agent's
+                # heartbeat and the control plane declares the VM dead. Containerised
+                # runners are already +19; re-applying is harmless.
+                test_pids=$(pgrep -f 'vitest|playwright|phpunit|go-build|/test/|artisan test' 2>/dev/null | tr '\n' ' ')
+                [ -n "$test_pids" ] && sudo renice -n 19 -p $test_pids >/dev/null 2>&1 || true
                 # Pin the agent at nice 0 (explicit, in case a prior boost leaked).
                 agent_pids=$(pgrep -f 'circleci-runner|circleci-agent|circleci-launch-agent' 2>/dev/null | tr '\n' ' ')
                 [ -n "$agent_pids" ] && sudo renice -n 0 -p $agent_pids >/dev/null 2>&1 || true
-                sleep 5
+                sleep 2
               done
             ) &
-            echo "CPU priority watchdog running: docker containers nice +19, agent pinned to nice 0"
+            echo "CPU priority watchdog running: docker containers + native test runners nice +19, agent pinned to nice 0"
 
             while true; do
               echo ""
@@ -367,6 +375,17 @@ commands:
                 && echo "Done — daemon config updated" \
                 || echo "⚠️  Could not update daemon.json (non-critical)"
             fi
+            # The mirror may be in daemon.json (from VM provisioning) yet NOT loaded
+            # by the running dockerd (started before the config, or never reloaded),
+            # so pulls bypass the mirror and hit Docker Hub directly (toomanyrequests).
+            # Verify the RUNNING daemon has it; reload (then restart) if not.
+            if ! docker info 2>/dev/null | grep -q "185.44.254.6:5000"; then
+              echo "Mirror absent from running daemon — reloading docker to load registry-mirrors..."
+              sudo systemctl reload docker 2>/dev/null || sudo systemctl restart docker 2>/dev/null || true
+              sleep 3
+            fi
+            echo "Registry mirrors in running daemon:"
+            docker info 2>/dev/null | grep -A2 "Registry Mirrors" || echo "  (none reported)"
             # Only prune on cloud — self-hosted runner needs layer cache for fast builds
             if [ "${SELF_HOSTED_RUNNER:-}" != "true" ]; then
               docker system prune -f || true
