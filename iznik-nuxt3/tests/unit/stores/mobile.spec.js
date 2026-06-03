@@ -75,7 +75,7 @@ vi.stubGlobal('useRuntimeConfig', () => ({
 const mockRouterPush = vi.fn()
 vi.stubGlobal('useRouter', () => ({
   push: mockRouterPush,
-  currentRoute: { path: '/' },
+  currentRoute: { value: { path: '/' } },
 }))
 
 describe('mobile store', () => {
@@ -591,6 +591,112 @@ describe('mobile store', () => {
       await store.getDeviceInfo(mockDevice)
 
       expect(store.deviceuserinfo).toBe('android 13')
+      logSpy.mockRestore()
+    })
+  })
+
+  describe('initDeepLinks', () => {
+    let store
+    let capturedListener
+    let mockApp
+
+    beforeEach(() => {
+      store = useMobileStore()
+      capturedListener = null
+      mockApp = {
+        addListener: vi.fn().mockImplementation((event, fn) => {
+          if (event === 'appUrlOpen') capturedListener = fn
+        }),
+      }
+      // initDeepLinks guards with `if (process.client)`; enable it for tests.
+      process.client = true
+    })
+
+    afterEach(() => {
+      delete process.client
+    })
+
+    async function triggerDeepLink(url) {
+      vi.useFakeTimers()
+      store.initDeepLinks(mockApp)
+      expect(capturedListener).not.toBeNull()
+      await capturedListener({ url })
+      vi.runAllTimers()
+    }
+
+    it('navigates to /chats/:id for a current-format chat deep link', async () => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await triggerDeepLink('https://www.ilovefreegle.org/chats/12345')
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/chats/12345')
+      logSpy.mockRestore()
+    })
+
+    it('rewrites old /chat/:id deep link to /chats/:id', async () => {
+      // AssertFlip: before the fix initDeepLinks has no /chat/ → /chats/ replacement,
+      // so push is called with '/chat/12345' (wrong). After fix it is '/chats/12345'.
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await triggerDeepLink('https://www.ilovefreegle.org/chat/12345')
+
+      expect(mockRouterPush).toHaveBeenCalledWith('/chats/12345')
+      logSpy.mockRestore()
+    })
+
+    it('does not navigate for a URL that does not contain ilovefreegle.org', async () => {
+      // AssertFlip: before the fix `ilfpos !== false` is always true (indexOf never
+      // returns false), so a freegle:// URL navigates to substring(15) = '/12345'.
+      // After fix `ilfpos !== -1` correctly skips non-ilovefreegle.org URLs.
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await triggerDeepLink('freegle://chats/12345')
+
+      expect(mockRouterPush).not.toHaveBeenCalled()
+      logSpy.mockRestore()
+    })
+  })
+
+  describe('handleNotification duplicate-navigation guard', () => {
+    it('skips router.push when already on the target chat route', async () => {
+      // AssertFlip: before the fix, router.currentRoute.path is accessed directly
+      // on the Vue Router 4 Ref — which is undefined — so the guard never fires
+      // and push is always called. After fix, router.currentRoute.value.path is
+      // used and the guard correctly prevents redundant navigation.
+      vi.stubGlobal('useRouter', () => ({
+        push: mockRouterPush,
+        currentRoute: { value: { path: '/chats/12345' } },
+      }))
+
+      vi.mock('@capacitor/app', () => ({
+        App: { getState: () => Promise.resolve({ isActive: false }) },
+      }))
+
+      const store = useMobileStore()
+      store.config = { public: {} }
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.handleNotification(
+        {
+          okToMove: true,
+          data: {
+            channel_id: 'chat_messages',
+            badge: '0',
+            modtools: '0',
+            route: '/chats/12345',
+          },
+        },
+        { removeAllDeliveredNotifications: vi.fn() },
+        { set: vi.fn() }
+      )
+
+      expect(mockRouterPush).not.toHaveBeenCalled()
+
+      // Restore default mock for subsequent tests.
+      vi.stubGlobal('useRouter', () => ({
+        push: mockRouterPush,
+        currentRoute: { value: { path: '/' } },
+      }))
       logSpy.mockRestore()
     })
   })
