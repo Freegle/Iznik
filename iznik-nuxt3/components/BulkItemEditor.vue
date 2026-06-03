@@ -1,6 +1,10 @@
 <template>
   <div class="bulkeditor">
-    <!-- Choose how to add items. -->
+    <!-- Choose how to add items. Nothing else shows until a choice is made. -->
+    <p class="bulkeditor__intro">
+      How would you like to add your items? You can type them in one at a time,
+      or fill in a spreadsheet and upload it.
+    </p>
     <div
       class="bulkeditor__mode mb-3"
       role="group"
@@ -8,7 +12,6 @@
     >
       <b-button
         :variant="mode === 'manual' ? 'primary' : 'outline-secondary'"
-        size="sm"
         data-testid="mode-manual"
         @click="mode = 'manual'"
       >
@@ -16,7 +19,6 @@
       </b-button>
       <b-button
         :variant="mode === 'upload' ? 'primary' : 'outline-secondary'"
-        size="sm"
         data-testid="mode-upload"
         @click="mode = 'upload'"
       >
@@ -181,11 +183,11 @@
     </div>
 
     <!-- UPLOAD: download the template, fill it in, upload it. -->
-    <div v-else class="bulkeditor__upload">
-      <p class="small text-muted mb-2">
-        Download the template, fill in a row per item, and upload it. It has a
-        condition drop-down and an optional <strong>photo</strong> column (http
-        links — we fetch &amp; store them). Accepts .xlsx or CSV.
+    <div v-else-if="mode === 'upload'" class="bulkeditor__upload">
+      <p class="mb-2">
+        Download this template, fill in a row per item, then upload it here. It
+        has a condition drop-down and an optional <strong>photo</strong> column
+        (http links — we fetch &amp; store them). Accepts .xlsx or CSV.
       </p>
       <div class="d-flex gap-2 flex-wrap align-items-center">
         <a
@@ -238,8 +240,9 @@ const items = ref(
     : [{ ...blankBulkItem(), photos: [] }]
 )
 
-// 'manual' = type items into the table; 'upload' = import a spreadsheet.
-const mode = ref('manual')
+// null = no choice yet (show only the prompt + buttons); 'manual' = type items
+// into the table; 'upload' = import a spreadsheet.
+const mode = ref(null)
 
 // The uploader's model — we drain finished uploads from it into `tray`,
 // so it always shows just the "Add photos" affordance (never a big gallery).
@@ -416,6 +419,12 @@ defineExpose({
 @import 'bootstrap/scss/variables';
 @import 'bootstrap/scss/mixins/_breakpoints';
 @import 'assets/css/_color-vars.scss';
+
+.bulkeditor__intro {
+  font-size: 0.95rem;
+  color: $color-gray--dark;
+  margin-bottom: 0.6rem;
+}
 
 .bulkeditor__mode {
   display: flex;

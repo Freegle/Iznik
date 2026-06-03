@@ -419,7 +419,12 @@
             />
             <div v-if="expanded">
               <!-- eslint-disable-next-line -->
-              <b-form-textarea v-if="editing" v-model="editmessage.textbody" rows="8" class="mb-3" />
+              <b-form-textarea
+                v-if="editing"
+                v-model="editmessage.textbody"
+                rows="8"
+                class="mb-3"
+              />
               <div v-else-if="editreview">
                 <template v-if="oldBody || newBody">
                   <h4>Differences:</h4>
@@ -467,6 +472,30 @@
                   {{ eBody }}
                 </span>
               </div>
+              <b-alert
+                v-if="isBulk"
+                :model-value="true"
+                variant="info"
+                class="mb-3"
+              >
+                <strong>
+                  <v-icon icon="boxes-stacked" /> Bulk clearance —
+                  {{ message.bulkcount }} item{{
+                    message.bulkcount === 1 ? '' : 's'
+                  }}.
+                </strong>
+                This is a single post on the group, but when a member opens it
+                they can see each item and turn on the ones they'd like (and how
+                many).
+                <b-button
+                  variant="link"
+                  class="p-0 ms-1 align-baseline"
+                  data-testid="bulk-preview-btn"
+                  @click="showBulkPreview = true"
+                >
+                  See how members see it
+                </b-button>
+              </b-alert>
               <div v-if="attachments?.length" class="w-100 d-flex flex-wrap">
                 <div
                   v-for="attachment in attachments"
@@ -729,6 +758,11 @@
       :lng="position?.lng"
       :arrival="reachArrival"
     />
+    <ModBulkPreviewModal
+      v-if="showBulkPreview"
+      :messageid="message.id"
+      @hidden="showBulkPreview = false"
+    />
     <div ref="bottom" />
   </div>
 </template>
@@ -865,6 +899,14 @@ const saving = ref(false)
 const saved = ref(false)
 const showEmailSourceModal = ref(false)
 const showSpamModal = ref(false)
+const showBulkPreview = ref(false)
+
+// A bulk "clearance" offer carries a structured catalogue of items.
+const isBulk = computed(
+  () =>
+    (message.value?.bulkcount || 0) > 0 ||
+    (message.value?.bulkitems?.length || 0) > 0
+)
 const showMailSettings = ref(false)
 const showActions = ref(false)
 const showEmails = ref(false)
