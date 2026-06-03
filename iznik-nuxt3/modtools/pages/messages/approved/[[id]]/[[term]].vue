@@ -64,11 +64,17 @@
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from '#imports'
 import { useMessageStore } from '@/stores/message'
+import { useMiscStore } from '@/stores/misc'
 import { setupModMessages } from '@/composables/useModMessages'
 import { useMe } from '~/composables/useMe'
 
+// Persisted (localStorage-backed) key for the semantic-search toggle so it
+// survives group changes, searches and remounts.
+const SEMANTIC_SEARCH_KEY = 'modtoolsSemanticSearch'
+
 // Stores
 const messageStore = useMessageStore()
+const miscStore = useMiscStore()
 
 // Composables
 const modMessages = setupModMessages(true)
@@ -95,8 +101,10 @@ const {
 // Local state (formerly data())
 const chosengroupid = ref(0)
 const bump = ref(0)
-const vectorSearchEnabled = ref(false)
-const searchmode = computed(() => vectorSearchEnabled.value ? 'vector' : 'keyword')
+const vectorSearchEnabled = ref(miscStore.get(SEMANTIC_SEARCH_KEY) ?? false)
+const searchmode = computed(() =>
+  vectorSearchEnabled.value ? 'vector' : 'keyword'
+)
 const urlOverride = ref(false)
 const loaded = ref(false)
 const highlightMsgId = ref(null)
@@ -201,6 +209,19 @@ function changedMessageTerm(term) {
 function searchedMessage(term) {
   const router = useRouter()
   term = term.trim()
+  // Start a fresh message search from a clean slate.  The store accumulates
+  // messages from other sources (notably a prior "messages from member"
+  // lookup, whose historical posts are not in any search index), and the
+  // listing is filtered by listingIds.  Without resetting here, those leaked
+  // results stay visible during the search — mirrors searchedMember() and the
+  // vectorSearchEnabled watcher, which already reset this state.
+  show.value = 0
+  context.value = null
+  memberTerm.value = null
+  modMessages.listingIds.value = new Set()
+  modMessages.listingIdOrder.value = []
+  messageStore.clear()
+  bump.value++
   if (term.length > 0) {
     router.push('/messages/approved/' + groupid.value + '/' + term)
   } else if (groupid.value) {
@@ -211,6 +232,8 @@ function searchedMessage(term) {
 }
 
 watch(vectorSearchEnabled, () => {
+  // Persist the choice so it sticks across group changes, searches and remounts.
+  miscStore.set({ key: SEMANTIC_SEARCH_KEY, value: vectorSearchEnabled.value })
   show.value = 0
   context.value = null
   modMessages.listingIds.value = new Set()
