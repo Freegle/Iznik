@@ -55,6 +55,11 @@ describe('BulkItemEditor', () => {
     expect(w.vm.items[0].name).toBe('')
   })
 
+  it('starts with no add-method chosen (gated until the user picks)', () => {
+    const w = mount(BulkItemEditor, mountOpts)
+    expect(w.vm.mode).toBe(null)
+  })
+
   it('imports items from uploaded spreadsheet text, replacing the blank row', async () => {
     const w = mount(BulkItemEditor, mountOpts)
     w.vm.applyImport('Desk,4,Good\nChair,14,Used')
@@ -62,6 +67,8 @@ describe('BulkItemEditor', () => {
     expect(w.vm.items.map((i) => i.name)).toEqual(['Desk', 'Chair'])
     expect(w.vm.items[0].quantity).toBe(4)
     expect(w.vm.items[1].condition).toBe('Used')
+    // Importing reveals the table so the rows can be edited.
+    expect(w.vm.mode).toBe('manual')
   })
 
   it('derives attachment ids from uploaded photos and emits them', async () => {

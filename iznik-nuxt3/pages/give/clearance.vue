@@ -4,10 +4,17 @@
       <b-row class="m-0">
         <b-col cols="12" lg="8" offset-lg="2" class="bg-white">
           <h1 class="mt-3">Offer lots of items at once</h1>
+          <p class="text-muted mb-2">
+            New to Freegle? Each thing you give away is an <em>offer</em>, and
+            people reply to you in the chat to ask for it. A clearance lets you
+            list lots of items in one post instead of posting them one at a time
+            — people tell you which ones they'd like and how many.
+          </p>
           <p class="text-muted">
-            Doing a clearance? List everything in one post. People can then tell
-            you which items they'd like and how many — all in a single
-            conversation.
+            You'll hear from several Freeglers and you'll need to organise who
+            gets what and when they collect it. We're building an assisted way
+            to make that easy — if you'd like to try it, email
+            <a href="mailto:geeks@ilovefreegle.org">geeks@ilovefreegle.org</a>.
           </p>
 
           <!-- Where (postcode) first: it picks the community. -->
@@ -84,6 +91,19 @@
             <v-icon icon="plus" /> Add a collection time
           </b-button>
 
+          <h2 class="bulk-section">Closing date</h2>
+          <p class="bulk-help">
+            Optional. After this date the offer disappears. Leave it blank to
+            keep it open until you take it down.
+          </p>
+          <b-form-input
+            v-model="deadline"
+            type="date"
+            :min="today"
+            class="bulk-deadline"
+            data-testid="clearance-deadline"
+          />
+
           <h2 class="bulk-section">Access instructions</h2>
           <p class="bulk-help">
             Only shared with someone once you promise them an item — e.g. the
@@ -147,7 +167,11 @@ const description = ref('')
 const items = ref([])
 const slots = ref([''])
 const accessInstructions = ref('')
+const deadline = ref('')
 const wentWrong = ref(false)
+
+// Earliest selectable closing date is today.
+const today = new Date().toISOString().slice(0, 10)
 
 // Bulk freegling is login-only — there's no logged-out flow. Show the
 // sign-up/login modal immediately so people start from a signed-in state.
@@ -195,8 +219,12 @@ async function submit(callback) {
       bulkslots: slots.value.map((s) => s.trim()).filter(Boolean),
       accessinstructions: accessInstructions.value.trim(),
     }
+    const submitOptions = {}
+    if (deadline.value) {
+      submitOptions.deadline = new Date(deadline.value).toISOString()
+    }
     const id = await composeStore.createDraft(message, email.value)
-    await composeStore.submitDraft(id, email.value)
+    await composeStore.submitDraft(id, email.value, submitOptions)
     router.push('/myposts')
   } catch (e) {
     console.error('Clearance submit failed', e)
