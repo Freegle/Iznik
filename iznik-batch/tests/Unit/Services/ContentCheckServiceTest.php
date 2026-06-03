@@ -445,15 +445,26 @@ class ContentCheckServiceTest extends TestCase
     public function test_check_language_real_world_terse_english_reply_not_flagged(): void
     {
         // Regression: this exact production chat reply (chat_messages 108721900)
-        // was shown in ModTools chat review as "It might not be in English".
-        // On short app-templated replies the detector ranks Interlingua/Latinate
-        // languages top with English at ~0.86 of the top, so the old 0.9 threshold
-        // flagged it; at the V1-parity 0.8 threshold it must pass. Uses the REAL
-        // detector (not an injected mock) to lock in the production behaviour.
+        // was shown in ModTools chat review as "It might not be in English". At 60
+        // chars it now falls below the 80-char detection gate, so it is no longer
+        // checked — it was a false positive (terse English the library misranks as
+        // a Latinate conlang). Uses the REAL detector (not a mock).
         $text = "Yes please can collect.Paul\n\nPossible collection times: Asap";
-        $this->assertGreaterThan(50, strlen(trim($text)), 'must exceed the 50-char language-check gate');
+        $this->assertLessThan(80, strlen(trim($text)));
         $result = $this->service->checkLanguage('', $text);
-        $this->assertNull($result, 'Terse English reply must not be flagged as non-English at the 0.8 threshold');
+        $this->assertNull($result, 'Terse English reply must not be flagged as non-English');
+    }
+
+    public function test_check_language_long_english_not_flagged_with_restricted_set(): void
+    {
+        // Longer English (>80 chars) where the FULL library would rank a Latinate
+        // conlang (Interlingua/Occitan) top; with the restricted UK language set
+        // English ranks top, so it is accepted. Uses the REAL detector to lock in
+        // that the restricted set prevents conlang false positives (Discourse #9481).
+        $text = 'Hi there, yes I would love these if still available, I can come and collect them this afternoon if that suits you, thank you so much';
+        $this->assertGreaterThan(80, strlen($text));
+        $result = $this->service->checkLanguage('', $text);
+        $this->assertNull($result, 'Long English must rank English top with the restricted set and not be flagged');
     }
 
     public function test_check_language_xxx_stripped_before_check(): void
@@ -473,19 +484,17 @@ class ContentCheckServiceTest extends TestCase
         $this->assertTrue($result === null || $result['check'] === ContentCheckService::CHECK_LANGUAGE);
     }
 
-    public function test_english_at_v1_borderline_threshold_not_flagged(): void
+    public function test_check_language_text_below_80_chars_skipped(): void
     {
-        // Regression test for Discourse #9656: English chat messages incorrectly
-        // flagged as non-English after threshold was tightened from 0.8 to 0.9.
-        //
-        // When another language scores slightly above English (ratio 0.826 — between
-        // the former-too-strict 0.9 and the V1-parity 0.8 threshold), the message
-        // should NOT be flagged. At 0.9: 0.38 >= 0.9*0.46=0.414 → false → wrongly
-        // flagged. At 0.8: 0.38 >= 0.8*0.46=0.368 → true → correctly accepted.
-        $borderlineDetector = static fn(string $text) => ['nl' => 0.46, 'en' => 0.38];
-        $text = 'Hi, is the sofa still available? I can collect on Saturday morning if that works for you. Thanks.';
-        $result = $this->service->checkLanguage('', $text, $borderlineDetector);
-        $this->assertNull($result, 'English at V1 0.8 threshold must not be flagged as non-English');
+        // The detection gate was raised 50→80: detection is a coin-flip on short
+        // text, so a sub-80-char message is skipped before detection even if a
+        // detector would flag it. This is how terse English replies (Discourse
+        // #9481) stop being false-flagged.
+        $alwaysFlags = static fn(string $text) => ['fr' => 0.90, 'en' => 0.10];
+        $text = 'Yes please can collect this thanks very much';
+        $this->assertLessThanOrEqual(80, strlen($text));
+        $result = $this->service->checkLanguage('', $text, $alwaysFlags);
+        $this->assertNull($result, 'Sub-80-char text must be skipped before language detection');
     }
 
     public function test_clearly_non_english_still_flagged_with_v1_threshold(): void
