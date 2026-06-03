@@ -6,6 +6,7 @@ use App\Models\ChatMessage;
 use App\Models\ChatRoom;
 use App\Models\Membership;
 use App\Models\Message;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -323,6 +324,99 @@ class StatsGenerationService
         $rows += $this->writeCount($date, $groupId, self::TYPE_ACTIVITY, $activity, $dryRun);
 
         return $rows;
+    }
+
+    /**
+     * Fast Weight-only regeneration across a date range.
+     *
+     * The full generate() pipeline runs 17 type-specific aggregations per
+     * (group, date) — for a 100-day × 500-group backfill that's ~850k
+     * queries. Only the WEIGHT type depends on messages_items (the table
+     * the cutover backfill repaired), so the other 16 are pure waste when
+     * the goal is just to recover the Weight figures.
+     *
+     * This method computes Weight for every group on a date in ONE
+     * grouped query and writes the results via a single multi-row
+     * REPLACE — two statements per date, vs ~600 statements per date
+     * for the full path. avgWeight is hoisted across the whole range
+     * (it's a function of the items table, not the date).
+     *
+     * CO2 and reuse-value are NOT stored — they're pure functions of
+     * Weight applied at read time by misc/ReuseBenefit.php, so fixing
+     * Weight here implicitly fixes them too.
+     *
+     * @return array{datesProcessed: int, rowsWritten: int}
+     */
+    public function regenerateWeightForRange(string $from, string $to, bool $dryRun = false): array
+    {
+        $start = CarbonImmutable::parse($from)->startOfDay();
+        $end = CarbonImmutable::parse($to)->endOfDay();
+
+        $avg = (float) (DB::table('items')
+            ->whereNotNull('weight')
+            ->where('weight', '!=', 0)
+            ->selectRaw('SUM(popularity * weight) / SUM(popularity) AS average')
+            ->value('average') ?? 0);
+
+        $datesProcessed = 0;
+        $rowsWritten = 0;
+
+        for ($d = $start; $d->lte($end); $d = $d->addDay()) {
+            $date = $d->toDateString();
+            $next = $d->addDay()->toDateString();
+
+            // Range query on timestamp (uses timestamp_2 composite index)
+            // beats the original DATE(timestamp)=? predicate which forced
+            // a scan. DISTINCT inside the subquery preserves V1 behavior:
+            // one (msgid, eff_weight) tuple counts once, but a msgid linked
+            // to multiple items with different weights contributes all of
+            // them — same shape as the PHP `distinct()` + foreach the old
+            // path had.
+            $rows = DB::select(
+                'SELECT sub.groupid, ROUND(SUM(sub.eff_weight)) AS total_weight '
+                . 'FROM ('
+                . '  SELECT DISTINCT mo.msgid, mg.groupid, '
+                . '    COALESCE(NULLIF(i.weight, 0), ?) AS eff_weight '
+                . '  FROM messages_outcomes mo '
+                . '  INNER JOIN messages_groups mg ON mg.msgid = mo.msgid '
+                . '  INNER JOIN messages_items mi ON mi.msgid = mo.msgid '
+                . '  LEFT JOIN items i ON i.id = mi.itemid '
+                . '  WHERE mo.timestamp >= ? AND mo.timestamp < ? '
+                . '    AND mo.outcome IN (?, ?)'
+                . ') sub '
+                . 'GROUP BY sub.groupid',
+                [$avg, $date, $next, Message::OUTCOME_TAKEN, Message::OUTCOME_RECEIVED]
+            );
+
+            $datesProcessed++;
+
+            if ($dryRun) {
+                $rowsWritten += count(array_filter($rows, fn ($r) => (int) $r->total_weight !== 0));
+                continue;
+            }
+
+            $placeholders = [];
+            $values = [];
+            foreach ($rows as $row) {
+                $w = (int) $row->total_weight;
+                if ($w === 0) {
+                    continue;
+                }
+                $placeholders[] = '(?, ?, ?, ?)';
+                array_push($values, $date, (int) $row->groupid, self::TYPE_WEIGHT, $w);
+            }
+
+            if (!empty($placeholders)) {
+                DB::statement(
+                    'REPLACE INTO stats (date, groupid, type, count) VALUES '
+                    . implode(', ', $placeholders),
+                    $values
+                );
+                $rowsWritten += count($placeholders);
+            }
+        }
+
+        return ['datesProcessed' => $datesProcessed, 'rowsWritten' => $rowsWritten];
     }
 
     /**
