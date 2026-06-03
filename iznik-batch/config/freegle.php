@@ -21,6 +21,8 @@ return [
         'v2_url' => env('FREEGLE_API_V2_URL', 'https://api.ilovefreegle.org/apiv2'),
     ],
 
+    'avatar_server_url' => env('FREEGLE_AVATAR_SERVER_URL', 'https://api.ilovefreegle.org/avatar'),
+
     'branding' => [
         'name' => env('FREEGLE_SITE_NAME', 'Freegle'),
         'logo_url' => env('FREEGLE_LOGO_URL', 'https://www.ilovefreegle.org/icon.png'),

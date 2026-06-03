@@ -245,29 +245,39 @@ commands:
             echo "Resource monitor started - logging every 30 seconds"
 
             # --- CPU priority watchdog (all runner types including Katapult) ---
-            # Root cause of build-test-katapult infrastructure_fail: during the
-            # Playwright phase load runs to ~30 and the CircleCI runner agent can't
-            # get CPU to send its heartbeat, so the control plane declares the VM
-            # dead (memory is fine; swap stays unused — it is NOT an OOM). Fix by
-            # scheduling priority, NOT by dropping workers: raise the runner/agent
-            # (nice -15) and lower every Docker test-container process (nice +15),
-            # re-applied every few seconds because Playwright keeps forking new
-            # headless_shell workers. Batched into two renice calls to stay cheap.
-            # Must run on ALL runner types (self-hosted and Katapult cloud) — the
-            # high CPU load affects the agent heartbeat on both.
+            # Root cause of build-test-katapult infrastructure_fail ("This job
+            # appears to have stopped responding"): during the parallel test phase
+            # load runs to ~30 on the 16-CPU VM (the Playwright container alone
+            # peaks at ~700% CPU) and the CircleCI agent can't get CPU to send its
+            # heartbeat, so the control plane declares the VM dead. Memory is fine,
+            # swap stays unused, iowait ~0 — it is purely CPU scheduling, NOT an OOM
+            # or disk problem. Fix by scheduling priority, NOT by dropping workers.
+            #
+            # DEMOTE the load, do NOT boost the agent. An earlier version raised the
+            # agent to nice -15, but a negative nice is INHERITED by every process
+            # the agent spawns — in build 18723 the vitest/Go/Playwright drivers all
+            # ran at nice -15 too (ps STAT "S<l+") and competed with the heartbeat at
+            # the same top priority, so boosting the agent boosted the load with it
+            # and the heartbeat was still starved. Instead: push every Docker
+            # container process hard down (nice +19) and pin the agent at default
+            # priority (0, never negative so nothing inherits a boost). The heartbeat
+            # then reliably out-schedules the +19 test workload. Re-applied every few
+            # seconds because Playwright keeps forking new headless_shell workers.
+            # Must run on ALL runner types (self-hosted and Katapult cloud).
             (
               while true; do
-                agent_pids=$(pgrep -f 'circleci-runner|circleci-agent' 2>/dev/null | tr '\n' ' ')
-                [ -n "$agent_pids" ] && sudo renice -n -15 -p $agent_pids >/dev/null 2>&1 || true
                 docker_pids=""
                 for pp in /proc/[0-9]*; do
-                  grep -qa 'docker' "$pp/cgroup" 2>/dev/null && docker_pids="$docker_pids ${pp#/proc/}"
+                  grep -qa 'docker\|containerd' "$pp/cgroup" 2>/dev/null && docker_pids="$docker_pids ${pp#/proc/}"
                 done
-                [ -n "$docker_pids" ] && sudo renice -n 15 -p $docker_pids >/dev/null 2>&1 || true
+                [ -n "$docker_pids" ] && sudo renice -n 19 -p $docker_pids >/dev/null 2>&1 || true
+                # Pin the agent at nice 0 (explicit, in case a prior boost leaked).
+                agent_pids=$(pgrep -f 'circleci-runner|circleci-agent|circleci-launch-agent' 2>/dev/null | tr '\n' ' ')
+                [ -n "$agent_pids" ] && sudo renice -n 0 -p $agent_pids >/dev/null 2>&1 || true
                 sleep 5
               done
             ) &
-            echo "CPU priority watchdog running: agent nice -15, docker containers nice +15"
+            echo "CPU priority watchdog running: docker containers nice +19, agent pinned to nice 0"
 
             while true; do
               echo ""
@@ -302,6 +312,16 @@ commands:
           auto_rerun_delay: 10s
           command: |
             echo "<< parameters.reason >>"
+
+            # Authenticate to Docker Hub to escape the shared-IP anonymous pull
+            # rate limit (toomanyrequests on redis/traefik/etc). Read-only PAT from
+            # the DOCKERHUB_* CircleCI env vars; safe no-op when they are not set.
+            if [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "Logging in to Docker Hub as ${DOCKERHUB_USERNAME:-freeglegeeks}..."
+              echo "$DOCKERHUB_TOKEN" | docker login -u "${DOCKERHUB_USERNAME:-freeglegeeks}" --password-stdin \
+                && echo "Docker Hub login OK" \
+                || echo "Docker Hub login failed - continuing unauthenticated"
+            fi
 
             # Ensure COMPOSE_PROFILES is set for all docker-compose commands
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
