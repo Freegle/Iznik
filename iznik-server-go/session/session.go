@@ -1292,7 +1292,10 @@ func GetSession(c *fiber.Ctx) error {
 
 		// Total only includes actionable work items (primary/red badge counts),
 		// not informational ones (other/blue badge counts like chatreviewother, happiness, giftaid, pendingother).
-		total := pending + spam + pendingmembers + spammembers + pendingevents +
+		// spam (COLLECTION_SPAM messages) and pendingmembers (pending membership applications) are excluded:
+		// V2 modtools has no page to view or action either of these, so including them inflates the badge
+		// beyond what the moderator can see or act on (Discourse #9654 post 9). In V1 PHP both were always 0.
+		total := pending + spammembers + pendingevents +
 			pendingadmins + editreview + pendingvolunteering + stories +
 			spammerpendingadd + spammerpendingremove +
 			chatreview + newsletterstories + relatedmembers + housekeeping + cronjobs +

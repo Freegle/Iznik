@@ -1932,16 +1932,19 @@ func TestWorkCountTotalExcludesInformational(t *testing.T) {
 	total := work["total"].(float64)
 
 	// Total should include actionable items but NOT informational ones
-	// (chatreviewother, happiness, giftaid, pendingother).
+	// (chatreviewother, happiness, giftaid, pendingother, spam, pendingmembers).
+	// spam (COLLECTION_SPAM messages) and pendingmembers (pending membership applications)
+	// are excluded because V2 modtools has no page to view or action either of them;
+	// including them causes a phantom badge increment (Discourse #9654 post 9).
 	chatreviewother := work["chatreviewother"].(float64)
 	happiness := work["happiness"].(float64)
 	giftaid := work["giftaid"].(float64)
 
-	// Compute expected total from all actionable fields.
-	// giftaid is excluded from total to match PHP API behaviour (commit df11b11).
+	// Compute expected total from all actionable visible fields.
+	// giftaid excluded: PHP API behaviour (commit df11b11).
+	// spam excluded: no spam-messages page in V2 modtools.
+	// pendingmembers excluded: no pending-members approval page in V2 modtools.
 	actionable := work["pending"].(float64) +
-		work["spam"].(float64) +
-		work["pendingmembers"].(float64) +
 		work["spammembers"].(float64) +
 		work["pendingevents"].(float64) +
 		work["pendingadmins"].(float64) +
@@ -1958,6 +1961,67 @@ func TestWorkCountTotalExcludesInformational(t *testing.T) {
 	_ = chatreviewother
 	_ = happiness
 	_ = giftaid
+}
+
+// ---------------------------------------------------------------------------
+// Work Counts: Spam messages and pending members must not inflate badge total
+// ---------------------------------------------------------------------------
+
+func TestSpamAndPendingMembersNotInBadgeTotal(t *testing.T) {
+	// Regression: work.total includes spam (COLLECTION_SPAM messages) and
+	// pendingmembers (membership applications awaiting mod approval). V2 modtools
+	// has no page to view or action either of these, so they are invisible to the
+	// moderator. The badge therefore shows 1 (or more) more than the visible
+	// actionable items. In V1 PHP both fields were always 0 (never queried).
+	prefix := uniquePrefix("wc_phantom")
+	db := database.DBConn
+	groupID := CreateTestGroup(t, prefix)
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, token := CreateTestSession(t, modID)
+
+	memberID := CreateTestUser(t, prefix+"_member", "User")
+	CreateTestMembership(t, memberID, groupID, "Member")
+
+	// Baseline counts before inserting phantom items.
+	workBefore := getSessionWork(t, token)
+	totalBefore := workBefore["total"].(float64)
+	spamBefore := workBefore["spam"].(float64)
+	pendingMembersBefore := workBefore["pendingmembers"].(float64)
+
+	// Insert a spam message into the test group.
+	var locationID uint64
+	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
+	db.Exec("INSERT INTO messages (fromuser, subject, textbody, message, type, locationid, arrival) "+
+		"VALUES (?, 'OFFER: Phantom spam', 'Test body', 'Test body', 'Offer', ?, NOW())", memberID, locationID)
+	var spamMsgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", memberID).Scan(&spamMsgID)
+	db.Exec("INSERT INTO messages_groups (msgid, groupid, arrival, collection, autoreposts) "+
+		"VALUES (?, ?, NOW(), 'Spam', 0)", spamMsgID, groupID)
+	defer func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", spamMsgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", spamMsgID)
+	}()
+
+	// Insert a pending member application into the test group.
+	pendingUserID := CreateTestUser(t, prefix+"_pending", "User")
+	db.Exec("INSERT INTO memberships (userid, groupid, role, collection) VALUES (?, ?, 'Member', 'Pending')",
+		pendingUserID, groupID)
+	defer db.Exec("DELETE FROM memberships WHERE userid = ? AND groupid = ?", pendingUserID, groupID)
+
+	workAfter := getSessionWork(t, token)
+	spamAfter := workAfter["spam"].(float64)
+	pendingMembersAfter := workAfter["pendingmembers"].(float64)
+	totalAfter := workAfter["total"].(float64)
+
+	// Sanity: both fields must reflect the newly inserted items.
+	assert.GreaterOrEqual(t, spamAfter, spamBefore+1, "spam field must count the inserted spam message")
+	assert.GreaterOrEqual(t, pendingMembersAfter, pendingMembersBefore+1, "pendingmembers field must count the pending application")
+
+	// The badge total must NOT be inflated by spam or pendingmembers.
+	// These items cannot be viewed or actioned in V2 modtools; including them
+	// in total causes a spurious badge increment (Discourse #9654 post 9).
+	assert.Equal(t, totalBefore, totalAfter, "badge total must not include spam messages or pending member applications")
 }
 
 // ---------------------------------------------------------------------------
