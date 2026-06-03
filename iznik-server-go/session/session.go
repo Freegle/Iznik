@@ -1781,24 +1781,34 @@ func DeleteSession(c *fiber.Ctx) error {
 	if myid > 0 {
 		db := database.DBConn
 
-		// Delete only the caller's current session so that other devices/browsers
-		// remain logged in. The JWT carries the session row ID; fall back to the
-		// legacy Authorization2 persistent-token header when no JWT is present.
-		_, sessionId, _ := user.GetJWTFromRequest(c)
+		// V1 parity (Session::destroy($userid, $series)): log out the current
+		// login SERIES, not all the user's sessions and not a single session row.
+		// Freegle and ModTools each get their own series at login, so deleting by
+		// series logs the user out of only the current app and leaves the other
+		// app logged in (Discourse #9748: logout was clearing both at once).
+		var series uint64
 
-		if sessionId == 0 {
-			// Persistent-token path: extract session ID from Authorization2 header.
-			persistent := c.Get("Authorization2")
-			if persistent != "" {
-				var pt auth.PersistentToken
-				if jsonErr := json.Unmarshal([]byte(persistent), &pt); jsonErr == nil {
-					sessionId = pt.ID
-				}
+		// Persistent-token (Authorization2) carries the series directly.
+		if persistent := c.Get("Authorization2"); persistent != "" {
+			var pt auth.PersistentToken
+			if json.Unmarshal([]byte(persistent), &pt) == nil {
+				series = pt.Series
 			}
 		}
 
-		if sessionId > 0 {
-			db.Exec("DELETE FROM sessions WHERE id = ? AND userid = ?", sessionId, myid)
+		// JWT path: resolve the series from the session row the JWT identifies.
+		if series == 0 {
+			if _, sessionId, _ := user.GetJWTFromRequest(c); sessionId > 0 {
+				db.Raw("SELECT series FROM sessions WHERE id = ? AND userid = ?", sessionId, myid).Scan(&series)
+			}
+		}
+
+		if series > 0 {
+			db.Exec("DELETE FROM sessions WHERE userid = ? AND series = ?", myid, series)
+		} else {
+			// Series could not be determined - fall back to V1's null-series path
+			// (clear all the user's sessions) so logout never silently no-ops.
+			db.Exec("DELETE FROM sessions WHERE userid = ?", myid)
 		}
 	}
 
