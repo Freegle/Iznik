@@ -173,7 +173,12 @@
                     <span>Show older chats</span>
                   </button>
                   <button
-                    v-if="complete && visibleChats && visibleChats.length"
+                    v-if="
+                      complete &&
+                      visibleChats &&
+                      visibleChats.length &&
+                      !showClosed
+                    "
                     class="chat-action-btn"
                     @click="showHideAll"
                   >
