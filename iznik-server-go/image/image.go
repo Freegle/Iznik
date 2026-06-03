@@ -3,6 +3,7 @@ package image
 import (
 	"database/sql"
 	"encoding/json"
+	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -162,6 +163,19 @@ func doCreate(c *fiber.Ctx, req *PostRequest) error {
 	}
 
 	parentID := req.resolveParentID()
+
+	// Avatar uploads (imgtype='User') require authentication and ownership:
+	// the requester must be the target user (or an admin/support account).
+	// All other imgtypes remain no-auth so the pre-signup give/post flow is not broken.
+	if imgType == "User" {
+		myid := auth.WhoAmI(c)
+		if myid == 0 {
+			return fiber.NewError(fiber.StatusUnauthorized, "Authentication required to upload a user avatar")
+		}
+		if parentID != 0 && myid != parentID && !auth.IsAdminOrSupport(myid) {
+			return fiber.NewError(fiber.StatusForbidden, "Cannot set another user's avatar")
+		}
+	}
 
 	// Use NULL instead of 0 for parent ID - FK constraints require valid references or NULL.
 	var parentIDParam interface{}
