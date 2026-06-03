@@ -31,9 +31,9 @@
         id="other-user-group"
         ref="expandBtnRef"
         class="other-user-group"
-        :class="{ clickme: chat.chattype === 'User2User' && otheruser?.info }"
+        :class="{ clickme: chat.chattype === 'User2User' || chat.chattype === 'User2Mod' }"
         @click="
-          chat.chattype === 'User2User' && otheruser?.info
+          chat.chattype === 'User2User' || chat.chattype === 'User2Mod'
             ? toggleProfileCard()
             : null
         "
@@ -52,7 +52,7 @@
     <!-- Profile popover — only for User2User where other user info is available -->
     <b-popover
       v-if="
-        cssReady && chat.chattype === 'User2User' && otheruser && otheruser.info
+        cssReady && (chat.chattype === 'User2User' || chat.chattype === 'User2Mod')
       "
       v-model="profileCardExpanded"
       target="other-user-group"
@@ -139,7 +139,7 @@
           <span>Profile</span>
         </button>
         <button
-          v-if="chat.chattype === 'User2User' || !unseen"
+          v-if="chat.chattype === 'User2User' || chat.chattype === 'User2Mod' || !unseen"
           class="action-btn"
           @click="chat.status === 'Closed' ? unhide() : showhide()"
         >
