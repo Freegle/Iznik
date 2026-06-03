@@ -205,7 +205,7 @@
             <mj-column>
                 <mj-divider border-color="#eeeeee" border-width="1px" padding="0 0 16px 0" />
                 <mj-button
-                    href="{{ $donateUrl }}"
+                    href="{{ $donateUrl ?? 'https://freegle.in/paypal1510' }}"
                     background-color="{{ $accentColor }}"
                     color="#ffffff"
                     font-size="14px"

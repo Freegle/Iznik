@@ -69,7 +69,7 @@ class VolunteeringDigestMail extends MjmlMailable
             'email'          => $this->recipientEmail,
             'jobAds'         => $jobAds,
             'jobsUrl'        => $this->trackedUrl("{$userSite}/jobs", 'jobs_link', 'jobs'),
-            'donateUrl'      => $this->trackedUrl("{$userSite}/donate", 'donate_link', 'donate'),
+            'donateUrl'      => $this->trackedUrl('https://freegle.in/paypal1510', 'donate_link', 'donate'),
         ]);
     }
 }
