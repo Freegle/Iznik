@@ -56,6 +56,49 @@ class UnifiedDigestRetryTest extends TestCase
         );
     }
 
+    public function test_rebuild_reloads_group_sponsors_for_immediate(): void
+    {
+        // A durable retry used to construct with an empty sponsor Collection,
+        // so retried immediate digests shipped without sponsor credit. The
+        // rebuild must re-derive the post's group sponsors (V1 single-group
+        // scope).
+        $poster = $this->createTestUser();
+        $recipient = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($recipient, $group);
+        $message = $this->createTestMessage($poster, $group);
+
+        \Illuminate\Support\Facades\DB::table('groups_sponsorship')->insert([
+            'groupid' => $group->id,
+            'name' => 'Retry Sponsor',
+            'linkurl' => 'https://retry.example.com',
+            'imageurl' => 'https://retry.example.com/logo.png',
+            'tagline' => 'Still here on retry',
+            'startdate' => now()->subDay(),
+            'enddate' => now()->addMonth(),
+            'contactname' => 'R',
+            'contactemail' => 'r@example.com',
+            'amount' => 100,
+            'visible' => TRUE,
+        ]);
+
+        $rebuilt = UnifiedDigest::rebuildFromDescriptor([
+            'userid' => $recipient->id,
+            'mode' => UnifiedDigestService::MODE_IMMEDIATE,
+            'posts' => [['msgid' => $message->id, 'groups' => [$group->id]]],
+        ]);
+
+        $this->assertInstanceOf(UnifiedDigest::class, $rebuilt);
+
+        // sponsors is protected — read it via reflection.
+        $ref = new \ReflectionProperty(UnifiedDigest::class, 'sponsors');
+        $ref->setAccessible(true);
+        $sponsors = $ref->getValue($rebuilt);
+
+        $this->assertCount(1, $sponsors);
+        $this->assertEquals('Retry Sponsor', $sponsors->first()->name);
+    }
+
     public function test_rebuild_returns_null_for_unknown_user(): void
     {
         $rebuilt = UnifiedDigest::rebuildFromDescriptor([

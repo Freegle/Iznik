@@ -244,7 +244,7 @@ commands:
           command: |
             echo "Resource monitor started - logging every 30 seconds"
 
-            # --- CPU priority watchdog (self-hosted/Katapult runner) ---
+            # --- CPU priority watchdog (all runner types including Katapult) ---
             # Root cause of build-test-katapult infrastructure_fail: during the
             # Playwright phase load runs to ~30 and the CircleCI runner agent can't
             # get CPU to send its heartbeat, so the control plane declares the VM
@@ -253,21 +253,21 @@ commands:
             # (nice -15) and lower every Docker test-container process (nice +15),
             # re-applied every few seconds because Playwright keeps forking new
             # headless_shell workers. Batched into two renice calls to stay cheap.
-            if [ "${SELF_HOSTED_RUNNER:-}" = "true" ]; then
-              (
-                while true; do
-                  agent_pids=$(pgrep -f 'circleci-runner|circleci-agent' 2>/dev/null | tr '\n' ' ')
-                  [ -n "$agent_pids" ] && sudo renice -n -15 -p $agent_pids >/dev/null 2>&1 || true
-                  docker_pids=""
-                  for pp in /proc/[0-9]*; do
-                    grep -qa 'docker' "$pp/cgroup" 2>/dev/null && docker_pids="$docker_pids ${pp#/proc/}"
-                  done
-                  [ -n "$docker_pids" ] && sudo renice -n 15 -p $docker_pids >/dev/null 2>&1 || true
-                  sleep 5
+            # Must run on ALL runner types (self-hosted and Katapult cloud) — the
+            # high CPU load affects the agent heartbeat on both.
+            (
+              while true; do
+                agent_pids=$(pgrep -f 'circleci-runner|circleci-agent' 2>/dev/null | tr '\n' ' ')
+                [ -n "$agent_pids" ] && sudo renice -n -15 -p $agent_pids >/dev/null 2>&1 || true
+                docker_pids=""
+                for pp in /proc/[0-9]*; do
+                  grep -qa 'docker' "$pp/cgroup" 2>/dev/null && docker_pids="$docker_pids ${pp#/proc/}"
                 done
-              ) &
-              echo "CPU priority watchdog running: agent nice -15, docker containers nice +15"
-            fi
+                [ -n "$docker_pids" ] && sudo renice -n 15 -p $docker_pids >/dev/null 2>&1 || true
+                sleep 5
+              done
+            ) &
+            echo "CPU priority watchdog running: agent nice -15, docker containers nice +15"
 
             while true; do
               echo ""
@@ -324,20 +324,28 @@ commands:
                 docker stop $old_containers 2>/dev/null || true
                 docker rm $old_containers 2>/dev/null || true
               fi
+            fi
 
-              # Ensure local build-layer cache registry (185.44.254.6:5002) is in insecure-registries.
-              # The pull-through mirrors (5000/5001) are configured at VM provision time; 5002 may be
-              # missing on older VMs, so we add it here if absent and reload Docker config.
-              if ! grep -q "5002" /etc/docker/daemon.json 2>/dev/null; then
-                echo "Adding 185.44.254.6:5002 to Docker insecure-registries..."
-                DAEMON_JSON=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
-                echo "$DAEMON_JSON" \
-                  | jq '."insecure-registries" = (."insecure-registries" // [] | . + ["185.44.254.6:5002"])' \
-                  | sudo tee /etc/docker/daemon.json > /dev/null \
-                  && sudo systemctl reload docker 2>/dev/null \
-                  && echo "Done — daemon config updated" \
-                  || echo "⚠️  Could not update daemon.json (non-critical)"
-              fi
+            # Ensure local Docker registry mirrors are in daemon.json.
+            # Must run for ALL runner types (Katapult cloud + self-hosted).
+            # 5002 = build-layer cache (insecure-registries only).
+            # 5000 = Docker Hub pull-through mirror: must be in registry-mirrors so
+            # Docker routes infrastructure image pulls (percona, redis, traefik, etc.)
+            # through the local cache instead of hitting Docker Hub directly.
+            # Without 5000 in registry-mirrors the Katapult VM IP hits Docker Hub's
+            # anonymous pull rate limit (100/6h per IP) and docker-compose up fails.
+            NEEDS_DAEMON_UPDATE=false
+            grep -q "5002" /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
+            grep -q '"http://185.44.254.6:5000"' /etc/docker/daemon.json 2>/dev/null || NEEDS_DAEMON_UPDATE=true
+            if [ "$NEEDS_DAEMON_UPDATE" = "true" ]; then
+              echo "Updating Docker daemon.json for local registry mirrors..."
+              DAEMON_JSON=$(cat /etc/docker/daemon.json 2>/dev/null || echo '{}')
+              echo "$DAEMON_JSON" \
+                | jq '."insecure-registries" = (."insecure-registries" // [] | (. + ["185.44.254.6:5000", "185.44.254.6:5002"]) | unique) | ."registry-mirrors" = (."registry-mirrors" // [] | (. + ["http://185.44.254.6:5000"]) | unique)' \
+                | sudo tee /etc/docker/daemon.json > /dev/null \
+                && sudo systemctl reload docker 2>/dev/null \
+                && echo "Done — daemon config updated" \
+                || echo "⚠️  Could not update daemon.json (non-critical)"
             fi
             # Only prune on cloud — self-hosted runner needs layer cache for fast builds
             if [ "${SELF_HOSTED_RUNNER:-}" != "true" ]; then

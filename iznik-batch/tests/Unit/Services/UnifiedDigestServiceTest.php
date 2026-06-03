@@ -348,6 +348,106 @@ class UnifiedDigestServiceTest extends TestCase
         $this->assertNotNull($localBiz);
     }
 
+    public function test_get_sponsors_for_group_returns_only_that_groups_sponsors(): void
+    {
+        // V1 parity for immediate digests: an email about group A must carry
+        // only group A's sponsors, never the union across the recipient's other
+        // groups (which getSponsorsForUser returns for the daily digest).
+        $groupA = $this->createTestGroup();
+        $groupB = $this->createTestGroup();
+
+        DB::table('groups_sponsorship')->insert([
+            'groupid' => $groupA->id,
+            'name' => 'Group A Sponsor',
+            'linkurl' => 'https://a.example.com',
+            'imageurl' => 'https://a.example.com/logo.png',
+            'tagline' => 'Backs group A',
+            'startdate' => now()->subDay(),
+            'enddate' => now()->addMonth(),
+            'contactname' => 'A',
+            'contactemail' => 'a@example.com',
+            'amount' => 100,
+            'visible' => TRUE,
+        ]);
+        DB::table('groups_sponsorship')->insert([
+            'groupid' => $groupB->id,
+            'name' => 'Group B Sponsor',
+            'linkurl' => 'https://b.example.com',
+            'imageurl' => 'https://b.example.com/logo.png',
+            'tagline' => 'Backs group B',
+            'startdate' => now()->subDay(),
+            'enddate' => now()->addMonth(),
+            'contactname' => 'B',
+            'contactemail' => 'b@example.com',
+            'amount' => 100,
+            'visible' => TRUE,
+        ]);
+
+        $sponsors = $this->service->getSponsorsForGroup($groupA->id);
+
+        $this->assertCount(1, $sponsors);
+        $this->assertEquals('Group A Sponsor', $sponsors->first()->name);
+        $this->assertNull($sponsors->firstWhere('name', 'Group B Sponsor'));
+    }
+
+    public function test_get_sponsors_for_group_excludes_expired_and_invisible(): void
+    {
+        $group = $this->createTestGroup();
+
+        // Expired.
+        DB::table('groups_sponsorship')->insert([
+            'groupid' => $group->id,
+            'name' => 'Expired Sponsor',
+            'linkurl' => 'https://x.example.com',
+            'imageurl' => null,
+            'tagline' => null,
+            'startdate' => now()->subMonths(2),
+            'enddate' => now()->subMonth(),
+            'contactname' => 'X',
+            'contactemail' => 'x@example.com',
+            'amount' => 100,
+            'visible' => TRUE,
+        ]);
+        // Hidden.
+        DB::table('groups_sponsorship')->insert([
+            'groupid' => $group->id,
+            'name' => 'Hidden Sponsor',
+            'linkurl' => 'https://y.example.com',
+            'imageurl' => null,
+            'tagline' => null,
+            'startdate' => now()->subDay(),
+            'enddate' => now()->addMonth(),
+            'contactname' => 'Y',
+            'contactemail' => 'y@example.com',
+            'amount' => 100,
+            'visible' => FALSE,
+        ]);
+        // Active + visible.
+        DB::table('groups_sponsorship')->insert([
+            'groupid' => $group->id,
+            'name' => 'Active Sponsor',
+            'linkurl' => 'https://z.example.com',
+            'imageurl' => null,
+            'tagline' => null,
+            'startdate' => now()->subDay(),
+            'enddate' => now()->addMonth(),
+            'contactname' => 'Z',
+            'contactemail' => 'z@example.com',
+            'amount' => 100,
+            'visible' => TRUE,
+        ]);
+
+        $sponsors = $this->service->getSponsorsForGroup($group->id);
+
+        $this->assertCount(1, $sponsors);
+        $this->assertEquals('Active Sponsor', $sponsors->first()->name);
+    }
+
+    public function test_get_sponsors_for_group_returns_empty_for_zero_group(): void
+    {
+        $this->assertTrue($this->service->getSponsorsForGroup(0)->isEmpty());
+    }
+
     public function test_expired_sponsors_are_excluded(): void
     {
         $user = $this->createTestUser();
