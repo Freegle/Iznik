@@ -575,6 +575,30 @@ describe('ProfileSection', () => {
 
       expect(wrapper.vm.displayName).toBe('Updated Name')
     })
+
+    describe('currentAtts watcher (avatar upload persistence)', () => {
+      it('posts avatar with user field (not msgid) so it persists against the user', async () => {
+        mockImagePost.mockResolvedValue({ id: 999, uid: 'freegletusd-abc' })
+        const wrapper = createWrapper()
+
+        wrapper.vm.currentAtts = [
+          { ouruid: 'freegletusd-abc', externalmods: {} },
+        ]
+        await wrapper.vm.$nextTick()
+        await new Promise((resolve) => setTimeout(resolve, 0))
+
+        expect(mockImagePost).toHaveBeenCalledWith(
+          expect.objectContaining({
+            externaluid: 'freegletusd-abc',
+            imgtype: 'User',
+            user: 123,
+          })
+        )
+        expect(mockImagePost).not.toHaveBeenCalledWith(
+          expect.objectContaining({ msgid: 123 })
+        )
+      })
+    })
   })
 
   describe('uploader visibility', () => {
