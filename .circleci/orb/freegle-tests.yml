@@ -303,6 +303,16 @@ commands:
           command: |
             echo "<< parameters.reason >>"
 
+            # Authenticate to Docker Hub to escape the shared-IP anonymous pull
+            # rate limit (toomanyrequests on redis/traefik/etc). Read-only PAT from
+            # the DOCKERHUB_* CircleCI env vars; safe no-op when they are not set.
+            if [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "Logging in to Docker Hub as ${DOCKERHUB_USERNAME:-freeglegeeks}..."
+              echo "$DOCKERHUB_TOKEN" | docker login -u "${DOCKERHUB_USERNAME:-freeglegeeks}" --password-stdin \
+                && echo "Docker Hub login OK" \
+                || echo "Docker Hub login failed - continuing unauthenticated"
+            fi
+
             # Ensure COMPOSE_PROFILES is set for all docker-compose commands
             export COMPOSE_PROFILES="${COMPOSE_PROFILES:-frontend,database,backend,dev,monitoring}"
 
@@ -382,6 +392,16 @@ commands:
           name: Build containers
           no_output_timeout: 25m
           command: |
+            # Authenticate to Docker Hub to escape the shared-IP anonymous pull
+            # rate limit (toomanyrequests on redis/traefik/etc). Read-only PAT from
+            # the DOCKERHUB_* CircleCI env vars; safe no-op when they are not set.
+            if [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+              echo "Logging in to Docker Hub as ${DOCKERHUB_USERNAME:-freeglegeeks}..."
+              echo "$DOCKERHUB_TOKEN" | docker login -u "${DOCKERHUB_USERNAME:-freeglegeeks}" --password-stdin \
+                && echo "Docker Hub login OK" \
+                || echo "Docker Hub login failed - continuing unauthenticated"
+            fi
+
             # Pre-pull shared base images once before any parallel builds start.
             # freegle-base: used by apiv1, freegle-prod-local, modtools-prod-local, etc.
             # freegle-batch-base: used by batch — contains compiled PHP extensions/PECL/MJML.
