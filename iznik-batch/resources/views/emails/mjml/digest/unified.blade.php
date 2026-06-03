@@ -123,7 +123,7 @@
                     {{ count($post['bulkItems']) }} items in this offer
                 </mj-text>
                 <mj-table cellpadding="0" cellspacing="0" width="100%">
-                    @foreach($post['bulkItems'] as $bi)
+                    @foreach($post['bulkItems'] as $i => $bi)
                     <tr style="border-bottom: 1px solid #f0f0f0;">
                         @if($bi['thumbUrl'])
                         <td style="width: 48px; padding: 6px 8px 6px 0; vertical-align: middle;">
@@ -133,6 +133,7 @@
                         @else
                         <td colspan="2" style="padding: 6px 0; vertical-align: middle; font-size: 14px; color: #333333;">
                         @endif
+                            <span style="color: #999999;">{{ $i + 1 }})</span>
                             <strong>{{ $bi['quantity'] }}&times;</strong> {{ $bi['name'] }}
                             @if($bi['condition'])<span style="color: #888888;"> &middot; {{ $bi['condition'] }}</span>@endif
                             @if($bi['dimensions'])<br/><span style="color: #999999; font-size: 12px;">{{ $bi['dimensions'] }}</span>@endif

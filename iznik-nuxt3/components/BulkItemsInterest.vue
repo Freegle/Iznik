@@ -9,7 +9,7 @@
     </p>
 
     <ul class="bulkitems__list">
-      <li v-for="item in items" :key="item.id" class="bitem">
+      <li v-for="(item, idx) in items" :key="item.id" class="bitem">
         <div class="bitem__photo">
           <img
             v-if="thumb(item)"
@@ -21,7 +21,9 @@
         </div>
 
         <div class="bitem__detail">
-          <div class="bitem__name">{{ item.name }}</div>
+          <div class="bitem__name">
+            <span class="bitem__ref">#{{ idx + 1 }}</span> {{ item.name }}
+          </div>
           <div class="bitem__meta">
             <b-badge variant="light" class="me-1"
               >{{ item.quantity }} available</b-badge
@@ -75,10 +77,7 @@
     </ul>
 
     <div v-if="!isOwner && !message.successful" class="bulkitems__actions">
-      <b-form-group
-        label="Which collection time suits you?"
-        class="mb-2"
-      >
+      <b-form-group label="Which collection time suits you?" class="mb-2">
         <b-form-radio-group
           v-if="slots.length"
           v-model="cancollect"
@@ -127,7 +126,9 @@ const authStore = useAuthStore()
 const message = computed(() => messageStore.byId(props.id) || {})
 const items = computed(() => message.value?.bulkitems || [])
 const slots = computed(() => message.value?.bulkslots || [])
-const slotOptions = computed(() => slots.value.map((s) => ({ value: s, text: s })))
+const slotOptions = computed(() =>
+  slots.value.map((s) => ({ value: s, text: s }))
+)
 const isOwner = computed(
   () =>
     !!authStore.user &&
@@ -184,8 +185,9 @@ function onCheck(item) {
 
 function thumb(item) {
   const att = item.attachments && item.attachments[0]
-  if (!att) return null
-  return att.paththumb || att.path || null
+  if (att) return att.paththumb || att.path || null
+  // Fall back to a spreadsheet-supplied photo link.
+  return item.photourl || null
 }
 
 function conditionLabel(c) {
@@ -290,6 +292,12 @@ defineExpose({ buildPayload, picks, canRegister })
 
 .bitem__name {
   font-weight: 600;
+}
+
+.bitem__ref {
+  color: $color-gray--normal;
+  font-weight: 400;
+  font-size: 0.85em;
 }
 
 /* Fixed-width pick column so rows stay the same shape whether on or off. */

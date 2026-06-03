@@ -2,9 +2,13 @@ package message
 
 import (
 	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -22,6 +26,7 @@ type BulkItem struct {
 	Quantity    uint    `json:"quantity"`
 	Condition   string  `json:"condition"`
 	Dimensions  *string `json:"dimensions"`
+	Photourl    *string `json:"photourl,omitempty"`
 	Description *string `json:"description"`
 	// Photos for this item, grouped from the message's attachments by bulkitemid.
 	Attachments []MessageAttachment `json:"attachments" gorm:"-"`
@@ -67,7 +72,7 @@ func interestIsActive(state string) bool {
 // non-bulk message so the JSON field is omitted.
 func LoadBulkItems(db *gorm.DB, msgid uint64, myid uint64, canSeeInterest bool, attachments []MessageAttachment) []BulkItem {
 	var items []BulkItem
-	db.Raw("SELECT id, msgid, position, name, quantity, `condition`, dimensions, description "+
+	db.Raw("SELECT id, msgid, position, name, quantity, `condition`, dimensions, photourl, description "+
 		"FROM messages_bulk_items WHERE msgid = ? ORDER BY position ASC, id ASC", msgid).Scan(&items)
 
 	if len(items) == 0 {
@@ -306,13 +311,13 @@ func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
 		var itemID uint64
 		if in.ID > 0 {
 			itemID = in.ID
-			db.Exec("UPDATE messages_bulk_items SET position = ?, name = ?, quantity = ?, `condition` = ?, dimensions = ?, description = ? WHERE id = ? AND msgid = ?",
-				pos, name, qty, condition, in.Dimensions, in.Description, itemID, msgid)
+			db.Exec("UPDATE messages_bulk_items SET position = ?, name = ?, quantity = ?, `condition` = ?, dimensions = ?, photourl = ?, description = ? WHERE id = ? AND msgid = ?",
+				pos, name, qty, condition, in.Dimensions, in.Photourl, in.Description, itemID, msgid)
 		} else {
 			sqlDB, err := db.DB()
 			if err == nil {
-				res, err := sqlDB.Exec("INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`, dimensions, description) VALUES (?, ?, ?, ?, ?, ?, ?)",
-					msgid, pos, name, qty, condition, in.Dimensions, in.Description)
+				res, err := sqlDB.Exec("INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`, dimensions, photourl, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+					msgid, pos, name, qty, condition, in.Dimensions, in.Photourl, in.Description)
 				if err == nil {
 					if id, err := res.LastInsertId(); err == nil {
 						itemID = uint64(id)
@@ -351,6 +356,7 @@ type BulkItemInput struct {
 	Quantity    int      `json:"quantity"`
 	Condition   string   `json:"condition"`
 	Dimensions  *string  `json:"dimensions"`
+	Photourl    *string  `json:"photourl"`
 	Description *string  `json:"description"`
 	Attachments []uint64 `json:"attachments"`
 }
@@ -362,16 +368,20 @@ type BulkItemInput struct {
 // Helper later turns that into structured interest.
 func buildBulkSummary(items []BulkItemInput, slots []string) string {
 	var lines []string
+	n := 0
 	for _, in := range items {
 		name := strings.TrimSpace(in.Name)
 		if name == "" {
 			continue
 		}
+		n++
 		qty := in.Quantity
 		if qty < 1 {
 			qty = 1
 		}
-		line := fmt.Sprintf("- %d× %s", qty, name)
+		// Reference number disambiguates similar items (same name, different
+		// condition) for free-text repliers and the Freegle Helper.
+		line := fmt.Sprintf("%d) %d× %s", n, qty, name)
 		if in.Condition != "" && in.Condition != "Unknown" {
 			line += " (" + in.Condition + ")"
 		}
@@ -394,6 +404,77 @@ func buildBulkSummary(items []BulkItemInput, slots []string) string {
 
 	return out
 }
+
+// fetchRemoteImage downloads an image from an http(s) URL, returning its bytes
+// and MIME type. Bounded size/time; verifies the content is an image.
+func fetchRemoteImage(url string) ([]byte, string, error) {
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		return nil, "", fmt.Errorf("not an http(s) url")
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("User-Agent", "Freegle bulk-offer photo fetcher")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("status %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 25<<20)) // 25 MB cap
+	if err != nil {
+		return nil, "", err
+	}
+	mime := resp.Header.Get("Content-Type")
+	if mime == "" || !strings.HasPrefix(mime, "image/") {
+		mime = http.DetectContentType(data)
+	}
+	if !strings.HasPrefix(mime, "image/") {
+		return nil, "", fmt.Errorf("not an image: %s", mime)
+	}
+	return data, mime, nil
+}
+
+// BulkPhotoFetcher is injectable for tests.
+var BulkPhotoFetcher = fetchRemoteImage
+
+// ingestBulkItemPhotos downloads any per-item photo URLs that don't yet have an
+// uploaded attachment, stores them in image storage (TUS) and links them to the
+// item. This is how a spreadsheet's "photo" links become real Freegle photos.
+// Run in a goroutine — downloads are slow; the photourl stays as an immediate
+// fallback until the attachment lands. Errors are logged only.
+func ingestBulkItemPhotos(db *gorm.DB, msgid uint64) {
+	type prow struct {
+		ID       uint64
+		Photourl string
+	}
+	var rows []prow
+	db.Raw("SELECT bi.id, bi.photourl FROM messages_bulk_items bi "+
+		"WHERE bi.msgid = ? AND bi.photourl IS NOT NULL AND bi.photourl != '' "+
+		"AND NOT EXISTS (SELECT 1 FROM messages_attachments a WHERE a.bulkitemid = bi.id)", msgid).Scan(&rows)
+
+	for _, r := range rows {
+		data, mime, err := BulkPhotoFetcher(r.Photourl)
+		if err != nil {
+			log.Printf("bulk photo ingest: download %s failed: %v", r.Photourl, err)
+			continue
+		}
+		uid, err := aiimage.ImageUploader(data, mime)
+		if err != nil {
+			log.Printf("bulk photo ingest: upload failed for %s: %v", r.Photourl, err)
+			continue
+		}
+		db.Exec("INSERT INTO messages_attachments (msgid, bulkitemid, externaluid) VALUES (?, ?, ?)",
+			msgid, r.ID, uid)
+	}
+}
+
+// IngestBulkItemPhotosSync is the synchronous variant, exposed for tests.
+var IngestBulkItemPhotosSync = ingestBulkItemPhotos
 
 // LoadBulkSlots returns the offerer's collection date/time windows for a message,
 // in display order. Returns nil when none are set.

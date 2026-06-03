@@ -850,8 +850,8 @@
         {{-- Bulk offer catalogue: a concise item list. --}}
         <p class="post-preview"><strong>{{ count($post['bulkItems']) }} items in this offer:</strong></p>
         <ul style="margin: 0 0 8px 0; padding-left: 18px; font-size: 14px; color: #333333;">
-          @foreach($post['bulkItems'] as $bi)
-          <li><strong>{{ $bi['quantity'] }}&times;</strong> {{ $bi['name'] }}@if($bi['condition']) &middot; {{ $bi['condition'] }}@endif</li>
+          @foreach($post['bulkItems'] as $i => $bi)
+          <li><span style="color:#999999;">{{ $i + 1 }})</span> <strong>{{ $bi['quantity'] }}&times;</strong> {{ $bi['name'] }}@if($bi['condition']) &middot; {{ $bi['condition'] }}@endif</li>
           @endforeach
         </ul>
         @endif
@@ -883,6 +883,14 @@
              accordion stack. The grid then auto-stretches the image cell
              to that same height, which is what makes the photo bottom
              edge align with the bottom of the Reply accordion / form. --}}
+        @if(!empty($post['bulkItems']))
+        {{-- Bulk offers need a per-item, structured reply (pick which items and
+             how many) that an AMP in-email form can't capture, so send the
+             replier to the website rather than offering the quick AMP reply. --}}
+        <p class="post-actions" style="margin-top: 12px;">
+          <a href="{{ $post['fallbackReplyUrl'] }}" class="reply-chip{{ $post['type'] === 'Offer' ? '' : ' wanted' }}">Choose the items you'd like on the website</a>
+        </p>
+        @else
         <amp-accordion class="reply-acc">
           <section>
             <h4 class="reply-toggle"><span class="reply-chip{{ $post['type'] === 'Offer' ? '' : ' wanted' }}">Reply</span></h4>
@@ -898,6 +906,7 @@
             </div>
           </section>
         </amp-accordion>
+        @endif
       </div>
     </div>
     @else
