@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 
 const mockReviewIgnore = vi.fn().mockResolvedValue()
+const mockRemoveMember = vi.fn().mockResolvedValue()
 const mockFetchMembers = vi.fn()
 const mockMergeAsk = vi.fn().mockResolvedValue()
 const mockMergeIgnore = vi.fn().mockResolvedValue()
@@ -11,6 +12,7 @@ vi.mock('~/api', () => ({
   default: () => ({
     memberships: {
       reviewIgnore: mockReviewIgnore,
+      remove: mockRemoveMember,
       fetchMembers: mockFetchMembers,
       update: mockMembershipsUpdate,
     },
@@ -49,26 +51,40 @@ describe('member store', () => {
   })
 
   describe('spamignore', () => {
-    it('removes entire user entry on ignore (backend clears all mod groups at once)', async () => {
+    it('removes only acted-on group and keeps entry when other memberships remain (Discourse #9481)', async () => {
+      // The backend is now per-group: ReviewIgnore only clears the one group clicked
+      // (reverted in commit 4749246f6 from the all-groups approach in e67355026).
+      // The frontend must keep the store entry when other memberships remain so the
+      // card stays visible for groups still under review.
       const store = useMemberStore()
       store.config = {}
 
-      // Simulate a member in review on two groups.
       store.list[123] = {
         id: 123,
         userid: 456,
         memberships: [
-          { id: 111, groupid: 789, membershipid: 111 },
-          { id: 222, groupid: 999, membershipid: 222 },
+          {
+            id: 111,
+            groupid: 789,
+            membershipid: 111,
+            reviewrequestedat: '2024-01-01T10:00:00Z',
+          },
+          {
+            id: 222,
+            groupid: 999,
+            membershipid: 222,
+            reviewrequestedat: '2024-01-01T10:00:00Z',
+          },
         ],
       }
 
-      // Ignore on group 789 — backend now clears ALL mod groups, so the
-      // whole entry should be removed immediately (Discourse #9618 fix).
       await store.spamignore({ userid: 456, groupid: 789 })
 
       expect(mockReviewIgnore).toHaveBeenCalledWith(456, 789)
-      expect(store.list[123]).toBeUndefined()
+      // Entry kept — group 999 still has a pending review.
+      expect(store.list[123]).toBeDefined()
+      expect(store.list[123].memberships.length).toBe(1)
+      expect(store.list[123].memberships[0].groupid).toBe(999)
     })
 
     it('removes entire entry when single membership is ignored', async () => {
@@ -82,6 +98,48 @@ describe('member store', () => {
       }
 
       await store.spamignore({ userid: 456, groupid: 789 })
+
+      expect(store.list[123]).toBeUndefined()
+    })
+  })
+
+  describe('remove - Spam review context', () => {
+    beforeEach(() => {
+      mockRemoveMember.mockResolvedValue()
+    })
+
+    it('keeps entry when other memberships remain after remove (Discourse #9481)', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      store.list[123] = {
+        id: 123,
+        userid: 456,
+        memberships: [
+          { id: 111, groupid: 789, membershipid: 111 },
+          { id: 222, groupid: 999, membershipid: 222 },
+        ],
+      }
+
+      await store.remove(456, 789)
+
+      // Entry kept — group 999 still listed for review.
+      expect(store.list[123]).toBeDefined()
+      expect(store.list[123].memberships.length).toBe(1)
+      expect(store.list[123].memberships[0].groupid).toBe(999)
+    })
+
+    it('removes entire entry when only membership is removed in Spam context', async () => {
+      const store = useMemberStore()
+      store.config = {}
+
+      store.list[123] = {
+        id: 123,
+        userid: 456,
+        memberships: [{ id: 111, groupid: 789, membershipid: 111 }],
+      }
+
+      await store.remove(456, 789)
 
       expect(store.list[123]).toBeUndefined()
     })
@@ -186,7 +244,11 @@ describe('member store', () => {
 
       const store = useMemberStore()
       store.config = {}
-      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+      await store.fetchMembers({
+        collection: 'Approved',
+        groupid: 1,
+        limit: 20,
+      })
 
       expect(store.context).toBe(456)
     })
@@ -207,7 +269,11 @@ describe('member store', () => {
       const store = useMemberStore()
       store.config = {}
 
-      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+      await store.fetchMembers({
+        collection: 'Approved',
+        groupid: 1,
+        limit: 20,
+      })
       await store.fetchMembers({
         collection: 'Approved',
         groupid: 1,
@@ -229,7 +295,11 @@ describe('member store', () => {
 
       const store = useMemberStore()
       store.config = {}
-      await store.fetchMembers({ collection: 'Approved', groupid: 1, limit: 20 })
+      await store.fetchMembers({
+        collection: 'Approved',
+        groupid: 1,
+        limit: 20,
+      })
 
       expect(store.context).toBeNull()
     })

@@ -226,13 +226,22 @@ export const useMemberStore = defineStore({
         params.groupid
       )
 
-      // The backend clears review flags for ALL of the mod's moderated groups at once
-      // (Discourse #9618 fix). Remove the whole user entry from the store so the card
-      // disappears immediately instead of reappearing with another group's Ignore button.
+      // ReviewIgnore is per-group: only the clicked group's flag is cleared
+      // (commit 4749246f6 reverted the all-groups broadcast from e67355026).
+      // Remove only the acted-on membership from the array so the card stays
+      // visible when the member is still under review on other groups (#9481).
+      // Delete the whole entry only when no memberships remain.
       const key = Object.keys(this.list).find(
         (k) => parseInt(this.list[k].userid) === parseInt(params.userid)
       )
-      if (key) {
+      if (key && this.list[key].memberships) {
+        this.list[key].memberships = this.list[key].memberships.filter(
+          (m) => parseInt(m.groupid) !== parseInt(params.groupid)
+        )
+        if (this.list[key].memberships.length === 0) {
+          delete this.list[key]
+        }
+      } else if (key) {
         delete this.list[key]
       }
     },
@@ -247,19 +256,38 @@ export const useMemberStore = defineStore({
       this.context = null
       await api(this.config).memberships.remove(userid, groupid)
 
-      // Remove from list: either use given membershipid or find matching userid/groupid
       if (membershipid) {
-        // const member = this.list[membershipid]
         delete this.list[membershipid]
       } else {
-        let foundid = false
-        for (const membership of Object.values(this.list)) {
-          if (membership.userid === userid && membership.groupid === groupid) {
-            foundid = membership.id
+        // For Spam review entries (have a memberships array): only remove the
+        // acted-on membership so the card stays visible for other pending groups
+        // (#9481).  For single-membership entries: keep the original userid+groupid
+        // match to avoid deleting unrelated entries for the same user.
+        const spamKey = Object.keys(this.list).find(
+          (k) =>
+            parseInt(this.list[k].userid) === parseInt(userid) &&
+            Array.isArray(this.list[k].memberships)
+        )
+        if (spamKey) {
+          this.list[spamKey].memberships = this.list[
+            spamKey
+          ].memberships.filter((m) => parseInt(m.groupid) !== parseInt(groupid))
+          if (this.list[spamKey].memberships.length === 0) {
+            delete this.list[spamKey]
           }
-        }
-        if (foundid) {
-          delete this.list[foundid]
+        } else {
+          let foundid = false
+          for (const membership of Object.values(this.list)) {
+            if (
+              parseInt(membership.userid) === parseInt(userid) &&
+              parseInt(membership.groupid) === parseInt(groupid)
+            ) {
+              foundid = membership.id
+            }
+          }
+          if (foundid) {
+            delete this.list[foundid]
+          }
         }
       }
     },
