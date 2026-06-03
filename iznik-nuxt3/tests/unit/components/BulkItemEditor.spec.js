@@ -7,17 +7,16 @@ vi.mock('~/components/PhotoUploader', () => ({
   default: {
     name: 'PhotoUploader',
     template: '<div class="photo-uploader-stub" />',
-    props: ['modelValue', 'type', 'maxPhotos', 'recognise', 'emptyTitle', 'emptySubtitle'],
+    props: [
+      'modelValue',
+      'type',
+      'maxPhotos',
+      'recognise',
+      'emptyTitle',
+      'emptySubtitle',
+    ],
   },
 }))
-vi.mock('~/components/NumberIncrementDecrement', () => ({
-  default: {
-    name: 'NumberIncrementDecrement',
-    template: '<input class="num-stub" />',
-    props: ['modelValue', 'min', 'max', 'size', 'label', 'labelSROnly'],
-  },
-}))
-
 import BulkItemEditor from '~/components/BulkItemEditor.vue'
 
 // Auto-stub the bootstrap-vue-next form components this component uses that the
@@ -29,6 +28,7 @@ const mountOpts = {
       'b-form-input': true,
       'b-form-textarea': true,
       'b-form-group': true,
+      'b-form-select': true,
     },
   },
 }
@@ -55,10 +55,9 @@ describe('BulkItemEditor', () => {
     expect(w.vm.items[0].name).toBe('')
   })
 
-  it('imports items from pasted spreadsheet text, replacing the blank row', async () => {
+  it('imports items from uploaded spreadsheet text, replacing the blank row', async () => {
     const w = mount(BulkItemEditor, mountOpts)
-    w.vm.importText = 'Desk,4,Good\nChair,14,Used'
-    w.vm.applyImport()
+    w.vm.applyImport('Desk,4,Good\nChair,14,Used')
     await nextTick()
     expect(w.vm.items.map((i) => i.name)).toEqual(['Desk', 'Chair'])
     expect(w.vm.items[0].quantity).toBe(4)

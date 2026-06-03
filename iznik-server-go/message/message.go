@@ -246,6 +246,10 @@ type Message struct {
 	Bulkcount int        `json:"bulkcount,omitempty" gorm:"-"`
 	// Bulkslots are the offerer-defined collection windows a replier picks from.
 	Bulkslots []string `json:"bulkslots,omitempty" gorm:"-"`
+	// Accessinstructions is the offerer's private note (address / gate code /
+	// intercom). Only returned to the offerer or a moderator — never to general
+	// viewers — and sent to a replier only once they're promised an item.
+	Accessinstructions *string `json:"accessinstructions,omitempty" gorm:"-"`
 }
 
 // MessagePosting represents a posting history record from messages_postings.
@@ -767,6 +771,14 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
 				message.Bulkcount = len(message.BulkItems)
 				if message.Bulkcount > 0 {
 					message.Bulkslots = LoadBulkSlots(db, message.ID)
+					// Access instructions are private — only the offerer/mod sees them.
+					if canSeeInterest {
+						var ai string
+						db.Raw("SELECT COALESCE(accessinstructions, '') FROM messages WHERE id = ?", message.ID).Scan(&ai)
+						if ai != "" {
+							message.Accessinstructions = &ai
+						}
+					}
 				}
 
 				mu.Lock()
@@ -2506,24 +2518,25 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error 
 
 // patchMessageRequest is the body for PATCH /message and PATCH /message/tn/:tnpostid.
 type patchMessageRequest struct {
-	ID           uint64          `json:"id"`
-	Subject      *string         `json:"subject"`
-	Textbody     *string         `json:"textbody"`
-	Type         *string         `json:"type"`
-	Msgtype      *string         `json:"msgtype"`
-	Messagetype  *string         `json:"messagetype"`
-	Item         *string         `json:"item"`
-	Availablenow *int            `json:"availablenow"`
-	Lat          *float64        `json:"lat"`
-	Lng          *float64        `json:"lng"`
-	Location     *string         `json:"location"`
-	Locationid   *uint64         `json:"locationid"`
-	Groupid      *uint64         `json:"groupid"`
-	Attachments  AttachmentIDs   `json:"attachments"`
-	BadAIImages  []uint64        `json:"badAIImages"`
-	Deadline     *string         `json:"deadline"`
-	Bulkitems    []BulkItemInput `json:"bulkitems"`
-	Bulkslots    []string        `json:"bulkslots"`
+	ID                 uint64          `json:"id"`
+	Subject            *string         `json:"subject"`
+	Textbody           *string         `json:"textbody"`
+	Type               *string         `json:"type"`
+	Msgtype            *string         `json:"msgtype"`
+	Messagetype        *string         `json:"messagetype"`
+	Item               *string         `json:"item"`
+	Availablenow       *int            `json:"availablenow"`
+	Lat                *float64        `json:"lat"`
+	Lng                *float64        `json:"lng"`
+	Location           *string         `json:"location"`
+	Locationid         *uint64         `json:"locationid"`
+	Groupid            *uint64         `json:"groupid"`
+	Attachments        AttachmentIDs   `json:"attachments"`
+	BadAIImages        []uint64        `json:"badAIImages"`
+	Deadline           *string         `json:"deadline"`
+	Bulkitems          []BulkItemInput `json:"bulkitems"`
+	Bulkslots          []string        `json:"bulkslots"`
+	Accessinstructions *string         `json:"accessinstructions"`
 }
 
 // resolvePartnerAuth reads a ?partner= query param and resolves the acting user ID.
@@ -2968,6 +2981,9 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
 	if req.Bulkslots != nil {
 		upsertBulkSlots(db, req.ID, req.Bulkslots)
 	}
+	if req.Accessinstructions != nil {
+		db.Exec("UPDATE messages SET accessinstructions = ? WHERE id = ?", *req.Accessinstructions, req.ID)
+	}
 
 	return nil
 }
@@ -3279,6 +3295,7 @@ func PutMessage(c *fiber.Ctx) error {
 		Email              string          `json:"email"`
 		Bulkitems          []BulkItemInput `json:"bulkitems"`
 		Bulkslots          []string        `json:"bulkslots"`
+		Accessinstructions string          `json:"accessinstructions"`
 	}
 
 	var req PutMessageRequest
@@ -3446,6 +3463,9 @@ func PutMessage(c *fiber.Ctx) error {
 	}
 	if req.Bulkslots != nil {
 		upsertBulkSlots(db, newMsgID, req.Bulkslots)
+	}
+	if strings.TrimSpace(req.Accessinstructions) != "" {
+		db.Exec("UPDATE messages SET accessinstructions = ? WHERE id = ?", req.Accessinstructions, newMsgID)
 	}
 
 	// Add spatial data if locationid is provided, and update the user's last known location
