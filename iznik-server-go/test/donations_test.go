@@ -369,3 +369,89 @@ func TestAddDonationSkipsGiftAidNotifWhenExisting(t *testing.T) {
 	db.Raw("SELECT COUNT(*) FROM users_notifications WHERE touser = ? AND type = 'GiftAid'", targetUserID).Scan(&notifCount)
 	assert.Equal(t, int64(0), notifCount)
 }
+
+// Regression: when a donor has two users_emails rows both preferred=0, and the
+// alias (@users.ilovefreegle.org) sorts BEFORE the real email under email ASC
+// (because '-' < '@' in ASCII), the old query picked the alias. V1 skips our-domain
+// addresses on the first pass and only falls back to them if no external email exists.
+// Payer must always be the real external email when one is available.
+func TestAddDonationPayerUsesRealEmailNotAlias(t *testing.T) {
+	prefix := uniquePrefix("DonPayerAlias")
+	callerID := CreateTestUser(t, prefix+"Caller", "User")
+	_, token := CreateTestSession(t, callerID)
+	db := database.DBConn
+
+	// Give the caller GiftAid permission.
+	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", callerID)
+
+	// Create the donor WITHOUT any email row (CreateTestUser adds one; we'll replace it).
+	donorID := CreateTestUser(t, prefix+"Donor", "User")
+
+	// Remove the default email row added by CreateTestUser.
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", donorID)
+
+	// Insert TWO rows, both preferred=0.
+	// The alias uses the donor's actual UID so it sorts BEFORE the real email under
+	// email ASC (e.g. "aaa-<uid>@users.ilovefreegle.org" vs "aaa@gmail.com").
+	realEmail := fmt.Sprintf("aaa%d@gmail.com", donorID)
+	aliasEmail := fmt.Sprintf("aaa%d-%d@users.ilovefreegle.org", donorID, donorID)
+	// aliasEmail sorts before realEmail because '-' (0x2D) < '@' (0x40) in ASCII.
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)", donorID, realEmail)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)", donorID, aliasEmail)
+
+	body := fmt.Sprintf(`{"userid":%d,"amount":0,"date":"2026-01-15 12:00:00"}`, donorID)
+	req := httptest.NewRequest("PUT", "/api/donations?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+	donationID := uint64(result["id"].(float64))
+	assert.NotZero(t, donationID)
+
+	// Payer must be the real external email, not the alias.
+	var payer string
+	db.Raw("SELECT Payer FROM users_donations WHERE id = ?", donationID).Scan(&payer)
+	assert.Equal(t, realEmail, payer,
+		"Payer should be the real external email, not the @users.ilovefreegle.org alias")
+}
+
+// Regression (fallback): when a donor's ONLY email is an @users.ilovefreegle.org alias,
+// AddDonation must still succeed and store the alias in Payer (second-pass fallback).
+func TestAddDonationPayerFallsBackToAliasWhenNoRealEmail(t *testing.T) {
+	prefix := uniquePrefix("DonPayerFB")
+	callerID := CreateTestUser(t, prefix+"Caller", "User")
+	_, token := CreateTestSession(t, callerID)
+	db := database.DBConn
+
+	// Give the caller GiftAid permission.
+	db.Exec("UPDATE users SET permissions = 'GiftAid' WHERE id = ?", callerID)
+
+	// Create donor whose ONLY email is the alias.
+	donorID := CreateTestUser(t, prefix+"Donor", "User")
+	db.Exec("DELETE FROM users_emails WHERE userid = ?", donorID)
+	aliasOnly := fmt.Sprintf("donor%d-%d@users.ilovefreegle.org", donorID, donorID)
+	db.Exec("INSERT INTO users_emails (userid, email, preferred) VALUES (?, ?, 0)", donorID, aliasOnly)
+
+	body := fmt.Sprintf(`{"userid":%d,"amount":0,"date":"2026-01-15 12:00:00"}`, donorID)
+	req := httptest.NewRequest("PUT", "/api/donations?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, float64(0), result["ret"])
+	donationID := uint64(result["id"].(float64))
+	assert.NotZero(t, donationID)
+
+	// When no real email exists, Payer falls back to the alias.
+	var payer string
+	db.Raw("SELECT Payer FROM users_donations WHERE id = ?", donationID).Scan(&payer)
+	assert.Equal(t, aliasOnly, payer,
+		"Payer should fall back to the alias when no external email exists")
+}

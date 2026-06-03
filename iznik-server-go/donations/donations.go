@@ -12,6 +12,7 @@ import (
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
+	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -208,11 +209,38 @@ func AddDonation(c *fiber.Ctx) error {
 
 	name := donor.Name
 
-	// Get preferred email: external email first, then any email.
+	// Get the donor's preferred email, mirroring V1 getEmailPreferred().
+	//
+	// First pass: prefer an external address, skipping our-domain aliases
+	// (@users.ilovefreegle.org, @groups.ilovefreegle.org, @direct.ilovefreegle.org,
+	// @republisher.freegle.in) and Yahoo Groups addresses. These are internal routing
+	// addresses, not the donor's real contact email.
+	//
+	// Second pass: if no external address exists (e.g. social-login-only users whose
+	// only email is the alias), fall back to any email including the alias.
 	db.Raw(`SELECT email FROM users_emails
 		WHERE userid = ?
-		ORDER BY preferred DESC, email ASC
-		LIMIT 1`, req.UserID).Scan(&preferredEmail)
+		  AND email NOT LIKE ?
+		  AND email NOT LIKE ?
+		  AND email NOT LIKE ?
+		  AND email NOT LIKE ?
+		  AND email NOT LIKE '%@yahoogroups.%'
+		ORDER BY preferred DESC, added DESC
+		LIMIT 1`,
+		req.UserID,
+		"%@"+utils.USER_DOMAIN,
+		"%@groups.ilovefreegle.org",
+		"%@direct.ilovefreegle.org",
+		"%@republisher.freegle.in",
+	).Scan(&preferredEmail)
+
+	if preferredEmail == "" {
+		// Second pass: no external email found; accept any email including our-domain aliases.
+		db.Raw(`SELECT email FROM users_emails
+			WHERE userid = ?
+			ORDER BY preferred DESC, added DESC
+			LIMIT 1`, req.UserID).Scan(&preferredEmail)
+	}
 
 	if preferredEmail == "" {
 		preferredEmail = "unknown"
