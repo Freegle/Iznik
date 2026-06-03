@@ -415,6 +415,27 @@ describe('messages/approved/[[id]]/[[term]].vue page', () => {
       expect(wrapper.vm.bump).toBeGreaterThan(0)
     })
 
+    it('initialises the semantic search toggle from the misc store (sticky across remounts)', async () => {
+      mockMiscStore.get.mockReturnValue(true)
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      expect(mockMiscStore.get).toHaveBeenCalledWith('modtoolsSemanticSearch')
+      expect(wrapper.vm.vectorSearchEnabled).toBe(true)
+    })
+
+    it('persists the semantic search toggle to the misc store when changed', async () => {
+      mockMiscStore.get.mockReturnValue(false)
+      const wrapper = mountComponent()
+      await wrapper.vm.$nextTick()
+      mockMiscStore.set.mockClear()
+      wrapper.vm.vectorSearchEnabled = true
+      await wrapper.vm.$nextTick()
+      expect(mockMiscStore.set).toHaveBeenCalledWith({
+        key: 'modtoolsSemanticSearch',
+        value: true,
+      })
+    })
+
     describe('loadMore', () => {
       it('calls loaded (not complete) when no user', async () => {
         const wrapper = mountComponent()

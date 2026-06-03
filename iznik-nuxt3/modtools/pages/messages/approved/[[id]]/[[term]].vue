@@ -64,11 +64,17 @@
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from '#imports'
 import { useMessageStore } from '@/stores/message'
+import { useMiscStore } from '@/stores/misc'
 import { setupModMessages } from '@/composables/useModMessages'
 import { useMe } from '~/composables/useMe'
 
+// Persisted (localStorage-backed) key for the semantic-search toggle so it
+// survives group changes, searches and remounts.
+const SEMANTIC_SEARCH_KEY = 'modtoolsSemanticSearch'
+
 // Stores
 const messageStore = useMessageStore()
+const miscStore = useMiscStore()
 
 // Composables
 const modMessages = setupModMessages(true)
@@ -95,8 +101,10 @@ const {
 // Local state (formerly data())
 const chosengroupid = ref(0)
 const bump = ref(0)
-const vectorSearchEnabled = ref(false)
-const searchmode = computed(() => vectorSearchEnabled.value ? 'vector' : 'keyword')
+const vectorSearchEnabled = ref(miscStore.get(SEMANTIC_SEARCH_KEY) ?? false)
+const searchmode = computed(() =>
+  vectorSearchEnabled.value ? 'vector' : 'keyword'
+)
 const urlOverride = ref(false)
 const loaded = ref(false)
 const highlightMsgId = ref(null)
@@ -224,6 +232,8 @@ function searchedMessage(term) {
 }
 
 watch(vectorSearchEnabled, () => {
+  // Persist the choice so it sticks across group changes, searches and remounts.
+  miscStore.set({ key: SEMANTIC_SEARCH_KEY, value: vectorSearchEnabled.value })
   show.value = 0
   context.value = null
   modMessages.listingIds.value = new Set()
