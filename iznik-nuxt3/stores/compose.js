@@ -150,6 +150,9 @@ export const useComposeStore = defineStore({
             attachments: Array.isArray(i.attachments) ? i.attachments : [],
           }))
       }
+      if (Array.isArray(message.bulkslots) && message.bulkslots.length) {
+        data.bulkslots = message.bulkslots
+      }
 
       const ret = await this.$api.message.put(data)
 
