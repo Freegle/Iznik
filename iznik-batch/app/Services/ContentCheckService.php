@@ -24,6 +24,23 @@ class ContentCheckService
     public const CHECK_URL               = 'Url';
     public const CHECK_MONEY             = 'Money';
     public const CHECK_LANGUAGE          = 'Language';
+
+    /**
+     * Candidate languages for the content-check language detector. Restricted to
+     * languages realistically seen on UK Freegle — English/Welsh, the main UK
+     * community languages, and frequent spam origins — so the detector cannot
+     * rank constructed/obscure languages (Interlingua, Occitan, Esperanto, Ido,
+     * Latin) top on short English and raise a false "not English" flag
+     * (Discourse #9481). Scandinavian (nb/nn/da/sv) is intentionally kept.
+     */
+    private const LANGUAGE_DETECT_SET = [
+        'en', 'cy', 'ga', 'gd', 'fr', 'de', 'nl', 'es', 'pt-BR', 'pt-PT', 'it',
+        'pl', 'ro', 'cs', 'sk', 'lt', 'lv', 'bg', 'hu', 'hr', 'sl', 'sr-Latn',
+        'uk', 'ru', 'ar', 'fa', 'ur', 'tr', 'so', 'he', 'zh-Hans', 'zh-Hant',
+        'ja', 'ko', 'vi', 'th', 'tl', 'id', 'ms-Latn', 'hi', 'bn', 'gu', 'ta',
+        'ml', 'sq', 'el-monoton', 'sv', 'da', 'nb', 'nn', 'fi', 'et', 'eu',
+        'ca', 'gl',
+    ];
     public const CHECK_IP_ABUSE          = 'IpAbuse';
     public const CHECK_BULK_MAIL         = 'BulkMail';
     public const CHECK_SUBJECT_REPEAT    = 'SubjectRepeat';
@@ -977,20 +994,27 @@ class ContentCheckService
     // Language detection — flag non-English/Welsh messages over 50 chars
     // (V1 Spam.php parity using patrickschur/language-detection).
     // English is accepted if it is the top language, or if P(en|cy) >= 0.8 *
-    // P(top language) — the same lax threshold V1 uses.
+    // P(top language) — the same lax threshold V1 uses (Spam.php line 413).
+    // The optional $detector callable accepts the lowercased text and returns
+    // an array of language => probability; used in tests for deterministic results.
     // -------------------------------------------------------------------------
 
-    public function checkLanguage(string $subject, string $textbody): ?array
+    public function checkLanguage(string $subject, string $textbody, ?callable $detector = null): ?array
     {
         $text = trim(str_ireplace('xxx', '', strtolower($textbody)));
 
-        if (strlen($text) <= 50) {
+        // Skip text too short for reliable language detection. The detector is a
+        // coin-flip below ~80 chars (it mis-ranks terse English replies like
+        // "Yes please can collect. … Possible collection times: Asap"), and such
+        // short replies carry little spam risk, so checking them only generates
+        // false "not English" flags (Discourse #9481). V1 used 50; raised to 80.
+        if (strlen($text) <= 80) {
             return null;
         }
 
         try {
-            $ld   = new Language();
-            $lang = $ld->detect($text)->close();
+            $detect = $detector ?? static fn(string $t) => (new Language(self::LANGUAGE_DETECT_SET))->detect($t)->close();
+            $lang   = $detect($text);
 
             if (empty($lang)) {
                 return null;

@@ -1907,6 +1907,15 @@ func PutUser(c *fiber.Ctx) error {
 		if result.RowsAffected > 0 {
 			db.Exec("INSERT INTO logs (timestamp, type, subtype, groupid, user, byuser) VALUES (NOW(), ?, ?, ?, ?, ?)",
 				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_JOINED, req.GroupID, newUserID, newUserID)
+
+			// V1 parity (User::addMembership, User.php:911-916): record the join in
+			// memberships_history with processingrequired=1 so the background
+			// member-review / welcome / abuse-detection consumer (memberships:process)
+			// treats this as a brand-new joiner. AddMembership() writes this row, but
+			// the website-signup path inserts the membership inline and never calls it,
+			// so without this the new member bypasses new-joiner scrutiny.
+			db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired, added) VALUES (?, ?, ?, 1, NOW())",
+				newUserID, req.GroupID, utils.COLLECTION_APPROVED)
 		}
 	}
 
@@ -2327,6 +2336,32 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
 }
 
+// LogGroupLeftForApprovedMemberships writes a per-group (Group, Left) audit log
+// for every Approved membership the user currently holds. V1 emits one such log
+// per group when the user actually leaves: at grace-period expiry the
+// processForgets cron calls User::forget(), which iterates the memberships and
+// calls User::removeMembership() per group, each writing a Left log
+// (User.php:1087-1095). V2 instead bulk-deletes approved memberships eagerly at
+// delete time, so by the time the cleanup cron runs there is nothing left to
+// iterate and the Left logs would never be written — at any point. We therefore
+// emit them here, immediately before the bulk delete. byUser is the actor recorded
+// in the log; pass 0 to record byuser as NULL (e.g. the partner flow, which has no
+// acting Freegle user).
+func LogGroupLeftForApprovedMemberships(db *gorm.DB, targetID uint64, byUser uint64) {
+	var groupids []uint64
+	db.Raw("SELECT groupid FROM memberships WHERE userid = ? AND collection = ?",
+		targetID, utils.COLLECTION_APPROVED).Scan(&groupids)
+	for _, groupid := range groupids {
+		if byUser == 0 {
+			db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, groupid) VALUES (NOW(), ?, ?, ?, NULL, ?)",
+				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_LEFT, targetID, groupid)
+		} else {
+			db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser, groupid) VALUES (NOW(), ?, ?, ?, ?, ?)",
+				log2.LOG_TYPE_GROUP, log2.LOG_SUBTYPE_LEFT, targetID, byUser, groupid)
+		}
+	}
+}
+
 // softLimboUser puts a user into a recoverable "limbo": it removes their approved
 // memberships (so they drop out of group member lists), marks the account deleted
 // (a 14-day grace period before users:cleanup runs forgetUser), and logs a
@@ -2335,6 +2370,9 @@ func handleUnbounce(c *fiber.Ctx, myid uint64, req UserPostRequest) error {
 // action (POST /user action=Unsubscribe) so both behave identically. byUser is the
 // actor recorded in the log (the user themselves, or the support volunteer).
 func softLimboUser(db *gorm.DB, targetID uint64, byUser uint64) {
+	// V1 parity: record a per-group (Group, Left) audit log before the eager bulk
+	// delete drops the memberships (see LogGroupLeftForApprovedMemberships).
+	LogGroupLeftForApprovedMemberships(db, targetID, byUser)
 	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
 	db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
 	db.Exec("INSERT INTO logs (timestamp, type, subtype, user, byuser) VALUES (NOW(), ?, ?, ?, ?)",

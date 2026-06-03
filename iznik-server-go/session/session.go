@@ -573,7 +573,10 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 		}
 
 		// V1 parity (User::delete): drop approved memberships so the user immediately
-		// disappears from group member lists.
+		// disappears from group member lists. Emit the per-group (Group, Left) audit
+		// log first (byuser NULL — no acting Freegle user in the partner flow), since
+		// the eager delete leaves nothing for the later cleanup cron to log.
+		user.LogGroupLeftForApprovedMemberships(db, targetID, 0)
 		db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", targetID, utils.COLLECTION_APPROVED)
 
 		db.Exec("UPDATE users SET deleted = NOW() WHERE id = ?", targetID)
@@ -624,7 +627,10 @@ func handleForget(c *fiber.Ctx, partner string, targetID uint64) error {
 	c.Locals("skipPostAuthCheck", true)
 
 	// V1 parity (User::delete): drop approved memberships so the user no longer appears
-	// in group member lists during the grace period.
+	// in group member lists during the grace period. Emit the per-group (Group, Left)
+	// audit log first (byuser = the user themselves), since the eager delete leaves
+	// nothing for the later cleanup cron to log.
+	user.LogGroupLeftForApprovedMemberships(db, myid, myid)
 	db.Exec("DELETE FROM memberships WHERE userid = ? AND collection = ?", myid, utils.COLLECTION_APPROVED)
 
 	// Soft-delete: user can recover by logging back in within ~14 days.

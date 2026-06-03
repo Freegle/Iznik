@@ -89,6 +89,97 @@ func TestCreateImageNoAuth(t *testing.T) {
 	assert.Equal(t, float64(0), result["ret"])
 }
 
+// TestCreateUserAvatarOwnedByRequester verifies that uploading an avatar for
+// imgtype='User' with the correct JWT succeeds and links the row to the user.
+func TestCreateUserAvatarOwnedByRequester(t *testing.T) {
+	prefix := uniquePrefix("AvatarOwn")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	body := fmt.Sprintf(
+		`{"externaluid":"freegletusd-avatar-%s","imgtype":"User","user":%d}`,
+		prefix, userID,
+	)
+	req := httptest.NewRequest("POST", "/api/image?jwt="+token, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	respBody := rsp(resp)
+	var result map[string]interface{}
+	json.Unmarshal(respBody, &result)
+	assert.NotZero(t, result["id"])
+	assert.Equal(t, float64(0), result["ret"])
+
+	// Confirm users_images.userid is set to the requester's ID (not NULL).
+	db := database.DBConn
+	var userid uint64
+	db.Raw("SELECT userid FROM users_images WHERE id = ?", uint64(result["id"].(float64))).Scan(&userid)
+	assert.Equal(t, userID, userid, "users_images.userid must equal the requester's ID")
+}
+
+// TestCreateUserAvatarForAnotherUser verifies that a user cannot set another
+// user's avatar (avatar-hijack prevention): must return 403.
+func TestCreateUserAvatarForAnotherUser(t *testing.T) {
+	prefix := uniquePrefix("AvatarHijack")
+	userA := CreateTestUser(t, prefix+"A", "User")
+	userB := CreateTestUser(t, prefix+"B", "User")
+	_, tokenA := CreateTestSession(t, userA)
+
+	// User A tries to upload an avatar for User B.
+	body := fmt.Sprintf(
+		`{"externaluid":"freegletusd-hijack-%s","imgtype":"User","user":%d}`,
+		prefix, userB,
+	)
+	req := httptest.NewRequest("POST", "/api/image?jwt="+tokenA, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusForbidden, resp.StatusCode)
+}
+
+// TestCreateUserAvatarNoAuth verifies that uploading imgtype='User' without a
+// JWT returns 401 (not the 200 that non-User types return without auth).
+func TestCreateUserAvatarNoAuth(t *testing.T) {
+	prefix := uniquePrefix("AvatarNoAuth")
+	userID := CreateTestUser(t, prefix, "User")
+
+	body := fmt.Sprintf(
+		`{"externaluid":"freegletusd-noauth-avatar-%s","imgtype":"User","user":%d}`,
+		prefix, userID,
+	)
+	req := httptest.NewRequest("POST", "/api/image", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusUnauthorized, resp.StatusCode)
+}
+
+// TestCreateUserAvatarAdminCanSetForOther verifies that an Admin can upload an
+// avatar for any user (bypasses the ownership check).
+func TestCreateUserAvatarAdminCanSetForOther(t *testing.T) {
+	prefix := uniquePrefix("AvatarAdmin")
+	adminID := CreateTestUser(t, prefix+"Admin", "Admin")
+	targetID := CreateTestUser(t, prefix+"Target", "User")
+	_, adminToken := CreateTestSession(t, adminID)
+
+	body := fmt.Sprintf(
+		`{"externaluid":"freegletusd-admin-avatar-%s","imgtype":"User","user":%d}`,
+		prefix, targetID,
+	)
+	req := httptest.NewRequest("POST", "/api/image?jwt="+adminToken, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, fiber.StatusOK, resp.StatusCode)
+
+	respBody := rsp(resp)
+	var result map[string]interface{}
+	json.Unmarshal(respBody, &result)
+	assert.NotZero(t, result["id"])
+}
+
 func TestCreateImageMissingUID(t *testing.T) {
 	prefix := uniquePrefix("CreateImageNoUID")
 	userID := CreateTestUser(t, prefix, "User")

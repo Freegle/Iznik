@@ -70,15 +70,14 @@ executors:
       COMPOSE_PROFILES: frontend,database,backend,dev,monitoring
       COMPOSE_PROJECT_NAME: freegle-ci
       SELF_HOSTED_RUNNER: "true"
-      # PW_WORKERS halved 11 -> 6 to stop build-test-katapult CPU-heartbeat
-      # starvation in the parallel test phase. RAM/swap are fine (20G swapfile),
-      # but 11 Chromium workers + Laravel + Go + Vitest saturated all 16 cores,
-      # so the CircleCI agent couldn't heartbeat and the job was killed
-      # (infrastructure_fail) ~6 min into the test step. nice-demoting the test
-      # runners alone (orb 1.1.338) did NOT hold, so we also cut Playwright
-      # concurrency. If it still starves, lower further or split Playwright onto
-      # its own Katapult job (task #37).
-      PW_WORKERS: 6
+      # PW_WORKERS reduced 11 -> 6 (orb 1.1.339) then 6 -> 4 (orb 1.1.340) to
+      # stop build-test-katapult CPU-heartbeat starvation in the parallel test
+      # phase. RAM/swap are fine (20G swapfile), but Chromium workers + Laravel +
+      # Go + Vitest saturated all 16 cores so the CircleCI agent couldn't
+      # heartbeat and the job was killed (infrastructure_fail). nice-demoting the
+      # test runners (orb 1.1.338) did NOT hold alone. 4 matches the stable
+      # machine-executor-large value.
+      PW_WORKERS: 4
       VITEST_MAX_WORKERS: 4
       PORT_TRAEFIK_HTTP: 9080
       PORT_TRAEFIK_API: 17192
