@@ -1026,6 +1026,59 @@ func TestDeleteSession(t *testing.T) {
 	assert.Equal(t, int64(0), countAfter)
 }
 
+// TestDeleteSessionScopedToCurrentDevice verifies that DELETE /session only
+// invalidates the caller's session, leaving other active sessions (other devices)
+// intact. Regression test for Discourse #9748: logout was deleting all sessions
+// for the user instead of just the current one.
+// TestDeleteSessionScopedToCurrentSeries verifies V1 parity
+// (Session::destroy with a series): logging out deletes the current login
+// SERIES only, so a separate app's session (a different series - e.g. ModTools
+// while Freegle is logged in) stays active. Regression test for Discourse
+// #9748: logout was deleting ALL of a user's sessions, logging them out of both
+// Freegle and ModTools at once.
+func TestDeleteSessionScopedToCurrentSeries(t *testing.T) {
+	prefix := uniquePrefix("del_sess_series")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	// Production gives each login a distinct random series; the CreateTestSession
+	// helper hardcodes series=userID, so insert explicit series here. series1 is
+	// the current app login (two tabs); series2 is a separate app login.
+	series1 := userID*1000 + 1
+	series2 := userID*1000 + 2
+
+	mk := func(series uint64) uint64 {
+		db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 1, NOW(), NOW())", userID, series)
+		var id uint64
+		db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&id)
+		return id
+	}
+	idA := mk(series1) // current login (series 1)
+	idB := mk(series1) // same login series, another tab
+	idC := mk(series2) // separate app login (series 2)
+
+	token := GetToken(userID, idA)
+
+	req := httptest.NewRequest("DELETE", "/api/session?jwt="+token, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	count := func(id uint64) int64 {
+		var n int64
+		db.Raw("SELECT COUNT(*) FROM sessions WHERE id = ?", id).Scan(&n)
+		return n
+	}
+	// The whole current series is logged out...
+	assert.Equal(t, int64(0), count(idA), "current session (series 1) should be deleted")
+	assert.Equal(t, int64(0), count(idB), "same-series session should also be deleted")
+	// ...but the other app's series stays logged in.
+	assert.Equal(t, int64(1), count(idC), "other app session (series 2) must remain logged in")
+}
+
 // ---------------------------------------------------------------------------
 // POST /session - Forget
 // ---------------------------------------------------------------------------

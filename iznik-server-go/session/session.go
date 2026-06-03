@@ -1780,7 +1780,36 @@ func DeleteSession(c *fiber.Ctx) error {
 
 	if myid > 0 {
 		db := database.DBConn
-		db.Exec("DELETE FROM sessions WHERE userid = ?", myid)
+
+		// V1 parity (Session::destroy($userid, $series)): log out the current
+		// login SERIES, not all the user's sessions and not a single session row.
+		// Freegle and ModTools each get their own series at login, so deleting by
+		// series logs the user out of only the current app and leaves the other
+		// app logged in (Discourse #9748: logout was clearing both at once).
+		var series uint64
+
+		// Persistent-token (Authorization2) carries the series directly.
+		if persistent := c.Get("Authorization2"); persistent != "" {
+			var pt auth.PersistentToken
+			if json.Unmarshal([]byte(persistent), &pt) == nil {
+				series = pt.Series
+			}
+		}
+
+		// JWT path: resolve the series from the session row the JWT identifies.
+		if series == 0 {
+			if _, sessionId, _ := user.GetJWTFromRequest(c); sessionId > 0 {
+				db.Raw("SELECT series FROM sessions WHERE id = ? AND userid = ?", sessionId, myid).Scan(&series)
+			}
+		}
+
+		if series > 0 {
+			db.Exec("DELETE FROM sessions WHERE userid = ? AND series = ?", myid, series)
+		} else {
+			// Series could not be determined - fall back to V1's null-series path
+			// (clear all the user's sessions) so logout never silently no-ops.
+			db.Exec("DELETE FROM sessions WHERE userid = ?", myid)
+		}
 	}
 
 	return c.JSON(fiber.Map{

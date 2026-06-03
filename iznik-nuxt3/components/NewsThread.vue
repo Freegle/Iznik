@@ -666,6 +666,12 @@ async function unmute() {
   z-index: 10000;
 }
 
+.thread-menu {
+  /* The "..." menu is floated to the end; give it space so it does not sit
+     right up against the post text (Discourse #9749 - chitchat niggle). */
+  margin-left: 0.5rem;
+}
+
 :deep(.strike) {
   text-decoration: line-through;
 }

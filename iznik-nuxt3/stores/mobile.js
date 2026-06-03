@@ -211,8 +211,10 @@ export const useMobileStore = defineStore({
           console.log('appUrlOpen', event.url)
           const lookfor = 'ilovefreegle.org'
           const ilfpos = event.url.indexOf(lookfor)
-          if (ilfpos !== false) {
-            const route = event.url.substring(ilfpos + lookfor.length)
+          if (ilfpos !== -1) {
+            const route = event.url
+              .substring(ilfpos + lookfor.length)
+              .replace('/chat/', '/chats/')
             console.log('appUrlOpen route', route)
             const router = useRouter()
             if (route.includes('src=forgotpass')) {
@@ -593,7 +595,7 @@ export const useMobileStore = defineStore({
         if (this.route && okToMove) {
           this.route = this.route.replace('/chat/', '/chats/')
           console.log('router.currentRoute', router.currentRoute)
-          if (router.currentRoute.path !== this.route) {
+          if (router.currentRoute.value.path !== this.route) {
             console.log('GO TO ', this.route)
             router.push(this.route)
           }
