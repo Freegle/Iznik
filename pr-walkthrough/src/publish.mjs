@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Help get the rendered MP4 into the PR.
 //
-//   node src/publish.mjs --example examples/pr-618                     # print embed instructions
-//   node src/publish.mjs --example examples/pr-618 --release owner/repo [--tag <tag>]
+//   node src/publish.mjs --pr-dir prs/pr-618                     # print embed instructions
+//   node src/publish.mjs --pr-dir prs/pr-618 --release owner/repo [--tag <tag>]
 //
 // GitHub renders an inline <video> player only for files uploaded as PR/issue ATTACHMENTS
 // (user-attachments), and that upload endpoint isn't exposed by the gh CLI/API — so the
@@ -21,7 +21,7 @@ function arg(name, fallback) {
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
 }
 
-const exampleDir = resolve(ROOT, arg('--example', 'examples/pr-618'));
+const exampleDir = resolve(ROOT, arg('--pr-dir', 'prs/pr-618'));
 const outDir = join(exampleDir, 'out');
 if (!existsSync(outDir)) throw new Error(`No out/ dir in ${exampleDir} — render first.`);
 const mp4 = readdirSync(outDir).find((f) => f.endsWith('.mp4'));
@@ -51,5 +51,5 @@ if (release) {
   console.log('GitHub turns the dropped file into markup like:');
   console.log('  https://github.com/user-attachments/assets/<uuid>\n');
   console.log('Automatable fallback (Release asset, stable URL but a download link, not a player):');
-  console.log('  node src/publish.mjs --example ' + arg('--example', 'examples/pr-618') + ' --release <owner/repo>\n');
+  console.log('  node src/publish.mjs --pr-dir ' + arg('--pr-dir', 'prs/pr-618') + ' --release <owner/repo>\n');
 }

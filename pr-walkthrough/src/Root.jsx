@@ -3,7 +3,7 @@ import { Composition } from 'remotion';
 import { Walkthrough } from './Walkthrough.jsx';
 import { VIDEO, TRANSITION_FRAMES } from './theme.js';
 import { totalDurationInFrames } from './storyboard-schema.mjs';
-import storyboard from '../examples/pr-618/storyboard.json';
+import storyboard from '../prs/pr-618/storyboard.json';
 
 // The storyboard is supplied as input props at render time (`remotion render --props`).
 // The bundled example is the default so `remotion studio` shows the 618 walkthrough.

@@ -21,19 +21,31 @@ default and unused for product walkthroughs.
 **PII (decided):** real PRs carry screenshots of real people's data, so masking is a
 first-class pipeline step — see "PII masking" below.
 
+**Live code, not embedded images (decided):** screenshots pasted into a PR body go stale
+(618's were — the live composer had gained collection-time slots, a deadline and access
+instructions). So the tool captures **fresh** screenshots from a **preexisting running
+worktree** of the PR (`--base-url`). It never checks out, builds or edits that worktree,
+and capture is **read-only / non-mutating** (fills + toggles to reach a state, but refuses
+submit/save clicks), so it can't write to the target's DB or pollute another agent's work.
+
+**Tests are the function signal (decided):** the PR's tests — Playwright/E2E especially —
+say which functions matter. `analyze` mines their `describe/it` titles to a coverage
+checklist so we include the important flows and don't miss key ones (e.g. 618's moderator
+bulk-preview surface). The capture plan's selectors come from the PR's own `data-testid`s.
+
 ## What we build
 
 A self-contained tool, `pr-walkthrough/`, that turns a PR into an annotated MP4:
 
 ```
-gh PR ──▶ fetch ──▶ analyze ──▶ storyboard.json ──▶ render (Remotion) ──▶ walkthrough.mp4
+gh PR ─▶ fetch ─▶ capture (live worktree) ─▶ analyze ─▶ mask PII ─▶ render (Remotion) ─▶ mp4
 ```
 
 Three decoupled stages, each independently runnable and testable:
 
 1. **fetch** (`src/fetch.mjs`) — pull PR metadata (`gh pr view --json`), the full diff
    (`gh pr diff`), and download every image referenced in the PR body into
-   `examples/pr-<n>/assets/`. Pure I/O; no judgement.
+   `prs/pr-<n>/assets/`. Pure I/O; no judgement.
 
 2. **analyze** (`src/analyze.mjs`) — turn the raw material into a **storyboard** (the
    "script" handed to Remotion): an ordered list of scenes, each with a type, a
@@ -50,7 +62,7 @@ Three decoupled stages, each independently runnable and testable:
 
 3. **render** (`src/render.mjs` + the Remotion project) — copy the example's assets into
    `public/`, then `remotion render` the `Walkthrough` composition with the storyboard
-   as input props. Output: `examples/pr-<n>/out/pr-<n>-walkthrough.mp4`.
+   as input props. Output: `prs/pr-<n>/out/pr-<n>-walkthrough.mp4`.
 
 `pr-walkthrough.mjs <pr> [--repo o/r] [--analyzer manual|claude]` chains the three.
 
@@ -96,7 +108,7 @@ pan targets are fractions (0..1) of the image's natural size.
 
 ## PII masking
 
-`examples/pr-<n>/masks.json` lists regions (fractions of an image) to pixelate / blur /
+`prs/pr-<n>/masks.json` lists regions (fractions of an image) to pixelate / blur /
 box; `src/imageutil.py` **bakes** them into `*.masked.png` copies. The storyboard only
 ever references the masked copies, and `render.mjs` stages only those into `public/` — so
 the sensitive pixels never reach the rendered frames (not merely covered by a CSS box).

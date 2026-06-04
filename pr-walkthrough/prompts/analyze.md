@@ -16,6 +16,11 @@ the *feature*, not the implementation.
 - The screenshots available to show, with their natural pixel sizes — `{{ASSETS}}`
 - The PR diff, for context only (to understand the feature — NOT to put on screen) — below.
 
+**Lead with what the tests cover.** The PR's tests — Playwright/E2E first, then unit/
+integration — list the journeys that matter. Build the storyboard around those flows; you
+may skip untested trivia, but do not miss an important surface that has a test (e.g. a
+preview modal). Each screenshot scene should correspond to a real, drivable screen.
+
 ## What you produce
 
 A single JSON object matching the storyboard schema (no prose, no markdown fences):

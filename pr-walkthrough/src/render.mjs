@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Render a storyboard to MP4.
 //
-//   node src/render.mjs [--example examples/pr-618] [--out <path>] [--no-mask]
+//   node src/render.mjs [--pr-dir prs/pr-618] [--out <path>] [--no-mask]
 //
 // Steps: validate storyboard → bake PII masks → stage ONLY the referenced (masked)
 // assets into public/ → remotion render. Raw screenshots are never copied into public/,
@@ -41,7 +41,7 @@ function imageSize(path) {
 }
 
 function main() {
-  const exampleDir = resolve(ROOT, arg('--example', 'examples/pr-618'));
+  const exampleDir = resolve(ROOT, arg('--pr-dir', 'prs/pr-618'));
   const storyboardPath = join(exampleDir, 'storyboard.json');
   if (!existsSync(storyboardPath)) throw new Error(`No storyboard at ${storyboardPath}`);
   const sb = JSON.parse(readFileSync(storyboardPath, 'utf8'));

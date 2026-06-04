@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Turn fetched PR material into a storyboard.json (the script handed to Remotion).
 //
-//   node src/analyze.mjs [--example dir] [--analyzer manual|claude]
+//   node src/analyze.mjs [--pr-dir dir] [--analyzer manual|claude]
 //
 // manual (default): validate the existing hand-authored storyboard.json. Spends nothing.
 // claude          : build the prompt from prompts/analyze.md + the PR material and ask the
@@ -37,6 +37,46 @@ function listAssets(assetsDir) {
     });
 }
 
+// The PR's tests — Playwright/E2E especially — are the strongest signal of which
+// user-facing functions matter. Mine their describe/it/test titles so the storyboard and
+// capture plan can be sanity-checked for coverage: include the important flows, skip the
+// trivia, don't miss key stuff.
+function mineTests(diff) {
+  const files = [];
+  let cur = null;
+  for (const line of diff.split('\n')) {
+    const head = /^\+\+\+ b\/(.+)$/.exec(line);
+    if (head) {
+      const f = head[1];
+      const isTest = /(\.spec\.|\.test\.|\/tests?\/|_test\.go|Test\.php)/i.test(f);
+      cur = isTest ? { file: f, titles: [], e2e: /(e2e|playwright)/i.test(f) } : null;
+      if (cur) files.push(cur);
+      continue;
+    }
+    if (cur) {
+      const t = /^\+\s*(?:it|test|describe)\(\s*['"`](.+?)['"`]/.exec(line);
+      if (t) cur.titles.push(t[1]);
+    }
+  }
+  return files.filter((f) => f.titles.length);
+}
+
+function reportCoverage(exampleDir) {
+  const diffFile = readdirSync(exampleDir).find((f) => /^pr-\d+\.diff$/.test(f));
+  if (!diffFile) return;
+  const tests = mineTests(readFileSync(join(exampleDir, diffFile), 'utf8'));
+  if (!tests.length) return;
+  const e2e = tests.filter((t) => t.e2e);
+  console.log(`\n• function signal from ${tests.length} test file(s)` +
+    (e2e.length ? ` — ★ = E2E/Playwright (${e2e.length}):` : ' (no Playwright E2E in this PR — using unit/integration tests):'));
+  for (const f of tests) {
+    console.log(`  ${f.e2e ? '★' : '·'} ${f.file}  (${f.titles.length})`);
+    for (const t of f.titles.slice(0, 8)) console.log(`      – ${t}`);
+    if (f.titles.length > 8) console.log(`      … +${f.titles.length - 8} more`);
+  }
+  console.log('  → Make sure the storyboard/capture-plan covers the important flows above; minor ones can be skipped.');
+}
+
 function buildPrompt(exampleDir) {
   const tmpl = readFileSync(join(ROOT, 'prompts', 'analyze.md'), 'utf8');
   const metaFile = readdirSync(exampleDir).find((f) => /^pr-\d+\.json$/.test(f));
@@ -68,7 +108,7 @@ function runClaude(prompt) {
 }
 
 function main() {
-  const exampleDir = resolve(ROOT, arg('--example', 'examples/pr-618'));
+  const exampleDir = resolve(ROOT, arg('--pr-dir', 'prs/pr-618'));
   const analyzer = arg('--analyzer', 'manual');
   const storyboardPath = join(exampleDir, 'storyboard.json');
   const assetExists = (src) => existsSync(join(exampleDir, 'assets', basename(src)));
@@ -94,6 +134,8 @@ function main() {
   }
   const secs = sb.scenes.reduce((a, s) => a + s.seconds, 0);
   console.log(`✓ storyboard valid: ${sb.scenes.length} scenes, ~${secs}s`);
+
+  reportCoverage(exampleDir);
 }
 
 main();

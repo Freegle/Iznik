@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Fetch raw material for a PR walkthrough.
 //
-//   node src/fetch.mjs <pr> [--repo owner/repo] [--example <dir>]
+//   node src/fetch.mjs <pr> [--repo owner/repo] [--pr-dir <dir>]
 //
 // Writes <example>/pr-<n>.json (metadata), <example>/pr-<n>.diff (full diff) and
 // downloads every image referenced in the PR body into <example>/assets/.
@@ -40,11 +40,11 @@ async function download(url, dest) {
 async function main() {
   const pr = process.argv[2];
   if (!pr || pr.startsWith('--')) {
-    console.error('usage: node src/fetch.mjs <pr> [--repo owner/repo] [--example dir]');
+    console.error('usage: node src/fetch.mjs <pr> [--repo owner/repo] [--pr-dir dir]');
     process.exit(1);
   }
   const repo = arg('--repo', 'Freegle/Iznik');
-  const exampleDir = resolve(ROOT, arg('--example', `examples/pr-${pr}`));
+  const exampleDir = resolve(ROOT, arg('--pr-dir', `prs/pr-${pr}`));
   const assets = join(exampleDir, 'assets');
   mkdirSync(assets, { recursive: true });
 

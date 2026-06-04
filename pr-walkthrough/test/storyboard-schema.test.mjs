@@ -52,7 +52,7 @@ test('duration math accounts for transition overlaps', () => {
 });
 
 test('the committed pr-618 storyboard is valid and external-only', () => {
-  const dir = join(ROOT, 'examples', 'pr-618');
+  const dir = join(ROOT, 'prs', 'pr-618');
   const sb = JSON.parse(readFileSync(join(dir, 'storyboard.json'), 'utf8'));
   const { ok, errors } = validateStoryboard(sb, (src) =>
     existsSync(join(dir, 'assets', basename(src))) || src.endsWith('.masked.png'));
