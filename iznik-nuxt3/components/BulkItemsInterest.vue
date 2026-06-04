@@ -4,8 +4,10 @@
       <v-icon icon="gift" class="me-1 text-success" />
       {{ items.length }} items in this offer
     </h4>
-    <p v-if="!isOwner" class="text-muted small mb-2">
-      Turn on the items you'd like and choose how many.
+    <p v-if="!isOwner && !message.successful" class="bulkitems__prompt">
+      Turn on <strong>“I'd like this”</strong> for each item you want — pick as
+      many as you like, and choose how many of each. You'll need at least one
+      turned on before you can register your interest.
     </p>
 
     <ul class="bulkitems__list">
@@ -58,10 +60,12 @@
             v-model="picks[item.id].checked"
             switch
             class="bitem__toggle"
+            :class="{ 'bitem__toggle--on': picks[item.id].checked }"
             :data-testid="'pick-' + item.id"
+            :aria-label="'I\'d like ' + item.name"
             @change="onCheck(item)"
           >
-            I'd like this
+            <span class="bitem__picktext">I'd like this</span>
           </b-form-checkbox>
           <b-form-select
             v-if="picks[item.id].checked"
@@ -86,10 +90,13 @@
     />
 
     <div v-if="!isOwner && !message.successful" class="bulkitems__actions">
-      <b-form-group label="Which collection time suits you?" class="mb-2">
-        <b-form-radio-group
+      <b-form-group
+        label="Which collection times can you make? Tick all that suit you."
+        class="mb-2"
+      >
+        <b-form-checkbox-group
           v-if="slots.length"
-          v-model="cancollect"
+          v-model="cancollectTimes"
           :options="slotOptions"
           stacked
           data-testid="slot-picker"
@@ -101,6 +108,10 @@
           maxlength="255"
         />
       </b-form-group>
+
+      <p v-if="registerHint" class="bulkitems__hint small">
+        {{ registerHint }}
+      </p>
 
       <SpinButton
         variant="primary"
@@ -149,7 +160,11 @@ const isOwner = computed(
 )
 
 const submitted = ref(false)
+// Free-text collection time (used when the giver set no fixed windows).
 const cancollect = ref('')
+// Selected fixed collection windows — recipients tick all the times they can
+// make, not just one.
+const cancollectTimes = ref([])
 
 // Per-item pick state, seeded from any interest the user already expressed.
 const picks = reactive({})
@@ -164,8 +179,15 @@ function seedPicks() {
         checked: !!yi && yi.state !== 'Withdrawn',
         quantity: yi && yi.quantity > 0 ? yi.quantity : 1,
       }
-      if (yi && yi.cancollect && !cancollect.value) {
+      if (yi && yi.cancollect && !cancollect.value && !cancollectTimes.value.length) {
         cancollect.value = yi.cancollect
+        // Pre-tick the fixed windows the user already chose (stored joined).
+        if (slots.value.length) {
+          cancollectTimes.value = yi.cancollect
+            .split(';')
+            .map((s) => s.trim())
+            .filter((s) => slots.value.includes(s))
+        }
       }
       if (yi && yi.state !== 'Withdrawn') {
         submitted.value = true
@@ -180,12 +202,23 @@ const anyPicked = computed(() =>
   Object.values(picks).some((p) => p.checked && p.quantity > 0)
 )
 
-// Can only register once something is picked, and — when the giver has set
-// collection windows — once one of those has been chosen.
+// Can only register once at least one item is turned on, and — when the giver
+// has set collection windows — once at least one of those is ticked.
 const canRegister = computed(() => {
   if (!anyPicked.value) return false
-  if (slots.value.length && !cancollect.value) return false
+  if (slots.value.length && !cancollectTimes.value.length) return false
   return true
+})
+
+// Tells the recipient why the Register button is disabled.
+const registerHint = computed(() => {
+  if (!anyPicked.value) {
+    return 'Turn on “I\'d like this” for at least one item above before you can register.'
+  }
+  if (slots.value.length && !cancollectTimes.value.length) {
+    return 'Tick at least one collection time you can make.'
+  }
+  return ''
 })
 
 function onCheck(item) {
@@ -234,6 +267,10 @@ function enlarge(item) {
 // collection time), plus any item previously wanted but now switched off
 // (quantity 0 withdraws it).
 function buildPayload() {
+  // Fixed windows are stored joined; free text is used when there are none.
+  const collect = slots.value.length
+    ? cancollectTimes.value.join('; ')
+    : cancollect.value
   const out = []
   for (const item of items.value) {
     const p = picks[item.id]
@@ -242,7 +279,7 @@ function buildPayload() {
       out.push({
         bulkitemid: item.id,
         quantity: p.quantity,
-        cancollect: cancollect.value || null,
+        cancollect: collect || null,
       })
     } else if (had) {
       out.push({ bulkitemid: item.id, quantity: 0 })
@@ -265,7 +302,7 @@ async function submit(callback) {
   if (callback) callback()
 }
 
-defineExpose({ buildPayload, picks, canRegister })
+defineExpose({ buildPayload, picks, canRegister, cancollectTimes, registerHint })
 </script>
 
 <style scoped lang="scss">
@@ -280,6 +317,30 @@ defineExpose({ buildPayload, picks, canRegister })
 .bulkitems__heading {
   font-size: 1.1rem;
   font-weight: 600;
+}
+
+/* Prominent instruction so it's obvious the toggles are the key action. */
+.bulkitems__prompt {
+  background-color: $color-green--light;
+  border-left: 3px solid $color-green--darker;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.95rem;
+}
+
+/* The "I'd like this" label — clear, and greens up when turned on. */
+.bitem__picktext {
+  font-weight: 600;
+}
+
+.bitem__toggle--on .bitem__picktext {
+  color: $color-green--darker;
+}
+
+.bulkitems__hint {
+  color: $color-gray--dark;
+  margin-bottom: 0.5rem;
 }
 
 .bulkitems__list {

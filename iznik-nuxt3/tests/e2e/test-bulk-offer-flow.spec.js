@@ -220,8 +220,10 @@ async function registerInterest(page, msgId, indices, takeScreenshot, who) {
   }
   await takeScreenshot(`bulk-${who}-items-picked`)
 
-  // Pick the first collection slot if the picker is shown.
-  const slot = page.locator('[data-testid="slot-picker"] input[type="radio"]').first()
+  // Tick the first collection time if the picker is shown (multi-select).
+  const slot = page
+    .locator('[data-testid="slot-picker"] input[type="checkbox"]')
+    .first()
   if (await slot.count()) await slot.check().catch(() => {})
 
   const register = page.getByTestId('register-interest')
