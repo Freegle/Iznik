@@ -1544,7 +1544,7 @@ func PatchSession(c *fiber.Ctx) error {
 		Email              *string             `json:"email,omitempty"`
 		Source             *string             `json:"source,omitempty"`
 		Deleted            json.RawMessage     `json:"deleted,omitempty"`
-		Marketingconsent   *bool               `json:"marketingconsent,omitempty"`
+		Marketingconsent   *FlexBool           `json:"marketingconsent,omitempty"`
 		Key                *string             `json:"key,omitempty"`
 		Modtools           FlexBool            `json:"modtools,omitempty"`
 	}
@@ -1684,7 +1684,7 @@ func PatchSession(c *fiber.Ctx) error {
 
 	if req.Marketingconsent != nil {
 		mc := 0
-		if *req.Marketingconsent {
+		if req.Marketingconsent.Bool() {
 			mc = 1
 		}
 		setClauses = append(setClauses, "marketingconsent = ?")

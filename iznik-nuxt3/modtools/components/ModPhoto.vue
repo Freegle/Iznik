@@ -14,32 +14,6 @@
       :messageid="messageid"
       :attachmentid="attachmentid"
     />
-    <b-modal
-      ref="aiDeleteModal"
-      title="Remove AI Image"
-      no-stacking
-    >
-      <template #default>
-        <p>This is an AI-generated image. Why are you removing it?</p>
-        <b-button
-          variant="outline-secondary"
-          class="d-block w-100 mb-2"
-          @click="confirmRemove(false)"
-        >
-          Not relevant to this post
-        </b-button>
-        <b-button
-          variant="outline-danger"
-          class="d-block w-100"
-          @click="confirmRemove(true)"
-        >
-          Bad AI image for any post of this item
-        </b-button>
-      </template>
-      <template #footer>
-        <b-button variant="white" @click="hideAiDeleteModal">Cancel</b-button>
-      </template>
-    </b-modal>
   </span>
 </template>
 
@@ -66,8 +40,6 @@ const messageStore = useMessageStore()
 
 const zoom = ref(false)
 const modphotomodal = ref(null)
-const aiDeleteModal = ref(null)
-const pendingRemoveId = ref(null)
 
 const message = computed(() => messageStore.byId(props.messageid))
 
@@ -94,29 +66,11 @@ function showModal() {
   modphotomodal.value?.show()
 }
 
-function hideAiDeleteModal() {
-  aiDeleteModal.value?.hide()
-  pendingRemoveId.value = null
-}
-
+// Removing an AI-generated image is recorded server-side: the V2 message PATCH handler
+// records a review vote and protects this message from the illustrations cron re-adding
+// an image. To stop AI images for an item entirely, use the "Don't use AI for this item"
+// control on the ModTools AI Images page.
 async function removePhoto(id) {
-  if (mods.value?.ai) {
-    pendingRemoveId.value = id
-    aiDeleteModal.value?.show()
-    return
-  }
-
-  await doRemove(id, false)
-}
-
-async function confirmRemove(isBadForAnyPost) {
-  const id = pendingRemoveId.value
-  aiDeleteModal.value?.hide()
-  pendingRemoveId.value = null
-  await doRemove(id, isBadForAnyPost)
-}
-
-async function doRemove(id, isBadForAnyPost) {
   const attachments = []
 
   message.value?.attachments?.forEach((a) => {
@@ -125,12 +79,7 @@ async function doRemove(id, isBadForAnyPost) {
     }
   })
 
-  const patch = { id: props.messageid, attachments }
-  if (isBadForAnyPost) {
-    patch.badAIImages = [id]
-  }
-
-  await messageStore.patch(patch)
+  await messageStore.patch({ id: props.messageid, attachments })
 }
 
 async function updatedPhoto() {
