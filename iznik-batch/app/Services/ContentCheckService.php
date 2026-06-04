@@ -24,6 +24,7 @@ class ContentCheckService
     public const CHECK_URL               = 'Url';
     public const CHECK_MONEY             = 'Money';
     public const CHECK_LANGUAGE          = 'Language';
+    public const CHECK_NOT_AN_ITEM       = 'NotAnItem';
 
     /**
      * Candidate languages for the content-check language detector. Restricted to
@@ -124,6 +125,9 @@ class ContentCheckService
             $reasons[] = $r;
         }
         if ($r = $this->checkVagueItem($itemName)) {
+            $reasons[] = $r;
+        }
+        if ($r = $this->checkNotAnItem($subject, $textbody, $itemName)) {
             $reasons[] = $r;
         }
         if ($r = $this->checkPhoneNumbers($subject, $textbody)) {
@@ -722,6 +726,98 @@ class ContentCheckService
             }
         }
         return $set;
+    }
+
+    // -------------------------------------------------------------------------
+    // Not-an-item — flag posts that are non-physical requests/offers (services,
+    // accommodation/rentals, jobs/work, help/advice) rather than a physical
+    // object. Freegle is for giving away things, so these are diverted to mods
+    // for review (action=flag, NOT auto-blocked). Keyword design is word-boundary
+    // + exclusion-guarded, validated against the production reject log to avoid
+    // false positives on real items: "vacuum cleaner" is not a cleaner-person,
+    // "removal boxes" is not a removal service, "job lot" is a bundle of goods,
+    // "dinner service" is crockery, and "ladder loan" is borrowing an item
+    // (which Freegle allows).
+    // -------------------------------------------------------------------------
+
+    /** Physical-item phrases that collide with non-item keywords — skip these. */
+    private const NOT_AN_ITEM_EXCLUSIONS = [
+        '/\b(vacuum|patio|window|oven|carpet|drain|fabric|pressure|jet|steam|spot|paint|tile|glass|leather|toilet|kitchen|shower|hoover|floor|wheel|pool|gutter|bbq|grill|mould|mold|nit|comb)\s+cleaner/',
+        '/\b(removal|moving|packing|cardboard|home|house|strong|storage|archive)\s+(box|boxes|crate|crates|bag|bags|paper)/',
+        '/\b(hair|paint|stain|tick|rust|odou?r|live|nit|mole|wart|graffiti|ear\s?wax)\s+removal/',
+        '/\bremoval\s+(box|boxes|cream|kit|tool|tools)/',
+        '/\bjob\s*lot\b/',
+        '/\b(dinner|tea|coffee|table|place|china|dining)\s+service\b/',
+        '/\b(loan|borrow|lend)\b/',
+        '/gardener[\'’]?s\s+world/',
+        '/\bdecorator[\'’]?s?\s+(spare|spares|tool|tools|paint|table|caddy|kit|trestle)/',
+        '/\b(motorway|emergency|bus|train|rail|ferry|postal|customer|council|nhs|social|financial|funeral|armed|secret|support|care|delivery)\s+services?\b/',
+    ];
+
+    /** Non-item trigger patterns, grouped by category; first match wins. */
+    private const NOT_AN_ITEM_PATTERNS = [
+        'accommodation' => [
+            '/\b(room|rooms|flat|house|garage|lock\s?-?\s?up|warehouse|studio|annexe?|bedsit|bedroom|property|driveway|parking\s+space)\b[^.!?\n]{0,30}\b(to|for)\s+(rent|let)\b/',
+            '/\bto let\b/', '/\bfor rent\b/', '/\bto rent\b/', '/\brenting\b/',
+            '/\blodger\b/', '/\bflat\s?share\b/', '/\bhouse\s?share\b/',
+            '/\baccommodation\b/', '/\btenant\b/', '/\broom available\b/',
+        ],
+        'service' => [
+            '/\bman\s+(with|and)\s+a?\s?(van|car)\b/', '/\bman\s*&\s*van\b/',
+            '/\b(cleaner|gardener|plumber|electrician|decorator|builder|tutor|handyman|hairdresser|barber|painter|joiner|locksmith)\s+(wanted|needed|required|available)\b/',
+            '/\b(need(ed)?|looking\s+for|want(ed)?|require[d]?)\s+a\s+(cleaner|gardener|plumber|electrician|decorator|builder|tutor|handyman|babysitter|child\s?minder|dog\s?walker|hairdresser|barber)\b/',
+            '/\b(domestic|house|home|office|end[\s-]of[\s-]tenancy)\s+cleaner\b/',
+            '/\b(cleaning|gardening|ironing|babysitting|child\s?minding|tutoring|decorating|plumbing|catering|delivery|moving)\s+service\b/',
+            '/\bdog\s?walk(er|ing)\b/', '/\bbaby\s?sit(ter|ting)\b/',
+            '/\bchild\s?mind(er|ing)\b/', '/\bhandy\s?man\b/', '/\bmassage\b/',
+            '/\bskill\s?swap\b/', '/\bservices\b/', '/\bservice\s+offered\b/',
+        ],
+        'work' => [
+            '/\bvacanc(y|ies)\b/', '/\bhiring\b/', '/\bwork\s+wanted\b/',
+            '/\b(part|full)[\s-]?time\s+job\b/', '/\bemployment\b/',
+            '/\bjob\s+vacancy\b/', '/\blooking\s+for\s+work\b/', '/\bzero\s+hours?\b/',
+        ],
+        'advice' => [
+            '/\badvice\b/', '/\bany\s+recommendations?\b/',
+            '/\bcan\s+(anyone|someone)\s+recommend\b/',
+            '/\blooking\s+for\s+(advice|recommendations?|someone\s+to)\b/',
+            '/\brecommendations?\s+for\s+a\b/',
+        ],
+    ];
+
+    /**
+     * Flag a post that appears to be a non-physical request/offer rather than an
+     * item. Pure text; returns a flag reason (kept Pending for mod review) or null.
+     */
+    public function checkNotAnItem(string $subject, string $textbody, ?string $itemName = null): ?array
+    {
+        $hay = strtolower(trim($subject . ' ' . $textbody . ' ' . ($itemName ?? '')));
+        if ($hay === '') {
+            return null;
+        }
+
+        // Exclusion guard: physical items that would otherwise match a keyword.
+        foreach (self::NOT_AN_ITEM_EXCLUSIONS as $ex) {
+            if (preg_match($ex, $hay)) {
+                return null;
+            }
+        }
+
+        foreach (self::NOT_AN_ITEM_PATTERNS as $category => $patterns) {
+            foreach ($patterns as $pattern) {
+                if (preg_match($pattern, $hay, $m)) {
+                    $matched = trim($m[0]);
+                    return [
+                        'check'    => self::CHECK_NOT_AN_ITEM,
+                        'category' => $category,
+                        'action'   => 'flag',
+                        'detail'   => "Post may be a non-physical request ({$category}) rather than an item — matched \"{$matched}\"",
+                    ];
+                }
+            }
+        }
+
+        return null;
     }
 
     // -------------------------------------------------------------------------
