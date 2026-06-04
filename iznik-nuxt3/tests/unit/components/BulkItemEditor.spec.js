@@ -17,6 +17,13 @@ vi.mock('~/components/PhotoUploader', () => ({
     ],
   },
 }))
+
+// Mock the upload composable so the per-row "Add photo" tests don't touch TUS
+// or the image store — the component just needs a photo object back.
+const uploadPhotoMock = vi.fn()
+vi.mock('~/composables/useBulkPhotoUpload', () => ({
+  useBulkPhotoUpload: () => ({ uploadPhoto: uploadPhotoMock }),
+}))
 import BulkItemEditor from '~/components/BulkItemEditor.vue'
 
 // Auto-stub the bootstrap-vue-next form components this component uses that the
@@ -109,6 +116,70 @@ describe('BulkItemEditor', () => {
     w.vm.onRowPhotoClick(0)
     expect(w.vm.items[0].photos).toHaveLength(0)
     expect(w.vm.tray).toHaveLength(1)
+  })
+
+  it('per-row Add photo uploads the file and attaches it to that item', async () => {
+    uploadPhotoMock.mockResolvedValueOnce({ id: 42, path: 'u', paththumb: 't' })
+    const w = mount(BulkItemEditor, mountOpts)
+    const item = w.vm.items[0]
+    item.name = 'Desk'
+
+    w.vm.addPhotoToRow(item)
+    await w.vm.onRowFile({ target: { files: [new Blob(['x'])], value: '' } })
+    await nextTick()
+
+    expect(uploadPhotoMock).toHaveBeenCalledTimes(1)
+    expect(item.photos.map((p) => p.id)).toEqual([42])
+    expect(item.uploading).toBe(false)
+    // The derived attachment id flows through to the emitted model.
+    expect(w.vm.items[0].attachments).toEqual([42])
+  })
+
+  it('attaches to the right item even if rows are added mid-upload', async () => {
+    let resolveUpload
+    uploadPhotoMock.mockReturnValueOnce(
+      new Promise((res) => {
+        resolveUpload = res
+      })
+    )
+    const w = mount(BulkItemEditor, mountOpts)
+    const target = w.vm.items[0]
+    target.name = 'Desk'
+
+    w.vm.addPhotoToRow(target)
+    const pending = w.vm.onRowFile({
+      target: { files: [new Blob(['x'])], value: '' },
+    })
+    // A new row is unshifted (so indices shift) before the upload resolves.
+    w.vm.addItem()
+    resolveUpload({ id: 7 })
+    await pending
+    await nextTick()
+
+    // The photo lands on the original item object, not whatever is at index 0.
+    expect(target.photos.map((p) => p.id)).toEqual([7])
+    expect(w.vm.items.find((i) => i.name === 'Desk').photos).toHaveLength(1)
+  })
+
+  it('surfaces an error and clears uploading when the upload fails', async () => {
+    uploadPhotoMock.mockRejectedValueOnce(new Error('nope'))
+    const w = mount(BulkItemEditor, mountOpts)
+    const item = w.vm.items[0]
+
+    w.vm.addPhotoToRow(item)
+    await w.vm.onRowFile({ target: { files: [new Blob(['x'])], value: '' } })
+    await nextTick()
+
+    expect(item.photos).toHaveLength(0)
+    expect(item.uploading).toBe(false)
+    expect(w.vm.photoError).toContain("couldn't be uploaded")
+  })
+
+  it('does nothing when the picker is dismissed with no file', async () => {
+    const w = mount(BulkItemEditor, mountOpts)
+    w.vm.addPhotoToRow(w.vm.items[0])
+    await w.vm.onRowFile({ target: { files: [], value: '' } })
+    expect(uploadPhotoMock).not.toHaveBeenCalled()
   })
 
   it('seeds from an incoming modelValue', () => {
