@@ -1130,12 +1130,20 @@ func GetSession(c *fiber.Ctx) error {
 		var housekeeping, cronjobs int64
 		var emailin, emailout int64
 		var helperEscalated int64
-		// Informational (blue) counts of recently-live posts for the oversight
+		// Informational (blue) counts of UNCHECKED live posts for the oversight
 		// views: checked = auto-approved posts from auto-moderated (NULL) members;
 		// trusted = posts that went live from trusted (group-settings) members.
+		// A post leaves the count when a mod marks it checked (checkedat set) or
+		// after 7 days (auto-checked, so the queue can't pile up indefinitely).
 		var checked, trusted int64
 
 		var wg2 sync.WaitGroup
+
+		// Oversight queues count only unchecked posts within the auto-check window.
+		checkedWindowSQL := fmt.Sprintf(
+			"AND mg.checkedat IS NULL AND mg.arrival >= NOW() - INTERVAL %d DAY",
+			utils.MESSAGE_CHECK_WINDOW_DAYS,
+		)
 
 		// --- Pending messages: active groups split by held, inactive all → pendingother ---
 		// Only count messages where contentcheck_checked_at IS NOT NULL: the content
@@ -1185,9 +1193,9 @@ func GetSession(c *fiber.Ctx) error {
 			}
 		}()
 
-		// --- Checked: recently auto-approved posts from auto-moderated (NULL) members.
-		// Informational oversight count (blue), bounded to the last 24h so it stays
-		// useful rather than the unbounded all-time approved total. ---
+		// --- Checked: UNCHECKED auto-approved posts from auto-moderated (NULL) members.
+		// Outstanding oversight work (blue): a mod hasn't marked it checked and it
+		// is within the 7-day auto-check window. ---
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
@@ -1198,12 +1206,12 @@ func GetSession(c *fiber.Ctx) error {
 				"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
 				"AND m.deleted IS NULL AND u.deleted IS NULL "+
 				"AND mg.approvedby IS NULL AND mem.ourPostingStatus IS NULL "+
-				"AND mg.arrival >= NOW() - INTERVAL 1 DAY",
+				checkedWindowSQL,
 				modGroupIDs, utils.COLLECTION_APPROVED).Scan(&checked)
 		}()
 
-		// --- Trusted: recently-live posts from trusted (group-settings) members.
-		// Informational oversight count (blue), bounded to the last 24h. ---
+		// --- Trusted: UNCHECKED live posts from trusted (group-settings) members.
+		// Outstanding oversight work (blue), same 7-day auto-check window. ---
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
@@ -1214,7 +1222,7 @@ func GetSession(c *fiber.Ctx) error {
 				"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
 				"AND m.deleted IS NULL AND u.deleted IS NULL "+
 				"AND mg.approvedby IS NULL AND mem.ourPostingStatus IN ('DEFAULT', 'UNMODERATED') "+
-				"AND mg.arrival >= NOW() - INTERVAL 1 DAY",
+				checkedWindowSQL,
 				modGroupIDs, utils.COLLECTION_APPROVED).Scan(&trusted)
 		}()
 

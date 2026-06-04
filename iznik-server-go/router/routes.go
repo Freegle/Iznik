@@ -892,6 +892,7 @@ func SetupRoutes(app *fiber.App) {
 		// @Tags message
 		rg.Get("/messages", deprecation.Marker("GET /messages", "2026-08-01"), message.ListMessages)
 		rg.Get("/modtools/messages", message.ListMessagesMT)
+		rg.Post("/modtools/messages/markchecked", message.MarkChecked)
 
 		// Message Sitemap
 		// @Router /message/sitemap [get]
