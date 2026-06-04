@@ -251,6 +251,63 @@ func TestPatchSessionMarketingconsentFalse(t *testing.T) {
 	assert.Equal(t, 0, val)
 }
 
+// marketingconsent sent as a JSON integer (1/0). The micro-volunteering
+// "accept invite" flow hardcodes `marketingconsent: 1`, which a plain *bool
+// could not unmarshal — the whole PATCH was rejected with a 400 and consent
+// was never recorded (Discourse/Loki: 285 such requests, all failing).
+// FlexBool must accept the integer form.
+func TestPatchSessionMarketingconsentNumberOne(t *testing.T) {
+	prefix := uniquePrefix("sess_mknum1")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	result := patchSession(t, token, map[string]interface{}{
+		"marketingconsent": 1,
+	})
+	assert.Equal(t, float64(0), result["ret"])
+
+	db := database.DBConn
+	var val int
+	db.Raw("SELECT marketingconsent FROM users WHERE id = ?", userID).Scan(&val)
+	assert.Equal(t, 1, val)
+}
+
+func TestPatchSessionMarketingconsentNumberZero(t *testing.T) {
+	prefix := uniquePrefix("sess_mknum0")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	// Set to true first, then clear via numeric 0.
+	patchSession(t, token, map[string]interface{}{"marketingconsent": true})
+
+	result := patchSession(t, token, map[string]interface{}{
+		"marketingconsent": 0,
+	})
+	assert.Equal(t, float64(0), result["ret"])
+
+	db := database.DBConn
+	var val int
+	db.Raw("SELECT marketingconsent FROM users WHERE id = ?", userID).Scan(&val)
+	assert.Equal(t, 0, val)
+}
+
+// marketingconsent sent as a string ("1") — HTML form / select robustness.
+func TestPatchSessionMarketingconsentStringOne(t *testing.T) {
+	prefix := uniquePrefix("sess_mkstr1")
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	result := patchSession(t, token, map[string]interface{}{
+		"marketingconsent": "1",
+	})
+	assert.Equal(t, float64(0), result["ret"])
+
+	db := database.DBConn
+	var val int
+	db.Raw("SELECT marketingconsent FROM users WHERE id = ?", userID).Scan(&val)
+	assert.Equal(t, 1, val)
+}
+
 // ---------------------------------------------------------------------------
 // aboutme
 // ---------------------------------------------------------------------------
