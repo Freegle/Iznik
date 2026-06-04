@@ -100,6 +100,11 @@ const COLLECTION_REJECTED = "Rejected"
 const COLLECTION_BANNED = "Banned"
 const COLLECTION_DRAFT = "Draft"
 
+// MESSAGE_CHECK_WINDOW_DAYS is how long an auto-published post stays in the
+// ModTools Checked/Trusted oversight queues (and their work-count badges) before
+// it is treated as auto-checked, so the queue cannot pile up indefinitely.
+const MESSAGE_CHECK_WINDOW_DAYS = 7
+
 const POSTING_STATUS_MODERATED = "MODERATED"
 const POSTING_STATUS_PROHIBITED = "PROHIBITED"
 const POSTING_STATUS_DEFAULT = "DEFAULT"

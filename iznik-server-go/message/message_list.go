@@ -2,6 +2,7 @@ package message
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -577,15 +578,22 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		// injected SQL is constant (no user-supplied text reaches the query).
 		filterJoin := ""
 		filterWhere := ""
+		// The Checked/Trusted oversight queues show only posts a mod has NOT yet
+		// marked checked, within the auto-check window — so the list matches the
+		// session work-count badge and clears as posts are checked.
+		checkedWindow := fmt.Sprintf(
+			"AND mg.checkedat IS NULL AND mg.arrival >= NOW() - INTERVAL %d DAY ",
+			utils.MESSAGE_CHECK_WINDOW_DAYS,
+		)
 		switch filter {
 		case "checked":
 			// Auto-approved (approvedby NULL) from auto-moderated (NULL) members.
 			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
-			filterWhere = "AND mg.approvedby IS NULL AND mem.ourPostingStatus IS NULL "
+			filterWhere = "AND mg.approvedby IS NULL AND mem.ourPostingStatus IS NULL " + checkedWindow
 		case "trusted":
 			// Went live without moderation from trusted (group-settings) members.
 			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
-			filterWhere = "AND mg.approvedby IS NULL AND (mem.ourPostingStatus = 'DEFAULT' OR mem.ourPostingStatus = 'UNMODERATED') "
+			filterWhere = "AND mg.approvedby IS NULL AND (mem.ourPostingStatus = 'DEFAULT' OR mem.ourPostingStatus = 'UNMODERATED') " + checkedWindow
 		}
 
 		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
