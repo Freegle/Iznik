@@ -671,6 +671,11 @@ export const useMessageStore = defineStore({
       return data?.checked ?? 0
     },
 
+    // Fetch SysAdmin moderation analytics for a date range ({start, end}).
+    async fetchModerationStats(params) {
+      return await api(this.config).message.moderationStats(params)
+    },
+
     async fetchMessagesMT(params) {
       if (params.context) {
         // Server expects context as a JSON-encoded string; URLSearchParams

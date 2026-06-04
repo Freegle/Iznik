@@ -338,6 +338,12 @@ class AutoApproveCleanServiceTest extends TestCase
 
         $this->assertGreaterThanOrEqual(1, $stats['held_quality']);
         $this->assertStillPending($message->id, $group->id);
+        // Held posts are marked as a quality-check sample for the stats dashboard.
+        $this->assertDatabaseHas('messages_groups', [
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'quality_sample' => 1,
+        ]);
     }
 
     public function test_quality_sample_zero_holds_none(): void
