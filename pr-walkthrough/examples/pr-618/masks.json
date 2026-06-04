@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "note": "PII masks are baked into *.masked.png copies so sensitive pixels never reach the video. Coordinates are fractions of each image's natural size.",
+  "images": [
+    {
+      "src": "clearance-composer.png",
+      "out": "clearance-composer.masked.png",
+      "regions": [
+        { "comment": "no PII in the composer (email field is a placeholder)" }
+      ]
+    },
+    {
+      "src": "recipient-interest.png",
+      "out": "recipient-interest.masked.png",
+      "regions": [
+        { "comment": "poster avatar / face", "x": 0.268, "y": 0.484, "w": 0.048, "h": 0.04, "mode": "pixelate", "blocks": 7 },
+        { "comment": "poster name next to avatar", "x": 0.312, "y": 0.486, "w": 0.098, "h": 0.024, "mode": "pixelate", "blocks": 14 },
+        { "comment": "poster name in 'POSTED BY'", "x": 0.32, "y": 0.461, "w": 0.076, "h": 0.019, "mode": "pixelate", "blocks": 10 }
+      ]
+    }
+  ]
+}

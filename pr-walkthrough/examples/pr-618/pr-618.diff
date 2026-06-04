@@ -1,0 +1,5051 @@
+diff --git a/.circleci/orb/freegle-tests.yml b/.circleci/orb/freegle-tests.yml
+index efee9c22c..53045994b 100644
+--- a/.circleci/orb/freegle-tests.yml
++++ b/.circleci/orb/freegle-tests.yml
+@@ -422,6 +422,17 @@ commands:
+           name: Build containers
+           no_output_timeout: 25m
+           command: |
++            # Authenticate with Docker Hub to avoid unauthenticated pull rate limits.
++            # DOCKERHUB_USERNAME / DOCKERHUB_TOKEN are set in CircleCI project settings.
++            # Authenticated users get 200 pulls/6h vs 100/6h for unauthenticated.
++            if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
++              echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin \
++                && echo "✅ Docker Hub authentication successful" \
++                || echo "⚠️  Docker Hub login failed — proceeding with unauthenticated pulls"
++            else
++              echo "ℹ️  DOCKERHUB credentials not set — skipping Docker Hub login"
++            fi
++
+             # Pre-pull shared base images once before any parallel builds start.
+             # freegle-base: used by apiv1, freegle-prod-local, modtools-prod-local, etc.
+             # freegle-batch-base: used by batch — contains compiled PHP extensions/PECL/MJML.
+diff --git a/iznik-batch/app/Mail/Digest/UnifiedDigest.php b/iznik-batch/app/Mail/Digest/UnifiedDigest.php
+index f63ecd8d8..e31fbfb1e 100644
+--- a/iznik-batch/app/Mail/Digest/UnifiedDigest.php
++++ b/iznik-batch/app/Mail/Digest/UnifiedDigest.php
+@@ -654,10 +654,86 @@ protected function preparePosts(): Collection
+                 'posterName' => $posterName,
+                 'posterAvatarUrl' => $posterAvatarUrl,
+                 'firstPostedFormatted' => $firstPostedFormatted,
++                'bulkItems' => $this->prepareBulkItems($message),
+             ];
+         });
+     }
+ 
++    /**
++     * Build the catalogue for a bulk offer ("clearance") for rendering in the
++     * digest. Returns [] for ordinary single-item posts. Each entry has a name,
++     * quantity, human-readable condition and (where available) a thumbnail URL.
++     */
++    protected function prepareBulkItems($message): array
++    {
++        $rows = \Illuminate\Support\Facades\DB::table('messages_bulk_items')
++            ->where('msgid', $message->id)
++            ->orderBy('position')
++            ->orderBy('id')
++            ->get(['id', 'name', 'quantity', 'condition', 'dimensions', 'photourl']);
++
++        if ($rows->isEmpty()) {
++            return [];
++        }
++
++        // First photo per item (the catalogue photos carry a bulkitemid).
++        $firstByItem = [];
++        $atts = \Illuminate\Support\Facades\DB::table('messages_attachments')
++            ->where('msgid', $message->id)
++            ->whereNotNull('bulkitemid')
++            ->orderBy('id')
++            ->get(['id', 'bulkitemid', 'externaluid', 'externalurl', 'archived']);
++        foreach ($atts as $a) {
++            if (!isset($firstByItem[$a->bulkitemid])) {
++                $firstByItem[$a->bulkitemid] = $a;
++            }
++        }
++
++        $items = [];
++        foreach ($rows as $row) {
++            $thumb = isset($firstByItem[$row->id])
++                ? $this->getAttachmentImageUrl($firstByItem[$row->id], 80, 80)
++                : null;
++            // Fall back to a spreadsheet-supplied photo link (run through the
++            // delivery proxy for sizing, like other email images).
++            if (!$thumb && !empty($row->photourl)) {
++                $thumb = $this->getDeliveryUrl($row->photourl, 80, 80);
++            }
++            $condition = $row->condition && $row->condition !== 'Unknown'
++                ? ($row->condition === 'LikeNew' ? 'Like new' : $row->condition)
++                : null;
++            $items[] = [
++                'name' => $row->name,
++                'quantity' => (int) $row->quantity,
++                'condition' => $condition,
++                'dimensions' => $row->dimensions,
++                'thumbUrl' => $thumb,
++            ];
++        }
++
++        return $items;
++    }
++
++    /**
++     * Build a delivery URL for a specific attachment row (mirrors
++     * getMessageImageUrl but for an arbitrary attachment).
++     */
++    protected function getAttachmentImageUrl($attachment, int $width = 80, ?int $height = null): ?string
++    {
++        if (!$attachment) {
++            return null;
++        }
++        if (!empty($attachment->externalurl)) {
++            return $this->getDeliveryUrl($attachment->externalurl, $width, $height);
++        }
++        if (!empty($attachment->externaluid) || (int) ($attachment->archived ?? 0) === 1) {
++            $imagesDomain = config('freegle.images.domain', 'https://images.ilovefreegle.org');
++            return $this->getDeliveryUrl("{$imagesDomain}/timg_{$attachment->id}.jpg", $width, $height);
++        }
++
++        return null;
++    }
++
+     /**
+      * Extract location name from subject line.
+      * Returns the text in parentheses at the end, e.g. "Edinburgh" from "OFFER: Sofa (Edinburgh)".
+diff --git a/iznik-batch/database/migrations/2026_06_02_000003_create_messages_bulk_items_table.php b/iznik-batch/database/migrations/2026_06_02_000003_create_messages_bulk_items_table.php
+new file mode 100644
+index 000000000..104b03de5
+--- /dev/null
++++ b/iznik-batch/database/migrations/2026_06_02_000003_create_messages_bulk_items_table.php
+@@ -0,0 +1,49 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++/**
++ * `messages_bulk_items` — the structured catalogue for a "bulk offer" / clearance
++ * listing. One Freegle message (e.g. "Office Clearance") can carry many items,
++ * each with its own name, quantity, condition, dimensions and photos.
++ *
++ * A message is a bulk offer simply by having rows here; the message itself stays
++ * a normal Offer (no new message type). See plans/active/bulk-offer-clearance-design.md
++ * and the Freegle Helper concierge spec which consumes this data.
++ */
++return new class extends Migration
++{
++    public function up(): void
++    {
++        if (Schema::hasTable('messages_bulk_items')) {
++            return;
++        }
++
++        Schema::create('messages_bulk_items', function (Blueprint $table) {
++            $table->comment('Structured catalogue items for a bulk offer (clearance) message.');
++            $table->bigIncrements('id');
++            $table->unsignedBigInteger('msgid');
++            $table->unsignedInteger('position')->default(0)->comment('Display order within the post');
++            $table->string('name', 255);
++            $table->unsignedInteger('quantity')->default(1)->comment('How many of this item are offered');
++            $table->enum('condition', ['New', 'LikeNew', 'Good', 'Used', 'Poor', 'Unknown'])->default('Unknown');
++            $table->string('dimensions', 255)->nullable()->comment('Free-text measurements, e.g. 120x80x74cm');
++            $table->text('description')->nullable();
++            $table->timestamp('created_at')->useCurrent();
++            $table->timestamp('updated_at')->useCurrent()->useCurrentOnUpdate();
++
++            $table->index('msgid');
++            $table->index(['msgid', 'position']);
++
++            $table->foreign('msgid')->references('id')->on('messages')
++                ->onUpdate('no action')->onDelete('cascade');
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::dropIfExists('messages_bulk_items');
++    }
++};
+diff --git a/iznik-batch/database/migrations/2026_06_02_000004_create_messages_bulk_items_interest_table.php b/iznik-batch/database/migrations/2026_06_02_000004_create_messages_bulk_items_interest_table.php
+new file mode 100644
+index 000000000..6adc95844
+--- /dev/null
++++ b/iznik-batch/database/migrations/2026_06_02_000004_create_messages_bulk_items_interest_table.php
+@@ -0,0 +1,59 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++/**
++ * `messages_bulk_items_interest` — interest expressed against the bulk-offer
++ * catalogue. Captures, for every item, WHO asked for it, HOW MANY they want,
++ * WHEN they can collect, and the current STATE — exactly the data the Mind in
++ * Brighton clearance tracked in a spreadsheet, and that the Freegle Helper
++ * concierge needs to manage allocation.
++ *
++ * One row per (item, user); re-expressing interest updates the row. `msgid` is
++ * denormalised from the parent item for easy per-post queries. `chatid` links to
++ * the User2User conversation the interest belongs to.
++ */
++return new class extends Migration
++{
++    public function up(): void
++    {
++        if (Schema::hasTable('messages_bulk_items_interest')) {
++            return;
++        }
++
++        Schema::create('messages_bulk_items_interest', function (Blueprint $table) {
++            $table->comment('Per-item interest in a bulk offer: who wants what, how many, when they can collect, and state.');
++            $table->bigIncrements('id');
++            $table->unsignedBigInteger('bulkitemid');
++            $table->unsignedBigInteger('msgid');
++            $table->unsignedBigInteger('userid');
++            $table->unsignedInteger('quantity')->default(1)->comment('How many of this item the user wants');
++            $table->string('cancollect', 255)->nullable()->comment('When they can collect (free text)');
++            $table->enum('state', ['Interested', 'Reserved', 'Collected', 'Withdrawn', 'Rejected'])->default('Interested');
++            $table->unsignedBigInteger('chatid')->nullable();
++            $table->timestamp('created_at')->useCurrent();
++            $table->timestamp('updated_at')->useCurrent()->useCurrentOnUpdate();
++
++            $table->unique(['bulkitemid', 'userid']);
++            $table->index('msgid');
++            $table->index('userid');
++            $table->index('bulkitemid');
++
++            $table->foreign('bulkitemid')->references('id')->on('messages_bulk_items')
++                ->onUpdate('no action')->onDelete('cascade');
++            $table->foreign('msgid')->references('id')->on('messages')
++                ->onUpdate('no action')->onDelete('cascade');
++            $table->foreign('userid')->references('id')->on('users')
++                ->onUpdate('no action')->onDelete('cascade');
++            $table->foreign('chatid')->references('id')->on('chat_rooms')
++                ->onUpdate('no action')->onDelete('set null');
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::dropIfExists('messages_bulk_items_interest');
++    }
++};
+diff --git a/iznik-batch/database/migrations/2026_06_02_000005_add_bulkitemid_to_messages_attachments_table.php b/iznik-batch/database/migrations/2026_06_02_000005_add_bulkitemid_to_messages_attachments_table.php
+new file mode 100644
+index 000000000..c164a51dc
+--- /dev/null
++++ b/iznik-batch/database/migrations/2026_06_02_000005_add_bulkitemid_to_messages_attachments_table.php
+@@ -0,0 +1,39 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++/**
++ * Add `bulkitemid` to `messages_attachments` so a photo in a bulk-offer listing
++ * can belong to a specific catalogue item (messages_bulk_items). NULL preserves
++ * the existing post-level behaviour for ordinary single-item posts. ON DELETE SET
++ * NULL: if an item is removed the photo stays attached to the message.
++ */
++return new class extends Migration
++{
++    public function up(): void
++    {
++        if (Schema::hasColumn('messages_attachments', 'bulkitemid')) {
++            return;
++        }
++
++        Schema::table('messages_attachments', function (Blueprint $table) {
++            $table->unsignedBigInteger('bulkitemid')->nullable()->after('msgid')->index();
++            $table->foreign('bulkitemid')->references('id')->on('messages_bulk_items')
++                ->onUpdate('no action')->onDelete('set null');
++        });
++    }
++
++    public function down(): void
++    {
++        if (!Schema::hasColumn('messages_attachments', 'bulkitemid')) {
++            return;
++        }
++
++        Schema::table('messages_attachments', function (Blueprint $table) {
++            $table->dropForeign(['bulkitemid']);
++            $table->dropColumn('bulkitemid');
++        });
++    }
++};
+diff --git a/iznik-batch/database/migrations/2026_06_03_000001_create_messages_bulk_slots_table.php b/iznik-batch/database/migrations/2026_06_03_000001_create_messages_bulk_slots_table.php
+new file mode 100644
+index 000000000..25b720477
+--- /dev/null
++++ b/iznik-batch/database/migrations/2026_06_03_000001_create_messages_bulk_slots_table.php
+@@ -0,0 +1,39 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++/**
++ * `messages_bulk_slots` — the collection date/time windows a bulk-offer
++ * ("clearance") offerer makes available (e.g. "Tue 7 Apr, 10am-4pm"). Repliers
++ * pick one of these when expressing interest, rather than typing a free-form
++ * time, so the offerer can concentrate collections into known windows.
++ */
++return new class extends Migration
++{
++    public function up(): void
++    {
++        if (Schema::hasTable('messages_bulk_slots')) {
++            return;
++        }
++
++        Schema::create('messages_bulk_slots', function (Blueprint $table) {
++            $table->comment('Collection date/time windows offered for a bulk offer; repliers pick one.');
++            $table->bigIncrements('id');
++            $table->unsignedBigInteger('msgid');
++            $table->unsignedInteger('position')->default(0);
++            $table->string('slot', 255);
++            $table->timestamp('created_at')->useCurrent();
++
++            $table->index('msgid');
++            $table->foreign('msgid')->references('id')->on('messages')
++                ->onUpdate('no action')->onDelete('cascade');
++        });
++    }
++
++    public function down(): void
++    {
++        Schema::dropIfExists('messages_bulk_slots');
++    }
++};
+diff --git a/iznik-batch/database/migrations/2026_06_03_000002_add_photourl_to_messages_bulk_items_table.php b/iznik-batch/database/migrations/2026_06_03_000002_add_photourl_to_messages_bulk_items_table.php
+new file mode 100644
+index 000000000..9163aba5e
+--- /dev/null
++++ b/iznik-batch/database/migrations/2026_06_03_000002_add_photourl_to_messages_bulk_items_table.php
+@@ -0,0 +1,36 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++/**
++ * Add `photourl` to messages_bulk_items so a catalogue item can carry an
++ * external photo link supplied via the spreadsheet import (an http URL),
++ * avoiding a manual upload. Uploaded photos (messages_attachments.bulkitemid)
++ * still take precedence; photourl is the fallback image.
++ */
++return new class extends Migration
++{
++    public function up(): void
++    {
++        if (Schema::hasColumn('messages_bulk_items', 'photourl')) {
++            return;
++        }
++
++        Schema::table('messages_bulk_items', function (Blueprint $table) {
++            $table->string('photourl', 2048)->nullable()->after('dimensions');
++        });
++    }
++
++    public function down(): void
++    {
++        if (!Schema::hasColumn('messages_bulk_items', 'photourl')) {
++            return;
++        }
++
++        Schema::table('messages_bulk_items', function (Blueprint $table) {
++            $table->dropColumn('photourl');
++        });
++    }
++};
+diff --git a/iznik-batch/database/migrations/2026_06_03_000003_add_accessinstructions_to_messages_table.php b/iznik-batch/database/migrations/2026_06_03_000003_add_accessinstructions_to_messages_table.php
+new file mode 100644
+index 000000000..1a0cad127
+--- /dev/null
++++ b/iznik-batch/database/migrations/2026_06_03_000003_add_accessinstructions_to_messages_table.php
+@@ -0,0 +1,36 @@
++<?php
++
++use Illuminate\Database\Migrations\Migration;
++use Illuminate\Database\Schema\Blueprint;
++use Illuminate\Support\Facades\Schema;
++
++/**
++ * Add `accessinstructions` to messages: an offer-level private note (exact
++ * address, gate code, intercom, etc.) that is NOT shown publicly. For a bulk
++ * offer ("clearance") it is sent to a replier only once the offerer promises
++ * them an item (their interest is moved to Reserved). Nullable; V1 ignores it.
++ */
++return new class extends Migration
++{
++    public function up(): void
++    {
++        if (Schema::hasColumn('messages', 'accessinstructions')) {
++            return;
++        }
++
++        Schema::table('messages', function (Blueprint $table) {
++            $table->text('accessinstructions')->nullable();
++        });
++    }
++
++    public function down(): void
++    {
++        if (!Schema::hasColumn('messages', 'accessinstructions')) {
++            return;
++        }
++
++        Schema::table('messages', function (Blueprint $table) {
++            $table->dropColumn('accessinstructions');
++        });
++    }
++};
+diff --git a/iznik-batch/resources/views/emails/amp/digest/unified.blade.php b/iznik-batch/resources/views/emails/amp/digest/unified.blade.php
+index 42501dddd..299b7e11f 100644
+--- a/iznik-batch/resources/views/emails/amp/digest/unified.blade.php
++++ b/iznik-batch/resources/views/emails/amp/digest/unified.blade.php
+@@ -514,6 +514,15 @@
+              (it's the only post); multi-post truncates for AMP size. --}}
+         <p class="post-preview">{!! nl2br(e($isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 120))) !!}</p>
+         @endif
++        @if(!empty($post['bulkItems']))
++        {{-- Bulk offer catalogue: a concise item list. --}}
++        <p class="post-preview"><strong>{{ count($post['bulkItems']) }} items in this offer:</strong></p>
++        <ul style="margin: 0 0 8px 0; padding-left: 18px; font-size: 14px; color: #333333;">
++          @foreach($post['bulkItems'] as $i => $bi)
++          <li><span style="color:#999999;">{{ $i + 1 }})</span> <strong>{{ $bi['quantity'] }}&times;</strong> {{ $bi['name'] }}@if($bi['condition']) &middot; {{ $bi['condition'] }}@endif</li>
++          @endforeach
++        </ul>
++        @endif
+         {{-- Location · distance · time as one clean strip — the previous
+              three stacked lines (post-loc, post-time, post-byline) read
+              as a messy column of dimming text and the location-pin emoji
+@@ -548,6 +557,14 @@
+              accordion stack. The grid then auto-stretches the image cell
+              to that same height, which is what makes the photo bottom
+              edge align with the bottom of the Reply accordion / form. --}}
++        @if(!empty($post['bulkItems']))
++        {{-- Bulk offers need a per-item, structured reply (pick which items and
++             how many) that an AMP in-email form can't capture, so send the
++             replier to the website rather than offering the quick AMP reply. --}}
++        <p class="post-actions" style="margin-top: 12px;">
++          <a href="{{ $post['fallbackReplyUrl'] }}" class="reply-chip{{ $post['type'] === 'Offer' ? '' : ' wanted' }}">Choose the items you'd like on the website</a>
++        </p>
++        @else
+         <amp-accordion class="reply-acc">
+           <section>
+             <h4 class="reply-toggle"><span class="reply-chip{{ $post['type'] === 'Offer' ? '' : ' wanted' }}">Reply</span></h4>
+@@ -563,6 +580,7 @@
+             </div>
+           </section>
+         </amp-accordion>
++        @endif
+       </div>
+     </div>
+     @endforeach
+diff --git a/iznik-batch/resources/views/emails/mjml/digest/unified.blade.php b/iznik-batch/resources/views/emails/mjml/digest/unified.blade.php
+index 18a2dda45..404d67494 100644
+--- a/iznik-batch/resources/views/emails/mjml/digest/unified.blade.php
++++ b/iznik-batch/resources/views/emails/mjml/digest/unified.blade.php
+@@ -91,6 +91,39 @@
+         </mj-section>
+         @endif
+ 
++        {{-- Bulk offer ("clearance") catalogue: a row per item. --}}
++        @if(!empty($post['bulkItems']))
++        <mj-section background-color="#ffffff" padding="0 20px">
++            <mj-column>
++                <mj-text font-size="14px" font-weight="600" color="#333333" padding="8px 0 4px 0">
++                    {{ count($post['bulkItems']) }} items in this offer
++                </mj-text>
++                <mj-table cellpadding="0" cellspacing="0" width="100%">
++                    @foreach($post['bulkItems'] as $i => $bi)
++                    <tr style="border-bottom: 1px solid #f0f0f0;">
++                        @if($bi['thumbUrl'])
++                        <td style="width: 48px; padding: 6px 8px 6px 0; vertical-align: middle;">
++                            <img src="{{ $bi['thumbUrl'] }}" width="44" height="44" alt="" style="border-radius: 4px; display: block; object-fit: cover;" />
++                        </td>
++                        <td style="padding: 6px 0; vertical-align: middle; font-size: 14px; color: #333333;">
++                        @else
++                        <td colspan="2" style="padding: 6px 0; vertical-align: middle; font-size: 14px; color: #333333;">
++                        @endif
++                            <span style="color: #999999;">{{ $i + 1 }})</span>
++                            <strong>{{ $bi['quantity'] }}&times;</strong> {{ $bi['name'] }}
++                            @if($bi['condition'])<span style="color: #888888;"> &middot; {{ $bi['condition'] }}</span>@endif
++                            @if($bi['dimensions'])<br/><span style="color: #999999; font-size: 12px;">{{ $bi['dimensions'] }}</span>@endif
++                        </td>
++                    </tr>
++                    @endforeach
++                </mj-table>
++                <mj-text font-size="12px" color="#888888" padding="6px 0 0 0">
++                    Open the post to choose the items you'd like and how many.
++                </mj-text>
++            </mj-column>
++        </mj-section>
++        @endif
++
+         {{-- Posted by + reply --}}
+         <mj-section background-color="#ffffff" padding="0 20px 20px">
+             <mj-column>
+diff --git a/iznik-batch/resources/views/emails/text/digest/unified.blade.php b/iznik-batch/resources/views/emails/text/digest/unified.blade.php
+index 736b95c94..357f285bc 100644
+--- a/iznik-batch/resources/views/emails/text/digest/unified.blade.php
++++ b/iznik-batch/resources/views/emails/text/digest/unified.blade.php
+@@ -21,6 +21,14 @@
+ 
+ {!! $isSingle ? $post['messageText'] : \Illuminate\Support\Str::limit($post['messageText'], 200) !!}
+ @endif
++@if(!empty($post['bulkItems']))
++
++{{ count($post['bulkItems']) }} items in this offer:
++@foreach($post['bulkItems'] as $i => $bi)
++  {{ $i + 1 }}) {{ $bi['quantity'] }}x {!! $bi['name'] !!}@if($bi['condition']) ({{ $bi['condition'] }})@endif
++
++@endforeach
++@endif
+ 
+ Posted by {!! $post['posterName'] !!}@if($post['groupName'] ?? null) on {!! $post['groupName'] !!}@endif
+ @if(!empty($post['firstPostedFormatted']))
+diff --git a/iznik-batch/tests/Feature/BulkOffer/BulkOfferSchemaTest.php b/iznik-batch/tests/Feature/BulkOffer/BulkOfferSchemaTest.php
+new file mode 100644
+index 000000000..d5fefa50b
+--- /dev/null
++++ b/iznik-batch/tests/Feature/BulkOffer/BulkOfferSchemaTest.php
+@@ -0,0 +1,112 @@
++<?php
++
++namespace Tests\Feature\BulkOffer;
++
++use App\Models\Message;
++use Illuminate\Support\Facades\DB;
++use Illuminate\Support\Facades\Schema;
++use Tests\TestCase;
++
++/**
++ * Schema + integrity coverage for the bulk-offer (clearance) tables:
++ *   messages_bulk_items, messages_bulk_items_interest, and the
++ *   messages_attachments.bulkitemid column.
++ */
++class BulkOfferSchemaTest extends TestCase
++{
++    public function test_tables_and_columns_exist(): void
++    {
++        $this->assertTrue(Schema::hasTable('messages_bulk_items'));
++        $this->assertTrue(Schema::hasColumns('messages_bulk_items', [
++            'id', 'msgid', 'position', 'name', 'quantity', 'condition', 'dimensions', 'description',
++        ]));
++
++        $this->assertTrue(Schema::hasTable('messages_bulk_items_interest'));
++        $this->assertTrue(Schema::hasColumns('messages_bulk_items_interest', [
++            'id', 'bulkitemid', 'msgid', 'userid', 'quantity', 'cancollect', 'state', 'chatid',
++        ]));
++
++        $this->assertTrue(Schema::hasColumn('messages_attachments', 'bulkitemid'));
++    }
++
++    public function test_defaults_applied(): void
++    {
++        [$msgid] = $this->makeBulkOffer();
++        $itemId = DB::table('messages_bulk_items')->insertGetId([
++            'msgid' => $msgid,
++            'name' => 'Office desk',
++        ]);
++        $row = DB::table('messages_bulk_items')->find($itemId);
++        $this->assertEquals(1, $row->quantity);
++        $this->assertEquals('Unknown', $row->condition);
++        $this->assertEquals(0, $row->position);
++    }
++
++    public function test_interest_unique_per_item_and_user(): void
++    {
++        [$msgid, $user] = $this->makeBulkOffer();
++        $itemId = DB::table('messages_bulk_items')->insertGetId([
++            'msgid' => $msgid, 'name' => 'Chair', 'quantity' => 14,
++        ]);
++
++        DB::table('messages_bulk_items_interest')->insert([
++            'bulkitemid' => $itemId, 'msgid' => $msgid, 'userid' => $user->id, 'quantity' => 6,
++        ]);
++
++        $this->expectException(\Illuminate\Database\QueryException::class);
++        DB::table('messages_bulk_items_interest')->insert([
++            'bulkitemid' => $itemId, 'msgid' => $msgid, 'userid' => $user->id, 'quantity' => 2,
++        ]);
++    }
++
++    public function test_deleting_message_cascades_items_and_interest(): void
++    {
++        [$msgid, $user] = $this->makeBulkOffer();
++        $itemId = DB::table('messages_bulk_items')->insertGetId([
++            'msgid' => $msgid, 'name' => 'Cabinet', 'quantity' => 3,
++        ]);
++        DB::table('messages_bulk_items_interest')->insert([
++            'bulkitemid' => $itemId, 'msgid' => $msgid, 'userid' => $user->id, 'quantity' => 1,
++        ]);
++
++        $this->assertDatabaseHas('messages_bulk_items', ['id' => $itemId]);
++        $this->assertDatabaseHas('messages_bulk_items_interest', ['bulkitemid' => $itemId]);
++
++        DB::table('messages')->where('id', $msgid)->delete();
++
++        $this->assertDatabaseMissing('messages_bulk_items', ['id' => $itemId]);
++        $this->assertDatabaseMissing('messages_bulk_items_interest', ['bulkitemid' => $itemId]);
++    }
++
++    public function test_deleting_item_nulls_attachment_bulkitemid_but_keeps_attachment(): void
++    {
++        [$msgid] = $this->makeBulkOffer();
++        $itemId = DB::table('messages_bulk_items')->insertGetId([
++            'msgid' => $msgid, 'name' => 'Lamp',
++        ]);
++        $attId = DB::table('messages_attachments')->insertGetId([
++            'msgid' => $msgid, 'bulkitemid' => $itemId,
++        ]);
++
++        DB::table('messages_bulk_items')->where('id', $itemId)->delete();
++
++        $att = DB::table('messages_attachments')->find($attId);
++        $this->assertNotNull($att, 'attachment should survive item deletion');
++        $this->assertNull($att->bulkitemid, 'bulkitemid should be set to NULL');
++    }
++
++    /**
++     * @return array{0:int,1:\App\Models\User}
++     */
++    private function makeBulkOffer(): array
++    {
++        $user = $this->createTestUser();
++        $group = $this->createTestGroup();
++        $message = $this->createTestMessage($user, $group, [
++            'type' => Message::TYPE_OFFER,
++            'subject' => 'OFFER: Office Clearance (Brighton BN1)',
++        ]);
++
++        return [$message->id, $user];
++    }
++}
+diff --git a/iznik-batch/tests/Unit/Mail/UnifiedDigestBulkOfferTest.php b/iznik-batch/tests/Unit/Mail/UnifiedDigestBulkOfferTest.php
+new file mode 100644
+index 000000000..0bfea696e
+--- /dev/null
++++ b/iznik-batch/tests/Unit/Mail/UnifiedDigestBulkOfferTest.php
+@@ -0,0 +1,174 @@
++<?php
++
++namespace Tests\Unit\Mail;
++
++use App\Mail\Digest\UnifiedDigest;
++use App\Services\UnifiedDigestService;
++use Illuminate\Support\Facades\DB;
++use Tests\Support\IsolatedSpoolDirectory;
++use Tests\TestCase;
++
++/**
++ * The digest must render the structured catalogue of a bulk offer ("clearance")
++ * in the HTML and text parts, so recipients see the items even before opening
++ * the post.
++ */
++class UnifiedDigestBulkOfferTest extends TestCase
++{
++    use IsolatedSpoolDirectory;
++
++    protected function setUp(): void
++    {
++        parent::setUp();
++        $this->setUpIsolatedSpoolDirectory();
++    }
++
++    protected function tearDown(): void
++    {
++        $this->tearDownIsolatedSpoolDirectory();
++        parent::tearDown();
++    }
++
++    private function spoolAndLoad(UnifiedDigest $mail, string $recipient): array
++    {
++        $id = $this->spooler->spool($mail, $recipient);
++        return json_decode(file_get_contents($this->testSpoolDir . '/pending/' . $id . '.json'), true);
++    }
++
++    public function test_bulk_offer_catalogue_rendered_in_html_and_text(): void
++    {
++        $user = $this->createTestUser();
++        $group = $this->createTestGroup();
++        $this->createMembership($user, $group);
++
++        $poster = $this->createTestUser();
++        $this->createMembership($poster, $group);
++        $message = $this->createTestMessage($poster, $group, [
++            'subject' => 'OFFER: Office Clearance (Brighton)',
++            'textbody' => 'Charity clearance — collection from Brighton.',
++        ]);
++
++        DB::table('messages_bulk_items')->insert([
++            ['msgid' => $message->id, 'position' => 0, 'name' => 'Office desk', 'quantity' => 4, 'condition' => 'Good'],
++            ['msgid' => $message->id, 'position' => 1, 'name' => 'Swivel chair', 'quantity' => 14, 'condition' => 'Used'],
++        ]);
++
++        $posts = collect([
++            ['message' => $message, 'postedToGroups' => [$group->id]],
++        ]);
++
++        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
++        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'recipient@example.com');
++
++        $html = $spooled['html'] ?? '';
++        $this->assertNotEmpty($html);
++        $this->assertStringContainsString('items in this offer', $html);
++        $this->assertStringContainsString('Office desk', $html);
++        $this->assertStringContainsString('Swivel chair', $html);
++        // Condition label and quantity surfaced.
++        $this->assertStringContainsString('Good', $html);
++
++        $text = $spooled['text'] ?? '';
++        $this->assertStringContainsString('Office desk', $text);
++        $this->assertStringContainsString('items in this offer', $text);
++        $this->assertStringContainsString('Swivel chair', $text);
++        // Reference numbers disambiguate similar items (same name, different
++        // condition) for free-text / Trash Nothing repliers and the AI Helper.
++        $this->assertStringContainsString('1)', $text);
++        $this->assertStringContainsString('2)', $text);
++    }
++
++    public function test_bulk_offer_amp_forces_website_reply(): void
++    {
++        // AMP in-email forms can't capture a per-item, per-quantity selection, so
++        // a bulk offer must send the replier to the website instead.
++        config(['freegle.amp.enabled' => true]);
++        config(['freegle.amp.secret' => 'test-secret-key']);
++
++        $user = $this->createTestUser();
++        $group = $this->createTestGroup();
++        $this->createMembership($user, $group);
++
++        $poster = $this->createTestUser();
++        $this->createMembership($poster, $group);
++        $message = $this->createTestMessage($poster, $group, [
++            'subject' => 'OFFER: Office Clearance (Brighton)',
++            'textbody' => 'Charity clearance — collection from Brighton.',
++        ]);
++
++        DB::table('messages_bulk_items')->insert([
++            ['msgid' => $message->id, 'position' => 0, 'name' => 'Office desk', 'quantity' => 4, 'condition' => 'Good'],
++        ]);
++
++        $posts = collect([
++            ['message' => $message, 'postedToGroups' => [$group->id]],
++        ]);
++
++        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
++        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'recipient@example.com');
++
++        $amp = $spooled['amp_html'] ?? '';
++        $this->assertNotEmpty($amp, 'AMP part should be rendered when AMP is enabled');
++        // Bulk offers get a "go to the website" link, not the quick AMP reply form.
++        $this->assertStringContainsString('Choose the items', $amp);
++    }
++
++    public function test_bulk_offer_photourl_used_as_thumbnail_fallback(): void
++    {
++        // A spreadsheet-supplied photo link (photourl) is shown when the item has
++        // no uploaded attachment yet, so the digest is never imageless.
++        $user = $this->createTestUser();
++        $group = $this->createTestGroup();
++        $this->createMembership($user, $group);
++
++        $poster = $this->createTestUser();
++        $this->createMembership($poster, $group);
++        $message = $this->createTestMessage($poster, $group, [
++            'subject' => 'OFFER: Office Clearance (Brighton)',
++        ]);
++
++        DB::table('messages_bulk_items')->insert([
++            [
++                'msgid' => $message->id,
++                'position' => 0,
++                'name' => 'Office desk',
++                'quantity' => 4,
++                'condition' => 'Good',
++                'photourl' => 'https://example.com/special-desk-photo.jpg',
++            ],
++        ]);
++
++        $posts = collect([
++            ['message' => $message, 'postedToGroups' => [$group->id]],
++        ]);
++
++        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
++        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'recipient@example.com');
++
++        $html = $spooled['html'] ?? '';
++        // The slug survives both the raw URL and the delivery-proxy (urlencoded) form.
++        $this->assertStringContainsString('special-desk-photo', $html);
++    }
++
++    public function test_ordinary_post_has_no_catalogue(): void
++    {
++        $user = $this->createTestUser();
++        $group = $this->createTestGroup();
++        $this->createMembership($user, $group);
++
++        $poster = $this->createTestUser();
++        $this->createMembership($poster, $group);
++        $message = $this->createTestMessage($poster, $group, [
++            'subject' => 'OFFER: Single sofa (London)',
++        ]);
++
++        $posts = collect([
++            ['message' => $message, 'postedToGroups' => [$group->id]],
++        ]);
++
++        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_IMMEDIATE);
++        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'recipient@example.com');
++
++        $this->assertStringNotContainsString('items in this offer', $spooled['html'] ?? '');
++    }
++}
+diff --git a/iznik-nuxt3/api/MessageAPI.js b/iznik-nuxt3/api/MessageAPI.js
+index 4d86d267d..1a4d276c0 100644
+--- a/iznik-nuxt3/api/MessageAPI.js
++++ b/iznik-nuxt3/api/MessageAPI.js
+@@ -98,6 +98,29 @@ export default class MessageAPI extends BaseAPI {
+     })
+   }
+ 
++  // Register interest in one or more items of a bulk offer. `items` is an array
++  // of { bulkitemid, quantity, cancollect }. A quantity of 0 withdraws interest
++  // in that item.
++  bulkInterest(id, items) {
++    return this.$postv2('/message', {
++      action: 'BulkInterest',
++      id,
++      bulkinterest: items,
++    })
++  }
++
++  // Offerer/mod transition of one interest row (Interested → Reserved →
++  // Collected, or Rejected/Withdrawn).
++  bulkInterestState(id, bulkitemid, userid, state) {
++    return this.$postv2('/message', {
++      action: 'BulkInterestState',
++      id,
++      bulkitemid,
++      userid,
++      state,
++    })
++  }
++
+   async getIllustration(item) {
+     try {
+       const result = await this.$getv2(
+diff --git a/iznik-nuxt3/components/BulkItemEditor.vue b/iznik-nuxt3/components/BulkItemEditor.vue
+new file mode 100644
+index 000000000..0c6928be2
+--- /dev/null
++++ b/iznik-nuxt3/components/BulkItemEditor.vue
+@@ -0,0 +1,605 @@
++<template>
++  <div class="bulkeditor">
++    <!-- Choose how to add items. Nothing else shows until a choice is made. -->
++    <p class="bulkeditor__intro">
++      How would you like to add your items? You can type them in one at a time,
++      or fill in a spreadsheet and upload it.
++    </p>
++    <div
++      class="bulkeditor__mode mb-3"
++      role="group"
++      aria-label="How to add items"
++    >
++      <b-button
++        :variant="mode === 'manual' ? 'primary' : 'outline-secondary'"
++        data-testid="mode-manual"
++        @click="mode = 'manual'"
++      >
++        <v-icon icon="pen" /> Type them in
++      </b-button>
++      <b-button
++        :variant="mode === 'upload' ? 'primary' : 'outline-secondary'"
++        data-testid="mode-upload"
++        @click="mode = 'upload'"
++      >
++        <v-icon icon="table" /> Upload a spreadsheet
++      </b-button>
++    </div>
++
++    <!-- MANUAL: items table (left) + photos to drag on (right). -->
++    <div v-if="mode === 'manual'" class="bulkeditor__cols">
++      <div class="bulkeditor__items">
++        <div class="bgrid bgrid--head">
++          <span class="bcell-photo" />
++          <span>Item</span>
++          <span>Qty</span>
++          <span>Condition</span>
++          <span>Size</span>
++          <span class="bcell-rm" />
++        </div>
++
++        <ul class="bulkeditor__list">
++          <li
++            v-for="(item, idx) in items"
++            :key="idx"
++            class="bgrid brow"
++            :class="{ 'brow--over': dragOverIdx === idx }"
++            @dragover.prevent
++            @dragenter.prevent="dragOverIdx = idx"
++            @dragleave="onRowLeave(idx)"
++            @drop="onDropToItem(idx)"
++          >
++            <div class="bcell-photo brow__photos">
++              <div
++                v-for="(p, pi) in item.photos"
++                :key="p.id || pi"
++                class="pthumb pthumb--sm"
++                draggable="true"
++                title="Drag to move, click to remove"
++                @dragstart="onDragStart($event, idx, pi)"
++                @click="unassign(idx, pi)"
++              >
++                <img :src="thumbSrc(p)" alt="" />
++              </div>
++              <div
++                v-if="!item.photos.length && item.photourl"
++                class="pthumb pthumb--sm"
++                title="From spreadsheet link"
++              >
++                <img :src="item.photourl" alt="" />
++              </div>
++              <span
++                v-else-if="!item.photos.length"
++                class="brow__drop"
++                aria-hidden="true"
++              >
++                <v-icon icon="image" />
++              </span>
++            </div>
++
++            <b-form-input
++              v-model="item.name"
++              class="bfield"
++              size="sm"
++              placeholder="Item name"
++              maxlength="255"
++              :data-testid="'item-name-' + idx"
++            />
++            <b-form-input
++              v-model.number="item.quantity"
++              class="bfield bfield--qty"
++              size="sm"
++              type="number"
++              min="1"
++              max="999"
++              :data-testid="'item-qty-' + idx"
++              aria-label="Quantity"
++            />
++            <b-form-select
++              v-model="item.condition"
++              :options="conditions"
++              size="sm"
++              class="bfield"
++              :data-testid="'item-condition-' + idx"
++            />
++            <b-form-input
++              v-model="item.dimensions"
++              class="bfield"
++              size="sm"
++              placeholder="optional"
++              maxlength="255"
++            />
++            <b-button
++              variant="link"
++              class="brow__rm text-danger p-0"
++              :aria-label="'Remove ' + (item.name || 'item')"
++              :data-testid="'item-remove-' + idx"
++              @click="removeItem(idx)"
++            >
++              <v-icon icon="trash" />
++            </b-button>
++          </li>
++        </ul>
++
++        <div
++          class="d-flex justify-content-between align-items-center mt-2 flex-wrap gap-2"
++        >
++          <b-button
++            variant="outline-primary"
++            size="sm"
++            data-testid="add-item"
++            @click="addItem"
++          >
++            <v-icon icon="plus" /> Add another item
++          </b-button>
++          <span class="small text-muted">
++            {{ totalItems }} item{{ totalItems === 1 ? '' : 's' }},
++            {{ totalQuantity }} thing{{ totalQuantity === 1 ? '' : 's' }} in
++            total
++          </span>
++        </div>
++      </div>
++
++      <aside class="bulkeditor__tools">
++        <div class="tool">
++          <div class="tool__title">Photos</div>
++          <PhotoUploader
++            v-model="uploaderModel"
++            type="Message"
++            :max-photos="50"
++            empty-title="Add photos"
++            empty-subtitle="Then drag each onto its item"
++          />
++          <div
++            v-if="tray.length"
++            class="bulkeditor__tray"
++            data-testid="photo-tray"
++          >
++            <span class="bulkeditor__tray-label">
++              <v-icon icon="arrow-left" /> Drag a photo onto its item
++            </span>
++            <div class="bulkeditor__tray-strip">
++              <div
++                v-for="(p, i) in tray"
++                :key="p.id || i"
++                class="pthumb"
++                draggable="true"
++                @dragstart="onDragStart($event, -1, i)"
++              >
++                <img :src="thumbSrc(p)" alt="" />
++                <button
++                  type="button"
++                  class="pthumb__x"
++                  aria-label="Remove photo"
++                  @click="removeTrayPhoto(i)"
++                >
++                  ×
++                </button>
++              </div>
++            </div>
++          </div>
++        </div>
++      </aside>
++    </div>
++
++    <!-- UPLOAD: download the template, fill it in, upload it. -->
++    <div v-else-if="mode === 'upload'" class="bulkeditor__upload">
++      <p class="mb-2">
++        Download this template, fill in a row per item, then upload it here. It
++        has a condition drop-down and an optional <strong>photo</strong> column
++        (http links — we fetch &amp; store them). Accepts .xlsx or CSV.
++      </p>
++      <div class="d-flex gap-2 flex-wrap align-items-center">
++        <a
++          class="btn btn-outline-success"
++          href="/freegle-clearance-template.xlsx"
++          download
++          data-testid="download-template"
++        >
++          <v-icon icon="download" /> Download template
++        </a>
++        <label class="btn btn-primary mb-0">
++          <v-icon icon="upload" /> Upload spreadsheet
++          <input
++            type="file"
++            accept=".csv,.tsv,.xlsx,text/csv"
++            class="d-none"
++            data-testid="import-file"
++            @change="onFile"
++          />
++        </label>
++        <span v-if="importMessage" class="small text-success">{{
++          importMessage
++        }}</span>
++      </div>
++    </div>
++  </div>
++</template>
++
++<script setup>
++import { ref, computed, watch } from 'vue'
++import {
++  BULK_CONDITIONS,
++  parseItemsCsv,
++  parseItemsRows,
++  blankBulkItem,
++} from '~/composables/useBulkItems'
++import PhotoUploader from '~/components/PhotoUploader'
++
++const props = defineProps({
++  modelValue: { type: Array, default: () => [] },
++})
++const emit = defineEmits(['update:modelValue'])
++
++const conditions = BULK_CONDITIONS
++
++// Internal list, seeded once from the incoming value (or one blank row).
++const items = ref(
++  props.modelValue && props.modelValue.length
++    ? props.modelValue.map((i) => ({ photos: [], ...i }))
++    : [{ ...blankBulkItem(), photos: [] }]
++)
++
++// null = no choice yet (show only the prompt + buttons); 'manual' = type items
++// into the table; 'upload' = import a spreadsheet.
++const mode = ref(null)
++
++// The uploader's model — we drain finished uploads from it into `tray`,
++// so it always shows just the "Add photos" affordance (never a big gallery).
++const uploaderModel = ref([])
++const tray = ref([])
++
++const importMessage = ref('')
++
++// Drag source: { from: -1 for tray else item index, index: position in that list }
++let dragSrc = null
++const dragOverIdx = ref(null)
++
++const totalItems = computed(
++  () => items.value.filter((i) => i.name && i.name.trim()).length
++)
++const totalQuantity = computed(() =>
++  items.value
++    .filter((i) => i.name && i.name.trim())
++    .reduce((sum, i) => sum + (parseInt(i.quantity, 10) || 0), 0)
++)
++
++function thumbSrc(p) {
++  return p.paththumb || p.path || p.preview || ''
++}
++
++// Move fully-uploaded photos (real numeric id) out of the uploader into the tray.
++watch(
++  uploaderModel,
++  (val) => {
++    const done = val.filter((p) => p.id && typeof p.id === 'number')
++    if (done.length) {
++      tray.value.push(...done)
++      uploaderModel.value = val.filter(
++        (p) => !(p.id && typeof p.id === 'number')
++      )
++    }
++  },
++  { deep: true }
++)
++
++function addItem() {
++  // Newest at the top, next to the photo tray, so dragging a photo onto a
++  // just-added item is a short move (no scrolling to the bottom).
++  items.value.unshift({ ...blankBulkItem(), photos: [] })
++}
++
++function removeItem(idx) {
++  // Return any photos on this row to the tray so they aren't lost.
++  const it = items.value[idx]
++  if (it && it.photos && it.photos.length) tray.value.push(...it.photos)
++  items.value.splice(idx, 1)
++  if (!items.value.length) addItem()
++}
++
++function removeTrayPhoto(i) {
++  tray.value.splice(i, 1)
++}
++
++function onDragStart(e, from, index) {
++  dragSrc = { from, index }
++  if (e.dataTransfer) {
++    e.dataTransfer.effectAllowed = 'move'
++    // Required for Firefox to initiate the drag.
++    e.dataTransfer.setData('text/plain', String(index))
++  }
++}
++
++function onRowLeave(idx) {
++  if (dragOverIdx.value === idx) dragOverIdx.value = null
++}
++
++function takeDragged() {
++  if (!dragSrc) return null
++  const { from, index } = dragSrc
++  let photo
++  if (from === -1) {
++    photo = tray.value.splice(index, 1)[0]
++  } else if (items.value[from]) {
++    photo = items.value[from].photos.splice(index, 1)[0]
++  }
++  dragSrc = null
++  return photo || null
++}
++
++function onDropToItem(idx) {
++  dragOverIdx.value = null
++  const photo = takeDragged()
++  if (photo && items.value[idx]) {
++    items.value[idx].photos.push(photo)
++  }
++}
++
++// Click a row thumbnail to send it back to the tray.
++function unassign(idx, pi) {
++  const photo = items.value[idx].photos.splice(pi, 1)[0]
++  if (photo) tray.value.push(photo)
++}
++
++// Prepend a parsed batch of items (newest at the top), keeping their order, and
++// switch to the table so the imported rows are visible/editable.
++function prependItems(parsed) {
++  if (!parsed.length) {
++    importMessage.value = 'No items found in that file'
++    return
++  }
++  const existing = items.value.filter((i) => i.name && i.name.trim())
++  items.value = [...parsed.map((i) => ({ ...i, photos: [] })), ...existing]
++  importMessage.value = `Added ${parsed.length} item${
++    parsed.length === 1 ? '' : 's'
++  }`
++  mode.value = 'manual'
++}
++
++function applyImportText(text) {
++  prependItems(parseItemsCsv(text))
++}
++// exposed name kept stable for tests
++function applyImport(text) {
++  applyImportText(text)
++}
++
++async function onFile(e) {
++  const file = e.target.files && e.target.files[0]
++  if (!file) return
++  try {
++    if (/\.xlsx$/i.test(file.name)) {
++      // Parse the filled .xlsx in the browser. read-excel-file is lazy-loaded so
++      // it never bloats the main bundle — only fetched when someone uploads one.
++      const readXlsxFile = (await import('read-excel-file')).default
++      const rows = await readXlsxFile(file)
++      prependItems(parseItemsRows(rows))
++    } else {
++      applyImportText(await file.text())
++    }
++  } catch (err) {
++    importMessage.value = "Sorry — couldn't read that file"
++  } finally {
++    // Allow re-uploading the same file.
++    e.target.value = ''
++  }
++}
++
++// Keep attachment IDs in sync with assigned photos and emit upward. Only write
++// when the derived ids change, to avoid retriggering this deep watcher endlessly.
++watch(
++  items,
++  (val) => {
++    for (const item of val) {
++      const ids = (item.photos || [])
++        .map((p) => p.id)
++        .filter((id) => typeof id === 'number')
++      if (JSON.stringify(item.attachments || []) !== JSON.stringify(ids)) {
++        item.attachments = ids
++      }
++    }
++    emit('update:modelValue', val)
++  },
++  { deep: true, immediate: true }
++)
++
++defineExpose({
++  items,
++  mode,
++  applyImport,
++  applyImportText,
++  addItem,
++  removeItem,
++  tray,
++})
++</script>
++
++<style scoped lang="scss">
++@import 'bootstrap/scss/functions';
++@import 'bootstrap/scss/variables';
++@import 'bootstrap/scss/mixins/_breakpoints';
++@import 'assets/css/_color-vars.scss';
++
++.bulkeditor__intro {
++  font-size: 0.95rem;
++  color: $color-gray--dark;
++  margin-bottom: 0.6rem;
++}
++
++.bulkeditor__mode {
++  display: flex;
++  gap: 0.5rem;
++}
++
++.bulkeditor__cols {
++  display: flex;
++  gap: 1rem;
++  align-items: flex-start;
++}
++
++.bulkeditor__items {
++  flex: 1 1 auto;
++  min-width: 0;
++}
++
++/* Fixed-width photo rail on the right of the items. */
++.bulkeditor__tools {
++  flex: 0 0 16rem;
++  width: 16rem;
++}
++
++.tool {
++  border: 1px solid $color-gray--light;
++  border-radius: 8px;
++  padding: 0.6rem 0.7rem;
++  background-color: $color-gray--lighter;
++}
++
++.tool__title {
++  font-weight: 600;
++  font-size: 0.9rem;
++  margin-bottom: 0.4rem;
++}
++
++.bulkeditor__upload {
++  border: 1px solid $color-gray--light;
++  border-radius: 8px;
++  padding: 0.9rem 1rem;
++  background-color: $color-gray--lighter;
++}
++
++/* Shared grid for the heading row and each item row, so columns line up. */
++.bgrid {
++  display: grid;
++  grid-template-columns: 38px minmax(7rem, 1fr) 4.5rem 8rem 6rem 1.75rem;
++  gap: 0.4rem;
++  align-items: center;
++}
++
++.bgrid--head {
++  font-size: 0.78rem;
++  font-weight: 600;
++  color: $color-gray--dark;
++  text-transform: uppercase;
++  letter-spacing: 0.02em;
++  padding: 0 0 0.25rem;
++  border-bottom: 1px solid $color-gray--light;
++}
++
++.bulkeditor__list {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++}
++
++.brow {
++  padding: 0.35rem 0;
++  border-bottom: 1px solid $color-gray--lighter;
++}
++
++.brow--over {
++  background-color: $color-green-background;
++  border-radius: 6px;
++}
++
++/* Every input/select fills its grid column, so the row reads as one tidy table. */
++.bfield,
++.bfield :deep(input),
++.bfield :deep(select) {
++  width: 100%;
++}
++
++.bfield--qty :deep(input),
++.bfield--qty {
++  text-align: center;
++}
++
++.bcell-photo {
++  display: flex;
++  align-items: center;
++  justify-content: center;
++}
++
++.brow__drop {
++  width: 34px;
++  height: 34px;
++  border: 1px dashed $color-gray--light;
++  border-radius: 4px;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  color: $color-gray--normal;
++}
++
++.pthumb {
++  position: relative;
++  width: 56px;
++  height: 56px;
++  border-radius: 4px;
++  overflow: hidden;
++  cursor: grab;
++  background-color: $color-gray--lighter;
++  flex: 0 0 auto;
++
++  img {
++    width: 100%;
++    height: 100%;
++    object-fit: cover;
++    display: block;
++    pointer-events: none;
++  }
++
++  &:active {
++    cursor: grabbing;
++  }
++}
++
++.pthumb--sm {
++  width: 34px;
++  height: 34px;
++}
++
++.pthumb__x {
++  position: absolute;
++  top: 0;
++  right: 0;
++  border: none;
++  background: rgba(0, 0, 0, 0.55);
++  color: #fff;
++  line-height: 1;
++  padding: 0 4px;
++  font-size: 0.8rem;
++  cursor: pointer;
++}
++
++.bulkeditor__tray {
++  margin-top: 0.5rem;
++}
++
++.bulkeditor__tray-label {
++  display: block;
++  font-size: 0.78rem;
++  color: $color-gray--dark;
++  margin-bottom: 0.35rem;
++}
++
++.bulkeditor__tray-strip {
++  display: flex;
++  flex-wrap: wrap;
++  gap: 0.4rem;
++}
++
++/* Stack the photo rail under the items on narrow screens. */
++@include media-breakpoint-down(md) {
++  .bulkeditor__cols {
++    flex-direction: column;
++  }
++  .bulkeditor__tools {
++    flex-basis: auto;
++    width: 100%;
++  }
++  .bgrid {
++    grid-template-columns: 34px minmax(5rem, 1fr) 3.5rem 6.5rem 4.5rem 1.5rem;
++  }
++}
++</style>
+diff --git a/iznik-nuxt3/components/BulkItemsInterest.vue b/iznik-nuxt3/components/BulkItemsInterest.vue
+new file mode 100644
+index 000000000..7f7d9d877
+--- /dev/null
++++ b/iznik-nuxt3/components/BulkItemsInterest.vue
+@@ -0,0 +1,316 @@
++<template>
++  <div v-if="items.length" class="bulkitems mt-3">
++    <h4 class="bulkitems__heading">
++      <v-icon icon="gift" class="me-1 text-success" />
++      {{ items.length }} items in this offer
++    </h4>
++    <p v-if="!isOwner" class="text-muted small mb-2">
++      Turn on the items you'd like and choose how many.
++    </p>
++
++    <ul class="bulkitems__list">
++      <li v-for="(item, idx) in items" :key="item.id" class="bitem">
++        <div class="bitem__photo">
++          <img
++            v-if="thumb(item)"
++            :src="thumb(item)"
++            :alt="item.name"
++            loading="lazy"
++          />
++          <v-icon v-else icon="image" class="bitem__nophoto" />
++        </div>
++
++        <div class="bitem__detail">
++          <div class="bitem__name">
++            <span class="bitem__ref">#{{ idx + 1 }}</span> {{ item.name }}
++          </div>
++          <div class="bitem__meta">
++            <b-badge variant="light" class="me-1"
++              >{{ item.quantity }} available</b-badge
++            >
++            <b-badge
++              v-if="item.condition && item.condition !== 'Unknown'"
++              variant="info"
++              class="me-1"
++            >
++              {{ conditionLabel(item.condition) }}
++            </b-badge>
++            <span v-if="item.dimensions" class="text-muted small">{{
++              item.dimensions
++            }}</span>
++          </div>
++
++          <!-- Owner sees a live interest summary. -->
++          <div v-if="isOwner" class="bitem__interest small">
++            <span v-if="item.interestcount">
++              <strong>{{ item.interestcount }}</strong>
++              interested · <strong>{{ item.interestedquantity }}</strong>
++              requested
++            </span>
++            <span v-else class="text-muted">No interest yet</span>
++          </div>
++        </div>
++
++        <!-- Recipient: a standard on/off toggle; quantity appears once it's on. -->
++        <div v-if="!isOwner && !message.successful" class="bitem__pick">
++          <b-form-checkbox
++            v-model="picks[item.id].checked"
++            switch
++            size="lg"
++            class="bitem__toggle"
++            :data-testid="'pick-' + item.id"
++            @change="onCheck(item)"
++          />
++          <div class="bitem__qty">
++            <NumberIncrementDecrement
++              v-if="picks[item.id].checked"
++              v-model="picks[item.id].quantity"
++              :min="1"
++              :max="item.quantity"
++              size="sm"
++              label="How many?"
++              :label-s-r-only="true"
++            />
++          </div>
++        </div>
++      </li>
++    </ul>
++
++    <div v-if="!isOwner && !message.successful" class="bulkitems__actions">
++      <b-form-group label="Which collection time suits you?" class="mb-2">
++        <b-form-radio-group
++          v-if="slots.length"
++          v-model="cancollect"
++          :options="slotOptions"
++          stacked
++          data-testid="slot-picker"
++        />
++        <b-form-input
++          v-else
++          v-model="cancollect"
++          placeholder="When could you collect?"
++          maxlength="255"
++        />
++      </b-form-group>
++
++      <SpinButton
++        variant="primary"
++        :disabled="!canRegister"
++        icon-name="check"
++        :label="submitted ? 'Update my interest' : 'Register interest'"
++        data-testid="register-interest"
++        @handle="submit"
++      />
++      <NoticeMessage v-if="submitted" variant="success" class="mt-2">
++        Thanks! We've let the giver know which items you're interested in.
++      </NoticeMessage>
++    </div>
++  </div>
++</template>
++
++<script setup>
++import { ref, reactive, computed, watch } from 'vue'
++import { useMessageStore } from '~/stores/message'
++import { useAuthStore } from '~/stores/auth'
++import NumberIncrementDecrement from '~/components/NumberIncrementDecrement'
++import SpinButton from '~/components/SpinButton'
++import NoticeMessage from '~/components/NoticeMessage'
++
++const props = defineProps({
++  id: { type: Number, required: true },
++})
++
++const messageStore = useMessageStore()
++const authStore = useAuthStore()
++
++const message = computed(() => messageStore.byId(props.id) || {})
++const items = computed(() => message.value?.bulkitems || [])
++const slots = computed(() => message.value?.bulkslots || [])
++const slotOptions = computed(() =>
++  slots.value.map((s) => ({ value: s, text: s }))
++)
++const isOwner = computed(
++  () =>
++    !!authStore.user &&
++    !!message.value &&
++    authStore.user.id === message.value.fromuser
++)
++
++const submitted = ref(false)
++const cancollect = ref('')
++
++// Per-item pick state, seeded from any interest the user already expressed.
++const picks = reactive({})
++
++function seedPicks() {
++  for (const item of items.value) {
++    if (!item.id) continue
++    const yi = item.yourinterest
++    const existing = picks[item.id]
++    if (!existing) {
++      picks[item.id] = {
++        checked: !!yi && yi.state !== 'Withdrawn',
++        quantity: yi && yi.quantity > 0 ? yi.quantity : 1,
++      }
++      if (yi && yi.cancollect && !cancollect.value) {
++        cancollect.value = yi.cancollect
++      }
++      if (yi && yi.state !== 'Withdrawn') {
++        submitted.value = true
++      }
++    }
++  }
++}
++
++watch(items, seedPicks, { immediate: true })
++
++const anyPicked = computed(() =>
++  Object.values(picks).some((p) => p.checked && p.quantity > 0)
++)
++
++// Can only register once something is picked, and — when the giver has set
++// collection windows — once one of those has been chosen.
++const canRegister = computed(() => {
++  if (!anyPicked.value) return false
++  if (slots.value.length && !cancollect.value) return false
++  return true
++})
++
++function onCheck(item) {
++  const p = picks[item.id]
++  if (p.checked && (!p.quantity || p.quantity < 1)) {
++    p.quantity = 1
++  }
++}
++
++function thumb(item) {
++  const att = item.attachments && item.attachments[0]
++  if (att) return att.paththumb || att.path || null
++  // Fall back to a spreadsheet-supplied photo link.
++  return item.photourl || null
++}
++
++function conditionLabel(c) {
++  return c === 'LikeNew' ? 'Like new' : c
++}
++
++// Build the API payload: checked items at their quantity (with the chosen
++// collection time), plus any item previously wanted but now switched off
++// (quantity 0 withdraws it).
++function buildPayload() {
++  const out = []
++  for (const item of items.value) {
++    const p = picks[item.id]
++    const had = item.yourinterest && item.yourinterest.state !== 'Withdrawn'
++    if (p && p.checked && p.quantity > 0) {
++      out.push({
++        bulkitemid: item.id,
++        quantity: p.quantity,
++        cancollect: cancollect.value || null,
++      })
++    } else if (had) {
++      out.push({ bulkitemid: item.id, quantity: 0 })
++    }
++  }
++  return out
++}
++
++async function submit(callback) {
++  if (!authStore.user) {
++    authStore.forceLogin = true
++    if (callback) callback()
++    return
++  }
++  const payload = buildPayload()
++  if (payload.length) {
++    await messageStore.bulkInterest(props.id, payload)
++    submitted.value = true
++  }
++  if (callback) callback()
++}
++
++defineExpose({ buildPayload, picks, canRegister })
++</script>
++
++<style scoped lang="scss">
++@import 'bootstrap/scss/functions';
++@import 'assets/css/_color-vars.scss';
++
++.bulkitems {
++  border-top: 1px solid $color-gray--lighter;
++  padding-top: 0.75rem;
++}
++
++.bulkitems__heading {
++  font-size: 1.1rem;
++  font-weight: 600;
++}
++
++.bulkitems__list {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++}
++
++/* Consistent row: photo | details (flex) | pick column (fixed width). */
++.bitem {
++  display: flex;
++  align-items: center;
++  gap: 0.75rem;
++  padding: 0.6rem 0;
++  border-bottom: 1px solid $color-gray--lighter;
++  min-height: 64px;
++}
++
++.bitem__photo {
++  flex: 0 0 56px;
++  width: 56px;
++  height: 56px;
++  border-radius: 6px;
++  overflow: hidden;
++  background-color: $color-gray--lighter;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++
++  img {
++    width: 100%;
++    height: 100%;
++    object-fit: cover;
++  }
++}
++
++.bitem__nophoto {
++  color: $color-gray--normal;
++  font-size: 1.4rem;
++}
++
++.bitem__detail {
++  flex: 1 1 auto;
++  min-width: 0;
++}
++
++.bitem__name {
++  font-weight: 600;
++}
++
++.bitem__ref {
++  color: $color-gray--normal;
++  font-weight: 400;
++  font-size: 0.85em;
++}
++
++/* Fixed-width pick column so rows stay the same shape whether on or off. */
++.bitem__pick {
++  flex: 0 0 7.5rem;
++  display: flex;
++  flex-direction: column;
++  align-items: flex-end;
++  gap: 0.35rem;
++}
++
++.bitem__qty {
++  min-height: 2rem;
++  width: 7rem;
++}
++</style>
+diff --git a/iznik-nuxt3/components/MessageExpanded.vue b/iznik-nuxt3/components/MessageExpanded.vue
+index ab4cb6a6c..5b60da9c2 100644
+--- a/iznik-nuxt3/components/MessageExpanded.vue
++++ b/iznik-nuxt3/components/MessageExpanded.vue
+@@ -324,6 +324,9 @@
+               </div>
+             </div>
+ 
++            <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
++            <BulkItemsInterest :id="id" />
++
+             <!-- Posted by divider and section (shown on taller screens, after description) -->
+             <client-only>
+               <div v-if="poster" class="section-header section-header--poster">
+@@ -604,6 +607,7 @@ import MessageTextBody from '~/components/MessageTextBody'
+ import MessageTag from '~/components/MessageTag'
+ import NoticeMessage from '~/components/NoticeMessage'
+ import MessageReplySection from '~/components/MessageReplySection'
++import BulkItemsInterest from '~/components/BulkItemsInterest'
+ import ProfileImage from '~/components/ProfileImage'
+ import UserRatings from '~/components/UserRatings'
+ import { useModalHistory } from '~/composables/useModalHistory'
+diff --git a/iznik-nuxt3/components/MessageSummary.vue b/iznik-nuxt3/components/MessageSummary.vue
+index c17101bd2..3ca0e80d1 100644
+--- a/iznik-nuxt3/components/MessageSummary.vue
++++ b/iznik-nuxt3/components/MessageSummary.vue
+@@ -100,6 +100,9 @@
+         </div>
+         <div class="title-row">
+           <span class="title-subject">{{ strippedSubject }}</span>
++          <b-badge v-if="bulkCount" variant="success" class="ms-1 bulk-badge"
++            >{{ bulkCount }} items</b-badge
++          >
+         </div>
+       </div>
+     </div>
+@@ -110,6 +113,9 @@
+         <MessageTag :id="id" :inline="true" class="content-tag" />
+         <div class="content-title-location">
+           <span class="content-subject">{{ subjectItemName }}</span>
++          <b-badge v-if="bulkCount" variant="success" class="ms-1 bulk-badge"
++            >{{ bulkCount }} items</b-badge
++          >
+           <span v-if="subjectLocation" class="content-location">
+             {{ subjectLocation }}
+           </span>
+@@ -179,6 +185,9 @@ const {
+   categoryIcon,
+ } = useMessageDisplay(idRef)
+ 
++// Bulk offer ("clearance"): number of catalogue items, for a list indicator.
++const bulkCount = computed(() => message.value?.bulkitems?.length || 0)
++
+ const miscStore = useMiscStore()
+ const { isLandscape } = useOrientation()
+ 
+diff --git a/iznik-nuxt3/composables/useBulkItems.js b/iznik-nuxt3/composables/useBulkItems.js
+new file mode 100644
+index 000000000..b2a34dce5
+--- /dev/null
++++ b/iznik-nuxt3/composables/useBulkItems.js
+@@ -0,0 +1,196 @@
++// Helpers for the bulk-offer ("clearance") composer: parsing a pasted/uploaded
++// spreadsheet of items into the structured shape the API expects.
++
++export const BULK_CONDITIONS = [
++  { value: 'New', text: 'New' },
++  { value: 'LikeNew', text: 'Like new' },
++  { value: 'Good', text: 'Good' },
++  { value: 'Used', text: 'Used' },
++  { value: 'Poor', text: 'Poor' },
++  { value: 'Unknown', text: 'Not sure' },
++]
++
++const VALID_CONDITIONS = BULK_CONDITIONS.map((c) => c.value)
++
++// Map a free-text condition (from a spreadsheet) onto our enum, tolerantly.
++export function normaliseCondition(raw) {
++  if (!raw) return 'Unknown'
++  const v = String(raw)
++    .trim()
++    .toLowerCase()
++    .replace(/[\s_-]+/g, '')
++  const map = {
++    new: 'New',
++    likenew: 'LikeNew',
++    asnew: 'LikeNew',
++    excellent: 'LikeNew',
++    good: 'Good',
++    used: 'Used',
++    fair: 'Used',
++    poor: 'Poor',
++    forparts: 'Poor',
++    unknown: 'Unknown',
++    notsure: 'Unknown',
++  }
++  if (map[v]) return map[v]
++  // Exact (case-sensitive) enum value passthrough.
++  const exact = VALID_CONDITIONS.find((c) => c.toLowerCase() === v)
++  return exact || 'Unknown'
++}
++
++// Minimal RFC-4180-ish splitter: handles quoted fields, escaped quotes ("")
++// and the delimiter inside quotes. Auto-detects the delimiter so it works for
++// both a downloaded/edited CSV (comma) and cells copied straight out of a
++// spreadsheet (tab) — the latter is how the xlsx template is meant to be used.
++export function splitCsv(text) {
++  const t = text || ''
++  const firstLine = t.split(/\r?\n/, 1)[0] || ''
++  const delim = firstLine.includes('\t') ? '\t' : ','
++
++  const rows = []
++  let row = []
++  let field = ''
++  let inQuotes = false
++
++  for (let i = 0; i < t.length; i++) {
++    const ch = t[i]
++    if (inQuotes) {
++      if (ch === '"') {
++        if (t[i + 1] === '"') {
++          field += '"'
++          i++
++        } else {
++          inQuotes = false
++        }
++      } else {
++        field += ch
++      }
++    } else if (ch === '"') {
++      inQuotes = true
++    } else if (ch === delim) {
++      row.push(field)
++      field = ''
++    } else if (ch === '\n' || ch === '\r') {
++      // Handle \r\n as one break.
++      if (ch === '\r' && text[i + 1] === '\n') i++
++      row.push(field)
++      field = ''
++      rows.push(row)
++      row = []
++    } else {
++      field += ch
++    }
++  }
++  // Trailing field/row (file without final newline).
++  if (field !== '' || row.length) {
++    row.push(field)
++    rows.push(row)
++  }
++  // Drop fully-empty rows.
++  return rows.filter((r) => r.some((c) => c.trim() !== ''))
++}
++
++// Parse a spreadsheet of items. Recognises a header row with any of the columns
++// name/item, quantity/qty/count, condition, dimensions/size/measurements,
++// description/notes. If no recognisable header is found, assumes the columns are
++// name, quantity, condition, dimensions, description in order.
++export function parseItemsCsv(text) {
++  return parseItemsRows(splitCsv(text || ''))
++}
++
++// Parse already-split rows (an array of arrays of cells) into structured items.
++// Cells may be non-strings (e.g. numbers from an .xlsx reader); they're coerced
++// to strings. Same header/column detection as parseItemsCsv.
++export function parseItemsRows(rawRows) {
++  const rows = (rawRows || []).map((r) =>
++    (r || []).map((c) => (c == null ? '' : String(c)))
++  )
++  if (!rows.length) return []
++
++  const headerCells = rows[0].map((c) => c.trim().toLowerCase())
++  const known = {
++    name: ['name', 'item', 'item name', 'title'],
++    quantity: ['quantity', 'qty', 'count', 'number', 'amount'],
++    condition: ['condition', 'state'],
++    dimensions: ['dimensions', 'size', 'measurements', 'measurement'],
++    photourl: [
++      'photo',
++      'photos',
++      'image',
++      'imageurl',
++      'image url',
++      'photo url',
++      'photourl',
++      'url',
++      'link',
++    ],
++    description: ['description', 'notes', 'detail', 'details'],
++  }
++
++  const findCol = (aliases) => headerCells.findIndex((h) => aliases.includes(h))
++
++  const hasHeader = Object.values(known).some(
++    (aliases) => findCol(aliases) !== -1
++  )
++
++  let cols
++  let dataRows
++  if (hasHeader) {
++    cols = {
++      name: findCol(known.name),
++      quantity: findCol(known.quantity),
++      condition: findCol(known.condition),
++      dimensions: findCol(known.dimensions),
++      photourl: findCol(known.photourl),
++      description: findCol(known.description),
++    }
++    dataRows = rows.slice(1)
++  } else {
++    cols = {
++      name: 0,
++      quantity: 1,
++      condition: 2,
++      dimensions: 3,
++      photourl: 4,
++      description: 5,
++    }
++    dataRows = rows
++  }
++
++  const at = (row, idx) => (idx >= 0 && idx < row.length ? row[idx].trim() : '')
++
++  const items = []
++  for (const row of dataRows) {
++    const name = at(row, cols.name)
++    if (!name) continue
++    // Skip comment lines (e.g. the guidance row in the downloadable template).
++    if (name.startsWith('#')) continue
++    const qtyRaw = at(row, cols.quantity)
++    let quantity = parseInt(qtyRaw, 10)
++    if (!Number.isFinite(quantity) || quantity < 1) quantity = 1
++    const photourl = at(row, cols.photourl)
++    items.push({
++      name,
++      quantity,
++      condition: normaliseCondition(at(row, cols.condition)),
++      dimensions: at(row, cols.dimensions) || null,
++      photourl: /^https?:\/\//i.test(photourl) ? photourl : null,
++      description: at(row, cols.description) || null,
++      attachments: [],
++    })
++  }
++  return items
++}
++
++// A blank item row for the editor.
++export function blankBulkItem() {
++  return {
++    name: '',
++    quantity: 1,
++    condition: 'Unknown',
++    dimensions: null,
++    photourl: null,
++    description: null,
++    attachments: [],
++  }
++}
+diff --git a/iznik-nuxt3/modtools/components/ModBulkPreviewModal.vue b/iznik-nuxt3/modtools/components/ModBulkPreviewModal.vue
+new file mode 100644
+index 000000000..3fbca4e26
+--- /dev/null
++++ b/iznik-nuxt3/modtools/components/ModBulkPreviewModal.vue
+@@ -0,0 +1,112 @@
++<template>
++  <b-modal
++    id="modBulkPreviewModal"
++    ref="modal"
++    size="lg"
++    scrollable
++    @hidden="onHide"
++  >
++    <template #title> How members will see this offer </template>
++    <template #default>
++      <p class="text-muted">
++        This appears on the group as a <strong>single post</strong>. When a
++        member opens it they see the list of items below and turn on the ones
++        they'd like — choosing how many — all in one conversation with the
++        giver. Here's roughly what they'll see:
++      </p>
++
++      <h4 v-if="subject" class="h5">{{ subject }}</h4>
++      <p v-if="body" class="preline text-muted">{{ body }}</p>
++
++      <ul class="list-unstyled mb-0">
++        <li
++          v-for="(item, idx) in items"
++          :key="item.id || idx"
++          class="d-flex gap-2 align-items-center border-bottom py-2"
++        >
++          <img
++            v-if="thumb(item)"
++            :src="thumb(item)"
++            class="bulkprev__thumb"
++            alt=""
++          />
++          <span v-else class="bulkprev__thumb bulkprev__thumb--empty">
++            <v-icon icon="image" />
++          </span>
++          <div class="flex-grow-1">
++            <strong>#{{ idx + 1 }} {{ item.name }}</strong>
++            <div class="small text-muted">
++              {{ item.quantity }} available<span v-if="conditionLabel(item)">
++                · {{ conditionLabel(item) }}</span
++              ><span v-if="item.dimensions"> · {{ item.dimensions }}</span>
++            </div>
++          </div>
++          <b-form-checkbox
++            switch
++            disabled
++            aria-label="Members tick to request"
++          />
++        </li>
++      </ul>
++      <p v-if="!items.length" class="text-muted mt-2">
++        No items have been listed on this offer.
++      </p>
++
++      <p v-if="slots.length" class="small text-muted mt-3 mb-0">
++        Collection times offered: {{ slots.join('; ') }}
++      </p>
++    </template>
++    <template #footer>
++      <b-button variant="white" @click="hide"> Close </b-button>
++    </template>
++  </b-modal>
++</template>
++
++<script setup>
++import { computed } from 'vue'
++import { useMessageStore } from '~/stores/message'
++import { useOurModal } from '~/composables/useOurModal'
++
++const props = defineProps({
++  messageid: { type: Number, required: true },
++})
++const emit = defineEmits(['hidden'])
++
++const messageStore = useMessageStore()
++const { modal, hide } = useOurModal()
++
++const message = computed(() => messageStore.byId(props.messageid) || {})
++const subject = computed(() => message.value.subject || '')
++const body = computed(() => message.value.textbody || '')
++const items = computed(() => message.value.bulkitems || [])
++const slots = computed(() => message.value.bulkslots || [])
++
++function thumb(item) {
++  const a = item.attachments && item.attachments[0]
++  return (a && (a.paththumb || a.path)) || item.photourl || null
++}
++
++function conditionLabel(item) {
++  const c = item.condition
++  if (!c || c === 'Unknown') return ''
++  return c === 'LikeNew' ? 'Like new' : c
++}
++
++function onHide() {
++  emit('hidden')
++}
++</script>
++
++<style scoped>
++.bulkprev__thumb {
++  width: 48px;
++  height: 48px;
++  object-fit: cover;
++  border-radius: 6px;
++  background-color: #f0f0f0;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  flex: 0 0 auto;
++}
++</style>
+diff --git a/iznik-nuxt3/modtools/components/ModMessage.vue b/iznik-nuxt3/modtools/components/ModMessage.vue
+index 478be30d4..1b0f60a94 100644
+--- a/iznik-nuxt3/modtools/components/ModMessage.vue
++++ b/iznik-nuxt3/modtools/components/ModMessage.vue
+@@ -81,7 +81,8 @@
+               <span
+                 v-if="message.matchedon && message.matchedon.type === 'Vector'"
+                 class="highlight"
+-              >{{ eSubject }}</span>
++                >{{ eSubject }}</span
++              >
+               <Highlighter
+                 v-else-if="message.matchedon"
+                 :search-words="[String(message.matchedon.word)]"
+@@ -139,15 +140,14 @@
+               Possibly should be on {{ homegroup }}
+               <span v-if="!homegroupontn"> but group not on TN </span>
+             </div>
+-            <div
+-              v-if="otherGroups.length > 0"
+-              class="small text-muted"
+-            >
++            <div v-if="otherGroups.length > 0" class="small text-muted">
+               Also on:
+-              <span
+-                v-for="(g, idx) in otherGroups"
+-                :key="g.groupid"
+-              >{{ groupStore.get(g.groupid)?.namedisplay || 'Group ' + g.groupid }}<span v-if="idx < otherGroups.length - 1">, </span></span>
++              <span v-for="(g, idx) in otherGroups" :key="g.groupid"
++                >{{
++                  groupStore.get(g.groupid)?.namedisplay ||
++                  'Group ' + g.groupid
++                }}<span v-if="idx < otherGroups.length - 1">, </span></span
++              >
+             </div>
+             <ModMessageDuplicate
+               v-for="(duplicate, index) in duplicates"
+@@ -208,7 +208,9 @@
+                   icon-name="reply"
+                   confirm
+                   @handle="backToPending"
+-                  ><span class="d-none d-sm-inline">Back to Pending</span></SpinButton
++                  ><span class="d-none d-sm-inline"
++                    >Back to Pending</span
++                  ></SpinButton
+                 >
+               </div>
+               <div class="ms-2">
+@@ -310,7 +312,11 @@
+               {{ message.spamreason }}
+             </NoticeMessage>
+             <NoticeMessage
+-              v-if="pending && membership && membership.ourpostingstatus === 'MODERATED'"
++              v-if="
++                pending &&
++                membership &&
++                membership.ourpostingstatus === 'MODERATED'
++              "
+               variant="info"
+               class="mb-2"
+             >
+@@ -353,16 +359,19 @@
+               v-if="
+                 message.worry?.length ||
+                 message.groups?.some(
+-                  (g) =>
+-                    g.contentcheck_reasons &&
+-                    g.contentcheck_reasons.length
++                  (g) => g.contentcheck_reasons && g.contentcheck_reasons.length
+                 )
+               "
+               :messageid="message.id"
+             />
+             <div v-if="expanded">
+               <!-- eslint-disable-next-line -->
+-              <b-form-textarea v-if="editing" v-model="editmessage.textbody" rows="8" class="mb-3" />
++              <b-form-textarea
++                v-if="editing"
++                v-model="editmessage.textbody"
++                rows="8"
++                class="mb-3"
++              />
+               <div v-else-if="editreview">
+                 <template v-if="oldBody || newBody">
+                   <h4>Differences:</h4>
+@@ -393,9 +402,12 @@
+                 class="mb-3 rounded border p-2 preline forcebreak fw-bold"
+               >
+                 <span
+-                  v-if="message.matchedon && message.matchedon.type === 'Vector'"
++                  v-if="
++                    message.matchedon && message.matchedon.type === 'Vector'
++                  "
+                   class="highlight"
+-                >{{ eBody }}</span>
++                  >{{ eBody }}</span
++                >
+                 <Highlighter
+                   v-else-if="message.matchedon"
+                   :search-words="[String(message.matchedon.word)]"
+@@ -407,6 +419,30 @@
+                   {{ eBody }}
+                 </span>
+               </div>
++              <b-alert
++                v-if="isBulk"
++                :model-value="true"
++                variant="info"
++                class="mb-3"
++              >
++                <strong>
++                  <v-icon icon="boxes-stacked" /> Bulk clearance —
++                  {{ message.bulkcount }} item{{
++                    message.bulkcount === 1 ? '' : 's'
++                  }}.
++                </strong>
++                This is a single post on the group, but when a member opens it
++                they can see each item and turn on the ones they'd like (and how
++                many).
++                <b-button
++                  variant="link"
++                  class="p-0 ms-1 align-baseline"
++                  data-testid="bulk-preview-btn"
++                  @click="showBulkPreview = true"
++                >
++                  See how members see it
++                </b-button>
++              </b-alert>
+               <div v-if="attachments?.length" class="w-100 d-flex flex-wrap">
+                 <div
+                   v-for="attachment in attachments"
+@@ -650,6 +686,11 @@
+       :userid="fromUserId"
+       :safelist="false"
+     />
++    <ModBulkPreviewModal
++      v-if="showBulkPreview"
++      :messageid="message.id"
++      @hidden="showBulkPreview = false"
++    />
+     <div ref="bottom" />
+   </div>
+ </template>
+@@ -782,6 +823,14 @@ const saving = ref(false)
+ const saved = ref(false)
+ const showEmailSourceModal = ref(false)
+ const showSpamModal = ref(false)
++const showBulkPreview = ref(false)
++
++// A bulk "clearance" offer carries a structured catalogue of items.
++const isBulk = computed(
++  () =>
++    (message.value?.bulkcount || 0) > 0 ||
++    (message.value?.bulkitems?.length || 0) > 0
++)
+ const showMailSettings = ref(false)
+ const showActions = ref(false)
+ const showEmails = ref(false)
+@@ -815,7 +864,10 @@ const messageGroup = computed(() => {
+ const contextGroup = computed(() => {
+   if (!message.value?.groups?.length) return null
+   const gid = parseInt(groupid.value)
+-  return message.value.groups.find((g) => parseInt(g.groupid) === gid) || message.value.groups[0]
++  return (
++    message.value.groups.find((g) => parseInt(g.groupid) === gid) ||
++    message.value.groups[0]
++  )
+ })
+ 
+ // Other groups this message is on (for multi-group indicator).
+diff --git a/iznik-nuxt3/nuxt.config.ts b/iznik-nuxt3/nuxt.config.ts
+index 87aa392ca..f16716f9b 100644
+--- a/iznik-nuxt3/nuxt.config.ts
++++ b/iznik-nuxt3/nuxt.config.ts
+@@ -126,7 +126,20 @@ export default defineNuxtConfig({
+   // 404 errors during prerendering when the crawler tried to access build metadata from the CDN.
+   $production: {
+     app: {
+-      cdnURL: process.env.URL,
++      // On the real production deploy, reference assets from the custom domain
++      // (proxied to the right place via public/_redirects). On deploy previews and
++      // branch deploys, process.env.URL is STILL the production domain, which only
++      // hosts production chunks — so a PR's newly-hashed chunks (including the entry
++      // chunk with the route map) 404 there and the whole app fails to boot. For
++      // those contexts, reference the deploy's OWN assets via the same-origin
++      // /netlify/<host> proxy (mirrors modtools/nuxt.config.ts; same-origin avoids
++      // Firefox CORS issues). See public/_redirects "/netlify/* https://:splat".
++      cdnURL:
++        process.env.CONTEXT === 'production'
++          ? process.env.URL
++          : process.env.DEPLOY_URL
++            ? '/netlify/' + process.env.DEPLOY_URL.replace('https://', '')
++            : '',
+     },
+   },
+ 
+diff --git a/iznik-nuxt3/package-lock.json b/iznik-nuxt3/package-lock.json
+index 9088f11d4..51b4ad319 100644
+--- a/iznik-nuxt3/package-lock.json
++++ b/iznik-nuxt3/package-lock.json
+@@ -89,6 +89,7 @@
+         "pluralize": "^8.0.0",
+         "postcss": "^8.5.6",
+         "postman-paf": "^1.0.1",
++        "read-excel-file": "^5.8.8",
+         "resize-observer-polyfill": "^1.5.1",
+         "rollup": "^4.42.0",
+         "save-file": "^2.3.1",
+@@ -12202,7 +12203,6 @@
+       "version": "0.8.11",
+       "resolved": "https://registry.npmjs.org/@xmldom/xmldom/-/xmldom-0.8.11.tgz",
+       "integrity": "sha512-cQzWCtO6C8TQiYl1ruKNn2U6Ao4o4WBBcbL61yJl84x+j5sOWWFU9X7DpND8XZG3daDppSsigMdfAIl2upQBRw==",
+-      "dev": true,
+       "license": "MIT",
+       "engines": {
+         "node": ">=10.0.0"
+@@ -13194,8 +13194,7 @@
+       "version": "3.7.2",
+       "resolved": "https://registry.npmjs.org/bluebird/-/bluebird-3.7.2.tgz",
+       "integrity": "sha512-XpNj6GDQzdfW+r2Wnn7xiSAd7TM3jzkxGXBGTtWKuSXv1xUV+azxAm8jdWZN06QTQk+2N2XB9jRDkvbmQmcRtg==",
+-      "license": "MIT",
+-      "peer": true
++      "license": "MIT"
+     },
+     "node_modules/blueimp-canvas-to-blob": {
+       "version": "3.29.0",
+@@ -16516,6 +16515,51 @@
+       "resolved": "https://registry.npmjs.org/duplexer/-/duplexer-0.1.2.tgz",
+       "integrity": "sha512-jtD6YG370ZCIi/9GTaJKQxWTZD045+4R4hTk/x1UyoqadyJ9x9CgSi1RlVDQF8U2sxLLSnFkCaMihqljHIWgMg=="
+     },
++    "node_modules/duplexer2": {
++      "version": "0.1.4",
++      "resolved": "https://registry.npmjs.org/duplexer2/-/duplexer2-0.1.4.tgz",
++      "integrity": "sha512-asLFVfWWtJ90ZyOUHMqk7/S2w2guQKxUI2itj3d92ADHhxUSbCMGi1f1cBcJ7xM1To+pE/Khbwo1yuNbMEPKeA==",
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "readable-stream": "^2.0.2"
++      }
++    },
++    "node_modules/duplexer2/node_modules/isarray": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/isarray/-/isarray-1.0.0.tgz",
++      "integrity": "sha512-VLghIWNM6ELQzo7zwmcg0NmTVyWKYjvIeM83yjp0wRDTmUnrM678fQbcKBo6n2CJEF0szoG//ytg+TKla89ALQ==",
++      "license": "MIT"
++    },
++    "node_modules/duplexer2/node_modules/readable-stream": {
++      "version": "2.3.8",
++      "resolved": "https://registry.npmjs.org/readable-stream/-/readable-stream-2.3.8.tgz",
++      "integrity": "sha512-8p0AUk4XODgIewSi0l8Epjs+EVnWiK7NoDIEGU0HhE7+ZyY8D1IMY7odu5lRrFXGg71L15KG8QrPmum45RTtdA==",
++      "license": "MIT",
++      "dependencies": {
++        "core-util-is": "~1.0.0",
++        "inherits": "~2.0.3",
++        "isarray": "~1.0.0",
++        "process-nextick-args": "~2.0.0",
++        "safe-buffer": "~5.1.1",
++        "string_decoder": "~1.1.1",
++        "util-deprecate": "~1.0.1"
++      }
++    },
++    "node_modules/duplexer2/node_modules/safe-buffer": {
++      "version": "5.1.2",
++      "resolved": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.1.2.tgz",
++      "integrity": "sha512-Gd2UZBJDkXlY7GbJxfsE8/nvKkUEU1G38c1siN6QP6a9PT9MmHB8GnpscSmMJSoF8LOIrt8ud/wPtojys4G6+g==",
++      "license": "MIT"
++    },
++    "node_modules/duplexer2/node_modules/string_decoder": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/string_decoder/-/string_decoder-1.1.1.tgz",
++      "integrity": "sha512-n/ShnvDi6FHbbVfviro+WojiFzv+s8MPMHBczVePfUpDJLwoLT0ht1l4YwBCbi8pJAveEEdnkHyPyTP/mzRfwg==",
++      "license": "MIT",
++      "dependencies": {
++        "safe-buffer": "~5.1.0"
++      }
++    },
+     "node_modules/eastasianwidth": {
+       "version": "0.2.0",
+       "resolved": "https://registry.npmjs.org/eastasianwidth/-/eastasianwidth-0.2.0.tgz",
+@@ -18089,6 +18133,12 @@
+       "resolved": "https://registry.npmjs.org/fetch-retry/-/fetch-retry-5.0.6.tgz",
+       "integrity": "sha512-3yurQZ2hD9VISAhJJP9bpYFNQrHHBXE2JxxjY5aLEcDi46RmAzJE2OC9FAde0yis5ElW0jTTzs0zfg/Cca4XqQ=="
+     },
++    "node_modules/fflate": {
++      "version": "0.7.4",
++      "resolved": "https://registry.npmjs.org/fflate/-/fflate-0.7.4.tgz",
++      "integrity": "sha512-5u2V/CDW15QM1XbbgS+0DfPxVB+jUKhWEKuuFuHncbk3tEEqzmoXL+2KyOFuKGqOnmdIy0/davWF1CkuwtibCw==",
++      "license": "MIT"
++    },
+     "node_modules/figures": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/figures/-/figures-2.0.0.tgz",
+@@ -22905,6 +22955,12 @@
+         "node-gyp-build-test": "build-test.js"
+       }
+     },
++    "node_modules/node-int64": {
++      "version": "0.4.0",
++      "resolved": "https://registry.npmjs.org/node-int64/-/node-int64-0.4.0.tgz",
++      "integrity": "sha512-O5lz91xSOeoXP6DulyHfllpq+Eg00MWitZIbtPfoSEvqIHdl5gfcY6hYzDWnj0qD5tz52PI08u9qUvSVeUBeHw==",
++      "license": "MIT"
++    },
+     "node_modules/node-mock-http": {
+       "version": "1.0.4",
+       "resolved": "https://registry.npmjs.org/node-mock-http/-/node-mock-http-1.0.4.tgz",
+@@ -25517,6 +25573,17 @@
+         "node": ">=0.10.0"
+       }
+     },
++    "node_modules/read-excel-file": {
++      "version": "5.8.8",
++      "resolved": "https://registry.npmjs.org/read-excel-file/-/read-excel-file-5.8.8.tgz",
++      "integrity": "sha512-Jb3g7wYe3NU7k52q5xs16swqsl47xIxc/CvHuJy49Elzp6+G6bg56Lds4s57FayosuCYm+TTU0ROpMMuM7WE0A==",
++      "license": "MIT",
++      "dependencies": {
++        "@xmldom/xmldom": "^0.8.2",
++        "fflate": "^0.7.3",
++        "unzipper": "^0.12.2"
++      }
++    },
+     "node_modules/read-pkg": {
+       "version": "5.2.0",
+       "resolved": "https://registry.npmjs.org/read-pkg/-/read-pkg-5.2.0.tgz",
+@@ -29211,6 +29278,33 @@
+         "pkg-types": "^2.3.0"
+       }
+     },
++    "node_modules/unzipper": {
++      "version": "0.12.3",
++      "resolved": "https://registry.npmjs.org/unzipper/-/unzipper-0.12.3.tgz",
++      "integrity": "sha512-PZ8hTS+AqcGxsaQntl3IRBw65QrBI6lxzqDEL7IAo/XCEqRTKGfOX56Vea5TH9SZczRVxuzk1re04z/YjuYCJA==",
++      "license": "MIT",
++      "dependencies": {
++        "bluebird": "~3.7.2",
++        "duplexer2": "~0.1.4",
++        "fs-extra": "^11.2.0",
++        "graceful-fs": "^4.2.2",
++        "node-int64": "^0.4.0"
++      }
++    },
++    "node_modules/unzipper/node_modules/fs-extra": {
++      "version": "11.3.5",
++      "resolved": "https://registry.npmjs.org/fs-extra/-/fs-extra-11.3.5.tgz",
++      "integrity": "sha512-eKpRKAovdpZtR1WopLHxlBWvAgPny3c4gX1G5Jhwmmw4XJj0ifSD5qB5TOo8hmA0wlRKDAOAhEE1yVPgs6Fgcg==",
++      "license": "MIT",
++      "dependencies": {
++        "graceful-fs": "^4.2.0",
++        "jsonfile": "^6.0.1",
++        "universalify": "^2.0.0"
++      },
++      "engines": {
++        "node": ">=14.14"
++      }
++    },
+     "node_modules/upath": {
+       "version": "1.2.0",
+       "resolved": "https://registry.npmjs.org/upath/-/upath-1.2.0.tgz",
+diff --git a/iznik-nuxt3/package.json b/iznik-nuxt3/package.json
+index 688c44c9b..78d87f4f5 100644
+--- a/iznik-nuxt3/package.json
++++ b/iznik-nuxt3/package.json
+@@ -176,6 +176,7 @@
+     "pluralize": "^8.0.0",
+     "postcss": "^8.5.6",
+     "postman-paf": "^1.0.1",
++    "read-excel-file": "^5.8.8",
+     "resize-observer-polyfill": "^1.5.1",
+     "rollup": "^4.42.0",
+     "save-file": "^2.3.1",
+diff --git a/iznik-nuxt3/pages/give/clearance.vue b/iznik-nuxt3/pages/give/clearance.vue
+new file mode 100644
+index 000000000..bb972aecd
+--- /dev/null
++++ b/iznik-nuxt3/pages/give/clearance.vue
+@@ -0,0 +1,258 @@
++<template>
++  <div>
++    <client-only>
++      <b-row class="m-0">
++        <b-col cols="12" lg="8" offset-lg="2" class="bg-white">
++          <h1 class="mt-3">Offer lots of items at once</h1>
++          <p class="text-muted mb-2">
++            New to Freegle? Each thing you give away is an <em>offer</em>, and
++            people reply to you in the chat to ask for it. A clearance lets you
++            list lots of items in one post instead of posting them one at a time
++            — people tell you which ones they'd like and how many.
++          </p>
++          <p class="text-muted">
++            You'll hear from several Freeglers and you'll need to organise who
++            gets what and when they collect it. We're building an assisted way
++            to make that easy — if you'd like to try it, email
++            <a href="mailto:geeks@ilovefreegle.org">geeks@ilovefreegle.org</a>.
++          </p>
++
++          <!-- Where (postcode) first: it picks the community. -->
++          <h2 class="bulk-section">Where are you?</h2>
++          <PostCode
++            :value="postcode"
++            @selected="postcodeSelect"
++            @cleared="postcodeClear"
++          />
++          <ComposeGroup v-if="postcodeValid" class="mt-2" />
++          <NoticeMessage
++            v-if="postcode && noGroups"
++            variant="warning"
++            class="mt-2"
++          >
++            There's no Freegle community covering that area yet.
++          </NoticeMessage>
++
++          <h2 class="bulk-section">What are you offering?</h2>
++          <b-form-input
++            v-model="title"
++            placeholder="e.g. Office Clearance"
++            maxlength="60"
++            data-testid="clearance-title"
++          />
++          <p class="bulk-help mt-2 mb-1">
++            A few words about the whole offer — this applies to every item.
++            Don't put anything here that you'd only want to share once you've
++            agreed someone can have an item; use
++            <strong>Access instructions</strong>
++            below for that.
++          </p>
++          <b-form-textarea
++            v-model="description"
++            rows="4"
++            placeholder="e.g. Charity office clearance — everything must go by Friday. Collection from central Brighton."
++            maxlength="2000"
++          />
++
++          <h2 class="bulk-section">The items</h2>
++          <BulkItemEditor v-model="items" />
++
++          <h2 class="bulk-section">When can people collect?</h2>
++          <p class="bulk-help">
++            These are shown publicly. People pick one when they reply and we ask
++            them to confirm it, so collections stay in set times.
++          </p>
++          <div
++            v-for="(s, i) in slots"
++            :key="i"
++            class="d-flex gap-2 mb-2 align-items-center"
++          >
++            <b-form-input
++              v-model="slots[i]"
++              placeholder="e.g. Tue 7 Apr, 10am–4pm"
++              maxlength="120"
++              :data-testid="'slot-' + i"
++            />
++            <b-button
++              variant="link"
++              class="text-danger p-0"
++              aria-label="Remove collection time"
++              @click="removeSlot(i)"
++            >
++              <v-icon icon="trash" />
++            </b-button>
++          </div>
++          <b-button
++            variant="outline-primary"
++            size="sm"
++            data-testid="add-slot"
++            @click="slots.push('')"
++          >
++            <v-icon icon="plus" /> Add a collection time
++          </b-button>
++
++          <h2 class="bulk-section">Closing date</h2>
++          <p class="bulk-help">
++            Optional. After this date the offer disappears. Leave it blank to
++            keep it open until you take it down.
++          </p>
++          <b-form-input
++            v-model="deadline"
++            type="date"
++            :min="today"
++            class="bulk-deadline"
++            data-testid="clearance-deadline"
++          />
++
++          <h2 class="bulk-section">Access instructions</h2>
++          <p class="bulk-help">
++            Only shared with someone once you promise them an item — e.g. the
++            exact address, a gate code, or intercom instructions.
++          </p>
++          <b-form-textarea
++            v-model="accessInstructions"
++            rows="2"
++            placeholder="e.g. 12 High St, side door, buzz flat 3. Optional."
++            maxlength="2000"
++            data-testid="clearance-access"
++          />
++
++          <div class="my-4">
++            <SpinButton
++              variant="primary"
++              size="lg"
++              icon-name="gift"
++              :disabled="!canSubmit"
++              label="Post these items"
++              data-testid="clearance-submit"
++              @handle="submit"
++            />
++            <NoticeMessage v-if="wentWrong" variant="danger" class="mt-2">
++              Something went wrong posting your items. Please try again.
++            </NoticeMessage>
++          </div>
++        </b-col>
++      </b-row>
++    </client-only>
++  </div>
++</template>
++
++<script setup>
++import { ref, computed, onMounted } from 'vue'
++import { useRouter } from '#imports'
++import {
++  setup,
++  postcodeSelect,
++  postcodeClear,
++  makeCanSubmit,
++} from '~/composables/useCompose'
++import { useComposeStore } from '~/stores/compose'
++import { useAuthStore } from '~/stores/auth'
++import PostCode from '~/components/PostCode.vue'
++import ComposeGroup from '~/components/ComposeGroup.vue'
++import BulkItemEditor from '~/components/BulkItemEditor.vue'
++import SpinButton from '~/components/SpinButton.vue'
++import NoticeMessage from '~/components/NoticeMessage.vue'
++
++const composeStore = useComposeStore()
++const authStore = useAuthStore()
++const router = useRouter()
++
++const { email, loggedIn, postcode, postcodeValid, noGroups } = await setup(
++  'Offer'
++)
++
++const title = ref('')
++const description = ref('')
++const items = ref([])
++const slots = ref([''])
++const accessInstructions = ref('')
++const deadline = ref('')
++const wentWrong = ref(false)
++
++// Earliest selectable closing date is today.
++const today = new Date().toISOString().slice(0, 10)
++
++// Bulk freegling is login-only — there's no logged-out flow. Show the
++// sign-up/login modal immediately so people start from a signed-in state.
++onMounted(() => {
++  if (!loggedIn.value) {
++    authStore.forceLogin = true
++  }
++})
++
++function removeSlot(i) {
++  slots.value.splice(i, 1)
++  if (!slots.value.length) slots.value.push('')
++}
++
++const messageValid = computed(
++  () => !!title.value.trim() && items.value.some((i) => i.name && i.name.trim())
++)
++
++const canSubmit = makeCanSubmit({
++  messageValid,
++  loggedIn,
++  emailValid: computed(() => false),
++  emailBelongsToSomeoneElse: computed(() => false),
++  postcodeValid,
++  closed: computed(() => false),
++  noGroups,
++  requirePostcode: true,
++})
++
++async function submit(callback) {
++  if (!loggedIn.value) {
++    authStore.forceLogin = true
++    if (callback) callback()
++    return
++  }
++  wentWrong.value = false
++  try {
++    const message = {
++      type: 'Offer',
++      item: title.value.trim(),
++      description: description.value,
++      availablenow: 1,
++      attachments: [],
++      bulkitems: items.value,
++      bulkslots: slots.value.map((s) => s.trim()).filter(Boolean),
++      accessinstructions: accessInstructions.value.trim(),
++    }
++    const submitOptions = {}
++    if (deadline.value) {
++      submitOptions.deadline = new Date(deadline.value).toISOString()
++    }
++    const id = await composeStore.createDraft(message, email.value)
++    await composeStore.submitDraft(id, email.value, submitOptions)
++    router.push('/myposts')
++  } catch (e) {
++    console.error('Clearance submit failed', e)
++    wentWrong.value = true
++  } finally {
++    if (callback) callback()
++  }
++}
++
++definePageMeta({ layout: 'default' })
++useHead({ title: 'Offer lots of items at once' })
++</script>
++
++<style scoped lang="scss">
++@import 'bootstrap/scss/functions';
++@import 'assets/css/_color-vars.scss';
++
++/* One consistent heading style for every section on the page. */
++.bulk-section {
++  font-size: 1.15rem;
++  font-weight: 600;
++  color: $color-green--darker;
++  margin: 1.25rem 0 0.5rem;
++}
++
++.bulk-help {
++  font-size: 0.85rem;
++  color: $color-gray--dark;
++  margin-bottom: 0.5rem;
++}
++</style>
+diff --git a/iznik-nuxt3/public/freegle-clearance-template.xlsx b/iznik-nuxt3/public/freegle-clearance-template.xlsx
+new file mode 100644
+index 000000000..50e1e75bf
+Binary files /dev/null and b/iznik-nuxt3/public/freegle-clearance-template.xlsx differ
+diff --git a/iznik-nuxt3/stores/compose.js b/iznik-nuxt3/stores/compose.js
+index 6404b1292..2189aa970 100644
+--- a/iznik-nuxt3/stores/compose.js
++++ b/iznik-nuxt3/stores/compose.js
+@@ -77,7 +77,10 @@ export const useComposeStore = defineStore({
+       // Extract the server attachment id from message.attachments.
+       if (message.attachments) {
+         const hasRealPhoto = message.attachments.some(
+-          (a) => a.id && typeof a.id === 'number' && !(a.externalmods && a.externalmods.ai)
++          (a) =>
++            a.id &&
++            typeof a.id === 'number' &&
++            !(a.externalmods && a.externalmods.ai)
+         )
+ 
+         for (const attachment of message.attachments) {
+@@ -118,6 +121,28 @@ export const useComposeStore = defineStore({
+         email,
+       }
+ 
++      // Bulk offer ("clearance"): a single post carrying many structured items.
++      // The server creates the catalogue and derives availablenow from the total.
++      if (message.bulkitems && message.bulkitems.length) {
++        data.bulkitems = message.bulkitems
++          .filter((i) => i.name && i.name.trim())
++          .map((i) => ({
++            name: i.name.trim(),
++            quantity: parseInt(i.quantity, 10) || 1,
++            condition: i.condition || 'Unknown',
++            dimensions: i.dimensions || null,
++            photourl: i.photourl || null,
++            description: i.description || null,
++            attachments: Array.isArray(i.attachments) ? i.attachments : [],
++          }))
++      }
++      if (Array.isArray(message.bulkslots) && message.bulkslots.length) {
++        data.bulkslots = message.bulkslots
++      }
++      if (message.accessinstructions) {
++        data.accessinstructions = message.accessinstructions
++      }
++
+       const ret = await this.$api.message.put(data)
+ 
+       // For unauthenticated users, Go creates a user and returns auth tokens.
+@@ -404,7 +429,11 @@ export const useComposeStore = defineStore({
+ 
+               for (const att in message.attachments) {
+                 const attachment = message.attachments[att]
+-                if (attachment.externalmods && attachment.externalmods.ai && hasRealPhoto) {
++                if (
++                  attachment.externalmods &&
++                  attachment.externalmods.ai &&
++                  hasRealPhoto
++                ) {
+                   continue
+                 }
+                 if (attachment.id && typeof attachment.id === 'number') {
+diff --git a/iznik-nuxt3/stores/message.js b/iznik-nuxt3/stores/message.js
+index 890df6f92..21b955594 100644
+--- a/iznik-nuxt3/stores/message.js
++++ b/iznik-nuxt3/stores/message.js
+@@ -300,6 +300,26 @@ export const useMessageStore = defineStore({
+     async view(id) {
+       await api(this.config).message.view(id)
+     },
++    // Register the current user's interest in bulk-offer items, then refetch so
++    // the per-item interest summary and yourinterest are up to date.
++    async bulkInterest(id, items) {
++      const data = await api(this.config).message.bulkInterest(id, items)
++      const message = await this.fetch(id, true)
++      this.list[id] = message
++      return data
++    },
++    // Offerer/mod: change the state of one interest row, then refetch.
++    async bulkInterestState(id, bulkitemid, userid, state) {
++      const data = await api(this.config).message.bulkInterestState(
++        id,
++        bulkitemid,
++        userid,
++        state
++      )
++      const message = await this.fetch(id, true)
++      this.list[id] = message
++      return data
++    },
+     async update(params) {
+       const authStore = useAuthStore()
+       const userUid = authStore.user?.id
+@@ -719,9 +739,7 @@ export const useMessageStore = defineStore({
+       // ModTools — match any group in the message's groups array (multi-group support).
+       const gid = parseInt(groupid)
+       const ret = Object.values(state.list).filter((message) => {
+-        return message.groups.some(
+-          (g) => parseInt(g.groupid) === gid
+-        )
++        return message.groups.some((g) => parseInt(g.groupid) === gid)
+       })
+       return ret
+     },
+diff --git a/iznik-nuxt3/tests/unit/components/BulkItemEditor.spec.js b/iznik-nuxt3/tests/unit/components/BulkItemEditor.spec.js
+new file mode 100644
+index 000000000..93ce9afb6
+--- /dev/null
++++ b/iznik-nuxt3/tests/unit/components/BulkItemEditor.spec.js
+@@ -0,0 +1,93 @@
++import { describe, it, expect, vi } from 'vitest'
++import { mount } from '@vue/test-utils'
++import { nextTick } from 'vue'
++
++// Stub heavy children so their imports (Uppy etc.) don't load.
++vi.mock('~/components/PhotoUploader', () => ({
++  default: {
++    name: 'PhotoUploader',
++    template: '<div class="photo-uploader-stub" />',
++    props: [
++      'modelValue',
++      'type',
++      'maxPhotos',
++      'recognise',
++      'emptyTitle',
++      'emptySubtitle',
++    ],
++  },
++}))
++import BulkItemEditor from '~/components/BulkItemEditor.vue'
++
++// Auto-stub the bootstrap-vue-next form components this component uses that the
++// global test setup doesn't already stub (the setup throws on unresolved
++// components). We exercise logic via the exposed methods, not the DOM.
++const mountOpts = {
++  global: {
++    stubs: {
++      'b-form-input': true,
++      'b-form-textarea': true,
++      'b-form-group': true,
++      'b-form-select': true,
++    },
++  },
++}
++
++describe('BulkItemEditor', () => {
++  it('starts with one blank row', () => {
++    const w = mount(BulkItemEditor, mountOpts)
++    expect(w.vm.items).toHaveLength(1)
++    expect(w.vm.items[0].name).toBe('')
++  })
++
++  it('adds and removes rows', () => {
++    const w = mount(BulkItemEditor, mountOpts)
++    w.vm.addItem()
++    expect(w.vm.items).toHaveLength(2)
++    w.vm.removeItem(0)
++    expect(w.vm.items).toHaveLength(1)
++  })
++
++  it('removing the last remaining row leaves one blank row', () => {
++    const w = mount(BulkItemEditor, mountOpts)
++    w.vm.removeItem(0)
++    expect(w.vm.items).toHaveLength(1)
++    expect(w.vm.items[0].name).toBe('')
++  })
++
++  it('starts with no add-method chosen (gated until the user picks)', () => {
++    const w = mount(BulkItemEditor, mountOpts)
++    expect(w.vm.mode).toBe(null)
++  })
++
++  it('imports items from uploaded spreadsheet text, replacing the blank row', async () => {
++    const w = mount(BulkItemEditor, mountOpts)
++    w.vm.applyImport('Desk,4,Good\nChair,14,Used')
++    await nextTick()
++    expect(w.vm.items.map((i) => i.name)).toEqual(['Desk', 'Chair'])
++    expect(w.vm.items[0].quantity).toBe(4)
++    expect(w.vm.items[1].condition).toBe('Used')
++    // Importing reveals the table so the rows can be edited.
++    expect(w.vm.mode).toBe('manual')
++  })
++
++  it('derives attachment ids from uploaded photos and emits them', async () => {
++    const w = mount(BulkItemEditor, mountOpts)
++    w.vm.items[0].name = 'Desk'
++    w.vm.items[0].photos = [{ id: 7 }, { id: 'notnumeric' }, { id: 9 }]
++    await nextTick()
++    expect(w.vm.items[0].attachments).toEqual([7, 9])
++    expect(w.emitted('update:modelValue')).toBeTruthy()
++  })
++
++  it('seeds from an incoming modelValue', () => {
++    const w = mount(BulkItemEditor, {
++      ...mountOpts,
++      props: {
++        modelValue: [{ name: 'Sofa', quantity: 2, condition: 'Good' }],
++      },
++    })
++    expect(w.vm.items).toHaveLength(1)
++    expect(w.vm.items[0].name).toBe('Sofa')
++  })
++})
+diff --git a/iznik-nuxt3/tests/unit/components/BulkItemsInterest.spec.js b/iznik-nuxt3/tests/unit/components/BulkItemsInterest.spec.js
+new file mode 100644
+index 000000000..07a3c9478
+--- /dev/null
++++ b/iznik-nuxt3/tests/unit/components/BulkItemsInterest.spec.js
+@@ -0,0 +1,126 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { mount } from '@vue/test-utils'
++import { nextTick } from 'vue'
++
++const bulkInterest = vi.fn().mockResolvedValue({})
++
++const mockMessage = {
++  id: 1,
++  fromuser: 99,
++  successful: false,
++  bulkitems: [
++    {
++      id: 10,
++      name: 'Desk',
++      quantity: 4,
++      condition: 'Good',
++      attachments: [],
++      interestcount: 0,
++      interestedquantity: 0,
++      yourinterest: null,
++    },
++    {
++      id: 11,
++      name: 'Chair',
++      quantity: 14,
++      condition: 'Used',
++      attachments: [],
++      interestcount: 1,
++      interestedquantity: 2,
++      yourinterest: { quantity: 2, state: 'Interested', cancollect: 'Tuesday' },
++    },
++  ],
++}
++
++vi.mock('~/stores/message', () => ({
++  useMessageStore: () => ({
++    byId: () => mockMessage,
++    bulkInterest,
++  }),
++}))
++
++vi.mock('~/components/NumberIncrementDecrement', () => ({
++  default: {
++    name: 'NumberIncrementDecrement',
++    template: '<input class="num-stub" />',
++    props: ['modelValue', 'min', 'max', 'size', 'label', 'labelSROnly'],
++  },
++}))
++vi.mock('~/components/SpinButton', () => ({
++  default: { name: 'SpinButton', template: '<button class="spin-stub" />' },
++}))
++vi.mock('~/components/NoticeMessage', () => ({
++  default: { name: 'NoticeMessage', template: '<div class="notice-stub"><slot /></div>' },
++}))
++
++import BulkItemsInterest from '~/components/BulkItemsInterest.vue'
++
++// Auto-stub the bootstrap-vue-next components not already stubbed by the global
++// test setup (which throws on unresolved components).
++const mountOpts = {
++  props: { id: 1 },
++  global: {
++    stubs: {
++      'b-badge': true,
++      'b-form-checkbox': true,
++      'b-form-group': true,
++      'b-form-input': true,
++    },
++  },
++}
++
++describe('BulkItemsInterest', () => {
++  beforeEach(() => {
++    bulkInterest.mockClear()
++    globalThis.__mockAuthStore = { user: { id: 5 }, forceLogin: false }
++  })
++
++  it('seeds picks from existing interest', () => {
++    const w = mount(BulkItemsInterest, mountOpts)
++    expect(w.vm.picks[11].checked).toBe(true)
++    expect(w.vm.picks[11].quantity).toBe(2)
++    expect(w.vm.picks[10].checked).toBe(false)
++  })
++
++  it('buildPayload includes checked items and withdrawals', async () => {
++    const w = mount(BulkItemsInterest, mountOpts)
++    // Newly tick the desk, leave the chair as-is.
++    w.vm.picks[10].checked = true
++    w.vm.picks[10].quantity = 3
++    await nextTick()
++    const payload = w.vm.buildPayload()
++    const byId = Object.fromEntries(payload.map((p) => [p.bulkitemid, p]))
++    expect(byId[10].quantity).toBe(3)
++    expect(byId[11].quantity).toBe(2)
++  })
++
++  it('buildPayload withdraws an item that was unticked', async () => {
++    const w = mount(BulkItemsInterest, mountOpts)
++    w.vm.picks[11].checked = false
++    await nextTick()
++    const payload = w.vm.buildPayload()
++    const chair = payload.find((p) => p.bulkitemid === 11)
++    expect(chair).toBeTruthy()
++    expect(chair.quantity).toBe(0)
++  })
++
++  it('submitting while logged out triggers login instead of an API call', async () => {
++    globalThis.__mockAuthStore = { user: null, forceLogin: false }
++    const w = mount(BulkItemsInterest, mountOpts)
++    await w.vm.submit()
++    expect(bulkInterest).not.toHaveBeenCalled()
++    expect(globalThis.__mockAuthStore.forceLogin).toBe(true)
++  })
++
++  it('submitting while logged in calls the store with the payload', async () => {
++    const w = mount(BulkItemsInterest, mountOpts)
++    w.vm.picks[10].checked = true
++    w.vm.picks[10].quantity = 1
++    await nextTick()
++    await w.vm.submit()
++    expect(bulkInterest).toHaveBeenCalledTimes(1)
++    const [id, items] = bulkInterest.mock.calls[0]
++    expect(id).toBe(1)
++    expect(items.some((i) => i.bulkitemid === 10)).toBe(true)
++  })
++})
+diff --git a/iznik-nuxt3/tests/unit/components/modtools/ModBulkPreviewModal.spec.js b/iznik-nuxt3/tests/unit/components/modtools/ModBulkPreviewModal.spec.js
+new file mode 100644
+index 000000000..77829b66a
+--- /dev/null
++++ b/iznik-nuxt3/tests/unit/components/modtools/ModBulkPreviewModal.spec.js
+@@ -0,0 +1,120 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { mount } from '@vue/test-utils'
++import { ref } from 'vue'
++import ModBulkPreviewModal from '~/modtools/components/ModBulkPreviewModal.vue'
++
++const message = {
++  id: 123,
++  subject: 'OFFER: Office Clearance (Brighton)',
++  textbody: 'Charity clearance.',
++  bulkcount: 2,
++  bulkitems: [
++    {
++      id: 1,
++      name: 'Office desk',
++      quantity: 4,
++      condition: 'Good',
++      dimensions: '120x80cm',
++      attachments: [],
++    },
++    {
++      id: 2,
++      name: 'Swivel chair',
++      quantity: 14,
++      condition: 'LikeNew',
++      attachments: [],
++    },
++  ],
++  bulkslots: ['Tue 7 Apr, 10am-4pm'],
++}
++
++const mockMessageStore = {
++  byId: vi.fn(() => message),
++}
++vi.mock('~/stores/message', () => ({
++  useMessageStore: () => mockMessageStore,
++}))
++
++const mockHide = vi.fn()
++vi.mock('~/composables/useOurModal', () => ({
++  useOurModal: () => ({ modal: ref(null), show: vi.fn(), hide: mockHide }),
++}))
++
++function mountComponent(props = {}) {
++  return mount(ModBulkPreviewModal, {
++    props: { messageid: 123, ...props },
++    global: {
++      stubs: {
++        'b-modal': {
++          template: `
++            <div class="modal">
++              <div class="modal-title"><slot name="title" /></div>
++              <div class="modal-body"><slot name="default" /></div>
++              <div class="modal-footer"><slot name="footer" /></div>
++            </div>`,
++          props: ['id', 'size', 'scrollable'],
++          emits: ['hidden'],
++        },
++        'b-button': {
++          template: '<button @click="$emit(\'click\')"><slot /></button>',
++          props: ['variant'],
++        },
++        'b-form-checkbox': {
++          template: '<input type="checkbox" class="switch" />',
++          props: ['switch', 'disabled'],
++        },
++        'v-icon': { template: '<i />', props: ['icon'] },
++      },
++    },
++  })
++}
++
++describe('ModBulkPreviewModal', () => {
++  beforeEach(() => vi.clearAllMocks())
++
++  it('renders the modal with the members-view title', () => {
++    const w = mountComponent()
++    expect(w.find('.modal').exists()).toBe(true)
++    expect(w.find('.modal-title').text()).toContain(
++      'How members will see this offer'
++    )
++  })
++
++  it('explains it is a single post', () => {
++    expect(mountComponent().text()).toContain('single post')
++  })
++
++  it('lists each item with quantity and condition', () => {
++    const t = mountComponent().text()
++    expect(t).toContain('Office desk')
++    expect(t).toContain('4 available')
++    expect(t).toContain('Swivel chair')
++    expect(t).toContain('14 available')
++    // LikeNew is humanised.
++    expect(t).toContain('Like new')
++  })
++
++  it('shows the per-item toggle members use', () => {
++    const w = mountComponent()
++    expect(w.findAll('.switch').length).toBe(2)
++  })
++
++  it('shows the collection times', () => {
++    expect(mountComponent().text()).toContain('Tue 7 Apr, 10am-4pm')
++  })
++
++  it('Close calls hide and onHide emits hidden', async () => {
++    const w = mountComponent()
++    await w.find('.modal-footer button').trigger('click')
++    expect(mockHide).toHaveBeenCalled()
++    w.vm.onHide()
++    expect(w.emitted('hidden')).toBeTruthy()
++  })
++
++  it('handles an offer with no items', () => {
++    mockMessageStore.byId.mockReturnValueOnce({ id: 9, bulkitems: [] })
++    expect(mountComponent({ messageid: 9 }).text()).toContain(
++      'No items have been listed'
++    )
++  })
++})
+diff --git a/iznik-nuxt3/tests/unit/components/modtools/ModMessage.spec.js b/iznik-nuxt3/tests/unit/components/modtools/ModMessage.spec.js
+index a497e8a72..5e53b31c3 100644
+--- a/iznik-nuxt3/tests/unit/components/modtools/ModMessage.spec.js
++++ b/iznik-nuxt3/tests/unit/components/modtools/ModMessage.spec.js
+@@ -342,6 +342,10 @@ describe('ModMessage', () => {
+             template: '<div class="mod-message-email-modal"><slot /></div>',
+             props: ['id'],
+           },
++          ModBulkPreviewModal: {
++            template: '<div class="mod-bulk-preview-modal"><slot /></div>',
++            props: ['messageid'],
++          },
+           ModSpammerReport: {
+             template: '<div class="mod-spammer-report"><slot /></div>',
+             props: ['userid', 'safelist'],
+diff --git a/iznik-nuxt3/tests/unit/composables/useBulkItems.spec.js b/iznik-nuxt3/tests/unit/composables/useBulkItems.spec.js
+new file mode 100644
+index 000000000..8f2724247
+--- /dev/null
++++ b/iznik-nuxt3/tests/unit/composables/useBulkItems.spec.js
+@@ -0,0 +1,224 @@
++import { describe, it, expect } from 'vitest'
++import {
++  splitCsv,
++  parseItemsCsv,
++  parseItemsRows,
++  normaliseCondition,
++  blankBulkItem,
++  BULK_CONDITIONS,
++} from '~/composables/useBulkItems'
++
++describe('useBulkItems', () => {
++  describe('splitCsv', () => {
++    it('splits simple rows', () => {
++      expect(splitCsv('a,b,c\nd,e,f')).toEqual([
++        ['a', 'b', 'c'],
++        ['d', 'e', 'f'],
++      ])
++    })
++
++    it('handles quoted fields with commas', () => {
++      expect(splitCsv('"Desk, large",4')).toEqual([['Desk, large', '4']])
++    })
++
++    it('handles escaped quotes', () => {
++      expect(splitCsv('"He said ""hi""",1')).toEqual([['He said "hi"', '1']])
++    })
++
++    it('handles CRLF line endings', () => {
++      expect(splitCsv('a,b\r\nc,d')).toEqual([
++        ['a', 'b'],
++        ['c', 'd'],
++      ])
++    })
++
++    it('drops blank rows', () => {
++      expect(splitCsv('a,b\n\n , \nc,d')).toEqual([
++        ['a', 'b'],
++        ['c', 'd'],
++      ])
++    })
++  })
++
++  describe('normaliseCondition', () => {
++    it('maps common spreadsheet values onto the enum', () => {
++      expect(normaliseCondition('new')).toBe('New')
++      expect(normaliseCondition('Like New')).toBe('LikeNew')
++      expect(normaliseCondition('excellent')).toBe('LikeNew')
++      expect(normaliseCondition('GOOD')).toBe('Good')
++      expect(normaliseCondition('fair')).toBe('Used')
++      expect(normaliseCondition('for parts')).toBe('Poor')
++    })
++
++    it('defaults to Unknown for blanks and unrecognised values', () => {
++      expect(normaliseCondition('')).toBe('Unknown')
++      expect(normaliseCondition(null)).toBe('Unknown')
++      expect(normaliseCondition('wibble')).toBe('Unknown')
++    })
++
++    it('passes through exact enum values', () => {
++      for (const c of BULK_CONDITIONS) {
++        expect(normaliseCondition(c.value)).toBe(c.value)
++      }
++    })
++  })
++
++  describe('parseItemsCsv', () => {
++    it('parses a header + rows', () => {
++      const csv =
++        'name,quantity,condition,dimensions,description\n' +
++        'Office desk,4,Good,120x80cm,Sturdy\n' +
++        'Chair,14,Used,,'
++      const items = parseItemsCsv(csv)
++      expect(items).toHaveLength(2)
++      expect(items[0]).toMatchObject({
++        name: 'Office desk',
++        quantity: 4,
++        condition: 'Good',
++        dimensions: '120x80cm',
++        description: 'Sturdy',
++      })
++      expect(items[1]).toMatchObject({
++        name: 'Chair',
++        quantity: 14,
++        condition: 'Used',
++        dimensions: null,
++        description: null,
++      })
++    })
++
++    it('recognises alternative header names and any column order', () => {
++      const csv = 'Qty,Item,Notes\n3,Lamp,Working'
++      const items = parseItemsCsv(csv)
++      expect(items[0]).toMatchObject({
++        name: 'Lamp',
++        quantity: 3,
++        description: 'Working',
++      })
++    })
++
++    it('assumes name,qty,condition,... when there is no header', () => {
++      const items = parseItemsCsv('Sofa,2,Good\nTable,1,Used')
++      expect(items).toHaveLength(2)
++      expect(items[0]).toMatchObject({
++        name: 'Sofa',
++        quantity: 2,
++        condition: 'Good',
++      })
++    })
++
++    it('defaults a missing/invalid quantity to 1', () => {
++      const items = parseItemsCsv('name,quantity\nWidget,\nGadget,abc\nThing,0')
++      expect(items.map((i) => i.quantity)).toEqual([1, 1, 1])
++    })
++
++    it('skips rows with no name', () => {
++      const items = parseItemsCsv('name,quantity\n,5\nDesk,2')
++      expect(items).toHaveLength(1)
++      expect(items[0].name).toBe('Desk')
++    })
++
++    it('returns [] for empty input', () => {
++      expect(parseItemsCsv('')).toEqual([])
++      expect(parseItemsCsv(null)).toEqual([])
++    })
++
++    it('every parsed item has an empty attachments array', () => {
++      const items = parseItemsCsv('Desk,1')
++      expect(items[0].attachments).toEqual([])
++    })
++  })
++
++  describe('photo URL column', () => {
++    it('parses an http(s) photo link from a recognised column', () => {
++      const csv =
++        'name,quantity,photo\nDesk,2,https://example.com/desk.jpg\nChair,1,'
++      const items = parseItemsCsv(csv)
++      expect(items[0].photourl).toBe('https://example.com/desk.jpg')
++      expect(items[1].photourl).toBeNull()
++    })
++
++    it('ignores non-URL values in the photo column', () => {
++      const items = parseItemsCsv('name,photo\nDesk,not-a-url')
++      expect(items[0].photourl).toBeNull()
++    })
++
++    it('recognises alternative photo header names', () => {
++      const items = parseItemsCsv('item,image url\nLamp,http://x.test/l.png')
++      expect(items[0].photourl).toBe('http://x.test/l.png')
++    })
++  })
++
++  describe('comment rows', () => {
++    it('skips lines whose name starts with #', () => {
++      const items = parseItemsCsv(
++        'name,quantity\n# a guidance comment,0\nDesk,2'
++      )
++      expect(items).toHaveLength(1)
++      expect(items[0].name).toBe('Desk')
++    })
++  })
++
++  describe('tab-separated (spreadsheet copy-paste)', () => {
++    it('parses tab-delimited rows pasted from a spreadsheet', () => {
++      const tsv =
++        'name\tquantity\tcondition\tdimensions\tphoto\tdescription\n' +
++        'Office desk\t4\tGood\t120x80cm\thttps://example.com/d.jpg\tBeech\n' +
++        'Swivel chair\t14\tUsed\t\t\t'
++      const items = parseItemsCsv(tsv)
++      expect(items).toHaveLength(2)
++      expect(items[0]).toMatchObject({
++        name: 'Office desk',
++        quantity: 4,
++        condition: 'Good',
++        photourl: 'https://example.com/d.jpg',
++      })
++      expect(items[1].name).toBe('Swivel chair')
++    })
++  })
++
++  describe('parseItemsRows (uploaded .xlsx)', () => {
++    it('parses rows with non-string cells (numbers from a spreadsheet)', () => {
++      const rows = [
++        ['name', 'quantity', 'condition', 'dimensions', 'photo', 'description'],
++        [
++          'Office desk',
++          4,
++          'Good',
++          '120x80cm',
++          'https://example.com/d.jpg',
++          'Beech',
++        ],
++        ['Swivel chair', 14, 'Used', null, null, null],
++      ]
++      const items = parseItemsRows(rows)
++      expect(items).toHaveLength(2)
++      expect(items[0]).toMatchObject({
++        name: 'Office desk',
++        quantity: 4,
++        condition: 'Good',
++        photourl: 'https://example.com/d.jpg',
++      })
++      expect(items[1]).toMatchObject({ name: 'Swivel chair', quantity: 14 })
++    })
++
++    it('returns [] for empty rows', () => {
++      expect(parseItemsRows([])).toEqual([])
++      expect(parseItemsRows(null)).toEqual([])
++    })
++  })
++
++  describe('blankBulkItem', () => {
++    it('returns a sensible default row', () => {
++      expect(blankBulkItem()).toEqual({
++        name: '',
++        quantity: 1,
++        condition: 'Unknown',
++        dimensions: null,
++        photourl: null,
++        description: null,
++        attachments: [],
++      })
++    })
++  })
++})
+diff --git a/iznik-nuxt3/tests/unit/setup.ts b/iznik-nuxt3/tests/unit/setup.ts
+index e00603c3a..0c8117c29 100644
+--- a/iznik-nuxt3/tests/unit/setup.ts
++++ b/iznik-nuxt3/tests/unit/setup.ts
+@@ -179,6 +179,33 @@ config.global.stubs = {
+       '<select class="form-select" :value="modelValue" @change="$emit(\'update:modelValue\', $event.target.value)"><slot /></select>',
+     props: ['modelValue', 'id', 'options'],
+   },
++  'b-form-input': {
++    template:
++      '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
++    props: ['modelValue', 'id', 'type', 'placeholder', 'maxlength'],
++  },
++  'b-form-checkbox': {
++    template:
++      '<label class="form-check"><input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked); $emit(\'change\', $event.target.checked)" /><slot /></label>',
++    props: ['modelValue'],
++  },
++  'b-form-group': {
++    template: '<div class="form-group"><slot /></div>',
++    props: ['label', 'labelFor'],
++  },
++  'b-badge': {
++    template: '<span class="badge" :class="variant"><slot /></span>',
++    props: ['variant'],
++  },
++  'b-form-radio-group': {
++    template: '<div class="radio-group"><slot /></div>',
++    props: ['modelValue', 'options', 'stacked'],
++  },
++  'b-form-radio': {
++    template:
++      '<label class="form-radio"><input type="radio" :value="value" @change="$emit(\'update:modelValue\', value)" /><slot /></label>',
++    props: ['modelValue', 'value'],
++  },
+ 
+   // Stub FontAwesome
+   'v-icon': { template: '<i :class="icon"></i>', props: ['icon'] },
+diff --git a/iznik-server-go/handler/handler_test.go b/iznik-server-go/handler/handler_test.go
+index aef5d65db..fddaeea00 100644
+--- a/iznik-server-go/handler/handler_test.go
++++ b/iznik-server-go/handler/handler_test.go
+@@ -196,14 +196,19 @@ func TestGeoLocation_FailStatus(t *testing.T) {
+ // GeoLocation — network error (cannot reach upstream)
+ // ---------------------------------------------------------------------------
+ 
++// errNetTransport always fails the round-trip, deterministically simulating a
++// network error. The previous approach relied on a 1ms client timeout firing,
++// which was timing-flaky on loaded CI VMs (the request occasionally completed
++// in time and returned 200 instead of 502).
++type errNetTransport struct{}
++
++func (errNetTransport) RoundTrip(*http.Request) (*http.Response, error) {
++	return nil, errors.New("simulated network error")
++}
++
+ func TestGeoLocation_NetworkError(t *testing.T) {
+-	// Use a client that always refuses connections.
+-	geoClient = &http.Client{
+-		Transport: &http.Transport{
+-			// Dial to an address that immediately refuses.
+-		},
+-		Timeout: 1 * time.Millisecond,
+-	}
++	// A transport that always errors — guarantees the network-error path (502).
++	geoClient = &http.Client{Transport: errNetTransport{}}
+ 	t.Cleanup(func() { geoClient = &http.Client{Timeout: 5 * time.Second} })
+ 
+ 	app := fiber.New()
+diff --git a/iznik-server-go/message/bulkItem.go b/iznik-server-go/message/bulkItem.go
+new file mode 100644
+index 000000000..51cfb2fd3
+--- /dev/null
++++ b/iznik-server-go/message/bulkItem.go
+@@ -0,0 +1,534 @@
++package message
++
++import (
++	"fmt"
++	"io"
++	"log"
++	"net/http"
++	"strings"
++	"time"
++
++	"github.com/freegle/iznik-server-go/aiimage"
++	"github.com/freegle/iznik-server-go/database"
++	"github.com/freegle/iznik-server-go/utils"
++	"github.com/gofiber/fiber/v2"
++	"gorm.io/gorm"
++)
++
++// BulkItem is one catalogue item within a bulk-offer ("clearance") message.
++// A message is a bulk offer when it has rows in messages_bulk_items; the message
++// itself stays a normal Offer. See plans/active/bulk-offer-clearance-design.md.
++type BulkItem struct {
++	ID          uint64  `json:"id" gorm:"primary_key"`
++	Msgid       uint64  `json:"-"`
++	Position    uint    `json:"position"`
++	Name        string  `json:"name"`
++	Quantity    uint    `json:"quantity"`
++	Condition   string  `json:"condition"`
++	Dimensions  *string `json:"dimensions"`
++	Photourl    *string `json:"photourl,omitempty"`
++	Description *string `json:"description"`
++	// Photos for this item, grouped from the message's attachments by bulkitemid.
++	Attachments []MessageAttachment `json:"attachments" gorm:"-"`
++	// Interest summary (visible to everyone).
++	Interestcount      int `json:"interestcount" gorm:"-"`
++	Interestedquantity int `json:"interestedquantity" gorm:"-"`
++	// The calling user's own interest in this item, if any.
++	Yourinterest *BulkItemInterest `json:"yourinterest,omitempty" gorm:"-"`
++	// The full interest list — only populated for the offerer / a moderator.
++	Interest []BulkItemInterest `json:"interest,omitempty" gorm:"-"`
++}
++
++func (BulkItem) TableName() string {
++	return "messages_bulk_items"
++}
++
++// BulkItemInterest is one user's interest in one catalogue item.
++type BulkItemInterest struct {
++	ID         uint64  `json:"id" gorm:"primary_key"`
++	Bulkitemid uint64  `json:"bulkitemid"`
++	Msgid      uint64  `json:"-"`
++	Userid     uint64  `json:"userid"`
++	Quantity   uint    `json:"quantity"`
++	Cancollect *string `json:"cancollect"`
++	State      string  `json:"state"`
++	Chatid     *uint64 `json:"chatid,omitempty"`
++}
++
++func (BulkItemInterest) TableName() string {
++	return "messages_bulk_items_interest"
++}
++
++// interestIsActive reports whether an interest state counts towards the public
++// interest summary (everything except explicit withdrawal/rejection).
++func interestIsActive(state string) bool {
++	return state != "Withdrawn" && state != "Rejected"
++}
++
++// LoadBulkItems returns the catalogue for a message, grouping the supplied
++// (already path-resolved) attachments by bulkitemid and computing per-item
++// interest. The full per-user interest list is only included when
++// canSeeInterest is true (the offerer or a moderator). Returns nil for a
++// non-bulk message so the JSON field is omitted.
++func LoadBulkItems(db *gorm.DB, msgid uint64, myid uint64, canSeeInterest bool, attachments []MessageAttachment) []BulkItem {
++	var items []BulkItem
++	db.Raw("SELECT id, msgid, position, name, quantity, `condition`, dimensions, photourl, description "+
++		"FROM messages_bulk_items WHERE msgid = ? ORDER BY position ASC, id ASC", msgid).Scan(&items)
++
++	if len(items) == 0 {
++		return nil
++	}
++
++	var interest []BulkItemInterest
++	db.Raw("SELECT id, bulkitemid, msgid, userid, quantity, cancollect, state, chatid "+
++		"FROM messages_bulk_items_interest WHERE msgid = ?", msgid).Scan(&interest)
++
++	// Index interest by bulk item id.
++	byItem := map[uint64][]BulkItemInterest{}
++	for _, in := range interest {
++		byItem[in.Bulkitemid] = append(byItem[in.Bulkitemid], in)
++	}
++
++	for i := range items {
++		item := &items[i]
++
++		// Group photos belonging to this item.
++		for _, a := range attachments {
++			if a.Bulkitemid != nil && *a.Bulkitemid == item.ID {
++				item.Attachments = append(item.Attachments, a)
++			}
++		}
++
++		// Summarise interest and pick out the caller's own row.
++		for _, in := range byItem[item.ID] {
++			if interestIsActive(in.State) {
++				item.Interestcount++
++				item.Interestedquantity += int(in.Quantity)
++			}
++			if in.Userid == myid {
++				row := in
++				item.Yourinterest = &row
++			}
++			if canSeeInterest {
++				item.Interest = append(item.Interest, in)
++			}
++		}
++	}
++
++	return items
++}
++
++// handleBulkInterest records the calling user's interest in one or more catalogue
++// items of a bulk offer, and posts a single consolidated "Interested" chat reply
++// to the offerer summarising the selection. Re-expressing interest updates the
++// existing rows; a quantity of 0 withdraws interest in that item.
++func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
++	db := database.DBConn
++
++	if len(req.BulkInterest) == 0 {
++		return fiber.NewError(fiber.StatusBadRequest, "bulkinterest is required")
++	}
++
++	var fromuser uint64
++	db.Raw("SELECT fromuser FROM messages WHERE id = ? AND deleted IS NULL", req.ID).Scan(&fromuser)
++	if fromuser == 0 {
++		return fiber.NewError(fiber.StatusNotFound, "Message not found")
++	}
++	if fromuser == myid {
++		return fiber.NewError(fiber.StatusBadRequest, "Cannot register interest in your own post")
++	}
++
++	// Validate each item belongs to this message, then split into active picks
++	// and withdrawals. Withdrawals don't need a chat room.
++	type selected struct {
++		bulkitemid uint64
++		name       string
++		qty        uint
++		cancollect *string
++	}
++	var picked []selected
++	var withdraw []uint64
++
++	for _, in := range req.BulkInterest {
++		var itemName string
++		var available uint
++		var itemMsgid uint64
++		db.Raw("SELECT name, quantity, msgid FROM messages_bulk_items WHERE id = ?", in.Bulkitemid).
++			Row().Scan(&itemName, &available, &itemMsgid)
++		if itemMsgid != req.ID {
++			// Unknown item or item from another post — ignore it.
++			continue
++		}
++		if in.Quantity <= 0 {
++			withdraw = append(withdraw, in.Bulkitemid)
++			continue
++		}
++		qty := uint(in.Quantity)
++		if available > 0 && qty > available {
++			qty = available
++		}
++		picked = append(picked, selected{bulkitemid: in.Bulkitemid, name: itemName, qty: qty, cancollect: in.Cancollect})
++	}
++
++	// Withdraw interest (keep the row for history). No chat room needed.
++	for _, id := range withdraw {
++		db.Exec("UPDATE messages_bulk_items_interest SET state = 'Withdrawn', quantity = 0 WHERE bulkitemid = ? AND userid = ?",
++			id, myid)
++	}
++
++	var chatid uint64
++	if len(picked) > 0 {
++		// Only now do we need a conversation with the offerer.
++		chatid = findOrCreateUser2UserRoom(db, myid, fromuser)
++
++		for _, p := range picked {
++			// Preserve an offerer-set state (Reserved/Collected/Rejected) — a
++			// replier re-expressing interest must not reset their allocation.
++			db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, cancollect, chatid, state) "+
++				"VALUES (?, ?, ?, ?, ?, ?, 'Interested') "+
++				"ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), cancollect = VALUES(cancollect), chatid = VALUES(chatid), "+
++				"state = IF(state IN ('Reserved','Collected','Rejected'), state, 'Interested')",
++				p.bulkitemid, req.ID, myid, p.qty, p.cancollect, chatid)
++		}
++
++		// One consolidated Interested chat reply: insert the first time, update
++		// it on re-express (so the thread isn't spammed with duplicates).
++		var parts []string
++		for _, p := range picked {
++			parts = append(parts, fmt.Sprintf("%d× %s", p.qty, p.name))
++		}
++		body := "I'm interested in: " + strings.Join(parts, ", ")
++		for _, p := range picked {
++			if p.cancollect != nil && strings.TrimSpace(*p.cancollect) != "" {
++				body += " (can collect: " + strings.TrimSpace(*p.cancollect) + ")"
++				break
++			}
++		}
++		var existingID uint64
++		db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? AND refmsgid = ? AND type = ? ORDER BY id DESC LIMIT 1",
++			chatid, myid, req.ID, utils.CHAT_MESSAGE_INTERESTED).Scan(&existingID)
++		if existingID > 0 {
++			db.Exec("UPDATE chat_messages SET message = ?, date = ? WHERE id = ?", body, time.Now(), existingID)
++		} else {
++			db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
++				chatid, myid, utils.CHAT_MESSAGE_INTERESTED, req.ID, time.Now(), body)
++		}
++		db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
++	}
++
++	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "chatid": chatid})
++}
++
++// handleBulkInterestState lets the offerer (or a moderator) move a single
++// interest row through its lifecycle: Interested → Reserved → Collected, or
++// Rejected/Withdrawn. Repliers cannot change state via this action.
++func handleBulkInterestState(c *fiber.Ctx, myid uint64, req PostMessageRequest) error {
++	db := database.DBConn
++
++	if req.Bulkitemid == nil || *req.Bulkitemid == 0 || req.Userid == nil || *req.Userid == 0 || req.State == nil {
++		return fiber.NewError(fiber.StatusBadRequest, "bulkitemid, userid and state are required")
++	}
++
++	switch *req.State {
++	case "Interested", "Reserved", "Collected", "Withdrawn", "Rejected":
++		// ok
++	default:
++		return fiber.NewError(fiber.StatusBadRequest, "Invalid state")
++	}
++
++	// Resolve the owning message and check permission.
++	var msgid, fromuser uint64
++	db.Raw("SELECT bi.msgid, m.fromuser FROM messages_bulk_items bi "+
++		"INNER JOIN messages m ON m.id = bi.msgid WHERE bi.id = ?", *req.Bulkitemid).
++		Row().Scan(&msgid, &fromuser)
++	if msgid == 0 {
++		return fiber.NewError(fiber.StatusNotFound, "Item not found")
++	}
++	if fromuser != myid && !isModForMessage(db, myid, msgid) {
++		return fiber.NewError(fiber.StatusForbidden, "Not your post")
++	}
++
++	var priorState string
++	db.Raw("SELECT COALESCE(state, '') FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?",
++		*req.Bulkitemid, *req.Userid).Scan(&priorState)
++
++	result := db.Exec("UPDATE messages_bulk_items_interest SET state = ? WHERE bulkitemid = ? AND userid = ?",
++		*req.State, *req.Bulkitemid, *req.Userid)
++	if result.RowsAffected == 0 {
++		return fiber.NewError(fiber.StatusNotFound, "Interest row not found")
++	}
++
++	// Promising an item (moving it to Reserved) reveals the offer's private
++	// access instructions to that replier — once, via chat.
++	if *req.State == "Reserved" && priorState != "Reserved" {
++		sendAccessInstructions(db, msgid, fromuser, *req.Userid)
++	}
++
++	return c.JSON(fiber.Map{"ret": 0, "status": "Success"})
++}
++
++// sendAccessInstructions delivers the offer's private access instructions to a
++// replier via chat, once the offerer has promised (Reserved) them an item. It's
++// a no-op when the offer has no instructions set. Exposed (via the var below)
++// for tests.
++func sendAccessInstructions(db *gorm.DB, msgid uint64, fromuser uint64, touser uint64) {
++	var ai string
++	db.Raw("SELECT COALESCE(accessinstructions, '') FROM messages WHERE id = ?", msgid).Scan(&ai)
++	ai = strings.TrimSpace(ai)
++	if ai == "" {
++		return
++	}
++	chatid := findOrCreateUser2UserRoom(db, fromuser, touser)
++	if chatid == 0 {
++		return
++	}
++	body := "Access instructions for collection:\n" + ai
++	db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
++		chatid, fromuser, utils.CHAT_MESSAGE_DEFAULT, msgid, time.Now(), body)
++	db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
++}
++
++// findOrCreateUser2UserRoom returns the id of the User2User chat room between
++// two users, creating it if necessary.
++func findOrCreateUser2UserRoom(db *gorm.DB, a uint64, b uint64) uint64 {
++	var chatID uint64
++	db.Raw("SELECT id FROM chat_rooms WHERE chattype = ? AND ((user1 = ? AND user2 = ?) OR (user1 = ? AND user2 = ?)) LIMIT 1",
++		utils.CHAT_TYPE_USER2USER, a, b, b, a).Scan(&chatID)
++	if chatID != 0 {
++		return chatID
++	}
++
++	sqlDB, err := db.DB()
++	if err != nil {
++		return 0
++	}
++	res, err := sqlDB.Exec("INSERT INTO chat_rooms (user1, user2, chattype, latestmessage) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), latestmessage = NOW()",
++		a, b, utils.CHAT_TYPE_USER2USER)
++	if err != nil {
++		return 0
++	}
++	id, err := res.LastInsertId()
++	if err != nil {
++		return 0
++	}
++	return uint64(id)
++}
++
++// upsertBulkItems replaces the catalogue for a message from the supplied input.
++// Existing items are matched by id; items not present in the input are removed
++// (their interest cascades). Returns the total quantity across all items, used
++// to keep messages.availableinitially in sync.
++func upsertBulkItems(db *gorm.DB, msgid uint64, items []BulkItemInput) int {
++	keepIDs := []uint64{}
++	total := 0
++
++	for pos, in := range items {
++		name := strings.TrimSpace(in.Name)
++		if name == "" {
++			continue
++		}
++		qty := in.Quantity
++		if qty < 1 {
++			qty = 1
++		}
++		condition := in.Condition
++		switch condition {
++		case "New", "LikeNew", "Good", "Used", "Poor", "Unknown":
++		default:
++			condition = "Unknown"
++		}
++		total += qty
++
++		var itemID uint64
++		if in.ID > 0 {
++			itemID = in.ID
++			db.Exec("UPDATE messages_bulk_items SET position = ?, name = ?, quantity = ?, `condition` = ?, dimensions = ?, photourl = ?, description = ? WHERE id = ? AND msgid = ?",
++				pos, name, qty, condition, in.Dimensions, in.Photourl, in.Description, itemID, msgid)
++		} else {
++			sqlDB, err := db.DB()
++			if err == nil {
++				res, err := sqlDB.Exec("INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`, dimensions, photourl, description) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
++					msgid, pos, name, qty, condition, in.Dimensions, in.Photourl, in.Description)
++				if err == nil {
++					if id, err := res.LastInsertId(); err == nil {
++						itemID = uint64(id)
++					}
++				}
++			}
++		}
++
++		if itemID > 0 {
++			keepIDs = append(keepIDs, itemID)
++			// Link this item's photos to both the message and the item. Freshly
++			// uploaded attachments have no msgid yet, so set it here too. The
++			// (msgid IS NULL OR msgid = ?) guard prevents stealing an attachment
++			// that already belongs to a different message.
++			for _, attID := range in.Attachments {
++				db.Exec("UPDATE messages_attachments SET bulkitemid = ?, msgid = ? WHERE id = ? AND (msgid IS NULL OR msgid = ?)",
++					itemID, msgid, attID, msgid)
++			}
++		}
++	}
++
++	// Remove items no longer present.
++	if len(keepIDs) > 0 {
++		db.Exec("DELETE FROM messages_bulk_items WHERE msgid = ? AND id NOT IN (?)", msgid, keepIDs)
++	} else {
++		db.Exec("DELETE FROM messages_bulk_items WHERE msgid = ?", msgid)
++	}
++
++	return total
++}
++
++// BulkItemInput is the create/edit payload for one catalogue item (PUT/PATCH).
++type BulkItemInput struct {
++	ID          uint64   `json:"id"`
++	Name        string   `json:"name"`
++	Quantity    int      `json:"quantity"`
++	Condition   string   `json:"condition"`
++	Dimensions  *string  `json:"dimensions"`
++	Photourl    *string  `json:"photourl"`
++	Description *string  `json:"description"`
++	Attachments []uint64 `json:"attachments"`
++}
++
++// buildBulkSummary returns a human-readable textbody summary of a catalogue and
++// the collection windows, so consumers with no structured-data channel (Trash
++// Nothing, email replies, search, the V1 digest) still see the items and times
++// in plain text. Repliers on those channels answer in free text; the Freegle
++// Helper later turns that into structured interest.
++func buildBulkSummary(items []BulkItemInput, slots []string) string {
++	var lines []string
++	n := 0
++	for _, in := range items {
++		name := strings.TrimSpace(in.Name)
++		if name == "" {
++			continue
++		}
++		n++
++		qty := in.Quantity
++		if qty < 1 {
++			qty = 1
++		}
++		// Reference number disambiguates similar items (same name, different
++		// condition) for free-text repliers and the Freegle Helper.
++		line := fmt.Sprintf("%d) %d× %s", n, qty, name)
++		if in.Condition != "" && in.Condition != "Unknown" {
++			line += " (" + in.Condition + ")"
++		}
++		lines = append(lines, line)
++	}
++	if len(lines) == 0 {
++		return ""
++	}
++	out := "Items available in this offer:\n" + strings.Join(lines, "\n")
++
++	var windows []string
++	for _, s := range slots {
++		if s = strings.TrimSpace(s); s != "" {
++			windows = append(windows, "- "+s)
++		}
++	}
++	if len(windows) > 0 {
++		out += "\n\nCollection times (let us know which suits you):\n" + strings.Join(windows, "\n")
++	}
++
++	return out
++}
++
++// fetchRemoteImage downloads an image from an http(s) URL, returning its bytes
++// and MIME type. Bounded size/time; verifies the content is an image.
++func fetchRemoteImage(url string) ([]byte, string, error) {
++	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
++		return nil, "", fmt.Errorf("not an http(s) url")
++	}
++	client := &http.Client{Timeout: 20 * time.Second}
++	req, err := http.NewRequest("GET", url, nil)
++	if err != nil {
++		return nil, "", err
++	}
++	req.Header.Set("User-Agent", "Freegle bulk-offer photo fetcher")
++	resp, err := client.Do(req)
++	if err != nil {
++		return nil, "", err
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		return nil, "", fmt.Errorf("status %d", resp.StatusCode)
++	}
++	data, err := io.ReadAll(io.LimitReader(resp.Body, 25<<20)) // 25 MB cap
++	if err != nil {
++		return nil, "", err
++	}
++	mime := resp.Header.Get("Content-Type")
++	if mime == "" || !strings.HasPrefix(mime, "image/") {
++		mime = http.DetectContentType(data)
++	}
++	if !strings.HasPrefix(mime, "image/") {
++		return nil, "", fmt.Errorf("not an image: %s", mime)
++	}
++	return data, mime, nil
++}
++
++// BulkPhotoFetcher is injectable for tests.
++var BulkPhotoFetcher = fetchRemoteImage
++
++// ingestBulkItemPhotos downloads any per-item photo URLs that don't yet have an
++// uploaded attachment, stores them in image storage (TUS) and links them to the
++// item. This is how a spreadsheet's "photo" links become real Freegle photos.
++// Run in a goroutine — downloads are slow; the photourl stays as an immediate
++// fallback until the attachment lands. Errors are logged only.
++func ingestBulkItemPhotos(db *gorm.DB, msgid uint64) {
++	type prow struct {
++		ID       uint64
++		Photourl string
++	}
++	var rows []prow
++	db.Raw("SELECT bi.id, bi.photourl FROM messages_bulk_items bi "+
++		"WHERE bi.msgid = ? AND bi.photourl IS NOT NULL AND bi.photourl != '' "+
++		"AND NOT EXISTS (SELECT 1 FROM messages_attachments a WHERE a.bulkitemid = bi.id)", msgid).Scan(&rows)
++
++	for _, r := range rows {
++		data, mime, err := BulkPhotoFetcher(r.Photourl)
++		if err != nil {
++			log.Printf("bulk photo ingest: download %s failed: %v", r.Photourl, err)
++			continue
++		}
++		uid, err := aiimage.ImageUploader(data, mime)
++		if err != nil {
++			log.Printf("bulk photo ingest: upload failed for %s: %v", r.Photourl, err)
++			continue
++		}
++		db.Exec("INSERT INTO messages_attachments (msgid, bulkitemid, externaluid) VALUES (?, ?, ?)",
++			msgid, r.ID, uid)
++	}
++}
++
++// IngestBulkItemPhotosSync is the synchronous variant, exposed for tests.
++var IngestBulkItemPhotosSync = ingestBulkItemPhotos
++
++// LoadBulkSlots returns the offerer's collection date/time windows for a message,
++// in display order. Returns nil when none are set.
++func LoadBulkSlots(db *gorm.DB, msgid uint64) []string {
++	var slots []string
++	db.Raw("SELECT slot FROM messages_bulk_slots WHERE msgid = ? ORDER BY position ASC, id ASC", msgid).Scan(&slots)
++	if len(slots) == 0 {
++		return nil
++	}
++	return slots
++}
++
++// upsertBulkSlots replaces the collection windows for a message from the supplied
++// list (blank entries ignored). An empty/nil slice clears them.
++func upsertBulkSlots(db *gorm.DB, msgid uint64, slots []string) {
++	db.Exec("DELETE FROM messages_bulk_slots WHERE msgid = ?", msgid)
++	pos := 0
++	for _, s := range slots {
++		s = strings.TrimSpace(s)
++		if s == "" {
++			continue
++		}
++		db.Exec("INSERT INTO messages_bulk_slots (msgid, position, slot) VALUES (?, ?, ?)", msgid, pos, s)
++		pos++
++	}
++}
+diff --git a/iznik-server-go/message/message.go b/iznik-server-go/message/message.go
+index aa594ac7b..5b3ff76ba 100644
+--- a/iznik-server-go/message/message.go
++++ b/iznik-server-go/message/message.go
+@@ -234,6 +234,17 @@ type Message struct {
+ 	Postings         []MessagePosting `json:"postings,omitempty" gorm:"-"`
+ 	Tnpostid         *string          `json:"tnpostid"`
+ 	Expiresat        *time.Time       `json:"expiresat,omitempty" gorm:"-"`
++	// BulkItems is the structured catalogue for a bulk offer ("clearance"). Nil
++	// (and omitted) for ordinary single-item posts. Bulkcount is len(BulkItems),
++	// exposed so list/summary views can flag a bulk offer cheaply.
++	BulkItems []BulkItem `json:"bulkitems,omitempty" gorm:"-"`
++	Bulkcount int        `json:"bulkcount,omitempty" gorm:"-"`
++	// Bulkslots are the offerer-defined collection windows a replier picks from.
++	Bulkslots []string `json:"bulkslots,omitempty" gorm:"-"`
++	// Accessinstructions is the offerer's private note (address / gate code /
++	// intercom). Only returned to the offerer or a moderator — never to general
++	// viewers — and sent to a replier only once they're promised an item.
++	Accessinstructions *string `json:"accessinstructions,omitempty" gorm:"-"`
+ }
+ 
+ // MessagePosting represents a posting history record from messages_postings.
+@@ -452,7 +463,7 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
+ 				// Mask rejected/regenerating AI images: if the externaluid matches an ai_image
+ 			// that is no longer active, return an empty externaluid so the frontend shows
+ 			// a placeholder instead of the rejected illustration.
+-			db.Raw(`SELECT ma.id, ma.msgid, ma.archived,
++			db.Raw(`SELECT ma.id, ma.msgid, ma.bulkitemid, ma.archived,
+ 				CASE WHEN ai.id IS NOT NULL THEN '' ELSE COALESCE(ma.externaluid, '') END AS externaluid,
+ 				ma.externalmods
+ 				FROM messages_attachments ma
+@@ -747,6 +758,24 @@ func GetMessagesByIds(myid uint64, ids []string, isPartner bool) []Message {
+ 					message.Location = loc
+ 				}
+ 
++				// Bulk-offer catalogue: group the (now path-resolved) attachments by
++				// item and attach per-item interest. The full per-user interest list
++				// is only visible to the offerer or a moderator.
++				canSeeInterest := message.Fromuser == myid || isGroupMod
++				message.BulkItems = LoadBulkItems(db, message.ID, myid, canSeeInterest, message.MessageAttachments)
++				message.Bulkcount = len(message.BulkItems)
++				if message.Bulkcount > 0 {
++					message.Bulkslots = LoadBulkSlots(db, message.ID)
++					// Access instructions are private — only the offerer/mod sees them.
++					if canSeeInterest {
++						var ai string
++						db.Raw("SELECT COALESCE(accessinstructions, '') FROM messages WHERE id = ?", message.ID).Scan(&ai)
++						if ai != "" {
++							message.Accessinstructions = &ai
++						}
++					}
++				}
++
+ 				mu.Lock()
+ 				messages = append(messages, message)
+ 				mu.Unlock()
+@@ -2474,22 +2503,25 @@ func handleJoinAndPost(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
+ 
+ // patchMessageRequest is the body for PATCH /message and PATCH /message/tn/:tnpostid.
+ type patchMessageRequest struct {
+-	ID           uint64   `json:"id"`
+-	Subject      *string  `json:"subject"`
+-	Textbody     *string  `json:"textbody"`
+-	Type         *string  `json:"type"`
+-	Msgtype      *string  `json:"msgtype"`
+-	Messagetype  *string  `json:"messagetype"`
+-	Item         *string  `json:"item"`
+-	Availablenow *int     `json:"availablenow"`
+-	Lat          *float64 `json:"lat"`
+-	Lng          *float64 `json:"lng"`
+-	Location     *string  `json:"location"`
+-	Locationid   *uint64  `json:"locationid"`
+-	Groupid      *uint64  `json:"groupid"`
+-	Attachments  []uint64 `json:"attachments"`
+-	BadAIImages  []uint64 `json:"badAIImages"`
+-	Deadline     *string  `json:"deadline"`
++	ID                 uint64          `json:"id"`
++	Subject            *string         `json:"subject"`
++	Textbody           *string         `json:"textbody"`
++	Type               *string         `json:"type"`
++	Msgtype            *string         `json:"msgtype"`
++	Messagetype        *string         `json:"messagetype"`
++	Item               *string         `json:"item"`
++	Availablenow       *int            `json:"availablenow"`
++	Lat                *float64        `json:"lat"`
++	Lng                *float64        `json:"lng"`
++	Location           *string         `json:"location"`
++	Locationid         *uint64         `json:"locationid"`
++	Groupid            *uint64         `json:"groupid"`
++	Attachments        []uint64        `json:"attachments"`
++	BadAIImages        []uint64        `json:"badAIImages"`
++	Deadline           *string         `json:"deadline"`
++	Bulkitems          []BulkItemInput `json:"bulkitems"`
++	Bulkslots          []string        `json:"bulkslots"`
++	Accessinstructions *string         `json:"accessinstructions"`
+ }
+ 
+ // resolvePartnerAuth reads a ?partner= query param and resolves the acting user ID.
+@@ -2914,6 +2946,29 @@ func applyPatchMessageCore(c *fiber.Ctx, myid uint64, req patchMessageRequest) e
+ 		}
+ 	}
+ 
++	// Bulk offer: rebuild the structured catalogue (attachments are already
++	// relinked above) and keep availableinitially/availablenow in sync with the
++	// total quantity. A nil slice leaves the catalogue untouched; an explicit
++	// (possibly empty) slice rebuilds it, including resetting availability to 0
++	// when all items are removed. The textbody summary is rebuilt too unless the
++	// caller supplied their own textbody.
++	if req.Bulkitems != nil {
++		total := upsertBulkItems(db, req.ID, req.Bulkitems)
++		db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, req.ID)
++		if req.Textbody == nil {
++			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
++				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, req.ID)
++			}
++		}
++		go ingestBulkItemPhotos(db, req.ID)
++	}
++	if req.Bulkslots != nil {
++		upsertBulkSlots(db, req.ID, req.Bulkslots)
++	}
++	if req.Accessinstructions != nil {
++		db.Exec("UPDATE messages SET accessinstructions = ? WHERE id = ?", *req.Accessinstructions, req.ID)
++	}
++
+ 	return nil
+ }
+ 
+@@ -3200,18 +3255,21 @@ func PutMessage(c *fiber.Ctx) error {
+ 	myid := user.WhoAmI(c)
+ 
+ 	type PutMessageRequest struct {
+-		Groupid            uint64   `json:"groupid"`
+-		Type               string   `json:"type"`
+-		Messagetype        string   `json:"messagetype"` // Client sends this; alias for Type.
+-		Subject            string   `json:"subject"`
+-		Item               string   `json:"item"`
+-		Textbody           string   `json:"textbody"`
+-		Collection         string   `json:"collection"` // Draft (default) or Pending.
+-		Locationid         *uint64  `json:"locationid"`
+-		Availableinitially *int     `json:"availableinitially"`
+-		Availablenow       *int     `json:"availablenow"`
+-		Attachments        []uint64 `json:"attachments"`
+-		Email              string   `json:"email"`
++		Groupid            uint64          `json:"groupid"`
++		Type               string          `json:"type"`
++		Messagetype        string          `json:"messagetype"` // Client sends this; alias for Type.
++		Subject            string          `json:"subject"`
++		Item               string          `json:"item"`
++		Textbody           string          `json:"textbody"`
++		Collection         string          `json:"collection"` // Draft (default) or Pending.
++		Locationid         *uint64         `json:"locationid"`
++		Availableinitially *int            `json:"availableinitially"`
++		Availablenow       *int            `json:"availablenow"`
++		Attachments        []uint64        `json:"attachments"`
++		Email              string          `json:"email"`
++		Bulkitems          []BulkItemInput `json:"bulkitems"`
++		Bulkslots          []string        `json:"bulkslots"`
++		Accessinstructions string          `json:"accessinstructions"`
+ 	}
+ 
+ 	var req PutMessageRequest
+@@ -3361,6 +3419,29 @@ func PutMessage(c *fiber.Ctx) error {
+ 		}
+ 	}
+ 
++	// Bulk offer: create the structured catalogue. Total quantity drives
++	// availableinitially/availablenow, and the textbody falls back to a
++	// readable summary so non-bulk-aware consumers still show the items.
++	if len(req.Bulkitems) > 0 {
++		total := upsertBulkItems(db, newMsgID, req.Bulkitems)
++		if total > 0 {
++			db.Exec("UPDATE messages SET availableinitially = ?, availablenow = ? WHERE id = ?", total, total, newMsgID)
++		}
++		if strings.TrimSpace(req.Textbody) == "" {
++			if summary := buildBulkSummary(req.Bulkitems, req.Bulkslots); summary != "" {
++				db.Exec("UPDATE messages SET textbody = ?, message = ? WHERE id = ?", summary, summary, newMsgID)
++			}
++		}
++		// Download any spreadsheet-supplied photo URLs into real attachments.
++		go ingestBulkItemPhotos(db, newMsgID)
++	}
++	if req.Bulkslots != nil {
++		upsertBulkSlots(db, newMsgID, req.Bulkslots)
++	}
++	if strings.TrimSpace(req.Accessinstructions) != "" {
++		db.Exec("UPDATE messages SET accessinstructions = ? WHERE id = ?", req.Accessinstructions, newMsgID)
++	}
++
+ 	// Add spatial data if locationid is provided, and update the user's last known location
+ 	// (so that GET /isochrone can auto-create an isochrone for the user).
+ 	if req.Locationid != nil && *req.Locationid > 0 {
+@@ -3426,6 +3507,18 @@ type PostMessageRequest struct {
+ 	Deliverypossible *bool   `json:"deliverypossible"`
+ 	ForcePending     *bool   `json:"forcepending"`
+ 	Tnpostid         *string `json:"tnpostid"`
++	// Bulk-offer interest (action "BulkInterest").
++	BulkInterest []BulkInterestInput `json:"bulkinterest"`
++	// Bulk-offer interest state change (action "BulkInterestState").
++	Bulkitemid *uint64 `json:"bulkitemid"`
++	State      *string `json:"state"`
++}
++
++// BulkInterestInput is one item the caller is expressing interest in.
++type BulkInterestInput struct {
++	Bulkitemid uint64  `json:"bulkitemid"`
++	Quantity   int     `json:"quantity"`
++	Cancollect *string `json:"cancollect"`
+ }
+ 
+ // PostMessage dispatches POST /message actions.
+@@ -3545,6 +3638,10 @@ func dispatchPostMessageAction(c *fiber.Ctx, myid uint64, req PostMessageRequest
+ 		return handleBackToPending(c, myid, req)
+ 	case "RejectToDraft", "BackToDraft":
+ 		return handleRejectToDraft(c, myid, req)
++	case "BulkInterest":
++		return handleBulkInterest(c, myid, req)
++	case "BulkInterestState":
++		return handleBulkInterestState(c, myid, req)
+ 	default:
+ 		return fiber.NewError(fiber.StatusBadRequest, "Unknown action")
+ 	}
+diff --git a/iznik-server-go/message/messageAttachment.go b/iznik-server-go/message/messageAttachment.go
+index ac399f29b..a295f64a0 100644
+--- a/iznik-server-go/message/messageAttachment.go
++++ b/iznik-server-go/message/messageAttachment.go
+@@ -14,6 +14,7 @@ func (MessageAttachment) TableName() string {
+ type MessageAttachment struct {
+ 	ID           uint64          `json:"id" gorm:"primary_key"`
+ 	Msgid        uint64          `json:"-"`
++	Bulkitemid   *uint64         `json:"bulkitemid,omitempty"`
+ 	Path         string          `json:"path"`
+ 	Paththumb    string          `json:"paththumb"`
+ 	Archived     int             `json:"archived"`
+diff --git a/iznik-server-go/test/bulk_offer_test.go b/iznik-server-go/test/bulk_offer_test.go
+new file mode 100644
+index 000000000..82ac8daf2
+--- /dev/null
++++ b/iznik-server-go/test/bulk_offer_test.go
+@@ -0,0 +1,575 @@
++package test
++
++import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/freegle/iznik-server-go/aiimage"
++	"github.com/freegle/iznik-server-go/database"
++	"github.com/freegle/iznik-server-go/message"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// addBulkItem inserts one catalogue item and returns its id.
++func addBulkItem(t *testing.T, msgid uint64, name string, qty int, condition string) uint64 {
++	db := database.DBConn
++	res := db.Exec("INSERT INTO messages_bulk_items (msgid, position, name, quantity, `condition`) VALUES (?, 0, ?, ?, ?)",
++		msgid, name, qty, condition)
++	require.NoError(t, res.Error)
++	var id uint64
++	db.Raw("SELECT id FROM messages_bulk_items WHERE msgid = ? AND name = ? ORDER BY id DESC LIMIT 1", msgid, name).Scan(&id)
++	require.NotZero(t, id)
++	return id
++}
++
++// TestBulkOfferPutCreatesCatalogue checks PUT /message with a bulkitems array
++// creates the catalogue, sets availableinitially to the total quantity, and
++// falls back to a readable textbody summary.
++func TestBulkOfferPutCreatesCatalogue(t *testing.T) {
++	db := database.DBConn
++	prefix := uniquePrefix("bulkput")
++	groupID := CreateTestGroup(t, prefix)
++	userID := CreateTestUser(t, prefix, "User")
++	CreateTestMembership(t, userID, groupID, "Member")
++	token := getToken(t, userID)
++
++	var locationID uint64
++	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
++
++	body := map[string]interface{}{
++		"messagetype": "Offer",
++		"item":        "Office Clearance",
++		"collection":  "Draft",
++		"groupid":     groupID,
++		"locationid":  locationID,
++		"bulkitems": []map[string]interface{}{
++			{"name": "Office desk", "quantity": 4, "condition": "Good", "photourl": "https://example.com/desk.jpg"},
++			{"name": "Chair", "quantity": 14, "condition": "Used"},
++		},
++	}
++	bodyBytes, _ := json.Marshal(body)
++	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bodyBytes))
++	req.Header.Set("Content-Type", "application/json")
++	resp, err := getApp().Test(req, 10000)
++	require.NoError(t, err)
++	require.Equal(t, 200, resp.StatusCode)
++
++	var result map[string]interface{}
++	json.NewDecoder(resp.Body).Decode(&result)
++	msgID := uint64(result["id"].(float64))
++	require.NotZero(t, msgID)
++
++	var count int64
++	db.Raw("SELECT COUNT(*) FROM messages_bulk_items WHERE msgid = ?", msgID).Scan(&count)
++	assert.Equal(t, int64(2), count)
++
++	var availInit int
++	db.Raw("SELECT availableinitially FROM messages WHERE id = ?", msgID).Scan(&availInit)
++	assert.Equal(t, 18, availInit, "availableinitially should equal total quantity 4+14")
++
++	var textbody string
++	db.Raw("SELECT textbody FROM messages WHERE id = ?", msgID).Scan(&textbody)
++	assert.Contains(t, textbody, "Office desk")
++	assert.Contains(t, textbody, "Chair")
++	// Ref numbers disambiguate items in the plain-text summary.
++	assert.Contains(t, textbody, "1)")
++
++	// Spreadsheet-supplied photo URL is stored on the item.
++	var photourl string
++	db.Raw("SELECT COALESCE(photourl,'') FROM messages_bulk_items WHERE msgid = ? AND name = 'Office desk'", msgID).Scan(&photourl)
++	assert.Equal(t, "https://example.com/desk.jpg", photourl)
++}
++
++// TestBulkOfferGetReturnsCatalogue checks GET /message returns the catalogue with
++// photos grouped under their item and an interest summary, and that the per-user
++// interest list is owner/mod-only while a viewer still sees their own interest.
++func TestBulkOfferGetReturnsCatalogue(t *testing.T) {
++	db := database.DBConn
++	prefix := uniquePrefix("bulkget")
++	groupID := CreateTestGroup(t, prefix)
++	ownerID := CreateTestUser(t, prefix+"_owner", "User")
++	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
++	otherID := CreateTestUser(t, prefix+"_other", "User")
++	CreateTestMembership(t, ownerID, groupID, "Member")
++
++	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
++	deskID := addBulkItem(t, msgID, "Office desk", 4, "Good")
++	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
++
++	// A photo belongs to the desk item.
++	attID := CreateTestAttachment(t, msgID)
++	db.Exec("UPDATE messages_attachments SET bulkitemid = ? WHERE id = ?", deskID, attID)
++
++	// viewer wants 2 desks; other wants 6 chairs.
++	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 2, 'Interested')", deskID, msgID, viewerID)
++	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 6, 'Interested')", chairID, msgID, otherID)
++
++	// --- As the owner: sees the full interest list. ---
++	ownerToken := getToken(t, ownerID)
++	resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, ownerToken), nil), 10000)
++	require.NoError(t, err)
++	require.Equal(t, 200, resp.StatusCode)
++	var ownerMsg message.Message
++	json.Unmarshal(rsp(resp), &ownerMsg)
++	require.Len(t, ownerMsg.BulkItems, 2)
++
++	var desk *message.BulkItem
++	for i := range ownerMsg.BulkItems {
++		if ownerMsg.BulkItems[i].ID == deskID {
++			desk = &ownerMsg.BulkItems[i]
++		}
++	}
++	require.NotNil(t, desk)
++	assert.Equal(t, uint(4), desk.Quantity)
++	assert.Len(t, desk.Attachments, 1, "desk photo should be grouped under the desk item")
++	assert.Equal(t, 1, desk.Interestcount)
++	assert.Equal(t, 2, desk.Interestedquantity)
++	assert.Len(t, desk.Interest, 1, "owner sees the per-user interest list")
++
++	// --- As the viewer: sees own interest, not others' list. ---
++	viewerToken := getToken(t, viewerID)
++	resp, err = getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, viewerToken), nil), 10000)
++	require.NoError(t, err)
++	var viewerMsg message.Message
++	json.Unmarshal(rsp(resp), &viewerMsg)
++	var vdesk *message.BulkItem
++	for i := range viewerMsg.BulkItems {
++		if viewerMsg.BulkItems[i].ID == deskID {
++			vdesk = &viewerMsg.BulkItems[i]
++		}
++	}
++	require.NotNil(t, vdesk)
++	assert.Nil(t, vdesk.Interest, "non-owner must NOT see the per-user interest list")
++	require.NotNil(t, vdesk.Yourinterest, "viewer should see their own interest")
++	assert.Equal(t, uint(2), vdesk.Yourinterest.Quantity)
++	assert.Equal(t, 1, vdesk.Interestcount, "counts are still visible to everyone")
++}
++
++// TestBulkInterest checks expressing interest creates rows + one consolidated
++// chat reply, caps quantity, updates on re-express, withdraws on zero, and
++// rejects interest in your own post.
++func TestBulkInterest(t *testing.T) {
++	db := database.DBConn
++	prefix := uniquePrefix("bulkint")
++	groupID := CreateTestGroup(t, prefix)
++	ownerID := CreateTestUser(t, prefix+"_owner", "User")
++	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
++	CreateTestMembership(t, ownerID, groupID, "Member")
++
++	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
++	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
++
++	wanterToken := getToken(t, wanterID)
++	cancollect := "Tuesday afternoon"
++	post := func(qty int) *map[string]interface{} {
++		body := map[string]interface{}{
++			"action": "BulkInterest",
++			"id":     msgID,
++			"bulkinterest": []map[string]interface{}{
++				{"bulkitemid": chairID, "quantity": qty, "cancollect": cancollect},
++			},
++		}
++		bb, _ := json.Marshal(body)
++		req := httptest.NewRequest("POST", "/api/message?jwt="+wanterToken, bytes.NewBuffer(bb))
++		req.Header.Set("Content-Type", "application/json")
++		resp, err := getApp().Test(req, 10000)
++		require.NoError(t, err)
++		require.Equal(t, 200, resp.StatusCode)
++		var result map[string]interface{}
++		json.NewDecoder(resp.Body).Decode(&result)
++		return &result
++	}
++
++	// Request more than available → capped at 14.
++	post(20)
++	var qty int
++	var state string
++	db.Raw("SELECT quantity, state FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", chairID, wanterID).Row().Scan(&qty, &state)
++	assert.Equal(t, 14, qty, "quantity capped at available")
++	assert.Equal(t, "Interested", state)
++
++	// A single consolidated Interested chat message referencing the post.
++	var chatCount int64
++	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND userid = ? AND type = 'Interested'", msgID, wanterID).Scan(&chatCount)
++	assert.Equal(t, int64(1), chatCount)
++
++	// Re-express with a smaller quantity → updates the existing row (still one row).
++	post(3)
++	var rowCount int64
++	db.Raw("SELECT COUNT(*) FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", chairID, wanterID).Scan(&rowCount)
++	assert.Equal(t, int64(1), rowCount)
++	db.Raw("SELECT quantity FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", chairID, wanterID).Scan(&qty)
++	assert.Equal(t, 3, qty)
++
++	// Re-expressing must NOT add a second chat message — the thread stays clean.
++	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND userid = ? AND type = 'Interested'", msgID, wanterID).Scan(&chatCount)
++	assert.Equal(t, int64(1), chatCount, "re-express updates the existing chat message, not a new one")
++
++	// Quantity 0 → withdrawn.
++	post(0)
++	db.Raw("SELECT state FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", chairID, wanterID).Scan(&state)
++	assert.Equal(t, "Withdrawn", state)
++
++	// Owner cannot register interest in their own post.
++	ownerToken := getToken(t, ownerID)
++	body := map[string]interface{}{
++		"action": "BulkInterest", "id": msgID,
++		"bulkinterest": []map[string]interface{}{{"bulkitemid": chairID, "quantity": 1}},
++	}
++	bb, _ := json.Marshal(body)
++	req := httptest.NewRequest("POST", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bb))
++	req.Header.Set("Content-Type", "application/json")
++	resp, err := getApp().Test(req, 10000)
++	require.NoError(t, err)
++	assert.Equal(t, 400, resp.StatusCode, "cannot be interested in your own post")
++}
++
++// TestBulkInterestState checks the offerer can transition an interest row, and a
++// non-owner cannot.
++func TestBulkInterestState(t *testing.T) {
++	db := database.DBConn
++	prefix := uniquePrefix("bulkstate")
++	groupID := CreateTestGroup(t, prefix)
++	ownerID := CreateTestUser(t, prefix+"_owner", "User")
++	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
++	strangerID := CreateTestUser(t, prefix+"_stranger", "User")
++	CreateTestMembership(t, ownerID, groupID, "Member")
++
++	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
++	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
++	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 1, 'Interested')", deskID, msgID, wanterID)
++
++	doState := func(token string, state string) int {
++		body := map[string]interface{}{
++			"action": "BulkInterestState", "id": msgID,
++			"bulkitemid": deskID, "userid": wanterID, "state": state,
++		}
++		bb, _ := json.Marshal(body)
++		req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(bb))
++		req.Header.Set("Content-Type", "application/json")
++		resp, err := getApp().Test(req, 10000)
++		require.NoError(t, err)
++		return resp.StatusCode
++	}
++
++	// Stranger cannot change state.
++	assert.Equal(t, 403, doState(getToken(t, strangerID), "Reserved"))
++
++	// Owner can.
++	assert.Equal(t, 200, doState(getToken(t, ownerID), "Reserved"))
++	var state string
++	db.Raw("SELECT state FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", deskID, wanterID).Scan(&state)
++	assert.Equal(t, "Reserved", state)
++}
++
++// TestBulkInterestPreservesReservedState checks that once the offerer has
++// reserved an item for a replier, the replier re-expressing interest does not
++// reset the state back to Interested (which would break allocation).
++func TestBulkInterestPreservesReservedState(t *testing.T) {
++	db := database.DBConn
++	prefix := uniquePrefix("bulkreserve")
++	groupID := CreateTestGroup(t, prefix)
++	ownerID := CreateTestUser(t, prefix+"_owner", "User")
++	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
++	CreateTestMembership(t, ownerID, groupID, "Member")
++
++	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
++	chairID := addBulkItem(t, msgID, "Chair", 14, "Used")
++	wanterToken := getToken(t, wanterID)
++
++	express := func(qty int) {
++		body := map[string]interface{}{
++			"action": "BulkInterest", "id": msgID,
++			"bulkinterest": []map[string]interface{}{{"bulkitemid": chairID, "quantity": qty}},
++		}
++		bb, _ := json.Marshal(body)
++		req := httptest.NewRequest("POST", "/api/message?jwt="+wanterToken, bytes.NewBuffer(bb))
++		req.Header.Set("Content-Type", "application/json")
++		resp, err := getApp().Test(req, 10000)
++		require.NoError(t, err)
++		require.Equal(t, 200, resp.StatusCode)
++	}
++
++	express(4)
++
++	// Offerer reserves the chairs for the wanter.
++	stateBody := map[string]interface{}{
++		"action": "BulkInterestState", "id": msgID,
++		"bulkitemid": chairID, "userid": wanterID, "state": "Reserved",
++	}
++	bb, _ := json.Marshal(stateBody)
++	req := httptest.NewRequest("POST", "/api/message?jwt="+getToken(t, ownerID), bytes.NewBuffer(bb))
++	req.Header.Set("Content-Type", "application/json")
++	resp, err := getApp().Test(req, 10000)
++	require.NoError(t, err)
++	require.Equal(t, 200, resp.StatusCode)
++
++	// Wanter tweaks their quantity — state must remain Reserved.
++	express(6)
++	var state string
++	var qty int
++	db.Raw("SELECT state, quantity FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", chairID, wanterID).Row().Scan(&state, &qty)
++	assert.Equal(t, "Reserved", state, "offerer's reservation must survive a re-express")
++	assert.Equal(t, 6, qty, "quantity still updates")
++}
++
++// TestBulkOfferPatchRebuildsCatalogue checks PATCH rebuilds the catalogue and
++// drops items no longer present.
++func TestBulkOfferPatchRebuildsCatalogue(t *testing.T) {
++	db := database.DBConn
++	prefix := uniquePrefix("bulkpatch")
++	groupID := CreateTestGroup(t, prefix)
++	ownerID := CreateTestUser(t, prefix+"_owner", "User")
++	CreateTestMembership(t, ownerID, groupID, "Member")
++	token := getToken(t, ownerID)
++
++	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
++	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
++	addBulkItem(t, msgID, "OldItem", 1, "Used")
++
++	body := map[string]interface{}{
++		"id": msgID,
++		"bulkitems": []map[string]interface{}{
++			{"id": deskID, "name": "Desk", "quantity": 5, "condition": "Good"},
++			{"name": "Cabinet", "quantity": 3, "condition": "Used"},
++		},
++	}
++	bb, _ := json.Marshal(body)
++	req := httptest.NewRequest("PATCH", "/api/message?jwt="+token, bytes.NewBuffer(bb))
++	req.Header.Set("Content-Type", "application/json")
++	resp, err := getApp().Test(req, 10000)
++	require.NoError(t, err)
++	require.Equal(t, 200, resp.StatusCode)
++
++	// OldItem removed; Desk updated to qty 5; Cabinet added.
++	var names []string
++	db.Raw("SELECT name FROM messages_bulk_items WHERE msgid = ? ORDER BY name", msgID).Scan(&names)
++	assert.Equal(t, []string{"Cabinet", "Desk"}, names)
++
++	var deskQty int
++	db.Raw("SELECT quantity FROM messages_bulk_items WHERE id = ?", deskID).Scan(&deskQty)
++	assert.Equal(t, 5, deskQty)
++
++	var availInit int
++	db.Raw("SELECT availableinitially FROM messages WHERE id = ?", msgID).Scan(&availInit)
++	assert.Equal(t, 8, availInit, "availableinitially rebuilt to 5+3")
++}
++
++// TestBulkOfferSlots checks the offerer's collection windows are stored on
++// create, summarised into the textbody (so non-structured channels like Trash
++// Nothing / email see them), and returned by GET in order.
++func TestBulkOfferSlots(t *testing.T) {
++	db := database.DBConn
++	prefix := uniquePrefix("bulkslots")
++	groupID := CreateTestGroup(t, prefix)
++	ownerID := CreateTestUser(t, prefix+"_owner", "User")
++	CreateTestMembership(t, ownerID, groupID, "Member")
++	token := getToken(t, ownerID)
++
++	var locationID uint64
++	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
++
++	body := map[string]interface{}{
++		"messagetype": "Offer",
++		"item":        "Office Clearance",
++		"collection":  "Draft",
++		"groupid":     groupID,
++		"locationid":  locationID,
++		"bulkitems": []map[string]interface{}{
++			{"name": "Desk", "quantity": 2, "condition": "Good"},
++		},
++		"bulkslots": []string{"Tue 7 Apr, 10am-4pm", "Wed 8 Apr, 10am-4pm"},
++	}
++	bb, _ := json.Marshal(body)
++	req := httptest.NewRequest("PUT", "/api/message?jwt="+token, bytes.NewBuffer(bb))
++	req.Header.Set("Content-Type", "application/json")
++	resp, err := getApp().Test(req, 10000)
++	require.NoError(t, err)
++	require.Equal(t, 200, resp.StatusCode)
++	var result map[string]interface{}
++	json.NewDecoder(resp.Body).Decode(&result)
++	msgID := uint64(result["id"].(float64))
++
++	var count int64
++	db.Raw("SELECT COUNT(*) FROM messages_bulk_slots WHERE msgid = ?", msgID).Scan(&count)
++	assert.Equal(t, int64(2), count)
++
++	// Collection windows summarised into the textbody for non-structured channels.
++	var tb string
++	db.Raw("SELECT textbody FROM messages WHERE id = ?", msgID).Scan(&tb)
++	assert.Contains(t, tb, "Collection times")
++	assert.Contains(t, tb, "Tue 7 Apr")
++
++	// GET returns the slots (seed a group row so the draft is visible to the owner).
++	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, 'Approved', NOW())", msgID, groupID)
++	gresp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, token), nil), 10000)
++	require.NoError(t, err)
++	var msg message.Message
++	json.Unmarshal(rsp(gresp), &msg)
++	assert.Equal(t, []string{"Tue 7 Apr, 10am-4pm", "Wed 8 Apr, 10am-4pm"}, msg.Bulkslots)
++}
++
++// TestBulkItemPhotoIngestion checks that a per-item photo URL (e.g. supplied via
++// a spreadsheet) is downloaded and turned into a real Freegle attachment linked
++// to the item. The remote fetch and TUS upload are stubbed so the test makes no
++// network calls.
++func TestBulkItemPhotoIngestion(t *testing.T) {
++	db := database.DBConn
++	prefix := uniquePrefix("bulkphoto")
++	groupID := CreateTestGroup(t, prefix)
++	ownerID := CreateTestUser(t, prefix+"_owner", "User")
++	CreateTestMembership(t, ownerID, groupID, "Member")
++
++	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
++	deskID := addBulkItem(t, msgID, "Desk", 2, "Good")
++	db.Exec("UPDATE messages_bulk_items SET photourl = ? WHERE id = ?", "https://example.com/desk.jpg", deskID)
++
++	// Stub the remote download and the TUS upload so no network is hit.
++	origFetch := message.BulkPhotoFetcher
++	origUpload := aiimage.ImageUploader
++	defer func() {
++		message.BulkPhotoFetcher = origFetch
++		aiimage.ImageUploader = origUpload
++	}()
++
++	var fetchedURL string
++	message.BulkPhotoFetcher = func(url string) ([]byte, string, error) {
++		fetchedURL = url
++		return []byte{0xFF, 0xD8, 0xFF, 0xE0}, "image/jpeg", nil
++	}
++	const stubUID = "bulkphoto-stub-uid-123"
++	aiimage.ImageUploader = func(data []byte, mime string) (string, error) {
++		return stubUID, nil
++	}
++
++	message.IngestBulkItemPhotosSync(db, msgID)
++
++	assert.Equal(t, "https://example.com/desk.jpg", fetchedURL, "the item's photo URL should be fetched")
++
++	var externaluid string
++	var bulkitemid uint64
++	db.Raw("SELECT COALESCE(externaluid,''), COALESCE(bulkitemid,0) FROM messages_attachments WHERE msgid = ? AND bulkitemid = ?", msgID, deskID).
++		Row().Scan(&externaluid, &bulkitemid)
++	assert.Equal(t, stubUID, externaluid, "an attachment with the uploaded uid should be created")
++	assert.Equal(t, deskID, bulkitemid, "the attachment should be linked to the item")
++
++	// Running again must not create a duplicate — the item already has an attachment.
++	message.IngestBulkItemPhotosSync(db, msgID)
++	var count int64
++	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE bulkitemid = ?", deskID).Scan(&count)
++	assert.Equal(t, int64(1), count, "ingestion is idempotent — no duplicate attachment")
++}
++
++// TestBulkOfferAccessInstructions checks that access instructions are stored on
++// PUT, returned only to the offerer/mod (never a plain viewer), and delivered to
++// a replier via chat only once the offerer promises (Reserves) them an item.
++func TestBulkOfferAccessInstructions(t *testing.T) {
++	db := database.DBConn
++	prefix := uniquePrefix("bulkaccess")
++	groupID := CreateTestGroup(t, prefix)
++	ownerID := CreateTestUser(t, prefix+"_owner", "User")
++	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
++	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
++	CreateTestMembership(t, ownerID, groupID, "Member")
++	ownerToken := getToken(t, ownerID)
++
++	var locationID uint64
++	db.Raw("SELECT id FROM locations LIMIT 1").Scan(&locationID)
++
++	const instructions = "12 High St, side door, buzz flat 3"
++	body := map[string]interface{}{
++		"messagetype":        "Offer",
++		"item":               "Office Clearance",
++		"collection":         "Draft",
++		"groupid":            groupID,
++		"locationid":         locationID,
++		"accessinstructions": instructions,
++		"bulkitems": []map[string]interface{}{
++			{"name": "Desk", "quantity": 2, "condition": "Good"},
++		},
++	}
++	bb, _ := json.Marshal(body)
++	req := httptest.NewRequest("PUT", "/api/message?jwt="+ownerToken, bytes.NewBuffer(bb))
++	req.Header.Set("Content-Type", "application/json")
++	resp, err := getApp().Test(req, 10000)
++	require.NoError(t, err)
++	require.Equal(t, 200, resp.StatusCode)
++	var result map[string]interface{}
++	json.NewDecoder(resp.Body).Decode(&result)
++	msgID := uint64(result["id"].(float64))
++	require.NotZero(t, msgID)
++
++	// Stored on the message.
++	var stored string
++	db.Raw("SELECT COALESCE(accessinstructions,'') FROM messages WHERE id = ?", msgID).Scan(&stored)
++	assert.Equal(t, instructions, stored)
++
++	// Make the draft visible so GET returns it.
++	db.Exec("INSERT INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, 'Approved', NOW())", msgID, groupID)
++	deskID := addBulkItemRef(t, msgID)
++
++	// --- Owner sees the instructions. ---
++	oresp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, ownerToken), nil), 10000)
++	require.NoError(t, err)
++	var ownerMsg message.Message
++	json.Unmarshal(rsp(oresp), &ownerMsg)
++	require.NotNil(t, ownerMsg.Accessinstructions, "owner should see access instructions")
++	assert.Equal(t, instructions, *ownerMsg.Accessinstructions)
++
++	// --- A plain viewer must NOT see the instructions. ---
++	vresp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, getToken(t, viewerID)), nil), 10000)
++	require.NoError(t, err)
++	var viewerMsg message.Message
++	json.Unmarshal(rsp(vresp), &viewerMsg)
++	assert.Nil(t, viewerMsg.Accessinstructions, "a plain viewer must not see access instructions")
++
++	// --- Reveal on promise: owner Reserves the item for the wanter. ---
++	db.Exec("INSERT INTO messages_bulk_items_interest (bulkitemid, msgid, userid, quantity, state) VALUES (?, ?, ?, 1, 'Interested')", deskID, msgID, wanterID)
++
++	stateBody := map[string]interface{}{
++		"action": "BulkInterestState", "id": msgID,
++		"bulkitemid": deskID, "userid": wanterID, "state": "Reserved",
++	}
++	sb, _ := json.Marshal(stateBody)
++	sreq := httptest.NewRequest("POST", "/api/message?jwt="+ownerToken, bytes.NewBuffer(sb))
++	sreq.Header.Set("Content-Type", "application/json")
++	sresp, err := getApp().Test(sreq, 10000)
++	require.NoError(t, err)
++	require.Equal(t, 200, sresp.StatusCode)
++
++	// The wanter received a chat message containing the instructions.
++	var chatBody string
++	db.Raw("SELECT cm.message FROM chat_messages cm "+
++		"INNER JOIN chat_rooms cr ON cr.id = cm.chatid "+
++		"WHERE cm.userid = ? AND ((cr.user1 = ? AND cr.user2 = ?) OR (cr.user1 = ? AND cr.user2 = ?)) "+
++		"ORDER BY cm.id DESC LIMIT 1",
++		ownerID, ownerID, wanterID, wanterID, ownerID).Scan(&chatBody)
++	assert.Contains(t, chatBody, instructions, "the promised replier should receive the access instructions")
++
++	// Re-reserving must not send the instructions again (state already Reserved).
++	sreq2 := httptest.NewRequest("POST", "/api/message?jwt="+ownerToken, mustJSON(stateBody))
++	sreq2.Header.Set("Content-Type", "application/json")
++	getApp().Test(sreq2, 10000)
++	var sent int64
++	db.Raw("SELECT COUNT(*) FROM chat_messages cm INNER JOIN chat_rooms cr ON cr.id = cm.chatid "+
++		"WHERE cm.userid = ? AND cm.message LIKE ? AND ((cr.user1 = ? AND cr.user2 = ?) OR (cr.user1 = ? AND cr.user2 = ?))",
++		ownerID, "%"+instructions+"%", ownerID, wanterID, wanterID, ownerID).Scan(&sent)
++	assert.Equal(t, int64(1), sent, "access instructions sent once, not on every re-reserve")
++}
++
++// addBulkItemRef returns the id of the (single) bulk item created for a message.
++func addBulkItemRef(t *testing.T, msgid uint64) uint64 {
++	var id uint64
++	database.DBConn.Raw("SELECT id FROM messages_bulk_items WHERE msgid = ? ORDER BY id ASC LIMIT 1", msgid).Scan(&id)
++	require.NotZero(t, id)
++	return id
++}
++
++func mustJSON(v interface{}) *bytes.Buffer {
++	b, _ := json.Marshal(v)
++	return bytes.NewBuffer(b)
++}
+diff --git a/plans/active/bulk-offer-clearance-design.md b/plans/active/bulk-offer-clearance-design.md
+new file mode 100644
+index 000000000..33cdc656b
+--- /dev/null
++++ b/plans/active/bulk-offer-clearance-design.md
+@@ -0,0 +1,121 @@
++# Bulk Offer ("Clearance") — Structured Multi-Item Listings
++
++**Status**: Design → Implementation
++**Created**: 2026-06-02
++**Branch**: `feature/bulk-offer-clearance`
++**Relates to**: [`freegle-helper-concierge.md`](freegle-helper-concierge.md) (the AI concierge that sits on top of this data model)
++
++## The Problem (from the Mind in Brighton case study)
++
++A single offerer (e.g. Mind during an office clearance) has a large number of items to redistribute at once — ~120 items catalogued in a **spreadsheet** with **photos, measurements and condition**. Today Freegle only supports one item per post, so a clearance means ~120 separate posts, each composed and photographed individually, and replies scattered across all of them.
++
++The case study describes the desired model precisely:
++
++> "The full catalogue … was used to publish a coordinated batch of listings … presented to the local community as a **single, browsable offer**. Because many items were offered simultaneously, people were able to **express interest in more than one item in a single message**. Interest was captured against the **central catalogue**, so that for every item it was possible to see **who had asked for it, how many they wanted and when they were able to collect**."
++
++The Freegle Helper concierge then manages the resulting conversations. **This work builds the foundation the concierge operates on**: the structured multi-item listing + per-item interest tracking. It does not build the concierge agent itself.
++
++## Scope
++
++In scope:
++1. **Data model** — a message can carry a structured catalogue of items (name, quantity, condition, dimensions, description, photos), with per-item interest tracking (who, how many, when they can collect, state).
++2. **Posting interface** — a "clearance" composer: add items as one-liners (name / qty / condition / dimensions / photos) **or** upload a spreadsheet (CSV). All items go into **one** post whose subject is the general offer (e.g. "Office Clearance").
++3. **Browsing/response** — when viewing the post, a recipient ticks a **checkbox per item** and sets **how many** they want; their selection is recorded as interest against the catalogue and opens/produces a chat reply to the offerer.
++4. **Email** — the catalogue renders sensibly in the digest/notification emails (item list with thumbnails, quantity, condition).
++5. **Graceful degradation** — the message `textbody` always contains a human-readable summary of the catalogue, so any consumer that only knows `textbody` (search, V1 digest, plain-text email) still shows something useful.
++
++Out of scope (later / concierge work): the Claude loop agent, allocation/scoring, promise automation, dashboard. Those consume this data via existing + new APIs.
++
++## Data Model (separate tables, not JSON-in-body)
++
++The user floated JSON-in-`textbody`. Rejected: the concierge and the UI both need to **query per-item interest and state** ("who wants item Y, how many, what state"). JSON blobs are unqueryable and fragile. We use normalised tables. The message stays a normal `Offer` (type unchanged); a bulk offer is simply one that has rows in `messages_bulk_items`.
++
++Laravel migrations in `iznik-batch/database/migrations/` are the single source of truth.
++
++### `messages_bulk_items` — the catalogue
++| column | type | notes |
++|---|---|---|
++| `id` | bigIncrements | PK |
++| `msgid` | unsignedBigInteger | FK → `messages.id` (cascade delete) |
++| `position` | unsignedInteger default 0 | display order within the post |
++| `name` | varchar(255) | item name (the one-liner) |
++| `quantity` | unsignedInteger default 1 | how many offered (per item) |
++| `condition` | enum(`New`,`LikeNew`,`Good`,`Used`,`Poor`,`Unknown`) default `Unknown` | from the case study's "condition assessed visually" |
++| `dimensions` | varchar(255) nullable | free-text measurements ("120×80×74cm") |
++| `description` | text nullable | optional extra detail per item |
++| `created_at`/`updated_at` | timestamps | |
++
++Indexes: `msgid`, (`msgid`,`position`).
++
++### `messages_bulk_items_interest` — interest against the catalogue
++| column | type | notes |
++|---|---|---|
++| `id` | bigIncrements | PK |
++| `bulkitemid` | unsignedBigInteger | FK → `messages_bulk_items.id` (cascade) |
++| `msgid` | unsignedBigInteger | FK → `messages.id` (cascade) — denormalised for easy per-post queries |
++| `userid` | unsignedBigInteger | FK → `users.id` (cascade) |
++| `quantity` | unsignedInteger default 1 | how many of this item they want |
++| `cancollect` | varchar(255) nullable | when they can collect (free text) |
++| `state` | enum(`Interested`,`Reserved`,`Collected`,`Withdrawn`,`Rejected`) default `Interested` | mirrors concierge item-states (Reserved≈promised/allocated, Collected≈rehomed) |
++| `chatid` | unsignedBigInteger nullable | FK → `chat_rooms.id` — the conversation this interest belongs to |
++| `created_at`/`updated_at` | timestamps | |
++
++Unique key `(bulkitemid, userid)` — one interest row per user per item (re-expressing updates quantity/cancollect). Indexes: `msgid`, `userid`, `bulkitemid`.
++
++This table answers the case-study requirement directly: for every item, who asked, how many, when they can collect, and current state.
++
++### `messages_attachments.bulkitemid` — photos per item
++Add a nullable `bulkitemid` column (FK → `messages_bulk_items.id`, ON DELETE SET NULL) to the existing `messages_attachments` table. A photo in a bulk listing belongs to exactly one catalogue item; `NULL` keeps existing post-level behaviour unchanged. (The pre-existing-but-unused `messages_attachments_items` table links to the global `items` catalogue, not per-message rows, so it is unsuitable.)
++
++## API (V2 Go — `iznik-server-go`, where message reads & writes already live)
++
++**Read** — `GET /message/{id}` gains a `bulkitems` array. Each entry:
++```
++{ id, position, name, quantity, condition, dimensions, description,
++  attachments: [ {id, path, paththumb, ...} ],   // grouped by bulkitemid
++  interestcount,            // distinct users interested
++  interestedquantity,       // sum of requested quantities
++  yourinterest: { quantity, cancollect, state } | null,  // for the calling user
++  interest: [ {userid, quantity, cancollect, state} ]    // owner/mod only
++}
++```
++A loader goroutine in `GetMessagesByIds` fetches the catalogue + grouped attachments + interest summary, mirroring the existing attachment/outcome fan-out. `bulk: true` and `bulkcount` are derived (presence-based) for list/summary use.
++
++**Write (create/edit)** — `PUT /message` and `PATCH /message` accept an optional `bulkitems` array (each: position, name, quantity, condition, dimensions, description, attachmentids[]). The handler upserts `messages_bulk_items`, links attachments via `bulkitemid`, and rebuilds the `textbody` summary. `availableinitially` on the message is set to the total quantity across items.
++
++**Express interest** — new `POST /message` action `BulkInterest`:
++```
++{ action: "BulkInterest", id: <msgid>, items: [ {bulkitemid, quantity, cancollect} ] }
++```
++Upserts interest rows for the calling user, ensures a `User2User` chat room with the offerer exists, and posts **one consolidated** `Interested` chat message referencing the post (`refmsgid`) summarising the selected items — so it flows through the existing reply/chat system and the concierge sees it. Clearing a tick (quantity 0) sets that row to `Withdrawn`.
++
++**State (owner/concierge)** — `POST /message` action `BulkInterestState` `{ id, bulkitemid, userid, state }` transitions an interest row (Interested→Reserved→Collected, or →Rejected/Withdrawn) with permission checks (offerer or mod only).
++
++All write paths keep `textbody` in sync with a readable summary (graceful degradation).
++
++## Frontend (`iznik-nuxt3`)
++
++- **Composer** — a "Clearance / many items" entry into the give flow. A `BulkItemEditor` component renders a list of item rows; each row is a one-liner (name, qty, condition select, dimensions) with a compact `PhotoUploader` (per item). A "Upload spreadsheet" control parses a CSV (papaparse — already used in modtools) with columns `name,quantity,condition,dimensions,description` into rows. Submits via the compose store → `PUT`/`POST` with `bulkitems`.
++- **Display** — `MessageExpanded` renders the catalogue when `message.bulkitems` is present: each item shows photo, name, "N available", condition, dimensions, a **checkbox** and a **quantity** stepper (capped at available). A single "Register interest" action sends `BulkInterest` for all ticked items, then opens the chat. Reuses `useReplyStateMachine` for auth/send.
++- **List/summary** — `MessageSummary` shows a bulk indicator ("Office Clearance · 12 items") and a small thumbnail strip.
++- Follows existing conventions: `bootstrap-vue-next`, FontAwesome `<v-icon>`, `NumberIncrementDecrement`, SCSS `/* */` comments.
++
++## Email (`iznik-batch` UnifiedDigest — the live immediate path)
++
++`preparePosts()` adds `items` (the catalogue) to each post. Templates render it:
++- **MJML** (`unified.blade.php`): below the description, an `<mj-table>` row-per-item (40×40 thumbnail + name + "×qty" + condition), following the existing jobs-table pattern. The OFFER pill shows the item count.
++- **AMP** and **text**: equivalent item list. Text: `  - {name} ×{qty} ({condition})`.
++The V1 daily-digest path renders `textbody`, which carries the readable summary, so it degrades gracefully without V1 changes.
++
++## Testing
++
++- **Migrations**: covered by the test-DB rebuild (`migrate:fresh`); add a Laravel test asserting tables/columns + cascade behaviour.
++- **Go**: handler tests — create with `bulkitems`, `GET` returns catalogue + grouped attachments + interest summary + `yourinterest`; `BulkInterest` upsert + consolidated chat message + idempotent re-express; `BulkInterestState` permissions; quantity cap. Run via status API `/api/tests/go`.
++- **Laravel**: digest render test asserts the item table appears for a bulk offer and the text summary lists items. Run via `/api/tests/laravel`.
++- **Frontend**: Vitest unit tests for `BulkItemEditor` (add/remove/CSV parse) and the display checkbox→payload mapping. Playwright E2E (via Chrome MCP and `/api/tests/playwright`) for compose-a-clearance and express-interest flows.
++
++## Key decisions / rationale
++- **Separate tables, not JSON** — the concierge needs queryable per-item interest + state.
++- **Still a normal `Offer`** — no new message type; presence of `messages_bulk_items` rows flags it. Minimises blast radius (no `messages` migration, no V1 parity break).
++- **Interest flows through chat** — reuses the existing reply/promise/notification machinery the concierge already understands; the new tables add the per-item structure on top.
++- **`textbody` summary always maintained** — every non-V2 consumer keeps working.
+diff --git a/plans/active/bulk-offer-screenshots/clearance-composer.png b/plans/active/bulk-offer-screenshots/clearance-composer.png
+new file mode 100644
+index 000000000..087357a4b
+Binary files /dev/null and b/plans/active/bulk-offer-screenshots/clearance-composer.png differ
+diff --git a/plans/active/bulk-offer-screenshots/recipient-interest.png b/plans/active/bulk-offer-screenshots/recipient-interest.png
+new file mode 100644
+index 000000000..d546a64fd
+Binary files /dev/null and b/plans/active/bulk-offer-screenshots/recipient-interest.png differ
