@@ -201,6 +201,10 @@ config.global.stubs = {
     template: '<div class="radio-group"><slot /></div>',
     props: ['modelValue', 'options', 'stacked'],
   },
+  'b-form-checkbox-group': {
+    template: '<div class="checkbox-group"><slot /></div>',
+    props: ['modelValue', 'options', 'stacked'],
+  },
   'b-form-radio': {
     template:
       '<label class="form-radio"><input type="radio" :value="value" @change="$emit(\'update:modelValue\', value)" /><slot /></label>',
