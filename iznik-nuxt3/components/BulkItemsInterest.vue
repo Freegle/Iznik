@@ -9,72 +9,81 @@
     </p>
 
     <ul class="bulkitems__list">
+      <!-- One compact line per item: thumb | #ref name + badges | toggle + qty. -->
       <li v-for="(item, idx) in items" :key="item.id" class="bitem">
-        <div class="bitem__photo">
+        <button
+          type="button"
+          class="bitem__photo"
+          :class="{ 'bitem__photo--zoom': thumb(item) }"
+          :title="thumb(item) ? 'Click to enlarge' : ''"
+          @click="enlarge(item)"
+        >
           <img
             v-if="thumb(item)"
             :src="thumb(item)"
-            :alt="item.name"
+            alt=""
             loading="lazy"
+            @error="brokenImage"
           />
           <v-icon v-else icon="image" class="bitem__nophoto" />
-        </div>
+        </button>
 
         <div class="bitem__detail">
-          <div class="bitem__name">
-            <span class="bitem__ref">#{{ idx + 1 }}</span> {{ item.name }}
-          </div>
-          <div class="bitem__meta">
-            <b-badge variant="light" class="me-1"
-              >{{ item.quantity }} available</b-badge
-            >
-            <b-badge
-              v-if="item.condition && item.condition !== 'Unknown'"
-              variant="info"
-              class="me-1"
-            >
-              {{ conditionLabel(item.condition) }}
-            </b-badge>
-            <span v-if="item.dimensions" class="text-muted small">{{
-              item.dimensions
-            }}</span>
-          </div>
-
-          <!-- Owner sees a live interest summary. -->
-          <div v-if="isOwner" class="bitem__interest small">
-            <span v-if="item.interestcount">
-              <strong>{{ item.interestcount }}</strong>
-              interested · <strong>{{ item.interestedquantity }}</strong>
-              requested
-            </span>
-            <span v-else class="text-muted">No interest yet</span>
-          </div>
+          <span class="bitem__ref">#{{ idx + 1 }}</span>
+          <span class="bitem__name">{{ item.name }}</span>
+          <b-badge variant="light">{{ item.quantity }} left</b-badge>
+          <b-badge
+            v-if="item.condition && item.condition !== 'Unknown'"
+            variant="info"
+          >
+            {{ conditionLabel(item.condition) }}
+          </b-badge>
+          <span v-if="item.dimensions" class="text-muted small">{{
+            item.dimensions
+          }}</span>
         </div>
 
-        <!-- Recipient: a standard on/off toggle; quantity appears once it's on. -->
-        <div v-if="!isOwner && !message.successful" class="bitem__pick">
+        <!-- Owner: compact interest summary. -->
+        <div v-if="isOwner" class="bitem__interest small text-muted">
+          <span v-if="item.interestcount"
+            >{{ item.interestcount }} interested ·
+            {{ item.interestedquantity }} req'd</span
+          >
+          <span v-else>—</span>
+        </div>
+
+        <!-- Recipient: labelled toggle + quantity dropdown, inline. -->
+        <div v-else-if="!message.successful" class="bitem__pick">
           <b-form-checkbox
             v-model="picks[item.id].checked"
             switch
-            size="lg"
             class="bitem__toggle"
             :data-testid="'pick-' + item.id"
             @change="onCheck(item)"
+          >
+            I'd like this
+          </b-form-checkbox>
+          <b-form-select
+            v-if="picks[item.id].checked"
+            v-model="picks[item.id].quantity"
+            :options="qtyOptions(item)"
+            size="sm"
+            class="bitem__qtysel"
+            :aria-label="'How many ' + item.name"
+            :data-testid="'qty-' + item.id"
           />
-          <div class="bitem__qty">
-            <NumberIncrementDecrement
-              v-if="picks[item.id].checked"
-              v-model="picks[item.id].quantity"
-              :min="1"
-              :max="item.quantity"
-              size="sm"
-              label="How many?"
-              :label-s-r-only="true"
-            />
-          </div>
         </div>
       </li>
     </ul>
+
+    <!-- Reuse the shared photo zoom modal; the bulk photos are the message's
+         attachments, so it opens at the clicked item's photo. -->
+    <MessagePhotosModal
+      v-if="showPhotos"
+      :id="id"
+      :initial-index="photoIndex"
+      @hidden="showPhotos = false"
+    />
 
     <div v-if="!isOwner && !message.successful" class="bulkitems__actions">
       <b-form-group label="Which collection time suits you?" class="mb-2">
@@ -109,12 +118,15 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, defineAsyncComponent } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
-import NumberIncrementDecrement from '~/components/NumberIncrementDecrement'
 import SpinButton from '~/components/SpinButton'
 import NoticeMessage from '~/components/NoticeMessage'
+
+const MessagePhotosModal = defineAsyncComponent(() =>
+  import('~/components/MessagePhotosModal')
+)
 
 const props = defineProps({
   id: { type: Number, required: true },
@@ -194,6 +206,30 @@ function conditionLabel(c) {
   return c === 'LikeNew' ? 'Like new' : c
 }
 
+// If a thumbnail fails to load, fall back to the shared placeholder rather
+// than showing a broken-image box (matches NewsPhotoModal's behaviour).
+function brokenImage(event) {
+  event.target.src = '/placeholder.jpg'
+}
+
+// Quantity choices for an item: 1..available, defaulting to 1.
+function qtyOptions(item) {
+  const max = Math.max(1, parseInt(item.quantity, 10) || 1)
+  return Array.from({ length: max }, (_, i) => i + 1)
+}
+
+// Click a thumbnail to open the shared photo zoom modal at that item's photo.
+const showPhotos = ref(false)
+const photoIndex = ref(0)
+function enlarge(item) {
+  const att = item.attachments && item.attachments[0]
+  if (!att) return
+  const all = message.value?.attachments || []
+  const idx = all.findIndex((a) => a.id === att.id)
+  photoIndex.value = idx >= 0 ? idx : 0
+  showPhotos.value = true
+}
+
 // Build the API payload: checked items at their quantity (with the chosen
 // collection time), plus any item previously wanted but now switched off
 // (quantity 0 withdraws it).
@@ -252,21 +288,22 @@ defineExpose({ buildPayload, picks, canRegister })
   padding: 0;
 }
 
-/* Consistent row: photo | details (flex) | pick column (fixed width). */
+/* One compact line: photo | details (flex, truncates) | toggle + qty. */
 .bitem {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.6rem 0;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
   border-bottom: 1px solid $color-gray--lighter;
-  min-height: 64px;
 }
 
 .bitem__photo {
-  flex: 0 0 56px;
-  width: 56px;
-  height: 56px;
-  border-radius: 6px;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
   overflow: hidden;
   background-color: $color-gray--lighter;
   display: flex;
@@ -280,37 +317,76 @@ defineExpose({ buildPayload, picks, canRegister })
   }
 }
 
-.bitem__nophoto {
-  color: $color-gray--normal;
-  font-size: 1.4rem;
+.bitem__photo--zoom {
+  cursor: zoom-in;
 }
 
+.bitem__nophoto {
+  color: $color-gray--normal;
+}
+
+/* Name + badges share one line; the name truncates if the row is tight. */
 .bitem__detail {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+  overflow: hidden;
+
+  .badge {
+    flex: 0 0 auto;
+  }
 }
 
 .bitem__name {
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .bitem__ref {
   color: $color-gray--normal;
   font-weight: 400;
   font-size: 0.85em;
+  flex: 0 0 auto;
 }
 
-/* Fixed-width pick column so rows stay the same shape whether on or off. */
+.bitem__interest {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* Toggle + quantity inline, never wrapping. */
 .bitem__pick {
-  flex: 0 0 7.5rem;
+  flex: 0 0 auto;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 0.35rem;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
 }
 
-.bitem__qty {
-  min-height: 2rem;
-  width: 7rem;
+.bitem__qtysel {
+  width: 4.25rem;
+}
+
+/* On a phone the photo + name + badges + the pick/interest controls don't fit
+   on one line (the row overflows ~390px). Wrap the recipient's toggle+quantity
+   — and the owner's interest summary — onto their own full-width line so the
+   photo, name and badges keep the first line and nothing is pushed off-screen. */
+@media (max-width: 575.98px) {
+  .bitem {
+    flex-wrap: wrap;
+  }
+
+  .bitem__pick,
+  .bitem__interest {
+    flex-basis: 100%;
+    /* Indent with padding (inside the 100% basis) not margin (which would add
+       on top of 100% and re-introduce overflow). */
+    padding-left: calc(40px + 0.5rem);
+    margin-top: 0.25rem;
+  }
 }
 </style>

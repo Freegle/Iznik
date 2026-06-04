@@ -20,7 +20,7 @@
           <!-- Where (postcode) first: it picks the community. -->
           <h2 class="bulk-section">Where are you?</h2>
           <PostCode
-            :value="postcode"
+            :value="initialPostcode"
             @selected="postcodeSelect"
             @cleared="postcodeClear"
           />
@@ -39,6 +39,7 @@
             placeholder="e.g. Office Clearance"
             maxlength="60"
             data-testid="clearance-title"
+            aria-label="Offer title"
           />
           <p class="bulk-help mt-2 mb-1">
             A few words about the whole offer — this applies to every item.
@@ -52,6 +53,7 @@
             rows="4"
             placeholder="e.g. Charity office clearance — everything must go by Friday. Collection from central Brighton."
             maxlength="2000"
+            aria-label="Description of the whole offer"
           />
 
           <h2 class="bulk-section">The items</h2>
@@ -72,6 +74,7 @@
               placeholder="e.g. Tue 7 Apr, 10am–4pm"
               maxlength="120"
               :data-testid="'slot-' + i"
+              :aria-label="'Collection time ' + (i + 1)"
             />
             <b-button
               variant="link"
@@ -102,6 +105,7 @@
             :min="today"
             class="bulk-deadline"
             data-testid="clearance-deadline"
+            aria-label="Closing date for replies"
           />
 
           <h2 class="bulk-section">Access instructions</h2>
@@ -115,6 +119,7 @@
             placeholder="e.g. 12 High St, side door, buzz flat 3. Optional."
             maxlength="2000"
             data-testid="clearance-access"
+            aria-label="Access instructions, shared once you promise an item"
           />
 
           <div class="my-4">
@@ -158,9 +163,8 @@ const composeStore = useComposeStore()
 const authStore = useAuthStore()
 const router = useRouter()
 
-const { email, loggedIn, postcode, postcodeValid, noGroups } = await setup(
-  'Offer'
-)
+const { email, loggedIn, initialPostcode, postcode, postcodeValid, noGroups } =
+  await setup('Offer')
 
 const title = ref('')
 const description = ref('')

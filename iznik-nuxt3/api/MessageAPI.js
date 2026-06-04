@@ -106,11 +106,14 @@ export default class MessageAPI extends BaseAPI {
   // Register interest in one or more items of a bulk offer. `items` is an array
   // of { bulkitemid, quantity, cancollect }. A quantity of 0 withdraws interest
   // in that item.
-  bulkInterest(id, items) {
+  // interestuserid lets the offerer record a replier's interest on their behalf;
+  // omit it (or pass falsy) to express your own.
+  bulkInterest(id, items, interestuserid) {
     return this.$postv2('/message', {
       action: 'BulkInterest',
       id,
       bulkinterest: items,
+      ...(interestuserid ? { interestuserid } : {}),
     })
   }
 

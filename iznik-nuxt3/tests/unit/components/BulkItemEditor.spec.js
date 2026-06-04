@@ -80,6 +80,37 @@ describe('BulkItemEditor', () => {
     expect(w.emitted('update:modelValue')).toBeTruthy()
   })
 
+  it('tap-to-assign moves a tray photo onto the tapped item (touch fallback)', async () => {
+    const w = mount(BulkItemEditor, mountOpts)
+    w.vm.items[0].name = 'Desk'
+    w.vm.tray.push({ id: 11 }, { id: 12 })
+    await nextTick()
+
+    // Tap the second tray photo to pick it up, then tap the item.
+    w.vm.onTrayPhotoClick(1)
+    expect(w.vm.selectedTrayPhoto).toBe(1)
+    w.vm.onRowPhotoClick(0)
+    await nextTick()
+
+    expect(w.vm.items[0].photos.map((p) => p.id)).toEqual([12])
+    expect(w.vm.tray.map((p) => p.id)).toEqual([11]) // the other stays
+    expect(w.vm.selectedTrayPhoto).toBe(null) // selection cleared after assign
+  })
+
+  it('tapping a picked-up tray photo again cancels the selection', async () => {
+    const w = mount(BulkItemEditor, mountOpts)
+    w.vm.tray.push({ id: 11 })
+    await nextTick()
+    w.vm.onTrayPhotoClick(0)
+    expect(w.vm.selectedTrayPhoto).toBe(0)
+    w.vm.onTrayPhotoClick(0)
+    expect(w.vm.selectedTrayPhoto).toBe(null)
+    // Tapping an item with nothing picked up does nothing.
+    w.vm.onRowPhotoClick(0)
+    expect(w.vm.items[0].photos).toHaveLength(0)
+    expect(w.vm.tray).toHaveLength(1)
+  })
+
   it('seeds from an incoming modelValue', () => {
     const w = mount(BulkItemEditor, {
       ...mountOpts,

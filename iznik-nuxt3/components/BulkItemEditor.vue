@@ -49,7 +49,12 @@
             @dragleave="onRowLeave(idx)"
             @drop="onDropToItem(idx)"
           >
-            <div class="bcell-photo brow__photos">
+            <div
+              class="bcell-photo brow__photos"
+              :class="{ 'bcell-photo--target': selectedTrayPhoto !== null }"
+              :data-testid="'item-photocell-' + idx"
+              @click="onRowPhotoClick(idx)"
+            >
               <div
                 v-for="(p, pi) in item.photos"
                 :key="p.id || pi"
@@ -57,7 +62,7 @@
                 draggable="true"
                 title="Drag to move, click to remove"
                 @dragstart="onDragStart($event, idx, pi)"
-                @click="unassign(idx, pi)"
+                @click.stop="unassign(idx, pi)"
               >
                 <img :src="thumbSrc(p)" alt="" />
               </div>
@@ -84,6 +89,7 @@
               placeholder="Item name"
               maxlength="255"
               :data-testid="'item-name-' + idx"
+              :aria-label="'Item ' + (idx + 1) + ' name'"
             />
             <b-form-input
               v-model.number="item.quantity"
@@ -93,7 +99,7 @@
               min="1"
               max="999"
               :data-testid="'item-qty-' + idx"
-              aria-label="Quantity"
+              :aria-label="'Item ' + (idx + 1) + ' quantity'"
             />
             <b-form-select
               v-model="item.condition"
@@ -101,6 +107,7 @@
               size="sm"
               class="bfield"
               :data-testid="'item-condition-' + idx"
+              :aria-label="'Item ' + (idx + 1) + ' condition'"
             />
             <b-form-input
               v-model="item.dimensions"
@@ -108,6 +115,7 @@
               size="sm"
               placeholder="optional"
               maxlength="255"
+              :aria-label="'Item ' + (idx + 1) + ' size (optional)'"
             />
             <b-button
               variant="link"
@@ -156,22 +164,33 @@
             data-testid="photo-tray"
           >
             <span class="bulkeditor__tray-label">
-              <v-icon icon="arrow-left" /> Drag a photo onto its item
+              <template v-if="selectedTrayPhoto !== null">
+                <v-icon icon="plus" /> Now tap the item this photo belongs to
+              </template>
+              <template v-else>
+                <v-icon icon="arrow-left" /> Drag a photo onto its item — or tap
+                a photo, then tap its item
+              </template>
             </span>
             <div class="bulkeditor__tray-strip">
               <div
                 v-for="(p, i) in tray"
                 :key="p.id || i"
                 class="pthumb"
+                :class="{ 'pthumb--selected': selectedTrayPhoto === i }"
                 draggable="true"
+                role="button"
+                :aria-pressed="selectedTrayPhoto === i"
+                :data-testid="'tray-photo-' + i"
                 @dragstart="onDragStart($event, -1, i)"
+                @click="onTrayPhotoClick(i)"
               >
                 <img :src="thumbSrc(p)" alt="" />
                 <button
                   type="button"
                   class="pthumb__x"
                   aria-label="Remove photo"
-                  @click="removeTrayPhoto(i)"
+                  @click.stop="removeTrayPhoto(i)"
                 >
                   ×
                 </button>
@@ -255,6 +274,10 @@ const importMessage = ref('')
 let dragSrc = null
 const dragOverIdx = ref(null)
 
+// Tap-to-assign (touch fallback for drag-and-drop, which doesn't fire on touch):
+// the index of the tray photo the user has tapped to "pick up", or null.
+const selectedTrayPhoto = ref(null)
+
 const totalItems = computed(
   () => items.value.filter((i) => i.name && i.name.trim()).length
 )
@@ -299,6 +322,8 @@ function removeItem(idx) {
 
 function removeTrayPhoto(i) {
   tray.value.splice(i, 1)
+  // Indices shifted — drop any pending tap selection to avoid mis-assignment.
+  selectedTrayPhoto.value = null
 }
 
 function onDragStart(e, from, index) {
@@ -330,6 +355,21 @@ function takeDragged() {
 function onDropToItem(idx) {
   dragOverIdx.value = null
   const photo = takeDragged()
+  if (photo && items.value[idx]) {
+    items.value[idx].photos.push(photo)
+  }
+}
+
+// Tap a tray photo to pick it up (or tap again to cancel).
+function onTrayPhotoClick(i) {
+  selectedTrayPhoto.value = selectedTrayPhoto.value === i ? null : i
+}
+
+// Tap an item while a tray photo is picked up to assign it there.
+function onRowPhotoClick(idx) {
+  if (selectedTrayPhoto.value === null) return
+  const photo = tray.value.splice(selectedTrayPhoto.value, 1)[0]
+  selectedTrayPhoto.value = null
   if (photo && items.value[idx]) {
     items.value[idx].photos.push(photo)
   }
@@ -411,6 +451,9 @@ defineExpose({
   addItem,
   removeItem,
   tray,
+  selectedTrayPhoto,
+  onTrayPhotoClick,
+  onRowPhotoClick,
 })
 </script>
 
@@ -557,6 +600,23 @@ defineExpose({
 .pthumb--sm {
   width: 34px;
   height: 34px;
+}
+
+/* Tap-to-assign cues: the picked-up tray photo, and the item photo cells that
+   are valid drop targets while one is picked up. */
+.pthumb--selected {
+  outline: 3px solid $color-green--darker;
+  outline-offset: 1px;
+}
+
+.bcell-photo--target {
+  cursor: pointer;
+
+  .brow__drop {
+    border-color: $color-green--darker;
+    border-style: solid;
+    color: $color-green--darker;
+  }
 }
 
 .pthumb__x {

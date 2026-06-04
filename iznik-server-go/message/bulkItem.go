@@ -134,7 +134,18 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 	if fromuser == 0 {
 		return fiber.NewError(fiber.StatusNotFound, "Message not found")
 	}
-	if fromuser == myid {
+
+	// Whose interest are we recording? By default the caller's own. The offerer
+	// may record a replier's interest on their behalf (e.g. the replier asked
+	// for an extra item in free-text chat) by passing interestuserid.
+	target := myid
+	if req.Interestuserid != nil && *req.Interestuserid != myid {
+		if myid != fromuser {
+			return fiber.NewError(fiber.StatusForbidden, "Only the giver can record interest for another freegler")
+		}
+		target = *req.Interestuserid
+	}
+	if target == fromuser {
 		return fiber.NewError(fiber.StatusBadRequest, "Cannot register interest in your own post")
 	}
 
@@ -173,13 +184,13 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 	// Withdraw interest (keep the row for history). No chat room needed.
 	for _, id := range withdraw {
 		db.Exec("UPDATE messages_bulk_items_interest SET state = 'Withdrawn', quantity = 0 WHERE bulkitemid = ? AND userid = ?",
-			id, myid)
+			id, target)
 	}
 
 	var chatid uint64
 	if len(picked) > 0 {
-		// Only now do we need a conversation with the offerer.
-		chatid = findOrCreateUser2UserRoom(db, myid, fromuser)
+		// Only now do we need a conversation between the replier and the offerer.
+		chatid = findOrCreateUser2UserRoom(db, target, fromuser)
 
 		for _, p := range picked {
 			// Preserve an offerer-set state (Reserved/Collected/Rejected) — a
@@ -188,7 +199,7 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 				"VALUES (?, ?, ?, ?, ?, ?, 'Interested') "+
 				"ON DUPLICATE KEY UPDATE quantity = VALUES(quantity), cancollect = VALUES(cancollect), chatid = VALUES(chatid), "+
 				"state = IF(state IN ('Reserved','Collected','Rejected'), state, 'Interested')",
-				p.bulkitemid, req.ID, myid, p.qty, p.cancollect, chatid)
+				p.bulkitemid, req.ID, target, p.qty, p.cancollect, chatid)
 		}
 
 		// One consolidated Interested chat reply: insert the first time, update
@@ -206,12 +217,12 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 		}
 		var existingID uint64
 		db.Raw("SELECT id FROM chat_messages WHERE chatid = ? AND userid = ? AND refmsgid = ? AND type = ? ORDER BY id DESC LIMIT 1",
-			chatid, myid, req.ID, utils.CHAT_MESSAGE_INTERESTED).Scan(&existingID)
+			chatid, target, req.ID, utils.CHAT_MESSAGE_INTERESTED).Scan(&existingID)
 		if existingID > 0 {
 			db.Exec("UPDATE chat_messages SET message = ?, date = ? WHERE id = ?", body, time.Now(), existingID)
 		} else {
 			db.Exec("INSERT INTO chat_messages (chatid, userid, type, refmsgid, date, message, processingrequired) VALUES (?, ?, ?, ?, ?, ?, 1)",
-				chatid, myid, utils.CHAT_MESSAGE_INTERESTED, req.ID, time.Now(), body)
+				chatid, target, utils.CHAT_MESSAGE_INTERESTED, req.ID, time.Now(), body)
 		}
 		db.Exec("UPDATE chat_rooms SET latestmessage = NOW() WHERE id = ?", chatid)
 	}
