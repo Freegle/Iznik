@@ -160,6 +160,7 @@ function share() {
 .imgthumb,
 :deep(.imgthumb img) {
   width: 100%;
+  max-height: 400px;
   object-fit: cover;
 
   @include media-breakpoint-up(md) {
