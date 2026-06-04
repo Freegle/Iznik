@@ -71,6 +71,70 @@ class VolunteeringDigestMailTest extends TestCase
             'Unsubscribe URL must appear correctly in the footer');
     }
 
+    private function makeJobAd(int $id = 1): object
+    {
+        return (object)[
+            'id'        => $id,
+            'title'     => 'Test Volunteer Co-ordinator',
+            'location'  => 'Testville',
+            'image_url' => null,
+        ];
+    }
+
+    /**
+     * Decode the donate button's destination URL from rendered HTML.
+     * The button href is a tracking redirect: /e/d/r/<id>?url=<base64>&p=donate_link
+     * Falls back to a raw href containing /donate if tracking is inactive.
+     */
+    private function extractDonateDestination(string $html): ?string
+    {
+        // Primary: find tracking redirect URL whose p= param is donate_link
+        if (preg_match_all('/href=["\']([^"\']*\/e\/d\/r\/[^"\']*)["\']/', $html, $matches)) {
+            foreach ($matches[1] as $href) {
+                $decoded = html_entity_decode($href);
+                if (str_contains($decoded, 'donate_link') &&
+                    preg_match('/[?&]url=([^&"\']+)/', $decoded, $urlMatch)) {
+                    $dest = base64_decode($urlMatch[1]);
+                    if ($dest !== false) {
+                        return $dest;
+                    }
+                }
+            }
+        }
+        // Fallback: raw /donate href (when tracking is null)
+        if (preg_match('/href=["\']([^"\']*\/donate[^"\']*)["\']/', $html, $match)) {
+            return html_entity_decode($match[1]);
+        }
+        return null;
+    }
+
+    public function test_donate_url_in_job_ads_section_uses_user_site_not_freegle_in(): void
+    {
+        $userSite = config('freegle.sites.user');
+
+        $mail = new VolunteeringDigestMail(
+            recipientEmail: 'test@example.com',
+            groupName:      'Testville Freegle',
+            volunteerings:  [$this->makeVolunteering(1)],
+            unsubscribeUrl: "{$userSite}/unsubscribe?email=" . urlencode('test@example.com'),
+            jobAds:         collect([$this->makeJobAd(99)]),
+        );
+
+        $html = $mail->render();
+
+        $this->assertStringContainsString('Donating helps too!', $html,
+            'Job ads section with Donating helps too! button should be present');
+
+        $donateDest = $this->extractDonateDestination($html);
+
+        $this->assertNotNull($donateDest,
+            '"Donating helps too!" button destination URL not found in rendered email');
+        $this->assertStringNotContainsString('freegle.in', $donateDest,
+            '"Donating helps too!" must not use freegle.in/paypal1510 — that URL fails the Go API isValidRedirectURL check and redirects users to the homepage instead of the donate page');
+        $this->assertStringContainsString('/donate', $donateDest,
+            '"Donating helps too!" must link to the Freegle donate page');
+    }
+
     public function test_service_builds_volunteering_url_without_doubled_https(): void
     {
         // Regression guard: ensure the URL key in the volData array passed to
