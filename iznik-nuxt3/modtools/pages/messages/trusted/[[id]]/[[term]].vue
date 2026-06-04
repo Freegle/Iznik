@@ -10,14 +10,26 @@
           remember="trusted"
           :url-override="urlOverride"
         />
-        <ModtoolsViewControl :misckey="summaryKey" />
+        <div class="d-flex">
+          <ModtoolsViewControl :misckey="summaryKey" />
+          <b-button
+            variant="primary"
+            size="sm"
+            class="ms-2 mt-2"
+            :disabled="marking || !messages.length"
+            @click="markAllChecked"
+          >
+            {{ marking ? 'Marking…' : 'Mark all as checked' }}
+          </b-button>
+        </div>
       </div>
       <NoticeMessage
         v-if="!messages.length && !busy && groupsreceived"
         class="mt-2"
       >
-        No posts from trusted members have gone live recently. These are posts
-        from members on Group Settings that publish without moderation.
+        Nothing to check. These are posts that went live without moderation from
+        trusted (Group Settings) members — once you've checked them they drop off
+        here, and anything older than a week is treated as checked.
       </NoticeMessage>
       <div v-if="groupsreceived">
         <ModMessages />
@@ -46,11 +58,13 @@ import { useMessageStore } from '@/stores/message'
 import { useMiscStore } from '@/stores/misc'
 import { useModGroupStore } from '@/stores/modgroup'
 import { useMe } from '~/composables/useMe'
+import { useModMe } from '~/composables/useModMe'
 
 const messageStore = useMessageStore()
 const miscStore = useMiscStore()
 const modGroupStore = useModGroupStore()
 const route = useRoute()
+const { checkWork } = useModMe()
 
 const FILTER = 'trusted'
 const summaryKey = 'modtoolsMessagesTrustedSummary'
@@ -84,6 +98,23 @@ const groupsreceived = computed(() => modGroupStore.received)
 
 const bump = ref(0)
 const urlOverride = ref(false)
+const marking = ref(false)
+
+// Mark every post currently in this oversight queue as checked, then refresh.
+async function markAllChecked() {
+  marking.value = true
+  try {
+    await messageStore.markChecked({ groupid: groupid.value, filter: FILTER })
+    show.value = 0
+    context.value = null
+    listingIds.value = new Set()
+    messageStore.clear()
+    bump.value++
+    await checkWork(true)
+  } finally {
+    marking.value = false
+  }
+}
 
 watch(groupid, async (newVal) => {
   const router = useRouter()
@@ -163,6 +194,8 @@ defineExpose({
   busy,
   messages,
   groupid,
+  marking,
+  markAllChecked,
   loadMore,
 })
 </script>
