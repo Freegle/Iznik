@@ -718,4 +718,66 @@ describe('ModSupportUser', () => {
       })
     })
   })
+
+  describe('join-method display', () => {
+    it('shows join-method text in parentheses for a Manual Joined entry', async () => {
+      mockApiFns.fetchMembershipHistory.mockResolvedValueOnce([
+        {
+          type: 'Joined',
+          nameshort: 'TestGroup',
+          timestamp: new Date().toISOString(),
+          text: 'Manual',
+        },
+      ])
+      const wrapper = await mountComponent({ expand: true })
+      await flushPromises()
+      const joinMethod = wrapper.find('.join-method')
+      expect(joinMethod.exists()).toBe(true)
+      expect(joinMethod.text()).toContain('Manual')
+    })
+
+    it('shows join-method text in parentheses for an Auto Joined entry', async () => {
+      mockApiFns.fetchMembershipHistory.mockResolvedValueOnce([
+        {
+          type: 'Joined',
+          nameshort: 'TestGroup',
+          timestamp: new Date().toISOString(),
+          text: 'Auto',
+        },
+      ])
+      const wrapper = await mountComponent({ expand: true })
+      await flushPromises()
+      const joinMethod = wrapper.find('.join-method')
+      expect(joinMethod.exists()).toBe(true)
+      expect(joinMethod.text()).toContain('Auto')
+    })
+
+    it('does not show join-method span when text is empty', async () => {
+      mockApiFns.fetchMembershipHistory.mockResolvedValueOnce([
+        {
+          type: 'Joined',
+          nameshort: 'TestGroup',
+          timestamp: new Date().toISOString(),
+          text: '',
+        },
+      ])
+      const wrapper = await mountComponent({ expand: true })
+      await flushPromises()
+      expect(wrapper.find('.join-method').exists()).toBe(false)
+    })
+
+    it('does not show join-method span for non-Joined entry', async () => {
+      mockApiFns.fetchMembershipHistory.mockResolvedValueOnce([
+        {
+          type: 'Left',
+          nameshort: 'TestGroup',
+          timestamp: new Date().toISOString(),
+          text: 'Manual',
+        },
+      ])
+      const wrapper = await mountComponent({ expand: true })
+      await flushPromises()
+      expect(wrapper.find('.join-method').exists()).toBe(false)
+    })
+  })
 })

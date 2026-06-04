@@ -1121,7 +1121,7 @@ func PutMemberships(c *fiber.Ctx) error {
 		}
 	}
 
-	return addMemberToGroup(c, db, userid, req.Groupid, myid)
+	return addMemberToGroup(c, db, userid, req.Groupid, myid, req.Manual)
 }
 
 // putMembershipsPartner handles the partner auth path for PUT /memberships.
@@ -1198,7 +1198,8 @@ func putMembershipsPartner(c *fiber.Ctx, db *gorm.DB, partnerKey string) error {
 }
 
 // addMemberToGroup is the shared logic for adding a user to a group (JWT auth paths).
-func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64) error {
+// manual mirrors V1 User::addMembership: true→"Manual", false→"Auto", nil→"".
+func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, byuser uint64, manual *bool) error {
 	// Check the group exists.
 	var groupExists int64
 	db.Raw("SELECT COUNT(*) FROM `groups` WHERE id = ?", groupid).Scan(&groupExists)
@@ -1234,7 +1235,18 @@ func addMemberToGroup(c *fiber.Ctx, db *gorm.DB, userid uint64, groupid uint64, 
 		db.Exec("INSERT INTO memberships_history (userid, groupid, collection, processingrequired) VALUES (?, ?, ?, 1)",
 			userid, groupid, utils.COLLECTION_APPROVED)
 
-		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, byuser, "")
+		// V1 parity (User.php:944-957): log text records how the user joined.
+		// manual=true→"Manual" (clicked Join button), false→"Auto" (auto-joined
+		// to reply/post), nil→"" (method not specified).
+		joinText := ""
+		if manual != nil {
+			if *manual {
+				joinText = "Manual"
+			} else {
+				joinText = "Auto"
+			}
+		}
+		logMembershipAction(log.LOG_TYPE_GROUP, log.LOG_SUBTYPE_JOINED, groupid, userid, byuser, joinText)
 	}
 
 	return c.JSON(fiber.Map{"ret": 0, "status": "Success", "addedto": utils.COLLECTION_APPROVED})
