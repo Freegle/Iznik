@@ -166,6 +166,14 @@ Schedule::command('mail:bounced')
     ->sendOutputTo(cronLog('mail:bounced'))
     ->runInBackground();
 
+// Charity Partner signup monitor — emails geeks about new entries in the
+// charities table (which would otherwise sit Pending, unwatched).
+Schedule::command('charity:notify-signups')
+    ->hourly()
+    ->withoutOverlapping()
+    ->sendOutputTo(cronLog('charity:notify-signups'))
+    ->runInBackground();
+
 // Moderator work notifications — tells mods about pending messages, events, etc.
 // Only runs 08:00–21:00; deduplicates against last sent summary.
 // V1: cron/mod_notifs.php (hourly)
