@@ -103,6 +103,16 @@ class AutoApproveCleanService
                 }
 
                 if ($this->isQualitySampled((int) $row->msgid, (int) $row->groupid)) {
+                    if (!$dryRun) {
+                        // Mark it as a quality-check sample so the moderation-stats
+                        // dashboard can compare the mod's verdict on the sample
+                        // against the auto-approved population's later error rate.
+                        DB::table('messages_groups')
+                            ->where('msgid', $row->msgid)
+                            ->where('groupid', $row->groupid)
+                            ->where('quality_sample', 0)
+                            ->update(['quality_sample' => 1]);
+                    }
                     $stats['held_quality']++;
                     continue;
                 }

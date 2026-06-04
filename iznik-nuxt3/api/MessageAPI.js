@@ -85,6 +85,11 @@ export default class MessageAPI extends BaseAPI {
     return this.$postv2('/modtools/messages/markchecked', params)
   }
 
+  // SysAdmin moderation analytics for a date range ({start, end}).
+  moderationStats(params) {
+    return this.$getv2('/modtools/moderationstats', params)
+  }
+
   update(event) {
     return this.$postv2('/message', event)
   }
