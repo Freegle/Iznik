@@ -59,7 +59,7 @@ export function Walkthrough({ meta, scenes }) {
       </TransitionSeries>
 
       {/* Persistent chrome */}
-      <Brand />
+      <Brand name={meta.brand} subtitle={meta.brandSubtitle} />
       <ProgressBar boundaries={boundaries} sceneCount={scenes.length} />
     </AbsoluteFill>
   );

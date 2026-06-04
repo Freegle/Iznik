@@ -113,5 +113,14 @@ script; the tooling does the mechanical parts and measures the coordinates.** Fu
   `<project>-dev-local:/app/...` (HMR recompiles) — don't `git`-modify another agent's worktree.
 - **Prepend editors**: `addItem`/`addSlot` *unshift* (prepend), so fill index 0 in REVERSE order
   (the row meant for the bottom first), or the earlier fills get overwritten.
+- **Tall pages crop the bottom out of frame** (this is why a long agreement page's "what happens
+  next" timeline never showed). `ScreenshotScene` projection: a scene with *any* `focus` — even a
+  full-frame `{x:0,y:0,w:1,h:1}` — fits the focus band to viewport **width** and lets the height
+  overflow, so on a page taller than 16:9 the lower part is cropped. Three correct moves: **(a)
+  omit `focus` entirely** → the renderer *contains* the whole image (full height visible); **(b)
+  `pan:"down"`** → fit width and glide top→bottom to reveal a tall image over time; **(c)** for a
+  tall *detail* that must read clearly, capture it as its **own `clip:"<selector>"` shot** so just
+  that element fills the frame. `focusAuto` that fits boxes spanning top→bottom of a tall page
+  zooms out / crops too — split it into per-region scenes or a clipped shot.
 - **`--analyzer claude`** can draft the storyboard from the diff+tests (spends tokens; opt-in).
 - The worked reference is `prs/pr-618/` (bulk-offer clearance) — copy its shape for a new PR.

@@ -4,7 +4,7 @@ import { SANS } from '../fonts.js';
 
 // A small, honest brand lockup (not the official logo asset): a green leaf mark plus
 // the wordmark, with a subtitle. Sits persistently in the top-left of every frame.
-export function Brand({ subtitle = 'PR walkthrough' }) {
+export function Brand({ name = 'freegle', subtitle = 'PR walkthrough' }) {
   return (
     <div
       style={{
@@ -42,7 +42,7 @@ export function Brand({ subtitle = 'PR walkthrough' }) {
       </div>
       <div style={{ lineHeight: 1.05 }}>
         <div style={{ fontSize: 30, fontWeight: 800, color: COLORS.greenDeep, letterSpacing: -0.5 }}>
-          freegle
+          {name}
         </div>
         <div style={{ fontSize: 16, fontWeight: 600, color: COLORS.inkSoft, letterSpacing: 0.5 }}>
           {subtitle}

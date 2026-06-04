@@ -67,6 +67,12 @@ natural size**, so they are resolution-independent and authorable by eye. Scene 
   a lower-third `caption`, and `callouts` that reveal **sequentially**, each pointing at a
   control with a short label.
 
+> **Tall pages crop.** A scene with a `focus` fits that band to the viewport **width** and lets
+> the height overflow — so on a page taller than 16:9 the bottom is cut off (e.g. a long form's
+> footer never shows). To show a tall page in full: omit `focus` (the renderer *contains* the
+> whole image), use `pan:"down"` to glide top→bottom, or capture the part that matters as its own
+> `clip: "<selector>"` shot so it fills the frame.
+
 Because the storyboard is just data, you can read it against the PR and judge whether it does
 the brief *before* spending a render — and tweak a caption or a callout and re-render in one
 command.
