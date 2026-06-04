@@ -171,7 +171,7 @@ class TrystService
             'location' => '',
         ];
 
-        return $userSite . '/calendar?data=' . base64_encode(json_encode($eventData));
+        return $userSite . '/calendar?data=' . rtrim(strtr(base64_encode(json_encode($eventData)), '+/', '-_'), '=');
     }
 
     /**
