@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/freegle/iznik-server-go/aiimage"
@@ -227,6 +228,56 @@ func TestBulkInterest(t *testing.T) {
 	resp, err := getApp().Test(req, 10000)
 	require.NoError(t, err)
 	assert.Equal(t, 400, resp.StatusCode, "cannot be interested in your own post")
+}
+
+// TestBulkInterestMessageIsStructured checks the consolidated Interested chat
+// reply is structured with the catalogue reference numbers (#n) — so it's
+// unambiguous when items share a name and machine-parseable by the Freegle
+// Helper / AI — lists the picks in catalogue order, and only the picked items.
+func TestBulkInterestMessageIsStructured(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("bulkstruct")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Office Clearance", 55.95, -3.18)
+	// Three items: ref #1, #2, #3 in insertion (id) order.
+	_ = addBulkItem(t, msgID, "Office desk", 4, "Good")
+	chairID := addBulkItem(t, msgID, "Swivel chair", 14, "Used")
+	lampID := addBulkItem(t, msgID, "Desk lamp", 6, "LikeNew")
+
+	wanterToken := getToken(t, wanterID)
+	// Interested in the chair (#2, qty 2) and the lamp (#3, qty 1), NOT the desk.
+	body := map[string]interface{}{
+		"action": "BulkInterest",
+		"id":     msgID,
+		"bulkinterest": []map[string]interface{}{
+			{"bulkitemid": lampID, "quantity": 1, "cancollect": "Tue 7 Apr, 10am-4pm"},
+			{"bulkitemid": chairID, "quantity": 2, "cancollect": "Tue 7 Apr, 10am-4pm"},
+		},
+	}
+	bb, _ := json.Marshal(body)
+	req := httptest.NewRequest("POST", "/api/message?jwt="+wanterToken, bytes.NewBuffer(bb))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var msg string
+	db.Raw("SELECT message FROM chat_messages WHERE refmsgid = ? AND userid = ? AND type = 'Interested' ORDER BY id DESC LIMIT 1",
+		msgID, wanterID).Scan(&msg)
+
+	// Reference numbers + quantities, picked items only.
+	assert.Contains(t, msg, "#2 Swivel chair × 2")
+	assert.Contains(t, msg, "#3 Desk lamp × 1")
+	assert.NotContains(t, msg, "#1", "the desk wasn't picked, so it must not appear")
+	assert.Contains(t, msg, "I can collect: Tue 7 Apr, 10am-4pm")
+	// Catalogue order: the chair (#2) is listed before the lamp (#3), regardless
+	// of the order they were sent in the request.
+	assert.Less(t, strings.Index(msg, "#2"), strings.Index(msg, "#3"),
+		"picks are listed in catalogue order")
 }
 
 // TestBulkInterestOnBehalf checks the offerer can record a replier's interest on
