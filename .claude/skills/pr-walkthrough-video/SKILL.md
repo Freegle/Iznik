@@ -16,11 +16,18 @@ script; the tooling does the mechanical parts and measures the coordinates.** Fu
    No code, data models, APIs, migrations, diff stats. (A `code` scene type exists but is off.)
 2. **Capture LIVE code, never the PR's embedded screenshots** — they go stale (fields get
    added/moved). The tool drives a *preexisting running worktree* of the PR, read-only.
-3. **Show EVERY affected party.** Many features touch more than one role — two Freeglers (a
-   giver *and* a recipient), or a Freegler *and* a moderator. Before filming, list the parties a
-   change affects and show **each side**. A clearance isn't just the giver posting and the
-   recipient ticking items — it's also the **giver receiving** the one consolidated message, and
-   the **mod** previewing the bulk post. Don't film only one side of a two-sided interaction.
+3. **Show EVERY affected party — but freegle users and moderators go in SEPARATE videos.**
+   Many features touch more than one role. Two Freeglers (a giver *and* a recipient) share an
+   audience → same video, both sides shown (a clearance is the giver posting, the recipient
+   ticking items, AND the giver receiving the one consolidated message). A **moderator** is a
+   different audience → its own video (e.g. the ModTools bulk-offer preview). One PR can have
+   several storyboards → several videos: `storyboard.json` (users) + `storyboard-mod.json`
+   (mods); render with `--storyboard <file>`.
+4. **Only ever use the TEST system + test users — never live/production data.** Drive a test
+   worktree with seeded test accounts (e.g. `pw_*@test.com`, password `freegle`) and use
+   `dev-local` (local API), not `dev-live`. Because everything is test data there is no real PII,
+   so **no masking is needed** — test names like "PW User2" can show as-is; don't mask or
+   annotate them.
 
 ## What you decide vs what the tool does
 
@@ -96,7 +103,7 @@ script; the tooling does the mechanical parts and measures the coordinates.** Fu
   `boundingBox` trap) and it scrolls to top before the shot so a sticky nav doesn't overlap.
 - **Repeated-row editors** sometimes *prepend* new rows (`unshift`) — fill index 0 in reverse
   display order. Check the component if rows don't populate.
-- **PII**: `masks.json` pixelates regions (fractions). Logged-in views often show no poster, so
-  no mask is needed — but always check the captured image for names/avatars/emails.
+- **PII**: not a concern when you follow rule 4 (test data only) — leave `masks.json` regions
+  empty and don't annotate masking. The pixelate capability exists only as a rare safety net.
 - **`--analyzer claude`** can draft the storyboard from the diff+tests (spends tokens; opt-in).
 - The worked reference is `prs/pr-618/` (bulk-offer clearance) — copy its shape for a new PR.

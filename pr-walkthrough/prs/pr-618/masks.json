@@ -20,7 +20,14 @@
       "src": "giver-chat.png",
       "out": "giver-chat.masked.png",
       "regions": [
-        { "comment": "other party's name in the chat header", "x": 0.28, "y": 0.016, "w": 0.42, "h": 0.032, "mode": "pixelate", "blocks": 16 }
+        { "comment": "test users only — names like 'PW User2_bulkofferflow' are test data, not real PII, so nothing to mask" }
+      ]
+    },
+    {
+      "src": "mod-bulk-preview.png",
+      "out": "mod-bulk-preview.masked.png",
+      "regions": [
+        { "comment": "mod preview modal shows item names + town, no personal PII" }
       ]
     }
   ]

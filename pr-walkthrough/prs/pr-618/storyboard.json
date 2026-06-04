@@ -75,9 +75,9 @@
       "url": "www.ilovefreegle.org/give/clearance",
       "focusAuto": true,
       "focusMinW": 0.7,
-      "caption": "Offer set collection times — then post the whole lot in one go.",
+      "caption": "Add private access instructions — then post the whole lot in one go.",
       "callouts": [
-        { "at": 1.5, "until": 7.5, "ref": "Offer set collection times" }
+        { "at": 1.5, "until": 7.5, "ref": "Private access instructions" }
       ]
     },
     {

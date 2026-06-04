@@ -28,10 +28,6 @@
         { "fill": "testid=item-name-0", "value": "Office desk" },
         { "fill": "testid=item-qty-0", "value": "4" },
         { "select": "testid=item-condition-0", "value": "Good" },
-        { "fill": "testid=slot-0", "value": "Tue 7 Apr, 10am–4pm" },
-        { "click": "testid=add-slot" },
-        { "waitMs": 200 },
-        { "fill": "testid=slot-1", "value": "Wed 8 Apr, 10am–2pm" },
         { "fill": "testid=clearance-access", "value": "Side gate by the loading bay; ask for reception." },
         { "waitMs": 400 }
       ],
@@ -42,7 +38,7 @@
         { "selector": "testid=item-qty-0", "label": "How many", "arrow": "up" },
         { "selector": "testid=item-condition-0", "label": "Condition", "arrow": "up" },
         { "selector": "text=things in total", "label": "3 items, 21 things", "arrow": "right" },
-        { "selector": "testid=slot-0", "label": "Offer set collection times", "arrow": "right" }
+        { "selector": "testid=clearance-access", "label": "Private access instructions", "arrow": "up" }
       ]
     },
     {
@@ -80,14 +76,28 @@
     },
     {
       "name": "mod-bulk-preview.png",
-      "route": "${MOD_MSG_ROUTE}",
+      "route": "/modtools/messages/approved",
+      "baseUrl": "${MODTOOLS_URL}",
       "viewport": { "width": 1385, "height": 1200 },
-      "clip": ".modal-content",
-      "_note": "Surfaced as important by the PR's ModBulkPreviewModal tests (single-post explanation, per-item list, collection times). Needs a moderator session + a bulk message in the mod queue (MOD_MSG_ROUTE). Verify the preview button + modal selector on live capture.",
+      "auth": ".auth-mod.json",
+      "clip": "#modBulkPreviewModal .modal-content",
+      "_note": "Mod side (ModBulkPreviewModal — 'See how members will see this offer'). On MODTOOLS_URL as a mod of the bulk message's group. The approved list lazy-loads, so scroll to render the button before clicking; the modal id is #modBulkPreviewModal.",
       "steps": [
+        { "waitMs": 4000 },
+        { "scrollBy": 1000 },
+        { "waitMs": 1000 },
+        { "scrollBy": 1000 },
+        { "waitMs": 1000 },
+        { "scrollBy": 1000 },
+        { "waitMs": 1000 },
+        { "scrollBy": 1000 },
+        { "waitMs": 1000 },
+        { "scrollBy": 1000 },
+        { "waitMs": 1200 },
+        { "waitFor": "testid=bulk-preview-btn" },
         { "click": "testid=bulk-preview-btn" },
-        { "waitFor": ".modal-content" },
-        { "waitMs": 300 }
+        { "waitFor": "#modBulkPreviewModal .modal-content" },
+        { "waitMs": 800 }
       ]
     }
   ]

@@ -4,7 +4,7 @@
 // reached (the controls the video highlights). Seeded ids/emails come from env
 // (see env-from-testenvs.mjs / test-envs.json); TEST_BASE_URL sets the target.
 const { test, expect } = require('@playwright/test')
-const { loginViaHomepage } = require('./utils/user')
+const { loginViaHomepage, loginViaModTools } = require('./utils/user')
 
 test.describe('pr-618 golden flows (from walkthrough)', () => {
   test('golden flow: clearance-composer', async ({ page }) => {
@@ -26,10 +26,6 @@ test.describe('pr-618 golden flows (from walkthrough)', () => {
     await page.locator('[data-testid="item-name-0"]').first().fill(`Office desk`)
     await page.locator('[data-testid="item-qty-0"]').first().fill(`4`)
     await page.locator('[data-testid="item-condition-0"]').first().selectOption(`Good`)
-    await page.locator('[data-testid="slot-0"]').first().fill(`Tue 7 Apr, 10am–4pm`)
-    await page.locator('[data-testid="add-slot"]').first().click()
-    await page.waitForTimeout(200)
-    await page.locator('[data-testid="slot-1"]').first().fill(`Wed 8 Apr, 10am–2pm`)
     await page.locator('[data-testid="clearance-access"]').first().fill(`Side gate by the loading bay; ask for reception.`)
     await page.waitForTimeout(400)
     await expect(page.locator("input[placeholder*=\"postcode\" i]").first()).toBeVisible() // Pick your area first
@@ -38,7 +34,7 @@ test.describe('pr-618 golden flows (from walkthrough)', () => {
     await expect(page.locator('[data-testid="item-qty-0"]').first()).toBeVisible() // How many
     await expect(page.locator('[data-testid="item-condition-0"]').first()).toBeVisible() // Condition
     await expect(page.getByText("things in total").first()).toBeVisible() // 3 items, 21 things
-    await expect(page.locator('[data-testid="slot-0"]').first()).toBeVisible() // Offer set collection times
+    await expect(page.locator('[data-testid="clearance-access"]').first()).toBeVisible() // Private access instructions
   })
 
   test('golden flow: recipient-interest', async ({ page }) => {
@@ -61,9 +57,17 @@ test.describe('pr-618 golden flows (from walkthrough)', () => {
   })
 
   test('golden flow: mod-bulk-preview', async ({ page }) => {
-    await page.goto(`${process.env.MOD_MSG_ROUTE}`, { waitUntil: 'networkidle' })
+    await loginViaModTools(page, process.env.MOD_EMAIL, process.env.TEST_PASSWORD || 'freegle')
+    await page.goto(`/modtools/messages/approved`, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(4000)
+    await page.waitForTimeout(1000)
+    await page.waitForTimeout(1000)
+    await page.waitForTimeout(1000)
+    await page.waitForTimeout(1000)
+    await page.waitForTimeout(1200)
+    await expect(page.locator('[data-testid="bulk-preview-btn"]').first()).toBeVisible()
     await page.locator('[data-testid="bulk-preview-btn"]').first().click()
-    await expect(page.locator(".modal-content").first()).toBeVisible()
-    await page.waitForTimeout(300)
+    await expect(page.locator("#modBulkPreviewModal .modal-content").first()).toBeVisible()
+    await page.waitForTimeout(800)
   })
 })

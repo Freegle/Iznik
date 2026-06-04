@@ -15,7 +15,7 @@
 
 const STEP_KEYS = new Set([
   'goto', 'fill', 'type', 'select', 'click', 'clickText', 'press',
-  'waitFor', 'waitForText', 'waitMs', 'scrollTo', 'setViewport',
+  'waitFor', 'waitForText', 'waitMs', 'scrollTo', 'scrollBy', 'setViewport',
 ]);
 
 function fail(errors, path, msg) {

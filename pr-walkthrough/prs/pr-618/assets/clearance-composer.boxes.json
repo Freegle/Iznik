@@ -4,9 +4,9 @@
     "arrow": "down",
     "box": {
       "x": 0.175,
-      "y": 0.1605,
+      "y": 0.1642,
       "w": 0.13,
-      "h": 0.0235
+      "h": 0.024
     }
   },
   "Name the whole clearance": {
@@ -14,9 +14,9 @@
     "arrow": "down",
     "box": {
       "x": 0.1735,
-      "y": 0.2095,
+      "y": 0.2143,
       "w": 0.6421,
-      "h": 0.0186
+      "h": 0.019
     }
   },
   "Type them in — or paste a spreadsheet": {
@@ -24,9 +24,9 @@
     "arrow": "up",
     "box": {
       "x": 0.1735,
-      "y": 0.348,
+      "y": 0.3561,
       "w": 0.1086,
-      "h": 0.0186
+      "h": 0.019
     }
   },
   "How many": {
@@ -34,9 +34,9 @@
     "arrow": "up",
     "box": {
       "x": 0.3715,
-      "y": 0.3895,
+      "y": 0.3985,
       "w": 0.052,
-      "h": 0.0152
+      "h": 0.0155
     }
   },
   "Condition": {
@@ -44,9 +44,9 @@
     "arrow": "up",
     "box": {
       "x": 0.4281,
-      "y": 0.3895,
+      "y": 0.3985,
       "w": 0.0924,
-      "h": 0.0152
+      "h": 0.0155
     }
   },
   "3 items, 21 things": {
@@ -54,19 +54,19 @@
     "arrow": "right",
     "box": {
       "x": 0.4854,
-      "y": 0.4602,
+      "y": 0.4708,
       "w": 0.1339,
-      "h": 0.0103
+      "h": 0.0105
     }
   },
-  "Offer set collection times": {
-    "label": "Offer set collection times",
-    "arrow": "right",
+  "Private access instructions": {
+    "label": "Private access instructions",
+    "arrow": "up",
     "box": {
       "x": 0.1735,
-      "y": 0.6326,
-      "w": 0.6248,
-      "h": 0.0186
+      "y": 0.7833,
+      "w": 0.6421,
+      "h": 0.031
     }
   }
 }

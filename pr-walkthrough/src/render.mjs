@@ -42,11 +42,16 @@ function imageSize(path) {
 
 function main() {
   const exampleDir = resolve(ROOT, arg('--pr-dir', 'prs/pr-618'));
-  const storyboardPath = join(exampleDir, 'storyboard.json');
+  // A PR can have several storyboards → several videos (e.g. one for users, one for mods).
+  const storyboardName = arg('--storyboard', 'storyboard.json');
+  const storyboardPath = join(exampleDir, storyboardName);
   if (!existsSync(storyboardPath)) throw new Error(`No storyboard at ${storyboardPath}`);
   const sb = JSON.parse(readFileSync(storyboardPath, 'utf8'));
 
   const tag = basename(exampleDir); // e.g. pr-618
+  // storyboard.json → "<tag>-walkthrough"; storyboard-mod.json → "<tag>-mod-walkthrough".
+  const variant = storyboardName.replace(/^storyboard-?/, '').replace(/\.json$/, '');
+  const outName = `${tag}${variant ? '-' + variant : ''}-walkthrough`;
   const publicDir = join(ROOT, 'public', tag);
   const assetsDir = join(exampleDir, 'assets');
 
@@ -131,7 +136,7 @@ function main() {
   // 5. Render.
   const outDir = join(exampleDir, 'out');
   mkdirSync(outDir, { recursive: true });
-  const out = resolve(arg('--out', join(outDir, `${tag}-walkthrough.mp4`)));
+  const out = resolve(arg('--out', join(outDir, `${outName}.mp4`)));
   const propsPath = join(outDir, '.props.json');
   writeFileSync(propsPath, JSON.stringify(sb));
 

@@ -1,0 +1,57 @@
+{
+  "meta": {
+    "pr": 618,
+    "repo": "Freegle/Iznik",
+    "title": "Bulk offers — the moderator's view",
+    "author": "edwh",
+    "url": "github.com/Freegle/Iznik/pull/618",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30
+  },
+  "_note": "Separate video for MODERATORS (different audience from the freegle-user walkthrough). Just the ModTools bulk-offer preview.",
+  "scenes": [
+    {
+      "type": "title",
+      "seconds": 4,
+      "title": "Bulk offers — the moderator's view",
+      "subtitle": "How a clearance looks to the team reviewing it.",
+      "showStats": false
+    },
+    {
+      "type": "narration",
+      "seconds": 6,
+      "chapter": "Why",
+      "heading": "A clearance is one post, not dozens.",
+      "bullets": [
+        "Moderators see a single Offer carrying a catalogue of items.",
+        "ModTools can preview exactly what members will see."
+      ],
+      "caption": "So the team reviews one post, the way members experience it."
+    },
+    {
+      "type": "screenshot",
+      "seconds": 11,
+      "chapter": "Moderator preview",
+      "src": "pr-618/mod-bulk-preview.masked.png",
+      "natW": 801,
+      "natH": 728,
+      "url": "modtools · messages · approved",
+      "caption": "In ModTools, “See how members will see this offer” previews the whole catalogue as one post.",
+      "callouts": [
+        { "at": 2.0, "until": 8.0, "box": { "x": 0.4, "y": 0.112, "w": 0.2, "h": 0.03 }, "label": "It's ONE post, not many", "arrow": "down" }
+      ]
+    },
+    {
+      "type": "outro",
+      "seconds": 6,
+      "title": "One preview, the whole offer",
+      "bullets": [
+        "The catalogue, exactly as members see it.",
+        "Items, quantities and conditions at a glance.",
+        "Collection times — all in one moderatable post."
+      ],
+      "url": "github.com/Freegle/Iznik/pull/618"
+    }
+  ]
+}

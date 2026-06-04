@@ -104,6 +104,7 @@ async function runStep(page, step, baseUrl) {
   if (step.waitForText != null) return page.getByText(step.waitForText, { exact: false }).first().waitFor({ state: 'visible', timeout: 15000 });
   if (step.waitMs != null) return page.waitForTimeout(step.waitMs);
   if (step.scrollTo != null) return locator(page, step.scrollTo).first().scrollIntoViewIfNeeded();
+  if (step.scrollBy != null) return page.evaluate((y) => window.scrollBy(0, y), step.scrollBy);
   if (step.setViewport != null) return page.setViewportSize(step.setViewport);
   return undefined;
 }
@@ -128,8 +129,10 @@ export async function capture(plan, { baseUrl, assetsDir, headful = false, stora
       });
       const page = await context.newPage();
       try {
-        await page.goto(baseUrl + subst(shot.route), { waitUntil: 'networkidle', timeout: 30000 });
-        for (const step of shot.steps || []) await runStep(page, step, baseUrl);
+        // A shot may target a different app (e.g. ModTools) via its own baseUrl.
+        const shotBase = (shot.baseUrl ? subst(shot.baseUrl) : baseUrl).replace(/\/$/, '');
+        await page.goto(shotBase + subst(shot.route), { waitUntil: 'networkidle', timeout: 30000 });
+        for (const step of shot.steps || []) await runStep(page, step, shotBase);
         const dest = join(assetsDir, shot.name);
         const fullPage = !shot.clip && shot.fullPage !== false;
         // Return to the top so a sticky/fixed nav sits at its natural place in the full-page
