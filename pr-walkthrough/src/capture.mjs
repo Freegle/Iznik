@@ -151,6 +151,10 @@ export async function capture(plan, { baseUrl, assetsDir, headful = false, stora
           measured = Object.keys(boxes).length;
           writeFileSync(join(assetsDir, basename(shot.name).replace(/\.(png|jpe?g)$/i, '.boxes.json')), JSON.stringify(boxes, null, 2));
         }
+        // Record the ACTUAL (test) URL captured from, so the video's browser chrome shows the
+        // real test address — never a hardcoded live/production URL. Host + path, no port.
+        const shotUrl = (shotBase + subst(shot.route)).replace(/^https?:\/\//, '').replace(/:\d+/, '');
+        writeFileSync(join(assetsDir, basename(shot.name).replace(/\.(png|jpe?g)$/i, '.meta.json')), JSON.stringify({ url: shotUrl }));
         results.push({ name: shot.name, ok: true, dest });
         console.log(`  ✓ ${shot.name} ← ${shot.route}${measured ? ` (+${measured} measured callouts)` : ''}`);
       } catch (e) {

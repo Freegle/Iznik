@@ -73,11 +73,20 @@ function main() {
     copyFileSync(from, join(publicDir, file));
   }
 
-  // 3. Auto-fill natW/natH from the staged images where absent.
+  // 3. Auto-fill natW/natH, and set the browser-chrome URL to the ACTUAL captured (test)
+  // address from <shot>.meta.json — overriding any hardcoded value, so the video can never
+  // show a live/production URL when it was filmed on the test system.
   for (const scene of sb.scenes) {
-    if (scene.type === 'screenshot' && (!scene.natW || !scene.natH)) {
+    if (scene.type !== 'screenshot') continue;
+    if (!scene.natW || !scene.natH) {
       const sz = imageSize(join(publicDir, basename(scene.src)));
       if (sz) { scene.natW = sz.w; scene.natH = sz.h; }
+    }
+    const base = basename(scene.src).replace(/\.masked\.png$/i, '').replace(/\.(png|jpe?g)$/i, '');
+    const metaPath = join(assetsDir, `${base}.meta.json`);
+    if (existsSync(metaPath)) {
+      const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+      if (meta.url) scene.url = meta.url;
     }
   }
 
@@ -120,7 +129,9 @@ function main() {
     // Keep a readable minimum width (less zoom) — expand around the centre if too tight.
     const minW = scene.focusMinW ?? 0.6;
     if (maxX - minX < minW) { const c = (minX + maxX) / 2; minX = c - minW / 2; maxX = c + minW / 2; }
-    scene.focus = { x: clamp01(minX), y: clamp01(minY), w: clamp01(maxX - minX), h: clamp01(maxY - minY) };
+    const fx = clamp01(minX);
+    const fy = clamp01(minY);
+    scene.focus = { x: fx, y: fy, w: clamp01(Math.min(maxX, 1) - fx), h: clamp01(Math.min(maxY, 1) - fy) };
     focused += 1;
   }
   if (focused) console.log(`• auto-computed focus for ${focused} scene(s)`);

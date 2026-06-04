@@ -28,6 +28,10 @@
         { "fill": "testid=item-name-0", "value": "Office desk" },
         { "fill": "testid=item-qty-0", "value": "4" },
         { "select": "testid=item-condition-0", "value": "Good" },
+        { "fill": "testid=slot-0", "value": "Wed 8 Apr, 10am–4pm" },
+        { "click": "testid=add-slot" },
+        { "waitMs": 300 },
+        { "fill": "testid=slot-0", "value": "Tue 7 Apr, 10am–4pm" },
         { "fill": "testid=clearance-access", "value": "Side gate by the loading bay; ask for reception." },
         { "waitMs": 400 }
       ],
@@ -38,6 +42,7 @@
         { "selector": "testid=item-qty-0", "label": "How many", "arrow": "up" },
         { "selector": "testid=item-condition-0", "label": "Condition", "arrow": "up" },
         { "selector": "text=things in total", "label": "3 items, 21 things", "arrow": "right" },
+        { "selector": "testid=slot-0", "label": "Offer set collection times", "arrow": "right" },
         { "selector": "testid=clearance-access", "label": "Private access instructions", "arrow": "up" }
       ]
     },
@@ -49,12 +54,13 @@
       "_note": "Needs a seeded bulk-offer message (BULK_MSG_ID) and a logged-in user to show the Want toggle + stepper. Login steps are env-driven and optional; if the worktree exposes a dev session they can be dropped. Verify pick/stepper selectors on live capture.",
       "steps": [
         { "click": "[data-testid^=\"pick-\"]" },
-        { "waitFor": "text=How many?" },
-        { "waitMs": 300 }
+        { "waitFor": "[data-testid^=\"qty-\"]" },
+        { "waitMs": 400 }
       ],
       "annotate": [
         { "selector": "text=items in this offer", "label": "A browsable catalogue in one offer", "arrow": "up" },
-        { "selector": "[data-testid^=\"pick-\"]", "label": "Turn on what you want", "arrow": "left" },
+        { "selector": "[data-testid^=\"pick-\"]", "label": "A clear toggle: “I'd like this”", "arrow": "left" },
+        { "selector": "[data-testid^=\"qty-\"]", "label": "Choose how many", "arrow": "left" },
         { "selector": "testid=slot-picker", "label": "Pick a collection time", "arrow": "up" },
         { "selector": "testid=register-interest", "label": "Send the giver your picks", "arrow": "right" }
       ]

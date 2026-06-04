@@ -105,5 +105,13 @@ script; the tooling does the mechanical parts and measures the coordinates.** Fu
   display order. Check the component if rows don't populate.
 - **PII**: not a concern when you follow rule 4 (test data only) — leave `masks.json` regions
   empty and don't annotate masking. The pixelate capability exists only as a rare safety net.
+- **Browser-chrome URL**: never hardcode a live/production URL (e.g. `www.ilovefreegle.org`) in
+  the storyboard. capture records the ACTUAL test URL (`<shot>.meta.json`) and render shows it,
+  so the chrome reads e.g. `freegle-dev-local.localhost/...` — honest about being the test system.
+- **Stale dev container**: the dev server holds a copied `/app`, not a live mount, and can lag
+  the working dir. If a capture shows old UI, `docker cp` the changed source files into
+  `<project>-dev-local:/app/...` (HMR recompiles) — don't `git`-modify another agent's worktree.
+- **Prepend editors**: `addItem`/`addSlot` *unshift* (prepend), so fill index 0 in REVERSE order
+  (the row meant for the bottom first), or the earlier fills get overwritten.
 - **`--analyzer claude`** can draft the storyboard from the diff+tests (spends tokens; opt-in).
 - The worked reference is `prs/pr-618/` (bulk-offer clearance) — copy its shape for a new PR.

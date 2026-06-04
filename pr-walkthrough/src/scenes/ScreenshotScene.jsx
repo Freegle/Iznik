@@ -101,7 +101,7 @@ export function ScreenshotScene({ scene }) {
           <span style={{ width: 13, height: 13, borderRadius: 99, background: '#febc2e' }} />
           <span style={{ width: 13, height: 13, borderRadius: 99, background: '#28c840' }} />
           <div style={{ marginLeft: 18, height: 26, flex: 1, marginRight: 18, background: '#fff', borderRadius: 8, border: `1px solid ${COLORS.paperEdge}`, display: 'flex', alignItems: 'center', paddingLeft: 14, fontSize: 14, color: COLORS.inkSoft, fontFamily: 'system-ui' }}>
-            {scene.url || 'www.ilovefreegle.org'}
+            {scene.url || 'freegle-dev-local.localhost'}
           </div>
         </div>
 

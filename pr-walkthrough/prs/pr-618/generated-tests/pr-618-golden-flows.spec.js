@@ -26,6 +26,10 @@ test.describe('pr-618 golden flows (from walkthrough)', () => {
     await page.locator('[data-testid="item-name-0"]').first().fill(`Office desk`)
     await page.locator('[data-testid="item-qty-0"]').first().fill(`4`)
     await page.locator('[data-testid="item-condition-0"]').first().selectOption(`Good`)
+    await page.locator('[data-testid="slot-0"]').first().fill(`Wed 8 Apr, 10am–4pm`)
+    await page.locator('[data-testid="add-slot"]').first().click()
+    await page.waitForTimeout(300)
+    await page.locator('[data-testid="slot-0"]').first().fill(`Tue 7 Apr, 10am–4pm`)
     await page.locator('[data-testid="clearance-access"]').first().fill(`Side gate by the loading bay; ask for reception.`)
     await page.waitForTimeout(400)
     await expect(page.locator("input[placeholder*=\"postcode\" i]").first()).toBeVisible() // Pick your area first
@@ -34,16 +38,18 @@ test.describe('pr-618 golden flows (from walkthrough)', () => {
     await expect(page.locator('[data-testid="item-qty-0"]').first()).toBeVisible() // How many
     await expect(page.locator('[data-testid="item-condition-0"]').first()).toBeVisible() // Condition
     await expect(page.getByText("things in total").first()).toBeVisible() // 3 items, 21 things
+    await expect(page.locator('[data-testid="slot-0"]').first()).toBeVisible() // Offer set collection times
     await expect(page.locator('[data-testid="clearance-access"]').first()).toBeVisible() // Private access instructions
   })
 
   test('golden flow: recipient-interest', async ({ page }) => {
     await page.goto(`/message/${process.env.BULK_MSG_ID}`, { waitUntil: 'networkidle' })
     await page.locator("[data-testid^=\"pick-\"]").first().click()
-    await expect(page.getByText("How many?").first()).toBeVisible()
-    await page.waitForTimeout(300)
+    await expect(page.locator("[data-testid^=\"qty-\"]").first()).toBeVisible()
+    await page.waitForTimeout(400)
     await expect(page.getByText("items in this offer").first()).toBeVisible() // A browsable catalogue in one offer
-    await expect(page.locator("[data-testid^=\"pick-\"]").first()).toBeVisible() // Turn on what you want
+    await expect(page.locator("[data-testid^=\"pick-\"]").first()).toBeVisible() // A clear toggle: “I'd like this”
+    await expect(page.locator("[data-testid^=\"qty-\"]").first()).toBeVisible() // Choose how many
     await expect(page.locator('[data-testid="slot-picker"]').first()).toBeVisible() // Pick a collection time
     await expect(page.locator('[data-testid="register-interest"]').first()).toBeVisible() // Send the giver your picks
   })

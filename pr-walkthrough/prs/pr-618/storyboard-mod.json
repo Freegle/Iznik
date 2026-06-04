@@ -36,7 +36,6 @@
       "src": "pr-618/mod-bulk-preview.masked.png",
       "natW": 801,
       "natH": 728,
-      "url": "modtools · messages · approved",
       "caption": "In ModTools, “See how members will see this offer” previews the whole catalogue as one post.",
       "callouts": [
         { "at": 2.0, "until": 8.0, "box": { "x": 0.4, "y": 0.112, "w": 0.2, "h": 0.03 }, "label": "It's ONE post, not many", "arrow": "down" }

@@ -4,19 +4,29 @@
     "arrow": "up",
     "box": {
       "x": 0.2588,
-      "y": 0.3146,
+      "y": 0.2168,
       "w": 0.4715,
-      "h": 0.0112
+      "h": 0.0137
     }
   },
-  "Turn on what you want": {
-    "label": "Turn on what you want",
+  "A clear toggle: “I'd like this”": {
+    "label": "A clear toggle: “I'd like this”",
     "arrow": "left",
     "box": {
-      "x": 0.6827,
-      "y": 0.3573,
-      "w": 0.0289,
-      "h": 0.0106
+      "x": 0.5733,
+      "y": 0.3084,
+      "w": 0.0231,
+      "h": 0.0104
+    }
+  },
+  "Choose how many": {
+    "label": "Choose how many",
+    "arrow": "left",
+    "box": {
+      "x": 0.6812,
+      "y": 0.3041,
+      "w": 0.0491,
+      "h": 0.0201
     }
   },
   "Pick a collection time": {
@@ -24,9 +34,9 @@
     "arrow": "up",
     "box": {
       "x": 0.2588,
-      "y": 0.5384,
+      "y": 0.4165,
       "w": 0.4715,
-      "h": 0.0265
+      "h": 0.0324
     }
   },
   "Send the giver your picks": {
@@ -34,9 +44,9 @@
     "arrow": "right",
     "box": {
       "x": 0.2588,
-      "y": 0.5702,
+      "y": 0.4741,
       "w": 0.1288,
-      "h": 0.0201
+      "h": 0.0246
     }
   }
 }

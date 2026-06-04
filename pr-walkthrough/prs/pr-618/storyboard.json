@@ -36,7 +36,6 @@
       "chapter": "Posting a clearance",
       "src": "pr-618/clearance-composer.masked.png",
       "pan": "down",
-      "url": "www.ilovefreegle.org/give/clearance",
       "caption": "One post holds the whole clearance — your area, the items, and when people can collect."
     },
     {
@@ -44,7 +43,6 @@
       "seconds": 10,
       "chapter": "Posting a clearance",
       "src": "pr-618/clearance-composer.masked.png",
-      "url": "www.ilovefreegle.org/give/clearance",
       "focusAuto": true,
       "caption": "Start with your area, then give the whole clearance a name.",
       "callouts": [
@@ -57,7 +55,6 @@
       "seconds": 13,
       "chapter": "Posting a clearance",
       "src": "pr-618/clearance-composer.masked.png",
-      "url": "www.ilovefreegle.org/give/clearance",
       "focusAuto": true,
       "caption": "Add every item — type them in or paste a spreadsheet — each with its quantity and condition.",
       "callouts": [
@@ -72,10 +69,9 @@
       "seconds": 9,
       "chapter": "Posting a clearance",
       "src": "pr-618/clearance-composer.masked.png",
-      "url": "www.ilovefreegle.org/give/clearance",
       "focusAuto": true,
       "focusMinW": 0.7,
-      "caption": "Add private access instructions — then post the whole lot in one go.",
+      "caption": "Add private access instructions — only shared once you promise someone an item — then post.",
       "callouts": [
         { "at": 1.5, "until": 7.5, "ref": "Private access instructions" }
       ]
@@ -85,12 +81,22 @@
       "seconds": 11,
       "chapter": "Receiving a clearance",
       "src": "pr-618/recipient-interest.masked.png",
-      "url": "www.ilovefreegle.org/message/…",
       "focusAuto": true,
-      "caption": "Recipients see one browsable catalogue — turn on the items you'd like; a stepper sets how many.",
+      "caption": "Recipients see one browsable catalogue, with a clear “I'd like this” toggle on each item.",
       "callouts": [
         { "at": 1.5, "until": 6.0, "ref": "A browsable catalogue in one offer" },
-        { "at": 5.5, "until": 10.0, "ref": "Turn on what you want" }
+        { "at": 5.5, "until": 10.0, "ref": "A clear toggle: “I'd like this”" }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "seconds": 9,
+      "chapter": "Receiving a clearance",
+      "src": "pr-618/recipient-interest.masked.png",
+      "focusAuto": true,
+      "caption": "Turn one on, then choose how many — never more than are available.",
+      "callouts": [
+        { "at": 1.5, "until": 8.0, "ref": "Choose how many" }
       ]
     },
     {
@@ -98,7 +104,6 @@
       "seconds": 10,
       "chapter": "Receiving a clearance",
       "src": "pr-618/recipient-interest.masked.png",
-      "url": "www.ilovefreegle.org/message/…",
       "focusAuto": true,
       "caption": "Pick a collection time, then one click sends the giver everything you chose.",
       "callouts": [
@@ -111,7 +116,6 @@
       "seconds": 9,
       "chapter": "The giver hears back",
       "src": "pr-618/giver-chat.masked.png",
-      "url": "www.ilovefreegle.org/chats/…",
       "focusAuto": true,
       "focusMinW": 0.78,
       "caption": "And the giver gets ONE message — everything that person chose, in a single conversation.",
