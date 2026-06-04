@@ -32,19 +32,11 @@
     },
     {
       "type": "screenshot",
-      "seconds": 8,
-      "chapter": "Posting a clearance",
-      "src": "pr-618/clearance-composer.masked.png",
-      "pan": "down",
-      "caption": "One post holds the whole clearance — your area, the items, and when people can collect."
-    },
-    {
-      "type": "screenshot",
       "seconds": 10,
       "chapter": "Posting a clearance",
       "src": "pr-618/clearance-composer.masked.png",
       "focusAuto": true,
-      "caption": "Start with your area, then give the whole clearance a name.",
+      "caption": "One post holds the whole clearance: start with your area, then name it.",
       "callouts": [
         { "at": 1.5, "until": 6.0, "ref": "Pick your area first" },
         { "at": 5.5, "until": 9.5, "ref": "Name the whole clearance" }
@@ -66,14 +58,15 @@
     },
     {
       "type": "screenshot",
-      "seconds": 9,
+      "seconds": 11,
       "chapter": "Posting a clearance",
       "src": "pr-618/clearance-composer.masked.png",
       "focusAuto": true,
       "focusMinW": 0.7,
-      "caption": "Add private access instructions — only shared once you promise someone an item — then post.",
+      "caption": "Offer set collection times and private access instructions, then post the whole lot.",
       "callouts": [
-        { "at": 1.5, "until": 7.5, "ref": "Private access instructions" }
+        { "at": 1.5, "until": 6.0, "ref": "Offer set collection times" },
+        { "at": 5.5, "until": 10.5, "ref": "Private access instructions" }
       ]
     },
     {

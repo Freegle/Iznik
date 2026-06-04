@@ -135,13 +135,21 @@ export async function capture(plan, { baseUrl, assetsDir, headful = false, stora
         for (const step of shot.steps || []) await runStep(page, step, shotBase);
         const dest = join(assetsDir, shot.name);
         const fullPage = !shot.clip && shot.fullPage !== false;
-        // Return to the top so a sticky/fixed nav sits at its natural place in the full-page
-        // screenshot (otherwise it overlaps content where the page happened to be scrolled).
-        if (fullPage) { await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(200); }
         if (shot.clip) {
           await locator(page, shot.clip).first().screenshot({ path: dest });
+        } else if (fullPage) {
+          // Capture the whole page by SIZING THE VIEWPORT to the document and taking a normal
+          // viewport screenshot — NOT Playwright's fullPage (which resizes+stitches the viewport
+          // and can distort viewport-/JS-sized layouts, producing phantom gaps). This also keeps
+          // the screenshot and the measured callout boxes in ONE identical layout state.
+          const vp = page.viewportSize() || { width: 1385, height: 1400 };
+          const docH = await page.evaluate(() => Math.ceil(document.documentElement.scrollHeight));
+          await page.setViewportSize({ width: vp.width, height: Math.min(docH + 40, 16000) });
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await page.waitForTimeout(350);
+          await page.screenshot({ path: dest, fullPage: false });
         } else {
-          await page.screenshot({ path: dest, fullPage });
+          await page.screenshot({ path: dest, fullPage: false });
         }
         // Auto-measure annotation boxes (fullPage only — fractions map to the screenshot).
         let measured = 0;
