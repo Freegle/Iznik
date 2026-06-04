@@ -1930,8 +1930,18 @@ func handleDeleteMessage(c *fiber.Ctx, myid uint64, req PostMessageRequest) erro
 		stdmsgid = *req.Stdmsgid
 	}
 
-	// Queue email+log+push via background task for each authorized group.
-	// The batch processor will create the mod log entry and notify group moderators.
+	// Write audit-log entry for each group this deletion affected (V1 parity:
+	// Message::delete() logs SUBTYPE_DELETED per group). Done synchronously so
+	// the entry is immediately visible in the modtools audit log without waiting
+	// for the batch processor. Push notifications are handled by the background
+	// task below.
+	for _, gid := range authorizedGroups {
+		logModAction(db, flog.LOG_TYPE_MESSAGE, flog.LOG_SUBTYPE_DELETED, gid, ctx.Fromuser, myid, req.ID, stdmsgid, "")
+	}
+
+	// Queue email+push via background task for each authorized group.
+	// The log is already written above; the batch processor skips the log step
+	// for "Delete Approved Message" actions to avoid a duplicate.
 	for _, gid := range authorizedGroups {
 		db.Exec("INSERT INTO background_tasks (task_type, data) VALUES (?, JSON_OBJECT('msgid', ?, 'groupid', ?, 'byuser', ?, 'subject', ?, 'body', ?, 'stdmsgid', ?, 'action', ?))",
 			"email_message_rejected", req.ID, gid, myid, subject, body, stdmsgid, "Delete Approved Message")

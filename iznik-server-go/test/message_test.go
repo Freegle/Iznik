@@ -1183,15 +1183,15 @@ func TestPostMessageDelete(t *testing.T) {
 	assert.Contains(t, taskData, "\"action\": \"Delete Approved Message\"", "Delete should include action field for BCC lookup")
 }
 
-// TestPostMessageDeleteNoDuplicateLog asserts that POST /message?action=Delete does NOT
-// synchronously write a Message/Deleted row to the logs table.  The batch processor
-// (ProcessBackgroundTasksCommand) is the sole writer: it inserts the row when it picks up
-// the email_message_rejected background task.  Adding a second synchronous write in the Go
-// handler creates an identical duplicate in production (one from Go, one from PHP).
+// TestPostMessageDeleteWritesExactlyOneLog asserts that POST /message?action=Delete writes
+// exactly one Message/Deleted row in the Go handler. The batch processor skips log creation
+// for "Delete Approved Message" tasks to avoid duplicates.
 //
-// handleDeleteMessage was temporarily broken to add a logAndNotifyMods() call (bug: duplicate
-// logs).  The fix removed that call; this test guards against regression by asserting count==0.
-func TestPostMessageDeleteNoDuplicateLog(t *testing.T) {
+// Previously this test asserted count==0 when the batch processor was the sole log writer,
+// but that caused a delay before the entry appeared in the modtools audit log. The fix moves
+// log creation to the Go handler (synchronous, immediately visible) and prevents the batch
+// processor from creating a duplicate.
+func TestPostMessageDeleteWritesExactlyOneLog(t *testing.T) {
 	prefix := uniquePrefix("msgmod_del_duplog")
 	db := database.DBConn
 
@@ -1205,8 +1205,9 @@ func TestPostMessageDeleteNoDuplicateLog(t *testing.T) {
 	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 52.5, -1.8)
 
 	body := map[string]interface{}{
-		"id":     msgID,
-		"action": "Delete",
+		"id":      msgID,
+		"action":  "Delete",
+		"groupid": groupID,
 	}
 	bodyBytes, _ := json.Marshal(body)
 	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
@@ -1216,14 +1217,57 @@ func TestPostMessageDeleteNoDuplicateLog(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	// The Go handler must NOT write a Message/Deleted log entry directly.
-	// The batch processor writes it when processing the email_message_rejected task.
-	// A sync write here produces a duplicate in production (Go + PHP = 2 identical rows).
+	// The Go handler writes exactly one Message/Deleted log entry synchronously.
+	// The batch processor is instructed (via action="Delete Approved Message") to skip its
+	// own log creation to prevent duplicates.
 	var logCount int64
-	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND msgid = ?",
-		log.LOG_TYPE_MESSAGE, log.LOG_SUBTYPE_DELETED, msgID).Scan(&logCount)
-	assert.Equal(t, int64(0), logCount,
-		"handleDeleteMessage must not sync-write a logs row: count expected 0, batch processor is the sole writer")
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND msgid = ? AND byuser = ?",
+		log.LOG_TYPE_MESSAGE, log.LOG_SUBTYPE_DELETED, msgID, modID).Scan(&logCount)
+	assert.Equal(t, int64(1), logCount,
+		"handleDeleteMessage must write exactly one Message/Deleted audit-log row")
+}
+
+// TestHandleDeleteMessageCreatesAuditLog asserts that POST /message?action=Delete
+// (the primary mod deletion path used by the frontend) writes a Message/Deleted audit-log
+// row synchronously in the Go handler, so the entry is immediately visible in the modtools
+// audit log without waiting for the batch processor.
+//
+// AssertFlip step 3b: this assertion FAILS on the buggy code because handleDeleteMessage
+// does not call logModAction directly — it only queues a background task.
+func TestHandleDeleteMessageCreatesAuditLog(t *testing.T) {
+	prefix := uniquePrefix("msgmod_del_auditlog")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" offer item", 52.5, -1.8)
+
+	body := map[string]interface{}{
+		"id":      msgID,
+		"action":  "Delete",
+		"groupid": groupID,
+	}
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/api/message?jwt=%s", modToken)
+	req := httptest.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	// The Go handler must write a Message/Deleted log entry immediately so it is visible
+	// in the modtools audit log without waiting for the batch processor.
+	// On the buggy code this fails because handleDeleteMessage only queues a background task.
+	var logCount int64
+	db.Raw("SELECT COUNT(*) FROM logs WHERE type = ? AND subtype = ? AND msgid = ? AND byuser = ?",
+		log.LOG_TYPE_MESSAGE, log.LOG_SUBTYPE_DELETED, msgID, modID).Scan(&logCount)
+	assert.GreaterOrEqual(t, logCount, int64(1),
+		"handleDeleteMessage must synchronously write a Message/Deleted audit-log row")
 }
 
 // --- Test: Spam ---
