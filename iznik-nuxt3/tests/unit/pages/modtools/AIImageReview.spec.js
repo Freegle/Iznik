@@ -15,6 +15,8 @@ vi.mock('~/composables/useMe', () => ({
 const mockFetchReview = vi.fn()
 const mockRegenerate = vi.fn()
 const mockAccept = vi.fn()
+const mockKeep = vi.fn()
+const mockSuppress = vi.fn()
 const mockImages = ref([])
 const mockLoading = ref(false)
 
@@ -25,6 +27,8 @@ vi.mock('~/modtools/composables/useAIImages', () => ({
     fetchReview: mockFetchReview,
     regenerate: mockRegenerate,
     accept: mockAccept,
+    keep: mockKeep,
+    suppress: mockSuppress,
     count: ref(0),
     fetchCount: vi.fn(),
   }),
@@ -60,6 +64,8 @@ beforeEach(async () => {
   mockFetchReview.mockReset()
   mockRegenerate.mockReset()
   mockAccept.mockReset()
+  mockKeep.mockReset()
+  mockSuppress.mockReset()
 })
 
 describe('Images page', () => {
@@ -406,5 +412,67 @@ describe('AIImageReview error handling', () => {
     // Clean up: resolve the promise
     resolveRegen({})
     await flushPromises()
+  })
+})
+
+describe('AIImageReview suppress ("Don\'t use AI for this item")', () => {
+  beforeEach(() => {
+    mockImages.value = [
+      {
+        id: 42,
+        name: 'Cash',
+        externaluid: 'freegletusd-cash',
+        image_url: 'https://example.com/cash.jpg',
+        status: 'rejected',
+        regeneration_notes: null,
+        pending_externaluid: null,
+        pending_image_url: null,
+        votes: [],
+        reject_count: 5,
+        approve_count: 0,
+      },
+    ]
+  })
+
+  it('renders a suppress button for each image', async () => {
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="suppress-btn"]').exists()).toBe(true)
+  })
+
+  it('calls suppress with the image id when clicked', async () => {
+    mockSuppress.mockResolvedValue({ ret: 0 })
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="suppress-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(mockSuppress).toHaveBeenCalledWith(42)
+  })
+
+  it('removes the image from the list after suppress', async () => {
+    mockSuppress.mockResolvedValue({ ret: 0 })
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Cash')
+
+    await wrapper.find('[data-testid="suppress-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('Cash')
+  })
+
+  it('shows an error and keeps the image when suppress throws', async () => {
+    mockSuppress.mockRejectedValue(new Error('Network error'))
+    const wrapper = mount(ImagesPage, { global: { stubs: stubComponents } })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="suppress-btn"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Failed to suppress')
+    // Image stays in the list so the moderator can retry.
+    expect(wrapper.text()).toContain('Cash')
   })
 })
