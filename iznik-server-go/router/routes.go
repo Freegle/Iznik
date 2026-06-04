@@ -867,6 +867,7 @@ func SetupRoutes(app *fiber.App) {
 		rg.Post("/locations", location.ExcludeLocation)
 
 		rg.Get("/modtools/messages", message.ListMessagesMT)
+		rg.Post("/modtools/messages/markchecked", message.MarkChecked)
 
 		// Message Sitemap
 		// @Router /message/sitemap [get]
