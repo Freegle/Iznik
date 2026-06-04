@@ -60,7 +60,22 @@
         { "selector": "text=items in this offer", "label": "A browsable catalogue in one offer", "arrow": "up" },
         { "selector": "[data-testid^=\"pick-\"]", "label": "Turn on what you want", "arrow": "left" },
         { "selector": "testid=slot-picker", "label": "Pick a collection time", "arrow": "up" },
-        { "selector": "testid=register-interest", "label": "One message to the giver", "arrow": "right" }
+        { "selector": "testid=register-interest", "label": "Send the giver your picks", "arrow": "right" }
+      ]
+    },
+    {
+      "name": "giver-chat.png",
+      "route": "/chats/${GIVER_CHAT_ID}",
+      "viewport": { "width": 700, "height": 1200 },
+      "fullPage": true,
+      "auth": ".auth-giver.json",
+      "_note": "The OTHER side of the conversation: the giver receives ONE consolidated interest message. Auth as the poster (giver); GIVER_CHAT_ID is a seeded chat carrying a bulk-interest message.",
+      "steps": [
+        { "waitFor": "text=can collect" },
+        { "waitMs": 500 }
+      ],
+      "annotate": [
+        { "selector": "text=can collect: Tue 7 Apr", "label": "One consolidated message — everything they chose", "arrow": "up" }
       ]
     },
     {

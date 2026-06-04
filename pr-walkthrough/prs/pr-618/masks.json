@@ -15,6 +15,13 @@
       "regions": [
         { "comment": "live logged-in recipient view shows no poster name/avatar — no PII to mask. Re-check if the capture state changes." }
       ]
+    },
+    {
+      "src": "giver-chat.png",
+      "out": "giver-chat.masked.png",
+      "regions": [
+        { "comment": "other party's name in the chat header", "x": 0.28, "y": 0.016, "w": 0.42, "h": 0.032, "mode": "pixelate", "blocks": 16 }
+      ]
     }
   ]
 }

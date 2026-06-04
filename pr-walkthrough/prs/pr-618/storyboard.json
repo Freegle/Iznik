@@ -100,10 +100,23 @@
       "src": "pr-618/recipient-interest.masked.png",
       "url": "www.ilovefreegle.org/message/…",
       "focusAuto": true,
-      "caption": "Pick a collection time, then one click tells the giver everything you chose.",
+      "caption": "Pick a collection time, then one click sends the giver everything you chose.",
       "callouts": [
         { "at": 1.5, "until": 5.5, "ref": "Pick a collection time" },
-        { "at": 5.0, "until": 9.5, "ref": "One message to the giver" }
+        { "at": 5.0, "until": 9.5, "ref": "Send the giver your picks" }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "seconds": 9,
+      "chapter": "The giver hears back",
+      "src": "pr-618/giver-chat.masked.png",
+      "url": "www.ilovefreegle.org/chats/…",
+      "focusAuto": true,
+      "focusMinW": 0.78,
+      "caption": "And the giver gets ONE message — everything that person chose, in a single conversation.",
+      "callouts": [
+        { "at": 2.0, "until": 8.0, "ref": "One consolidated message — everything they chose" }
       ]
     },
     {

@@ -10,12 +10,17 @@ changed UI. The tool lives at `pr-walkthrough/` (Remotion + Playwright). **You a
 script; the tooling does the mechanical parts and measures the coordinates.** Full design:
 `plans/active/pr-walkthrough-capture-framework.md` and `pr-walkthrough/README.md`.
 
-## Two rules that shape everything
+## Three rules that shape everything
 
 1. **Externally-visible function only.** Show what a person using the product sees and does.
    No code, data models, APIs, migrations, diff stats. (A `code` scene type exists but is off.)
 2. **Capture LIVE code, never the PR's embedded screenshots** — they go stale (fields get
    added/moved). The tool drives a *preexisting running worktree* of the PR, read-only.
+3. **Show EVERY affected party.** Many features touch more than one role — two Freeglers (a
+   giver *and* a recipient), or a Freegler *and* a moderator. Before filming, list the parties a
+   change affects and show **each side**. A clearance isn't just the giver posting and the
+   recipient ticking items — it's also the **giver receiving** the one consolidated message, and
+   the **mod** previewing the bulk post. Don't film only one side of a two-sided interaction.
 
 ## What you decide vs what the tool does
 
@@ -35,14 +40,18 @@ script; the tooling does the mechanical parts and measures the coordinates.** Fu
 | log in | `node src/auth.mjs --base-url <url> --email <e> [--password freegle] --out prs/pr-<pr>/.auth-<role>.json` |
 | capture | `node src/capture.mjs --pr-dir prs/pr-<pr> --base-url <url> [--storage-state <auth>]` → `assets/*.png` + `*.boxes.json` |
 | render | `node src/render.mjs --pr-dir prs/pr-<pr>` → masks + resolves refs + auto-focus + MP4 |
+| **golden tests** | `node src/plan-to-playwright.mjs --pr-dir prs/pr-<pr>` → a Playwright spec per shot (the same flows, as regression tests) |
+| seeded env | `eval "$(node src/env-from-testenvs.mjs --env <key> --testenvs <path>)"` → seeded ids/users as `${ENV}` vars |
 | embed | `node src/publish.mjs --pr-dir prs/pr-<pr>` (drag-drop into the PR for an inline player) |
 
 ## Runbook (any PR)
 
 1. **Fetch** (mechanical): `node src/fetch.mjs <pr> --repo <owner/repo>`.
 2. **Pick the shots** (judgement): read the diff; run `analyze` to see the test-covered flows.
-   List the screens/states worth filming (the give flow, the receive flow, an important
-   moderator/preview surface, etc.). Grep the diff for `data-testid=` — those are your selectors.
+   **First list the parties the change affects** (giver, recipient, mod, …) and ensure a shot
+   for **each side** (rule 3) — e.g. giver-posts, recipient-expresses-interest, *giver-receives
+   the message*, mod-previews. Then list the screens/states worth filming. Grep the diff for
+   `data-testid=` — those are your selectors. (Different parties usually need different auth.)
 3. **Find the running app** (mechanical): `node src/discover.mjs --worktree <name>`. If the
    frontend is down, `docker start <project>-dev-local` and wait for it to serve 200. Use
    **dev-local** (local API, seeded worktree DB) — never dev-live (live data).
@@ -71,7 +80,12 @@ script; the tooling does the mechanical parts and measures the coordinates.** Fu
 9. **Review** (judgement): extract frames and check each callout + caption against the real PR:
    `ffmpeg -ss <t> -i prs/pr-<pr>/out/*.mp4 -frames:v 1 /tmp/f.png` then Read it. Adjust the
    storyboard (timing/captions/refs) — re-render. Aim ~85–120s, scenes 8–13s, captions dwell ≥3s.
-10. **Deliver**: `publish.mjs` prints the embed markdown; copy to Downloads if asked
+10. **Lock the golden flows as regression tests** (mechanical): a flow worth a walkthrough is
+    worth a test. `node src/plan-to-playwright.mjs --pr-dir prs/pr-<pr>` turns each capture-plan
+    shot into one Playwright `test()` (steps → actions; every `waitFor`/annotated selector →
+    a `toBeVisible` assertion on the golden state). Review it and **propose it to the PR**
+    (`iznik-nuxt3/tests/e2e/`) — don't edit the target worktree yourself.
+11. **Deliver**: `publish.mjs` prints the embed markdown; copy to Downloads if asked
     (`cp prs/pr-<pr>/out/*.mp4 /mnt/c/Users/<you>/Downloads/`).
 
 ## Tips & gotchas (the tool handles these — know them)
