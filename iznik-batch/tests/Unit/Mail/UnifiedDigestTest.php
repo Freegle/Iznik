@@ -662,6 +662,44 @@ class UnifiedDigestTest extends TestCase
         $this->assertStringContainsString('New paragraph after blank', $html);
     }
 
+    public function test_daily_no_photo_post_omits_placeholder_image(): void
+    {
+        // A daily-digest post with no photo must NOT fall back to the blank
+        // grey placeholder tile — neither as the card image nor in the top
+        // thumbnail nav strip. Both read as a broken/unloaded image,
+        // especially on mobile where the stacked card image spans the full
+        // width of the screen.
+        $user = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($user, $group);
+
+        $poster = $this->createTestUser();
+        $this->createMembership($poster, $group);
+
+        // No attachment → no photo → isPlaceholder.
+        $message = $this->createTestMessage($poster, $group, [
+            'subject' => 'OFFER: Coloplast supplies (Craigmount EH12)',
+        ]);
+
+        $posts = collect([
+            ['message' => $message, 'postedToGroups' => [$group->id]],
+        ]);
+
+        $mail = new UnifiedDigest($user, $posts, UnifiedDigestService::MODE_DAILY);
+        $spooled = $this->spoolAndLoad($mail, $user->email_preferred ?? 'recipient@example.com');
+        $html = $spooled['html'] ?? '';
+
+        $this->assertNotEmpty($html, 'Spooled HTML body should not be empty');
+
+        $placeholder = config('freegle.images.offer_placeholder');
+        $this->assertNotEmpty($placeholder, 'offer_placeholder config should be set');
+        $this->assertStringNotContainsString(
+            $placeholder,
+            $html,
+            'A photo-less daily digest must not render the blank placeholder image'
+        );
+    }
+
     public function test_amp_content_excluded_when_disabled(): void
     {
         // Force AMP off via config before constructing the mailable.

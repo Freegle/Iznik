@@ -10,7 +10,7 @@
     @php $post = $posts->first(); $isOffer = $post['type'] === 'Offer'; $accentColor = $isOffer ? '#3c763d' : '#2196A6'; @endphp
     @include('emails.mjml.partials.head', ['preview' => $post['subject']])
     @else
-    @include('emails.mjml.partials.head', ['preview' => $postCount . ' new post' . ($postCount === 1 ? '' : 's') . ' near you'])
+    @include('emails.mjml.partials.head', ['preview' => $postCount . ' new post' . ($postCount === 1 ? '' : 's') . ' near you', 'mediaStyles' => '@media only screen and (max-width:479px){ .dpost-content { padding-top:14px !important; } }'])
     @endif
 
     <mj-body background-color="#f0f0f0">
@@ -242,10 +242,13 @@
             </mj-column>
             <mj-column width="84%" vertical-align="middle">
                 <mj-text padding="0" line-height="1">
-                    @php $maxThumbItems = 6; @endphp
+                    {{-- Only thumbnail posts that actually have a photo — a
+                         placeholder (blank grey) tile in the nav strip reads
+                         as a broken image. --}}
+                    @php $maxThumbItems = 6; $thumbPosts = collect($posts)->reject(fn($p) => $p['isPlaceholder'])->values(); @endphp
                     <table cellpadding="0" cellspacing="0" border="0" role="presentation" style="border-collapse: collapse;">
                         <tr>
-                            @foreach(collect($posts)->take($maxThumbItems) as $thumbPost)
+                            @foreach($thumbPosts->take($maxThumbItems) as $thumbPost)
                             @php $thumbIsOffer = $thumbPost['type'] === 'Offer'; @endphp
                             <td style="padding: 0 3px 0 0; vertical-align: middle;">
                                 {{-- Link to the post itself: in-email #fragment
@@ -258,9 +261,9 @@
                                 </a>
                             </td>
                             @endforeach
-                            @if(count($posts) > $maxThumbItems)
+                            @if($thumbPosts->count() > $maxThumbItems)
                             <td style="vertical-align: middle; padding-left: 4px;">
-                                <a href="{{ $browseUrl }}" style="color: #ffffff; text-decoration: none; font-size: 12px; font-weight: bold; line-height: 1.3;">+{{ count($posts) - $maxThumbItems }}<br/>more</a>
+                                <a href="{{ $browseUrl }}" style="color: #ffffff; text-decoration: none; font-size: 12px; font-weight: bold; line-height: 1.3;">+{{ $thumbPosts->count() - $maxThumbItems }}<br/>more</a>
                             </td>
                             @endif
                         </tr>
@@ -312,6 +315,12 @@
              row's bottom edge gives a visual baseline match without needing
              to know the description's wrapped line count up front. --}}
         <mj-section background-color="#ffffff" padding="{{ $index === 0 ? '16px' : '0' }} 16px 16px 16px">
+            {{-- Only show the photo column when the post actually has a photo.
+                 A photo-less post previously rendered a full-width blank grey
+                 placeholder tile (jarring on mobile, where the columns stack
+                 and it fills the screen); drop the image entirely and let the
+                 content span the full width instead. --}}
+            @if(!$post['isPlaceholder'])
             <mj-column width="34%" padding="0" vertical-align="bottom">
                 {{-- Square thumbnail (240x240 server-side cover-crop, displayed
                      at the column's width). Square matches the typical content
@@ -327,7 +336,13 @@
                     fluid-on-mobile="true"
                 />
             </mj-column>
-            <mj-column width="66%" padding="0 0 0 14px" vertical-align="top">
+            @endif
+            {{-- css-class "dpost-content" carries a mobile-only top padding (see
+                 mediaStyles in the head include): when the columns stack on
+                 mobile it lets the OFFER/WANTED pill clear the photo above
+                 instead of butting against it. Photo-less cards are full width
+                 with no image above, so they don't need it. --}}
+            <mj-column width="{{ $post['isPlaceholder'] ? '100%' : '66%' }}" css-class="{{ $post['isPlaceholder'] ? '' : 'dpost-content' }}" padding="0 0 0 {{ $post['isPlaceholder'] ? '0' : '14px' }}" vertical-align="top">
                 <mj-text padding="0 0 6px 0" font-size="13px">
                     <span style="display: inline-block; background-color: {{ $isOffer ? $offerColor : $wantedColor }}; color: #ffffff; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 3px;">{{ $isOffer ? 'OFFER' : 'WANTED' }}</span>
                 </mj-text>
@@ -346,11 +361,16 @@
                 @if($post['messageText'])
                 <mj-text padding="0 0 8px 0" font-size="14px" color="#333333" line-height="1.5"><span style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">{{ \Illuminate\Support\Str::limit($post['messageText'], 160, '…') }}</span></mj-text>
                 @endif
-                {{-- One-line metadata strip: location · distance · time. --}}
+                {{-- Metadata: location on its own line, then distance + time on
+                     the next. A long location name (e.g. a full postcode area)
+                     made the old single inline "loc · dist · time" strip wrap
+                     awkwardly mid-time on narrow mobile screens. --}}
+                @if($post['locationName'])
+                <mj-text padding="0 0 1px 0" font-size="12px" color="#888888">{{ $post['locationName'] }}</mj-text>
+                @endif
                 <mj-text padding="0" font-size="12px" color="#888888">
-                    @if($post['locationName'])<span>{{ $post['locationName'] }}</span>@endif
-                    @if($post['distanceText'])@if($post['locationName'])<span style="margin: 0 6px; color: #cccccc;">&middot;</span>@endif<span>&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
-                    <span style="margin: 0 6px; color: #cccccc;">&middot;</span><span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
+                    @if($post['distanceText'])<span style="margin-right: 12px;">&#x1F4CD; {{ $post['distanceText'] }}</span>@endif
+                    <span>&#x1F552; {{ $post['arrivalFormatted'] }}</span>
                 </mj-text>
                 {{-- Avatar byline (V1 MultipleDigest parity). --}}
                 <mj-text padding="6px 0 10px 0" font-size="12px" color="#888888">

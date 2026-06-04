@@ -667,9 +667,12 @@ async function unmute() {
 }
 
 .thread-menu {
-  /* The "..." menu is floated to the end; give it space so it does not sit
-     right up against the post text (Discourse #9749 - chitchat niggle). */
-  margin-left: 0.5rem;
+  /* The "..." menu is floated to the end; the post text wraps beside it on the
+     first line (and reclaims full width below, so no space is wasted). Give it a
+     clear gap so it does not sit right up against the text — 0.5rem (the first
+     attempt) was too small on inline name+body replies at narrow/iPad widths
+     (Discourse #9749 - chitchat niggle). */
+  margin-left: 1.5rem;
 }
 
 :deep(.strike) {
