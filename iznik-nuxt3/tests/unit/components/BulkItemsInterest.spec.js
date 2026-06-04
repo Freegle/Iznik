@@ -63,6 +63,7 @@ const mountOpts = {
     stubs: {
       'b-badge': true,
       'b-form-checkbox': true,
+      'b-form-checkbox-group': true,
       'b-form-group': true,
       'b-form-input': true,
     },
@@ -73,6 +74,7 @@ describe('BulkItemsInterest', () => {
   beforeEach(() => {
     bulkInterest.mockClear()
     globalThis.__mockAuthStore = { user: { id: 5 }, forceLogin: false }
+    mockMessage.bulkslots = [] // most tests have no fixed collection windows
   })
 
   it('seeds picks from existing interest', () => {
@@ -122,5 +124,33 @@ describe('BulkItemsInterest', () => {
     const [id, items] = bulkInterest.mock.calls[0]
     expect(id).toBe(1)
     expect(items.some((i) => i.bulkitemid === 10)).toBe(true)
+  })
+
+  it('cannot register until at least one item is turned on', async () => {
+    const w = mount(BulkItemsInterest, mountOpts)
+    w.vm.picks[11].checked = false // nothing on
+    await nextTick()
+    expect(w.vm.canRegister).toBe(false)
+    expect(w.vm.registerHint).toContain('at least one item')
+    w.vm.picks[11].checked = true
+    await nextTick()
+    expect(w.vm.canRegister).toBe(true)
+  })
+
+  it('with fixed windows, needs at least one ticked and joins them all', async () => {
+    mockMessage.bulkslots = ['Tue 10–4', 'Wed 10–4']
+    const w = mount(BulkItemsInterest, mountOpts)
+    w.vm.picks[11].checked = true
+    w.vm.picks[11].quantity = 1
+    await nextTick()
+    // An item is on, but no collection time chosen yet → blocked.
+    expect(w.vm.canRegister).toBe(false)
+    expect(w.vm.registerHint).toContain('collection time')
+    // Tick all the times they can make.
+    w.vm.cancollectTimes = ['Tue 10–4', 'Wed 10–4']
+    await nextTick()
+    expect(w.vm.canRegister).toBe(true)
+    const chair = w.vm.buildPayload().find((p) => p.bulkitemid === 11)
+    expect(chair.cancollect).toBe('Tue 10–4; Wed 10–4')
   })
 })
