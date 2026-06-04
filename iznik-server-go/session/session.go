@@ -1130,6 +1130,10 @@ func GetSession(c *fiber.Ctx) error {
 		var housekeeping, cronjobs int64
 		var emailin, emailout int64
 		var helperEscalated int64
+		// Informational (blue) counts of recently-live posts for the oversight
+		// views: checked = auto-approved posts from auto-moderated (NULL) members;
+		// trusted = posts that went live from trusted (group-settings) members.
+		var checked, trusted int64
 
 		var wg2 sync.WaitGroup
 
@@ -1179,6 +1183,39 @@ func GetSession(c *fiber.Ctx) error {
 					Count(&inact)
 				pendingother += inact
 			}
+		}()
+
+		// --- Checked: recently auto-approved posts from auto-moderated (NULL) members.
+		// Informational oversight count (blue), bounded to the last 24h so it stays
+		// useful rather than the unbounded all-time approved total. ---
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
+				"INNER JOIN messages m ON m.id = mg.msgid "+
+				"INNER JOIN users u ON u.id = m.fromuser "+
+				"INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+
+				"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
+				"AND m.deleted IS NULL AND u.deleted IS NULL "+
+				"AND mg.approvedby IS NULL AND mem.ourPostingStatus IS NULL "+
+				"AND mg.arrival >= NOW() - INTERVAL 1 DAY",
+				modGroupIDs, utils.COLLECTION_APPROVED).Scan(&checked)
+		}()
+
+		// --- Trusted: recently-live posts from trusted (group-settings) members.
+		// Informational oversight count (blue), bounded to the last 24h. ---
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			db.Raw("SELECT COUNT(*) FROM messages_groups mg "+
+				"INNER JOIN messages m ON m.id = mg.msgid "+
+				"INNER JOIN users u ON u.id = m.fromuser "+
+				"INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "+
+				"WHERE mg.groupid IN ? AND mg.collection = ? AND mg.deleted = 0 "+
+				"AND m.deleted IS NULL AND u.deleted IS NULL "+
+				"AND mg.approvedby IS NULL AND mem.ourPostingStatus IN ('DEFAULT', 'UNMODERATED') "+
+				"AND mg.arrival >= NOW() - INTERVAL 1 DAY",
+				modGroupIDs, utils.COLLECTION_APPROVED).Scan(&trusted)
 		}()
 
 		// --- Spam messages (only for active groups) ---
@@ -1598,6 +1635,8 @@ func GetSession(c *fiber.Ctx) error {
 		work = fiber.Map{
 			"pending":              pending,
 			"pendingother":         pendingother,
+			"checked":              checked,
+			"trusted":              trusted,
 			"spam":                 spam,
 			"pendingmembers":       pendingmembers,
 			"spammembers":          spammembers,
