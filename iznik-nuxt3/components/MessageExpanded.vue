@@ -326,7 +326,13 @@
             </div>
 
             <!-- Bulk-offer ("clearance") catalogue with per-item interest. -->
-            <BulkItemsInterest :id="id" />
+            <BulkItemsInterest
+              v-if="isBulk"
+              ref="bulkInterestRef"
+              :id="id"
+              @can-register="bulkCanRegister = $event"
+              @submitted="bulkSubmitted = $event"
+            />
 
             <!-- Posted by divider and section (shown on taller screens, after description) -->
             <client-only>
@@ -452,9 +458,17 @@
                   variant="primary"
                   size="lg"
                   class="reply-button"
-                  @click="expandReply"
+                  :disabled="isBulk && !bulkCanRegister"
+                  :data-testid="isBulk ? 'register-interest' : undefined"
+                  @click="isBulk ? registerBulkInterest() : expandReply()"
                 >
-                  Reply
+                  {{
+                    isBulk
+                      ? bulkSubmitted
+                        ? 'Update my interest'
+                        : 'Register interest'
+                      : 'Reply'
+                  }}
                 </b-button>
               </div>
               <b-alert
@@ -512,9 +526,17 @@
             variant="primary"
             size="lg"
             class="reply-button"
-            @click="expandReply"
+            :disabled="isBulk && !bulkCanRegister"
+            :data-testid="isBulk ? 'register-interest' : undefined"
+            @click="isBulk ? registerBulkInterest() : expandReply()"
           >
-            Reply
+            {{
+              isBulk
+                ? bulkSubmitted
+                  ? 'Update my interest'
+                  : 'Register interest'
+                : 'Reply'
+            }}
           </b-button>
         </div>
         <b-alert
@@ -711,11 +733,23 @@ const reachBlocked = computed(
 // web page that just duplicates the catalogue — so suppress it. A giver's own
 // free-text description doesn't start with this generated marker, so it still
 // shows. (Marker kept in sync with buildBulkSummary in iznik-server-go.)
+const isBulk = computed(
+  () => (message.value?.bulkcount || message.value?.bulkitems?.length) > 0
+)
 const hideGeneratedBulkBody = computed(() => {
-  const isBulk = (message.value?.bulkcount || message.value?.bulkitems?.length) > 0
   const body = message.value?.textbody || ''
-  return isBulk && body.startsWith('Items available in this offer:')
+  return isBulk.value && body.startsWith('Items available in this offer:')
 })
+
+// A bulk offer is replied to by registering per-item interest, not by opening a
+// reply box — so the main reply button becomes "Register interest". These mirror
+// the BulkItemsInterest child's state (emitted up) so the button can reflect it.
+const bulkInterestRef = ref(null)
+const bulkCanRegister = ref(false)
+const bulkSubmitted = ref(false)
+function registerBulkInterest() {
+  bulkInterestRef.value?.submit()
+}
 
 // State
 const replied = ref(false)

@@ -224,6 +224,15 @@ async function captureCatalogue(page, takeScreenshot, msgId, who) {
       .waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
       .catch(() => {})
     await page.waitForTimeout(600)
+    // For the recipient, turn the first item on so the quantity dropdown shows
+    // — that's the most layout-sensitive state to review/measure.
+    if (who === 'responder') {
+      const firstPick = page.locator('[data-testid^="pick-"]').first()
+      if (await firstPick.count()) {
+        await firstPick.click().catch(() => {})
+        await page.waitForTimeout(300)
+      }
+    }
     await takeScreenshot(`${who}-${vp.tag}`)
 
     // A recipient sees the structured catalogue, so the server-generated text
