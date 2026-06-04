@@ -3047,11 +3047,13 @@ func GetUserMembershipHistory(c *fiber.Ctx) error {
 		Nameshort   string     `json:"nameshort"`
 		Namefull    string     `json:"namefull"`
 		Namedisplay string     `json:"namedisplay" gorm:"column:namedisplay"`
+		Text        string     `json:"text"`
 	}
 
 	var history []MembershipHistoryRow
 	db.Raw("SELECT l.timestamp, l.subtype AS type, l.groupid, "+
-		"g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay "+
+		"g.nameshort, COALESCE(g.namefull, '') AS namefull, COALESCE(g.namefull, g.nameshort) AS namedisplay, "+
+		"COALESCE(l.text,'') AS text "+
 		"FROM logs l "+
 		"INNER JOIN `groups` g ON g.id = l.groupid "+
 		"WHERE l.user = ? AND l.type = 'Group' "+

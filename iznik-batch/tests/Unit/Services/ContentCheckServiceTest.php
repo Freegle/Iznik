@@ -320,6 +320,66 @@ class ContentCheckServiceTest extends TestCase
     }
 
     // =========================================================================
+    // checkNotAnItem — public, pure (non-physical-item detection)
+    // Positive/negative cases are drawn from the production reject log.
+    // =========================================================================
+
+    #[DataProvider('notAnItemProvider')]
+    public function test_check_not_an_item(string $subject, string $body, ?string $category): void
+    {
+        $result = $this->service->checkNotAnItem($subject, $body);
+
+        if ($category === null) {
+            $this->assertNull($result, "Expected NO flag for: {$subject} {$body}");
+        } else {
+            $this->assertNotNull($result, "Expected a flag for: {$subject} {$body}");
+            $this->assertSame(ContentCheckService::CHECK_NOT_AN_ITEM, $result['check']);
+            $this->assertSame('flag', $result['action']);
+            $this->assertSame($category, $result['category']);
+        }
+    }
+
+    public static function notAnItemProvider(): array
+    {
+        return [
+            // --- positives: flag, with expected category ---
+            'cleaner wanted'      => ['WANTED: Cleaner wanted', '', 'service'],
+            'man with a van'      => ['WANTED: Man with a Van', '', 'service'],
+            'man and car removal' => ['WANTED: man and car removal', '', 'service'],
+            'dog walker'          => ['WANTED: dog walker', '', 'service'],
+            'babysitter needed'   => ['WANTED: babysitter needed', '', 'service'],
+            'gardening service'   => ['OFFER: gardening service available', '', 'service'],
+            'services plural'     => ['OFFER: Services', '', 'service'],
+            'room to rent'        => ['OFFER: Room to rent', '', 'accommodation'],
+            'warehouse to rent'   => ['WANTED: Storage warehouse to rent', '', 'accommodation'],
+            'garage to rent'      => ['WANTED: Lockup garage to rent', '', 'accommodation'],
+            'lodger'              => ['WANTED: lodger wanted', '', 'accommodation'],
+            'job vacancy'         => ['', 'I have a job vacancy to fill', 'work'],
+            'part time job'       => ['WANTED: part time job', '', 'work'],
+            'food advice'         => ['WANTED: Food advice', '', 'advice'],
+
+            // --- negatives: real production items that must NOT trip ---
+            'vacuum cleaner'      => ['OFFER: Shark vacuum cleaner', '', null],
+            'patio cleaner'       => ['OFFER: Patio Cleaner', '', null],
+            'plain vacuum'        => ['WANTED: Vacuum cleaner', '', null],
+            'removal boxes'       => ['WANTED: Removal boxes', '', null],
+            'hair removal cream'  => ['OFFER: Nads hair removal cream', '', null],
+            'job lot'             => ['OFFER: job lot of books', '', null],
+            'dinner service'      => ['OFFER: Dinner service', '', null],
+            'ladder loan'         => ['WANTED: Ladder loan', '', null],
+            'loan camera'         => ['WANTED: Loan IR camera', '', null],
+            'gardeners world'     => ["OFFER: Gardener's World magazines", '', null],
+            'decorator spares'    => ['OFFER: Decorator spares', '', null],
+            'different items'     => ['WANTED: different items', '', null],
+            'lifted turf'         => ['OFFER: Lifted turf', '', null],
+            'guitar tutor'        => ['OFFER: Guitar tutor', '', null],
+            'plain sofa'          => ['WANTED: Sofa', '', null],
+            'garden soil'         => ['OFFER: Garden soil', '', null],
+            'motorway services'   => ['WANTED: footstool', 'Collection near the motorway services', null],
+        ];
+    }
+
+    // =========================================================================
     // checkGreetingSpam — public, pure
     // =========================================================================
 
