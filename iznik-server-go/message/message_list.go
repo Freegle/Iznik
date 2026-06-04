@@ -440,13 +440,15 @@ func ListMessagesMT(c *fiber.Ctx) error {
 
 	var msgIDs []uint64
 
-	// Hide messages not yet processed by the content-check batch job.
+	// Hide Pending messages not yet processed by the content-check batch job.
 	// The 30-minute fallback ensures mods always see messages if the batch job is down,
 	// and also makes existing rows (contentcheck_checked_at IS NULL) visible without a
 	// backfill — their arrival times are already in the past.
+	// When the Pending view also shows Spam-collection messages, scope the filter to
+	// Pending rows only (Spam messages have already been reviewed and need no content check).
 	contentcheckFilter := ""
 	if collection == utils.COLLECTION_PENDING {
-		contentcheckFilter = " AND (mg.contentcheck_checked_at IS NOT NULL OR mg.arrival < NOW() - INTERVAL 30 MINUTE)"
+		contentcheckFilter = " AND (mg.collection != 'Pending' OR mg.contentcheck_checked_at IS NOT NULL OR mg.arrival < NOW() - INTERVAL 30 MINUTE)"
 	}
 
 	if collection == "Edit" {
@@ -519,13 +521,23 @@ func ListMessagesMT(c *fiber.Ctx) error {
 			db.Raw(sql, args...).Pluck("msgid", &msgIDs)
 		}
 	} else {
+		// When listing the Pending review queue, also include Spam-collection messages.
+		// The badge work-count (session.workCount.spam) already counts these, so
+		// excluding them from the list creates a spurious "+1 over visible" badge
+		// (Discourse #9654 / V1 parity).
+		collectionFilter := "mg.collection = ?"
+		branchArgs := []interface{}{collection}
+		if collection == utils.COLLECTION_PENDING {
+			collectionFilter = "mg.collection IN (?, ?)"
+			branchArgs = []interface{}{utils.COLLECTION_PENDING, utils.COLLECTION_SPAM}
+		}
+
 		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
 			"INNER JOIN messages m ON m.id = mg.msgid " +
 			"INNER JOIN users u ON u.id = m.fromuser " +
-			"WHERE mg.groupid = %GID% AND mg.collection = ? AND mg.deleted = 0 " +
+			"WHERE mg.groupid = %GID% AND " + collectionFilter + " AND mg.deleted = 0 " +
 			"AND m.deleted IS NULL AND m.fromuser IS NOT NULL AND u.deleted IS NULL " +
 			contentcheckFilter + " "
-		branchArgs := []interface{}{collection}
 
 		if fromuser > 0 {
 			branchSQL += "AND m.fromuser = ? "

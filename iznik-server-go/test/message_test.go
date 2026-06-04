@@ -8648,3 +8648,49 @@ func TestPatchMessageByTnPostid_NonAIAttachmentPreservedOnTextOnlyEdit(t *testin
 	// Cleanup.
 	db.Exec("DELETE FROM messages_attachments WHERE id = ?", realAttachID)
 }
+
+// TestListMessagesMT_SpamInPendingList verifies that Spam-collection messages
+// are returned by the /modtools/messages?collection=Pending endpoint.
+//
+// Root cause (Discourse #9654): the badge work-count includes spam messages
+// but the ModTools Pending review list filtered only mg.collection = 'Pending',
+// so the spam message was counted in the badge but had no visible home in the
+// UI — a spurious "+1 over visible".  V1 parity: V1 included Spam messages in
+// the review queue alongside Pending.
+func TestListMessagesMT_SpamInPendingList(t *testing.T) {
+	prefix := uniquePrefix("lstmt_spam")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Create a message in the Spam collection (as the spam handler would do).
+	msgID := CreateTestMessage(t, posterID, groupID, prefix+" spam item", 52.0, -1.0)
+	db.Exec("UPDATE messages_groups SET collection = 'Spam' WHERE msgid = ? AND groupid = ?", msgID, groupID)
+
+	// The Pending review endpoint should return the Spam-collection message.
+	resp, err := getApp().Test(httptest.NewRequest("GET",
+		fmt.Sprintf("/api/modtools/messages?groupid=%d&collection=Pending&jwt=%s", groupID, modToken), nil))
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var body map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&body)
+	msgs, _ := body["messages"].([]interface{})
+
+	found := false
+	for _, id := range msgs {
+		if id == float64(msgID) {
+			found = true
+		}
+	}
+	assert.True(t, found, "Spam-collection message should appear in modtools Pending review list (Discourse #9654)")
+
+	// Cleanup.
+	db.Exec("DELETE FROM messages_groups WHERE msgid = ?", msgID)
+	db.Exec("DELETE FROM messages WHERE id = ?", msgID)
+}
