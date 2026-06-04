@@ -33,7 +33,7 @@
         <div class="bitem__detail">
           <span class="bitem__ref">#{{ idx + 1 }}</span>
           <span class="bitem__name">{{ item.name }}</span>
-          <b-badge variant="light">{{ item.quantity }} left</b-badge>
+          <b-badge variant="light">{{ item.quantity }} available</b-badge>
           <b-badge
             v-if="item.condition && item.condition !== 'Unknown'"
             variant="info"
@@ -67,15 +67,24 @@
           >
             <span class="bitem__picktext">I'd like this</span>
           </b-form-checkbox>
-          <b-form-select
-            v-if="picks[item.id].checked"
-            v-model="picks[item.id].quantity"
-            :options="qtyOptions(item)"
-            size="sm"
-            class="bitem__qtysel"
-            :aria-label="'How many ' + item.name"
-            :data-testid="'qty-' + item.id"
-          />
+          <!-- Quantity only matters when more than one is available. The slot
+               keeps a fixed width so turning the toggle on doesn't shift it. -->
+          <div v-if="item.quantity > 1" class="bitem__qtyslot">
+            <template v-if="picks[item.id].checked">
+              <label :for="'qty-' + item.id" class="bitem__qtylabel"
+                >How many?</label
+              >
+              <b-form-select
+                :id="'qty-' + item.id"
+                v-model="picks[item.id].quantity"
+                :options="qtyOptions(item)"
+                size="sm"
+                class="bitem__qtysel"
+                :aria-label="'How many ' + item.name"
+                :data-testid="'qty-' + item.id"
+              />
+            </template>
+          </div>
         </div>
       </li>
     </ul>
@@ -112,15 +121,8 @@
       <p v-if="registerHint" class="bulkitems__hint small">
         {{ registerHint }}
       </p>
-
-      <SpinButton
-        variant="primary"
-        :disabled="!canRegister"
-        icon-name="check"
-        :label="submitted ? 'Update my interest' : 'Register interest'"
-        data-testid="register-interest"
-        @handle="submit"
-      />
+      <!-- The "Register interest" action lives in the page's main reply button
+           (see MessageExpanded), which calls submit() and reflects canRegister. -->
       <NoticeMessage v-if="submitted" variant="success" class="mt-2">
         Thanks! We've let the giver know which items you're interested in.
       </NoticeMessage>
@@ -132,7 +134,6 @@
 import { ref, reactive, computed, watch, defineAsyncComponent } from 'vue'
 import { useMessageStore } from '~/stores/message'
 import { useAuthStore } from '~/stores/auth'
-import SpinButton from '~/components/SpinButton'
 import NoticeMessage from '~/components/NoticeMessage'
 
 const MessagePhotosModal = defineAsyncComponent(() =>
@@ -142,6 +143,10 @@ const MessagePhotosModal = defineAsyncComponent(() =>
 const props = defineProps({
   id: { type: Number, required: true },
 })
+
+// The page's main reply button drives the actual "Register interest" action, so
+// it needs to know whether we're ready, and whether interest is already in.
+const emit = defineEmits(['can-register', 'submitted'])
 
 const messageStore = useMessageStore()
 const authStore = useAuthStore()
@@ -220,6 +225,11 @@ const registerHint = computed(() => {
   }
   return ''
 })
+
+// Keep the page's reply button in sync (it shows "Register interest" and is
+// disabled until canRegister, then "Update my interest" once interest is in).
+watch(canRegister, (v) => emit('can-register', v), { immediate: true })
+watch(submitted, (v) => emit('submitted', v), { immediate: true })
 
 function onCheck(item) {
   const p = picks[item.id]
@@ -302,7 +312,14 @@ async function submit(callback) {
   if (callback) callback()
 }
 
-defineExpose({ buildPayload, picks, canRegister, cancollectTimes, registerHint })
+defineExpose({
+  submit,
+  buildPayload,
+  picks,
+  canRegister,
+  cancollectTimes,
+  registerHint,
+})
 </script>
 
 <style scoped lang="scss">
@@ -419,17 +436,37 @@ defineExpose({ buildPayload, picks, canRegister, cancollectTimes, registerHint }
   white-space: nowrap;
 }
 
-/* Toggle + quantity inline, never wrapping. */
+/* Toggle on top; the quantity (label + dropdown) sits BELOW it when turned on,
+   so turning the toggle on never shifts its position. */
 .bitem__pick {
   flex: 0 0 auto;
   display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
+.bitem__qtyslot {
+  display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.35rem;
+}
+
+.bitem__qtylabel {
+  margin: 0;
+  font-size: 0.85rem;
+  color: $color-gray--dark;
   white-space: nowrap;
 }
 
 .bitem__qtysel {
   width: 4.25rem;
+}
+
+/* Give the collection-times block some breathing room from the items list. */
+.bulkitems__actions {
+  margin-top: 1rem;
 }
 
 /* On a phone the photo + name + badges + the pick/interest controls don't fit
@@ -448,6 +485,11 @@ defineExpose({ buildPayload, picks, canRegister, cancollectTimes, registerHint }
        on top of 100% and re-introduce overflow). */
     padding-left: calc(40px + 0.5rem);
     margin-top: 0.25rem;
+  }
+
+  /* Left-align the stacked toggle + quantity under the item name on mobile. */
+  .bitem__pick {
+    align-items: flex-start;
   }
 }
 </style>
