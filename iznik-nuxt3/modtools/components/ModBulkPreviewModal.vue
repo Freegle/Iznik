@@ -29,6 +29,7 @@
             :src="thumb(item)"
             class="bulkprev__thumb"
             alt=""
+            @error="brokenImage"
           />
           <span v-else class="bulkprev__thumb bulkprev__thumb--empty">
             <v-icon icon="image" />
@@ -44,7 +45,7 @@
           <b-form-checkbox
             switch
             disabled
-            aria-label="Members tick to request"
+            aria-label="Members turn this on to request the item"
           />
         </li>
       </ul>
@@ -90,6 +91,12 @@ function conditionLabel(item) {
   const c = item.condition
   if (!c || c === 'Unknown') return ''
   return c === 'LikeNew' ? 'Like new' : c
+}
+
+// Degrade a missing thumbnail to the shared placeholder rather than a broken
+// image (matches BulkItemsInterest / NewsPhotoModal).
+function brokenImage(event) {
+  event.target.src = '/placeholder.jpg'
 }
 
 function onHide() {

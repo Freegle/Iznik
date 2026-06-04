@@ -10,6 +10,7 @@ import (
 	"github.com/freegle/iznik-server-go/aiimage"
 	"github.com/freegle/iznik-server-go/database"
 	"github.com/freegle/iznik-server-go/message"
+	"github.com/freegle/iznik-server-go/misc"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -226,6 +227,60 @@ func TestBulkInterest(t *testing.T) {
 	resp, err := getApp().Test(req, 10000)
 	require.NoError(t, err)
 	assert.Equal(t, 400, resp.StatusCode, "cannot be interested in your own post")
+}
+
+// TestBulkInterestOnBehalf checks the offerer can record a replier's interest on
+// their behalf (interestuserid) — e.g. when the replier asked for an item in
+// free-text chat — while a non-offerer cannot do it for someone else.
+func TestBulkInterestOnBehalf(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("bulkonbehalf")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	wanterID := CreateTestUser(t, prefix+"_wanter", "User")
+	otherID := CreateTestUser(t, prefix+"_other", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	deskID := addBulkItem(t, msgID, "Desk", 4, "Good")
+
+	postAs := func(token string, interestUserid uint64, qty int) int {
+		body := map[string]interface{}{
+			"action":         "BulkInterest",
+			"id":             msgID,
+			"interestuserid": interestUserid,
+			"bulkinterest": []map[string]interface{}{
+				{"bulkitemid": deskID, "quantity": qty},
+			},
+		}
+		bb, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/api/message?jwt="+token, bytes.NewBuffer(bb))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := getApp().Test(req, 10000)
+		require.NoError(t, err)
+		return resp.StatusCode
+	}
+
+	// The offerer records the replier's interest on their behalf.
+	require.Equal(t, 200, postAs(getToken(t, ownerID), wanterID, 2))
+	var qty int
+	var state string
+	db.Raw("SELECT quantity, state FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", deskID, wanterID).Row().Scan(&qty, &state)
+	assert.Equal(t, 2, qty, "interest is recorded against the replier, not the offerer")
+	assert.Equal(t, "Interested", state)
+
+	// The consolidated Interested chat message is attributed to the replier.
+	var chatCount int64
+	db.Raw("SELECT COUNT(*) FROM chat_messages WHERE refmsgid = ? AND userid = ? AND type = 'Interested'", msgID, wanterID).Scan(&chatCount)
+	assert.Equal(t, int64(1), chatCount)
+
+	// No interest row leaks onto the offerer.
+	var ownerRows int64
+	db.Raw("SELECT COUNT(*) FROM messages_bulk_items_interest WHERE bulkitemid = ? AND userid = ?", deskID, ownerID).Scan(&ownerRows)
+	assert.Equal(t, int64(0), ownerRows)
+
+	// A non-offerer cannot record interest for someone else.
+	assert.Equal(t, 403, postAs(getToken(t, otherID), wanterID, 1))
 }
 
 // TestBulkInterestState checks the offerer can transition an interest row, and a
@@ -462,6 +517,57 @@ func TestBulkItemPhotoIngestion(t *testing.T) {
 	var count int64
 	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE bulkitemid = ?", deskID).Scan(&count)
 	assert.Equal(t, int64(1), count, "ingestion is idempotent — no duplicate attachment")
+}
+
+// TestBulkItemUploadedPhotoDeliveryURL checks that an uploaded per-item photo
+// surfaces to a recipient as a correctly-built image-delivery URL. This is the
+// wiring that makes the photo actually render for the person browsing the offer:
+// the bulk item must carry the attachment, and the attachment's path/thumb must
+// be the image-delivery URL derived from its uploaded uid (the same URL every
+// other Freegle photo uses). Whether a given environment's resizer can fetch the
+// bytes is a separate infra concern; this asserts the API's contract.
+func TestBulkItemUploadedPhotoDeliveryURL(t *testing.T) {
+	db := database.DBConn
+	prefix := uniquePrefix("bulkphotourl")
+	groupID := CreateTestGroup(t, prefix)
+	ownerID := CreateTestUser(t, prefix+"_owner", "User")
+	viewerID := CreateTestUser(t, prefix+"_viewer", "User")
+	CreateTestMembership(t, ownerID, groupID, "Member")
+
+	msgID := CreateTestMessage(t, ownerID, groupID, prefix+" Clearance", 55.95, -3.18)
+	deskID := addBulkItem(t, msgID, "Office desk", 4, "Good")
+
+	// Mirror the real upload flow: an attachment carrying the uploaded uid (in the
+	// tusd "freegletusd-<hash>" form), linked to the bulk item.
+	const uid = "freegletusd-deadbeefcafe1234"
+	res := db.Exec("INSERT INTO messages_attachments (msgid, externaluid, bulkitemid, `primary`) VALUES (?, ?, ?, 1)", msgID, uid, deskID)
+	require.NoError(t, res.Error)
+
+	// GET as an ordinary viewer — the recipient who needs to see the photo.
+	viewerToken := getToken(t, viewerID)
+	resp, err := getApp().Test(httptest.NewRequest("GET", fmt.Sprintf("/api/message/%d?jwt=%s", msgID, viewerToken), nil), 10000)
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var msg message.Message
+	require.NoError(t, json.Unmarshal(rsp(resp), &msg))
+
+	var desk *message.BulkItem
+	for i := range msg.BulkItems {
+		if msg.BulkItems[i].ID == deskID {
+			desk = &msg.BulkItems[i]
+		}
+	}
+	require.NotNil(t, desk, "the desk item should be in the catalogue")
+	require.Len(t, desk.Attachments, 1, "the uploaded photo should be grouped under the desk item")
+
+	att := desk.Attachments[0]
+	want := misc.GetImageDeliveryUrl(uid, "")
+	require.NotEmpty(t, want)
+	assert.Equal(t, want, att.Path, "item photo path should be the image-delivery URL for its uid")
+	assert.Equal(t, want, att.Paththumb, "item photo thumb should be the image-delivery URL for its uid")
+	assert.Contains(t, att.Path, "deadbeefcafe1234", "the delivery URL must reference the uploaded image")
+	assert.Contains(t, att.Path, "?url=", "the delivery URL must be a resizer URL")
 }
 
 // TestBulkOfferAccessInstructions checks that access instructions are stored on

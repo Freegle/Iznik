@@ -3535,6 +3535,10 @@ type PostMessageRequest struct {
 	Tnpostid         *string `json:"tnpostid"`
 	// Bulk-offer interest (action "BulkInterest").
 	BulkInterest []BulkInterestInput `json:"bulkinterest"`
+	// Whose interest to record/edit (action "BulkInterest"). Nil = the caller.
+	// Only the offerer may pass another user's id — e.g. to record a replier's
+	// verbally-expressed interest against the structured catalogue.
+	Interestuserid *uint64 `json:"interestuserid"`
 	// Bulk-offer interest state change (action "BulkInterestState").
 	Bulkitemid *uint64 `json:"bulkitemid"`
 	State      *string `json:"state"`

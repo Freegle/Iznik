@@ -702,6 +702,13 @@ services:
       - MYSQL_PASSWORD=${MYSQL_PRODUCTION_ROOT_PASSWORD:-iznik}
       - IMAGE_DELIVERY=http://delivery.localhost:${PORT_TRAEFIK_HTTP:-80}
       - TUS_UPLOADER=http://tusd:8080/tus
+      # In dev, uploaded photos live in the local tusd, not the production
+      # store. The Go API builds delivery URLs as IMAGE_DELIVERY?url=UPLOADS+uid;
+      # without this UPLOADS defaults to production (uploads.ilovefreegle.org),
+      # so the resizer 404s on locally-uploaded files. Point it at local tusd's
+      # file-serving path (reachable from the delivery container) so dev images
+      # render — matching how V1 derives its base from TUS_UPLOADER.
+      - UPLOADS=http://tusd:8080/tus/
       - PARTNER_KEY_FILE=/run/secrets/PARTNER_KEY
       - LOKI_ENABLED=true
       - LOKI_URL=http://loki:3100

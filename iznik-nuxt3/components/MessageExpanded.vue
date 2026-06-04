@@ -314,6 +314,7 @@
                 </div>
               </div>
               <div
+                v-if="!hideGeneratedBulkBody"
                 class="description-content"
                 :class="{
                   'description-content--promised':
@@ -656,6 +657,18 @@ const {
 } = useMessageDisplay(props.id)
 
 const stickyAdRendered = computed(() => miscStore.stickyAdRendered)
+
+// For a bulk offer the catalogue below (BulkItemsInterest) lists the items and
+// collection times structurally. The server also stores a plain-text summary as
+// the body (so digests/search/non-bulk clients still have something), but on the
+// web page that just duplicates the catalogue — so suppress it. A giver's own
+// free-text description doesn't start with this generated marker, so it still
+// shows. (Marker kept in sync with buildBulkSummary in iznik-server-go.)
+const hideGeneratedBulkBody = computed(() => {
+  const isBulk = (message.value?.bulkcount || message.value?.bulkitems?.length) > 0
+  const body = message.value?.textbody || ''
+  return isBulk && body.startsWith('Items available in this offer:')
+})
 
 // State
 const replied = ref(false)

@@ -3174,9 +3174,10 @@ func TestChatIconUsesProfileSetPath(t *testing.T) {
 		"Chat icon should NOT use raw uimg_ URL; should use ProfileSetPath delivery URL")
 
 	// The icon should contain the delivery service pattern.
-	// ProfileSetPath for freegletusd- UIDs calls GetImageDeliveryUrl which produces a URL like:
-	//   https://delivery.ilovefreegle.org?url=https://uploads.ilovefreegle.org:8080/abc123testimage&ro=90
-	// (or uses IMAGE_DELIVERY / UPLOADS env vars if set)
+	// ProfileSetPath for freegletusd- UIDs calls GetImageDeliveryUrl, which builds
+	// a URL from the IMAGE_DELIVERY / UPLOADS env vars, e.g.:
+	//   <IMAGE_DELIVERY>?url=<UPLOADS>/abc123testimage&ro=90
+	// The test only asserts the embedded UID, so it's independent of those values.
 	assert.Contains(t, foundChat.Icon, "abc123testimage",
 		"Chat icon should contain the external UID (minus freegletusd- prefix)")
 

@@ -23,7 +23,13 @@
           :chatid="chatid"
           class="mt-1 mb-2"
         />
-        <div>
+        <BulkInterestEditor
+          v-if="isBulk && refmsgid"
+          :messageid="refmsgid"
+          :interestuserid="chatmessage.userid"
+          class="mt-1 mb-2"
+        />
+        <div v-if="!isBulk">
           <!-- ModTools: clickable links enabled -->
           <template v-if="isModTools">
             <span
@@ -56,6 +62,7 @@
         </div>
         <div
           v-if="
+            !isBulk &&
             refmsg &&
             refmsg.fromuser === myid &&
             refmsg.type === 'Offer' &&
@@ -117,7 +124,13 @@
       </div>
       <div v-else>
         <ChatMessageSummary v-if="refmsgid" :id="refmsgid" class="mt-1 mb-2" />
-        <div>
+        <BulkInterestEditor
+          v-if="isBulk && refmsgid"
+          :messageid="refmsgid"
+          :interestuserid="myid"
+          class="mt-1 mb-2"
+        />
+        <div v-if="!isBulk">
           <!-- ModTools: clickable links enabled -->
           <template v-if="isModTools">
             <span v-if="!highlightEmails">
@@ -243,6 +256,9 @@ import { useMiscStore } from '~/stores/misc'
 const OutcomeModal = defineAsyncComponent(() =>
   import('~/components/OutcomeModal')
 )
+const BulkInterestEditor = defineAsyncComponent(() =>
+  import('~/components/BulkInterestEditor')
+)
 const props = defineProps({
   chatid: {
     type: Number,
@@ -296,6 +312,14 @@ const refmsgid = computed(() => {
 const refmsg = computed(() => {
   if (chatmessage.value?.refmsg) return chatmessage.value.refmsg
   return refmsgid.value ? messageStore.byId(refmsgid.value) : null
+})
+
+// A bulk ("clearance") offer: show the interactive per-item interest editor
+// instead of the plain "I'm interested in: …" text, so either party can adjust
+// which items are wanted right from the chat.
+const isBulk = computed(() => {
+  const m = refmsg.value
+  return !!m && ((m.bulkcount || 0) > 0 || (m.bulkitems && m.bulkitems.length > 0))
 })
 
 // In ModTools, we make URLs clickable. In Freegle, we don't for safety reasons.
