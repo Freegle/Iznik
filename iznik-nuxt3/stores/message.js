@@ -664,6 +664,13 @@ export const useMessageStore = defineStore({
       )
       return fetched.filter((id) => id !== null)
     },
+    // Mark auto-published posts as reviewed by a moderator, clearing them from
+    // the Checked/Trusted oversight queues. Returns the number marked.
+    async markChecked(params) {
+      const data = await api(this.config).message.markChecked(params)
+      return data?.checked ?? 0
+    },
+
     async fetchMessagesMT(params) {
       if (params.context) {
         // Server expects context as a JSON-encoded string; URLSearchParams

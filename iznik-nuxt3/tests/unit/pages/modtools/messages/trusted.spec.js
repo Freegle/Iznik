@@ -34,10 +34,16 @@ const mockMessageStore = {
   list: {},
   context: null,
   fetchMessagesMT: vi.fn().mockResolvedValue([]),
+  markChecked: vi.fn().mockResolvedValue(2),
   clear: vi.fn(),
 }
 vi.mock('@/stores/message', () => ({
   useMessageStore: () => mockMessageStore,
+}))
+
+const mockCheckWork = vi.fn().mockResolvedValue(undefined)
+vi.mock('~/composables/useModMe', () => ({
+  useModMe: () => ({ checkWork: mockCheckWork }),
 }))
 
 const mockMiscStore = { get: vi.fn(), set: vi.fn() }
@@ -154,5 +160,17 @@ describe('messages/trusted/[[id]]/[[term]].vue page', () => {
     const wrapper = mountComponent()
     expect(wrapper.vm.id).toBe(42)
     expect(mockGroupid.value).toBe(42)
+  })
+
+  it('markAllChecked clears the trusted bucket and refreshes work counts', async () => {
+    mockGroupid.value = 7
+    const wrapper = mountComponent()
+    await wrapper.vm.markAllChecked()
+    expect(mockMessageStore.markChecked).toHaveBeenCalledWith({
+      groupid: 7,
+      filter: 'trusted',
+    })
+    expect(mockMessageStore.clear).toHaveBeenCalled()
+    expect(mockCheckWork).toHaveBeenCalled()
   })
 })

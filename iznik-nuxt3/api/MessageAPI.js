@@ -79,6 +79,12 @@ export default class MessageAPI extends BaseAPI {
     return this.$getv2('/modtools/messages', params)
   }
 
+  // Mark auto-published posts (Checked/Trusted oversight queues) as reviewed by a
+  // moderator. Pass {groupid, filter} to clear a whole bucket, or {groupid, ids}.
+  markChecked(params) {
+    return this.$postv2('/modtools/messages/markchecked', params)
+  }
+
   update(event) {
     return this.$postv2('/message', event)
   }
