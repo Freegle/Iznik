@@ -96,12 +96,14 @@ test.describe('Bulk offer (clearance) end-to-end', () => {
     console.log(`Listed ${items.length} items`)
     await takeScreenshot('bulk-items-listed')
 
-    // Photos: upload three, then drag each onto an item row.
+    // Photos: upload three via the batch uploader, then drag each onto a row.
     try {
       await page.getByRole('button', { name: /add photos/i }).first().click()
-      const fileInput = page
-        .locator('.uppy-Dashboard-input, input[type="file"]')
-        .first()
+      // Target the Uppy dashboard's own (multiple) file input specifically. The
+      // composer also has a single-file per-row "Add photo" input, so a broad
+      // input[type=file] selector would grab the wrong one ("Non-multiple file
+      // input can only accept single file").
+      const fileInput = page.locator('.uppy-Dashboard-input').first()
       await fileInput.waitFor({ state: 'attached', timeout: timeouts.ui.appearance })
       await fileInput.setInputFiles([
         ASSET('item1.png'),
@@ -113,10 +115,6 @@ test.describe('Bulk offer (clearance) end-to-end', () => {
         .locator('[data-testid="photo-tray"] .pthumb')
         .first()
         .waitFor({ state: 'visible', timeout: 60000 })
-      // Close the uploader modal if it's still open.
-      const closeBtn = page.locator('.uppy-Dashboard-close, button[aria-label="Close Modal"]')
-      if (await closeBtn.count()) await closeBtn.first().click().catch(() => {})
-      await page.waitForTimeout(500)
 
       // Drag the first tray photo onto each item row in turn.
       let trayCount = await page.locator('[data-testid="photo-tray"] .pthumb').count()
@@ -131,6 +129,16 @@ test.describe('Bulk offer (clearance) end-to-end', () => {
     } catch (e) {
       console.warn(`Photo upload/drag step did not complete: ${e.message}`)
       await takeScreenshot('bulk-photos-failed')
+    } finally {
+      // Always dismiss the uploader modal — if it's left open it overlays the
+      // form and intercepts pointer events on the steps below (e.g. add-slot).
+      const closeBtn = page.locator(
+        '.uppy-Dashboard-close, button[aria-label="Close Modal"]'
+      )
+      if (await closeBtn.count())
+        await closeBtn.first().click().catch(() => {})
+      await page.keyboard.press('Escape').catch(() => {})
+      await page.waitForTimeout(400)
     }
 
     // Collection times.

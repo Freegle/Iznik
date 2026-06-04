@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -202,16 +203,38 @@ func handleBulkInterest(c *fiber.Ctx, myid uint64, req PostMessageRequest) error
 				p.bulkitemid, req.ID, target, p.qty, p.cancollect, chatid)
 		}
 
+		// Map each item to its catalogue reference number (1-based, in catalogue
+		// order) — the same #n the offer body and the on-site catalogue show.
+		// Including it makes the reply unambiguous even when two items share a
+		// name (e.g. two swivel chairs of different colours), so a human or the
+		// Freegle Helper / AI can map each line straight back to the offer.
+		type orderedItem struct{ ID uint64 }
+		var ordered []orderedItem
+		db.Raw("SELECT id FROM messages_bulk_items WHERE msgid = ? ORDER BY position ASC, id ASC", req.ID).Scan(&ordered)
+		refByItem := make(map[uint64]int, len(ordered))
+		for i, o := range ordered {
+			refByItem[o.ID] = i + 1
+		}
+
+		// List the picks in catalogue order so the reply reads top-to-bottom.
+		sort.SliceStable(picked, func(i, j int) bool {
+			return refByItem[picked[i].bulkitemid] < refByItem[picked[j].bulkitemid]
+		})
+
 		// One consolidated Interested chat reply: insert the first time, update
 		// it on re-express (so the thread isn't spammed with duplicates).
-		var parts []string
+		// Structured one-item-per-line with the reference number, quantity and
+		// name; newline-separated so it stays machine-parseable. Names are
+		// flattened to a single line to keep the format predictable.
+		var lines []string
 		for _, p := range picked {
-			parts = append(parts, fmt.Sprintf("%d× %s", p.qty, p.name))
+			name := strings.Join(strings.Fields(p.name), " ")
+			lines = append(lines, fmt.Sprintf("#%d %s × %d", refByItem[p.bulkitemid], name, p.qty))
 		}
-		body := "I'm interested in: " + strings.Join(parts, ", ")
+		body := "I'd like these items from your offer:\n" + strings.Join(lines, "\n")
 		for _, p := range picked {
 			if p.cancollect != nil && strings.TrimSpace(*p.cancollect) != "" {
-				body += " (can collect: " + strings.TrimSpace(*p.cancollect) + ")"
+				body += "\nI can collect: " + strings.TrimSpace(*p.cancollect)
 				break
 			}
 		}
