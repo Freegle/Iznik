@@ -9,7 +9,7 @@
 
 const { test, expect } = require('./fixtures')
 const { timeouts } = require('./config')
-const { loginViaHomepage } = require('./utils/user')
+const { loginViaHomepage, logoutIfLoggedIn } = require('./utils/user')
 
 const VIEWPORTS = [
   { w: 1280, h: 900, tag: 'desktop' },
@@ -139,37 +139,74 @@ test.describe('Bulk composer UX review', () => {
     }
   })
 
-  // Recipient catalogue (BulkItemsInterest) — the one-line rows are the most
+  // Catalogue views — post a real bulk offer, then check both the owner's view
+  // and a non-owner recipient's view. The recipient's one-line rows are the most
   // overflow-prone bit on a phone, and it's what most people actually see.
-  test('capture responder catalogue at desktop and mobile', async ({
+  test('catalogue: owner and responder views do not overflow', async ({
     page,
     testEnv,
     takeScreenshot,
   }) => {
-    test.setTimeout(120000)
-    // View an existing bulk offer as a non-owner so the recipient picker shows.
+    test.setTimeout(240000)
+    // Post the offer as the owner so the message genuinely exists (CI has no
+    // seeded data) — then view it from both sides.
+    expect(
+      await loginViaHomepage(page, testEnv.user.email, 'freegle')
+    ).toBeTruthy()
+    const msgId = await postBulkOffer(page, testEnv.postcode || 'PL1 2EX')
+    expect(msgId, 'a bulk offer should have been posted').toBeTruthy()
+
+    // Owner's own view of the offer.
+    await captureCatalogue(page, takeScreenshot, msgId, 'owner')
+
+    // A non-owner recipient sees the structured picker.
+    await logoutIfLoggedIn(page)
     expect(
       await loginViaHomepage(page, testEnv.user2.email, 'freegle')
     ).toBeTruthy()
-    const msgId = Number(process.env.BULK_REVIEW_MSGID || 15)
-
     await captureCatalogue(page, takeScreenshot, msgId, 'responder')
   })
-
-  // Owner view — the offerer sees an interest summary instead of the picker;
-  // same one-line row, same mobile overflow risk.
-  test('capture owner catalogue at desktop and mobile', async ({
-    page,
-    takeScreenshot,
-  }) => {
-    test.setTimeout(120000)
-    const ownerEmail =
-      process.env.BULK_REVIEW_OWNER || 'pw_bulkofferflow_user@test.com'
-    const msgId = Number(process.env.BULK_REVIEW_MSGID || 15)
-    expect(await loginViaHomepage(page, ownerEmail, 'freegle')).toBeTruthy()
-    await captureCatalogue(page, takeScreenshot, msgId, 'owner')
-  })
 })
+
+// Post a minimal bulk offer via the composer (caller is already logged in) and
+// return the new message id. Self-contained so the catalogue checks run in CI.
+async function postBulkOffer(page, postcode) {
+  await page.gotoAndVerify('/give/clearance', {
+    timeout: timeouts.navigation.default,
+  })
+  const pc = page.locator('.pcinp, input[placeholder="Type postcode"]').first()
+  await pc.waitFor({ state: 'visible', timeout: timeouts.ui.appearance })
+  await pc.fill(postcode)
+  await page
+    .locator('.validation-tick, .fa-check-circle, .v-icon[icon="check-circle"]')
+    .first()
+    .waitFor({ state: 'visible', timeout: timeouts.api.default })
+    .catch(() => {})
+  await page
+    .getByTestId('clearance-title')
+    .fill('Office clearance — everything must go')
+  await page.getByTestId('mode-manual').click()
+  for (let i = 0; i < ITEMS.length; i++) {
+    if (i > 0) await page.getByTestId('add-item').click()
+    await page.getByTestId('item-name-0').fill(ITEMS[i][0])
+    await page.getByTestId('item-qty-0').fill(ITEMS[i][1])
+    await page.getByTestId('item-condition-0').selectOption(ITEMS[i][2])
+  }
+  const putResponse = page.waitForResponse(
+    (r) =>
+      r.url().includes('/api/message') &&
+      r.request().method() === 'PUT' &&
+      r.status() === 200,
+    { timeout: timeouts.api.default }
+  )
+  await page.getByTestId('clearance-submit').click()
+  const resp = await putResponse
+  const msgId = (await resp.json().catch(() => ({})))?.id
+  await page
+    .waitForURL(/\/myposts/, { timeout: timeouts.navigation.default })
+    .catch(() => {})
+  return msgId
+}
 
 // Open a bulk message, screenshot the catalogue at each viewport, and assert it
 // never forces horizontal page scroll. `who` namespaces the screenshots.
