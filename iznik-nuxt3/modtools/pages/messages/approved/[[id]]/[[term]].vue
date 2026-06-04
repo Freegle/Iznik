@@ -22,14 +22,6 @@
       <b-form-checkbox v-model="originOnly" class="mt-2">
         Only this group's own posts (hide rippled-in)
       </b-form-checkbox>
-      <b-form-select
-        v-model="filter"
-        size="sm"
-        class="mt-2 ms-2"
-        style="max-width: 220px"
-        :options="filterOptions"
-        aria-label="Filter approved messages"
-      />
     </div>
     <div>
       <NoticeMessage v-if="loaded && !messages.length && !busy" class="mt-2">
@@ -67,13 +59,11 @@
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from '#imports'
 import { useMessageStore } from '@/stores/message'
-import { useMiscStore } from '@/stores/misc'
 import { setupModMessages } from '@/composables/useModMessages'
 import { useMe } from '~/composables/useMe'
 
 // Stores
 const messageStore = useMessageStore()
-const miscStore = useMiscStore()
 
 // Composables
 const modMessages = setupModMessages(true)
@@ -100,13 +90,6 @@ const {
 // Local state (formerly data())
 const chosengroupid = ref(0)
 const bump = ref(0)
-const filter = ref('')
-const filterOptions = [
-  { value: '', text: 'All messages' },
-  { value: 'recentjoin', text: 'Joined last 7 days' },
-  { value: 'autoapproved', text: 'Auto-approved' },
-  { value: 'outsidecga', text: 'Outside group area' },
-]
 const urlOverride = ref(false)
 const loaded = ref(false)
 const highlightMsgId = ref(null)
@@ -247,21 +230,6 @@ function searchedMessage(term) {
   }
 }
 
-watch(filter, (newVal) => {
-  // The auto-approved view is for scanning posts that went out without a human
-  // checking, so default it to the compact summary view.
-  if (newVal === 'autoapproved') {
-    miscStore.set({ key: 'modtoolsMessagesApprovedSummary', value: true })
-  }
-  show.value = 0
-  context.value = null
-  modMessages.listingIds.value = new Set()
-  modMessages.listingIdOrder.value = []
-  messageStore.clear()
-  bump.value++
-})
-
-
 function searchedMember(term) {
   show.value = 0
   messageTerm.value = null
@@ -333,9 +301,6 @@ async function loadMore($state) {
         collection: collection.value,
         modtools: true,
         summary: false,
-      }
-      if (filter.value) {
-        params.filter = filter.value
       }
     }
 

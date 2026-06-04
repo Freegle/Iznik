@@ -452,10 +452,10 @@ func ListMessagesMT(c *fiber.Ctx) error {
 	search := c.Query("search", "")
 	fromuserStr := c.Query("fromuser", "0")
 	fromuser, _ := strconv.ParseUint(fromuserStr, 10, 64)
-	// Optional moderation filter for the standard (non-search) listing:
-	//   autoapproved — posts approved without a moderator (mg.approvedby IS NULL)
-	//   recentjoin   — posts from members who joined this group in the last 7 days
-	//   outsidecga   — posts whose location falls outside the group's area polygon
+	// Optional oversight view of the Approved collection (non-search listing):
+	//   checked — live posts auto-approved via the automated checks, from
+	//             auto-moderated (NULL posting status) members
+	//   trusted — live posts from trusted (group-settings) members
 	filter := c.Query("filter", "")
 
 	var msgIDs []uint64
@@ -578,18 +578,14 @@ func ListMessagesMT(c *fiber.Ctx) error {
 		filterJoin := ""
 		filterWhere := ""
 		switch filter {
-		case "autoapproved":
-			filterWhere = "AND mg.approvedby IS NULL "
-		case "recentjoin":
+		case "checked":
+			// Auto-approved (approvedby NULL) from auto-moderated (NULL) members.
 			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
-			filterWhere = "AND mem.added >= NOW() - INTERVAL 7 DAY "
-		case "outsidecga":
-			// Use the canonical spatial point (messages_spatial), matching how
-			// location containment is checked elsewhere. Unmappable posts (no
-			// spatial row) can't be "outside" and are excluded by the INNER JOIN.
-			filterJoin = "INNER JOIN `groups` g ON g.id = mg.groupid " +
-				"INNER JOIN messages_spatial ms ON ms.msgid = mg.msgid AND ms.groupid = mg.groupid "
-			filterWhere = "AND g.polyindex IS NOT NULL AND NOT ST_Contains(g.polyindex, ms.point) "
+			filterWhere = "AND mg.approvedby IS NULL AND mem.ourPostingStatus IS NULL "
+		case "trusted":
+			// Went live without moderation from trusted (group-settings) members.
+			filterJoin = "INNER JOIN memberships mem ON mem.userid = m.fromuser AND mem.groupid = mg.groupid "
+			filterWhere = "AND mg.approvedby IS NULL AND (mem.ourPostingStatus = 'DEFAULT' OR mem.ourPostingStatus = 'UNMODERATED') "
 		}
 
 		branchSQL := "SELECT mg.msgid, mg.arrival FROM messages_groups mg " +
