@@ -1,0 +1,12 @@
+[Unit]
+Description=Freegle: stop idle worktree Docker Compose stacks to free RAM
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+User=edward
+Group=edward
+SupplementaryGroups=docker
+Environment=HOME=/home/edward
+ExecStart=/home/edward/.claude/freegle-stack-sweeper.sh
