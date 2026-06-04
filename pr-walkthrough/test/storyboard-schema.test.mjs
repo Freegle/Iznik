@@ -44,6 +44,18 @@ test('rejects callout until beyond scene length', () => {
   assert.equal(validateStoryboard(sb).ok, false);
 });
 
+test('callout may position by ref (a tool-measured label) instead of box', () => {
+  const sb = { meta: {}, scenes: [{ type: 'screenshot', seconds: 6, src: 'x.png', callouts: [{ at: 1, until: 5, ref: 'How many' }] }] };
+  assert.equal(validateStoryboard(sb).ok, true);
+});
+
+test('callout needs either box or ref', () => {
+  const sb = { meta: {}, scenes: [{ type: 'screenshot', seconds: 6, src: 'x.png', callouts: [{ at: 1, until: 5 }] }] };
+  const { ok, errors } = validateStoryboard(sb);
+  assert.equal(ok, false);
+  assert.match(errors.join('\n'), /box.*or.*ref/i);
+});
+
 test('duration math accounts for transition overlaps', () => {
   const sb = { scenes: [{ seconds: 5 }, { seconds: 5 }, { seconds: 5 }] };
   const { total } = totalDurationInFrames(sb, 30, 15);

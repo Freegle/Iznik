@@ -47,6 +47,16 @@ export function validateCapturePlan(plan) {
     if (shot.viewport) {
       if (!(shot.viewport.width > 0 && shot.viewport.height > 0)) fail(errors, `${p}.viewport`, 'needs positive width/height');
     }
+    if (shot.annotate != null) {
+      if (!Array.isArray(shot.annotate)) {
+        fail(errors, `${p}.annotate`, 'must be an array');
+      } else {
+        shot.annotate.forEach((a, j) => {
+          if (typeof a.selector !== 'string' || !a.selector) fail(errors, `${p}.annotate[${j}].selector`, 'is required');
+          if (typeof a.label !== 'string' || !a.label) fail(errors, `${p}.annotate[${j}].label`, 'is required');
+        });
+      }
+    }
     if (shot.steps != null) {
       if (!Array.isArray(shot.steps)) { fail(errors, `${p}.steps`, 'must be an array'); } else {
         shot.steps.forEach((step, j) => {

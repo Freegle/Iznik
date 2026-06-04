@@ -6,3 +6,5 @@ public/
 prs/*/out/
 prs/*/assets/*.masked.png
 *.log
+# captured auth sessions (tokens)
+prs/*/.auth*.json

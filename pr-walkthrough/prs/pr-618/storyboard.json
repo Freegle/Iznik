@@ -9,6 +9,7 @@
     "height": 1080,
     "fps": 30
   },
+  "_note": "Screenshot scenes position callouts by `ref` (a label measured live by capture into <shot>.boxes.json) and set focusAuto:true, so the renderer derives both the highlight boxes and the zoom from the real element positions — no hand-measured coordinates.",
   "scenes": [
     {
       "type": "title",
@@ -31,59 +32,52 @@
     },
     {
       "type": "screenshot",
+      "seconds": 8,
+      "chapter": "Posting a clearance",
+      "src": "pr-618/clearance-composer.masked.png",
+      "pan": "down",
+      "url": "www.ilovefreegle.org/give/clearance",
+      "caption": "One post holds the whole clearance — your area, the items, and when people can collect."
+    },
+    {
+      "type": "screenshot",
+      "seconds": 10,
+      "chapter": "Posting a clearance",
+      "src": "pr-618/clearance-composer.masked.png",
+      "url": "www.ilovefreegle.org/give/clearance",
+      "focusAuto": true,
+      "caption": "Start with your area, then give the whole clearance a name.",
+      "callouts": [
+        { "at": 1.5, "until": 6.0, "ref": "Pick your area first" },
+        { "at": 5.5, "until": 9.5, "ref": "Name the whole clearance" }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "seconds": 13,
+      "chapter": "Posting a clearance",
+      "src": "pr-618/clearance-composer.masked.png",
+      "url": "www.ilovefreegle.org/give/clearance",
+      "focusAuto": true,
+      "caption": "Add every item — type them in or paste a spreadsheet — each with its quantity and condition.",
+      "callouts": [
+        { "at": 1.5, "until": 5.5, "ref": "Type them in — or paste a spreadsheet" },
+        { "at": 5.0, "until": 8.5, "ref": "How many" },
+        { "at": 8.0, "until": 11.0, "ref": "Condition" },
+        { "at": 10.5, "until": 13.0, "ref": "3 items, 21 things" }
+      ]
+    },
+    {
+      "type": "screenshot",
       "seconds": 9,
       "chapter": "Posting a clearance",
       "src": "pr-618/clearance-composer.masked.png",
-      "natW": 1385,
-      "natH": 3610,
-      "pan": "down",
       "url": "www.ilovefreegle.org/give/clearance",
-      "caption": "One post holds the entire clearance — everything listed in a single place."
-    },
-    {
-      "type": "screenshot",
-      "seconds": 12,
-      "chapter": "Posting a clearance",
-      "src": "pr-618/clearance-composer.masked.png",
-      "natW": 1385,
-      "natH": 3610,
-      "url": "www.ilovefreegle.org/give/clearance",
-      "focus": { "x": 0.02, "y": 0.058, "w": 0.96, "h": 0.118 },
-      "caption": "Name the clearance once, then paste your stock list straight from a spreadsheet.",
+      "focusAuto": true,
+      "focusMinW": 0.7,
+      "caption": "Offer set collection times — then post the whole lot in one go.",
       "callouts": [
-        { "at": 2.0, "until": 6.5, "box": { "x": 0.025, "y": 0.069, "w": 0.45, "h": 0.016 }, "label": "Name the whole clearance", "arrow": "down" },
-        { "at": 6.0, "until": 11.5, "box": { "x": 0.15, "y": 0.139, "w": 0.66, "h": 0.024 }, "label": "Paste from a spreadsheet — or upload a CSV", "arrow": "up" }
-      ]
-    },
-    {
-      "type": "screenshot",
-      "seconds": 13,
-      "chapter": "Posting a clearance",
-      "src": "pr-618/clearance-composer.masked.png",
-      "natW": 1385,
-      "natH": 3610,
-      "url": "www.ilovefreegle.org/give/clearance",
-      "focus": { "x": 0.02, "y": 0.185, "w": 0.96, "h": 0.09 },
-      "caption": "Each line becomes an item you can fine-tune — quantity, condition, size and its own photos.",
-      "callouts": [
-        { "at": 1.5, "until": 6.0, "box": { "x": 0.443, "y": 0.19, "w": 0.082, "h": 0.013 }, "label": "How many", "arrow": "up" },
-        { "at": 5.5, "until": 9.5, "box": { "x": 0.525, "y": 0.19, "w": 0.105, "h": 0.013 }, "label": "Condition", "arrow": "up" },
-        { "at": 9.0, "until": 13.0, "box": { "x": 0.42, "y": 0.205, "w": 0.16, "h": 0.05 }, "label": "Photos per item", "arrow": "right" }
-      ]
-    },
-    {
-      "type": "screenshot",
-      "seconds": 11,
-      "chapter": "Posting a clearance",
-      "src": "pr-618/clearance-composer.masked.png",
-      "natW": 1385,
-      "natH": 3610,
-      "url": "www.ilovefreegle.org/give/clearance",
-      "focus": { "x": 0.02, "y": 0.812, "w": 0.96, "h": 0.11 },
-      "caption": "Post it in one go — one conversation for the entire clearance.",
-      "callouts": [
-        { "at": 1.5, "until": 6.0, "box": { "x": 0.165, "y": 0.824, "w": 0.16, "h": 0.011 }, "label": "41 things across 5 items", "arrow": "right" },
-        { "at": 5.5, "until": 10.5, "box": { "x": 0.17, "y": 0.902, "w": 0.18, "h": 0.022 }, "label": "Post the whole lot at once", "arrow": "up" }
+        { "at": 1.5, "until": 7.5, "ref": "Offer set collection times" }
       ]
     },
     {
@@ -91,30 +85,12 @@
       "seconds": 11,
       "chapter": "Receiving a clearance",
       "src": "pr-618/recipient-interest.masked.png",
-      "natW": 1385,
-      "natH": 1913,
       "url": "www.ilovefreegle.org/message/…",
-      "focus": { "x": 0.18, "y": 0.028, "w": 0.64, "h": 0.252 },
-      "caption": "Recipients see one tidy offer — with a catalogue of what's inside.",
+      "focusAuto": true,
+      "caption": "Recipients see one browsable catalogue — turn on the items you'd like; a stepper sets how many.",
       "callouts": [
-        { "at": 2.0, "until": 6.5, "box": { "x": 0.448, "y": 0.082, "w": 0.115, "h": 0.026 }, "label": "Everything available, at a glance", "arrow": "down" },
-        { "at": 6.0, "until": 10.5, "box": { "x": 0.255, "y": 0.215, "w": 0.205, "h": 0.028 }, "label": "A browsable list inside one offer", "arrow": "up" }
-      ]
-    },
-    {
-      "type": "screenshot",
-      "seconds": 13,
-      "chapter": "Receiving a clearance",
-      "src": "pr-618/recipient-interest.masked.png",
-      "natW": 1385,
-      "natH": 1913,
-      "url": "www.ilovefreegle.org/message/…",
-      "focus": { "x": 0.18, "y": 0.245, "w": 0.64, "h": 0.16 },
-      "caption": "Tick the items you want; a stepper lets you say how many — never more than are available.",
-      "callouts": [
-        { "at": 1.5, "until": 6.0, "box": { "x": 0.681, "y": 0.254, "w": 0.085, "h": 0.022 }, "label": "Tick what you'd like", "arrow": "left" },
-        { "at": 5.5, "until": 10.0, "box": { "x": 0.642, "y": 0.276, "w": 0.108, "h": 0.03 }, "label": "How many — capped at what's left", "arrow": "left" },
-        { "at": 9.5, "until": 13.0, "box": { "x": 0.305, "y": 0.267, "w": 0.2, "h": 0.024 }, "label": "Condition & quantity available", "arrow": "down" }
+        { "at": 1.5, "until": 6.0, "ref": "A browsable catalogue in one offer" },
+        { "at": 5.5, "until": 10.0, "ref": "Turn on what you want" }
       ]
     },
     {
@@ -122,14 +98,12 @@
       "seconds": 10,
       "chapter": "Receiving a clearance",
       "src": "pr-618/recipient-interest.masked.png",
-      "natW": 1385,
-      "natH": 1913,
       "url": "www.ilovefreegle.org/message/…",
-      "focus": { "x": 0.18, "y": 0.392, "w": 0.64, "h": 0.085 },
-      "caption": "One click sends the giver a single message — everything you chose, in one go.",
+      "focusAuto": true,
+      "caption": "Pick a collection time, then one click tells the giver everything you chose.",
       "callouts": [
-        { "at": 1.5, "until": 5.5, "box": { "x": 0.255, "y": 0.405, "w": 0.49, "h": 0.028 }, "label": "Say when you can collect", "arrow": "up" },
-        { "at": 5.0, "until": 9.5, "box": { "x": 0.255, "y": 0.432, "w": 0.147, "h": 0.028 }, "label": "One message to the giver", "arrow": "right" }
+        { "at": 1.5, "until": 5.5, "ref": "Pick a collection time" },
+        { "at": 5.0, "until": 9.5, "ref": "One message to the giver" }
       ]
     },
     {
@@ -139,7 +113,7 @@
       "heading": "It fits in everywhere people already look.",
       "bullets": [
         "The clearance turns up in the daily digest email, with photos.",
-        "Anywhere that shows the older view still gets a clear, readable list.",
+        "Older views still get a clear, readable list — items and collection times.",
         "Nothing new for people to learn — it's just a richer offer."
       ]
     },

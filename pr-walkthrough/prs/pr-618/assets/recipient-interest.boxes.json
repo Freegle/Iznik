@@ -1,0 +1,42 @@
+{
+  "A browsable catalogue in one offer": {
+    "label": "A browsable catalogue in one offer",
+    "arrow": "up",
+    "box": {
+      "x": 0.2588,
+      "y": 0.3146,
+      "w": 0.4715,
+      "h": 0.0112
+    }
+  },
+  "Turn on what you want": {
+    "label": "Turn on what you want",
+    "arrow": "left",
+    "box": {
+      "x": 0.6827,
+      "y": 0.3573,
+      "w": 0.0289,
+      "h": 0.0106
+    }
+  },
+  "Pick a collection time": {
+    "label": "Pick a collection time",
+    "arrow": "up",
+    "box": {
+      "x": 0.2588,
+      "y": 0.5384,
+      "w": 0.4715,
+      "h": 0.0265
+    }
+  },
+  "One message to the giver": {
+    "label": "One message to the giver",
+    "arrow": "right",
+    "box": {
+      "x": 0.2588,
+      "y": 0.5702,
+      "w": 0.1288,
+      "h": 0.0201
+    }
+  }
+}

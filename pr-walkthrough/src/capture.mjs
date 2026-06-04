@@ -13,8 +13,8 @@
 //
 // Uses the system Chrome via playwright-core (no extra browser download).
 import { chromium } from 'playwright-core';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCapturePlan } from './capture-plan-schema.mjs';
 
@@ -39,6 +39,38 @@ function chromePath() {
 // are supplied at capture time (e.g. BULK_MSG_ID=123) rather than hardcoded.
 function subst(s) {
   return typeof s === 'string' ? s.replace(/\$\{([A-Z0-9_]+)\}/g, (_, k) => process.env[k] ?? '') : s;
+}
+
+// PNG natural size from the IHDR header (no dependency).
+function pngSize(path) {
+  const b = readFileSync(path);
+  return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+}
+
+// Auto-derive callout coordinates: ask Playwright for each annotated element's bounding
+// box and express it as FRACTIONS of the captured (full-page) screenshot. This is the part
+// a human used to measure off a grid — the tool now produces it deterministically.
+async function measureAnnotations(page, annotate, imgW, imgH) {
+  const boxes = {};
+  for (const a of annotate) {
+    try {
+      // DOCUMENT-relative box (getBoundingClientRect is viewport-relative; add scroll) so it
+      // matches the full-page screenshot's coordinate system regardless of current scroll.
+      const bb = await locator(page, a.selector).first().evaluate((node) => {
+        const r = node.getBoundingClientRect();
+        return { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
+      });
+      if (!bb || !bb.width || !bb.height) continue;
+      boxes[a.label] = {
+        label: a.label,
+        arrow: a.arrow || 'up',
+        box: { x: +(bb.x / imgW).toFixed(4), y: +(bb.y / imgH).toFixed(4), w: +(bb.width / imgW).toFixed(4), h: +(bb.height / imgH).toFixed(4) },
+      };
+    } catch {
+      // element not present in this state — skip it
+    }
+  }
+  return boxes;
 }
 
 // "testid=foo" → locator by test id; "text=Bar" → by text; else raw CSS.
@@ -76,7 +108,7 @@ async function runStep(page, step, baseUrl) {
   return undefined;
 }
 
-export async function capture(plan, { baseUrl, assetsDir, headful = false }) {
+export async function capture(plan, { baseUrl, assetsDir, headful = false, storageState = undefined, authDir = undefined }) {
   mkdirSync(assetsDir, { recursive: true });
   const browser = await chromium.launch({
     executablePath: chromePath(),
@@ -87,19 +119,37 @@ export async function capture(plan, { baseUrl, assetsDir, headful = false }) {
   try {
     const vpDefault = plan.defaultViewport || { width: 1385, height: 1200 };
     for (const shot of plan.shots) {
-      const context = await browser.newContext({ viewport: shot.viewport || vpDefault, deviceScaleFactor: 1 });
+      // A shot may name its own auth state (e.g. a moderator); otherwise use the run default.
+      const shotState = shot.auth ? join(authDir || assetsDir, shot.auth) : storageState;
+      const context = await browser.newContext({
+        viewport: shot.viewport || vpDefault,
+        deviceScaleFactor: 1,
+        ...(shotState && existsSync(shotState) ? { storageState: shotState } : {}),
+      });
       const page = await context.newPage();
       try {
         await page.goto(baseUrl + subst(shot.route), { waitUntil: 'networkidle', timeout: 30000 });
         for (const step of shot.steps || []) await runStep(page, step, baseUrl);
         const dest = join(assetsDir, shot.name);
+        const fullPage = !shot.clip && shot.fullPage !== false;
+        // Return to the top so a sticky/fixed nav sits at its natural place in the full-page
+        // screenshot (otherwise it overlaps content where the page happened to be scrolled).
+        if (fullPage) { await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(200); }
         if (shot.clip) {
           await locator(page, shot.clip).first().screenshot({ path: dest });
         } else {
-          await page.screenshot({ path: dest, fullPage: shot.fullPage !== false });
+          await page.screenshot({ path: dest, fullPage });
+        }
+        // Auto-measure annotation boxes (fullPage only — fractions map to the screenshot).
+        let measured = 0;
+        if (fullPage && Array.isArray(shot.annotate) && shot.annotate.length) {
+          const { w, h } = pngSize(dest);
+          const boxes = await measureAnnotations(page, shot.annotate, w, h);
+          measured = Object.keys(boxes).length;
+          writeFileSync(join(assetsDir, basename(shot.name).replace(/\.(png|jpe?g)$/i, '.boxes.json')), JSON.stringify(boxes, null, 2));
         }
         results.push({ name: shot.name, ok: true, dest });
-        console.log(`  ✓ ${shot.name} ← ${shot.route}`);
+        console.log(`  ✓ ${shot.name} ← ${shot.route}${measured ? ` (+${measured} measured callouts)` : ''}`);
       } catch (e) {
         results.push({ name: shot.name, ok: false, error: e.message });
         console.warn(`  ✗ ${shot.name} ← ${shot.route}: ${e.message}`);
@@ -126,8 +176,9 @@ async function main() {
   if (!baseUrl) throw new Error('No base URL — pass --base-url <running worktree URL> or set baseUrl in the plan');
   const assetsDir = arg('--out', join(exampleDir, 'assets'));
 
-  console.log(`• capturing ${plan.shots.length} shot(s) from ${baseUrl}`);
-  const results = await capture(plan, { baseUrl, assetsDir, headful: hasFlag('--headful') });
+  const storageState = arg('--storage-state', undefined);
+  console.log(`• capturing ${plan.shots.length} shot(s) from ${baseUrl}${storageState ? ' (authed)' : ''}`);
+  const results = await capture(plan, { baseUrl, assetsDir, headful: hasFlag('--headful'), storageState, authDir: exampleDir });
   const failed = results.filter((r) => !r.ok);
   if (failed.length) { console.error(`\n${failed.length} shot(s) failed.`); process.exit(2); }
   console.log(`\n✓ ${results.length} screenshot(s) → ${assetsDir}`);

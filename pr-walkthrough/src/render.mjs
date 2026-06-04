@@ -76,6 +76,50 @@ function main() {
     }
   }
 
+  // 3b. Resolve callouts that reference a tool-measured box by label. capture.mjs writes
+  // <shot>.boxes.json (element boundingBoxes → fractions); a storyboard callout can say
+  // { "ref": "<label>" } instead of typing coordinates by hand.
+  let resolved = 0;
+  for (const scene of sb.scenes) {
+    if (scene.type !== 'screenshot' || !Array.isArray(scene.callouts)) continue;
+    const base = basename(scene.src).replace(/\.masked\.png$/i, '').replace(/\.(png|jpe?g)$/i, '');
+    const boxesPath = join(assetsDir, `${base}.boxes.json`);
+    const boxes = existsSync(boxesPath) ? JSON.parse(readFileSync(boxesPath, 'utf8')) : {};
+    for (const c of scene.callouts) {
+      if (c.ref && !c.box) {
+        const m = boxes[c.ref];
+        if (!m) throw new Error(`callout ref "${c.ref}" not found in ${base}.boxes.json (run capture to measure it)`);
+        c.box = m.box;
+        if (!c.arrow) c.arrow = m.arrow;
+        if (!c.label) c.label = m.label;
+        resolved += 1;
+      }
+    }
+  }
+  if (resolved) console.log(`• resolved ${resolved} callout(s) from tool-measured boxes`);
+
+  // 3c. Auto-compute focus from the (now-resolved) callout boxes, so the zoom is derived from
+  // where the controls actually are rather than hand-measured. Opt in with "focusAuto": true.
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  let focused = 0;
+  for (const scene of sb.scenes) {
+    if (scene.type !== 'screenshot' || !scene.focusAuto) continue;
+    const bs = (scene.callouts || []).map((c) => c.box).filter(Boolean);
+    if (!bs.length) continue;
+    const padX = scene.focusPad?.x ?? 0.07;
+    const padY = scene.focusPad?.y ?? 0.045;
+    let minX = Math.min(...bs.map((b) => b.x)) - padX;
+    let minY = Math.min(...bs.map((b) => b.y)) - padY;
+    let maxX = Math.max(...bs.map((b) => b.x + b.w)) + padX;
+    let maxY = Math.max(...bs.map((b) => b.y + b.h)) + padY;
+    // Keep a readable minimum width (less zoom) — expand around the centre if too tight.
+    const minW = scene.focusMinW ?? 0.6;
+    if (maxX - minX < minW) { const c = (minX + maxX) / 2; minX = c - minW / 2; maxX = c + minW / 2; }
+    scene.focus = { x: clamp01(minX), y: clamp01(minY), w: clamp01(maxX - minX), h: clamp01(maxY - minY) };
+    focused += 1;
+  }
+  if (focused) console.log(`• auto-computed focus for ${focused} scene(s)`);
+
   // 4. Validate (now that assets are staged).
   const { ok, errors } = validateStoryboard(sb, (src) => existsSync(join(ROOT, 'public', src)));
   if (!ok) {

@@ -104,6 +104,22 @@ BULK_MSG_ID=1234 node src/capture.mjs --pr-dir prs/pr-618 --base-url <url>   # s
 clicks on submit/save controls (`Post these items`, `Register interest`, `clearance-submit`,
 …) are **refused** — so capturing never writes to the target's database or files.
 
+**Auto-measured callout coordinates.** A shot can list `annotate: [{ selector, label, arrow }]`.
+After reaching the state, capture asks the live DOM for each element's box (document-relative)
+and writes `<shot>.boxes.json` with fractional `{x,y,w,h}`. A storyboard callout then says
+`{ "at", "until", "ref": "<label>" }` instead of typed coordinates, and the renderer resolves
+it — and with `"focusAuto": true` it derives the scene's zoom from those boxes too. So the
+*spatial* part of the script is produced by the tool, not eyeballed off a grid.
+
+**Auth.** `src/auth.mjs --base-url <url> --email <e> --out <file>` logs in via the Freegle
+login modal and saves a storageState (read-only; login doesn't mutate). Pass it to capture
+with `--storage-state`, or name it per-shot as `"auth"`. Seeded users/ids/password come from
+the PR's `tests/e2e/test-envs.json` + `config.js`.
+
+The end-to-end framework (discover URL → auth → seeded env → capture → storyboard → render),
+the per-PR runbook, and what's mechanical vs needs judgement, are written up in
+[`plans/active/pr-walkthrough-capture-framework.md`](../plans/active/pr-walkthrough-capture-framework.md).
+
 ## Tests as the function signal
 
 A PR's tests — **Playwright/E2E especially** — are the best signal of which functions matter.

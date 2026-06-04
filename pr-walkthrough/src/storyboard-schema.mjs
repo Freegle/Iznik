@@ -92,7 +92,12 @@ export function validateStoryboard(sb, assetExists = null) {
         } else {
           scene.callouts.forEach((c, j) => {
             const cp = `${p}.callouts[${j}]`;
-            checkBox(errors, `${cp}.box`, c.box);
+            // A callout positions itself by an explicit fractional `box`, OR by `ref` — the
+            // label of a tool-measured box (resolved from <shot>.boxes.json at render time).
+            if (c.box) checkBox(errors, `${cp}.box`, c.box);
+            else if (typeof c.ref !== 'string' || !c.ref) {
+              fail(errors, cp, 'needs either `box` (fractions) or `ref` (a measured-box label)');
+            }
             if (typeof c.at !== 'number' || c.at < 0) fail(errors, `${cp}.at`, 'must be >= 0');
             if (typeof c.until !== 'number' || c.until <= c.at) {
               fail(errors, `${cp}.until`, 'must be greater than `at`');
@@ -103,8 +108,8 @@ export function validateStoryboard(sb, assetExists = null) {
             if (c.arrow != null && !ARROWS.has(c.arrow)) {
               fail(errors, `${cp}.arrow`, `must be one of ${[...ARROWS].join(', ')}`);
             }
-            if (typeof c.label !== 'string' || !c.label) {
-              fail(errors, `${cp}.label`, 'is required');
+            if (!c.ref && (typeof c.label !== 'string' || !c.label)) {
+              fail(errors, `${cp}.label`, 'is required (or use `ref` to inherit the measured label)');
             }
           });
         }
