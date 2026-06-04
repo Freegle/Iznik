@@ -26,8 +26,17 @@
       </b-button>
     </div>
 
-    <!-- MANUAL: items table (left) + photos to drag on (right). -->
+    <!-- MANUAL: items table on top, batch-photo tools full-width below. -->
     <div v-if="mode === 'manual'" class="bulkeditor__cols">
+      <!-- Shared hidden picker for the per-row "Add photo" button. -->
+      <input
+        ref="rowFileInput"
+        type="file"
+        accept="image/*"
+        class="d-none"
+        data-testid="row-photo-input"
+        @change="onRowFile"
+      />
       <div class="bulkeditor__items">
         <div class="bgrid bgrid--head">
           <span class="bcell-photo" />
@@ -55,31 +64,48 @@
               :data-testid="'item-photocell-' + idx"
               @click="onRowPhotoClick(idx)"
             >
-              <div
-                v-for="(p, pi) in item.photos"
-                :key="p.id || pi"
-                class="pthumb pthumb--sm"
-                draggable="true"
-                title="Drag to move, click to remove"
-                @dragstart="onDragStart($event, idx, pi)"
-                @click.stop="unassign(idx, pi)"
-              >
-                <img :src="thumbSrc(p)" alt="" />
-              </div>
-              <div
-                v-if="!item.photos.length && item.photourl"
-                class="pthumb pthumb--sm"
-                title="From spreadsheet link"
-              >
-                <img :src="item.photourl" alt="" />
-              </div>
-              <span
-                v-else-if="!item.photos.length"
-                class="brow__drop"
-                aria-hidden="true"
-              >
-                <v-icon icon="image" />
-              </span>
+              <Spinner v-if="item.uploading" :size="20" />
+              <template v-else>
+                <div
+                  v-for="(p, pi) in item.photos"
+                  :key="p.id || pi"
+                  class="pthumb pthumb--sm"
+                  draggable="true"
+                  title="Drag to move, click to remove"
+                  @dragstart="onDragStart($event, idx, pi)"
+                  @click.stop="unassign(idx, pi)"
+                >
+                  <img :src="thumbSrc(p)" alt="" />
+                </div>
+                <div
+                  v-if="!item.photos.length && item.photourl"
+                  class="pthumb pthumb--sm"
+                  title="From spreadsheet link"
+                >
+                  <img :src="item.photourl" alt="" />
+                </div>
+                <!-- While a batch photo is "picked up", the cell is a drop
+                     target — show that instead of the add button. -->
+                <span
+                  v-else-if="!item.photos.length && selectedTrayPhoto !== null"
+                  class="brow__drop"
+                  aria-hidden="true"
+                >
+                  <v-icon icon="image" />
+                </span>
+                <!-- Otherwise: add a photo straight to this row (one per item). -->
+                <b-button
+                  v-else-if="!item.photos.length"
+                  variant="link"
+                  class="brow__addphoto p-0"
+                  :data-testid="'item-addphoto-' + idx"
+                  :aria-label="'Add a photo for item ' + (idx + 1)"
+                  title="Add a photo for this item"
+                  @click.stop="addPhotoToRow(item)"
+                >
+                  <v-icon icon="camera" />
+                </b-button>
+              </template>
             </div>
 
             <b-form-input
@@ -146,17 +172,27 @@
             total
           </span>
         </div>
+
+        <p v-if="photoError" class="small text-danger mt-2 mb-0" role="alert">
+          {{ photoError }}
+        </p>
       </div>
 
       <aside class="bulkeditor__tools">
         <div class="tool">
-          <div class="tool__title">Photos</div>
+          <div class="tool__title">Photos (optional)</div>
+          <p class="tool__help">
+            Two ways to add them: tap
+            <v-icon icon="camera" class="text-success" /> on an item's row to
+            add a photo just for that item — or, if you've taken a pile of
+            photos, add them all here and drag each onto its item.
+          </p>
           <PhotoUploader
             v-model="uploaderModel"
             type="Message"
             :max-photos="50"
-            empty-title="Add photos"
-            empty-subtitle="Then drag each onto its item"
+            empty-title="Add a batch of photos"
+            empty-subtitle="Then drag each onto its item below"
           />
           <div
             v-if="tray.length"
@@ -168,8 +204,8 @@
                 <v-icon icon="plus" /> Now tap the item this photo belongs to
               </template>
               <template v-else>
-                <v-icon icon="arrow-left" /> Drag a photo onto its item — or tap
-                a photo, then tap its item
+                <v-icon icon="arrow-up" /> Drag a photo onto its item above — or
+                tap a photo, then tap its item
               </template>
             </span>
             <div class="bulkeditor__tray-strip">
@@ -243,6 +279,7 @@ import {
   parseItemsRows,
   blankBulkItem,
 } from '~/composables/useBulkItems'
+import { useBulkPhotoUpload } from '~/composables/useBulkPhotoUpload'
 import PhotoUploader from '~/components/PhotoUploader'
 
 const props = defineProps({
@@ -269,6 +306,14 @@ const uploaderModel = ref([])
 const tray = ref([])
 
 const importMessage = ref('')
+const photoError = ref('')
+
+// Per-row "Add photo": a single shared file picker, plus the item it should
+// attach to (captured by object reference, not index — addItem unshifts, so
+// indices shift while an upload is in flight).
+const { uploadPhoto } = useBulkPhotoUpload()
+const rowFileInput = ref(null)
+let pendingPhotoItem = null
 
 // Drag source: { from: -1 for tray else item index, index: position in that list }
 let dragSrc = null
@@ -381,6 +426,32 @@ function unassign(idx, pi) {
   if (photo) tray.value.push(photo)
 }
 
+// Per-row "Add photo": open the shared picker, remembering which item it's for.
+function addPhotoToRow(item) {
+  pendingPhotoItem = item
+  if (rowFileInput.value) rowFileInput.value.click()
+}
+
+// Upload the chosen file and attach it straight to that item's row.
+async function onRowFile(e) {
+  const file = e.target.files && e.target.files[0]
+  e.target.value = '' // allow re-picking the same file
+  const item = pendingPhotoItem
+  pendingPhotoItem = null
+  if (!file || !item) return
+  photoError.value = ''
+  item.uploading = true
+  try {
+    const photo = await uploadPhoto(file, { type: 'Message' })
+    if (!item.photos) item.photos = []
+    item.photos.push(photo)
+  } catch (err) {
+    photoError.value = "Sorry — that photo couldn't be uploaded. Please try again."
+  } finally {
+    item.uploading = false
+  }
+}
+
 // Prepend a parsed batch of items (newest at the top), keeping their order, and
 // switch to the table so the imported rows are visible/editable.
 function prependItems(parsed) {
@@ -454,6 +525,9 @@ defineExpose({
   selectedTrayPhoto,
   onTrayPhotoClick,
   onRowPhotoClick,
+  addPhotoToRow,
+  onRowFile,
+  photoError,
 })
 </script>
 
@@ -474,21 +548,20 @@ defineExpose({
   gap: 0.5rem;
 }
 
+/* Items table on top, photos as a full-width row below it — so the table keeps
+   its full width (no squeezed columns) and the photo area is wider and shorter. */
 .bulkeditor__cols {
   display: flex;
+  flex-direction: column;
   gap: 1rem;
-  align-items: flex-start;
 }
 
 .bulkeditor__items {
-  flex: 1 1 auto;
   min-width: 0;
 }
 
-/* Fixed-width photo rail on the right of the items. */
 .bulkeditor__tools {
-  flex: 0 0 16rem;
-  width: 16rem;
+  width: 100%;
 }
 
 .tool {
@@ -502,6 +575,12 @@ defineExpose({
   font-weight: 600;
   font-size: 0.9rem;
   margin-bottom: 0.4rem;
+}
+
+.tool__help {
+  font-size: 0.85rem;
+  color: $color-gray--dark;
+  margin-bottom: 0.6rem;
 }
 
 .bulkeditor__upload {
@@ -572,6 +651,25 @@ defineExpose({
   align-items: center;
   justify-content: center;
   color: $color-gray--normal;
+}
+
+/* Per-row "add a photo" affordance — a camera button sized like the drop slot. */
+.brow__addphoto {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed $color-gray--light;
+  border-radius: 4px;
+  color: $color-green--darker;
+  text-decoration: none;
+
+  &:hover,
+  &:focus {
+    border-color: $color-green--darker;
+    background-color: $color-green-background;
+  }
 }
 
 .pthumb {
@@ -649,15 +747,8 @@ defineExpose({
   gap: 0.4rem;
 }
 
-/* Stack the photo rail under the items on narrow screens. */
+/* Tighten the table's column widths on narrow screens so it stays readable. */
 @include media-breakpoint-down(md) {
-  .bulkeditor__cols {
-    flex-direction: column;
-  }
-  .bulkeditor__tools {
-    flex-basis: auto;
-    width: 100%;
-  }
   .bgrid {
     grid-template-columns: 34px minmax(5rem, 1fr) 3.5rem 6.5rem 4.5rem 1.5rem;
   }
