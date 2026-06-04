@@ -49,6 +49,7 @@ import (
 	"github.com/freegle/iznik-server-go/group"
 	"github.com/freegle/iznik-server-go/housekeeper"
 	"github.com/freegle/iznik-server-go/image"
+	"github.com/freegle/iznik-server-go/moderation"
 	"github.com/freegle/iznik-server-go/isochrone"
 	"github.com/freegle/iznik-server-go/item"
 	"github.com/freegle/iznik-server-go/job"
@@ -1490,6 +1491,9 @@ func SetupRoutes(app *fiber.App) {
 		// @Failure 401 {object} fiber.Error "Unauthorized"
 		// @Failure 403 {object} fiber.Error "Forbidden"
 		rg.Get("/modtools/email/deferrals", emailtracking.Deferrals)
+
+		// Moderation analytics for the auto-approve approach (Admin/Support only).
+		rg.Get("/modtools/moderationstats", moderation.Stats)
 
 		// Email Statistics Time Series (authenticated, admin only)
 		// @Router /email/stats/timeseries [get]
