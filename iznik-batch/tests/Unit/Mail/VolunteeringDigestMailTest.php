@@ -71,6 +71,73 @@ class VolunteeringDigestMailTest extends TestCase
             'Unsubscribe URL must appear correctly in the footer');
     }
 
+    private function makeJobAd(int $id = 1): object
+    {
+        return (object)[
+            'id'        => $id,
+            'title'     => 'Test Volunteer Co-ordinator',
+            'location'  => 'Testville',
+            'image_url' => null,
+        ];
+    }
+
+    /**
+     * Decode the donate button's destination URL from rendered HTML.
+     * The button href is a tracking redirect: /e/d/r/<id>?url=<base64>&p=donate_link
+     * Falls back to a raw href containing /donate if tracking is inactive.
+     */
+    private function extractDonateDestination(string $html): ?string
+    {
+        // Primary: find tracking redirect URL whose p= param is donate_link
+        if (preg_match_all('/href=["\']([^"\']*\/e\/d\/r\/[^"\']*)["\']/', $html, $matches)) {
+            foreach ($matches[1] as $href) {
+                $decoded = html_entity_decode($href);
+                if (str_contains($decoded, 'donate_link') &&
+                    preg_match('/[?&]url=([^&"\']+)/', $decoded, $urlMatch)) {
+                    $dest = base64_decode($urlMatch[1]);
+                    if ($dest !== false) {
+                        return $dest;
+                    }
+                }
+            }
+        }
+        // Fallback: raw freegle.in short link href (when tracking is null)
+        if (preg_match('/href=["\']([^"\']*freegle\.in[^"\']*)["\']/', $html, $match)) {
+            return html_entity_decode($match[1]);
+        }
+        return null;
+    }
+
+    public function test_donate_url_in_job_ads_section_uses_freegle_in_short_link(): void
+    {
+        // The "Donating helps too!" button must keep the freegle.in/paypal1510
+        // PayPal short link. freegle.in is whitelisted in the Go API's
+        // isValidRedirectURL allow-list, so the tracked redirect resolves the
+        // short link correctly. The short link must NOT be rewritten to a full
+        // /donate URL — short links are intentional and supported.
+        $userSite = config('freegle.sites.user');
+
+        $mail = new VolunteeringDigestMail(
+            recipientEmail: 'test@example.com',
+            groupName:      'Testville Freegle',
+            volunteerings:  [$this->makeVolunteering(1)],
+            unsubscribeUrl: "{$userSite}/unsubscribe?email=" . urlencode('test@example.com'),
+            jobAds:         collect([$this->makeJobAd(99)]),
+        );
+
+        $html = $mail->render();
+
+        $this->assertStringContainsString('Donating helps too!', $html,
+            'Job ads section with Donating helps too! button should be present');
+
+        $donateDest = $this->extractDonateDestination($html);
+
+        $this->assertNotNull($donateDest,
+            '"Donating helps too!" button destination URL not found in rendered email');
+        $this->assertStringContainsString('freegle.in/paypal1510', $donateDest,
+            '"Donating helps too!" must use the freegle.in/paypal1510 PayPal short link (whitelisted in isValidRedirectURL); it must not be replaced with a full URL');
+    }
+
     public function test_service_builds_volunteering_url_without_doubled_https(): void
     {
         // Regression guard: ensure the URL key in the volData array passed to
