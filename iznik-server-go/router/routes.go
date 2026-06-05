@@ -1043,6 +1043,11 @@ func SetupRoutes(app *fiber.App) {
 		rg.Put("/message", message.PutMessage)
 		rg.Delete("/message/:id", message.DeleteMessageEndpoint)
 
+		// Single-call compose: create + attach (inline) + join + post in one request.
+		// Additive — the multi-step PUT/POST(JoinAndPost)/POST(image) flow above is
+		// kept for edit/repost and backwards compatibility.
+		rg.Put("/message/submit", message.SubmitMessage)
+
 		// Bulk-offer ("clearance") logged-out update page: an external item-owner
 		// toggles item available/taken and edits counts via an unguessable secret
 		// token in the URL. No JWT - the token is the sole credential and grants
