@@ -51,6 +51,10 @@ export const useComposeStore = defineStore({
     // reason: if we have to interrupt them to log in, app.vue rebuilds the whole
     // app and the modal goes with it, so without this what they typed is gone.
     storyDraft: null,
+    // A submit deferred until the user logs in. The whole store is persisted to
+    // localStorage, so this (and the draft) survive a page refresh during the
+    // forced-login flow and the submit resumes automatically afterwards.
+    pendingSubmit: null,
   }),
   actions: {
     init(config) {
@@ -271,6 +275,29 @@ export const useComposeStore = defineStore({
       }
 
       return ret // { id, groupid, newuser?, newpassword? }
+    },
+    // Defer a submit until the user has logged in — used when their email is
+    // already registered so we must force a login first. Persisted (whole store
+    // is), so it survives a page refresh mid-login.
+    setPendingSubmit(message, email, options = {}) {
+      this.pendingSubmit = { message, email, options }
+    },
+    clearPendingSubmit() {
+      this.pendingSubmit = null
+    },
+    // Fire the deferred submit exactly once, after login completes. Called from
+    // the auth store's setUser() when a forced login clears.
+    async resumePendingSubmit() {
+      const pending = this.pendingSubmit
+      if (!pending) {
+        return null
+      }
+      this.pendingSubmit = null
+      return await this.submitSingle(
+        pending.message,
+        pending.email,
+        pending.options
+      )
     },
     async submitDraft(id, email, options = {}) {
       console.log('Submit draft', id, email, options)
