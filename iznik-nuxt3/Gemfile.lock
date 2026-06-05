@@ -238,6 +238,7 @@ PLATFORMS
 DEPENDENCIES
   abbrev
   fastlane
+  multi_json
   net-ftp
   nkf
 
