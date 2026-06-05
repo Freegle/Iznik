@@ -285,19 +285,46 @@ export const useComposeStore = defineStore({
     clearPendingSubmit() {
       this.pendingSubmit = null
     },
+    // Capture the post currently being composed (of the given type) so it can be
+    // submitted automatically once the user has logged in. Called from the page
+    // submit handlers just before they force a login. The whole store is
+    // persisted, so this survives a refresh during the login flow.
+    deferSubmit(type) {
+      const message = this.messages.find(
+        (m) => m && m.type === type && !m.submitted && !m.repostof
+      )
+      if (!message) {
+        return
+      }
+      const options = {}
+      if (message.deadline) {
+        options.deadline = new Date(message.deadline).toISOString()
+      }
+      if (message.deliveryPossible !== undefined) {
+        options.deliverypossible = message.deliveryPossible
+      }
+      this.setPendingSubmit(message, this.email, options)
+    },
     // Fire the deferred submit exactly once, after login completes. Called from
-    // the auth store's setUser() when a forced login clears.
+    // the auth store's setUser() when a forced login clears. On success we land
+    // the user on My Posts, matching the normal freegleIt navigation.
     async resumePendingSubmit() {
       const pending = this.pendingSubmit
       if (!pending) {
         return null
       }
       this.pendingSubmit = null
-      return await this.submitSingle(
+      const ret = await this.submitSingle(
         pending.message,
         pending.email,
         pending.options
       )
+      // Clear the composed post (it's now submitted) and land on My Posts.
+      this.clearMessages()
+      if (ret?.id) {
+        navigateTo({ name: 'myposts' })
+      }
+      return ret
     },
     async submitDraft(id, email, options = {}) {
       console.log('Submit draft', id, email, options)
@@ -630,22 +657,24 @@ export const useComposeStore = defineStore({
           }
 
           if (!message.repostof) {
-            // This is a draft we have composed on the client, which doesn't have a corresponding server message yet.
-            // We need to:
-            // - create a drafted
-            // - submit it
-            // - mark it in our store as submitted.
-            console.log('Create draft')
-            const id = await this.createDraft(message, this.email)
-            console.log('Created draft', id)
-
-            const { groupid, newuser, newpassword } = await this.submitDraft(
-              id,
+            // A new post composed on the client. ONE call creates the message,
+            // attaches the photos inline (by Cloudflare externaluid), auto-joins
+            // the group and posts it — no draft round-trip, no client-side
+            // attachment ids, no separate image-link step. This is the heart of
+            // the compose simplification.
+            const ret = await this.submitSingle(
+              message,
               this.email,
               submitOptions
             )
+            this._progress++
 
-            result = { id, groupid, newuser, newpassword }
+            result = {
+              id: ret.id,
+              groupid: ret.groupid,
+              newuser: ret.newuser,
+              newpassword: ret.newpassword,
+            }
           } else {
             // This is one of our existing messages which we are reposting.  We need to convert it back to a draft,
             // edit it (to update it from our client data), and then submit.

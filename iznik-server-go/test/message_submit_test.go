@@ -86,6 +86,54 @@ func TestSubmitMessageSingleCall(t *testing.T) {
 	assert.Greater(t, postingCount, int64(0))
 }
 
+// TestSubmitMessageLinksExistingAttachment covers the case where the client has
+// already created an attachment row via POST /image (msgid NULL). The single-call
+// submit must LINK that orphan row to the new message rather than inserting a
+// duplicate, so the message ends up with exactly one attachment for that uid.
+func TestSubmitMessageLinksExistingAttachment(t *testing.T) {
+	prefix := uniquePrefix("submit_link")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+
+	// Simulate POST /image having already created an orphan attachment row.
+	orphanUID := "submit-link-uid-ccc"
+	db.Exec("INSERT INTO messages_attachments (msgid, externaluid, `primary`) VALUES (NULL, ?, 0)", orphanUID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"type":     "Offer",
+		"item":     "Test Link Lamp",
+		"textbody": "Linking an existing uploaded attachment",
+		"groupid":  groupID,
+		"attachments": []map[string]interface{}{
+			{"externaluid": orphanUID},
+		},
+	})
+	req := httptest.NewRequest("PUT", "/api/message/submit?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	msgID := uint64(result["id"].(float64))
+	assert.Greater(t, msgID, uint64(0))
+
+	// Exactly one row for this uid, now linked to the message and primary — no duplicate.
+	var rowCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_attachments WHERE externaluid = ?", orphanUID).Scan(&rowCount)
+	assert.Equal(t, int64(1), rowCount, "must link the orphan row, not insert a duplicate")
+
+	var linkedMsgID uint64
+	var primary int
+	db.Raw("SELECT msgid, `primary` FROM messages_attachments WHERE externaluid = ? LIMIT 1", orphanUID).Row().Scan(&linkedMsgID, &primary)
+	assert.Equal(t, msgID, linkedMsgID)
+	assert.Equal(t, 1, primary)
+}
+
 // TestSubmitMessageValidation covers the input guards.
 func TestSubmitMessageValidation(t *testing.T) {
 	prefix := uniquePrefix("submit_valid")
