@@ -701,6 +701,47 @@ describe('compose store', () => {
     })
   })
 
+  describe('deferred submit / resume after login', () => {
+    it('setPendingSubmit stores the intent (persisted with the store)', () => {
+      const store = useComposeStore()
+      const msg = { type: 'Offer', item: 'Sofa' }
+      store.setPendingSubmit(msg, 'a@b.com', { deadline: '2026-07-01' })
+      expect(store.pendingSubmit).toEqual({
+        message: msg,
+        email: 'a@b.com',
+        options: { deadline: '2026-07-01' },
+      })
+    })
+
+    it('resumePendingSubmit fires the deferred submit once and clears the flag', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 42, groupid: 10 })
+      store.setPendingSubmit(
+        { type: 'Offer', item: 'Sofa', attachments: [{ ouruid: 'u1' }] },
+        'a@b.com'
+      )
+
+      const ret = await store.resumePendingSubmit()
+
+      expect(ret).toEqual({ id: 42, groupid: 10 })
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+      expect(store.pendingSubmit).toBeNull()
+      // A second call is a no-op (fires exactly once).
+      expect(await store.resumePendingSubmit()).toBeNull()
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+    })
+
+    it('resumePendingSubmit is a no-op when nothing is pending', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      expect(await store.resumePendingSubmit()).toBeNull()
+      expect(mockMessageSubmit).not.toHaveBeenCalled()
+    })
+  })
+
   describe('createDraft', () => {
     it('throws when not initialized', async () => {
       const store = useComposeStore()
