@@ -214,6 +214,64 @@ export const useComposeStore = defineStore({
       this._progress++
       return ret.id
     },
+    // Single-call submit: build the flat payload and post it in ONE request via
+    // PUT /message/submit (create + attach + join + post). Attachments go inline
+    // by externaluid (the Cloudflare uid) — no fake/numeric attachment ids, no
+    // separate POST /image, no draft round-trip. This is the simplified path that
+    // replaces createDraft + submitDraft; the old two-step actions are kept for
+    // edit/repost and backwards compatibility.
+    async submitSingle(message, email, options = {}) {
+      if (!this.$api) {
+        throw new Error('Compose store not initialized - $api is not available')
+      }
+      if (!this.postcode?.id) {
+        throw new Error(
+          'No postcode set - please go back and enter your postcode'
+        )
+      }
+
+      const all = message.attachments || []
+      // Suppress the AI illustration when the user uploaded a real photo.
+      const real = all.filter((a) => !(a.externalmods && a.externalmods.ai))
+      const chosen = real.length ? real : all
+      const attachments = chosen
+        .map((a) => ({
+          externaluid: a.ouruid || a.externaluid,
+          externalmods: a.externalmods,
+        }))
+        .filter((a) => a.externaluid)
+
+      const data = {
+        type: message.type,
+        item: message.item,
+        textbody: message.description || '',
+        groupid: this.group,
+        locationid: this.postcode.id,
+        availablenow: message.availablenow,
+        email,
+        attachments,
+      }
+      if (options.deadline) {
+        data.deadline = options.deadline
+      }
+      if (options.deliverypossible !== undefined) {
+        data.deliverypossible = options.deliverypossible
+      }
+
+      const ret = await this.$api.message.submit(
+        data,
+        (d) => d?.error !== 403 // 403 = posting prohibited/banned (mod choice, not a server error)
+      )
+
+      // For unauthenticated users the server creates the account and returns
+      // auth tokens — store them so the user is logged in afterwards.
+      if (ret.jwt && ret.persistent) {
+        const authStore = useAuthStore()
+        authStore.setAuth(ret.jwt, ret.persistent)
+      }
+
+      return ret // { id, groupid, newuser?, newpassword? }
+    },
     async submitDraft(id, email, options = {}) {
       console.log('Submit draft', id, email, options)
       const ret = await this.$api.message.joinAndPost(id, email, {

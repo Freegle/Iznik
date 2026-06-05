@@ -135,6 +135,14 @@ export default class MessageAPI extends BaseAPI {
     return this.$putv2('/message' + onBehalfOfQuery(onbehalfof), body)
   }
 
+  // Single-call compose: create + attach (inline) + join + post in one request.
+  // data: { type, item, textbody, groupid, locationid, availablenow, deadline,
+  //         deliverypossible, email, attachments:[{externaluid, externalmods}] }
+  // Returns { id, groupid, jwt?, persistent?, newuser?, newpassword? }.
+  submit(data, logError = true) {
+    return this.$putv2('/message/submit', data, logError)
+  }
+
   intend(id, outcome) {
     return this.$postv2('/message', {
       action: 'OutcomeIntended',
