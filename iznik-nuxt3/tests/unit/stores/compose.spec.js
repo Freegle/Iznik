@@ -4,12 +4,14 @@ import { setActivePinia, createPinia } from 'pinia'
 const mockMessagePut = vi.fn()
 const mockJoinAndPost = vi.fn()
 const mockImagePost = vi.fn()
+const mockMessageSubmit = vi.fn()
 
 vi.mock('~/api', () => ({
   default: () => ({
     message: {
       put: mockMessagePut,
       joinAndPost: mockJoinAndPost,
+      submit: mockMessageSubmit,
     },
     image: {
       post: mockImagePost,
@@ -576,6 +578,126 @@ describe('compose store', () => {
       expect(store.messages[0].description).toBeNull()
       expect(store.messages[0].attachments).toEqual([])
       logSpy.mockRestore()
+    })
+  })
+
+  describe('submitSingle (single-call submit)', () => {
+    it('throws when no postcode set', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      await expect(
+        store.submitSingle({ type: 'Offer', item: 'Test' }, 'a@b.com')
+      ).rejects.toThrow('No postcode')
+    })
+
+    it('posts the whole message in one call with attachments inline by externaluid', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
+
+      const ret = await store.submitSingle(
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          description: 'Good condition',
+          availablenow: 1,
+          attachments: [{ ouruid: 'uid-a' }, { ouruid: 'uid-b' }],
+        },
+        'test@example.com',
+        { deadline: '2026-07-01', deliverypossible: false }
+      )
+
+      expect(ret).toEqual({ id: 99, groupid: 10 })
+      // Exactly one API call — no draft, no POST /image, no JoinAndPost.
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+      expect(mockMessagePut).not.toHaveBeenCalled()
+      expect(mockJoinAndPost).not.toHaveBeenCalled()
+      expect(mockImagePost).not.toHaveBeenCalled()
+      expect(mockMessageSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'Offer',
+          item: 'Sofa',
+          textbody: 'Good condition',
+          groupid: 10,
+          locationid: 123,
+          availablenow: 1,
+          email: 'test@example.com',
+          deadline: '2026-07-01',
+          deliverypossible: false,
+          attachments: [{ externaluid: 'uid-a' }, { externaluid: 'uid-b' }],
+        }),
+        expect.any(Function)
+      )
+    })
+
+    it('suppresses the AI illustration when a real photo is present', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 1, groupid: 10 })
+
+      await store.submitSingle(
+        {
+          type: 'Offer',
+          item: 'Sofa',
+          attachments: [
+            { ouruid: 'real-photo' },
+            { ouruid: 'ai-img', externalmods: { ai: true } },
+          ],
+        },
+        'test@example.com'
+      )
+
+      const payload = mockMessageSubmit.mock.calls[0][0]
+      expect(payload.attachments).toEqual([{ externaluid: 'real-photo' }])
+    })
+
+    it('includes the AI illustration when there is no real photo', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 1, groupid: 10 })
+
+      await store.submitSingle(
+        {
+          type: 'Wanted',
+          item: 'Sofa',
+          attachments: [{ ouruid: 'ai-img', externalmods: { ai: true } }],
+        },
+        'test@example.com'
+      )
+
+      const payload = mockMessageSubmit.mock.calls[0][0]
+      expect(payload.attachments).toEqual([
+        { externaluid: 'ai-img', externalmods: { ai: true } },
+      ])
+    })
+
+    it('stores auth tokens returned for a new user', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({
+        id: 1,
+        groupid: 10,
+        jwt: 'jwt-x',
+        persistent: { id: 5 },
+        newuser: true,
+        newpassword: 'pw',
+      })
+
+      const ret = await store.submitSingle(
+        { type: 'Offer', item: 'Sofa', attachments: [] },
+        'new@example.com'
+      )
+
+      expect(mockSetAuth).toHaveBeenCalledWith('jwt-x', { id: 5 })
+      expect(ret.newpassword).toBe('pw')
     })
   })
 
