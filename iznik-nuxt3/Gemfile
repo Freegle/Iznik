@@ -4,6 +4,7 @@ gem "fastlane"  # Version locked to 2.230.0 in Gemfile.lock (frozen mode enforce
 gem "abbrev"  # Required for Ruby 3.4+ compatibility
 gem "nkf"     # Required for Ruby 3.4+ compatibility (provides kconv module)
 gem "net-ftp" # Required for Ruby 3.0+ compatibility with older gems (nokogiri, mini_portile2)
+gem "multi_json" # Transitive fastlane dep; declared directly so strict/frozen bundler (4.x) lets fastlane require it ("not part of the bundle")
 
 plugins_path = File.join(File.dirname(__FILE__), 'fastlane', 'Pluginfile')
 eval_gemfile(plugins_path) if File.exist?(plugins_path)
