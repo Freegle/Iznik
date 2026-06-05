@@ -44,3 +44,6 @@ plans/
 yesterday/
 *.md
 !README.md
+
+# PR walkthrough video tool (dev-only; never built into or run by any container)
+pr-walkthrough/

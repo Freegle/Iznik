@@ -1,0 +1,82 @@
+{
+  "Pick your area first": {
+    "label": "Pick your area first",
+    "arrow": "down",
+    "box": {
+      "x": 0.175,
+      "y": 0.1409,
+      "w": 0.13,
+      "h": 0.0206
+    }
+  },
+  "Name the whole clearance": {
+    "label": "Name the whole clearance",
+    "arrow": "down",
+    "box": {
+      "x": 0.1735,
+      "y": 0.1839,
+      "w": 0.6421,
+      "h": 0.0163
+    }
+  },
+  "Type them in — or paste a spreadsheet": {
+    "label": "Type them in — or paste a spreadsheet",
+    "arrow": "up",
+    "box": {
+      "x": 0.1735,
+      "y": 0.3056,
+      "w": 0.1086,
+      "h": 0.0163
+    }
+  },
+  "How many": {
+    "label": "How many",
+    "arrow": "up",
+    "box": {
+      "x": 0.5679,
+      "y": 0.342,
+      "w": 0.052,
+      "h": 0.0133
+    }
+  },
+  "Condition": {
+    "label": "Condition",
+    "arrow": "up",
+    "box": {
+      "x": 0.6245,
+      "y": 0.342,
+      "w": 0.0924,
+      "h": 0.0133
+    }
+  },
+  "3 items, 21 things": {
+    "label": "3 items, 21 things",
+    "arrow": "right",
+    "box": {
+      "x": 0.6817,
+      "y": 0.4041,
+      "w": 0.1339,
+      "h": 0.009
+    }
+  },
+  "Offer set collection times": {
+    "label": "Offer set collection times",
+    "arrow": "right",
+    "box": {
+      "x": 0.1735,
+      "y": 0.6601,
+      "w": 0.6248,
+      "h": 0.0163
+    }
+  },
+  "Private access instructions": {
+    "label": "Private access instructions",
+    "arrow": "up",
+    "box": {
+      "x": 0.1735,
+      "y": 0.7967,
+      "w": 0.6421,
+      "h": 0.0266
+    }
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "meta": {
+    "pr": 618,
+    "repo": "Freegle/Iznik",
+    "title": "Give away a whole clearance in one post",
+    "author": "edwh",
+    "url": "github.com/Freegle/Iznik/pull/618",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30
+  },
+  "_note": "Screenshot scenes position callouts by `ref` (a label measured live by capture into <shot>.boxes.json) and set focusAuto:true, so the renderer derives both the highlight boxes and the zoom from the real element positions — no hand-measured coordinates.",
+  "scenes": [
+    {
+      "type": "title",
+      "seconds": 5,
+      "title": "Give away a whole clearance in one post",
+      "subtitle": "Offer dozens of items at once — and let people pick exactly what they want.",
+      "showStats": false
+    },
+    {
+      "type": "narration",
+      "seconds": 8,
+      "chapter": "Why",
+      "heading": "A clearance used to mean dozens of posts.",
+      "bullets": [
+        "A charity clearing an office can have 100+ things to rehome.",
+        "Today that's one Freegle post per item — each written and photographed by hand.",
+        "Replies land scattered across all of them."
+      ],
+      "caption": "What if the whole clearance were a single, browsable offer?"
+    },
+    {
+      "type": "screenshot",
+      "seconds": 10,
+      "chapter": "Posting a clearance",
+      "src": "pr-618/clearance-composer.masked.png",
+      "focusAuto": true,
+      "caption": "One post holds the whole clearance: start with your area, then name it.",
+      "callouts": [
+        { "at": 1.5, "until": 6.0, "ref": "Pick your area first" },
+        { "at": 5.5, "until": 9.5, "ref": "Name the whole clearance" }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "seconds": 13,
+      "chapter": "Posting a clearance",
+      "src": "pr-618/clearance-composer.masked.png",
+      "focusAuto": true,
+      "caption": "Add every item — type them in or paste a spreadsheet — each with its quantity and condition.",
+      "callouts": [
+        { "at": 1.5, "until": 5.5, "ref": "Type them in — or paste a spreadsheet" },
+        { "at": 5.0, "until": 8.5, "ref": "How many" },
+        { "at": 8.0, "until": 11.0, "ref": "Condition" },
+        { "at": 10.5, "until": 13.0, "ref": "3 items, 21 things" }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "seconds": 11,
+      "chapter": "Posting a clearance",
+      "src": "pr-618/clearance-composer.masked.png",
+      "focusAuto": true,
+      "focusMinW": 0.7,
+      "caption": "Offer set collection times and private access instructions, then post the whole lot.",
+      "callouts": [
+        { "at": 1.5, "until": 6.0, "ref": "Offer set collection times" },
+        { "at": 5.5, "until": 10.5, "ref": "Private access instructions" }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "seconds": 11,
+      "chapter": "Receiving a clearance",
+      "src": "pr-618/recipient-interest.masked.png",
+      "focusAuto": true,
+      "caption": "Recipients see one browsable catalogue, with a clear “I'd like this” toggle on each item.",
+      "callouts": [
+        { "at": 1.5, "until": 6.0, "ref": "A browsable catalogue in one offer" },
+        { "at": 5.5, "until": 10.0, "ref": "A clear toggle: “I'd like this”" }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "seconds": 9,
+      "chapter": "Receiving a clearance",
+      "src": "pr-618/recipient-interest.masked.png",
+      "focusAuto": true,
+      "caption": "Turn one on, then choose how many — never more than are available.",
+      "callouts": [
+        { "at": 1.5, "until": 8.0, "ref": "Choose how many" }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "seconds": 10,
+      "chapter": "Receiving a clearance",
+      "src": "pr-618/recipient-interest.masked.png",
+      "focusAuto": true,
+      "caption": "Pick a collection time, then one click sends the giver everything you chose.",
+      "callouts": [
+        { "at": 1.5, "until": 5.5, "ref": "Pick a collection time" },
+        { "at": 5.0, "until": 9.5, "ref": "Send the giver your picks" }
+      ]
+    },
+    {
+      "type": "screenshot",
+      "seconds": 9,
+      "chapter": "The giver hears back",
+      "src": "pr-618/giver-chat.masked.png",
+      "focusAuto": true,
+      "focusMinW": 0.78,
+      "caption": "And the giver gets ONE message — everything that person chose, in a single conversation.",
+      "callouts": [
+        { "at": 2.0, "until": 8.0, "ref": "One consolidated message — everything they chose" }
+      ]
+    },
+    {
+      "type": "narration",
+      "seconds": 7,
+      "chapter": "And everywhere else",
+      "heading": "It fits in everywhere people already look.",
+      "bullets": [
+        "The clearance turns up in the daily digest email, with photos.",
+        "Older views still get a clear, readable list — items and collection times.",
+        "Nothing new for people to learn — it's just a richer offer."
+      ]
+    },
+    {
+      "type": "outro",
+      "seconds": 8,
+      "title": "What this unlocks",
+      "bullets": [
+        "List a whole clearance as one post.",
+        "People pick exactly the items — and how many — they want.",
+        "Every request arrives as a single message against the catalogue."
+      ],
+      "url": "github.com/Freegle/Iznik/pull/618"
+    }
+  ]
+}
