@@ -281,13 +281,13 @@
                                             @endif
                                         </td>
                                     </tr>
-                                    @if(($post['messageText'] ?? null) || ($post['postedToText'] ?? null))
+                                    @if($post['messageText'] || $post['postedToText'])
                                     <tr>
                                         <td colspan="2" style="padding-top: 4px;">
-                                            @if($post['messageText'] ?? null)
+                                            @if($post['messageText'])
                                             <span style="color: #808080; font-size: 13px; font-weight: 500; line-height: 1.4;">{{ \Illuminate\Support\Str::limit($post['messageText'], 100, '...') }}</span>
                                             @endif
-                                            @if($post['postedToText'] ?? null)
+                                            @if($post['postedToText'])
                                             <br/><span style="color: #999999; font-size: 11px; font-style: italic;">{{ $post['postedToText'] }}</span>
                                             @endif
                                         </td>
