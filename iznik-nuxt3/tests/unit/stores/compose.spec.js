@@ -729,6 +729,8 @@ describe('compose store', () => {
       expect(ret).toEqual({ id: 42, groupid: 10 })
       expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
       expect(store.pendingSubmit).toBeNull()
+      // After resuming, the user lands on My Posts (matching freegleIt).
+      expect(navigateTo).toHaveBeenCalledWith({ name: 'myposts' })
       // A second call is a no-op (fires exactly once).
       expect(await store.resumePendingSubmit()).toBeNull()
       expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
@@ -739,6 +741,136 @@ describe('compose store', () => {
       store.init({ public: {} })
       expect(await store.resumePendingSubmit()).toBeNull()
       expect(mockMessageSubmit).not.toHaveBeenCalled()
+    })
+
+    it('deferSubmit captures the composing post and its options', () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.email = 'a@b.com'
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          deadline: '2026-07-01',
+          deliveryPossible: true,
+          attachments: [{ ouruid: 'u1' }],
+        },
+      ]
+
+      store.deferSubmit('Offer')
+
+      expect(store.pendingSubmit.email).toBe('a@b.com')
+      expect(store.pendingSubmit.message.item).toBe('Sofa')
+      expect(store.pendingSubmit.options).toEqual({
+        deadline: new Date('2026-07-01').toISOString(),
+        deliverypossible: true,
+      })
+    })
+
+    it('deferSubmit does nothing when there is no matching post', () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.messages = [{ id: 0, type: 'Wanted', item: 'x', submitted: false }]
+      store.deferSubmit('Offer')
+      expect(store.pendingSubmit).toBeNull()
+    })
+
+    it('deferSubmit ignores reposts and already-submitted posts', () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.messages = [
+        { id: 0, type: 'Offer', item: 'a', submitted: true },
+        { id: 1, type: 'Offer', item: 'b', submitted: false, repostof: 5 },
+      ]
+      store.deferSubmit('Offer')
+      expect(store.pendingSubmit).toBeNull()
+    })
+  })
+
+  describe('submit() — new post uses the single call', () => {
+    it('routes a freshly-composed post through submitSingle, not the draft dance', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          description: 'Good condition',
+          availablenow: 1,
+          submitted: false,
+          deadline: '2026-07-01',
+          deliveryPossible: true,
+          attachments: [{ ouruid: 'uid-a' }],
+        },
+      ]
+      mockMessageSubmit.mockResolvedValue({
+        id: 99,
+        groupid: 10,
+        newuser: true,
+        newpassword: 'pw',
+      })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      const results = await store.submit({ type: 'Offer' })
+
+      // Single call — old draft/image/JoinAndPost path is not used for new posts.
+      expect(mockMessageSubmit).toHaveBeenCalledTimes(1)
+      expect(mockMessagePut).not.toHaveBeenCalled()
+      expect(mockJoinAndPost).not.toHaveBeenCalled()
+      expect(mockImagePost).not.toHaveBeenCalled()
+
+      // Options threaded through: deadline normalised to ISO, delivery passed on.
+      const payload = mockMessageSubmit.mock.calls[0][0]
+      expect(payload.deadline).toBe(new Date('2026-07-01').toISOString())
+      expect(payload.deliverypossible).toBe(true)
+      expect(payload.attachments).toEqual([{ externaluid: 'uid-a' }])
+
+      // Return contract preserved for freegleIt (id/groupid/newuser/newpassword).
+      expect(results).toEqual([
+        { id: 99, groupid: 10, newuser: true, newpassword: 'pw' },
+      ])
+
+      // The store is cleared after a successful submit.
+      expect(store.messages).toEqual([])
+
+      logSpy.mockRestore()
+    })
+
+    it('still uses the old draft path for reposts (back-compat)', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          repostof: 99,
+          attachments: [{ id: 5 }],
+        },
+      ]
+      mockMessageUpdate.mockResolvedValue({})
+      mockMessagePatch.mockResolvedValue({})
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // Repost keeps the preserved multi-step path; submitSingle is not used.
+      expect(mockMessageSubmit).not.toHaveBeenCalled()
+      expect(mockMessagePatch).toHaveBeenCalledTimes(1)
+      expect(mockJoinAndPost).toHaveBeenCalledTimes(1)
+
+      logSpy.mockRestore()
     })
   })
 

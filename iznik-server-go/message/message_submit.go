@@ -135,8 +135,11 @@ func SubmitMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to retrieve message ID")
 	}
 
-	// Attachments INLINE: insert each with msgid already set. No fake ids, no
-	// NULL-then-UPDATE. First attachment is primary (drives the thumbnail).
+	// Attachments INLINE by Cloudflare externaluid. First attachment is primary
+	// (drives the thumbnail). The client may already have created an orphan row
+	// via POST /image (msgid NULL) — link that one rather than inserting a
+	// duplicate; only insert a fresh row when none exists. This keeps the handler
+	// correct whether or not the client still does the separate image upload.
 	for i, att := range req.Attachments {
 		if strings.TrimSpace(att.Externaluid) == "" {
 			continue
@@ -149,8 +152,12 @@ func SubmitMessage(c *fiber.Ctx) error {
 		if i == 0 {
 			isPrimary = 1
 		}
-		db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, ?, ?)",
-			msgid, att.Externaluid, mods, isPrimary)
+		linked := db.Exec("UPDATE messages_attachments SET msgid = ?, `primary` = ?, externalmods = COALESCE(?, externalmods) WHERE externaluid = ? AND msgid IS NULL ORDER BY id DESC LIMIT 1",
+			msgid, isPrimary, mods, att.Externaluid)
+		if linked.RowsAffected == 0 {
+			db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, ?, ?)",
+				msgid, att.Externaluid, mods, isPrimary)
+		}
 	}
 
 	// Item + messages_items.
