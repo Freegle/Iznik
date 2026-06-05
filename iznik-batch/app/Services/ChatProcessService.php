@@ -173,11 +173,20 @@ class ChatProcessService
                 }
             }
 
-            // If the previous message in this chat is held for review, hold this one too.
+            // If the PREVIOUS message in this chat is held for review, hold this
+            // one too. Use id < $id, not id != $id: V1's chat_process.php was a
+            // continuous daemon that processed each message as it arrived, so the
+            // newest other row WAS the previous one. This service processes in
+            // batches (processIncoming orders by id asc), so when a burst of
+            // messages is pending, "newest other row" is a LATER, not-yet-processed
+            // message (reviewrequired defaults to 0) and the hold chain silently
+            // breaks — subsequent messages from a member already under review get
+            // delivered (Discourse #9656). Looking strictly backwards at the
+            // immediately preceding (already-processed) message restores the chain.
             if (!$review) {
                 $lastReview = DB::table('chat_messages')
                     ->where('chatid', $chatid)
-                    ->where('id', '!=', $id)
+                    ->where('id', '<', $id)
                     ->orderByDesc('id')
                     ->value('reviewrequired');
 
