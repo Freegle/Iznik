@@ -69,7 +69,10 @@ class VolunteeringDigestMail extends MjmlMailable
             'email'          => $this->recipientEmail,
             'jobAds'         => $jobAds,
             'jobsUrl'        => $this->trackedUrl("{$userSite}/jobs", 'jobs_link', 'jobs'),
-            'donateUrl'      => $this->trackedUrl("{$userSite}/donate", 'donate_link', 'donate'),
+            // Keep the freegle.in PayPal short link — it is whitelisted in the Go
+            // API's isValidRedirectURL (domain allow-list), so the tracked redirect
+            // resolves it correctly. Don't replace the short link with a full URL.
+            'donateUrl'      => $this->trackedUrl('https://freegle.in/paypal1510', 'donate_link', 'donate'),
         ]);
     }
 }
