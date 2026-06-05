@@ -922,4 +922,24 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertCount(0, glob($this->testSpoolDir . '/sending/*.json'));
         $this->assertCount(3, glob($this->testSpoolDir . '/pending/*.json'));
     }
+
+    /**
+     * A genuinely unparseable spool file is moved to failed/ and counted as
+     * invalid, rather than being silently discarded with no recorded reason.
+     */
+    public function test_process_spool_moves_unparseable_file_to_failed(): void
+    {
+        $id = 'test_corrupt_' . uniqid();
+        file_put_contents(
+            $this->testSpoolDir . '/pending/' . $id . '.json',
+            '{not valid json'
+        );
+
+        $stats = $this->spooler->processSpool();
+
+        $this->assertEquals(1, $stats['invalid']);
+        $this->assertEquals(0, $stats['sent']);
+        $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
+        $this->assertFileExists($this->testSpoolDir . '/failed/' . $id . '.json');
+    }
 }

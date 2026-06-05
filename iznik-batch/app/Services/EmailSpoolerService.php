@@ -390,6 +390,7 @@ class EmailSpoolerService
             'sent' => 0,
             'retried' => 0,
             'stuck_alerts' => 0,
+            'invalid' => 0,
         ];
 
         $files = glob($this->pendingDir . '/*.json');
@@ -407,9 +408,29 @@ class EmailSpoolerService
 
             $stats['processed']++;
 
-            $data = json_decode(file_get_contents($sendingPath), true);
+            // A spool file is written atomically (temp file + rename), so a
+            // complete file in pending/ is always valid JSON. A decode failure
+            // here is therefore almost always a transient read (interrupted or
+            // partial filesystem read) rather than real corruption — observed
+            // from welcome emails that landed in failed/ with attempts:0 yet
+            // were perfectly valid JSON afterwards. Re-read once before
+            // condemning, and if it still fails record WHY (json error + byte
+            // count) so the failure is diagnosable instead of a silent discard.
+            $raw = file_get_contents($sendingPath);
+            $data = json_decode($raw, true);
             if (!$data) {
-                Log::error('Invalid spool file', ['file' => $filename]);
+                clearstatcache(true, $sendingPath);
+                usleep(50000);
+                $raw = file_get_contents($sendingPath);
+                $data = json_decode($raw, true);
+            }
+            if (!$data) {
+                $stats['invalid']++;
+                Log::error('Invalid spool file', [
+                    'file' => $filename,
+                    'json_error' => json_last_error_msg(),
+                    'bytes' => strlen($raw),
+                ]);
                 // Move invalid files to failed - these can't be retried.
                 rename($sendingPath, $this->failedDir . '/' . $filename);
                 continue;
