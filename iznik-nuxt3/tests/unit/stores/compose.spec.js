@@ -869,6 +869,117 @@ describe('compose store', () => {
       expect(mockMessageSubmit).not.toHaveBeenCalled()
       expect(mockMessagePatch).toHaveBeenCalledTimes(1)
       expect(mockJoinAndPost).toHaveBeenCalledTimes(1)
+      // The existing photo already has a numeric id, so no materialisation.
+      expect(mockImagePost).not.toHaveBeenCalled()
+
+      logSpy.mockRestore()
+    })
+
+    it('materialises an inline (Phase-5) photo added during a repost', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          repostof: 99,
+          // A new photo added via PhotoUploader carries only the inline uid.
+          attachments: [{ ouruid: 'uid-new' }],
+        },
+      ]
+      mockMessageUpdate.mockResolvedValue({})
+      mockMessagePatch.mockResolvedValue({})
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockImagePost.mockResolvedValue({ id: 321 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // The inline photo is materialised and its id reaches the PATCH payload.
+      expect(mockImagePost).toHaveBeenCalledWith({
+        externaluid: 'uid-new',
+        externalmods: undefined,
+      })
+      expect(mockMessagePatch.mock.calls[0][0].attachments).toEqual([321])
+
+      logSpy.mockRestore()
+    })
+
+    it('materialises an AI illustration on repost when there is no real photo', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          repostof: 99,
+          attachments: [
+            { ouruid: 'ai-uid', externalmods: { ai: true } },
+          ],
+        },
+      ]
+      mockMessageUpdate.mockResolvedValue({})
+      mockMessagePatch.mockResolvedValue({})
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockImagePost.mockResolvedValue({ id: 654 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // AI illustration kept (materialised) since there is no real photo.
+      expect(mockImagePost).toHaveBeenCalledWith({
+        externaluid: 'ai-uid',
+        externalmods: { ai: true },
+      })
+      expect(mockMessagePatch.mock.calls[0][0].attachments).toEqual([654])
+
+      logSpy.mockRestore()
+    })
+
+    it('suppresses the AI illustration on repost when a real inline photo is present', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        {
+          id: 0,
+          type: 'Offer',
+          item: 'Sofa',
+          submitted: false,
+          repostof: 99,
+          attachments: [
+            { ouruid: 'real-uid' },
+            { ouruid: 'ai-uid', externalmods: { ai: true } },
+          ],
+        },
+      ]
+      mockMessageUpdate.mockResolvedValue({})
+      mockMessagePatch.mockResolvedValue({})
+      mockJoinAndPost.mockResolvedValue({ groupid: 10 })
+      mockImagePost.mockResolvedValue({ id: 777 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // Only the real photo is materialised; the AI illustration is dropped.
+      expect(mockImagePost).toHaveBeenCalledTimes(1)
+      expect(mockImagePost).toHaveBeenCalledWith({
+        externaluid: 'real-uid',
+        externalmods: undefined,
+      })
+      expect(mockMessagePatch.mock.calls[0][0].attachments).toEqual([777])
 
       logSpy.mockRestore()
     })

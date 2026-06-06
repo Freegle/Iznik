@@ -8,14 +8,16 @@ import {
   isNumericOnlyBody,
 } from '~/composables/useItemValidation'
 
+// Templates for the synthetic Offer/Wanted entries the `all` getter returns when
+// the user hasn't started composing one of each type yet. These are TEMPLATES —
+// the getter must spread a fresh copy each time and never hand back (or mutate)
+// these module-level objects, otherwise edits to one compose leak into the next.
 const defaultOffer = {
-  id: 0,
   type: 'Offer',
   text: '',
   attachments: [],
 }
 const defaultWanted = {
-  id: 1,
   type: 'Wanted',
   text: '',
   attachments: [],
@@ -686,42 +688,38 @@ export const useComposeStore = defineStore({
             if (message.attachments) {
               const hasRealPhoto = message.attachments.some(
                 (a) =>
-                  a.id &&
-                  typeof a.id === 'number' &&
-                  !(a.externalmods && a.externalmods.ai)
+                  !(a.externalmods && a.externalmods.ai) &&
+                  ((a.id && typeof a.id === 'number') || a.ouruid || a.externaluid)
               )
 
               for (const att in message.attachments) {
                 const attachment = message.attachments[att]
-                if (attachment.externalmods && attachment.externalmods.ai) {
-                  // AI illustrations: include only when there is no real user photo.
-                  if (!hasRealPhoto) {
-                    if (typeof attachment.id === 'number') {
-                      // Already a real server-side id — use it directly.
-                      attids.push(attachment.id)
-                    } else if (attachment.ouruid) {
-                      // Materialise the attachment via POST /image so the PATCH
-                      // receives a valid uint64 id (never a synthetic 'ai-...' string).
-                      try {
-                        const result = await this.$api.image.post({
-                          externaluid: attachment.ouruid,
-                          externalmods: { ai: true },
-                        })
-                        if (result.id) {
-                          attids.push(result.id)
-                        }
-                      } catch (e) {
-                        console.error(
-                          'Failed to create AI illustration attachment:',
-                          e
-                        )
-                      }
-                    }
-                  }
+                const isAi = attachment.externalmods && attachment.externalmods.ai
+                // Suppress the AI illustration when a real photo is present.
+                if (isAi && hasRealPhoto) {
                   continue
                 }
                 if (attachment.id && typeof attachment.id === 'number') {
                   attids.push(attachment.id)
+                } else if (attachment.ouruid || attachment.externaluid) {
+                  // Repost reuses the old PATCH-by-id path, but Phase-5 photos and
+                  // AI illustrations are carried inline (externaluid, no numeric id).
+                  // Materialise them now so the edit keeps them rather than dropping
+                  // them silently.
+                  try {
+                    const result = await this.$api.image.post({
+                      externaluid: attachment.ouruid || attachment.externaluid,
+                      externalmods: attachment.externalmods,
+                    })
+                    if (result.id) {
+                      attids.push(result.id)
+                    }
+                  } catch (e) {
+                    console.error(
+                      'Failed to materialise attachment for repost:',
+                      e
+                    )
+                  }
                 }
               }
             }
@@ -840,15 +838,14 @@ export const useComposeStore = defineStore({
       // This can also happen, it seems, during the initial load before the Pinia
       // state has been restored.  We used to try to spot when the store didn't have the right messages and fix them
       // up, but because the state hadn't been restored we actually lost what was in there.
+      // Fresh copies, flagged synthetic: they have no row in messages[] (callers
+      // gate writes on composeStore.messages[m.id]) so they can never create the
+      // sparse-array corruption the dual Offer/Wanted defaults used to cause.
       if (!gotOffer) {
-        const m = defaultOffer
-        m.id = ret.length
-        ret.push(m)
+        ret.push({ ...defaultOffer, id: ret.length, synthetic: true })
       }
       if (!gotWanted) {
-        const m = defaultWanted
-        m.id = ret.length
-        ret.push(m)
+        ret.push({ ...defaultWanted, id: ret.length, synthetic: true })
       }
 
       return ret

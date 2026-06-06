@@ -49,7 +49,7 @@
           :progress="selectedPhoto.progress"
           :error="selectedPhoto.error"
           :quality-warning="selectedPhoto.qualityWarning"
-          :show-rotate="!!selectedPhoto.id"
+          :show-rotate="!!selectedPhoto.ouruid"
           :externalmods="selectedPhoto.externalmods"
           @remove="removePhoto(selectedPhoto)"
           @rotate="rotatePhoto(selectedPhoto, 90)"
@@ -65,7 +65,7 @@
       <draggable
         v-model="photos"
         class="thumbnail-strip"
-        :item-key="(el) => `thumb-${el.id || el.tempId}`"
+        :item-key="(el) => `thumb-${el.ouruid || el.id || el.tempId}`"
         :animation="150"
         ghost-class="ghost"
         @start="onDragStart"
@@ -224,21 +224,14 @@ import {
   createHeicSafeCompressor,
 } from '~/composables/useUppyHeic'
 import { action, error as logError } from '~/composables/useClientLog'
-import { withTimeout } from '~/composables/usePromiseTimeout'
 import { describeUploadError } from '~/composables/useUploadErrorDetail'
 import { reportCameraError } from '~/composables/useCameraErrorMessage'
 import { useRuntimeConfig } from '#app'
-import { useImageStore } from '~/stores/image'
 import { useMobileStore } from '~/stores/mobile'
 import {
   analyzePhotoQuality,
   getQualityMessage,
 } from '~/composables/usePhotoQuality'
-
-// The bytes are already uploaded by the time we register the photo, so this
-// call is small.  Generous ceiling: we only want to catch a hang, never a slow
-// connection.
-const FINALISE_TIMEOUT_MS = 60000
 
 const draggable = defineAsyncComponent(() => import('vuedraggable'))
 const MessagePhotosModal = defineAsyncComponent(() =>
@@ -289,7 +282,6 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'photoProcessed', 'skip'])
 
 const runtimeConfig = useRuntimeConfig()
-const imageStore = useImageStore()
 const mobileStore = useMobileStore()
 
 // Detect if running in app vs web browser
@@ -500,16 +492,9 @@ async function uploadPhoto(photo, webPath) {
           const progress = Math.round((bytesUploaded / bytesTotal) * 100)
           photo.progress = progress
         },
-        onSuccess: async () => {
+        onSuccess: () => {
           let uid = uploadInstance.url
           uid = 'freegletusd-' + uid.substring(uid.lastIndexOf('/') + 1)
-
-          const att = {
-            imgtype: props.type,
-            externaluid: uid,
-            externalmods: {},
-            recognise: props.recognise && photos.value.indexOf(photo) === 0,
-          }
 
           action('photo bytes uploaded', {
             event_type: 'photo_upload',
@@ -517,53 +502,9 @@ async function uploadPhoto(photo, webPath) {
             imgtype: props.type,
           })
 
-          try {
-            // The bytes are already up at this point; this call only registers
-            // them, so it is quick under any normal conditions.  Bound it
-            // anyway.  This is the step that has to complete for the photo to
-            // stop being "uploading", and the give flow has no way out while
-            // it is: Next is gated on anyUploading and Skip only renders in
-            // the empty state.  So an await here that never settles does not
-            // lose a photo, it locks the member out of posting entirely, and
-            // compose persists that state to the next visit.  Better a photo
-            // that failed and offers Retry than a flow with no exits.
-            const ret = await withTimeout(
-              imageStore.post(att),
-              FINALISE_TIMEOUT_MS,
-              'Timed out registering the uploaded photo'
-            )
-
-            // Update photo with server data
-            photo.id = ret.id
-            photo.path = ret.url
-            photo.paththumb = ret.url
-            photo.ouruid = ret.uid
-            photo.info = ret.info
-            photo.uploading = false
-            delete photo.tempId
-
-            // Remove any AI-generated images now that a real photo has been added
-            photos.value = photos.value.filter((p) => !p.externalmods?.ai)
-
-            action('photo registered', {
-              event_type: 'photo_upload',
-              photo_stage: 'registered',
-              attachment_id: ret.id,
-            })
-
-            emit('photoProcessed', ret.id)
-            resolve()
-          } catch (e) {
-            console.error('Image post failed:', e)
-            photo.error = true
-            photo.uploading = false
-            logError('Photo upload could not be completed', {
-              event_type: 'photo_upload',
-              photo_stage: 'finalise_failed',
-              reason: e?.message,
-            })
-            reject(e)
-          }
+          // No POST /image — carry the attachment inline by uid (see applyUploadedUid).
+          applyUploadedUid(photo, uid)
+          resolve()
         },
       })
 
@@ -581,6 +522,26 @@ async function uploadPhoto(photo, webPath) {
   }
 }
 
+// Finalise an uploaded photo WITHOUT a POST /image round-trip. Compose posts in
+// a single call: the Cloudflare uid returned by the tus upload IS the attachment
+// reference, and the message-submit endpoint creates the messages_attachments row
+// inline (by externaluid). So there are no client-side attachment ids, no orphan
+// rows, and no separate image-link step — the source of the old compose bugs.
+function applyUploadedUid(photo, uid) {
+  photo.ouruid = uid
+  photo.externaluid = uid
+  if (!photo.externalmods) {
+    photo.externalmods = {}
+  }
+  photo.uploading = false
+  delete photo.tempId
+
+  // A real photo supersedes any AI illustration.
+  photos.value = photos.value.filter((p) => !p.externalmods?.ai)
+
+  emit('photoProcessed', uid)
+}
+
 // Retry a failed upload
 function retryUpload(photo) {
   if (photo.preview) {
@@ -595,39 +556,28 @@ function retryUpload(photo) {
 function removePhoto(photo) {
   const index = photos.value.findIndex(
     (p) =>
-      (p.id && p.id === photo.id) || (p.tempId && p.tempId === photo.tempId)
+      (p.ouruid && p.ouruid === photo.ouruid) ||
+      (p.id && p.id === photo.id) ||
+      (p.tempId && p.tempId === photo.tempId)
   )
   if (index !== -1) {
     photos.value.splice(index, 1)
   }
 }
 
-// Rotate a photo
-async function rotatePhoto(photo, degrees) {
-  if (!photo.id) return
-
-  // Calculate new rotation
+// Rotate a photo. The rotation is held in externalmods and rendered client-side
+// (PhotoCard → OurUploadedImage applies the modifiers), then persisted inline by
+// the single submit call — so there's no POST /image round-trip and rotation works
+// before the attachment row even exists on the server.
+function rotatePhoto(photo, degrees) {
   const currentRotation = photo.externalmods?.rotate || 0
   let newRotation = currentRotation + degrees
   newRotation = ((newRotation % 360) + 360) % 360
 
-  // Update local state
   if (!photo.externalmods) {
     photo.externalmods = {}
   }
   photo.externalmods.rotate = newRotation
-
-  // Save to server
-  try {
-    await imageStore.post({
-      id: photo.id,
-      rotate: newRotation,
-      bust: Date.now(),
-      type: props.type,
-    })
-  } catch (e) {
-    console.error('Failed to rotate photo:', e)
-  }
 }
 
 // Show quality warning for a photo
@@ -774,32 +724,8 @@ async function handleUppySuccess(result) {
 
       photos.value.push(photo)
 
-      try {
-        const att = {
-          imgtype: props.type,
-          externaluid: uid,
-          externalmods: {},
-          recognise: props.recognise && photos.value.indexOf(photo) === 0,
-        }
-
-        const ret = await imageStore.post(att)
-
-        photo.id = ret.id
-        photo.path = ret.url
-        photo.paththumb = ret.url
-        photo.ouruid = ret.uid
-        photo.info = ret.info
-        photo.uploading = false
-        delete photo.tempId
-
-        photos.value = photos.value.filter((p) => !p.externalmods?.ai)
-
-        emit('photoProcessed', ret.id)
-      } catch (e) {
-        console.error('Image post failed:', e)
-        photo.error = true
-        photo.uploading = false
-      }
+      // No POST /image — carry the attachment inline by uid (see applyUploadedUid).
+      applyUploadedUid(photo, uid)
     }
   }
 
