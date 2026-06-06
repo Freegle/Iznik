@@ -94,7 +94,6 @@
                 {{ chat.status === 'Blocked' ? 'Unblock' : 'Block' }}
               </b-button>
               <b-button
-                v-if="chat.chattype !== 'User2Mod' || chat.status === 'Closed'"
                 variant="white"
                 class="action-btn"
                 @click="chat.status === 'Closed' ? unhide() : showhide()"

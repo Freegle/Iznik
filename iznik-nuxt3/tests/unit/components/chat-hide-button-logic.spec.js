@@ -1,36 +1,30 @@
 /**
- * TDD tests for the per-chat Hide/Unhide button visibility rules (PR #627 corrected).
+ * TDD tests for the per-chat Hide/Unhide button visibility rules.
  *
  * These tests verify the v-if logic for the Hide/Unhide button in ChatPane.vue
  * and ChatMobileNavbar.vue directly, without mounting the full async component.
  *
- * Spec:
- *   - User2User chat (any status): button always shown
+ * Spec (revised for #9690/20):
+ *   - All chats: button always shown (v-if removed)
  *       - status !== 'Closed' → "Hide"
  *       - status === 'Closed' → "Unhide"
- *   - User2Mod chat, status !== 'Closed': button MUST NOT appear (no hiding volunteer chats)
- *   - User2Mod chat, status === 'Closed': button MUST appear as "Unhide"
- *     (recovery path for chats hidden by the previously-buggy Hide all)
+ *   - Bulk-hide protection lives in hideAll(), not per-chat buttons.
  *
- * The condition is:
- *   chat.chattype !== 'User2Mod' || chat.status === 'Closed'
- *
- * This file tests this condition expression and the derived label directly so
- * they can fail before any template edits and pass after.
+ * Previous spec (PR #627 for #9690/14) removed the Hide button from User2Mod
+ * chats entirely, but that caused #9690/20: after unhiding a volunteer chat,
+ * there were zero action buttons (User2Mod has otheruid=0, so no Profile
+ * button either). Fix: no per-chat chattype restriction.
  */
 
 import { describe, it, expect } from 'vitest'
 
 /**
- * shouldShowHideButton replicates the v-if condition from the template:
- *   chat.chattype !== 'User2Mod' || chat.status === 'Closed'
+ * shouldShowHideButton replicates the v-if condition from the template.
  *
- * On BUGGY code (PR as-over-reached) the condition is absent or always true,
- * so volunteer chats also get a Hide button. After the fix this returns false
- * for User2Mod with status !== 'Closed'.
+ * After fix (#9690/20): no condition — button always shown for all chats.
  */
-function shouldShowHideButton(chat) {
-  return chat.chattype !== 'User2Mod' || chat.status === 'Closed'
+function shouldShowHideButton(_chat) {
+  return true
 }
 
 /**
@@ -64,54 +58,34 @@ describe('per-chat Hide/Unhide button visibility (ChatPane + ChatMobileNavbar)',
 
   describe('User2Mod (volunteer) chats', () => {
     /**
-     * STEP 2 — INVERTED assertion.
-     *
-     * On BUGGY code (button has no v-if or always-true v-if) this test FAILS
-     * because shouldShowHideButton returns true for a User2Mod Online chat,
-     * meaning volunteers can be accidentally hidden.
-     *
-     * After the fix (v-if="chat.chattype !== 'User2Mod' || chat.status === 'Closed'")
-     * this returns false → PASSES.
+     * Fix for #9690/20: Hide button MUST appear for active User2Mod chats.
+     * After unhiding, the user sees the Hide button again (avoids zero-button state).
+     * Bulk-hide protection is in hideAll() which already skips User2Mod.
      */
     it(
-      'does NOT show the Hide button for an active User2Mod chat (status Online)',
+      'shows Hide button for an active User2Mod chat (status Online)',
       () => {
         const chat = { chattype: 'User2Mod', status: 'Online' }
-        expect(shouldShowHideButton(chat)).toBe(false)
+        expect(shouldShowHideButton(chat)).toBe(true)
+        expect(hideButtonLabel(chat)).toBe('Hide')
       }
     )
 
     it(
-      'does NOT show the Hide button for a User2Mod chat with status Active',
+      'shows Hide button for a User2Mod chat with status Active',
       () => {
         const chat = { chattype: 'User2Mod', status: 'Active' }
-        expect(shouldShowHideButton(chat)).toBe(false)
+        expect(shouldShowHideButton(chat)).toBe(true)
+        expect(hideButtonLabel(chat)).toBe('Hide')
       }
     )
 
-    /**
-     * STEP 2 — INVERTED assertion for the recovery path.
-     *
-     * On BUGGY code that always hides the button for User2Mod, this FAILS.
-     * After the fix (show Unhide when status === 'Closed') → PASSES.
-     */
     it(
       'shows Unhide button for a User2Mod chat that is already hidden (status Closed)',
       () => {
         const chat = { chattype: 'User2Mod', status: 'Closed' }
         expect(shouldShowHideButton(chat)).toBe(true)
         expect(hideButtonLabel(chat)).toBe('Unhide')
-      }
-    )
-
-    it(
-      'never shows Hide (only Unhide) for User2Mod: when status is Closed it is Unhide',
-      () => {
-        const chat = { chattype: 'User2Mod', status: 'Closed' }
-        // Button appears, but only as Unhide — never as Hide
-        expect(shouldShowHideButton(chat)).toBe(true)
-        expect(hideButtonLabel(chat)).toBe('Unhide')
-        expect(hideButtonLabel(chat)).not.toBe('Hide')
       }
     )
   })
