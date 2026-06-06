@@ -479,8 +479,11 @@ class PushNotificationService
     /**
      * Build the ModTools notification payload.
      *
-     * For ModTools, we send a simple "pending messages" notification.
-     * Matches legacy User::getNotificationPayload(modtools=true).
+     * Routes to /modtools/messages/pending only when there are actual pending
+     * messages — spam-only or volunteering-only work routes to the dashboard
+     * (/modtools) so tapping never lands on an empty pending queue.
+     * Fixes Discourse #9692: notification wrongly labelled "pending" and routing
+     * to /messages/pending when the badge count came from spam/volunteering only.
      */
     private function buildModToolsPayload(int $userId): ?array
     {
@@ -506,7 +509,18 @@ class PushNotificationService
             ];
         }
 
-        $title = "$total message" . ($total > 1 ? 's' : '') . " pending";
+        // Only route to /messages/pending when there are actually pending messages.
+        // The badge count includes spam + volunteering; routing there when only
+        // those exist sends the mod to an empty pending queue (Discourse #9692).
+        $pendingCount = $this->getPendingMessageCount($userId);
+
+        if ($pendingCount > 0) {
+            $title = "$total message" . ($total > 1 ? 's' : '') . " pending";
+            $route = '/modtools/messages/pending';
+        } else {
+            $title = "$total item" . ($total > 1 ? 's' : '') . " to review";
+            $route = '/modtools';
+        }
         $message = "Open ModTools to review";
 
         return [
@@ -521,12 +535,61 @@ class PushNotificationService
             'image' => 'www/images/modtools_logo.png',
             'modtools' => '1',
             'sound' => 'default',
-            'route' => '/modtools/messages/pending',
+            'route' => $route,
             'channel_id' => 'modtools',
             // Fixed notId per user so each new notification replaces the previous one
             // on Android instead of stacking multiple "N pending" badges.
             'notId' => (string) $userId,
         ];
+    }
+
+    /**
+     * Count unheld pending messages in the user's active groups.
+     *
+     * Subset of getBadgeCount() — used by buildModToolsPayload() to decide
+     * whether to route the notification to /messages/pending or the dashboard.
+     */
+    private function getPendingMessageCount(int $userId): int
+    {
+        $memberships = DB::select(
+            "SELECT groupid, settings FROM memberships
+             WHERE userid = ? AND role IN ('Owner', 'Moderator') AND collection = 'Approved'",
+            [$userId]
+        );
+
+        if (empty($memberships)) {
+            return 0;
+        }
+
+        $activeGroupIds = [];
+        foreach ($memberships as $m) {
+            if ($this->isActiveMod($m->settings)) {
+                $activeGroupIds[] = $m->groupid;
+            }
+        }
+
+        if (empty($activeGroupIds)) {
+            return 0;
+        }
+
+        $placeholders = implode(',', array_fill(0, count($activeGroupIds), '?'));
+        $params = array_merge([$userId], $activeGroupIds);
+
+        $pending = DB::selectOne(
+            "SELECT COUNT(*) as cnt FROM messages_groups mg
+             INNER JOIN messages m ON m.id = mg.msgid
+             INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ?
+             WHERE mem.role IN ('Owner', 'Moderator')
+             AND mem.collection = 'Approved'
+             AND mg.collection = 'Pending'
+             AND mg.groupid IN ({$placeholders})
+             AND mg.deleted = 0
+             AND m.fromuser IS NOT NULL
+             AND m.heldby IS NULL",
+            $params
+        );
+
+        return $pending->cnt ?? 0;
     }
 
     /**

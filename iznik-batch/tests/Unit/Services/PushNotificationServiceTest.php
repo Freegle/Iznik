@@ -496,6 +496,50 @@ class PushNotificationServiceTest extends TestCase
         $this->assertArrayNotHasKey('notification', $cfg);
     }
 
+    /**
+     * Regression for Discourse #9692/10: when only spam (no pending) messages exist,
+     * the notification must route to /modtools (the dashboard) and must NOT say "pending".
+     */
+    public function test_buildModToolsPayload_spam_only_routes_to_dashboard(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $sender = $this->createTestUser();
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Spam Item (Location)',
+            'textbody' => 'Spam',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_SPAM,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        $method = new \ReflectionMethod($this->service, 'buildModToolsPayload');
+        $method->setAccessible(true);
+        $payload = $method->invoke($this->service, $mod->id);
+
+        // Badge must still reflect total work items
+        $this->assertSame('1', $payload['badge'], 'Badge must count spam items');
+        // CORRECT: no pending messages → must route to dashboard, not /messages/pending
+        $this->assertSame('/modtools', $payload['route'],
+            'When only spam exists (no pending messages), route must be /modtools not /messages/pending');
+        $this->assertStringNotContainsString('pending', $payload['title'],
+            'When only spam exists, title must not say "pending" — Discourse #9692');
+    }
+
     private function invokeBuildAndroidFcmMessage(string $token, array $payload, bool $forceVisible): array
     {
         $method = new \ReflectionMethod($this->service, 'buildAndroidFcmMessage');
