@@ -835,7 +835,31 @@ func GetSession(c *fiber.Ctx) error {
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, series, token FROM sessions WHERE userid = ? LIMIT 1", myid).Scan(&sessionRow)
+		// Use the session that authenticated this specific request so the
+		// returned JWT/persistent carries the correct series for this context.
+		// LIMIT 1 returned an arbitrary (typically oldest) session, so a user
+		// logged into both Freegle and ModTools would receive the wrong series
+		// after GET /session, causing subsequent logout to delete the wrong
+		// app's sessions. Discourse #9748.
+		if _, reqSessionId, _ := user.GetJWTFromRequest(c); reqSessionId > 0 {
+			db.Raw("SELECT id, series, token FROM sessions WHERE id = ? AND userid = ?",
+				reqSessionId, myid).Scan(&sessionRow)
+		}
+		if sessionRow.ID == 0 {
+			// Authorization2 persistent-token fallback: its ID field is the sessions row pk.
+			if pt := c.Get("Authorization2"); pt != "" {
+				var persistentTok auth.PersistentToken
+				if json.Unmarshal([]byte(pt), &persistentTok) == nil && persistentTok.ID > 0 {
+					db.Raw("SELECT id, series, token FROM sessions WHERE id = ? AND userid = ?",
+						persistentTok.ID, myid).Scan(&sessionRow)
+				}
+			}
+		}
+		if sessionRow.ID == 0 {
+			// Last resort: LIMIT 1 covers the case where neither auth method
+			// identifies a specific session row (backward compatibility).
+			db.Raw("SELECT id, series, token FROM sessions WHERE userid = ? LIMIT 1", myid).Scan(&sessionRow)
+		}
 	}()
 	go func() {
 		defer wg.Done()

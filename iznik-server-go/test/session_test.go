@@ -1079,6 +1079,55 @@ func TestDeleteSessionScopedToCurrentSeries(t *testing.T) {
 	assert.Equal(t, int64(1), count(idC), "other app session (series 2) must remain logged in")
 }
 
+// TestGetSessionReturnsSendersSeries verifies that GET /session returns the
+// persistent/JWT tied to the SESSION that authenticated the request, not an
+// arbitrary first session in the DB.
+//
+// Regression for Discourse #9748 (post 4): DeleteSession already scopes
+// logout to the current login series, but GetSession was still running
+// "SELECT ... FROM sessions WHERE userid = ? LIMIT 1", which returns the
+// oldest session. When a user has two active contexts (e.g. Freegle and
+// ModTools), the second login's GET /session overwrites its auth store with
+// the first login's series. Subsequent logout then deletes the WRONG series,
+// logging the user out of the other app.
+func TestGetSessionReturnsSendersSeries(t *testing.T) {
+	prefix := uniquePrefix("get_sess_series")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	series1 := userID*1000 + 1
+	series2 := userID*1000 + 2
+
+	mk := func(series uint64) uint64 {
+		db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 1, NOW(), NOW())", userID, series)
+		var id uint64
+		db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&id)
+		return id
+	}
+	// Create both sessions; idFirst has the lower pk (LIMIT 1 picks this one on bugged code).
+	idFirst := mk(series1)
+	idSecond := mk(series2)
+
+	// Authenticate as the SECOND session.
+	token := GetToken(userID, idSecond)
+	req := httptest.NewRequest("GET", "/api/session?jwt="+token, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	persistent, _ := result["persistent"].(map[string]interface{})
+	assert.NotNil(t, persistent, "persistent token should be returned")
+	// The persistent token must identify the session that made the request
+	// (idSecond / series2), not the first session in the DB (idFirst / series1).
+	assert.Equal(t, float64(idSecond), persistent["id"],
+		"persistent.id must match the requesting session, not the oldest session (idFirst=%d)", idFirst)
+	assert.Equal(t, fmt.Sprintf("%d", series2), fmt.Sprintf("%v", persistent["series"]),
+		"persistent.series must match the requesting session's series")
+}
+
 // ---------------------------------------------------------------------------
 // POST /session - Forget
 // ---------------------------------------------------------------------------
