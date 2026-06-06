@@ -103,12 +103,19 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(0, $stats['retried']);
         $this->assertEquals(0, $stats['stuck_alerts']);
 
-        // File should be moved to sent.
+        // File should be moved out of pending and stored gzipped in sent/
+        // (sent records are write-only + pruned after 7 days, so they are
+        // compressed to keep the archive small).
         $this->assertFileDoesNotExist($this->testSpoolDir . '/pending/' . $id . '.json');
-        $this->assertFileExists($this->testSpoolDir . '/sent/' . $id . '.json');
+        $this->assertFileDoesNotExist($this->testSpoolDir . '/sent/' . $id . '.json');
 
-        // Mail::html sends a closure, not a Mailable class.
-        // We verify the file was moved to sent directory as proof of success.
+        $sentFile = $this->testSpoolDir . '/sent/' . $id . '.json.gz';
+        $this->assertFileExists($sentFile);
+
+        // The gzipped record must decode back to the original spooled JSON.
+        $decoded = json_decode(gzdecode(file_get_contents($sentFile)), true);
+        $this->assertIsArray($decoded);
+        $this->assertSame($id, $decoded['id']);
     }
 
     public function test_process_spool_respects_limit(): void
@@ -145,14 +152,34 @@ class EmailSpoolerServiceTest extends TestCase
         $id = $this->spooler->spool($mailable, $email);
         $this->spooler->processSpool();
 
-        // Backdate the sent file.
-        $sentFile = $this->testSpoolDir . '/sent/' . $id . '.json';
+        // Backdate the sent file (stored gzipped).
+        $sentFile = $this->testSpoolDir . '/sent/' . $id . '.json.gz';
         touch($sentFile, strtotime('-10 days'));
 
         $deleted = $this->spooler->cleanupSent(daysToKeep: 7);
 
         $this->assertEquals(1, $deleted);
         $this->assertFileDoesNotExist($sentFile);
+    }
+
+    public function test_cleanup_sent_prunes_old_gz_files_and_keeps_recent(): void
+    {
+        // Explicitly lock the .gz extension handling in cleanupSent: an old
+        // gzipped record is pruned, a recent one is kept. Without .gz in the
+        // accepted-extension filter these would never be deleted and the sent
+        // archive would grow unbounded.
+        $oldFile = $this->testSpoolDir . '/sent/old_mail.json.gz';
+        file_put_contents($oldFile, gzencode(json_encode(['id' => 'old'])));
+        touch($oldFile, strtotime('-10 days'));
+
+        $newFile = $this->testSpoolDir . '/sent/new_mail.json.gz';
+        file_put_contents($newFile, gzencode(json_encode(['id' => 'new'])));
+
+        $deleted = $this->spooler->cleanupSent(daysToKeep: 7);
+
+        $this->assertEquals(1, $deleted);
+        $this->assertFileDoesNotExist($oldFile);
+        $this->assertFileExists($newFile);
     }
 
     public function test_cleanup_sent_skips_non_json_files(): void
