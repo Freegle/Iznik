@@ -127,3 +127,39 @@ func TestIllustrationLocationSuffixStripping(t *testing.T) {
 	// Clean up.
 	db.Exec("DELETE FROM ai_images WHERE name = ?", testItem)
 }
+
+// AssertFlip: suppressed and rejected AI images must not be returned by the
+// /illustration endpoint. Without the AND status='active' filter these tests
+// fail (ret=0 instead of ret=3), proving the bug.
+
+func TestIllustrationSuppressedNotReturned(t *testing.T) {
+	testUid := fmt.Sprintf("test-uid-suppressed-%d", time.Now().UnixNano())
+	testItem := fmt.Sprintf("UTTest Suppressed Widget %d", time.Now().UnixNano())
+
+	db := database.DBConn
+	db.Exec("INSERT INTO ai_images (name, externaluid, status) VALUES (?, ?, 'suppressed')", testItem, testUid)
+	defer db.Exec("DELETE FROM ai_images WHERE name = ?", testItem)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/illustration?item="+url.QueryEscape(testItem), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result misc.IllustrationResult
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, 3, result.Ret, "Suppressed illustration must not be returned (expected ret=3)")
+}
+
+func TestIllustrationRejectedNotReturned(t *testing.T) {
+	testUid := fmt.Sprintf("test-uid-rejected-%d", time.Now().UnixNano())
+	testItem := fmt.Sprintf("UTTest Rejected Widget %d", time.Now().UnixNano())
+
+	db := database.DBConn
+	db.Exec("INSERT INTO ai_images (name, externaluid, status) VALUES (?, ?, 'rejected')", testItem, testUid)
+	defer db.Exec("DELETE FROM ai_images WHERE name = ?", testItem)
+
+	resp, _ := getApp().Test(httptest.NewRequest("GET", "/api/illustration?item="+url.QueryEscape(testItem), nil))
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result misc.IllustrationResult
+	json2.Unmarshal(rsp(resp), &result)
+	assert.Equal(t, 3, result.Ret, "Rejected illustration must not be returned (expected ret=3)")
+}

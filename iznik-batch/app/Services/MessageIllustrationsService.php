@@ -117,6 +117,7 @@ class MessageIllustrationsService
                 $cached = DB::table('ai_images')
                     ->where('name', $itemName)
                     ->whereNotNull('externaluid')
+                    ->where('status', 'active')
                     ->value('externaluid');
 
                 if ($cached) {

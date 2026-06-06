@@ -170,4 +170,44 @@ class MessageIllustrationsServiceTest extends TestCase
         $lastArrival = DB::table('config')->where('key', 'illustrations_last_arrival')->value('value');
         $this->assertNotNull($lastArrival, 'Config should have last arrival set after processing');
     }
+
+    // AssertFlip: suppressed and rejected AI images must NOT be attached to messages.
+    // Without ->where('status', 'active') these tests fail (attachment is created),
+    // proving the bug. After the fix both tests pass.
+
+    public function test_does_not_attach_suppressed_illustration(): void
+    {
+        $message = $this->createMessageInSpatial('OFFER: Abstract Widget (TestTown)');
+
+        DB::table('ai_images')->insert([
+            'name' => 'Abstract Widget',
+            'externaluid' => 'freegletusd-suppressed001',
+            'imagehash' => 'hashsup001',
+            'status' => 'suppressed',
+        ]);
+
+        $service = $this->makeService();
+        $service->processIllustrations();
+
+        $count = DB::table('messages_attachments')->where('msgid', $message->id)->count();
+        $this->assertEquals(0, $count, 'Should not attach a suppressed AI illustration');
+    }
+
+    public function test_does_not_attach_rejected_illustration(): void
+    {
+        $message = $this->createMessageInSpatial('OFFER: Broken Lamp (TestTown)');
+
+        DB::table('ai_images')->insert([
+            'name' => 'Broken Lamp',
+            'externaluid' => 'freegletusd-rejected001',
+            'imagehash' => 'hashrej001',
+            'status' => 'rejected',
+        ]);
+
+        $service = $this->makeService();
+        $service->processIllustrations();
+
+        $count = DB::table('messages_attachments')->where('msgid', $message->id)->count();
+        $this->assertEquals(0, $count, 'Should not attach a rejected AI illustration');
+    }
 }
