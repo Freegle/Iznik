@@ -228,6 +228,38 @@ describe('work_router_decide action', () => {
     expect(result._transition).toBe('PARALLEL_FIX_BUGS')
     expect(result.singleBug?.topic).toBe(9999)
   })
+
+  it('dispatches only ONE bug per topic — no duplicate PRs for the same topic', async () => {
+    // Regression: topic 9692 ("Bad links in emails") was classified as two posts and
+    // both dispatched, producing duplicate PRs #661 and #662 for the same donate link.
+    // The dispatch batch must be deduped by topic.
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [
+        { topic: 9692, post: 11, type: 'bug', user: 'reporterA' },
+        { topic: 9692, post: 12, type: 'bug', user: 'reporterB' },
+      ],
+      bugsFixed: [],
+    })
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
+    // Two posts queued, but only one dispatched (one per topic).
+    expect(result.reason).toContain('dispatching 1 in parallel')
+    expect(result.reason).toContain('9692.11') // oldest/first post kept
+    expect(result.reason).not.toContain('9692.12')
+  })
+
+  it('still dispatches both when two bugs are on DIFFERENT topics', async () => {
+    const result = await workRouterHandler({}, {
+      phase: 'analysis',
+      classifications: [
+        { topic: 9801, post: 1, type: 'bug', user: 'a' },
+        { topic: 9802, post: 1, type: 'bug', user: 'b' },
+      ],
+      bugsFixed: [],
+    })
+    expect(result._transition).toBe('PARALLEL_FIX_BUGS')
+    expect(result.reason).toContain('dispatching 2 in parallel')
+  })
 })
 
 describe('recent merged PR dedup in work_router_decide', () => {

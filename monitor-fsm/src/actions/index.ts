@@ -2773,7 +2773,20 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
           const bt = typeof b.first_seen_at === 'string' ? b.first_seen_at : '9999'
           return at < bt ? -1 : at > bt ? 1 : 0
         })
-        const bugBatch = sorted.slice(0, MAX_PARALLEL_BUGS)
+        // One bug per topic per dispatch: two posts on the same topic are almost
+        // always the same underlying issue, so dispatching both spawns duplicate PRs
+        // (e.g. #661/#662, both rewriting the same donate link for topic 9692). Keep
+        // the oldest post per topic; a genuinely-distinct second bug is picked up a
+        // later iteration (where the first post's PR makes topicsWithActivePr skip it).
+        const seenDispatchTopics = new Set<number>()
+        const bugBatch = sorted
+          .filter((b) => {
+            const t = Number(b.topic)
+            if (seenDispatchTopics.has(t)) return false
+            seenDispatchTopics.add(t)
+            return true
+          })
+          .slice(0, MAX_PARALLEL_BUGS)
         const batchKeys = bugBatch.map(b => `${b.topic}.${b.post}`).join(', ')
         return {
           _transition: 'PARALLEL_FIX_BUGS',
