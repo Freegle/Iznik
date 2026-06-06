@@ -116,6 +116,25 @@ func SubmitMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusForbidden, "You are not allowed to post on this group")
 	}
 
+	// Decide the collection (V1 parity: Message::save() postcoll + User::postToCollection()).
+	// Most posts land Pending and the content-check batch promotes clean ones, but a
+	// member who is explicitly unmoderated on an open group posts straight to Approved —
+	// we must NOT blanket everything to Pending. The rule:
+	//   - group `moderated` or `closed`         -> Pending
+	//   - else by the member's ourPostingStatus -> NULL/MODERATED/PROHIBITED = Pending,
+	//                                              anything else (DEFAULT/UNMODERATED) = Approved
+	// A freshly auto-joined member has ourPostingStatus NULL, so new members stay Pending.
+	collection := utils.COLLECTION_PENDING
+	var groupSettings *string
+	db.Raw("SELECT settings FROM `groups` WHERE id = ?", req.Groupid).Scan(&groupSettings)
+	if !groupSettingTruthy(groupSettings, "moderated") && !groupSettingTruthy(groupSettings, "closed") &&
+		ourPostingStatus != nil {
+		s := strings.ToUpper(strings.TrimSpace(*ourPostingStatus))
+		if s != "" && s != utils.POSTING_STATUS_MODERATED && s != utils.POSTING_STATUS_PROHIBITED {
+			collection = utils.COLLECTION_APPROVED
+		}
+	}
+
 	availNow := 1
 	if req.Availablenow != nil {
 		availNow = *req.Availablenow
@@ -194,9 +213,10 @@ func SubmitMessage(c *fiber.Ctx) error {
 		db.Exec("UPDATE messages SET deliverypossible = ? WHERE id = ?", *req.Deliverypossible, msgid)
 	}
 
-	// Post it: Pending in the group, posting + history records, internal fromaddr.
+	// Post it: into the group with the collection decided above, plus posting +
+	// history records and the internal fromaddr.
 	db.Exec("INSERT IGNORE INTO messages_groups (msgid, groupid, collection, arrival) VALUES (?, ?, ?, NOW())",
-		msgid, req.Groupid, utils.COLLECTION_PENDING)
+		msgid, req.Groupid, collection)
 	db.Exec("INSERT INTO messages_postings (msgid, groupid) VALUES (?, ?)", msgid, req.Groupid)
 
 	fromaddr := user.GetOrCreateInternalEmail(db, myid)
@@ -208,7 +228,12 @@ func SubmitMessage(c *fiber.Ctx) error {
 
 	logMessageReceived(db, req.Groupid, myid, msgid)
 
-	// NOT added to messages_spatial — Pending posts are not in public browse.
+	// A Pending post is not in public browse, so it stays out of messages_spatial
+	// (the content-check batch / a moderator adds it when it becomes Approved). But a
+	// post that went straight to Approved must be indexed now so it shows on the map.
+	if collection == utils.COLLECTION_APPROVED {
+		addApprovedMessageToSpatialIndex(db, msgid)
+	}
 
 	resp := fiber.Map{"ret": 0, "status": "Success", "id": msgid, "groupid": req.Groupid}
 	if jwtString != "" {
@@ -230,4 +255,28 @@ func SubmitMessage(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(resp)
+}
+
+// groupSettingTruthy reports whether a boolean-ish group setting (e.g. "moderated",
+// "closed") in the groups.settings JSON blob is on. V1's getSetting treats these as
+// off by default, so a missing/unparseable value is false. The value may be encoded
+// as a JSON bool, a number, or a string ("1"/"true"), so we accept all three.
+func groupSettingTruthy(settingsJSON *string, key string) bool {
+	if settingsJSON == nil || *settingsJSON == "" {
+		return false
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(*settingsJSON), &m); err != nil {
+		return false
+	}
+	switch v := m[key].(type) {
+	case bool:
+		return v
+	case float64:
+		return v != 0
+	case string:
+		return v == "1" || strings.EqualFold(v, "true")
+	default:
+		return false
+	}
 }
