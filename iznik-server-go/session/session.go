@@ -972,10 +972,14 @@ func GetSession(c *fiber.Ctx) error {
 		}()
 
 		// --- Pending members (all groups, no active/inactive split) ---
+		// INNER JOIN users excludes orphaned membership rows (user deleted, membership remains)
+		// so the count matches the listing query which also INNER-JOINs users (Discourse #9654/12).
 		wg2.Add(1)
 		go func() {
 			defer wg2.Done()
-			db.Raw("SELECT COUNT(*) FROM memberships WHERE groupid IN ? AND collection = ?",
+			db.Raw("SELECT COUNT(*) FROM memberships m "+
+				"INNER JOIN users u ON u.id = m.userid AND u.deleted IS NULL "+
+				"WHERE m.groupid IN ? AND m.collection = ?",
 				modGroupIDs, utils.COLLECTION_PENDING).Scan(&pendingmembers)
 		}()
 
