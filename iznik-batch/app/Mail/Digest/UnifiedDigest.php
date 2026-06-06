@@ -214,7 +214,7 @@ class UnifiedDigest extends MjmlMailable implements RetryableMailable
             );
         }
         $jobsUrl = $this->trackedUrl($this->userSite . '/jobs', 'jobs_view_more', 'jobs_view_more');
-        $donateUrl = $this->trackedUrl(config('freegle.donate.url', 'https://freegle.in/paypal1510'), 'donate', 'donate');
+        $donateUrl = $this->trackedUrl($this->userSite . '/donate', 'donate', 'donate');
 
         // Per-group footer heading: "you're a member of {group}, set to
         // receive {frequency}". An immediate digest is about a single
