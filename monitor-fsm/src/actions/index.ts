@@ -113,6 +113,45 @@ export function parseRetryAfter(header: string | null, body: string): number {
   return 5
 }
 
+// Bot accounts whose PR comments are never a human review signal.
+const BOT_COMMENT_LOGINS = new Set([
+  'netlify', 'github-actions', 'codecov', 'codecov-commenter', 'coderabbitai',
+  'sonarcloud', 'dependabot', 'vercel',
+])
+
+// Phrases a human uses when closing an FSM PR to mean "this is NOT an actionable
+// code bug — do not try again", as opposed to "the fix is wrong, redo it" (for
+// which they leave the PR open with changes requested). On a CLOSED PR these park
+// the bug instead of triggering the retry-once-then-escalate path.
+const WONTFIX_CLOSE_PATTERNS = [
+  'no fix required', 'no fix needed', 'no fix is required', 'no fix is needed',
+  'not a bug', 'not a code bug', "isn't a bug", 'not a real bug',
+  'no actionable', 'not actionable', 'no action required', 'no action needed',
+  'wontfix', "won't fix", 'wont fix', 'will not fix',
+  'working as designed', 'working as intended', 'by design', 'as designed',
+  'perception complaint', 'bad fix',
+]
+
+/**
+ * Did a human leave a "this is not an actionable bug" signal on a (closed) PR?
+ * Scans non-bot comments for a WONTFIX_CLOSE_PATTERN. Returns the matched comment
+ * excerpt so the bug's reason can quote the human's decision.
+ */
+export function detectWontfixClose(
+  comments: Array<{ author?: { login?: string } | null; body?: string | null }>,
+): { wontfix: boolean; reason?: string } {
+  for (const c of comments ?? []) {
+    const login = (c?.author?.login ?? '').toLowerCase()
+    if (!login || BOT_COMMENT_LOGINS.has(login) || login.endsWith('[bot]')) continue
+    const body = c?.body ?? ''
+    const hay = body.toLowerCase()
+    if (WONTFIX_CLOSE_PATTERNS.some((p) => hay.includes(p))) {
+      return { wontfix: true, reason: body.replace(/\s+/g, ' ').trim().slice(0, 200) }
+    }
+  }
+  return { wontfix: false }
+}
+
 export async function postDiscourseReply(
   topicId: number,
   raw: string,
@@ -682,7 +721,33 @@ print(json.dumps({'confirmations': results, 'edwardUpdates': edward_updates}))
               `SELECT topic, post, pr_rejections FROM discourse_bug
                WHERE pr_number = ? AND state NOT IN ('fixed','confirmed','deferred','off-topic','duplicate')`
             ).all(pr.number) as Array<{ topic: number; post: number; pr_rejections: number }>
+
+            // Distinguish "the human closed this because it is NOT a code bug" (park it,
+            // never retry) from "the fix was wrong, try again" (retry-once-then-escalate).
+            // Re-attempting after a wontfix close just churns out duplicate bad PRs —
+            // exactly what happened with #9753 (#631 closed "no actionable code bug" → the
+            // FSM produced #660). A wontfix signal in a human close comment means STOP.
+            let wontfix: { wontfix: boolean; reason?: string } = { wontfix: false }
+            if (bugs.length > 0) {
+              const cres = await sh('gh', ['pr', 'view', String(pr.number), '--repo', 'Freegle/Iznik', '--json', 'comments'])
+              if (cres.code === 0) {
+                try {
+                  const parsed = JSON.parse(cres.stdout) as { comments?: Array<{ author?: { login?: string } | null; body?: string | null }> }
+                  wontfix = detectWontfixClose(parsed.comments ?? [])
+                } catch { /* malformed comments json — fall through to reopen */ }
+              }
+            }
+
             for (const bug of bugs) {
+              if (wontfix.wontfix) {
+                db.prepare(
+                  `UPDATE discourse_bug SET state='deferred', pr_number=NULL,
+                     reason=?, last_seen_at=datetime('now')
+                   WHERE topic=? AND post=?`
+                ).run(`Human closed PR #${pr.number} as not-a-bug: ${wontfix.reason ?? 'no fix required'}`, bug.topic, bug.post)
+                out(`sync_pr_states: PR #${pr.number} CLOSED as wontfix — parked bug ${bug.topic}/${bug.post} (no retry)`)
+                continue
+              }
               reopenBugAfterRejection(db, bug.topic, bug.post, pr.number)
               insertReviewerFeedback(db, {
                 kind: 'pr_rejected',
