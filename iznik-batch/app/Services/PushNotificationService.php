@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\ChatRoom;
+use App\Services\LokiService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Kreait\Firebase\Factory;
@@ -27,20 +28,81 @@ class PushNotificationService
 
     private $messaging = null;
 
+    /** Whether we've already alerted that FCM is unavailable (avoids per-push spam). */
+    private bool $unavailableLogged = false;
+
     public function __construct()
     {
         $credentialsPath = config('freegle.firebase.credentials_path', '/etc/firebase.json');
 
-        if (file_exists($credentialsPath)) {
+        try {
+            // NB: file_exists() is TRUE for a /dev/null bind-mount, and an empty
+            // or unreadable credentials file makes the Firebase factory throw deep
+            // inside SplFileObject ("length must be > 0"). Check explicitly so the
+            // failure is unambiguous rather than a cryptic stream error — a broken
+            // creds mount previously disabled push for days with no visible alert.
+            if (! is_file($credentialsPath) || ! is_readable($credentialsPath) || filesize($credentialsPath) === 0) {
+                throw new \RuntimeException("Firebase credentials missing, unreadable or empty: {$credentialsPath}");
+            }
+
+            $factory = (new Factory)->withServiceAccount($credentialsPath);
+            $this->messaging = $factory->createMessaging();
+        } catch (\Throwable $e) {
+            $this->reportFirebaseUnavailable($e->getMessage());
+        }
+    }
+
+    /**
+     * Alert loudly — application log (ERROR), Sentry and Loki — that FCM could
+     * not be initialised, so a broken/empty credentials mount can never again
+     * silently swallow push notifications. Fires once per service construction.
+     */
+    private function reportFirebaseUnavailable(string $detail): void
+    {
+        $message = 'Push notifications DISABLED: Firebase Cloud Messaging failed to initialise';
+
+        Log::error($message, ['detail' => $detail]);
+
+        if (function_exists('\Sentry\captureMessage')) {
+            \Sentry\captureMessage($message.' — '.$detail);
+        }
+
+        try {
+            app(LokiService::class)->logEvent('push', 'firebase_init_failed', [
+                'detail' => $detail,
+            ]);
+        } catch (\Throwable $e) {
+            // Never let alerting break construction.
+        }
+    }
+
+    /**
+     * Record (once per instance) that a push had to be dropped because FCM is
+     * unavailable, then return 0. Makes the *impact* visible in Sentry/Loki
+     * without emitting a line per dropped message.
+     */
+    private function messagingUnavailable(string $context, array $extra = []): int
+    {
+        if (! $this->unavailableLogged) {
+            $this->unavailableLogged = true;
+
+            $message = 'Push notification DROPPED: Firebase Cloud Messaging not initialised';
+            Log::error($message, array_merge(['context' => $context], $extra));
+
+            if (function_exists('\Sentry\captureMessage')) {
+                \Sentry\captureMessage($message.' ('.$context.')');
+            }
+
             try {
-                $factory = (new Factory)->withServiceAccount($credentialsPath);
-                $this->messaging = $factory->createMessaging();
+                app(LokiService::class)->logEvent('push', 'dropped_no_firebase', array_merge([
+                    'context' => $context,
+                ], $extra));
             } catch (\Throwable $e) {
-                Log::warning('Failed to initialize Firebase', [
-                    'error' => $e->getMessage(),
-                ]);
+                // Swallow — alerting must not break the send path.
             }
         }
+
+        return 0;
     }
 
     /**
@@ -80,11 +142,7 @@ class PushNotificationService
     public function notify(int $userId, bool $modtools): int
     {
         if (! $this->messaging) {
-            Log::debug('Firebase not configured, skipping push notification', [
-                'user_id' => $userId,
-            ]);
-
-            return 0;
+            return $this->messagingUnavailable('notify', ['user_id' => $userId]);
         }
 
         $count = 0;
@@ -157,9 +215,7 @@ class PushNotificationService
     public function notifyUser(int $userId): int
     {
         if (! $this->messaging) {
-            Log::debug('Firebase not configured, skipping user push notification', ['user_id' => $userId]);
-
-            return 0;
+            return $this->messagingUnavailable('notify_user', ['user_id' => $userId]);
         }
 
         $notifs = DB::select(
@@ -707,7 +763,7 @@ class PushNotificationService
     private function sendChatMessagePush(int $userId, int $messageId, bool $modtools): int
     {
         if (! $this->messaging) {
-            return 0;
+            return $this->messagingUnavailable('chat_message', ['user_id' => $userId, 'message_id' => $messageId]);
         }
 
         $payload = $this->buildChatMessagePayload($messageId, $userId, $modtools);
