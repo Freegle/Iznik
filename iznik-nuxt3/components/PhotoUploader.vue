@@ -523,7 +523,7 @@ async function uploadPhoto(photo, webPath) {
 }
 
 // Finalise an uploaded photo WITHOUT a POST /image round-trip. Compose posts in
-// a single call: the Cloudflare uid returned by the tus upload IS the attachment
+// a single call: the tusd uid returned by the tus upload IS the attachment
 // reference, and the message-submit endpoint creates the messages_attachments row
 // inline (by externaluid). So there are no client-side attachment ids, no orphan
 // rows, and no separate image-link step — the source of the old compose bugs.

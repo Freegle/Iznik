@@ -222,7 +222,7 @@ export const useComposeStore = defineStore({
     },
     // Single-call submit: build the flat payload and post it in ONE request via
     // PUT /message/submit (create + attach + join + post). Attachments go inline
-    // by externaluid (the Cloudflare uid) — no fake/numeric attachment ids, no
+    // by externaluid (the tusd uid) — no fake/numeric attachment ids, no
     // separate POST /image, no draft round-trip. This is the simplified path that
     // replaces createDraft + submitDraft; the old two-step actions are kept for
     // edit/repost and backwards compatibility.
@@ -660,7 +660,7 @@ export const useComposeStore = defineStore({
 
           if (!message.repostof) {
             // A new post composed on the client. ONE call creates the message,
-            // attaches the photos inline (by Cloudflare externaluid), auto-joins
+            // attaches the photos inline (by tusd externaluid), auto-joins
             // the group and posts it — no draft round-trip, no client-side
             // attachment ids, no separate image-link step. This is the heart of
             // the compose simplification.
