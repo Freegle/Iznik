@@ -101,20 +101,15 @@ class VolunteeringDigestMailTest extends TestCase
                 }
             }
         }
-        // Fallback: raw freegle.in short link href (when tracking is null)
-        if (preg_match('/href=["\']([^"\']*freegle\.in[^"\']*)["\']/', $html, $match)) {
+        // Fallback: raw href containing /donate (when tracking is null)
+        if (preg_match('/href=["\']([^"\']*\/donate[^"\']*)["\']/', $html, $match)) {
             return html_entity_decode($match[1]);
         }
         return null;
     }
 
-    public function test_donate_url_in_job_ads_section_uses_freegle_in_short_link(): void
+    public function test_donate_url_in_job_ads_section_uses_user_site_donate_page(): void
     {
-        // The "Donating helps too!" button must keep the freegle.in/paypal1510
-        // PayPal short link. freegle.in is whitelisted in the Go API's
-        // isValidRedirectURL allow-list, so the tracked redirect resolves the
-        // short link correctly. The short link must NOT be rewritten to a full
-        // /donate URL — short links are intentional and supported.
         $userSite = config('freegle.sites.user');
 
         $mail = new VolunteeringDigestMail(
@@ -134,8 +129,10 @@ class VolunteeringDigestMailTest extends TestCase
 
         $this->assertNotNull($donateDest,
             '"Donating helps too!" button destination URL not found in rendered email');
-        $this->assertStringContainsString('freegle.in/paypal1510', $donateDest,
-            '"Donating helps too!" must use the freegle.in/paypal1510 PayPal short link (whitelisted in isValidRedirectURL); it must not be replaced with a full URL');
+        $this->assertStringContainsString('/donate', $donateDest,
+            '"Donating helps too!" must link to the user-site /donate page');
+        $this->assertStringNotContainsString('freegle.in', $donateDest,
+            '"Donating helps too!" must not use the broken freegle.in/paypal1510 short link');
     }
 
     public function test_service_builds_volunteering_url_without_doubled_https(): void

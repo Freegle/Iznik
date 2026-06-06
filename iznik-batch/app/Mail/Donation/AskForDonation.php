@@ -35,7 +35,7 @@ class AskForDonation extends MjmlMailable
         $this->itemSubject = $itemSubject;
         $this->userSite = config('freegle.sites.user');
         $this->target = config('freegle.donation.target', 2500);
-        $this->donateUrl = config('freegle.donation.url', 'http://freegle.in/paypal1510');
+        $this->donateUrl = $this->userSite . '/donate';
 
         // Initialize email tracking.
         $userId = $this->user->exists ? $this->user->id : null;

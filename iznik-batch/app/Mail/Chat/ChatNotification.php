@@ -433,7 +433,7 @@ class ChatNotification extends MjmlMailable implements RetryableMailable
                 ),
                 'jobAds' => $jobAds['jobs'],
                 'jobsUrl' => $this->trackedUrl($this->userSite . '/jobs', 'jobs_link', 'jobs'),
-                'donateUrl' => $this->trackedUrl('https://freegle.in/paypal1510', 'donate_link', 'donate'),
+                'donateUrl' => $this->trackedUrl($this->userSite . '/donate', 'donate_link', 'donate'),
                 'ampIncluded' => $ampIncluded,
                 'isOwnMessage' => $this->isOwnMessage,
                 'otherUserName' => $otherUserName,
