@@ -699,6 +699,22 @@ describe('compose store', () => {
       expect(mockSetAuth).toHaveBeenCalledWith('jwt-x', { id: 5 })
       expect(ret.newpassword).toBe('pw')
     })
+
+    it('sends ai_declined when the user declined the AI illustration', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      mockMessageSubmit.mockResolvedValue({ id: 1, groupid: 10 })
+
+      await store.submitSingle(
+        { type: 'Offer', item: 'Sofa', attachments: [] },
+        'a@b.com',
+        { ai_declined: true }
+      )
+
+      expect(mockMessageSubmit.mock.calls[0][0].ai_declined).toBe(true)
+    })
   })
 
   describe('deferred submit / resume after login', () => {
@@ -710,6 +726,7 @@ describe('compose store', () => {
         message: msg,
         email: 'a@b.com',
         options: { deadline: '2026-07-01' },
+        at: expect.any(Number),
       })
     })
 
@@ -787,6 +804,57 @@ describe('compose store', () => {
       store.deferSubmit('Offer')
       expect(store.pendingSubmit).toBeNull()
     })
+
+    it('deferSubmit captures the ai_declined flag', () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.email = 'a@b.com'
+      store.messages = [
+        { id: 0, type: 'Offer', item: 'Sofa', submitted: false, aiDeclined: true },
+      ]
+      store.deferSubmit('Offer')
+      expect(store.pendingSubmit.options.ai_declined).toBe(true)
+    })
+
+    it('does NOT auto-post a stale deferral (older than the TTL)', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      // Simulate a deferral made long ago (beyond the 1h TTL).
+      store.pendingSubmit = {
+        message: { type: 'Offer', item: 'Old', attachments: [] },
+        email: 'a@b.com',
+        options: {},
+        at: Date.now() - 2 * 60 * 60 * 1000,
+      }
+
+      const ret = await store.resumePendingSubmit()
+
+      expect(ret).toBeNull()
+      expect(mockMessageSubmit).not.toHaveBeenCalled()
+      // The stale marker is dropped (so it never fires) but the draft is untouched.
+      expect(store.pendingSubmit).toBeNull()
+    })
+
+    it('keeps the composed draft if the resumed submit fails', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.group = 10
+      store.messages = [{ id: 0, type: 'Offer', item: 'Sofa', submitted: false }]
+      mockMessageSubmit.mockRejectedValue(new Error('boom'))
+      store.setPendingSubmit(
+        { type: 'Offer', item: 'Sofa', attachments: [] },
+        'a@b.com'
+      )
+
+      await expect(store.resumePendingSubmit()).rejects.toThrow('boom')
+
+      // Fires once (marker cleared) but the draft is preserved for a manual retry.
+      expect(store.pendingSubmit).toBeNull()
+      expect(store.messages).toHaveLength(1)
+    })
   })
 
   describe('submit() — new post uses the single call', () => {
@@ -838,6 +906,29 @@ describe('compose store', () => {
 
       // The store is cleared after a successful submit.
       expect(store.messages).toEqual([])
+
+      logSpy.mockRestore()
+    })
+
+    it('clears only the submitted type, preserving a parallel draft of the other type', async () => {
+      const store = useComposeStore()
+      store.init({ public: {} })
+      store.postcode = { id: 123 }
+      store.email = 'test@example.com'
+      store.group = 10
+      store.messages = [
+        { id: 0, type: 'Offer', item: 'Sofa', submitted: false, attachments: [] },
+        { id: 1, type: 'Wanted', item: 'Drill', submitted: false, attachments: [] },
+      ]
+      mockMessageSubmit.mockResolvedValue({ id: 99, groupid: 10 })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await store.submit({ type: 'Offer' })
+
+      // The Wanted draft survives; the Offer is gone.
+      expect(store.messages).toHaveLength(1)
+      expect(store.messages[0].type).toBe('Wanted')
+      expect(store.messages[0].item).toBe('Drill')
 
       logSpy.mockRestore()
     })
