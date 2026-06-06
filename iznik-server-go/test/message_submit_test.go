@@ -134,6 +134,110 @@ func TestSubmitMessageLinksExistingAttachment(t *testing.T) {
 	assert.Equal(t, 1, primary)
 }
 
+// TestSubmitMessageApprovedForUnmoderatedMember covers the V1-parity collection
+// logic: an existing member who is explicitly unmoderated (ourPostingStatus DEFAULT)
+// on an open group posts STRAIGHT to Approved (not Pending) and is indexed in
+// messages_spatial so it shows on the public map immediately.
+func TestSubmitMessageApprovedForUnmoderatedMember(t *testing.T) {
+	prefix := uniquePrefix("submit_approved")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", userID, groupID)
+
+	// A location with real coordinates so the post can be added to the spatial index.
+	locName := "SubmitLoc " + prefix
+	db.Exec("INSERT INTO locations (name, type, lat, lng, canon, popularity) VALUES (?, 'Point', 55.95, -3.19, ?, 0)", locName, locName)
+	var locID uint64
+	db.Raw("SELECT id FROM locations WHERE name = ? ORDER BY id DESC LIMIT 1", locName).Scan(&locID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"type":       "Offer",
+		"item":       "Approved Sofa",
+		"textbody":   "Posted straight to Approved",
+		"groupid":    groupID,
+		"locationid": locID,
+	})
+	req := httptest.NewRequest("PUT", "/api/message/submit?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	msgID := uint64(result["id"].(float64))
+	assert.Greater(t, msgID, uint64(0))
+
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ? AND groupid = ?", msgID, groupID).Row().Scan(&collection)
+	assert.Equal(t, "Approved", collection, "unmoderated member on an open group posts straight to Approved")
+
+	var spatialCount int64
+	db.Raw("SELECT COUNT(*) FROM messages_spatial WHERE msgid = ?", msgID).Scan(&spatialCount)
+	assert.Equal(t, int64(1), spatialCount, "an Approved post must be added to the spatial index")
+}
+
+// TestSubmitMessageModeratedGroupStaysPending: even an unmoderated member posts
+// Pending when the group itself is moderated.
+func TestSubmitMessageModeratedGroupStaysPending(t *testing.T) {
+	prefix := uniquePrefix("submit_modgroup")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'DEFAULT' WHERE userid = ? AND groupid = ?", userID, groupID)
+	db.Exec(`UPDATE `+"`groups`"+` SET settings = '{"moderated":1}' WHERE id = ?`, groupID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"type": "Offer", "item": "Moderated Group Sofa", "groupid": groupID,
+	})
+	req := httptest.NewRequest("PUT", "/api/message/submit?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req, 10000)
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	msgID := uint64(result["id"].(float64))
+
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ?", msgID).Row().Scan(&collection)
+	assert.Equal(t, "Pending", collection, "a moderated group forces Pending regardless of member status")
+}
+
+// TestSubmitMessageModeratedMemberStaysPending: a member whose posting status is
+// MODERATED stays Pending even on an open group.
+func TestSubmitMessageModeratedMemberStaysPending(t *testing.T) {
+	prefix := uniquePrefix("submit_modmember")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	CreateTestMembership(t, userID, groupID, "Member")
+	_, token := CreateTestSession(t, userID)
+
+	db := database.DBConn
+	db.Exec("UPDATE memberships SET ourPostingStatus = 'MODERATED' WHERE userid = ? AND groupid = ?", userID, groupID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"type": "Offer", "item": "Moderated Member Sofa", "groupid": groupID,
+	})
+	req := httptest.NewRequest("PUT", "/api/message/submit?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ := getApp().Test(req, 10000)
+	assert.Equal(t, 200, resp.StatusCode)
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	msgID := uint64(result["id"].(float64))
+
+	var collection string
+	db.Raw("SELECT collection FROM messages_groups WHERE msgid = ?", msgID).Row().Scan(&collection)
+	assert.Equal(t, "Pending", collection, "a MODERATED member stays Pending")
+}
+
 // TestSubmitMessageValidation covers the input guards.
 func TestSubmitMessageValidation(t *testing.T) {
 	prefix := uniquePrefix("submit_valid")
