@@ -254,6 +254,7 @@ const pendingPhoto = ref(null)
 // Always show first photo as the featured/primary one
 const selectedIndex = ref(0)
 let uploadInstance = null
+let uploadingPhoto = null // Photo associated with the current in-progress TUS upload
 let tempIdCounter = 0
 
 // Computed property for the selected photo
@@ -405,8 +406,16 @@ async function uploadPhoto(photo, webPath) {
     await new Promise((resolve, reject) => {
       if (uploadInstance) {
         uploadInstance.abort()
+        // tus.abort() never fires onError/onSuccess, so the Promise we wrapped
+        // around the previous upload would hang forever. Mark that photo as
+        // errored immediately so the user gets feedback and can retry.
+        if (uploadingPhoto && uploadingPhoto.uploading) {
+          uploadingPhoto.error = true
+          uploadingPhoto.uploading = false
+        }
       }
 
+      uploadingPhoto = photo
       uploadInstance = new tus.Upload(file, {
         endpoint: runtimeConfig.public.TUS_UPLOADER,
         retryDelays: [0, 3000, 5000, 10000, 20000],

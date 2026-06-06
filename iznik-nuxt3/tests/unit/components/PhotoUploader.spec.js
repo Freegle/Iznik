@@ -1411,4 +1411,30 @@ describe('PhotoUploader', () => {
       expect(wrapper.vm.photos[0].id).toBe(1)
     })
   })
+
+  // Bug: concurrent uploadPhoto calls abort the previous TUS upload but tus.abort()
+  // never calls onError/onSuccess, so the aborted photo's Promise hangs forever
+  // (uploading stays true, error stays false — user sees a permanent spinner with no retry).
+  // Fix: track the photo associated with the in-progress upload and mark it errored on abort.
+  describe('concurrent upload abort (9764-1)', () => {
+    it('when second upload starts while first is in-progress, aborted photo should be marked error not stuck uploading', async () => {
+      createWrapper()
+      await flushPromises()
+
+      // Start two uploads without awaiting — simulates user quickly adding photos
+      // while a previous upload is still in-flight on a slow mobile connection.
+      wrapper.vm.processPhoto('blob://photo1.jpg')
+      wrapper.vm.processPhoto('blob://photo2.jpg')
+      await flushPromises()
+
+      // photo1's TUS upload was aborted by photo2's upload start.
+      // After the fix: photo1 must be marked as errored (not stuck in uploading=true).
+      const photo1 = wrapper.vm.photos.find(
+        (p) => p.preview === 'blob://photo1.jpg'
+      )
+      expect(photo1).toBeDefined()
+      expect(photo1.uploading).toBe(false) // FAILS on buggy code (stuck uploading=true)
+      expect(photo1.error).toBe(true) // FAILS on buggy code (error never set)
+    })
+  })
 })
