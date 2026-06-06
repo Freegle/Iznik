@@ -56,6 +56,48 @@
         </p>
       </NoticeMessage>
       <b-form-textarea v-model="body" rows="10" class="mt-2" />
+      <NoticeMessage
+        v-if="directiveWarning"
+        variant="danger"
+        class="mt-1 mb-1"
+      >
+        {{ directiveWarning }}
+      </NoticeMessage>
+      <NoticeMessage v-if="pendingEdits.length" variant="warning" class="mt-2">
+        <strong>Please edit before sending:</strong>
+        <ul class="mb-0">
+          <li v-for="(e, i) in pendingEdits" :key="'edit' + i">
+            <span class="fst-italic">{{ e }}</span>
+          </li>
+        </ul>
+        Change this wording where it appears in the message above.
+      </NoticeMessage>
+      <div v-if="optionalSections.length" class="mt-2">
+        <p class="mb-1">
+          <strong>Optional — keep or remove each before sending:</strong>
+        </p>
+        <div
+          v-for="(o, i) in optionalSections"
+          :key="'opt' + i"
+          class="d-flex align-items-start gap-2 mb-1 p-2 border rounded optional-section"
+        >
+          <div class="flex-grow-1 fst-italic">{{ o }}</div>
+          <b-button
+            size="sm"
+            variant="outline-success"
+            @click="keepOptional(i)"
+          >
+            Keep
+          </b-button>
+          <b-button
+            size="sm"
+            variant="outline-danger"
+            @click="removeOptional(i)"
+          >
+            Remove
+          </b-button>
+        </div>
+      </div>
       <div
         v-if="stdmsg?.newdelstatus && stdmsg.newdelstatus !== 'UNCHANGED'"
         class="mt-1"
@@ -153,6 +195,15 @@ import { useOurModal } from '~/composables/useOurModal'
 import { SUBJECT_REGEX } from '~/constants'
 import { useMe } from '~/composables/useMe'
 import { useModMe } from '~/composables/useModMe'
+import {
+  parseEditThis,
+  parseOptional,
+  removeOptionalAt,
+  keepOptionalAt,
+  pendingEditThis,
+  stripDirectiveTags,
+  sendBlockers,
+} from '~/modtools/utils/stdMessageDirectives'
 
 const props = defineProps({
   messageid: {
@@ -211,6 +262,22 @@ const subject = ref(null)
 const body = ref(null)
 const bodyInitialLength = ref(0)
 const replyTooShort = ref(false)
+// Directive tags (<editthis>/<optional>) in the template, processed below.
+const originalEditThis = ref([])
+const directiveWarning = ref(null)
+// The <editthis> placeholders still present verbatim (i.e. not yet personalised).
+const pendingEdits = computed(() =>
+  pendingEditThis(body.value || '', originalEditThis.value)
+)
+// The <optional> sections still awaiting a Keep/Remove decision.
+const optionalSections = computed(() => parseOptional(body.value || ''))
+
+function keepOptional(index) {
+  body.value = keepOptionalAt(body.value, index)
+}
+function removeOptional(index) {
+  body.value = removeOptionalAt(body.value, index)
+}
 const keywordList = ['Offer', 'Taken', 'Wanted', 'Received', 'Other']
 const recentDays = 31
 const changingNewModStatus = ref(false)
@@ -529,6 +596,9 @@ async function fillin() {
   }
 
   body.value = (await substitutionStrings(msg)).trim()
+  // Remember the <editthis> placeholders as loaded, so we can tell later whether
+  // the mod has actually personalised them before allowing the message to send.
+  originalEditThis.value = parseEditThis(body.value)
 
   if (props.autosend && !warning.value) {
     // Start doing stuff.
@@ -560,10 +630,23 @@ async function substitutionStrings(text) {
     text = text.replace(/\$myname/g, me.value.displayname)
     text = text.replace(/\$nummembers/g, group.membercount)
     text = text.replace(/\$nummods/g, group.modcount)
-    if (group.settings && group.settings.reposts)
+    // Link the member to where they can edit/repost their own posts.
+    text = text.replace(/\$editlink/g, 'https://www.ilovefreegle.org/myposts')
+    if (group.settings && group.settings.reposts) {
       text = text.replace(/\$repostoffer/g, group.settings.reposts.offer)
-    if (group.settings && group.settings.reposts)
       text = text.replace(/\$repostwanted/g, group.settings.reposts.wanted)
+      // Human-readable repost interval — replaces the old hand-typed
+      // "*insert repeat wanted time*" placeholder.
+      const days = (n) => `${n} ${Number(n) === 1 ? 'day' : 'days'}`
+      text = text.replace(
+        /\$repeatoffertime/g,
+        days(group.settings.reposts.offer)
+      )
+      text = text.replace(
+        /\$repeatwantedtime/g,
+        days(group.settings.reposts.wanted)
+      )
+    }
 
     text = text.replace(
       /\$origsubj/g,
@@ -671,6 +754,18 @@ async function substitutionStrings(text) {
 async function process(callback) {
   replyTooShort.value = false
 
+  // Enforce the directive tags: don't let a templated <editthis> go out
+  // un-personalised, and don't send an <optional> section without a Keep/Remove
+  // decision. Block here (like the too-short check) rather than send.
+  directiveWarning.value = null
+  const blockers = sendBlockers(body.value || '', originalEditThis.value)
+  if (!blockers.ok) {
+    directiveWarning.value = blockers.editThis.length
+      ? 'Please personalise the highlighted “edit this” wording before sending.'
+      : 'Please choose Keep or Remove for each optional section before sending.'
+    return
+  }
+
   const msglen = body.value.length - bodyInitialLength.value
 
   if (stdmsg.value.action !== 'Edit' && msglen >= 0 && msglen < 30) {
@@ -705,7 +800,9 @@ async function process(callback) {
     }
 
     const subj = subject.value.trim()
-    const bodyText = body.value.trim()
+    // Strip the directive tags so <editthis>/<optional> markup never reaches the
+    // recipient — only the (edited / kept) content goes out.
+    const bodyText = stripDirectiveTags(body.value).trim()
 
     switch (stdmsg.value.action) {
       case 'Approve':
