@@ -27,7 +27,7 @@ import (
 // (edit/repost still use them); this is purely additive.
 //
 // One request carries everything: the item, the body, the location, the group,
-// the options, and the attachments INLINE (by Cloudflare externaluid — the
+// the options, and the attachments INLINE (by tusd externaluid — the
 // server inserts the messages_attachments row with msgid already set, so there
 // are no NULL-then-link round-trips and no client-side attachment ids at all).
 // For an unauthenticated user an email find-or-creates the account and a JWT is
@@ -154,7 +154,7 @@ func SubmitMessage(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to retrieve message ID")
 	}
 
-	// Attachments INLINE by Cloudflare externaluid. First attachment is primary
+	// Attachments INLINE by tusd externaluid. First attachment is primary
 	// (drives the thumbnail). The client may already have created an orphan row
 	// via POST /image (msgid NULL) — link that one rather than inserting a
 	// duplicate; only insert a fresh row when none exists. This keeps the handler
