@@ -238,6 +238,33 @@ func TestSubmitMessageModeratedMemberStaysPending(t *testing.T) {
 	assert.Equal(t, "Pending", collection, "a MODERATED member stays Pending")
 }
 
+// TestSubmitMessageAiDeclined: when the poster declined the AI illustration, the
+// submit records messages_ai_declined so the illustrations cron won't re-inject one.
+func TestSubmitMessageAiDeclined(t *testing.T) {
+	prefix := uniquePrefix("submit_aidecl")
+	groupID := CreateTestGroup(t, prefix)
+	userID := CreateTestUser(t, prefix, "User")
+	_, token := CreateTestSession(t, userID)
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"type": "Wanted", "item": "Declined AI Drill", "groupid": groupID,
+		"ai_declined": true,
+	})
+	req := httptest.NewRequest("PUT", "/api/message/submit?jwt="+token, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	assert.NoError(t, err)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.Unmarshal(rsp(resp), &result)
+	msgID := uint64(result["id"].(float64))
+
+	var declinedCount int64
+	database.DBConn.Raw("SELECT COUNT(*) FROM messages_ai_declined WHERE msgid = ?", msgID).Scan(&declinedCount)
+	assert.Equal(t, int64(1), declinedCount, "ai_declined must record messages_ai_declined")
+}
+
 // TestSubmitMessageValidation covers the input guards.
 func TestSubmitMessageValidation(t *testing.T) {
 	prefix := uniquePrefix("submit_valid")
@@ -272,4 +299,41 @@ func TestSubmitMessageValidation(t *testing.T) {
 	assert.Equal(t, 401, resp.StatusCode)
 
 	_ = fmt.Sprint(userID)
+}
+
+// TestSubmitMessageExistingEmailLoggedOutRejected covers the security guard: an
+// UNAUTHENTICATED submit whose email belongs to an existing account must be rejected
+// (401) — the server must NOT post on that account's behalf, and must NOT mint/return
+// a native password for it (account-takeover prevention). The client forces a login
+// in this case; the server must enforce it too.
+func TestSubmitMessageExistingEmailLoggedOutRejected(t *testing.T) {
+	prefix := uniquePrefix("submit_existing_email")
+	groupID := CreateTestGroup(t, prefix)
+	email := prefix + "@test.com"
+	existingUID := CreateTestUserWithEmail(t, prefix, email)
+
+	db := database.DBConn
+	// The dangerous case is an account with NO native login (e.g. OAuth-only):
+	// the old code would have generated one and returned the password.
+	db.Exec("DELETE FROM users_logins WHERE userid = ? AND type = ?", existingUID, "Native")
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"type": "Offer", "item": "Takeover Sofa", "groupid": groupID, "email": email,
+	})
+	// No JWT — unauthenticated.
+	req := httptest.NewRequest("PUT", "/api/message/submit", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := getApp().Test(req, 10000)
+	assert.NoError(t, err)
+	assert.Equal(t, 401, resp.StatusCode, "unauthenticated submit for an existing email must be rejected")
+
+	// No native password may have been created for the existing account.
+	var nativeLogins int64
+	db.Raw("SELECT COUNT(*) FROM users_logins WHERE userid = ? AND type = ?", existingUID, "Native").Scan(&nativeLogins)
+	assert.Equal(t, int64(0), nativeLogins, "must not mint a native password for someone else's account")
+
+	// No message may have been posted on the existing user's behalf.
+	var msgCount int64
+	db.Raw("SELECT COUNT(*) FROM messages WHERE fromuser = ?", existingUID).Scan(&msgCount)
+	assert.Equal(t, int64(0), msgCount, "must not post on the existing account's behalf")
 }

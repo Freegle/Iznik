@@ -3,12 +3,14 @@ package message
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
 	"github.com/freegle/iznik-server-go/auth"
 	"github.com/freegle/iznik-server-go/database"
 	flog "github.com/freegle/iznik-server-go/log"
+	"github.com/freegle/iznik-server-go/queue"
 	"github.com/freegle/iznik-server-go/user"
 	"github.com/freegle/iznik-server-go/utils"
 	"github.com/gofiber/fiber/v2"
@@ -53,6 +55,7 @@ func SubmitMessage(c *fiber.Ctx) error {
 		Availablenow     *int               `json:"availablenow"`
 		Deadline         *string            `json:"deadline"`
 		Deliverypossible *bool              `json:"deliverypossible"`
+		AiDeclined       bool               `json:"ai_declined"`
 		Email            string             `json:"email"`
 		Attachments      []submitAttachment `json:"attachments"`
 	}
@@ -88,6 +91,15 @@ func SubmitMessage(c *fiber.Ctx) error {
 				return fiber.NewError(fiber.StatusBadRequest, "Invalid email address")
 			}
 			return fiber.NewError(fiber.StatusInternalServerError, "Failed to create user")
+		}
+		// SECURITY: findOrCreateUserForDraft returns a JWT only for a brand-new
+		// account. An empty JWT here means the email belongs to an EXISTING account
+		// while the caller is not logged in — we must NOT post on their behalf or
+		// touch their credentials (the password block below would otherwise mint and
+		// return a native password for someone else's account). Require a real login;
+		// the client already forces this for a known email.
+		if jwtString == "" {
+			return fiber.NewError(fiber.StatusUnauthorized, "Please log in to post with this email")
 		}
 	}
 	if myid == 0 {
@@ -140,19 +152,27 @@ func SubmitMessage(c *fiber.Ctx) error {
 		availNow = *req.Availablenow
 	}
 
-	// Create the message row. Subject is rebuilt below once we have the location.
+	// Create the message row, capturing the new id from the SAME connection via
+	// LastInsertId(). A separate "SELECT id ... ORDER BY id DESC LIMIT 1" would race
+	// with a concurrent post by the same user (GORM uses a connection pool) and could
+	// return the wrong id, mislinking attachments/postings/history to another message.
 	fromip := c.IP()
 	messageid := fmt.Sprintf("%.6f@%s-%d", float64(time.Now().UnixNano())/1e9, utils.USER_DOMAIN, req.Groupid)
 	initialSubject := req.Type + ": " + req.Item
-	if r := db.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
-		myid, req.Type, initialSubject, req.Textbody, req.Textbody, availNow, availNow, req.Locationid, fromip, messageid); r.Error != nil {
+	sqlDB, err := db.DB()
+	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
 	}
-	var msgid uint64
-	db.Raw("SELECT id FROM messages WHERE fromuser = ? ORDER BY id DESC LIMIT 1", myid).Scan(&msgid)
-	if msgid == 0 {
+	insRes, err := sqlDB.Exec("INSERT INTO messages (fromuser, type, subject, textbody, message, arrival, date, source, availableinitially, availablenow, locationid, fromip, messageid) VALUES (?, ?, ?, ?, ?, NOW(), NOW(), 'Platform', ?, ?, ?, ?, ?)",
+		myid, req.Type, initialSubject, req.Textbody, req.Textbody, availNow, availNow, req.Locationid, fromip, messageid)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create message")
+	}
+	msgidInt, err := insRes.LastInsertId()
+	if err != nil || msgidInt == 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "Failed to retrieve message ID")
 	}
+	msgid := uint64(msgidInt)
 
 	// Attachments INLINE by tusd externaluid. First attachment is primary
 	// (drives the thumbnail). The client may already have created an orphan row
@@ -177,6 +197,12 @@ func SubmitMessage(c *fiber.Ctx) error {
 			db.Exec("INSERT INTO messages_attachments (msgid, externaluid, externalmods, `primary`) VALUES (?, ?, ?, ?)",
 				msgid, att.Externaluid, mods, isPrimary)
 		}
+	}
+
+	// If the user declined the AI illustration, record it (V1/PATCH parity) so the
+	// illustrations cron does not later re-inject a cached AI image into this post.
+	if req.AiDeclined {
+		db.Exec("INSERT IGNORE INTO messages_ai_declined (msgid) VALUES (?)", msgid)
 	}
 
 	// Item + messages_items.
@@ -230,9 +256,18 @@ func SubmitMessage(c *fiber.Ctx) error {
 
 	// A Pending post is not in public browse, so it stays out of messages_spatial
 	// (the content-check batch / a moderator adds it when it becomes Approved). But a
-	// post that went straight to Approved must be indexed now so it shows on the map.
+	// post that went straight to Approved must be indexed now so it shows on the map,
+	// and a live Offer must be announced to freebiealerts.app — both things handleApprove
+	// does. (approvedby/approvedat stay NULL: this went live without a moderator, which
+	// is exactly what "auto-approved" means. No mod-approval email is sent for the same
+	// reason — it was never in a moderation queue.)
 	if collection == utils.COLLECTION_APPROVED {
 		addApprovedMessageToSpatialIndex(db, msgid)
+		if req.Type == "Offer" {
+			if err := queue.QueueTask(queue.TaskFreebieAlertsAdd, map[string]interface{}{"msgid": msgid}); err != nil {
+				log.Printf("Failed to queue freebie alerts add for message %d: %v", msgid, err)
+			}
+		}
 	}
 
 	resp := fiber.Map{"ret": 0, "status": "Success", "id": msgid, "groupid": req.Groupid}

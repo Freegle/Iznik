@@ -23,6 +23,11 @@ const defaultWanted = {
   attachments: [],
 }
 
+// How long a deferred (login-gated) submit stays valid. After this it is treated as
+// abandoned and is NOT auto-posted on a later login — guards against a stale draft
+// being silently submitted out of nowhere days later.
+const PENDING_SUBMIT_TTL = 60 * 60 * 1000 // 1 hour
+
 export const useComposeStore = defineStore({
   id: 'compose',
   persist: {
@@ -263,6 +268,11 @@ export const useComposeStore = defineStore({
       if (options.deliverypossible !== undefined) {
         data.deliverypossible = options.deliverypossible
       }
+      if (options.ai_declined) {
+        // Tell the server the user declined the AI illustration, so the
+        // illustrations cron does not re-inject a cached AI image later.
+        data.ai_declined = true
+      }
 
       const ret = await this.$api.message.submit(
         data,
@@ -282,7 +292,9 @@ export const useComposeStore = defineStore({
     // already registered so we must force a login first. Persisted (whole store
     // is), so it survives a page refresh mid-login.
     setPendingSubmit(message, email, options = {}) {
-      this.pendingSubmit = { message, email, options }
+      // Stamp it so a stale deferral (user abandoned login, comes back much later)
+      // is not silently auto-posted on some future unrelated login.
+      this.pendingSubmit = { message, email, options, at: Date.now() }
     },
     clearPendingSubmit() {
       this.pendingSubmit = null
@@ -305,6 +317,9 @@ export const useComposeStore = defineStore({
       if (message.deliveryPossible !== undefined) {
         options.deliverypossible = message.deliveryPossible
       }
+      if (message.aiDeclined) {
+        options.ai_declined = true
+      }
       this.setPendingSubmit(message, this.email, options)
     },
     // Fire the deferred submit exactly once, after login completes. Called from
@@ -315,14 +330,25 @@ export const useComposeStore = defineStore({
       if (!pending) {
         return null
       }
+      // Drop the marker up front so a later, unrelated login can't replay it and so
+      // it can never double-fire.
       this.pendingSubmit = null
+      // Ignore a stale deferral: if the user abandoned the login and only logged in
+      // much later (or logged in for some other reason entirely), don't auto-post an
+      // old draft out of nowhere. The draft itself is left untouched.
+      if (pending.at && Date.now() - pending.at > PENDING_SUBMIT_TTL) {
+        return null
+      }
       const ret = await this.submitSingle(
         pending.message,
         pending.email,
         pending.options
       )
-      // Clear the composed post (it's now submitted) and land on My Posts.
-      this.clearMessages()
+      // Only reached on success (submitSingle throws otherwise — and we deliberately
+      // do NOT clear the draft on failure, so the user can retry rather than lose it).
+      // Clear just the submitted type so a parallel draft of the other type survives,
+      // then land on My Posts.
+      this.clearMessagesOfType(pending.message?.type)
       if (ret?.id) {
         navigateTo({ name: 'myposts' })
       }
@@ -692,8 +718,7 @@ export const useComposeStore = defineStore({
                   ((a.id && typeof a.id === 'number') || a.ouruid || a.externaluid)
               )
 
-              for (const att in message.attachments) {
-                const attachment = message.attachments[att]
+              for (const attachment of message.attachments) {
                 const isAi = attachment.externalmods && attachment.externalmods.ai
                 // Suppress the AI illustration when a real photo is present.
                 if (isAi && hasRealPhoto) {
@@ -754,7 +779,9 @@ export const useComposeStore = defineStore({
       }
 
       console.log('Done')
-      this.clearMessages()
+      // Clear only the type we just submitted, so a parallel draft of the other type
+      // (e.g. a Wanted composed alongside this Offer) is not wiped.
+      this.clearMessagesOfType(params.type)
 
       // We might have done this logged out.  By the time it has completed we will have an account, so we want to make
       // sure that the login page pops up rather than the signup page.
@@ -799,6 +826,20 @@ export const useComposeStore = defineStore({
     },
     clearMessages() {
       this.messages = []
+    },
+    // Clear the posts we just submitted of a given type, preserving a parallel
+    // (non-submitted) draft of the other type. We drop both anything of this type
+    // and anything already marked submitted — markSubmitted() strips the type off a
+    // submitted message, so a type check alone would leave the submitted stub behind.
+    // Falls back to clearing everything if no type is given.
+    clearMessagesOfType(type) {
+      if (!type) {
+        this.messages = []
+        return
+      }
+      this.messages = this.messages.filter(
+        (m) => m && !m.submitted && m.type !== type
+      )
     },
   },
   getters: {

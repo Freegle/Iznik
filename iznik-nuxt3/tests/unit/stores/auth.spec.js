@@ -59,7 +59,9 @@ vi.mock('@capgo/capacitor-social-login', () => ({
 }))
 
 vi.mock('~/stores/compose', () => ({
-  useComposeStore: () => ({}),
+  useComposeStore: () => ({
+    clearPendingSubmit: () => {},
+  }),
 }))
 
 const mockFetchBatch = vi.fn()

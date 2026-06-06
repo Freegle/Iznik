@@ -233,6 +233,11 @@ export const useAuthStore = defineStore({
       this.loggedInEver = loggedInEver
       this.$api = api
 
+      // Drop any login-gated compose submit: it belongs to the user who just logged
+      // out, and the compose store is persisted separately, so it would otherwise
+      // survive and auto-fire on the NEXT person's login on this device.
+      useComposeStore().clearPendingSubmit()
+
       // Restore normal request handling now that logout is complete.
       exitLogoutMode()
     },
