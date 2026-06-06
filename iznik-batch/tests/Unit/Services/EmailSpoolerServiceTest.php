@@ -403,7 +403,7 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(1, $stats['sent']);
 
         // Read the sent file to confirm it was processed.
-        $sentData = json_decode(file_get_contents($this->testSpoolDir . '/sent/' . $id . '.json'), true);
+        $sentData = json_decode(gzdecode(file_get_contents($this->testSpoolDir . '/sent/' . $id . '.json.gz')), true);
         $this->assertEquals($id, $sentData['id']);
 
         // The headers should still be in the data.
@@ -587,7 +587,7 @@ class EmailSpoolerServiceTest extends TestCase
         $this->assertEquals(1, $stats['sent']);
 
         // Read the sent file to confirm BCC data is preserved.
-        $sentData = json_decode(file_get_contents($this->testSpoolDir . '/sent/' . $id . '.json'), true);
+        $sentData = json_decode(gzdecode(file_get_contents($this->testSpoolDir . '/sent/' . $id . '.json.gz')), true);
         $this->assertEquals($id, $sentData['id']);
         $this->assertCount(2, $sentData['bcc']);
     }
