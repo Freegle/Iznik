@@ -490,8 +490,23 @@ class EmailSpoolerService
                     // If text is empty, Mail::html() has already set HTML-only body.
                 });
 
-                // Move to sent directory.
-                rename($sendingPath, $this->sentDir . '/' . $filename);
+                // Compress into the sent directory instead of a plain move.
+                // Nothing ever reads sent/ back programmatically — it is
+                // write-only and pruned after 7 days (see cleanupSent()) — so
+                // each message is stored gzipped: JSON wrapping HTML/AMP/text
+                // compresses ~85-90%, turning a ~52G/7-day archive into ~6-8G.
+                // A human debugging a send can still `zcat` the file. The .gz
+                // is created fresh here so its mtime drives retention exactly as
+                // the plain .json did. On any read/gzip/write error we fall back
+                // to an uncompressed move so a sent record is never lost nor
+                // stranded in sending/.
+                $raw = @file_get_contents($sendingPath);
+                $gz = $raw === false ? false : gzencode($raw, 6);
+                if ($gz !== false && @file_put_contents($this->sentDir . '/' . $filename . '.gz', $gz) !== false) {
+                    @unlink($sendingPath);
+                } else {
+                    rename($sendingPath, $this->sentDir . '/' . $filename);
+                }
                 $stats['sent']++;
 
                 // Extract tracking data from headers.
@@ -645,7 +660,9 @@ class EmailSpoolerService
         $iterator = new \DirectoryIterator($this->sentDir);
 
         foreach ($iterator as $fileInfo) {
-            if ($fileInfo->isDot() || $fileInfo->getExtension() !== 'json') {
+            // Sent records are stored gzipped (.gz); accept legacy plain .json
+            // too so a mixed directory during rollout is still pruned.
+            if ($fileInfo->isDot() || !in_array($fileInfo->getExtension(), ['json', 'gz'], true)) {
                 continue;
             }
 
