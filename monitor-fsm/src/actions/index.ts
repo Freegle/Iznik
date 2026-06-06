@@ -97,11 +97,31 @@ const NETLIFY_SITE = 'golden-caramel-d2c3a7.netlify.app'
  * the reply under the SPECIFIC reporting post (only meaningful for post > 1; a
  * reply to the OP is a normal topic reply and Discourse normalises it).
  */
-async function postDiscourseReply(
+/**
+ * How long to wait before retrying a Discourse 429. Prefers the Retry-After
+ * header, falls back to the rate-limit body's `extras.wait_seconds`, then a
+ * sensible default. Returns seconds.
+ */
+export function parseRetryAfter(header: string | null, body: string): number {
+  const fromHeader = header ? Number(header) : NaN
+  if (Number.isFinite(fromHeader) && fromHeader > 0) return fromHeader
+  try {
+    const j = JSON.parse(body) as { extras?: { wait_seconds?: unknown } }
+    const w = Number(j?.extras?.wait_seconds)
+    if (Number.isFinite(w) && w > 0) return w
+  } catch { /* body not JSON */ }
+  return 5
+}
+
+export async function postDiscourseReply(
   topicId: number,
   raw: string,
   replyToPostNumber?: number,
+  opts: { maxRetries?: number; sleepFn?: (ms: number) => Promise<void> } = {},
 ): Promise<{ ok: boolean; error?: string }> {
+  const maxRetries = opts.maxRetries ?? 4
+  const sleepFn = opts.sleepFn ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
+
   let apiKey: string | null = null
   try {
     const profile = JSON.parse(await readFile('/home/edward/profile.json', 'utf8')) as {
@@ -114,22 +134,38 @@ async function postDiscourseReply(
   const payload: Record<string, unknown> = { topic_id: topicId, raw }
   if (replyToPostNumber && replyToPostNumber > 1) payload.reply_to_post_number = replyToPostNumber
 
-  try {
-    const resp = await fetch(`${DISCOURSE_BASE}/posts.json`, {
-      method: 'POST',
-      headers: {
-        'User-Api-Key': apiKey,
-        'Api-Username': 'Edward_Hibbert',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    })
-    if (resp.status === 200 || resp.status === 201) return { ok: true }
-    const text = await resp.text().catch(() => '')
-    return { ok: false, error: `HTTP ${resp.status}: ${text.slice(0, 300)}` }
-  } catch (err) {
-    return { ok: false, error: String(err) }
+  let lastError = ''
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const resp = await fetch(`${DISCOURSE_BASE}/posts.json`, {
+        method: 'POST',
+        headers: {
+          'User-Api-Key': apiKey,
+          'Api-Username': 'Edward_Hibbert',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+      if (resp.status === 200 || resp.status === 201) return { ok: true }
+
+      const text = await resp.text().catch(() => '')
+      lastError = `HTTP ${resp.status}: ${text.slice(0, 300)}`
+
+      // Discourse rate-limits writes hard. Rather than dropping the reply (and
+      // hammering on the next iteration), respect Retry-After and back off so the
+      // burst self-throttles. Cap the wait so one pathological value can't stall
+      // the whole iteration.
+      if (resp.status === 429 && attempt < maxRetries - 1) {
+        const waitSecs = Math.min(parseRetryAfter(resp.headers.get('Retry-After'), text), 60)
+        await sleepFn(waitSecs * 1000)
+        continue
+      }
+      return { ok: false, error: lastError }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
   }
+  return { ok: false, error: lastError }
 }
 
 /**
@@ -1007,15 +1043,35 @@ print(json.dumps({'posts': posts_out, 'topicsSeen': topics_seen}))
     paramsSchema: { type: 'object', properties: { recentLimit: { type: 'number' } } },
     handler: async (params) => {
       const recentLimit = (params.recentLimit as number) ?? 30
+      // Discourse rate-limits aggressively, and this GET runs in the same iteration
+      // as a burst of reply POSTs — so a raw urlopen here regularly 429'd and the
+      // step silently returned zero topics (missing genuinely-active bug reports).
+      // Use the same retry-with-backoff helper as fetch_topic_updates so a 429 is
+      // ridden out (respecting Retry-After) instead of dropping the pre-check.
       const script = `
-import json, urllib.request, sys
+import json, urllib.request, sys, time
 p = json.load(open('/home/edward/profile.json'))
 api_key = p['auth_pairs'][0]['user_api_key']
-req = urllib.request.Request(
-    '${DISCOURSE_BASE}/latest.json?order=activity&per_page=${recentLimit}',
-    headers={'User-Api-Key': api_key}
-)
-d = json.load(urllib.request.urlopen(req, timeout=15))
+headers = {'User-Api-Key': api_key}
+
+def fetch(url, retries=4):
+    """GET a Discourse URL with rate-limit backoff for 429."""
+    delay = 2.0
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            return json.load(urllib.request.urlopen(req, timeout=20))
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < retries - 1:
+                retry_after = e.headers.get('Retry-After')
+                sleep_s = float(retry_after) if retry_after else delay
+                sys.stderr.write(f'429 on {url} — backing off {sleep_s}s (attempt {attempt+1}/{retries})\\n')
+                time.sleep(sleep_s)
+                delay *= 2
+                continue
+            raise
+
+d = fetch('${DISCOURSE_BASE}/latest.json?order=activity&per_page=${recentLimit}')
 topics = [{'id': t['id'], 'title': t['title'], 'postsCount': t['posts_count']} for t in d['topic_list']['topics']]
 print(json.dumps(topics))
 `
