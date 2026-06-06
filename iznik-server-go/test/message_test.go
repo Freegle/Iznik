@@ -1986,6 +1986,72 @@ func TestJoinAndPostRejectsEmptyDraft(t *testing.T) {
 	assert.Equal(t, int64(0), msgGroupCount, "Empty draft must not produce a messages_groups row")
 }
 
+// TestManualRepostPendingVisibleInHistory verifies that a user's message appears in
+// their posting history while it is in Pending collection (e.g. after a manual repost).
+// Bug: GetUserMessageHistory filtered to collection='Approved' only, so a manually
+// reposted message was invisible in the Posts history until the content-check batch
+// approved it. Discourse #9481 post 562.
+//
+// FAILS on buggy code (Pending filtered out), PASSES after fix (Pending included).
+func TestManualRepostPendingVisibleInHistory(t *testing.T) {
+	prefix := uniquePrefix("repost_pending_history")
+	db := database.DBConn
+
+	groupID := CreateTestGroup(t, prefix)
+	posterID := CreateTestUser(t, prefix+"_poster", "User")
+	modID := CreateTestUser(t, prefix+"_mod", "User")
+	CreateTestMembership(t, posterID, groupID, "Member")
+	CreateTestMembership(t, modID, groupID, "Moderator")
+	_, modToken := CreateTestSession(t, modID)
+
+	// Simulate a manual repost: message is in Pending collection (content-check not yet run).
+	pendingSubject := prefix + " OFFER pending repost"
+	db.Exec(
+		"INSERT INTO messages (fromuser, subject, textbody, message, type, arrival) "+
+			"VALUES (?, ?, 'body', 'body', 'Offer', NOW())",
+		posterID, pendingSubject)
+	var pendingMsgID uint64
+	db.Raw("SELECT id FROM messages WHERE fromuser = ? AND subject = ? ORDER BY id DESC LIMIT 1",
+		posterID, pendingSubject).Scan(&pendingMsgID)
+	require.NotZero(t, pendingMsgID)
+	db.Exec(
+		"INSERT INTO messages_groups (msgid, groupid, arrival, collection) VALUES (?, ?, NOW(), 'Pending')",
+		pendingMsgID, groupID)
+
+	t.Cleanup(func() {
+		db.Exec("DELETE FROM messages_groups WHERE msgid = ?", pendingMsgID)
+		db.Exec("DELETE FROM messages WHERE id = ?", pendingMsgID)
+	})
+
+	// Fetch the poster as a moderator (modtools=true returns messagehistory).
+	url := fmt.Sprintf("/api/user/%d?modtools=true&jwt=%s", posterID, modToken)
+	resp, err := getApp().Test(httptest.NewRequest("GET", url, nil))
+	require.NoError(t, err)
+	require.Equal(t, 200, resp.StatusCode)
+
+	var raw map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&raw)
+	require.NoError(t, err)
+
+	history, ok := raw["messagehistory"].([]interface{})
+	require.True(t, ok, "messagehistory must be present for modtools fetch")
+
+	pendingFound := false
+	for _, h := range history {
+		entry, _ := h.(map[string]interface{})
+		if uint64(entry["id"].(float64)) == pendingMsgID {
+			pendingFound = true
+			// While we are here verify the collection field is exposed.
+			coll, _ := entry["collection"].(string)
+			assert.Equal(t, "Pending", coll, "messagehistory entry for pending message must carry collection='Pending'")
+		}
+	}
+
+	// FAILS on buggy code: GetUserMessageHistory returns collection='Approved' only.
+	assert.True(t, pendingFound,
+		"Manually reposted Pending message must appear in Posts history (Discourse #9481/562)")
+}
+
 // --- Test: PatchMessage ---
 
 func TestPatchMessage(t *testing.T) {

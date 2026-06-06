@@ -476,6 +476,10 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 	db := database.DBConn
 
 	var history []UserMessageHistory
+	// Include Pending so that manually-reposted messages (which re-enter Pending
+	// while awaiting content-check) remain visible in the Posts history.
+	// Rejected is excluded: rejected messages should not count as active posts
+	// (e.g. $recentwanted substitution). Discourse #9481/562.
 	db.Raw("SELECT m.id, m.subject, m.type, "+
 		"GREATEST(COALESCE(mp.date, m.arrival), COALESCE(mp.date, m.arrival)) AS arrival, "+
 		"mg.groupid, mg.collection, "+
@@ -483,8 +487,8 @@ func GetUserMessageHistory(userid uint64) []UserMessageHistory {
 		"FROM messages m "+
 		"INNER JOIN messages_groups mg ON m.id = mg.msgid "+
 		"LEFT JOIN messages_postings mp ON mp.msgid = m.id "+
-		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL AND mg.collection = ? "+
-		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED).Scan(&history)
+		"WHERE m.fromuser = ? AND mg.deleted = 0 AND m.deleted IS NULL AND mg.collection IN (?, ?) "+
+		"ORDER BY arrival DESC", userid, utils.COLLECTION_APPROVED, utils.COLLECTION_PENDING).Scan(&history)
 
 	now := time.Now()
 	for ix, h := range history {
