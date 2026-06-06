@@ -37,9 +37,9 @@ class GenerateIllustrationsCommand extends Command
             $result = $service->processIllustrations($dryRun);
 
             if ($dryRun) {
-                $this->info("Illustrations: would clean {$result['cleaned']}, cache-hits {$result['cached_hits']}, would-fetch {$result['would_fetch']} (skipped — costs \$).");
+                $this->info("Illustrations: would clean {$result['cleaned']}, would remove non-active {$result['cleaned_non_active']}, cache-hits {$result['cached_hits']}, would-fetch {$result['would_fetch']} (skipped — costs \$).");
             } else {
-                $this->info("Illustrations: {$result['processed']} processed, {$result['cleaned']} cleaned up.");
+                $this->info("Illustrations: {$result['processed']} processed, {$result['cleaned']} cleaned up, {$result['cleaned_non_active']} non-active removed.");
                 Log::info('Message illustrations complete', $result);
             }
 

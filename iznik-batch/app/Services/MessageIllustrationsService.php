@@ -15,14 +15,39 @@ class MessageIllustrationsService
     /**
      * Generate AI illustrations for messages that have no attachments.
      *
-     * @return array{cleaned: int, processed: int, would_fetch: int, cached_hits: int}
+     * @return array{cleaned: int, cleaned_non_active: int, processed: int, would_fetch: int, cached_hits: int}
      */
     public function processIllustrations(bool $dryRun = false): array
     {
         $cleaned = $this->cleanupDuplicates($dryRun);
+        $cleanedNonActive = $this->cleanupNonActiveAttachments($dryRun);
         $batchStats = $this->processBatches($dryRun);
 
-        return ['cleaned' => $cleaned] + $batchStats;
+        return ['cleaned' => $cleaned, 'cleaned_non_active' => $cleanedNonActive] + $batchStats;
+    }
+
+    /**
+     * Remove AI illustration attachments from messages where the illustration has been
+     * suppressed or rejected. Without this, those messages show a ghost blank image slot
+     * because the message-serve query blanks the externaluid for non-active ai_images
+     * rows (topic 9753). Deleting the attachment makes the message look cleanly
+     * illustration-free instead.
+     */
+    private function cleanupNonActiveAttachments(bool $dryRun = false): int
+    {
+        $ids = DB::table('messages_attachments as ma')
+            ->join('ai_images as ai', 'ai.externaluid', '=', 'ma.externaluid')
+            ->whereRaw("JSON_EXTRACT(ma.externalmods, '$.ai') = TRUE")
+            ->whereIn('ai.status', ['suppressed', 'rejected'])
+            ->pluck('ma.id')
+            ->toArray();
+
+        if (!$dryRun && !empty($ids)) {
+            DB::table('messages_attachments')->whereIn('id', $ids)->delete();
+            Log::info('MessageIllustrations: removed ' . count($ids) . ' attachment(s) for suppressed/rejected illustrations');
+        }
+
+        return count($ids);
     }
 
     /**

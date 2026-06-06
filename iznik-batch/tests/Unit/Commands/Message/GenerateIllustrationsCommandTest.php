@@ -14,7 +14,7 @@ class GenerateIllustrationsCommandTest extends TestCase
         $service->expects($this->once())
             ->method('processIllustrations')
             ->with(true)
-            ->willReturn(['cleaned' => 0, 'cached_hits' => 0, 'would_fetch' => 0]);
+            ->willReturn(['cleaned' => 0, 'cleaned_non_active' => 0, 'cached_hits' => 0, 'would_fetch' => 0]);
 
         $this->app->instance(MessageIllustrationsService::class, $service);
 

@@ -210,4 +210,96 @@ class MessageIllustrationsServiceTest extends TestCase
         $count = DB::table('messages_attachments')->where('msgid', $message->id)->count();
         $this->assertEquals(0, $count, 'Should not attach a rejected AI illustration');
     }
+
+    // AssertFlip: existing messages with suppressed/rejected AI attachments must have
+    // those attachments removed by cleanupNonActiveAttachments so that no ghost blank
+    // image slot is shown (topic 9753). Without the cleanup these tests fail (attachment
+    // remains), proving the bug. After the fix both tests pass.
+
+    public function test_removes_existing_suppressed_illustration_attachment(): void
+    {
+        $message = $this->createMessageInSpatial('OFFER: Voucher (TestTown)');
+
+        DB::table('ai_images')->insert([
+            'name'        => 'Voucher',
+            'externaluid' => 'freegletusd-sup-ghost001',
+            'imagehash'   => 'hashsupghost001',
+            'status'      => 'suppressed',
+        ]);
+
+        // Simulate an attachment created before the illustration was suppressed.
+        $attachId = DB::table('messages_attachments')->insertGetId([
+            'msgid'        => $message->id,
+            'externaluid'  => 'freegletusd-sup-ghost001',
+            'externalmods' => json_encode(['ai' => true]),
+            'contenttype'  => 'image/jpeg',
+        ]);
+
+        $service = $this->makeService();
+        $result = $service->processIllustrations();
+
+        $this->assertFalse(
+            DB::table('messages_attachments')->where('id', $attachId)->exists(),
+            'Suppressed illustration attachment must be removed to prevent ghost blank slot'
+        );
+        $this->assertGreaterThanOrEqual(1, $result['cleaned_non_active']);
+    }
+
+    public function test_removes_existing_rejected_illustration_attachment(): void
+    {
+        $message = $this->createMessageInSpatial('OFFER: Printer (TestTown)');
+
+        DB::table('ai_images')->insert([
+            'name'        => 'Printer',
+            'externaluid' => 'freegletusd-rej-ghost001',
+            'imagehash'   => 'hashrejghost001',
+            'status'      => 'rejected',
+        ]);
+
+        // Simulate an attachment created before the illustration was rejected.
+        $attachId = DB::table('messages_attachments')->insertGetId([
+            'msgid'        => $message->id,
+            'externaluid'  => 'freegletusd-rej-ghost001',
+            'externalmods' => json_encode(['ai' => true]),
+            'contenttype'  => 'image/jpeg',
+        ]);
+
+        $service = $this->makeService();
+        $result = $service->processIllustrations();
+
+        $this->assertFalse(
+            DB::table('messages_attachments')->where('id', $attachId)->exists(),
+            'Rejected illustration attachment must be removed to prevent ghost blank slot'
+        );
+        $this->assertGreaterThanOrEqual(1, $result['cleaned_non_active']);
+    }
+
+    public function test_does_not_remove_active_illustration_attachment(): void
+    {
+        $message = $this->createMessageInSpatial('OFFER: Chair (TestTown)');
+
+        DB::table('ai_images')->insert([
+            'name'        => 'Chair',
+            'externaluid' => 'freegletusd-active-chair001',
+            'imagehash'   => 'hashchairactive001',
+            'status'      => 'active',
+        ]);
+
+        // Attach the active illustration.
+        $attachId = DB::table('messages_attachments')->insertGetId([
+            'msgid'        => $message->id,
+            'externaluid'  => 'freegletusd-active-chair001',
+            'externalmods' => json_encode(['ai' => true]),
+            'contenttype'  => 'image/jpeg',
+        ]);
+
+        $service = $this->makeService();
+        $result = $service->processIllustrations();
+
+        $this->assertTrue(
+            DB::table('messages_attachments')->where('id', $attachId)->exists(),
+            'Active illustration attachment must NOT be removed'
+        );
+        $this->assertEquals(0, $result['cleaned_non_active']);
+    }
 }
