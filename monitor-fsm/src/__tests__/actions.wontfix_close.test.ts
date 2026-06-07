@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectWontfixClose } from '../actions/index'
+import { detectWontfixClose, buildFailedReviewCloseComment, FSM_AUTOCLOSE_MARKER } from '../actions/index'
 
 /**
  * detectWontfixClose distinguishes a human closing an FSM PR because the report
@@ -61,5 +61,36 @@ describe('detectWontfixClose', () => {
 
   it('is case-insensitive', () => {
     expect(detectWontfixClose([{ author: { login: 'edwh' }, body: 'NOT A BUG' }]).wontfix).toBe(true)
+  })
+
+  it('does NOT treat the FSM auto-close comment as a human wontfix (so the bug retries)', () => {
+    // Auto-close quotes blocker text that can contain wontfix-ish phrases (e.g.
+    // "working-as-designed override"), but the FSM marker means retry, not park.
+    const autoClose = buildFailedReviewCloseComment(700, [
+      { category: 'Incomplete diff / working-as-designed override', description: 'reverses intended behaviour', severity: 'error' },
+    ])
+    expect(autoClose).toContain(FSM_AUTOCLOSE_MARKER)
+    expect(detectWontfixClose([{ author: { login: 'edwh' }, body: autoClose }]).wontfix).toBe(false)
+  })
+})
+
+describe('buildFailedReviewCloseComment', () => {
+  it('lists the blockers and carries the FSM auto-close marker', () => {
+    const c = buildFailedReviewCloseComment(701, [
+      { category: 'Partial implementation', description: 'symptom not root', severity: 'error' },
+      { category: 'Test proves nothing', description: 'stubbed', severity: 'error' },
+      { category: 'Naming', description: 'minor', severity: 'warning' }, // not a blocker
+    ])
+    expect(c).toContain('#701')
+    expect(c).toContain('Partial implementation')
+    expect(c).toContain('Test proves nothing')
+    expect(c).not.toContain('Naming') // only error-severity blockers listed
+    expect(c).toContain(FSM_AUTOCLOSE_MARKER)
+  })
+
+  it('handles a failed review with no recorded blockers', () => {
+    const c = buildFailedReviewCloseComment(702, [])
+    expect(c).toContain('no specific blockers recorded')
+    expect(c).toContain(FSM_AUTOCLOSE_MARKER)
   })
 })

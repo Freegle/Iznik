@@ -132,6 +132,34 @@ const WONTFIX_CLOSE_PATTERNS = [
   'perception complaint', 'bad fix',
 ]
 
+// Marker the FSM puts in its OWN auto-close comments (failed adversarial review) so
+// detectWontfixClose can tell them apart from a human "not a bug" close: the FSM's
+// auto-close means "retry then escalate", a human wontfix means "park, never retry".
+export const FSM_AUTOCLOSE_MARKER = '<!-- fsm-auto-close: failed-review -->'
+
+/**
+ * Build the comment for auto-closing an FSM fix PR that failed adversarial review.
+ * Lists the blockers and carries FSM_AUTOCLOSE_MARKER so it is not mistaken for a
+ * human wontfix close (which would wrongly park the bug instead of retrying it).
+ */
+export function buildFailedReviewCloseComment(
+  prNumber: number,
+  issues: Array<{ category?: string; description?: string; severity?: string }>,
+): string {
+  const blockers = (issues ?? []).filter((i) => i?.severity === 'error')
+  const body = blockers.length
+    ? blockers.map((b) => `- **${b.category ?? 'issue'}**: ${(b.description ?? '').slice(0, 300)}`).join('\n')
+    : '- (no specific blockers recorded)'
+  return [
+    `Auto-closed by the monitor's adversarial review (PR #${prNumber}) — this fix did not pass and is not ready to merge.`,
+    '',
+    body,
+    '',
+    'The underlying bug will be re-attempted, then escalated for human triage if it keeps failing review. Reopen if this was closed in error.',
+    FSM_AUTOCLOSE_MARKER,
+  ].join('\n')
+}
+
 /**
  * Did a human leave a "this is not an actionable bug" signal on a (closed) PR?
  * Scans non-bot comments for a WONTFIX_CLOSE_PATTERN. Returns the matched comment
@@ -144,6 +172,9 @@ export function detectWontfixClose(
     const login = (c?.author?.login ?? '').toLowerCase()
     if (!login || BOT_COMMENT_LOGINS.has(login) || login.endsWith('[bot]')) continue
     const body = c?.body ?? ''
+    // The FSM's own auto-close (failed review) means retry, not park — never treat
+    // it as a human wontfix even though it quotes blocker text that may match.
+    if (body.includes(FSM_AUTOCLOSE_MARKER)) continue
     const hay = body.toLowerCase()
     if (WONTFIX_CLOSE_PATTERNS.some((p) => hay.includes(p))) {
       return { wontfix: true, reason: body.replace(/\s+/g, ' ').trim().slice(0, 200) }
@@ -2977,8 +3008,36 @@ ${diff.length > 20000 ? '\n(diff truncated — only the first 20 000 chars shown
           ...(Array.isArray(review.info) ? review.info.map((i: any) => ({ ...i, severity: 'info' })) : []),
         ]
 
+        // A failed review must NOT leave a bad PR open for the human to find (that's
+        // how #661/#662/#663/#668/#670 reached the operator). Auto-close the PR; the
+        // bug then re-enters the reopen→retry→escalate path via sync_pr_states. Only
+        // touch FSM-authored fix branches (fix/ or fix-), never a human PR, and never
+        // a passing one. The close comment carries FSM_AUTOCLOSE_MARKER so it is not
+        // mistaken for a human wontfix (which would park instead of retry).
+        let autoClosed = false
+        if (!passed) {
+          try {
+            const { stdout: branchOut } = await exec(
+              'gh', ['pr', 'view', String(prNumber), '--repo', repo, '--json', 'headRefName,state', '-q', '.headRefName + " " + .state'],
+              { timeout: 20 * 1000 },
+            )
+            const [branch, state] = (branchOut || '').trim().split(' ')
+            if (/^fix[/-]/.test(branch ?? '') && state === 'OPEN') {
+              await exec(
+                'gh', ['pr', 'close', String(prNumber), '--repo', repo, '--delete-branch', '--comment', buildFailedReviewCloseComment(prNumber, issues)],
+                { timeout: 30 * 1000 },
+              )
+              autoClosed = true
+              out(`adversarial_review_pr: auto-closed PR #${prNumber} (failed review: ${issues.filter((i: any) => i.severity === 'error').map((i: any) => i.category).join(', ') || 'blockers'})`)
+            }
+          } catch (e: any) {
+            outWarn(`adversarial_review_pr: could not auto-close PR #${prNumber}: ${e.message}`)
+          }
+        }
+
         return {
           passed,
+          autoClosed,
           issues,
           summary: review.summary ?? (passed ? 'PR passed review' : 'PR has issues'),
         }
