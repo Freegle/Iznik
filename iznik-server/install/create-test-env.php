@@ -211,6 +211,44 @@ $modUid = findOrCreateUser($dbhr, $dbhm, $modEmail, 'PW', "Mod_$prefix", 'Admin'
 $modUser = new User($dbhr, $dbhm, $modUid);
 $modUser->addMembership($gid2, User::ROLE_MODERATOR);
 
+# Create a mod config + a standard message that exercises the new send-standard-message
+# directive features (Discourse #659 / PR #659): the $editlink and $repeatwantedtime
+# substitution vars, the <editthis> "must personalise" enforcement, and a removable
+# <optional> section. Used by the stdmsg-directives screenshot/e2e spec.
+$existingCfg = $dbhr->preQuery("SELECT id FROM mod_configs WHERE name = ? AND createdby = ?", [ "PW Std Config $prefix", $modUid ]);
+if (count($existingCfg)) {
+    $stdCid = $existingCfg[0]['id'];
+} else {
+    $stdCfg = new ModConfig($dbhr, $dbhm);
+    $stdCid = $stdCfg->create("PW Std Config $prefix", $modUid);
+}
+if ($stdCid) {
+    # Make this the active config for the mod on both groups so its standard messages
+    # appear as buttons on pending messages.
+    $dbhm->preExec("UPDATE memberships SET configid = ? WHERE userid = ? AND groupid IN (?, ?)", [ $stdCid, $modUid, $gid, $gid2 ]);
+
+    $existingSm = $dbhr->preQuery("SELECT id FROM mod_stdmsgs WHERE configid = ? AND title = ?", [ $stdCid, 'Suggest editing or reposting' ]);
+    if (!count($existingSm)) {
+        $stdSm = new StdMessage($dbhr, $dbhm);
+        $stdSmId = $stdSm->create('Suggest editing or reposting', $stdCid);
+        if ($stdSmId) {
+            $stdSm->setAttributes([
+                'action' => 'Reject',
+                'subjpref' => '',
+                'subjsuff' => '',
+                'body' =>
+                    "Hi \$fromname,\n\n" .
+                    "Thanks for your post on \$groupname.\n\n" .
+                    "<editthis>[Add a personal note about their specific item here before sending.]</editthis>\n\n" .
+                    "You can edit or repost your own items at any time here: \$editlink\n\n" .
+                    "<optional>If you're looking for something, you might find it faster by browsing existing posts rather than putting up a new Wanted.</optional>\n\n" .
+                    "You'll be able to repost a wanted after \$repeatwantedtime.\n\n" .
+                    "Thanks,\nThe \$groupname Volunteers",
+            ]);
+        }
+    }
+}
+
 # Create regular users.
 $userUid = findOrCreateUser($dbhr, $dbhm, $userEmail, 'PW', "User_$prefix", 'User', $gid, User::ROLE_MEMBER, $pcid, $location['lat'], $location['lng']);
 $user2Uid = findOrCreateUser($dbhr, $dbhm, $user2Email, 'PW', "User2_$prefix", 'User', $gid, User::ROLE_MEMBER, $pcid, $location['lat'], $location['lng']);
