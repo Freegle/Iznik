@@ -2210,11 +2210,40 @@ ANALYSIS_COMPLETE is for tasks that involve NO code changes (e.g. Discourse tria
         else summary = `[${t.id}] exited ${result.code} (${toolCount} tools)`
         out(summary)
 
+        // A timed-out agent did not complete its protocol (no OUTCOME marker, no
+        // self-review), so any PR it managed to open is incomplete/unverified work.
+        // Close it so it never reaches the operator as a "ready" fix (e.g. #666);
+        // VERIFY_DISCOURSE_BATCH defers the bug for human triage. Only FSM fix/ or
+        // fix- branches that are still OPEN; the marker keeps it out of the human
+        // wontfix path. Best-effort — a gh failure must not break result collection.
+        let autoClosedTimedOut = false
+        if (timedOut && prNumber !== undefined) {
+          try {
+            const { stdout: bo } = await exec(
+              'gh', ['pr', 'view', String(prNumber), '--repo', 'Freegle/Iznik', '--json', 'headRefName,state', '-q', '.headRefName + " " + .state'],
+              { timeout: 20 * 1000 },
+            )
+            const [br, st] = (bo || '').trim().split(' ')
+            if (/^fix[/-]/.test(br ?? '') && st === 'OPEN') {
+              await exec(
+                'gh', ['pr', 'close', String(prNumber), '--repo', 'Freegle/Iznik', '--delete-branch', '--comment',
+                  `Auto-closed: the fix agent for this PR timed out before completing its protocol (no verification or self-review), so the PR is incomplete. The bug is deferred for human triage. Reopen if this was closed in error.\n${FSM_AUTOCLOSE_MARKER}`],
+                { timeout: 30 * 1000 },
+              )
+              autoClosedTimedOut = true
+              out(`delegate_parallel_tasks: auto-closed incomplete PR #${prNumber} from timed-out task ${t.id}`)
+            }
+          } catch (e: any) {
+            outWarn(`delegate_parallel_tasks: could not close timed-out PR #${prNumber}: ${e.message}`)
+          }
+        }
+
         return {
           id: t.id,
           exitCode: result.code,
           timedOut,
           timeoutReason: result.killReason,
+          autoClosedTimedOut,
           prNumber,
           directPushSha,
           commitPushedSha,
