@@ -209,6 +209,49 @@ class PushNotificationServiceTest extends TestCase
     }
 
     /**
+     * Pending messages from DELETED users must NOT count towards the badge.
+     *
+     * Regression for Discourse #9654/12: mods reported the ModTools badge stuck at
+     * +1 after clearing all visible tasks. Root cause: getBadgeCount() counted
+     * pending messages whose author had been deleted (fromuser set, but
+     * users.deleted IS NOT NULL), while the app menu (session.go) filters them via
+     * INNER JOIN users ... u.deleted IS NULL. The phantom message is in the badge
+     * but not the menu, so the mod can never clear it. Live data at diagnosis time:
+     * 32 such messages across 24 groups.
+     */
+    public function test_pending_message_from_deleted_user_does_not_count_towards_badge(): void
+    {
+        $mod = $this->createTestUser();
+        $group = $this->createTestGroup();
+        $this->createMembership($mod, $group, ['role' => Membership::ROLE_MODERATOR]);
+
+        $sender = $this->createTestUser(['deleted' => now()]);  // author deleted
+        $message = Message::create([
+            'fromuser' => $sender->id,
+            'type' => Message::TYPE_OFFER,
+            'subject' => 'OFFER: Test (Location)',
+            'textbody' => 'Test',
+            'source' => 'Platform',
+            'date' => now(),
+            'arrival' => now(),
+            'lat' => $group->lat,
+            'lng' => $group->lng,
+            'heldby' => null,  // not held — would count if author were live
+        ]);
+        MessageGroup::create([
+            'msgid' => $message->id,
+            'groupid' => $group->id,
+            'collection' => MessageGroup::COLLECTION_PENDING,
+            'arrival' => now(),
+            'deleted' => 0,
+        ]);
+
+        $count = $this->service->getBadgeCount($mod->id);
+
+        $this->assertEquals(0, $count, 'Pending messages from deleted users must not inflate badge count (Discourse #9654/12)');
+    }
+
+    /**
      * Pending messages in inactive groups must NOT count towards the badge.
      *
      * Session.go excludes inactive group work from `total` (it goes to pendingother/blue).

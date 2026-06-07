@@ -363,10 +363,16 @@ class PushNotificationService
      * - Only ACTIVE groups (membership settings.active != 0 and settings.showmessages != 0)
      * - Only unheld pending messages (heldby IS NULL)
      * - Only spam collection messages (not spamtype in Pending)
-     * - Excludes deleted (mg.deleted = 0) and system messages (fromuser IS NOT NULL)
+     * - Excludes deleted messages (mg.deleted = 0)
+     * - INNER JOINs users with u.deleted IS NULL, so system messages (null fromuser)
+     *   AND messages whose author has been deleted are both excluded — matching the
+     *   app menu (session.go), which filters them too. Without this a pending message
+     *   from a deleted user is counted in the badge but hidden from the menu, leaving
+     *   a phantom +1 the mod can never clear (Discourse #9654/12).
      *
-     * This prevents phantom badges caused by held messages, deleted messages, or
-     * work from inactive groups inflating the count while the app shows nothing.
+     * This prevents phantom badges caused by held messages, deleted messages,
+     * deleted-user messages, or work from inactive groups inflating the count while
+     * the app shows nothing.
      *
      * Note: currently covers only pending + spam (2 of 14 session.go work categories).
      * Omitted categories: pendingmembers, spammembers, pendingevents, pendingadmins,
@@ -408,13 +414,13 @@ class PushNotificationService
         $pending = DB::selectOne(
             "SELECT COUNT(*) as cnt FROM messages_groups mg
              INNER JOIN messages m ON m.id = mg.msgid
+             INNER JOIN users u ON u.id = m.fromuser AND u.deleted IS NULL
              INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ?
              WHERE mem.role IN ('Owner', 'Moderator')
              AND mem.collection = 'Approved'
              AND mg.collection = 'Pending'
              AND mg.groupid IN ({$placeholders})
              AND mg.deleted = 0
-             AND m.fromuser IS NOT NULL
              AND m.heldby IS NULL",
             $pendingParams
         );
@@ -424,13 +430,13 @@ class PushNotificationService
         $spam = DB::selectOne(
             "SELECT COUNT(*) as cnt FROM messages_groups mg
              INNER JOIN messages m ON m.id = mg.msgid
+             INNER JOIN users u ON u.id = m.fromuser AND u.deleted IS NULL
              INNER JOIN memberships mem ON mem.groupid = mg.groupid AND mem.userid = ?
              WHERE mem.role IN ('Owner', 'Moderator')
              AND mem.collection = 'Approved'
              AND mg.collection = 'Spam'
              AND mg.groupid IN ({$placeholders})
-             AND mg.deleted = 0
-             AND m.fromuser IS NOT NULL",
+             AND mg.deleted = 0",
             $spamParams
         );
 
