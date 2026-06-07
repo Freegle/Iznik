@@ -8,6 +8,10 @@ import {
   pendingEditThis,
   hasUndecidedOptional,
   sendBlockers,
+  parseSegments,
+  hasDirectives,
+  assembleSegments,
+  segmentsSendBlockers,
 } from '~/modtools/utils/stdMessageDirectives'
 
 describe('stdMessageDirectives', () => {
@@ -116,6 +120,75 @@ describe('stdMessageDirectives', () => {
       expect(r.ok).toBe(true)
       expect(r.editThis).toEqual([])
       expect(r.optionalUndecided).toBe(false)
+    })
+  })
+
+  describe('parseSegments', () => {
+    it('splits a message into ordered text/editthis/optional segments', () => {
+      const t = 'Hi <editthis>name</editthis>, see <optional>browse first</optional> ok'
+      const segs = parseSegments(t)
+      expect(segs.map((s) => s.type)).toEqual([
+        'text', 'editthis', 'text', 'optional', 'text',
+      ])
+      expect(segs[0].content).toBe('Hi ')
+      expect(segs[1]).toMatchObject({ type: 'editthis', content: 'name', value: 'name', edited: false })
+      expect(segs[3]).toMatchObject({ type: 'optional', content: 'browse first', removed: undefined })
+      expect(segs[4].content).toBe(' ok')
+    })
+    it('preserves order with multiple editthis blocks', () => {
+      const segs = parseSegments('a<editthis>1</editthis>b<editthis>2</editthis>c')
+      expect(segs.filter((s) => s.type === 'editthis').map((s) => s.content)).toEqual(['1', '2'])
+      expect(segs.map((s) => s.type)).toEqual(['text', 'editthis', 'text', 'editthis', 'text'])
+    })
+    it('handles a plain message (single text segment) and empty input', () => {
+      expect(parseSegments('just text').map((s) => s.type)).toEqual(['text'])
+      expect(parseSegments('')).toEqual([])
+    })
+  })
+
+  describe('hasDirectives', () => {
+    it('detects editthis/optional, ignores plain text', () => {
+      expect(hasDirectives('a <editthis>x</editthis>')).toBe(true)
+      expect(hasDirectives('a <optional>x</optional>')).toBe(true)
+      expect(hasDirectives('plain message')).toBe(false)
+      expect(hasDirectives('')).toBe(false)
+    })
+  })
+
+  describe('assembleSegments', () => {
+    it('builds the final message from edited segments in order', () => {
+      const segs = parseSegments('Hi <editthis>NAME</editthis>.\n\n<optional>browse first</optional>\n\nThanks')
+      segs.find((s) => s.type === 'editthis').value = 'Jo'
+      segs.find((s) => s.type === 'optional').removed = false // kept
+      expect(assembleSegments(segs)).toBe('Hi Jo.\n\nbrowse first\n\nThanks')
+    })
+    it('drops a removed optional and tidies the blank lines', () => {
+      const segs = parseSegments('Hi <editthis>NAME</editthis>.\n\n<optional>browse first</optional>\n\nThanks')
+      segs.find((s) => s.type === 'editthis').value = 'Jo'
+      segs.find((s) => s.type === 'optional').removed = true
+      expect(assembleSegments(segs)).toBe('Hi Jo.\n\nThanks')
+    })
+  })
+
+  describe('segmentsSendBlockers', () => {
+    it('blocks while an editthis is unchanged or an optional undecided', () => {
+      const segs = parseSegments('Hi <editthis>NAME</editthis> <optional>x</optional>')
+      let r = segmentsSendBlockers(segs)
+      expect(r.ok).toBe(false)
+      expect(r.unedited.length).toBe(1)
+      expect(r.undecided.length).toBe(1)
+      // edit the editthis and decide the optional
+      segs.find((s) => s.type === 'editthis').value = 'Jo'
+      segs.find((s) => s.type === 'optional').removed = true
+      r = segmentsSendBlockers(segs)
+      expect(r.ok).toBe(true)
+      expect(r.unedited).toEqual([])
+      expect(r.undecided).toEqual([])
+    })
+    it('treats a blanked editthis as still unedited', () => {
+      const segs = parseSegments('Hi <editthis>NAME</editthis>')
+      segs.find((s) => s.type === 'editthis').value = '   '
+      expect(segmentsSendBlockers(segs).ok).toBe(false)
     })
   })
 })

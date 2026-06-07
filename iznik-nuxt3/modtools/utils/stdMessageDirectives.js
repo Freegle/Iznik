@@ -102,3 +102,74 @@ export function sendBlockers(currentText, originalEditThisInners) {
   const optional = hasUndecidedOptional(currentText)
   return { editThis, optionalUndecided: optional, ok: editThis.length === 0 && !optional }
 }
+
+// ── Segmented editor model ──────────────────────────────────────────────────
+// Editing the whole template (tags and all) in one textarea gets unmanageable
+// with several <editthis> blocks — you hunt through the text and lose your place.
+// parseSegments splits the message into an ORDERED list so the UI can render it
+// in flow with an inline box per <editthis> and a keep/remove control per
+// <optional>: the mod fills each box in order, never looking back at the raw
+// template.
+//
+// Segment shapes:
+//   { type: 'text',     content }                 fixed prose (not editable)
+//   { type: 'editthis', content, value, edited }  must-fill; content=placeholder
+//   { type: 'optional', content, removed }        removed: undefined until decided
+const SEGMENT_RE = /<(editthis|optional)>([\s\S]*?)<\/\1>/gi
+
+export function parseSegments(text) {
+  if (!text) return []
+  const re = new RegExp(SEGMENT_RE.source, SEGMENT_RE.flags)
+  const segments = []
+  let last = 0
+  let m
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) segments.push({ type: 'text', content: text.slice(last, m.index) })
+    const type = m[1].toLowerCase() // 'editthis' | 'optional'
+    const content = m[2]
+    if (type === 'editthis') segments.push({ type, content, value: content, edited: false })
+    else segments.push({ type, content, removed: undefined })
+    last = m.index + m[0].length
+  }
+  if (last < text.length) segments.push({ type: 'text', content: text.slice(last) })
+  return segments
+}
+
+// True if a message uses directives (modal switches to the segmented editor;
+// plain messages keep the ordinary textarea).
+export function hasDirectives(text) {
+  if (!text) return false
+  return /<editthis>/i.test(text) || /<optional>/i.test(text)
+}
+
+// Build the final recipient message from the edited segments, in order. editthis
+// → the mod's value; optional → its text unless removed; text → as-is. Tidies the
+// blank lines a removed optional leaves behind.
+export function assembleSegments(segments) {
+  if (!segments) return ''
+  const out = segments
+    .map((s) => {
+      if (s.type === 'editthis') return s.value ?? s.content
+      if (s.type === 'optional') return s.removed ? '' : s.content
+      return s.content
+    })
+    .join('')
+  return collapseBlankLines(out)
+}
+
+// What still blocks Send in the segmented model: an editthis not yet changed from
+// its placeholder (or blanked), and an optional not yet Kept/Removed. Returns the
+// segment indices so the UI can highlight exactly what's outstanding.
+export function segmentsSendBlockers(segments) {
+  const unedited = []
+  const undecided = []
+  ;(segments || []).forEach((s, i) => {
+    if (s.type === 'editthis') {
+      const v = (s.value ?? '').trim()
+      if (!v || v === (s.content ?? '').trim()) unedited.push(i)
+    } else if (s.type === 'optional' && s.removed === undefined) {
+      undecided.push(i)
+    }
+  })
+  return { unedited, undecided, ok: unedited.length === 0 && undecided.length === 0 }
+}
