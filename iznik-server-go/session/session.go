@@ -795,7 +795,7 @@ func GetSession(c *fiber.Ctx) error {
 
 	type SessionRow struct {
 		ID     uint64 `json:"id"`
-		Series string `json:"series"`
+		Series uint64 `json:"series"`
 		Token  string `json:"token"`
 	}
 
@@ -818,6 +818,30 @@ func GetSession(c *fiber.Ctx) error {
 	}
 	var supporterInfo supporterRow
 
+	// Determine which session authenticated this request so we return its
+	// credentials in the response, not an arbitrary session row.
+	//
+	// Without this, "WHERE userid = ? LIMIT 1" returns the oldest session for
+	// the user (InnoDB primary-key order). A user with two active sessions —
+	// one for ModTools, one for ilovefreegle.org — would get the other app's
+	// session credentials back, causing fetchUser() to overwrite the client's
+	// stored JWT/persistent with the wrong session. The next logout then
+	// deletes the wrong series, logging the other app out. (Discourse #9748 / post 5)
+	var currentSessionID uint64
+	if _, sessID, _ := user.GetJWTFromRequest(c); sessID > 0 {
+		currentSessionID = sessID
+	} else if ptHeader := c.Get("Authorization2"); ptHeader != "" {
+		// Use a minimal struct (no Series field) so that old persistent tokens
+		// whose Series was serialised as a JSON string don't cause Unmarshal to
+		// return a type-error that zeros out the parsed ID.
+		var minPT struct {
+			ID uint64 `json:"ID"`
+		}
+		if json.Unmarshal([]byte(ptHeader), &minPT) == nil && minPT.ID > 0 {
+			currentSessionID = minPT.ID
+		}
+	}
+
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
@@ -835,7 +859,14 @@ func GetSession(c *fiber.Ctx) error {
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, series, token FROM sessions WHERE userid = ? LIMIT 1", myid).Scan(&sessionRow)
+		if currentSessionID > 0 {
+			db.Raw("SELECT id, series, token FROM sessions WHERE id = ? AND userid = ? LIMIT 1", currentSessionID, myid).Scan(&sessionRow)
+		}
+		if sessionRow.ID == 0 {
+			// Fallback: session ID not determinable (no JWT, no parseable persistent
+			// token). Single-session users and legacy paths still get a session row.
+			db.Raw("SELECT id, series, token FROM sessions WHERE userid = ? LIMIT 1", myid).Scan(&sessionRow)
+		}
 	}()
 	go func() {
 		defer wg.Done()
@@ -1787,32 +1818,32 @@ func DeleteSession(c *fiber.Ctx) error {
 	if myid > 0 {
 		db := database.DBConn
 
-		// Log out the current login SERIES only (Discourse #9748: logout was
-		// clearing every session, so logging out of Freegle also logged you out
-		// of ModTools and every other device). Freegle and ModTools each get
-		// their own random series at login, so deleting by series closes only the
-		// current app and leaves the other app logged in.
+		// V1 parity (Session::destroy($userid, $series)): log out the current
+		// login SERIES only.  Freegle and ModTools each get their own series at
+		// login, so deleting by series logs out only the current app and leaves
+		// the other app logged in (Discourse #9748: logout was clearing both at once).
 		//
-		// Identify the current session ROW authoritatively, then resolve its
-		// series SERVER-SIDE. Do NOT trust a series value supplied by the client:
-		// a persistent token minted before the 53-bit series mask (or otherwise
-		// stale) can carry a 0 / wrong series, which previously dropped logout
-		// into a "delete everything" fallback — the actual cause of #9748 still
-		// failing. The session row id, by contrast, is a small stable integer
-		// that survives a JSON round-trip through the browser intact.
+		// Identify the current session row authoritatively and resolve its series
+		// SERVER-SIDE.  Do NOT trust a series value supplied by the client: old
+		// persistent tokens serialise Series as a JSON string, causing Unmarshal
+		// into uint64 to return a type-error that silently zeros out the value.
+		// The session row id is a small stable integer that survives any JSON
+		// round-trip intact.
 		var sessionId uint64
-
 		// Prefer the JWT (server-verified). It carries the session row id.
 		if _, sid, _ := user.GetJWTFromRequest(c); sid > 0 {
 			sessionId = sid
 		}
-
 		// Fall back to the persistent token's id (NOT its series).
+		// Use a minimal struct so that old tokens with a string Series field
+		// do not cause Unmarshal to fail and zero-out the parsed ID.
 		if sessionId == 0 {
 			if persistent := c.Get("Authorization2"); persistent != "" {
-				var pt auth.PersistentToken
-				if json.Unmarshal([]byte(persistent), &pt) == nil {
-					sessionId = pt.ID
+				var minPT struct {
+					ID uint64 `json:"ID"`
+				}
+				if json.Unmarshal([]byte(persistent), &minPT) == nil {
+					sessionId = minPT.ID
 				}
 			}
 		}
@@ -1826,12 +1857,11 @@ func DeleteSession(c *fiber.Ctx) error {
 			// Close the whole current login series (all its tabs/token rotations).
 			db.Exec("DELETE FROM sessions WHERE userid = ? AND series = ?", myid, series)
 		} else if sessionId > 0 {
-			// Series unavailable but the row is known — delete just that row.
+			// Series row missing (e.g. already deleted); delete just this row.
 			db.Exec("DELETE FROM sessions WHERE id = ? AND userid = ?", sessionId, myid)
 		}
-		// If the current session cannot be identified at all, do NOT delete every
-		// session for the user. A logout that can't scope itself must no-op rather
-		// than evict the user from every device and app (Discourse #9748).
+		// No else: if the session cannot be identified, no-op rather than
+		// evicting all of the user's devices — that was the original bug.
 	}
 
 	return c.JSON(fiber.Map{

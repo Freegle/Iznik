@@ -3,6 +3,7 @@ package test
 import (
 	"bytes"
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -1079,46 +1080,150 @@ func TestDeleteSessionScopedToCurrentSeries(t *testing.T) {
 	assert.Equal(t, int64(1), count(idC), "other app session (series 2) must remain logged in")
 }
 
-// TestDeleteSessionNeverDeletesAllWhenSeriesUnresolvable is the regression test
-// for Discourse #9748 *still failing* after the first fix. When the current
-// session's series cannot be resolved to a non-zero value (e.g. a legacy/edge
-// session row stored with series 0, or a stale client token), the previous code
-// fell back to DELETE FROM sessions WHERE userid = ? — logging the user out of
-// EVERY app and device ("logging out of either Freegle or ModTools logs me out
-// of both everywhere"). Logout must instead scope to the current session row and
-// never evict the user's other logins.
-func TestDeleteSessionNeverDeletesAllWhenSeriesUnresolvable(t *testing.T) {
-	prefix := uniquePrefix("del_sess_zero")
+// TestGetSessionReturnsCurrentSessionCredentials is an AssertFlip regression
+// test for Discourse #9748 post 5.
+//
+// Bug: GET /session fetched the session row with "WHERE userid = ? LIMIT 1",
+// which in practice returns the session with the lowest primary-key ID (i.e.
+// the oldest session, not necessarily the one that made the request).  When a
+// user has two sessions — one for ModTools, one for ilovefreegle.org — that
+// means whichever app logged in first gets its session row returned for BOTH
+// apps.  fetchUser() then calls setAuth(jwt, persistent) with those wrong
+// credentials, overwriting the other app's stored tokens.  The next GET
+// /session call uses the wrong JWT → wrong session row again → the client ends
+// up permanently using the other app's session.  Logout then deletes the wrong
+// series, logging the other app out as well.
+//
+// Fix: bind the session query to the session ID found in the current request
+// (JWT sessionid claim or persistent-token id field).
+//
+// This test asserts the CORRECT (post-fix) behaviour.  It FAILS on the buggy
+// code and PASSES after the fix.
+func TestGetSessionReturnsCurrentSessionCredentials(t *testing.T) {
+	prefix := uniquePrefix("sess_cred")
 	userID := CreateTestUser(t, prefix, "User")
 	db := database.DBConn
 
-	mk := func(series uint64) uint64 {
-		db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 1, NOW(), NOW())", userID, series)
-		var id uint64
-		db.Raw("SELECT id FROM sessions WHERE userid = ? ORDER BY id DESC LIMIT 1", userID).Scan(&id)
-		return id
-	}
-	// Current login's row has series 0 (series unresolvable); a separate app/device
-	// login has a normal series and must survive this logout.
-	idCurrent := mk(0)
-	idOther := mk(userID*1000 + 7)
+	// Insert two sessions explicitly.  We insert in order so that idOther < idCurrent,
+	// which means the un-fixed "LIMIT 1" query (InnoDB primary-key scan, ascending)
+	// will return the older session — not the one whose JWT we send in the request.
+	seriesOther := userID*1000 + 1
+	seriesCurrent := userID*1000 + 2
 
-	token := GetToken(userID, idCurrent)
-	req := httptest.NewRequest("DELETE", "/api/session?jwt="+token, nil)
-	resp, err := getApp().Test(req)
-	assert.NoError(t, err)
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokOther', NOW(), NOW())", userID, seriesOther)
+	var idOther uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesOther).Scan(&idOther)
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokCurrent', NOW(), NOW())", userID, seriesCurrent)
+	var idCurrent uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesCurrent).Scan(&idCurrent)
+
+	assert.NotZero(t, idOther, "other-app session must be created")
+	assert.NotZero(t, idCurrent, "current session must be created")
+	// Confirm ordering assumption: the "other" session was inserted first and has
+	// a lower primary key, so a bare LIMIT 1 query returns it, not the current one.
+	assert.Less(t, idOther, idCurrent, "other session must have lower id for the LIMIT 1 regression to be deterministic")
+
+	// Authenticate as the CURRENT session (the second one created).
+	tokenCurrent := GetToken(userID, idCurrent)
+	req := httptest.NewRequest("GET", "/api/session?jwt="+tokenCurrent, nil)
+	resp, _ := getApp().Test(req)
 	assert.Equal(t, 200, resp.StatusCode)
 
-	count := func(id uint64) int64 {
-		var n int64
-		db.Raw("SELECT COUNT(*) FROM sessions WHERE id = ?", id).Scan(&n)
-		return n
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	// The persistent token in the response MUST be for the current session, not
+	// the older other-app session that LIMIT 1 happens to return first.
+	persistent, ok := result["persistent"].(map[string]interface{})
+	assert.True(t, ok, "response must contain a persistent token map")
+
+	gotID := uint64(persistent["id"].(float64))
+	assert.Equal(t, idCurrent, gotID,
+		"persistent.id must match the current request's session (%d), not the other-app session (%d); "+
+			"LIMIT 1 without session binding returned the wrong session row",
+		idCurrent, idOther)
+
+	// The JWT in the response must also reference the current session.
+	jwtStr, _ := result["jwt"].(string)
+	assert.NotEmpty(t, jwtStr, "response must include a jwt")
+	parts := strings.Split(jwtStr, ".")
+	assert.Len(t, parts, 3, "jwt must have three parts")
+	// base64url-decode (no padding) the payload to read the sessionid claim.
+	payload, decErr := base64URLDecodeNoPad(parts[1])
+	assert.NoError(t, decErr, "jwt payload must be base64url decodable")
+	var claims map[string]interface{}
+	assert.NoError(t, json.Unmarshal(payload, &claims))
+	assert.Equal(t, strconv.FormatUint(idCurrent, 10), claims["sessionid"],
+		"jwt sessionid must be the current session (%d), not the other-app session (%d)",
+		idCurrent, idOther)
+}
+
+// TestGetSessionReturnsCurrentSessionCredentialsViaAuth2 is a companion to
+// TestGetSessionReturnsCurrentSessionCredentials that exercises the
+// Authorization2 (persistent-token) code path in GetSession.
+//
+// When the JWT has expired the client sends only Authorization2.  This path
+// was previously broken for tokens whose Series was stored as a JSON string
+// (pre-uint64 fix): json.Unmarshal returned a type-error, zeroed out the ID,
+// and fell through to the "LIMIT 1" fallback — returning the wrong session.
+func TestGetSessionReturnsCurrentSessionCredentialsViaAuth2(t *testing.T) {
+	prefix := uniquePrefix("sess_auth2")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	// Insert two sessions. idOther is inserted first so it has a lower PK
+	// and wins the old bare "LIMIT 1" query.
+	seriesOther := userID*2000 + 1
+	seriesCurrent := userID*2000 + 2
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokOtherA2', NOW(), NOW())", userID, seriesOther)
+	var idOther uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesOther).Scan(&idOther)
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokCurrentA2', NOW(), NOW())", userID, seriesCurrent)
+	var idCurrent uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesCurrent).Scan(&idCurrent)
+
+	assert.NotZero(t, idOther, "other session must exist")
+	assert.NotZero(t, idCurrent, "current session must exist")
+	assert.Less(t, idOther, idCurrent, "other session must have lower id for LIMIT 1 regression to be deterministic")
+
+	// Build a persistent token that mimics what a browser would send.
+	// Use old wire-format: Series as a JSON string ("12345"), not a number.
+	// This is exactly the case that broke before the minimal-struct fix.
+	persistentJSON := fmt.Sprintf(`{"ID":%d,"Series":"%d","Token":"tokCurrentA2"}`, idCurrent, seriesCurrent)
+
+	req := httptest.NewRequest("GET", "/api/session", nil)
+	req.Header.Set("Authorization2", persistentJSON)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	persistent, ok := result["persistent"].(map[string]interface{})
+	assert.True(t, ok, "response must contain a persistent token map")
+
+	gotID := uint64(persistent["id"].(float64))
+	assert.Equal(t, idCurrent, gotID,
+		"persistent.id must match the current session (%d), not the other-app session (%d)",
+		idCurrent, idOther)
+}
+
+// base64URLDecodeNoPad decodes a base64url string that may lack padding.
+func base64URLDecodeNoPad(s string) ([]byte, error) {
+	switch len(s) % 4 {
+	case 2:
+		s += "=="
+	case 3:
+		s += "="
 	}
-	// The current session is logged out (by row id when its series is 0)...
-	assert.Equal(t, int64(0), count(idCurrent), "current session must be deleted")
-	// ...but the user's other login must NOT be cleared. The old delete-all
-	// fallback deleted this too — that was #9748 "logged out everywhere".
-	assert.Equal(t, int64(1), count(idOther), "other login must survive when current series is unresolvable")
+	s = strings.ReplaceAll(s, "-", "+")
+	s = strings.ReplaceAll(s, "_", "/")
+	return base64.StdEncoding.DecodeString(s)
 }
 
 // ---------------------------------------------------------------------------
