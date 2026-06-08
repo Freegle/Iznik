@@ -498,6 +498,108 @@ func TestGetSessionNotLoggedIn(t *testing.T) {
 	assert.Equal(t, "Not logged in", result["status"])
 }
 
+// TestGetSessionReturnsCurrentSessionCredentials is a regression test for
+// Discourse #9748 post 5. GET /session must return the credentials for the
+// session that made the request, not an arbitrary row returned by LIMIT 1.
+// When two sessions exist for the same user (e.g. ModTools + ilovefreegle.org),
+// the response must carry the JWT and persistent token for the requesting
+// session, not the one with the lowest primary key.
+func TestGetSessionReturnsCurrentSessionCredentials(t *testing.T) {
+	prefix := uniquePrefix("sess_cred")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	// Insert two sessions. idOther is inserted first so it has the lower PK
+	// and wins the old bare "LIMIT 1" query.
+	seriesOther := userID*1000 + 1
+	seriesCurrent := userID*1000 + 2
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokOther', NOW(), NOW())", userID, seriesOther)
+	var idOther uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesOther).Scan(&idOther)
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokCurrent', NOW(), NOW())", userID, seriesCurrent)
+	var idCurrent uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesCurrent).Scan(&idCurrent)
+
+	assert.NotZero(t, idOther, "other-app session must be created")
+	assert.NotZero(t, idCurrent, "current session must be created")
+	assert.Less(t, idOther, idCurrent, "other session must have lower id for the LIMIT 1 regression to be deterministic")
+
+	// Authenticate as the CURRENT session (the second one created).
+	tokenCurrent := GetToken(userID, idCurrent)
+	req := httptest.NewRequest("GET", "/api/session?jwt="+tokenCurrent, nil)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	persistent, ok := result["persistent"].(map[string]interface{})
+	assert.True(t, ok, "response must contain a persistent token map")
+	if ok {
+		gotID := uint64(persistent["id"].(float64))
+		assert.Equal(t, idCurrent, gotID,
+			"persistent.id must match the current session (%d), not the other-app session (%d)",
+			idCurrent, idOther)
+	}
+}
+
+// TestGetSessionReturnsCurrentSessionCredentialsViaAuth2 is a companion to
+// TestGetSessionReturnsCurrentSessionCredentials that exercises the
+// Authorization2 (persistent-token) code path in GetSession.
+//
+// When the JWT has expired the client sends only Authorization2.  This path
+// was broken in two ways: (1) WhoAmI required Series to be non-zero, but
+// old-format tokens sent Series as a JSON string ("12345") which json.Unmarshal
+// coerced to 0; (2) GetSession used LIMIT 1 instead of binding to the session
+// ID from the token.
+func TestGetSessionReturnsCurrentSessionCredentialsViaAuth2(t *testing.T) {
+	prefix := uniquePrefix("sess_auth2")
+	userID := CreateTestUser(t, prefix, "User")
+	db := database.DBConn
+
+	// Insert two sessions. idOther is inserted first so it has a lower PK
+	// and wins the old bare "LIMIT 1" query.
+	seriesOther := userID*2000 + 1
+	seriesCurrent := userID*2000 + 2
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokOtherA2', NOW(), NOW())", userID, seriesOther)
+	var idOther uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesOther).Scan(&idOther)
+
+	db.Exec("INSERT INTO sessions (userid, series, token, date, lastactive) VALUES (?, ?, 'tokCurrentA2', NOW(), NOW())", userID, seriesCurrent)
+	var idCurrent uint64
+	db.Raw("SELECT id FROM sessions WHERE userid = ? AND series = ?", userID, seriesCurrent).Scan(&idCurrent)
+
+	assert.NotZero(t, idOther, "other session must exist")
+	assert.NotZero(t, idCurrent, "current session must exist")
+	assert.Less(t, idOther, idCurrent, "other session must have lower id for LIMIT 1 regression to be deterministic")
+
+	// Build a persistent token that mimics what a browser would send.
+	// Use old wire-format: Series as a JSON string ("12345"), not a number.
+	persistentJSON := fmt.Sprintf(`{"id":%d,"series":"%d","token":"tokCurrentA2"}`, idCurrent, seriesCurrent)
+
+	req := httptest.NewRequest("GET", "/api/session", nil)
+	req.Header.Set("Authorization2", persistentJSON)
+	resp, _ := getApp().Test(req)
+	assert.Equal(t, 200, resp.StatusCode)
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	assert.Equal(t, float64(0), result["ret"])
+
+	persistent, ok := result["persistent"].(map[string]interface{})
+	assert.True(t, ok, "response must contain a persistent token map")
+	if ok {
+		gotID := uint64(persistent["id"].(float64))
+		assert.Equal(t, idCurrent, gotID,
+			"persistent.id must match the current session (%d), not the other-app session (%d)",
+			idCurrent, idOther)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // POST /session - Email/Password Login
 // ---------------------------------------------------------------------------

@@ -795,13 +795,35 @@ func GetSession(c *fiber.Ctx) error {
 
 	type SessionRow struct {
 		ID     uint64 `json:"id"`
-		Series string `json:"series"`
+		Series uint64 `json:"series"`
 		Token  string `json:"token"`
 	}
 
 	type AboutmeRow struct {
 		Text      string    `json:"text"`
 		Timestamp time.Time `json:"timestamp"`
+	}
+
+	// Identify which session authenticated this request so we return its
+	// credentials in the response, not an arbitrary session row.
+	// Without this, "WHERE userid = ? LIMIT 1" returns the oldest session for
+	// the user (InnoDB primary-key order). A user with two active sessions —
+	// one for ModTools, one for ilovefreegle.org — gets the other app's
+	// session credentials back, causing the client to overwrite its stored
+	// JWT/persistent token with the wrong session. (Discourse #9748)
+	var currentSessionID uint64
+	if _, sessID, _ := user.GetJWTFromRequest(c); sessID > 0 {
+		currentSessionID = sessID
+	} else if ptHeader := c.Get("Authorization2"); ptHeader != "" {
+		// Use a minimal struct (no Series field) so that old persistent tokens
+		// whose Series was serialised as a JSON string don't cause Unmarshal to
+		// zero out the parsed ID.
+		var minPT struct {
+			ID uint64 `json:"id"`
+		}
+		if json.Unmarshal([]byte(ptHeader), &minPT) == nil && minPT.ID > 0 {
+			currentSessionID = minPT.ID
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -835,7 +857,11 @@ func GetSession(c *fiber.Ctx) error {
 	}()
 	go func() {
 		defer wg.Done()
-		db.Raw("SELECT id, series, token FROM sessions WHERE userid = ? LIMIT 1", myid).Scan(&sessionRow)
+		if currentSessionID > 0 {
+			db.Raw("SELECT id, series, token FROM sessions WHERE id = ? AND userid = ?", currentSessionID, myid).Scan(&sessionRow)
+		} else {
+			db.Raw("SELECT id, series, token FROM sessions WHERE userid = ? LIMIT 1", myid).Scan(&sessionRow)
+		}
 	}()
 	go func() {
 		defer wg.Done()
