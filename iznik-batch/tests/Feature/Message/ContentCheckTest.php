@@ -2011,6 +2011,144 @@ class ContentCheckTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // checkIpAbuse — shared/CDN infrastructure IP exclusion
+    // -------------------------------------------------------------------------
+
+    public function test_ip_abuse_cloudflare_ip_with_many_users_is_flagged_before_fix(): void
+    {
+        // This test documents the BUGGY behaviour before the fix:
+        // a Cloudflare IP shared by 6+ users currently triggers the warning.
+        // With the fix in place, checkIpAbuse() returns null for Cloudflare IPs
+        // and this assertion would need to be inverted — see the companion test below.
+        $ip = '162.158.0.1'; // Cloudflare 162.158.0.0/15
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+
+        for ($i = 0; $i < 5; $i++) {
+            $other = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $other->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Another item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+
+        // BUG: without the fix this returns a non-null IpAbuse result.
+        // After the fix this must return null — tested by the companion test.
+        $result = $this->service->checkIpAbuse($msgid);
+
+        $this->assertNull($result, 'Cloudflare IP (162.158.0.0/15) shared by 6 users must NOT trigger IP abuse warning — it is a CDN edge node, not a home IP');
+    }
+
+    public function test_ip_abuse_cloudflare_ranges_are_excluded(): void
+    {
+        // Cloudflare published IPv4 ranges must never trigger the warning.
+        // One representative IP from each /CIDR block.
+        $cloudflareIps = [
+            '173.245.48.1',   // 173.245.48.0/20
+            '103.21.244.1',   // 103.21.244.0/22
+            '103.22.200.1',   // 103.22.200.0/22
+            '103.31.4.1',     // 103.31.4.0/22
+            '141.101.64.1',   // 141.101.64.0/18
+            '108.162.192.1',  // 108.162.192.0/18
+            '190.93.240.1',   // 190.93.240.0/20
+            '188.114.96.1',   // 188.114.96.0/20
+            '197.234.240.1',  // 197.234.240.0/22
+            '198.41.128.1',   // 198.41.128.0/17
+            '162.158.0.1',    // 162.158.0.0/15
+            '104.16.0.1',     // 104.16.0.0/13
+            '104.24.0.1',     // 104.24.0.0/14
+            '172.64.0.1',     // 172.64.0.0/13
+            '131.0.72.1',     // 131.0.72.0/22
+            '100.64.0.1',     // RFC 6598 CGNAT 100.64.0.0/10
+        ];
+
+        foreach ($cloudflareIps as $ip) {
+            $user = $this->createTestUser();
+            $msgid = DB::table('messages')->insertGetId([
+                'fromuser' => $user->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Test item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+            for ($i = 0; $i < 5; $i++) {
+                $other = $this->createTestUser();
+                DB::table('messages')->insert([
+                    'fromuser' => $other->id,
+                    'type'     => 'Offer',
+                    'subject'  => 'OFFER: Another item',
+                    'textbody' => 'Test body',
+                    'message'  => 'Test body',
+                    'fromip'   => $ip,
+                    'arrival'  => now(),
+                    'date'     => now(),
+                    'source'   => 'Platform',
+                ]);
+            }
+            $result = $this->service->checkIpAbuse($msgid);
+            $this->assertNull($result, "Cloudflare/shared IP {$ip} must not trigger IP abuse warning");
+        }
+    }
+
+    public function test_ip_abuse_non_cloudflare_ip_still_flagged(): void
+    {
+        // Ensure the fix does not suppress warnings for genuine home IPs.
+        $ip = '192.0.2.1'; // TEST-NET — not in any shared infrastructure CIDR
+
+        $user = $this->createTestUser();
+        $msgid = DB::table('messages')->insertGetId([
+            'fromuser' => $user->id,
+            'type'     => 'Offer',
+            'subject'  => 'OFFER: Test item',
+            'textbody' => 'Test body',
+            'message'  => 'Test body',
+            'fromip'   => $ip,
+            'arrival'  => now(),
+            'date'     => now(),
+            'source'   => 'Platform',
+        ]);
+        for ($i = 0; $i < 5; $i++) {
+            $other = $this->createTestUser();
+            DB::table('messages')->insert([
+                'fromuser' => $other->id,
+                'type'     => 'Offer',
+                'subject'  => 'OFFER: Another item',
+                'textbody' => 'Test body',
+                'message'  => 'Test body',
+                'fromip'   => $ip,
+                'arrival'  => now(),
+                'date'     => now(),
+                'source'   => 'Platform',
+            ]);
+        }
+        $result = $this->service->checkIpAbuse($msgid);
+        $this->assertNotNull($result, 'Non-Cloudflare IP shared by 6 users must still flag IpAbuse');
+        $this->assertEquals('IpAbuse', $result['check']);
+    }
+
+    // -------------------------------------------------------------------------
     // checkBulkVolunteerMail — detect bulk mailing to volunteer addresses (V1 Spam.php parity)
     // -------------------------------------------------------------------------
 

@@ -1147,11 +1147,76 @@ class ContentCheckService
      */
     private const IP_ABUSE_ID_CAP = 50;
 
+    /**
+     * Known shared infrastructure IP ranges that must never trigger the IP
+     * abuse warning. Co-occurrence on these IPs is meaningless — they are
+     * used by CDN edge nodes, DNS resolvers, and carrier-grade NAT, not by
+     * individual households.
+     *
+     * Cloudflare ranges: https://www.cloudflare.com/ips-v4
+     * CGNAT (RFC 6598): carrier-grade NAT shared address space
+     */
+    private const SHARED_INFRASTRUCTURE_CIDRS = [
+        '173.245.48.0/20',
+        '103.21.244.0/22',
+        '103.22.200.0/22',
+        '103.31.4.0/22',
+        '141.101.64.0/18',
+        '108.162.192.0/18',
+        '190.93.240.0/20',
+        '188.114.96.0/20',
+        '197.234.240.0/22',
+        '198.41.128.0/17',
+        '162.158.0.0/15',
+        '104.16.0.0/13',
+        '104.24.0.0/14',
+        '172.64.0.0/13',
+        '131.0.72.0/22',
+        '100.64.0.0/10',
+    ];
+
+    /**
+     * Returns true if $ip falls within any of the shared infrastructure CIDRs.
+     * Only handles IPv4; IPv6 addresses are passed through (not excluded).
+     */
+    private function isSharedInfrastructureIp(string $ip): bool
+    {
+        $ipBin = @inet_pton($ip);
+        if ($ipBin === false || strlen($ipBin) !== 4) {
+            return false;
+        }
+        foreach (self::SHARED_INFRASTRUCTURE_CIDRS as $cidr) {
+            [$network, $prefixLen] = explode('/', $cidr, 2);
+            $netBin = @inet_pton($network);
+            if ($netBin === false || strlen($netBin) !== 4) {
+                continue;
+            }
+            $bits      = (int) $prefixLen;
+            $fullBytes = intdiv($bits, 8);
+            $remBits   = $bits % 8;
+            if (substr($ipBin, 0, $fullBytes) !== substr($netBin, 0, $fullBytes)) {
+                continue;
+            }
+            if ($remBits > 0) {
+                $mask = 0xFF & (0xFF << (8 - $remBits));
+                if ((ord($ipBin[$fullBytes]) & $mask) !== (ord($netBin[$fullBytes]) & $mask)) {
+                    continue;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
     public function checkIpAbuse(int $msgid): ?array
     {
         $fromip = DB::table('messages')->where('id', $msgid)->value('fromip');
 
         if (!$fromip) {
+            return null;
+        }
+
+        if ($this->isSharedInfrastructureIp($fromip)) {
             return null;
         }
 
