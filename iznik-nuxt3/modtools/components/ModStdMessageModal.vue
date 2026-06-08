@@ -1040,17 +1040,15 @@ defineExpose({ fillin, show, modal })
 .seg-text {
   white-space: pre-wrap;
 }
-/* editthis boxes flow inline with the prose and auto-size; a placeholder box is
-   highlighted (amber) so outstanding ones stand out, fading to plain once filled
-   — so with several of them the differences "disappear" as you go. */
+/* editthis boxes sit on their own full-width line so each editable bit reads as
+   a clear fillable field. A placeholder box is highlighted (amber) so outstanding
+   ones stand out, fading to plain once filled — so with several of them the
+   differences "disappear" as you go. */
 .seg-editthis {
-  display: inline-block;
-  vertical-align: top;
-  width: auto;
-  min-width: 16rem;
-  max-width: 100%;
-  margin: 0 2px;
-  padding: 2px 8px;
+  display: block;
+  width: 100%;
+  margin: 4px 0;
+  padding: 4px 8px;
   /* A clear, consistent box outline so each editable bit reads as a fillable
      field rather than plain prose. Subtle once filled (so it blends back into
      the message), prominent while still a placeholder. */
