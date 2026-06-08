@@ -535,7 +535,7 @@ describe('ModSettingsGroup', () => {
         // With valid groupid
         wrapper.vm.groupid = 123
         await wrapper.vm.fetchGroup()
-        expect(mockModGroupStore.fetchIfNeedBeMT).toHaveBeenCalledWith(123)
+        expect(mockModGroupStore.fetchGroupMT).toHaveBeenCalledWith(123)
         expect(mockShortlinkStore.fetch).toHaveBeenCalledWith(0, 123)
 
         // Reset mocks
@@ -544,7 +544,7 @@ describe('ModSettingsGroup', () => {
         // With null groupid
         wrapper.vm.groupid = null
         await wrapper.vm.fetchGroup()
-        expect(mockModGroupStore.fetchIfNeedBeMT).not.toHaveBeenCalled()
+        expect(mockModGroupStore.fetchGroupMT).not.toHaveBeenCalled()
       })
     })
 
@@ -717,7 +717,7 @@ describe('ModSettingsGroup', () => {
       const wrapper = mountComponent()
       wrapper.vm.groupid = 456
       await flushPromises()
-      expect(mockModGroupStore.fetchIfNeedBeMT).toHaveBeenCalled()
+      expect(mockModGroupStore.fetchGroupMT).toHaveBeenCalled()
     })
   })
 
@@ -769,6 +769,18 @@ describe('ModSettingsGroup', () => {
       // Not confirmed
       wrapper = mountComponent({}, { affiliationconfirmed: null })
       expect(wrapper.text()).toContain('Affiliation not confirmed')
+    })
+  })
+
+  describe('bug #9767: TN settings link missing on first load', () => {
+    // The batch fetch (getModGroups → fetchGroupsMTBatch) ignores the tnkey
+    // query parameter in the Go batch endpoint, so cached groups have no tnkey.
+    // fetchIfNeedBeMT returns early for cached groups — skipping the tnkey fetch.
+    // Fix: fetchGroup must call fetchGroupMT directly so tnkey is always fetched.
+    it('fetchGroup calls fetchGroupMT directly to ensure tnkey is always fetched fresh', async () => {
+      const wrapper = mountComponent({ initialGroup: 123 })
+      await flushPromises()
+      expect(mockModGroupStore.fetchGroupMT).toHaveBeenCalledWith(123)
     })
   })
 })

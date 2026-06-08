@@ -1417,7 +1417,7 @@ async function fetchGroup() {
   if (!groupid.value) return
   editingDescription.value = false
 
-  await modGroupStore.fetchIfNeedBeMT(groupid.value)
+  await modGroupStore.fetchGroupMT(groupid.value)
   const groupData = modGroupStore.get(groupid.value)
   let groupRules = groupData?.rules || {}
   // console.log('fetchGroup rules',groupRules)
